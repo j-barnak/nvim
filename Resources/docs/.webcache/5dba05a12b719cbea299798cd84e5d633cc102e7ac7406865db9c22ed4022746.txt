@@ -1,0 +1,679 @@
+By Sergi Martinez
+
+## Overview
+
+It’s been a while since our last technical blogpost, so here’s one right on time for the Christmas holidays. We describe a method to exploit a use-after-free in the Linux kernel when objects are allocated in a specific slab cache, namely the `kmalloc-cg` series of SLUB caches used for cgroups. This vulnerability is assigned [CVE-2022-32250](https://nvd.nist.gov/vuln/detail/cve-2022-32250) and exists in Linux kernel versions 5.18.1 and prior.
+
+The use-after-free vulnerability in the Linux kernel netfilter subsystem was discovered by NCC Group’s Exploit Development Group (EDG). They published a very detailed [write-up](https://research.nccgroup.com/2022/09/01/settlers-of-netlink-exploiting-a-limited-uaf-in-nf_tables-cve-2022-32250) with an in-depth analysis of the vulnerability and an exploitation strategy that targeted Linux Kernel version 5.13. Additionally, Theori [published their own analysis](https://blog.theori.io/research/CVE-2022-32250-linux-kernel-lpe-2022/) and exploitation strategy, this time targetting the Linux Kernel version 5.15. We strongly recommend having a thorough read of both articles to better understand the vulnerability prior to reading this post, which almost exclusively focuses on an exploitation strategy that works on the latest vulnerable version of the Linux kernel, version 5.18.1.
+
+The aforementioned exploitation strategies are different from each other and from the one detailed here since the targeted kernel versions have different peculiarities. In version 5.13, allocations performed with either the `GFP_KERNEL` flag or the `GFP_KERNEL_ACCOUNT` flag are served by the `kmalloc-*` slab caches. In version 5.15, allocations performed with the `GFP_KERNEL_ACCOUNT` flag are served by the `kmalloc-cg-*` slab caches. While in both 5.13 and 5.15 the affected object, `nft_expr,` is allocated using `GFP_KERNEL, `the difference in exploitation between them arises because a commonly used heap spraying object, the System V message structure (`struct msg_msg)`, is served from `kmalloc-*` in 5.13 but from `kmalloc-cg-*` in 5.15. Therefore, in 5.15, `struct msg_msg` cannot be used to exploit this vulnerability.
+
+In 5.18.1, the object involved in the use-after-free vulnerability, `nft_expr, `is itself allocated with `GFP_KERNEL_ACCOUNT` in the `kmalloc-cg-*` slab caches. Since the exploitation strategies presented by the NCC Group and Theori rely on objects allocated with  `GFP_KERNEL, `they do not work against the latest vulnerable version of the Linux kernel.
+
+The subject of this blog post is to present a strategy that works on the latest vulnerable version of the Linux kernel.
+
+## Vulnerability
+
+Netfilter sets can be created with a maximum of two associated expressions that have the `NFT_EXPR_STATEFUL` flag. The vulnerability occurs when a set is created with an associated expression that does not have the `NFT_EXPR_STATEFUL` flag, such as the `dynset` and `lookup` expressions. These two expressions have a reference to another set for updating and performing lookups, respectively. Additionally, to enable tracking, each set has a bindings list that specifies the objects that have a reference to them.
+
+During the allocation of the associated `dynset` or `lookup` expression objects, references to the objects are added to the bindings list of the referenced set. However, when the expression associated to the set does not have the `NFT_EXPR_STATEFUL` flag, the creation is aborted and the allocated expression is destroyed. The problem occurs during the destruction process where the bindings list of the referenced set is not updated to remove the reference, effectively leaving a dangling pointer to the freed expression object. Whenever the set containing the dangling pointer in its bindings list is referenced again and its bindings list has to be updated, a use-after-free condition occurs.
+
+## Exploitation
+
+Before jumping straight into exploitation details, first let’s see the definition of the structures involved in the vulnerability: `nft_set`, `nft_expr`, `nft_lookup`, and `nft_dynset`.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/include/net/netfilter/nf_tables.h#L502
+
+struct nft_set {
+        struct list_head           list;                 /*     0    16 */
+        struct list_head           bindings;             /*    16    16 */
+        struct nft_table *         table;                /*    32     8 */
+        possible_net_t             net;                  /*    40     8 */
+        char *                     name;                 /*    48     8 */
+        u64                        handle;               /*    56     8 */
+        /* --- cacheline 1 boundary (64 bytes) --- */
+        u32                        ktype;                /*    64     4 */
+        u32                        dtype;                /*    68     4 */
+        u32                        objtype;              /*    72     4 */
+        u32                        size;                 /*    76     4 */
+        u8                         field_len[16];        /*    80    16 */
+        u8                         field_count;          /*    96     1 */
+
+        /* XXX 3 bytes hole, try to pack */
+
+        u32                        use;                  /*   100     4 */
+        atomic_t                   nelems;               /*   104     4 */
+        u32                        ndeact;               /*   108     4 */
+        u64                        timeout;              /*   112     8 */
+        u32                        gc_int;               /*   120     4 */
+        u16                        policy;               /*   124     2 */
+        u16                        udlen;                /*   126     2 */
+        /* --- cacheline 2 boundary (128 bytes) --- */
+        unsigned char *            udata;                /*   128     8 */
+
+        /* XXX 56 bytes hole, try to pack */
+
+        /* --- cacheline 3 boundary (192 bytes) --- */
+        const struct nft_set_ops  * ops __attribute__((__aligned__(64))); /*   192     8 */
+        u16                        flags:14;             /*   200: 0  2 */
+        u16                        genmask:2;            /*   200:14  2 */
+        u8                         klen;                 /*   202     1 */
+        u8                         dlen;                 /*   203     1 */
+        u8                         num_exprs;            /*   204     1 */
+
+        /* XXX 3 bytes hole, try to pack */
+
+        struct nft_expr *          exprs[2];             /*   208    16 */
+        struct list_head           catchall_list;        /*   224    16 */
+        unsigned char              data[] __attribute__((__aligned__(8))); /*   240     0 */
+
+        /* size: 256, cachelines: 4, members: 29 */
+        /* sum members: 176, holes: 3, sum holes: 62 */
+        /* sum bitfield members: 16 bits (2 bytes) */
+        /* padding: 16 */
+        /* forced alignments: 2, forced holes: 1, sum forced holes: 56 */
+} __attribute__((__aligned__(64)));
+```
+
+The `nft_set` structure represents an nftables set, a built-in generic infrastructure of nftables that allows using any supported selector to build sets, which makes possible the representation of maps and verdict maps (check the [corresponding nftables wiki entry](https://wiki.nftables.org/wiki-nftables/index.php/Sets) for more details).
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/include/net/netfilter/nf_tables.h#L347
+
+/**
+ *	struct nft_expr - nf_tables expression
+ *
+ *	@ops: expression ops
+ *	@data: expression private data
+ */
+struct nft_expr {
+	const struct nft_expr_ops	*ops;
+	unsigned char			data[]
+		__attribute__((aligned(__alignof__(u64))));
+};
+```
+
+The `nft_expr` structure is a generic container for expressions. The specific expression data is stored within its `data` member. For this particular vulnerability the relevant expressions are `nft_lookup` and `nft_dynset`, which are used to perform lookups on sets or update dynamic sets respectively.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/net/netfilter/nft_lookup.c#L18
+
+struct nft_lookup {
+        struct nft_set *           set;                  /*     0     8 */
+        u8                         sreg;                 /*     8     1 */
+        u8                         dreg;                 /*     9     1 */
+        bool                       invert;               /*    10     1 */
+
+        /* XXX 5 bytes hole, try to pack */
+
+        struct nft_set_binding     binding;              /*    16    32 */
+
+        /* XXX last struct has 4 bytes of padding */
+
+        /* size: 48, cachelines: 1, members: 5 */
+        /* sum members: 43, holes: 1, sum holes: 5 */
+        /* paddings: 1, sum paddings: 4 */
+        /* last cacheline: 48 bytes */
+};
+```
+
+`nft_lookup` expressions have to be bound to a given set on which the lookup operations are performed.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/net/netfilter/nft_dynset.c#L15
+
+struct nft_dynset {
+        struct nft_set *           set;                  /*     0     8 */
+        struct nft_set_ext_tmpl    tmpl;                 /*     8    12 */
+
+        /* XXX last struct has 1 byte of padding */
+
+        enum nft_dynset_ops        op:8;                 /*    20: 0  4 */
+
+        /* Bitfield combined with next fields */
+
+        u8                         sreg_key;             /*    21     1 */
+        u8                         sreg_data;            /*    22     1 */
+        bool                       invert;               /*    23     1 */
+        bool                       expr;                 /*    24     1 */
+        u8                         num_exprs;            /*    25     1 */
+
+        /* XXX 6 bytes hole, try to pack */
+
+        u64                        timeout;              /*    32     8 */
+        struct nft_expr *          expr_array[2];        /*    40    16 */
+        struct nft_set_binding     binding;              /*    56    32 */
+
+        /* XXX last struct has 4 bytes of padding */
+
+        /* size: 88, cachelines: 2, members: 11 */
+        /* sum members: 81, holes: 1, sum holes: 6 */
+        /* sum bitfield members: 8 bits (1 bytes) */
+        /* paddings: 2, sum paddings: 5 */
+        /* last cacheline: 24 bytes */
+};
+```
+
+`nft_dynset` expressions have to be bound to a given set on which the add, delete, or update operations will be performed.
+
+When a given `nft_set` has expressions bound to it, they are added to the `nft_set.bindings` double linked list. A visual representation of an `nft_set` with 2 expressions is shown in the diagram below.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/double_linked_list.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/double_linked_list.png)
+
+The `binding` member of the `nft_lookup` and `nft_dynset` expressions is defined as follows:
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/include/net/netfilter/nf_tables.h#L576
+
+/**
+ *	struct nft_set_binding - nf_tables set binding
+ *
+ *	@list: set bindings list node
+ *	@chain: chain containing the rule bound to the set
+ *	@flags: set action flags
+ *
+ *	A set binding contains all information necessary for validation
+ *	of new elements added to a bound set.
+ */
+struct nft_set_binding {
+	struct list_head		list;
+	const struct nft_chain		*chain;
+	u32				flags;
+};
+```
+
+The important member in our case is the `list` member. It is of type `struct list_head`, the same as the `nft_lookup.binding` and `nft_dynset.binding` members. These are the foundation for building a double linked list in the kernel. For more details on how linked lists in the Linux kernel are implemented refer to [this article](https://0xax.gitbooks.io/linux-insides/content/DataStructures/linux-datastructures-1.html).
+
+With this information, let’s see what the vulnerability allows to do. Since the UAF occurs within a double linked list let’s review the common operations on them and what that implies in our scenario. Instead of showing a generic example, we are going to use the linked list that is build with the `nft_set` and the expressions that can be bound to it.
+
+In the diagram shown above, the simplified pseudo-code for removing the `nft_lookup` expression from the list would be:
+
+```
+nft_lookup.binding.list->prev->next = nft_lookup.binding.list->next
+
+nft_lookup.binding.list->next->prev = nft_lookup.binding.list->prev
+```
+
+This code effectively writes the address of `nft_dynset.binding` in `nft_set.bindings.next`, and the address of `nft_set.bindings` in `nft_dynset.binding.list->prev`. Since the `binding` member of `nft_lookup` and `nft_dynset` expressions are defined at different offsets, the write operation is done at different offsets.
+
+With this out of the way we can now list the write primitives that this vulnerability allows, depending on which expression is the vulnerable one:
+
+- `nft_lookup`: Write an 8-byte address at offset 24 (`binding.list->next`) or offset 32 (`binding.list->prev`) of a freed `nft_lookup` object.
+- `nft_dynset`: Write an 8-byte address at offset 64 (`binding.list->next`) or offset 72 (`binding.list->prev`) of a freed `nft_dynset` object.
+
+The offsets mentioned above take into account the fact that `nft_lookup` and `nft_dynset` expressions are bundled in the `data` member of an `nft_expr` object (the data member is at offset 8).
+
+In order to do something useful with the limited write primitves that the vulnerability offers we need to find objects allocated within the same slab caches as the `nft_lookup` and `nft_dynset` expression objects that have an interesting member at the listed offsets.
+
+As mentioned before, in Linux kernel 5.18.1 the `nft_expr` objects are allocated using the `GFP_KERNEL_ACCOUNT` flag, as shown below.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/net/netfilter/nf_tables_api.c#L2866
+
+static struct nft_expr *nft_expr_init(const struct nft_ctx *ctx,
+				      const struct nlattr *nla)
+{
+	struct nft_expr_info expr_info;
+	struct nft_expr *expr;
+	struct module *owner;
+	int err;
+
+	err = nf_tables_expr_parse(ctx, nla, &expr_info);
+	if (err < 0)
+            goto err1;
+        err = -ENOMEM;
+
+        expr = kzalloc(expr_info.ops->size, GFP_KERNEL_ACCOUNT);
+	if (expr == NULL)
+	    goto err2;
+
+	err = nf_tables_newexpr(ctx, &expr_info, expr);
+	if (err < 0)
+            goto err3;
+
+        return expr;
+err3:
+        kfree(expr);
+err2:
+        owner = expr_info.ops->type->owner;
+	if (expr_info.ops->type->release_ops)
+	    expr_info.ops->type->release_ops(expr_info.ops);
+
+	module_put(owner);
+err1:
+	return ERR_PTR(err);
+}
+```
+
+Therefore, the objects suitable for exploitation will be different from those of the publicly available exploits targetting version 5.13 and 5.15.
+
+### Exploit Strategy
+
+The ultimate primitives we need to exploit this vulnerability are the following:
+
+- Memory leak primitive: Mainly to defeat KASLR.
+- RIP control primitive: To achieve kernel code execution and escalate privileges.
+
+However, neither of these can be achieved by only using the 8-byte write primitive that the vulnerability offers. The 8-byte write primitive on a freed object can be used to corrupt the object replacing the freed allocation. This can be leveraged to force a partial free on either the `nft_set`, `nft_lookup` or the `nft_dynset` objects.
+
+Partially freeing `nft_lookup` and `nft_dynset` objects can help with leaking pointers, while partially freeing an `nft_set` object can be pretty useful to craft a partial fake `nft_set` to achieve RIP control, since it has an `ops` member that points to a function table.
+
+Therefore, the high-level exploitation strategy would be the following:
+
+1.  Leak the kernel image base address.
+2.  Leak a pointer to an `nft_set` object.
+3.  Obtain RIP control.
+4.  Escalate privileges by overwriting the kernel’s `MODPROBE_PATH` global variable.
+5.  Return execution to userland and drop a root shell.
+
+The following sub-sections describe how this can be achieved.
+
+### Partial Object Free Primitive
+
+A partial object free primitive can be built by looking for a kernel object allocated with `GFP_KERNEL_ACCOUNT` within kmalloc-cg-64 or kmalloc-cg-96, with a pointer at offsets 24 or 32 for kmalloc-cg-64 or at offsets 64 and 72 for kmalloc-cg-96. Afterwards, when the object of interest is destroyed, `kfree()` has to be called on that pointer in order to partially free the targeted object.
+
+One of such objects is the `fdtable` object, which is meant to hold the file descriptor table for a given process. Its definition is shown below.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/include/linux/fdtable.h#L27
+
+struct fdtable {
+        unsigned int               max_fds;              /*     0     4 */
+
+        /* XXX 4 bytes hole, try to pack */
+
+        struct file * *            fd;                   /*     8     8 */
+        long unsigned int *        close_on_exec;        /*    16     8 */
+        long unsigned int *        open_fds;             /*    24     8 */
+        long unsigned int *        full_fds_bits;        /*    32     8 */
+        struct callback_head       rcu __attribute__((__aligned__(8))); /*    40    16 */
+
+        /* size: 56, cachelines: 1, members: 6 */
+        /* sum members: 52, holes: 1, sum holes: 4 */
+        /* forced alignments: 1 */
+        /* last cacheline: 56 bytes */
+} __attribute__((__aligned__(8)));
+```
+
+The size of an `fdtable` object is 56, is allocated in the kmalloc-cg-64 slab and thus can be used to replace `nft_lookup` objects. It has a member of interest at offset 24 (`open_fds`), which is a pointer to an unsigned long integer array.
+
+The allocation of `fdtable` objects is done by the kernel function `alloc_fdtable()`, which can be reached with the following call stack.
+
+```
+alloc_fdtable()
+ |  
+ +- dup_fd()
+    |
+    +- copy_files()
+      |
+      +- copy_process()
+        |
+        +- kernel_clone()
+          |
+          +- fork() syscall
+```
+
+Therefore, by calling the `fork()` system call the current process is copied and thus the currently open files. This is done by allocating a new file descriptor table object (`fdtable`), if required, and copying the currently open file descriptors to it. The allocation of a new `fdtable` object only happens when the number of open file descriptors exceeds `NR_OPEN_DEFAULT`, which is defined as 64 on 64-bit machines. The following listing shows this check.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/fs/file.c#L316
+
+/*
+ * Allocate a new files structure and copy contents from the
+ * passed in files structure.
+ * errorp will be valid only when the returned files_struct is NULL.
+ */
+struct files_struct *dup_fd(struct files_struct *oldf, unsigned int max_fds, int *errorp)
+{
+        struct files_struct *newf;
+        struct file **old_fds, **new_fds;
+        unsigned int open_files, i;
+        struct fdtable *old_fdt, *new_fdt;
+
+        *errorp = -ENOMEM;
+        newf = kmem_cache_alloc(files_cachep, GFP_KERNEL);
+        if (!newf)
+                goto out;
+
+        atomic_set(&newf->count, 1);
+
+        spin_lock_init(&newf->file_lock);
+        newf->resize_in_progress = false;
+        init_waitqueue_head(&newf->resize_wait);
+        newf->next_fd = 0;
+        new_fdt = &newf->fdtab;
+
+[1]
+
+        new_fdt->max_fds = NR_OPEN_DEFAULT;
+        new_fdt->close_on_exec = newf->close_on_exec_init;
+        new_fdt->open_fds = newf->open_fds_init;
+        new_fdt->full_fds_bits = newf->full_fds_bits_init;
+        new_fdt->fd = &newf->fd_array[0];
+
+        spin_lock(&oldf->file_lock);
+        old_fdt = files_fdtable(oldf);
+        open_files = sane_fdtable_size(old_fdt, max_fds);
+
+        /*
+         * Check whether we need to allocate a larger fd array and fd set.
+         */
+
+[2]
+
+        while (unlikely(open_files > new_fdt->max_fds)) {
+                spin_unlock(&oldf->file_lock);
+
+                if (new_fdt != &newf->fdtab)
+                        __free_fdtable(new_fdt);
+
+[3]
+
+                new_fdt = alloc_fdtable(open_files - 1);
+                if (!new_fdt) {
+                        *errorp = -ENOMEM;
+                        goto out_release;
+                }
+
+[Truncated]
+
+        }
+
+[Truncated]
+
+        return newf;
+
+out_release:
+        kmem_cache_free(files_cachep, newf);
+out:
+        return NULL;
+}
+```
+
+At \[1\] the `max_fds` member of `new_fdt` is set to `NR_OPEN_DEFAULT`. Afterwards, at \[2\] the loop executes only when the number of open files exceeds the `max_fds` value. If the loop executes, at \[3\] a new `fdtable` object is allocated via the `alloc_fdtable()` function.
+
+Therefore, to force the allocation of `fdtable` objects in order to replace a given free object from kmalloc-cg-64 the following steps must be taken:
+
+1.  Create more than 64 open file descriptors. This can be easily done by calling the `dup()` function to duplicate an existing file descriptor, such as the `stdout`. This step should be done before triggering the free of the object to be replaced with an `fdtable` object, since the `dup()` system call also ends up allocating `fdtable` objects that can interfere.
+2.  Once the target object has been freed, fork the current process a large number of times. Each `fork()` execution creates one `fdtable` object.
+
+The free of the `open_fds` pointer is triggered when the `fdtable` object is destroyed in the `__free_fdtable()` function.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/fs/file.c#L34
+
+static void __free_fdtable(struct fdtable *fdt)
+{
+        kvfree(fdt->fd);
+        kvfree(fdt->open_fds);
+        kfree(fdt);
+}
+```
+
+Therefore, the partial free via the overwritten `open_fds` pointer can be triggered by simply terminating the child process that allocated the `fdtable` object.
+
+### Leaking Pointers
+
+The exploit primitive provided by this vulnerability can be used to build a leaking primitive by overwriting the vulnerable object with an object that has an area that will be copied back to userland. One such object is the System V message represented by the `msg_msg` structure, which is allocated in `kmalloc-cg-*` slab caches starting from kernel version 5.14.
+
+The `msg_msg` structure acts as a header of System V messages that can be created via the userland `msgsnd()` function. The content of the message can be found right after the header within the same allocation. System V messages are a widely used exploit primitive for heap spraying.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/include/linux/msg.h#L9
+
+struct msg_msg {
+        struct list_head           m_list;               /*     0    16 */
+        long int                   m_type;               /*    16     8 */
+        size_t                     m_ts;                 /*    24     8 */
+        struct msg_msgseg *        next;                 /*    32     8 */
+        void *                     security;             /*    40     8 */
+
+        /* size: 48, cachelines: 1, members: 5 */
+        /* last cacheline: 48 bytes */
+};
+```
+
+Since the size of the allocation for a System V message can be controlled, it is possible to allocate it in both kmalloc-cg-64 and kmalloc-cg-96 slab caches.
+
+It is important to note that any data to be leaked must be written past the first 48 bytes of the message allocation, otherwise it would overwrite the `msg_msg` header. This restriction discards the `nft_lookup` object as a candidate to apply this technique to as it is only possible to write the pointer either at offset 24 or offset 32 within the object. The ability of overwriting the `msg_msg.m_ts` member, which defines the size of the message, helps building a strong out-of-bounds read primitive if the value is large enough. However, there is a check in the code to ensure that the `m_ts` member is not negative when interpreted as a signed long integer and heap addresses start with `0xffff`, making it a negative long integer. 
+
+### Leaking an `nft_set` Pointer
+
+Leaking a pointer to an `nft_set` object is quite simple with the memory leak primitive described above. The steps to achieve it are the following:
+
+1\. Create a target set where the expressions will be bound to.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/set_only.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/set_only.png)
+
+2\. Create a rule with a lookup expression bound to the target set from step 1.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/nft_set_with_lookup.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/nft_set_with_lookup.png)
+
+3\. Create a set with an embedded `nft_dynset` expression bound to the target set. Since this is considered an invalid expression to be embedded to a set, the `nft_dynset` object will be freed but not removed from the target set bindings list, causing a UAF.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list.png)
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_dynset_free.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_dynset_free.png)
+
+4\. Spray System V messages in the kmalloc-cg-96 slab cache in order to replace the freed `nft_dynset` object (via `msgsnd()` function). Tag all the messages at offset 24 so the one corrupted with the `nft_set` pointer can later be identified.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_dynset_msg.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_dynset_msg.png)
+
+5\. Remove the rule created, which will remove the entry of the `nft_lookup` expression from the target set’s bindings list. Removing this from the list effectively writes a pointer to the target `nft_set` object where the original `binding.list.prev` member was (offset 72). Since the freed `nft_dynset` object was replaced by a System V message, the pointer to the `nft_set` will be written at offset 24 within the message data.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_dynset_msg_write.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_dynset_msg_write.png)
+
+6\. Use the userland `msgrcv()` function to read the messages and check which one does not have the tag anymore, as it would have been replaced by the pointer to the `nft_set`.
+
+### Leaking a Kernel Function Pointer
+
+Leaking a kernel pointer requires a bit more work than leaking a pointer to an `nft_set` object. It requires being able to partially free objects within the target set bindings list as a means of crafting use-after-free conditions. This can be done by using the partial object free primitive using `fdtable` object already described. The steps followed to leak a pointer to a kernel function are the following.
+
+1\. Increase the number of open file descriptors by calling `dup()` on `stdout` 65 times.
+
+2\. Create a target set where the expressions will be bound to (different from the one used in the \``nft_set`\` adress leak).
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/set_only.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/set_only.png)
+
+3\. Create a set with an embedded `nft_lookup` expression bound to the target set. Since this is considered an invalid expression to be embedded into a set, the `nft_lookup` object will be freed but not removed from the target set bindings list, causing a UAF.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/nft_set_with_lookup.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/nft_set_with_lookup.png)
+
+4\. Spray `fdtable` objects in order to replace the freed `nft_lookup` from step 3.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/nft_set_fdtables.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/nft_set_fdtables.png)
+
+5\. Create a set with an embedded `nft_dynset` expression bound to the target set. Since this is considered an invalid expression to be embedded into a set, the `nft_dynset` object will be freed but not removed from the target set bindings list, causing a UAF. This addition to the bindings list will write the pointer to its binding member into the `open_fds` member of the `fdtable` object (allocated in step 4) that replaced the `nft_lookup` object.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_fdtable.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_fdtable.png)
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_fdtable_free_dynset.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_fdtable_free_dynset.png)
+
+6\. Spray System V messages in the kmalloc-cg-96 slab cache in order to replace the freed `nft_dynset` object (via `msgsnd()` function). Tag all the messages at offset 8 so the one corrupted can be identified.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_fdtable_msg_replaced-1.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_fdtable_msg_replaced-1.png)
+
+7\. Kill all the child processes created in step 4 in order to trigger the partial free of the System V message that replaced the `nft_dynset` object, effectively causing a UAF to a part of a System V message.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_partial_free.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_partial_free.png)
+
+8\. Spray `time_namespace` objects in order to replace the partially freed System V message allocated in step 7. The reason for using the `time_namespace` objects is explained later.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_time_namespace.png)](https://blog.exodusintel.com/wp-content/uploads/2022/12/full_list_time_namespace.png)
+
+9\. Since the System V message header was not corrupted, find the System V message whose tag has been overwritten. Use `msgrcv()` to read the data from it, which is overlapping with the newly allocated `time_namespace` object. The offset 40 of the data portion of the System V message corresponds to `time_namespace.ns->ops` member, which is a function table of functions defined within the kernel core. Armed with this information and the knowledge of the offset from the kernel base image to this function it is possible to calculate the kernel image base address.
+
+10\. Clean-up the child processes used to spray the `time_namespace` objects.
+
+`time_namespace` objects are interesting because they contain an `ns_common` structure embedded in them, which in turn contains an `ops` member that points to a function table with functions defined within the kernel core. The `time_namespace` structure definition is listed below.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/include/linux/time_namespace.h#L19
+
+struct time_namespace {
+        struct user_namespace *    user_ns;              /*     0     8 */
+        struct ucounts *           ucounts;              /*     8     8 */
+        struct ns_common           ns;                   /*    16    24 */
+        struct timens_offsets      offsets;              /*    40    32 */
+        /* --- cacheline 1 boundary (64 bytes) was 8 bytes ago --- */
+        struct page *              vvar_page;            /*    72     8 */
+        bool                       frozen_offsets;       /*    80     1 */
+
+        /* size: 88, cachelines: 2, members: 6 */
+        /* padding: 7 */
+        /* last cacheline: 24 bytes */
+};
+```
+
+At offset 16, the `ns` member is found. It is an `ns_common` structure, whose definition is the following.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/include/linux/ns_common.h#L9
+
+struct ns_common {
+        atomic_long_t              stashed;              /*     0     8 */
+        const struct proc_ns_operations  * ops;          /*     8     8 */
+        unsigned int               inum;                 /*    16     4 */
+        refcount_t                 count;                /*    20     4 */
+
+        /* size: 24, cachelines: 1, members: 4 */
+        /* last cacheline: 24 bytes */
+};
+```
+
+At offset 8 within the `ns_common` structure the `ops` member is found. Therefore, `time_namespace.ns->ops` is at offset 24.
+
+Spraying `time_namespace` objects can be done by calling the `unshare()` system call and providing the `CLONE_NEWUSER` and `CLONE_NEWTIME`. In order to avoid altering the execution of the current process the `unshare()` executions can be done in separate processes created via `fork()`.
+
+```
+clone_time_ns()
+  |
+  +- copy_time_ns()
+    |
+    +- create_new_namespaces()
+      |
+      +- unshare_nsproxy_namespaces()
+        |
+        +- unshare() syscall
+```
+
+The `CLONE_NEWTIME` flag is required because of a check in the function `copy_time_ns()` (listed below) and `CLONE_NEWUSER` is required to be able to use the `CLONE_NEWTIME` flag from an unprivileged user.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/kernel/time/namespace.c#L133
+
+/**
+ * copy_time_ns - Create timens_for_children from @old_ns
+ * @flags:      Cloning flags
+ * @user_ns:    User namespace which owns a new namespace.
+ * @old_ns:     Namespace to clone
+ *
+ * If CLONE_NEWTIME specified in @flags, creates a new timens_for_children;
+ * adds a refcounter to @old_ns otherwise.
+ *
+ * Return: timens_for_children namespace or ERR_PTR.
+ */
+struct time_namespace *copy_time_ns(unsigned long flags,
+        struct user_namespace *user_ns, struct time_namespace *old_ns)
+{
+        if (!(flags & CLONE_NEWTIME))
+                return get_time_ns(old_ns);
+
+        return clone_time_ns(user_ns, old_ns);
+}
+```
+
+### RIP Control
+
+Achieving RIP control is relatively easy with the partial object free primitive. This primitive can be used to partially free an `nft_set` object whose address is known and replace it with a fake `nft_set` object created with a System V message. The `nft_set` objects contain an `ops` member, which is a function table of type `nft_set_ops`. Crafting this function table and triggering the right call will lead to RIP control.
+
+The following is the definition of the `nft_set_ops` structure.
+
+```
+// Source: https://elixir.bootlin.com/linux/v5.18.1/source/include/net/netfilter/nf_tables.h#L389
+
+struct nft_set_ops {
+        bool                       (*lookup)(const struct net  *, const struct nft_set  *, const u32  *, const struct nft_set_ext  * *); /*     0     8 */
+        bool                       (*update)(struct nft_set *, const u32  *, void * (*)(struct nft_set *, const struct nft_expr  *, struct nft_regs *), const struct nft_expr  *, struct nft_regs *, const struct nft_set_ext  * *); /*     8     8 */
+        bool                       (*delete)(const struct nft_set  *, const u32  *); /*    16     8 */
+        int                        (*insert)(const struct net  *, const struct nft_set  *, const struct nft_set_elem  *, struct nft_set_ext * *); /*    24     8 */
+        void                       (*activate)(const struct net  *, const struct nft_set  *, const struct nft_set_elem  *); /*    32     8 */
+        void *                     (*deactivate)(const struct net  *, const struct nft_set  *, cstimate *); /*    88     8 */
+        int                        (*init)(const struct nft_set  *, const struct nft_set_desc  *, const struct nlattr  * const *); /*    96     8 */
+        void                       (*destroy)(const struct nft_set  *); /*   onst struct nft_set_elem  *); /*    40     8 */
+        bool                       (*flush)(const struct net  *, const struct nft_set  *, void *); /*    48     8 */
+        void                       (*remove)(const struct net  *, const struct nft_set  *, const struct nft_set_elem  *); /*    56     8 */
+        /* --- cacheline 1 boundary (64 bytes) --- */
+        void                       (*walk)(const struct nft_ctx  *, struct nft_set *, struct nft_set_iter *); /*    64     8 */
+        void *                     (*get)(const struct net  *, const struct nft_set  *, const struct nft_set_elem  *, unsigned int); /*    72     8 */
+        u64                        (*privsize)(const struct nlattr  * const *, const struct nft_set_desc  *); /*    80     8 */
+        bool                       (*estimate)(const struct nft_set_desc  *, u32, struct nft_set_e104     8 */
+        void                       (*gc_init)(const struct nft_set  *); /*   112     8 */
+        unsigned int               elemsize;             /*   120     4 */
+
+        /* size: 128, cachelines: 2, members: 16 */
+        /* padding: 4 */
+};
+```
+
+The `delete` member is executed when an item has to be removed from the set. The item removal can be done from a rule that removes an element from a set when certain criteria is matched. Using the `nft` command, a very simple one can be as follows:
+
+```
+nft add table inet test_dynset
+nft add chain inet test_dynset my_input_chain { type filter hook input priority 0;}
+nft add set inet test_dynset my_set { type ipv4_addr; }
+nft add rule inet test_dynset my_input_chain ip saddr 127.0.0.1 delete @my_set { 127.0.0.1 }
+```
+
+The snippet above shows the creation of a table, a chain, and a set that contains elements of type `ipv4_addr` (i.e. IPv4 addresses). Then a rule is added, which deletes the item `127.0.0.1` from the set `my_set` when an incoming packet has the source IPv4 address `127.0.0.1`. Whenever a packet matching that criteria is processed via nftables, the `delete` function pointer of the specified set is called.
+
+Therefore, RIP control can be achieved with the following steps. Consider the target set to be the `nft_set` object whose address was already obtained.
+
+1.  Add a rule to the table being used for exploitation in which an item is removed from the target set when the source IP of incoming packets is `127.0.0.1`.
+2.  Partially free the `nft_set` object from which the address was obtained.
+3.  Spray System V messages containing a partially fake `nft_set` object containing a fake `ops` table, with a given value for the `ops->delete` member.
+4.  Trigger the call of `nft_set->ops->delete` by locally sending a network packet to `127.0.0.1`. This can be done by simply opening a TCP socket to `127.0.0.1` at any port and issuing a `connect()` call.
+
+### Escalating Privileges
+
+Once the control of the RIP register is achieved and thus the code execution can be redirected, the last step is to escalate privileges of the current process and drop to an interactive shell with root privileges.
+
+A way of achieving this is as follows:
+
+1.  Pivot the stack to a memory area under control. When the `delete` function is called, the RSI register contains the address of the memory region where the nftables register values are stored. The values of such registers can be controlled by adding an `immediate` expression in the rule created to achieve RIP control.
+2.  Afterwards, since the nftables register memory area is not big enough to fit a ROP chain to overwrite the `MODPROBE_PATH` global variable, the stack is pivoted again to the end of the fake `nft_set` used for RIP control.
+3.  Build a ROP chain to overwrite the `MODPROBE_PATH` global variable. Place it at the end of the `nft_set` mentioned in step 2.
+4.  Return to userland by using the [KPTI trampoline](https://lkmidas.github.io/posts/20210128-linux-kernel-pwn-part-2/#adding-kpti).
+5.  Drop to a privileged shell by leveraging the [overwritten `MODPROBE_PATH` global variable](https://lkmidas.github.io/posts/20210223-linux-kernel-pwn-modprobe/).
+
+The stack pivot gadgets and ROP chain used can be found below.
+
+```
+// ROP gadget to pivot the stack to the nftables registers memory area
+
+0xffffffff8169361f: push rsi ; add byte [rbp+0x310775C0], al ; rcr byte [rbx+0x5D], 0x41 ; pop rsp ; ret ;
+
+
+// ROP gadget to pivot the stack to the memory allocation holding the target nft_set
+
+0xffffffff810b08f1: pop rsp ; ret ;
+```
+
+When the execution flow is redirected, the RSI register contains the address otf the nftables’ registers memory area. This memory can be controlled and thus is used as a temporary stack, given that the area is not big enough to hold the entire ROP chain. Afterwards, using the second gadget shown above, the stack is pivoted towards the end of the fake `nft_set` object.
+
+```
+// ROP chain used to overwrite the MODPROBE_PATH global variable
+
+0xffffffff8148606b: pop rax ; ret ;
+0xffffffff8120f2fc: pop rdx ; ret ;
+0xffffffff8132ab39: mov qword [rax], rdx ; ret ;
+```
+
+It is important to mention that the stack pivoting gadget that was used performs memory dereferences, requiring the address to be mapped. While experimentally the address was usually mapped, it negatively impacts the exploit reliability.
+
+## Wrapping Up
+
+We hope you enjoyed this reading and could learn something new. If you are hungry for more make sure to check [our other blog posts](https://blog.exodusintel.com/category/vulnerability-analysis/).
+
+We wish y’all a great Christmas holidays and a happy new year! Here’s to a 2023 with more bugs, exploits, and write ups!

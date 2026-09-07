@@ -2450,6 +2450,7 @@ local pick_rust_atomics = frozen_web_provider("rust-atomics", "Rust Atomics and 
 -- works it cites (astra), and a set of write-ups on one topic (kernel-ctf).
 -- Same frozen shape as the others, so they are offline from a bare clone.
 local pick_astra = frozen_web_provider("astra", "The Astra Book> ")
+local pick_kernel_exploitation = frozen_web_provider("kernel-exploitation", "Linux Kernel Exploitation> ")
 local pick_kernel_ctf = frozen_web_provider("kernel-ctf", "Kernel CTF> ")
 local pick_packer = frozen_web_provider("packer", "Executable Packer> ")
 local pick_snapshot_fuzzer = frozen_web_provider("snapshot-fuzzer", "Snapshot Fuzzer> ")
@@ -3104,6 +3105,7 @@ local WEB_BOOKS = {
 	{ title = "SLUB", key = "slub", run = pick_slub },
 	{ title = "Snapshot Fuzzer", key = "snapshot-fuzzer", run = pick_snapshot_fuzzer },
 	{ title = "The Astra Book", key = "astra", run = pick_astra },
+	{ title = "Linux Kernel Exploitation Chapter", key = "kernel-exploitation", run = pick_kernel_exploitation },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.
@@ -3255,6 +3257,7 @@ LOCATION["snapshot-fuzzer"] = { index = "snapshot-fuzzer/index.tsv", unit = "cha
 LOCATION["kernel-labs"] = { index = "kernel-labs/index.tsv", unit = "chapter" }
 LOCATION.slub = { index = "slub/index.tsv", unit = "chapter" }
 LOCATION["kernel-internals"] = { index = "kernel-internals/index.tsv", unit = "article" }
+LOCATION["kernel-exploitation"] = { index = "kernel-exploitation/index.tsv", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
 	LOCATION[key] = { network = true }

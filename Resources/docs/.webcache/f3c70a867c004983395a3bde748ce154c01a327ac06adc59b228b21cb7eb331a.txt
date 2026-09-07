@@ -1,0 +1,275 @@
+# Blog
+
+# CVE-2020-8835: Linux Kernel Privilege Escalation via Improper eBPF Program Verification
+
+April 16, 2020
+
+Guest Blogger
+
+*During the recent* [*Pwn2Own 2020*](https://www.zerodayinitiative.com/blog/2020/3/19/pwn2own-2020-day-one-results) *competition, Manfred Paul (*[*@\_manfp*](https://twitter.com/_manfp)*) of* [*RedRocket CTF*](https://twitter.com/redrocket_ctf) *used an improper input validation bug in the Linux kernel to go from a standard user to root. Manfred used this bug during the contest to win \$30,000 in the Privilege Escalation category. He has graciously put together this write-up of his research describing the bug and the exploit used during the contest.*
+
+------------------------------------------------------------------------
+
+This blog explains the technical details of an exploit using the Linux eBPF feature to achieve local privilege escalation. Due to the nature of the bug(s), which are rather subtle misbehaviors of a safety-critical feature called the “verifier”, some explanations about the inner workings of eBPF need to be provided first. It may be helpful to have the kernel source ([kernel/bpf/verifier.c](https://github.com/torvalds/linux/blob/master/kernel/bpf/verifier.c) in particular) as a reference alongside these explanations. This bug has been assigned CVE-2020-8835 and was patched on [March 30, 2020](https://www.openwall.com/lists/oss-security/2020/03/30/3). Here’s a quick video demonstration of the exploit in action:
+
+**How eBPF works**
+
+**eBPF**
+
+Since version 3.15, the Linux kernel supports a general tracing feature called “extended Berkeley Packet Filters”, or eBPF for short. This feature allows users to run eBPF programs, which are written in an assembly-like instruction set, directly in kernel space and can be used to trace certain kernel functionalities. This feature can also be used to filter network packets.
+
+All BPF features are accessed through the BPF syscall, which supports various commands. The man page for [BPF(2)](http://man7.org/linux/man-pages/man2/bpf.2.html) states:
+
+In the current implementation, all bpf() commands require the caller to have the CAP_SYS_ADMIN capability.
+
+This is incorrect. Since Linux 4.4, any user can load eBPF programs and run them by attaching them to a socket they own.
+
+**eBPF Programs**
+
+eBPF uses an instruction set that is quite similar to a (very) limited subset of standard x86 assembly. There are 10 registers (plus one stack pointer), and we can execute all basic copy and arithmetic operations on them, including bitwise operations and shifts. For example:
+
+       `BPF_MOV64_IMM(BPF_REG_3, 1)`
+
+sets register 3 to value 1, and
+
+       `BPF_ALU64_REG(BPF_ARSH, BPF_REG_7, BPF_REG_5)`
+
+arithmetically shifts register 7 right by the contents of register 5. Note that the suffix `_REG` denotes a register as second operand, while `_IMM`-instructions take an immediate value.
+
+There are also branching jump instructions:
+
+       `BPF_JMP_IMM(BPF_JNE, BPF_REG_3, 0, 3)`
+
+jumps over the next three instructions, if register 3 is not equal to 0.
+
+For each `mov`, `alu` and `jmp` instruction, there is also a corresponding 32-bit version that operates just on the lower 32 bits of the registers (results are zero-extended where needed).
+
+Finally, there are memory loads and stores:
+
+       `BPF_LDX_MEM(BPF_DW, BPF_REG_3, BPF_REG_9, 24)`
+
+loads a 64-bit value from `[reg9+24]` into `reg3`, and
+
+       `BPF_STX_MEM(BPF_DW, BPF_REG_8, BPF_REG_6, 0)`
+
+stores the contents of register 6 in `[reg8+0]`.
+
+To execute an eBPF program, it first has to be loaded via the `BPF_PROG_LOAD` command. This returns a file descriptor corresponding to the program. This file descriptor can then be attached to a socket. The program is then executed for every packet that comes through this socket.
+
+**eBPF Maps**
+
+To store data or communicate with user space programs (or each other), eBPF programs can use a feature called maps. All maps represent key-value-mappings of some kind. There are different map types, for example, queues and stacks, however for this exploit, the only one that is used is the `arraymap`. As the name implies, this type of map is just a contiguous array of entries. It is defined by three parameters:
+
+       -- `key_size` is the size in bytes of each index used to access an element. The exploit always uses `key_size=sizeof(int)=4`.  
+       -- `value_size` is the size of each array element. This size can be arbitrary, within reasonable limits.  
+       -- `max_entries` is the length of the array. We will always just set `value_size` as high as we need, and set `max_entries` to 1.
+
+One advantage to setting `max_entries` to 1, rather than having a small `value_size` but more entries, is that we can then get a pointer to the single value inside the eBPF program, so that the `arraymap` is in effect just a single memory chunk. This will be very convenient later on.
+
+Similar to programs, maps are created by the `BPF_MAP_CREATE` command of the `bpf` syscall and are identified by a file descriptor.
+
+The exploit will use three maps:
+
+       -- `inmap` is a small map containing all parameters the exploit needs to run (e.g. the offset of an out-of-bounds read to perform). Note that although there will be multiple parameters, they will all be stored inside a single larger array entry.  
+       -- `outmap` is a very small map containing any output from the exploit program (for Out-of-Bounds (OOB) reads, the read value).  
+       -- `explmap` is a larger map that will be used for the exploit itself.
+
+**JIT Compiler**
+
+For performance reasons, all eBPF programs are JIT compiled into native machine code when they are loaded (except when `CONFIG_BPF_JIT_ALWAYS_ON` is disabled).
+
+The JIT compilation process is pretty much straightforward, as it is very easy to find x86 instructions corresponding to most eBPF instructions. The compiled program runs in kernel space with no additional sandboxing.
+
+**Verifier**
+
+Obviously, running arbitrary JIT-compiled eBPF instructions would trivially allow arbitrary memory access, because the load and store instructions are translated into indirect `mov`s. Therefore, the kernel runs a verifier on each program to make sure no OOB memory access can be performed, and also that no kernel pointers can be leaked. The verifier enforces roughly the following (some of these apply only to programs loaded by non-privileged processes):
+
+       -- No pointer arithmetic or comparisons can be performed, except for the addition or subtraction of a pointer and a scalar value (a *scalar value* is any value that is not derived from a pointer value).  
+       -- No pointer arithmetic that leaves the bounds of known-safe memory regions (i.e. maps) can be performed.  
+       -- No pointer values can be returned from maps, nor can they be stored in maps, where they would be readable from user space.  
+       -- No instruction is reachable from itself, meaning that the program may not contain any loops.
+
+To do this, the verifier must track – for each program instruction – which registers contain pointers and which contain scalar values. In addition, the verifier must perform range computations to ensure that pointers can never leave their appropriate memory regions. It must also perform range tracking for scalar values, because without knowing lower and upper bounds it would be impossible to tell if adding a register containing a scalar value to one containing a pointer would result in an out-of-bounds pointer.
+
+For tracking the range of possible values of each register, the verifier keeps track of three separate bounds:
+
+       1- `umin` and `umax` track the minimum and maximum value that the register can contain when interpreted as an unsigned integer.  
+       2- `smin` and `smax` track the minimum and maximum value that the register can contain when interpreted as a signed integer.  
+       3- `var_off` contains information about certain bits that are known to be 0 or 1. The type of `var_off` is a structure known as `tnum`, which is short for “tracked number” or “tristate number”. A `tnum` has two fields. One field, named `value`, has all bits set that are known to be 1 in the register under consideration. The other field, named `mask`, has all bits set where the corresponding bit in the register is unknown. For example, if `value` is binary `010` and `mask` is binary `100`, then the register could contain either binary `010` or binary `110`.
+
+To see why 1 and 2 are both necessary, consider a register whose signed bounds are -1 and 0. Interpreted as an unsigned integer, those values can range from 0 to 2ˆ64-1, which has the same representation as signed -1. On the other hand, the unsigned range from 2ˆ63-1 to 2ˆ63 includes both the smallest and largest possible signed values.
+
+All of these bounds are regularly used to update each other. For example, if `umax` is below 2ˆ63, then `smin` is set to 0 (if it was negative before), as all such numbers are positive. Similarly, if `var_off` indicates that all except the last three bits are 0, then `umax` can be safely set to 7.
+
+The verifier checks each possible execution path, meaning that at each branch, both outcomes are checked separately. For the two branches of a conditional jump, some additional information can be learned. For example, consider:
+
+       `BPF_JMP_IMM(BPF_JGE, BPF_REG_5, 8, 3)`
+
+which takes the branch if register 5 is greater or equal than 8 in an unsigned comparison. While analyzing the false-branch, the verifier is able to set `umax` of register 5 to 7, because any higher unsigned value would have resulted in taking the other branch.
+
+**ALU Sanitation**
+
+In response to a large number of security vulnerabilities that were due to bugs in the verifier, a feature called “ALU sanitation” was introduced. The idea is to supplement the verifier’s static range checks with runtime checks on the actual values being processed by the program. Recall that the only permitted calculations with pointers are to add or subtract a scalar. For every arithmetic operation that involves a pointer and a scalar register (as opposed to an immediate), an `alu_limit` is determined as the maximal absolute value that can safely be added to or subtracted from to the pointer without exceeding the allowable range.
+
+Pointer arithmetic where the sign of the scalar operand is unknown is disallowed. For the rest of this subsection, assume that each scalar is treated as positive; the negative case is analogous.
+
+Before each arithmetic instruction that has an `alu_limit`, the following sequence of instructions is added. Note that `off_reg` is the register containing the scalar value, and `BPF_REG_AX` is an auxiliary register.
+
+`BPF_MOV32_IMM(BPF_REG_AX, aux->alu_limit - 1)` `BPF_ALU64_REG(BPF_SUB, BPF_REG_AX, off_reg)` `BPF_ALU64_REG(BPF_OR, BPF_REG_AX, off_reg)` `BPF_ALU64_IMM(BPF_NEG, BPF_REG_AX, 0)` `BPF_ALU64_IMM(BPF_ARSH, BPF_REG_AX, 63)` `BPF_ALU64_REG(BPF_AND, off_reg, BPF_REG_AX)`
+
+If the scalar exceeds `alu_limit`, then the first subtraction will be negative, so that the leftmost bit of `BPF_REG_AX` will be set. Similarly, if the scalar that is supposed to be positive is in fact negative, the `BPF_OR` instruction will set the leftmost bit of `BPF_REG_AX`. The negation followed by the arithmetic shift will then fill `BPF_REG_AX` with all 0s, so that the `BPF_AND` will force `off_reg` to zero, replacing the offending scalar. On the other hand, if the scalar falls within the appropriate range `0 <= off_reg <= alu_limit`, the arithmetic shift will fill `BPF_REG_AX` with all 1s, so that the `BPF_AND` will leave the scalar register unchanged.
+
+To make sure that setting the register to 0 does not itself introduce a new out-of-bounds condition, the verifier will track an additional “speculative” branch where the operand is treated as 0.
+
+**Exploiting the Verifier**
+
+**Breaking Range Tracking**
+
+As mentioned, jump conditionals also exist in a 32-bit variant. However, because all bounds are tracked exclusively for the full 64-bit-wide registers, there is no straightforward way to use 32-bit branches to update register bounds, as can be done for 64-bit branches as detailed above. Because this resulted in improperly rejected programs, for every 32-bit branching jump an additional function call was added, in an attempt to maximize the bounds information that can be gleaned. The idea is to use `umin` and `umax` to narrow down the last 32 bits in `var_off`. The code is as follows, found in `kernel/bpf/verifier.c`:
+
+![Picture1.png](https://images.squarespace-cdn.com/content/v1/5894c269e4fcb5e65a1ed623/1586377358072-XA3HANULXSNTUUPG790N/Picture1.png)
+
+To understand this code, we must first explain the purpose of several functions used here.
+
+       -- `tnum_range` is a function that generates a `tnum` corresponding to the possible values in a given range of unsigned integers.  
+       -- `tnum_cast` creates a new `tnum` based on the lowermost bits of an existing `tnum`. Here, it is used to return the lower 32 bits of `reg->var_off`.  
+       -- `tnum_lshift` / `tnum_rshift` perform shifts on `tnum`s. Here, they are used together to clear the lower 32 bits of a `tnum`.  
+       -- `tnum_intersect` takes two `tnum` arguments both pertaining to a single value, and returns a single `tnum` that synthesizes all knowledge conveyed by the arguments.  
+       -- `tnum_or` returns a `tnum` indicating our knowledge of the bitwise OR of two operands, where the two arguments indicate our knowledge of the two operands.
+
+Now consider a register with `umin_value = 1` and `umax_value = 2ˆ32+1`, and `var_off` otherwise unconstrained. Then `reg->umin_value & mask` and `reg->umax_value & mask` will both be 1. Thus, the resulting `tnum_range` will indicate that the lowest bit is known to be 1, and that all other bits are known to be 0. `tnum_intersect` will preserve this information and mark all lower 32 bits as known in its output. Finally, `tnum_or` will reintroduce uncertainty in the upper 32 bits, but because `hi32` indicates that the lower 32 bits are known zeros, the lower 32 bits from the `tnum_intersect` will be preserved. This means that after this function finishes, the lower half of `var_off` will be marked as known binary `00...01`.
+
+However, this conclusion is not justified. Just because `umin` and `umax` both end in binary `00...01` doesn’t mean that each value in between also does. For example, the register’s true value could easily have been 2. As we will see, this initial incorrect assumption made by the verifier can be used to break further assumptions.
+
+**Triggering the Bug**
+
+To actually trigger the described bug, we need to have a register that fulfills the following conditions:
+
+       -- During execution, the actual value in the register is 2.  
+       -- The register’s `umin_val` is set to 1, and `umax_val` is set to 2ˆ32+1.  
+       -- A conditional jump with a 32-bit comparison on this register is executed.
+
+We cannot directly load the value 2 into the register with a `mov`, as the verifier would then know that `umin_val=umax_val=2`. However, there is an easy workaround. If we load the register from a map (we’ll use our input map `inmap`), then the verifier will have no information about its value, as map values can be changed during runtime.
+
+To set `umin_val` and `umax_val` we can use the verifier’s jump branch logic:
+
+       `BPF_JMP_IMM(BPF_JGE, BPF_REG_2, 1, 1)`  
+       `BPF_RAW_INSN(BPF_JMP | BPF_EXIT, 0, 0, 0, 0)`
+
+The conditional jump will result in two branches. In the one where the branch is taken, the verifier knows that `BPF_REG_2 >= 1`, while the other branch ends with the exit instruction and is discarded. Thus, for all further instructions the `umin_val` of register 2 will be 1.
+
+Analogously, another conditional jump can be used to set `umax_val` to `2ˆ32+1`. However, here we need to compare against a register, because only 32-bit immediate values are supported. After this, we have `umin_val` and `umax_val` set as we wanted.
+
+Now, any conditional 32-bit jump can be used to trigger the bug:
+
+       `BPF_JMP32_IMM(BPF_JNE, BPF_REG_2, 5, 1),`  
+       `BPF_RAW_INSN(BPF_JMP | BPF_EXIT, 0, 0, 0, 0),`
+
+The verifier now thinks that the last 32 bits of register 2 are binary `00...01` when in reality they are binary `00...10`. After two additional instructions:
+
+       `BPF_ALU64_IMM(BPF_AND, BPF_REG_2, 2),`  
+       `BPF_ALU64_IMM(BPF_RSH, BPF_REG_2, 1),`
+
+The verifier now assumes that register 2 has to be 0 because the `AND` instruction necessarily has to result in 0 if the second-last bit of the register 2 was 0, but in reality it is `(2&2)>>1 = 1`. This is a very useful primitive, as we can now multiply register 2 with any number to create an arbitrary value that the verifier believes to be 0.
+
+**Bypassing ALU Sanitation**
+
+While rechecking all pointer arithmetic in runtime seems like a good idea, the implementation is severely lacking. The main problem seems to be that the values aren’t actually limited to the range that the static portion of the verifier assumes them to be in, but rather to a larger limit that seems safe *at that moment* but isn’t necessarily so with respect to the future. To understand the distinction, consider the following example:
+
+       -- Register 1 contains a pointer p to the beginning of 4000 bytes of safe memory. Assume that the type of `*p` is just one byte in size. This means that adding 3999 to `p` is perfectly fine but adding 4000 would leave the bounds.  
+       -- Register 2 contains a scalar `a`, which the static verifier believes to be 1000.  
+       -- Now, add register 2 to register 1. The static verifier has no problem with this, as `p+1000` is still within the bounds of the memory region. Because this is arithmetic involving a pointer, the ALU sanitizer will set an `alu_limit`. However, even though the verifier believes that `a` is no larger than 1000, the limit is not set to 1000, but rather to 3999, because this is the largest value still believed to be safe.  
+       -- Add register 2 to register 1 again. This time, the static part of the verifier believes that `p` points to position 1000 in the 4000 byte memory block. The `alu_limit` will now be set to 2999, because this is the largest legal value that can still be added.
+
+Now consider what happens if we have used a bug in the static analysis to trick the verifier into believing that `a = 1000`, while in reality we set `a = 2500`. The value will still pass both runtime checks without being forced to 0, because 2500 is less than both 3999 and 2999. However, in total we have added 5000 to the pointer `p`, resulting in an address well outside the safe memory range. While each `alu_limit` is sufficiently low individually, in combination they are insufficient. The second limit calculation only catches errors that the static analysis makes about the second addition, while assuming that it was completely correct about the first one.
+
+**Achieving OOB Read & Write**
+
+Now achieving OOB memory access is just a matter of combining the pieces. First, we use the `JMP32` bug to set a register to 1, while the verifier believes it has to be 0. Assume that we have a pointer `p` to a map of size 8000 bytes (the exploit uses slightly different values). For the purpose of the exploit, it’s most convenient to get OOB access before the beginning of the map, not after the end, so the first step is to add a large value like 6000 to `p` so that we can “mirror” the ALU sanitation bypass described above.
+
+Next, we manufacture a register that has an actual value of 6000 while the verifier thinks it contains 0. We do this by multiplying our original “fake” register with 6000. Now we can subtract that from `p`. This works because the `alu_limit` will be set to 6000, the largest legal amount we can subtract. However, the static part of the verifier will still assume that `p` points to position 6000 in our map. Thus, we can now subtract any value up to 6000 from `p`, while `p` in reality points to the start of the map.
+
+We now have a pointer up to 6000 bytes before the start of the map’s contents. Because the verifier still believes this pointer to be inside the map’s boundaries, it now allows us to read from and write to this address. For convenience, we can even make the operation and offset (and for writes, the value written) depend on parameters in our input map `inmap`. For an OOB read, the read value is written to `outmap`. As maps can be read and modified from user space through the `bpf` syscall, we can now load this program just once and then repeatedly trigger it with different parameters for an arbitrary OOB read/write gadget.
+
+**Escalating Privileges**
+
+**Leaking KASLR**
+
+Conveniently for us, the map’s contents are not stored in a heap chunk by itself, but rather they are placed at the end of a larger struct called struct `bpf_map` (defined in `include/linux/bpf.h`). This struct contains some useful members:
+
+View fullsize
+
+![Picture2.png](https://images.squarespace-cdn.com/content/v1/5894c269e4fcb5e65a1ed623/1586377725025-QVM2EOEFSN9QTMZGIS09/Picture2.png)
+
+Particularly useful is the pointer `ops` which points to a vtable of functions, depending on the map type. In this case, as the map is an `arraymap`, it points to `array_map_ops`. As this is a constant struct at a fixed location in `rodata` (it’s even an exported symbol), reading this can be used to directly bypass KASLR.
+
+**Arbitrary Read**
+
+Also useful in the struct is the pointer struct `btf *btf`, which points to an additional struct containing debug info. This pointer is normally unused (and set to NULL), which makes it a good target to overwrite without messing things up too much.
+
+It turns out that this pointer can be conveniently accessed through the `bpf_map_get_info_by_fd-function`, which in turn is called by the `BPF_OBJ_GET_INFO_BY_FD` command of the `bpf` syscall if the file descriptor of the map is provided. This function effectively performs the following (the full function is found in `kernel/bpf/syscall.c`):
+
+View fullsize
+
+![Picture3.png](https://images.squarespace-cdn.com/content/v1/5894c269e4fcb5e65a1ed623/1586377772455-H6ME2BDSABZGASODQ4FQ/Picture3.png)
+
+This means that if we use our OOB-write primitive to `set map->btf` to `someaddr - offsetof(struct btf, id)`, then `BPF_OBJ_GET_INFO_BY_FD` returns `*someaddr` in `info.btf_id`. Since the id field of `struct btf` is a u32, this primitive can be used to read 4 bytes at a time from an arbitrary address.
+
+**Finding process structs**
+
+To find the `cred` and `files` structs of the process, we first search for `init_pid_ns`, the default process namespace (if running in a container, we would need to find the corresponding namespace first). This might not be the quickest way, but it works.
+
+There are two ways to find `init_pid_ns`:
+
+       -- If we know the offset between `array_map_ops` and `init_pid_ns`, we can simply add it to the address of `array_map_ops`, which we already know. This offset does not depend on KASLR, but it isn’t stable across kernel updates.  
+       -- Instead, we can find `init_pid_ns` in the `ksymtab` and `kstrtab` segments. To do this, we first find the beginning of `kstrtab` by iterative search beginning at `array_map_ops`. Then, we find the null-terminated string “init_pid_ns” in `kstrtab`, again by a simple iterative search. A final iteration over `ksymtab` finds the symbol entry that references the `kstrtab` entry, and also contains the relative address of `init_pid_ns`.
+
+Once `init_pid_ns` is found, its radix tree can be iterated to find a pointer into the `task` struct that corresponds to the pid of the exploit process. In fact, this is exactly the mechanism the kernel itself uses to find a `task` by its pid.
+
+Using the tasks struct, both the `cred` struct containing the user privileges and an array of open file descriptors can be found. The latter can be indexed by the file descriptor of the loaded `explmap` to obtain the corresponding struct file of the map. In turn, the `private_data` of this structure points to the struct `bpf_map`. This means now we also know the address of the contents of `explmap`.
+
+**Arbitrary Write**
+
+Note that by overwriting `ops` using OOB-write we can control RIP to any function to which we have a pointer. However, the first argument in RDI will always be set to the `bpf_map-struct`, which rules out a lot of existing functions. Thus, it seems natural to overwrite certain elements of `array_map_ops` to different map operations, which can at least handle the first argument correctly.
+
+To do this, we first load a complete copy of the `array_map_ops` table into the data of `explmap` using the arbitrary read primitive as well as the `bpf` syscall with `BPF_MAP_UPDATE_ELEM`. The only modification to this copy is that the `map_push_elem` member, normally unused in `arraymaps`, is overwritten with the `map_get_next_key` operation.
+
+The `arraymap` implementation of `map_get_next_key` is as follows (from `kernel/bpf/arraymap.c`):
+
+View fullsize
+
+![Picture4.png](https://images.squarespace-cdn.com/content/v1/5894c269e4fcb5e65a1ed623/1586377897420-M2747K3G6VC6GD42Z5WC/Picture4.png)
+
+If we control `next_key` and `key`, then `*next = index + 1;` can be used as an arbitrary write primitive under the condition that `index < array->map.max_entries`. If `map->max_entries` can be set to `0xffffffff`, this check will always pass (except for `index=0xffffffff`, which is actually what we are going to use, but this is fine as `*next` is still set to `0=index+1`).
+
+Because we already obtained a pointer to the data of `explmap`, we can now overwrite `explmap->array_map_ops` to point to our modified operations table.
+
+Note that the signature of `map_push_elem`, which we have overwritten with `map_get_next_key`, is:
+
+View fullsize
+
+![Picture5.png](https://images.squarespace-cdn.com/content/v1/5894c269e4fcb5e65a1ed623/1586377929929-U58YTZ7E0MVZDY4D74OX/Picture5.png)
+
+However, `map_push_elem` is called by the `BPF_MAP_UPDATE_ELEM` command only if the map has type `BPF_MAP_TYPE_STACK` or `BPF_MAP_TYPE_QUEUE`. But if this is the case, we can directly control the `flags` argument, which will be interpreted as `next_key`, as well as the `value` argument.
+
+To trigger the arbitrary write gadget, we have to perform the following OOB writes in sequence:
+
+       -- Set `ops` to our fake vtable inside the `explmap` buffer.  
+       -- Set `explmap->spin_lock_off` to 0 to pass some additional checks.  
+       -- Set `explmap->max_entries` to `0xffffffff` to pass the check in `array_map_get_next_key`.  
+       -- Set `explmap->map_type` to `BPF_MAP_TYPE_STACK` to be able to reach `map_push_elem`.
+
+The arbitrary 32-bit write can now be triggered by passing appropriate arguments to `BPF_MAP_UPDATE_ELEM`. After all writes are performed, the fields should be reset to their original values to prevent crashes on cleanup.
+
+**Getting root privileges**
+
+Getting root is now trivial: We just need to set the `uid` to 0 in the `cred` struct of the process. Now we can execute arbitrary privileged commands or drop into an interactive shell.
+
+------------------------------------------------------------------------
+
+*Thanks again to Manfred for such a thorough write-up of this local privilege escalation. This was Manfred’s first time at Pwn2Own, and we hope to see more of his work in the future. Until then, follow the *[*team*](https://twitter.com/thezdi)* for the latest in exploit techniques and security patches.*
+
+- [Linux](https://www.thezdi.com/blog/tag/Linux)
+- [Pwn2Own](https://www.thezdi.com/blog/tag/Pwn2Own)
+- [Exploit](https://www.thezdi.com/blog/tag/Exploit)
+- [LPE](https://www.thezdi.com/blog/tag/LPE)

