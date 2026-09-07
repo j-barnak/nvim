@@ -946,6 +946,17 @@ if mode == "content":
             t.decompose()
         for pre in el.select("pre.PROGRAMLISTING"):
             pre["class"] = ["bash"]
+        # Per-page footnotes are a <table class="FOOTNOTES"> (each note in a <td>).
+        # The generic table pass get_text(" ")s the cells, which inserts a space
+        # at every inline boundary and breaks a bolded-initial mnemonic like
+        # <b>A</b>merican into "A merican". Unwrap the table into its cell
+        # contents so the notes stay real paragraphs with their markup intact.
+        for tbl in el.select("table.FOOTNOTES"):
+            div = s.new_tag("div")
+            for td in tbl.find_all("td"):
+                for child in list(td.children):
+                    div.append(child.extract())
+            tbl.replace_with(div)
         # Admonitions (Note/Tip/Caution/Important/Warning) are drawn as a
         # two-cell layout table: <td> icon gif + <td> the text. pandoc renders
         # that as a GFM table with an empty first column ("|  | text |").
@@ -991,6 +1002,46 @@ if mode == "content":
             new = _dbesc.sub(r"\\\\", str(t))
             if new != str(t):
                 t.replace_with(NavigableString(new))
+
+    if opt("studyplan"):
+        # studyplan.dev embeds a <CoursePromo> upsell card inside the lesson body
+        # (an <a> "View Recommended Course" pointing at a broken /undefined path,
+        # in a div.bg-card box) and decorative lucide link-icons as data:image
+        # SVG blobs inside external links. Neither is lesson content.
+        for a in el.select("a"):
+            href = a.get("href") or ""
+            if "Recommended Course" in a.get_text() or href.endswith("/undefined"):
+                (a.find_parent("div", class_="bg-card") or a).decompose()
+        for img in el.select('img[src^="data:"]'):
+            img.decompose()
+
+    if opt("lyah"):
+        # Learn You a Haskell (learnyouahaskell.github.io): the chapter body is
+        # #content, framed top and bottom by a div.footdiv nav bar (Previous /
+        # Table of contents / Next). Drop the nav. Code is <pre class="haskell:
+        # ghci"> (interactive GHCi sessions) or <pre class="haskell:hs"> (source
+        # files); normalise either to a plain "haskell" fence label.
+        for d in el.select("div.footdiv"):
+            d.decompose()
+        for p in el.select("pre"):
+            if any(c.startswith("haskell") for c in (p.get("class") or [])):
+                p["class"] = ["haskell"]
+
+    if opt("lazyfoo"):
+        # LazyFoo SDL tutorials (lazyfoo.net): the lesson body is <main>, mostly
+        # clean, but carries Google ads, the CSE search box, a "Last Updated"
+        # date line, and social/donate chrome. Drop those; the C++ listings are
+        # <pre class="border ..."> with no language class, so label them cpp.
+        # (Bare numeric entities like &#060 - a "<" with no trailing ";" - are
+        # repaired before the parse, in the freeze pipeline.)
+        for t in el.select("ins.adsbygoogle, .adsbygoogle, div.gcse-search, "
+                           "div.gcse-searchbox, script, style, iframe, "
+                           "[id*=donate], [class*=donate], [class*=social]"):
+            t.decompose()
+        for t in el.find_all(string=re.compile(r"^\s*Last Updated:")):
+            t.extract()
+        for p in el.select("pre"):
+            p["class"] = ["cpp"]
 
     if opt("wbe"):
         # browser.engineering ships a custom pandoc template with NO article
