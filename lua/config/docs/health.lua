@@ -69,7 +69,7 @@ function M.check()
 		{ "slub", 14 }, { "kernel-internals", 482 }, { "kernel-exploitation", 77 },
 		{ "llvm-tutorial", 15 }, { "browser-engineering", 24 }, { "learnopengl", 72 },
 		{ "revers-hypervisor", 8 }, { "glibc", 775 },
-		{ "elf-series", 6 }, { "glibc-malloc", 3 }, { "javascript-exploitation", 12 }, { "bootloader-articles", 9 }, { "binary-exploitation-dojo", 49 }, { "makefile-tutorial", 1 }, { "abs", 140 }, { "studyplan-pro-cpp", 10 }, { "studyplan-dsa", 5 }, { "lyah", 14 }, { "lazyfoo-sdl3", 21 }, { "qemu-internals", 15 }, { "jit-series", 4 }, { "bochs-docs", 99 } }) do
+		{ "elf-series", 6 }, { "glibc-malloc", 3 }, { "javascript-exploitation", 12 }, { "bootloader-articles", 9 }, { "binary-exploitation-dojo", 49 }, { "makefile-tutorial", 1 }, { "abs", 140 }, { "studyplan-pro-cpp", 10 }, { "studyplan-dsa", 5 }, { "lyah", 14 }, { "lazyfoo-sdl3", 21 }, { "qemu-internals", 15 }, { "jit-series", 4 }, { "bochs-docs", 99 }, { "decompilation-wiki", 119 } }) do
 		local idx = fr .. "/" .. w[1] .. "/index.tsv"
 		if vim.fn.filereadable(idx) == 1 then
 			local n = #vim.fn.readfile(idx)

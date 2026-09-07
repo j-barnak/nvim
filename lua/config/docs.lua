@@ -2506,6 +2506,7 @@ local pick_lazyfoo_sdl3 = frozen_web_provider("lazyfoo-sdl3", "SDL3> ")
 local pick_qemu_internals = frozen_web_provider("qemu-internals", "QEMU> ")
 local pick_jit_series = frozen_web_provider("jit-series", "JIT> ")
 local pick_bochs_docs = frozen_web_provider("bochs-docs", "Bochs docs> ")
+local pick_decompilation = frozen_web_provider("decompilation-wiki", "Decompilation> ")
 
 -- ── glibc: frozen manual (docs) + per-version source (:Src) ──────────────
 -- Docs are the frozen latest manual (one book, same for every release). Source
@@ -3287,6 +3288,7 @@ local WEB_BOOKS = {
 	{ title = "QEMU Internals (Airbus Seclab)", key = "qemu-internals", run = pick_qemu_internals },
 	{ title = "JIT (Series)", key = "jit-series", run = pick_jit_series },
 	{ title = "Bochs Documentation", key = "bochs-docs", run = pick_bochs_docs },
+	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.
@@ -3458,6 +3460,7 @@ LOCATION["lazyfoo-sdl3"] = { index = "lazyfoo-sdl3/index.tsv", unit = "chapter" 
 LOCATION["qemu-internals"] = { index = "qemu-internals/index.tsv", unit = "chapter" }
 LOCATION["jit-series"] = { index = "jit-series/index.tsv", unit = "chapter" }
 LOCATION["bochs-docs"] = { index = "bochs-docs/index.tsv", unit = "chapter" }
+LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
 LOCATION["elf-tis"] = { rel = "books/books-compilers/elf-specification", marker = ".complete", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
