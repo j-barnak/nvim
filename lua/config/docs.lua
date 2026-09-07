@@ -3078,7 +3078,6 @@ local BOOKS = {
 	{ module = "Compilers", key = "books-compilers", items = {
 		{ title = "Linkers and Loaders", fmt = "pdf", file = "Linkers-and-Loaders.pdf" },
 		{ title = "How To Write Shared Libraries", fmt = "pdf", slug = "how-to-write-shared-libraries", file = "dsohowto.pdf" },
-		{ title = "Executable and Linkable Format (ELF)", fmt = "pdf", slug = "elf-specification", file = "elf.pdf" },
 		{ title = "Crafting Interpreters", fmt = "epub", file = "Crafting Interpreters -- Robert Nystrom -- United States_] _, 2021 -- Genever Benning -- isbn13 9780990582939 -- c96d09f7d0933fc5c9b75228f7f3e2a3 -- Anna’s Archive.epub" },
 		{ title = "Writing a C Compiler", fmt = "epub", file = "WritingaCCompiler.epub" },
 		{ title = "SSA-based Compiler Design", fmt = "pdf", file = "Fabrice Rastello, Florent Bouchez Tichadou - SSA-based Compiler Design-Springer (2022).pdf" },
@@ -3172,6 +3171,19 @@ local function ensure_book(mkey, entry)
 	-- "md" books come from a git repo of markdown (a course or tutorial set)
 	-- rather than an epub or pdf; the chapters are already markdown.
 	pick_files(out, (entry.fmt == "epub" or entry.fmt == "md") and "-e md" or "-e txt", entry.title .. "> ")
+end
+
+-- ELF (TIS): the TIS ELF specification. It is a frozen PDF chapter book like the
+-- ones in Books, but it lives at the top level next to the man-page manuals
+-- (readelf/objdump, ld, as, elf(5)) because that is where a reader reaches for
+-- the format definition, not among the tutorials.
+local function pick_elf_tis()
+	if not have("fd") then
+		return vim.notify("fd is needed to browse the ELF spec", vim.log.levels.WARN)
+	end
+	local out = resolve_docs("books/books-compilers/elf-specification")
+		or (frozen_root .. "/books/books-compilers/elf-specification")
+	pick_files(out, "-e txt", "ELF (TIS)> ")
 end
 
 -- Aya: the book (aya-rs.dev) and the crate reference (docs.rs) under one entry.
@@ -3376,13 +3388,14 @@ LOCATION["learnopengl"] = { index = "learnopengl/index.tsv", unit = "chapter" }
 LOCATION["revers-hypervisor"] = { index = "revers-hypervisor/index.tsv", unit = "chapter" }
 LOCATION["glibc"] = { index = "glibc/index.tsv", unit = "chapter" }
 LOCATION["emulator"] = { index = "emulator/index.tsv", unit = "chapter" }
+LOCATION["elf-tis"] = { rel = "books/books-compilers/elf-specification", marker = ".complete", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
 	LOCATION[key] = { network = true }
 end
 -- Rendered from this machine's own installation, so they can never be frozen
 -- into the repo: what you get is whatever man-db / python3 / cppman has.
-for _, key in ipairs({ "man1", "man2", "man3", "man4", "man5", "man7", "man8", "cppman", "binutils", "ld", "as", "elf", "bash", "pydoc" }) do
+for _, key in ipairs({ "man1", "man2", "man3", "man4", "man5", "man7", "man8", "cppman", "binutils", "ld", "as", "bash", "pydoc" }) do
 	LOCATION[key] = { system = true }
 end
 LOCATION.books = { books = true, unit = "book" }
@@ -3595,7 +3608,7 @@ local providers = {
 	{ name = "GNU as (assembler)", key = "as", run = man_provider("man as", "as(1)") },
 	{ name = "GCC internals + manuals", key = "gcc", run = pick_gcc },
 	{ name = "binutils (readelf/objdump/nm/…)", key = "binutils", run = pick_binutils },
-	{ name = "ELF format", key = "elf", run = man_provider("man 5 elf", "elf(5)") },
+	{ name = "ELF (TIS) specification", key = "elf-tis", run = pick_elf_tis },
 	{ name = "Bash (man bash)", key = "bash", run = man_provider("man bash", "bash(1)") },
 	{ name = "pydoc (any Python pkg)", key = "pydoc", run = pick_pydoc },
 	{ name = "List all sources (offline status)", key = "list", run = function()
