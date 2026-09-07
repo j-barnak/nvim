@@ -1,10 +1,10 @@
 ## Chapter 12
 
- 
+
 
 Hash Tables and Bloom Filters
 
- 
+
 
 We conclude with an incredibly useful and ubiquitous data structure known as a hash table (or hash map). Hash tables, like heaps and search trees, maintain an evolving set of objects associated with keys (and possibly lots of other data). Unlike heaps and search trees, they maintain no ordering information whatsoever. The raison d’être of a hash table is to facilitate super-fast searches, which are also called lookups in this context. A hash table can tell you what’s there and what’s not, and can do it really, really quickly (much faster than a heap or search tree). As usual, we’ll start with the
 
@@ -14,7 +14,7 @@ supported operations (Section 12.1) before proceeding to applications
 
 and 12.4). Sections 12.5 and 12.6 cover bloom filters, close cousins of hash tables that use less space at the expense of occasional errors.
 
- 
+
 
 12.1 Supported Operations
 
@@ -32,7 +32,7 @@ phone numbers. If you’re lucky, all your friends had unusually unimag-
 
 152 Hash Tables and Bloom Filters
 
- 
+
 
 inative parents who named their kids after positive integers, say be-tween 1 and 10000. In this case, you can store phone numbers in a length-10000 array (which is not that big). If your best friend is named 173, store their phone number in position 173 of the array. To forget about your ex-friend 548, overwrite position 548 with a default value. This array-based solution works well, even if your friends change over time—the space requirements are modest and insertions, deletions, and lookups run in constant time.
 
@@ -40,7 +40,7 @@ Probably your friends have more interesting but less convenient names, like Alic
 
 in the “Alice” position of the array (Figure 12.1).
 
- 
+
 
 55 99-5-9 5 9 55 99-5 -9
 
@@ -50,7 +50,7 @@ null -4 -2 null +1 15 12
 
 ![](media/index-165_1.jpg)
 
- 
+
 
 ” ” ” b” **.** **.** **.** **.** **.** **.** **.** **.** **.** **.** **.** **.** **.** aa icf ice “Bo “Al “Aa “Al
 
@@ -60,7 +60,7 @@ Figure 12.1: In principle, you could store your friends’ phone numbers in an a
 
 ![](media/index-165_3.jpg)
 
- 
+
 
 Quiz 12.1
 
@@ -110,7 +110,7 @@ Earth (in bits).
 
 12.1 Supported Operations 153
 
- 
+
 
 d\) More than the number of atoms in the universe.
 
@@ -126,7 +126,7 @@ Insert: given a new object x, add x to the hash table.
 
 Delete: for a key k, delete an object with key k from the hash table, if one exists.
 
- 
+
 
 In a hash table, all these operations typically run in constant
 
@@ -134,7 +134,7 @@ time—matching the naive array-based solution—under a couple of
 
 assumptions that generally hold in practice (described in Section 12.3). A hash table uses space linear in the number of objects stored. This is radically less than the space required by the naive array-based solution, which is proportional to the number of all-imaginable objects that might ever need to be stored. The scorecard reads:
 
- 
+
 
 Operation Typical running time
 
@@ -150,7 +150,7 @@ see Section 12.3 for details.
 
 154 Hash Tables and Bloom Filters
 
- 
+
 
 Summarizing, hash tables don’t support many operations, but what they do, they do really, really well. Whenever lookups constitute a significant amount of your program’s work, a light bulb should go off in your head—the program calls out for a hash table!
 
@@ -158,7 +158,7 @@ When to Use a Hash Table
 
 If your application requires fast lookups with a dynamically changing set of objects, the hash table is usually the data structure of choice.
 
- 
+
 
 12.1.1 Solution to Quiz 12.1
 
@@ -166,17 +166,17 @@ Correct answer: (c). The point of this quiz is to have fun thinking about some r
 
 25-letter strings, which has order of magnitude roughly 35 10. (There are also the strings with 24 letters or less, but these are dwarfed by the length-25 strings.) The number of hairs on a person’s head is typically around 5 10. The indexed Web has several billion pages, but the actual number of Web pages is probably around one trillion ( 12 10). The total amount of storage on Earth is hard to estimate but, at least in 2018, is surely no more than a yottabyte ( 24 10 bytes, or roughly 25 10 bits). Meanwhile, the number of atoms in the known universe is estimated to be around 80 10.
 
- 
+
 
 12.2 Applications
 
 It’s pretty amazing how many different applications boil down to repeated lookups and hence call out for a hash table. Back in the 1950s, researchers building the first compilers needed a symbol table, meaning a good data structure for keeping track of a program’s variable and function names. Hash tables were invented for exactly this type of application. For a more modern example, imagine that a network router is tasked with blocking data packets from certain IP addresses, perhaps belonging to spammers. Every time a new data packet arrives, the router must look up whether the source IP address is in the blacklist. If so, it drops the packet; otherwise, it forwards 12.2 Applications 155
 
- 
+
 
 the packet toward its destination. Again, these repeated lookups are right in the wheelhouse of hash tables.
 
- 
+
 
 12.2.1 Application: De-duplication
 
@@ -206,7 +206,7 @@ tains an object with key k.
 
 2\. If not, use Insert to put x in the hash table.
 
- 
+
 
 After processing the data, the hash table contains exactly one object
 
@@ -218,7 +218,7 @@ stored objects, in some arbitrary order, in linear time. This enables further pr
 
 156 Hash Tables and Bloom Filters
 
- 
+
 
 12.2.2 Application: The 2-SUM Problem
 
@@ -232,7 +232,7 @@ Goal: Determine whether or not there are two numbers x, y
 
 in A 2 satisfying x + y = t .
 
- 
+
 
 The 2-SUM problem can be solved by brute-force search—by trying all possibilities for x and y and checking if any of them work. Because there are n choices for each of x and y, this is a quadratic-time ( 2 ⇥ ( n)) algorithm.
 
@@ -254,7 +254,7 @@ return “yes”
 
 return “no”
 
- 
+
 
 Does this help? The for loop has n iterations and it takes linear time to search for an integer in an unsorted array, so this would seem to be
 
@@ -262,7 +262,7 @@ Does this help? The for loop has n iterations and it takes linear time to search
 
 12.2 Applications 157
 
- 
+
 
 another quadratic-time algorithm. But remember, sorting is a for-free primitive. Why not use it, so that all the searches can take advantage of a sorted array?
 
@@ -282,7 +282,7 @@ return “yes”
 
 return “no”
 
- 
+
 
 Quiz 12.2
 
@@ -298,7 +298,7 @@ d\) 2 ⇥ ( n)
 
 (See Section 12.2.4 for the solution and discussion.)
 
- 
+
 
 The sorted array-based solution to 2-SUM is a big improvement
 
@@ -306,7 +306,7 @@ over brute-force search, and it showcases the elegant power of the algorithmic t
 
 158 Hash Tables and Bloom Filters
 
- 
+
 
 2-SUM (Hash Table Solution)
 
@@ -328,7 +328,7 @@ return “yes”
 
 return “no”
 
- 
+
 
 Assuming a good hash table implementation and non-pathological data, the Insert and Lookup operations typically run in constant time. In this case, the hash table-based solution to the 2-SUM problem runs in linear time. Because any correct algorithm must look at every number in A at least once, this is the best-possible running time (up to constant factors).
 
@@ -338,7 +338,7 @@ Hash tables are all about speeding up search. One application domain in which se
 
 search algorithms from Chapter 8. A more tractable alternative is to run a graph search algorithm like breadth-first search, starting from the current state, and explore the short-term consequences of different moves until reaching a time limit. To learn as much as possible, it’s important to avoid exploring a vertex more than once, and so the search algorithm must keep track of which vertices it has already \*12.3 Implementation: High-Level Ideas 159
 
- 
+
 
 visited. As in our de-duplication application, this task is ready-made for a hash table. When the search algorithm reaches a vertex, it looks it up in a hash table. If the vertex is already there, the algorithm skips it and backtracks; otherwise, it inserts the vertex into the hash
 
@@ -352,7 +352,7 @@ O(n log n) time using MergeSort (described in Part 1) or HeapSort
 
 (Section 10.3.1).5 Each of the n for loop iterations can be implemented in O(log n) time via binary search. Adding everything up gives the final running time bound of O(n log n).
 
- 
+
 
 \*12.3 Implementation: High-Level Ideas
 
@@ -382,7 +382,7 @@ algorithm (see footnote 10 in Chapter 10).
 
 160 Hash Tables and Bloom Filters
 
- 
+
 
 program explored in the last five seconds. In most applications of hash tables, the size of U is astronomical but the size of the subset S is manageable.
 
@@ -392,7 +392,7 @@ A second straightforward solution is to store objects in a linked list. The good
 
 to \|S\| and constant-time operations (Table 12.2).
 
- 
+
 
 Data Structure Space Typical Running Time of Lookup
 
@@ -404,7 +404,7 @@ Hash Table ⇤ ⇥ ( \| S \| ) ⇥ (1)
 
 Table 12.2: Hash tables combine the best features of arrays and linked lists, with space linear in the number of objects stored and constant-time operations. The asterisk (\*) indicates that the running time bound holds if and only if the hash table is implemented properly and the data is non-pathological.
 
- 
+
 
 12.3.2 Hash Functions
 
@@ -418,7 +418,7 @@ size of S; see also Section 12.4.2.
 
 \*12.3 Implementation: High-Level Ideas 161
 
- 
+
 
 A hash function performs the translation from what we really
 
@@ -432,7 +432,7 @@ A hash function h : U ! {0, 1, 2, . . . , n 1} assigns every key from the univer
 
 ![](media/index-174_1.jpg)
 
- 
+
 
 h 0
 
@@ -446,7 +446,7 @@ h 0
 
 ![](media/index-174_4.jpg)
 
- 
+
 
 U **.**
 
@@ -464,19 +464,19 @@ U **.**
 
 ![](media/index-174_8.jpg)
 
- 
+
 
 *n-1*
 
 ![](media/index-174_9.jpg)
 
- 
+
 
 Figure 12.2: A hash function maps every possible key in the universe U to a position in {0, 1, 2, . . . , n 1}. When \|U\| \> n, two different keys must be mapped to the same position.
 
 ![](media/index-174_10.jpg)
 
- 
+
 
 A hash function tells you where to start searching for an object.
 
@@ -494,7 +494,7 @@ If you choose a hash function h with h("Alice") = 17—in which case, we say tha
 
 162 Hash Tables and Bloom Filters
 
- 
+
 
 12.3.3 Collisions Are Inevitable
 
@@ -506,7 +506,7 @@ Collisions
 
 Two keys k1 and k2 from U collide under the hash function h if h(k1) = h(k2).
 
- 
+
 
 Collisions cause confusion about where an object resides in the hash table, and we’d like to minimize them as much as possible. Why not design a super-smart hash function with no collisions whatsoever? Because collisions are inevitable. The reason is the Pigeonhole Prin-ciple, the intuitively obvious fact that, for every positive integer n, no matter how you stuff n + 1 pigeons into n holes, there will be a hole with at least two pigeons. Thus whenever the number n of array positions (the holes) is less than the size of the universe U (the pigeons), every hash function (assignment of pigeons to holes)—no
 
@@ -522,7 +522,7 @@ Consider n people with random birthdays, with each of the 366 days of the year e
 
 \*12.3 Implementation: High-Level Ideas 163
 
- 
+
 
 a\) 23
 
@@ -562,37 +562,37 @@ multiple objects mapped to the same array position (Figure 12.3). With chaining,
 
 ![](media/index-177_1.jpg)
 
- 
+
 
 0 “Carol”
 
 ![](media/index-177_2.jpg)
 
- 
+
 
 1 null
 
 ![](media/index-177_3.jpg)
 
- 
+
 
 2 “Daniel” “Bob”
 
 ![](media/index-177_4.jpg)
 
- 
+
 
 3 “Alice”
 
 ![](media/index-177_5.jpg)
 
- 
+
 
 Figure 12.3: A hash table with collisions resolved by chaining, with four buckets and four objects. The strings “Bob” and “Daniel” collide in the third bucket (bucket 2). Only the keys are shown, and not the associated data (like phone numbers).
 
 ![](media/index-177_6.jpg)
 
- 
+
 
 Chaining
 
@@ -608,7 +608,7 @@ Chaining
 
 perform Lookup/Insert Delete on the linked list in the bucket A\[h(k)\], where h denotes the hash function and A the hash table’s array.
 
- 
+
 
 Performance of Chaining
 
@@ -616,7 +616,7 @@ Provided h can be evaluated in constant time, the Insert operation also takes co
 
 List lengths (and lookup times) degrade if the hash table becomes heavily populated. For example, if 100n objects are stored in a \*12.3 Implementation: High-Level Ideas 165
 
- 
+
 
 hash table with array length n, a typical bucket has 100 objects to sift through. Lookup times can also degrade with a poorly chosen hash function that causes lots of collisions. For example, in the extreme case in which all the objects collide and wind up in the same
 
@@ -646,7 +646,7 @@ Open Addressing
 
 the probe sequence associated with k, storing the object in the first empty position found.
 
- 
+
 
 7 Plenty of hash table applications don’t require the Delete operation, includ-
 
@@ -656,7 +656,7 @@ ing the three applications in Section 12.2.
 
 ![](media/index-179_1.jpg)
 
- 
+
 
 “Carol”
 
@@ -694,13 +694,13 @@ null
 
 ![](media/index-179_10.jpg)
 
- 
+
 
 Figure 12.4: An insertion into a hash table with collisions resolved by open addressing. The first entry of the probe sequence for “Daniel” collides with “Alice,” and the second with “Bob,” but the third entry is an unoccupied position.
 
 ![](media/index-179_11.jpg)
 
- 
+
 
 2\. Lookup: Given a key k, iterate through the probe
 
@@ -714,7 +714,7 @@ position (in which case, report “none”).8
 
 ![](media/index-179_14.jpg)
 
- 
+
 
 Linear Probing
 
@@ -732,7 +732,7 @@ There are several ways to use one or more hash functions to define a probe seque
 
 ![](media/index-179_19.jpg)
 
- 
+
 
 function indicates the starting position for an insertion or lookup, and the operation scans to the right until it finds the desired object or an empty position.
 
@@ -760,13 +760,13 @@ No matter which collision-resolution strategy we employ, hash table performance 
 
 single hash function h. For example, if keys are nonnegative integers represented in binary, define h1 and h2 from h by tacking on a new digit (either ‘0’ or ‘1’) to the end of the given key k: h1(k) = h(2k) and h2 (k) = h(2k + 1). 168 Hash Tables and Bloom Filters
 
- 
+
 
 Bad Hash Functions
 
 There are a zillion different ways to define a hash function, and the choice matters. For example, what happens to hash table performance with a dumbest-possible choice of a hash function?
 
- 
+
 
 Quiz 12.4
 
@@ -782,7 +782,7 @@ d\) ⇥(\|S\|) with chaining, ⇥(\|S\|) with open addressing.
 
 (See Section 12.3.7 for the solution and discussion.)
 
- 
+
 
 Pathological Data Sets and Hash Function Kryptonite
 
@@ -790,7 +790,7 @@ None of us would ever implement the dumb hash function in Quiz 12.4. Instead, we
 
 with hash table performance deteriorating as in Quiz 12.4.
 
- 
+
 
 Pathological Data Sets
 
@@ -800,7 +800,7 @@ for every k 10 1 , k 2 2 S .
 
 \*12.3 Implementation: High-Level Ideas 169
 
- 
+
 
 This may sound crazy, but it’s just a generalization of our Pigeonhole
 
@@ -834,7 +834,7 @@ and examples, see the bonus videos at [www.algorithmsilluminated.org](http://www
 
 170 Hash Tables and Bloom Filters
 
- 
+
 
 we can hope for is a hash function that has few collisions for all
 
@@ -858,7 +858,7 @@ d\) It would take too much time to evaluate.
 
 (See Section 12.3.7 for the solution and discussion.)
 
- 
+
 
 Good Hash Functions
 
@@ -870,7 +870,7 @@ Hash Function Desiderata
 
 2\. Easy to store, ideally with O(1) memory.
 
- 
+
 
 13 The dumb hash function in Quiz 12.4 leads to terrible performance for every
 
@@ -878,7 +878,7 @@ data set, pathological or otherwise.
 
 \*12.3 Implementation: High-Level Ideas 171
 
- 
+
 
 3\. Mimics a random function by spreading non-
 
@@ -886,7 +886,7 @@ pathological data sets roughly evenly across the posi-
 
 tions of the hash table.
 
- 
+
 
 What Does a Good Hash Function Look Like?
 
@@ -918,11 +918,11 @@ are discussed further in Section 12.4.3.
 
 implements such a conversion. 15 There are much faster ways to compute k mod n than repeated subtraction! 172 Hash Tables and Bloom Filters
 
- 
+
 
 To conclude, the two most important things to know about hash function design are:
 
- 
+
 
 Take-Aways
 
@@ -936,7 +936,7 @@ random functions for all practical purposes.
 
 you should leave it to experts if at all possible.
 
- 
+
 
 12.3.7 Solutions to Quizzes 12.3—12.5
 
@@ -976,7 +976,7 @@ n = ⇥( k)).
 
 \*12.4 Further Implementation Details 173
 
- 
+
 
 Solution to Quiz 12.4
 
@@ -994,7 +994,7 @@ We could try defining the hash function on a need-to-know basis,
 
 assigning a random value to h(k) the first time the key k is encountered. But then evaluating h(k) requires first checking whether it has already been defined. This boils down to a lookup for k, which is the problem we’re supposed to be solving!
 
- 
+
 
 \*12.4 Further Implementation Details
 
@@ -1006,13 +1006,13 @@ The performance of a hash table degrades as its population increases: with chain
 
 174 Hash Tables and Bloom Filters
 
- 
+
 
 The Load of a Hash Table
 
 We measure the population of a hash table via its load:
 
- 
+
 
 load of a hash table . (12.1) n = number of objects stored array length
 
@@ -1032,7 +1032,7 @@ d\) Only open addressing.
 
 (See Section 12.4.5 for the solution and discussion.)
 
- 
+
 
 Idealized Performance with Chaining
 
@@ -1050,13 +1050,13 @@ up to the nearest integer.
 
 is close to 0. The running time of every operation is always ⌦(1), no matter how small ↵ is—if nothing else, there is one hash function evaluation to be accounted for. Alternatively, we could write O(1 + ↵) in place of O(d↵e). \*12.4 Further Implementation Details 175
 
- 
+
 
 plementations (with a good hash function and with non-pathological
 
 data).21
 
- 
+
 
 Idealized Performance with Open Addressing
 
@@ -1082,11 +1082,11 @@ page 536.)
 
 176 Hash Tables and Bloom Filters
 
- 
+
 
 Collision-Resolution Strategy Idealized Running Time of Lookup
 
- 
+
 
 Double hashing Chaining O (d↵e) ⇣ ⌘ 1 O 1 ↵ ⇣ ⌘ Linear probing 1 O 2 (1 ↵ )
 
@@ -1094,7 +1094,7 @@ Table 12.3: Idealized performance of a hash table as a function of its
 
 load 24 ↵ and its collision-resolution strategy.
 
- 
+
 
 12.4.2 Managing the Load of Your Hash Table
 
@@ -1114,7 +1114,7 @@ strategies varies with the hash table load, see the bonus videos at [www.](http:
 
 \*12.4 Further Implementation Details 177
 
- 
+
 
 of well-tested and publicly available hash functions that you can use in your own work.
 
@@ -1142,7 +1142,7 @@ implementations like double hashing is also tricky. Linear probing results in bi
 
 178 Hash Tables and Bloom Filters
 
- 
+
 
 environment’s memory hierarchy. As with the choice of a hash function, for mission-critical code, there’s no substitute for coding up multiple competing implementations and seeing which works best for your application.
 
@@ -1152,7 +1152,7 @@ Correct answer: (c). Because hash tables with open addressing store at most one 
 
 An arbitrary number of objects can be inserted into a hash table with chaining, although performance degrades as more are inserted. For example, if the load is 100, the average length of a bucket’s list is also 100.
 
- 
+
 
 12.5 Bloom Filters: The Basics
 
@@ -1172,7 +1172,7 @@ Coding with Allowable Errors,” by Burton H. Bloom (Communications of the ACM, 
 
 12.5 Bloom Filters: The Basics 179
 
- 
+
 
 Bloom Filters: Supported Operations
 
@@ -1180,7 +1180,7 @@ Lookup: for a key k, return “yes” if k has been previously inserted into the
 
 Insert: add a new key k to the bloom filter.
 
- 
+
 
 Bloom filters are very space-efficient; in a typical use case, they might require only 8 bits per insertion. This is pretty incredible, as 8 bits are nowhere near enough to remember even a 32-bit key or a pointer to an object! This is the reason why the Lookup operation in a bloom filter returns only a “yes”/”no” answer, whereas in a hash table the operation returns a pointer to the sought-after object (if found). This is also why the Insert operation now takes only a key, rather than (a pointer to) an object.
 
@@ -1206,13 +1206,13 @@ Bloom Filters Vs. Hash Tables
 
 1\. Pro: More space efficient.
 
- 
+
 
 28 Provided hash function evaluations take constant time and that a constant number of bits is used per inserted key.
 
 180 Hash Tables and Bloom Filters
 
- 
+
 
 2\. Pro: Guaranteed constant-time operations for every
 
@@ -1236,7 +1236,7 @@ Insert O(1)
 
 Table 12.4: Basic bloom filters: supported operations and their running times. The dagger ( †) indicates that the Lookup operation suffers from a controllable but non-zero probability of false positives.
 
- 
+
 
 Bloom filters should be used in place of hash tables in applications in which their advantages matter and their disadvantages are not dealbreakers.
 
@@ -1244,7 +1244,7 @@ When to Use a Bloom Filter
 
 If your application requires fast lookups with a dynamically changing set of objects, space is at a premium, and a small number of false positives can be tolerated, the bloom filter is usually the data structure of choice.
 
- 
+
 
 12.5.2 Applications
 
@@ -1254,7 +1254,7 @@ Spell checkers. Back in the 1970s, bloom filters were used to implement spell ch
 
 12.5 Bloom Filters: The Basics 181
 
- 
+
 
 In this application, a false positive corresponds to an illegal word
 
@@ -1264,13 +1264,13 @@ Forbidden passwords. An old application that remains relevant today is keeping t
 
 Internet routers. Many of today’s killer applications of bloom filters take place in the core of the Internet, where data packets pass through routers at a torrential rate. There are many reasons why a router might want to quickly recall what it has seen in the past. For example, the router might want to look up the source IP address of a packet in a list of blocked IP addresses, keep track of the contents of a cache to avoid spurious cache lookups, or maintain statistics helpful for identifying a denial-of-service attack. The rate of packet arrivals demands super-fast lookups, and limited router memory puts space at a premium. These applications are right in the wheelhouse of a bloom filter.
 
- 
+
 
 12.5.3 Implementation
 
 Looking under the hood of a bloom filter reveals an elegant implemen-tation. The data structure maintains an n-bit string, or equivalently a length-n array A in which each entry is either 0 or 1. (All en-tries are initialized to 0.) The structure also uses m hash functions h1, h2, . . . , hm , each mapping the universe U of all possible keys to the set {0, 1, 2, . . . , n 1} of array positions. The parameter m is proportional to the number of bits that the bloom filter uses per 182 Hash Tables and Bloom Filters
 
- 
+
 
 insertion, and is typically a small constant (like 5). 29
 
@@ -1282,17 +1282,17 @@ for i = 1 to m do
 
 A\[h i(k)\] := 1
 
- 
+
 
 For example, if m = 3 and h1(k) = 23, h2(k) = 17, and h3(k) = 5, inserting k causes the 5th, 17th, and 23rd bits of the array to be set
 
 to 1 (Figure 12.5).
 
- 
+
 
 1
 
- 
+
 
 h 3(k)
 
@@ -1308,13 +1308,13 @@ h (k) 1 1
 
 ![](media/index-195_3.jpg)
 
- 
+
 
 Figure 12.5: Inserting a new key k into a bloom filter sets the bits in positions h1(k), . . . , hm(k) to 1.
 
 ![](media/index-195_4.jpg)
 
- 
+
 
 29 Sections 12.3.6 and 12.4.3 provide guidance for choosing one hash function.
 
@@ -1368,7 +1368,7 @@ define h1 , h2, . . . , hm via the formula 0 h i ( k ) = ( h ( k ) + ( i 1) · h
 
 ![](media/index-195_27.jpg)
 
- 
+
 
 In the Lookup operation, a bloom filter looks for the footprint
 
@@ -1384,7 +1384,7 @@ return “no”
 
 return “yes”
 
- 
+
 
 We can now see why bloom filters can’t suffer from false negatives.
 
@@ -1416,7 +1416,7 @@ h3(k4) 1
 
 ![](media/index-197_1.jpg)
 
- 
+
 
 k 1 4 h 2 (k 4 ) h 1 (k 4 )
 
@@ -1452,13 +1452,13 @@ k h (k 2 22)
 
 ![](media/index-197_5.jpg)
 
- 
+
 
 Figure 12.6: False positives: A bloom filter can contain the footprint of a key k1 even if k1 was never inserted.
 
 ![](media/index-197_6.jpg)
 
- 
+
 
 \*12.6 Bloom Filters: Heuristic Analysis
 
@@ -1538,7 +1538,7 @@ The relationship between the per-key storage b and the frequency of false positi
 
 ![](media/index-197_36.jpg)
 
- 
+
 
 some probability calculations. To understand them, all you need to remember from probability theory is:
 
@@ -1566,7 +1566,7 @@ tion hi of the bloom filter, hi(k) is uniformly dis-tributed, with each of the n
 
 hash functions h1, h2, . . . , hm, are independent random variables.
 
- 
+
 
 The first assumption says that, for each key k, each hash function hi, and each array position q 2 {0, 1, 2, . . . , n 1}, the probability that hi(k) = q is exactly 1 . The second assumption implies that the n
 
@@ -1586,7 +1586,7 @@ the Wikibook on discrete probability [(](https://en.wikibooks.org/wiki/High_Scho
 
 [School_Mathematics_Extensions/Discrete_Probability).](https://en.wikibooks.org/wiki/High_School_Mathematics_Extensions/Discrete_Probability) 186 Hash Tables and Bloom Filters
 
- 
+
 
 On Heuristic Analyses
 
@@ -1618,13 +1618,13 @@ bloom filters in practice is comparable to the predic-
 
 tion of our heuristic analysis.
 
- 
+
 
 12.6.2 The Fraction of Bits Set to 1
 
 We begin with a preliminary calculation.
 
- 
+
 
 Quiz 12.7
 
@@ -1642,7 +1642,7 @@ d\) 1 m\|S\| 1 1 n
 
 \*12.6 Bloom Filters: Heuristic Analysis 187
 
- 
+
 
 There is nothing special about the first bit of the bloom filter. By
 
@@ -1654,7 +1654,7 @@ The solution to Quiz 12.7 is messy. To clean it up, we can use the fact that x e
 
 ![](media/index-200_1.jpg)
 
- 
+
 
 For us, the relevant value of 1 x is x = , which is close to 0 (ignoring n the uninteresting case of tiny n). Thus, among friends, we can use the quantity
 
@@ -1678,7 +1678,7 @@ in its footprint are set to 1 by the keys in 32 S . Because the probability
 
 32 For simplicity, we’re assuming that each of the m hash functions hashes k to a different position (as is usually the case). 188 Hash Tables and Bloom Filters
 
- 
+
 
 that a given bit is 1 is approximately m/b 1 e, the probability that all m of these bits are set to 1 is approximately
 
@@ -1708,7 +1708,7 @@ choice of m, by setting the derivative of (12.2) with respect to m to 0 and solv
 
 We can now specialize the error estimate in (12.2) with the optimal choice of m = (ln 2) · b to get the estimate
 
- 
+
 
 ⇣ ✓ ◆ ⌘(ln 2)·b (ln 2) · b 1 ln 2 1 e = . 2
 
@@ -1718,7 +1718,7 @@ First, 1/n e isn’t exactly equal to 1 1 n, but it’s close. Second, even with
 
 \*12.6 Bloom Filters: Heuristic Analysis 189
 
- 
+
 
 This is exactly what we wanted all along—a formula that spits out the expected frequency of false positives as a function of the amount of
 
@@ -1734,7 +1734,7 @@ By the first heuristic assumption, for every k 2 S and i 2
 
 {1, 2, . . . , m} , the probability that a dart hits the first region (that
 
- 
+
 
 is, that hi(k) = 0) is 1 . Thus, the dart misses the first region (that n 1 is, h i ( k ) is not 0) with the remaining probability 1 . By the sec-n ond heuristic assumption, di ff erent darts are independent. Thus, the probability that every dart misses the first region—that hi(k) 6= 0 for every 1 \| k 2 S and m \| S i 2 { 1 , 2 , . . . , m } —is (1 ). With the remaining n 1 1 m \|S\| (1 ) probability, some dart hits the first region (that is, n
 
@@ -1752,11 +1752,11 @@ P Hash tables support the Insert and Lookup
 
 operations, and in some cases the Delete oper-
 
- 
+
 
 34 Equivalently, if you have a target false positive rate of ✏, you should take the per-key space to be at least 1 b ⇡ 1 . 44 log 2 ✏ . As expected, the smaller the target error rate ✏, the larger the space requirements. 190 Hash Tables and Bloom Filters
 
- 
+
 
 ation. With a well-implemented hash table and
 
@@ -1806,7 +1806,7 @@ space is at a premium and the occasional false
 
 positive is not a dealbreaker.
 
- 
+
 
 Test Your Understanding
 
@@ -1818,7 +1818,7 @@ evenly across its range.
 
 Problems 191
 
- 
+
 
 b\) The hash function should be easy to compute (constant time or
 
@@ -1832,7 +1832,7 @@ d\) The hash function should spread out most data sets roughly
 
 evenly across its range.
 
- 
+
 
 Problem 12.2 (S) A good hash function mimics the gold standard of a random function for all practical purposes, so it’s interesting to investigate collisions with a random function. If the locations of two different keys k1, k2 2 U are chosen independently and uniformly at random across n array positions (with all possibilities equally likely), what is the probability that k1 and k2 will collide?
 
@@ -1858,7 +1858,7 @@ d\) The false positive rate would be less than 0.001%.
 
 192 Hash Tables and Bloom Filters
 
- 
+
 
 Programming Problems
 

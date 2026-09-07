@@ -1,12 +1,12 @@
 ## **Chapter 13 – Pre-EFI Initialization (PEI)** 
 
- 
+
 
 Small is Beautiful
 
 —E.F. Schumacher
 
- 
+
 
 The UEFI Platform Initialization (PI) pre-EFI initialization (PEI) phase of execution
 
@@ -24,11 +24,11 @@ minimum amount of system RAM and firmware volume(s) that contain the DXE Foun-da
 
 system design, the minimum amount of activity should be orchestrated and located in this phase of execution; no more, no less.
 
- 
+
 
 **Scope**
 
- 
+
 
 The PEI phase is responsible for initializing enough of the system to provide a stable base for subsequent phases. It is also responsible for detecting and recovering from
 
@@ -46,17 +46,16 @@ be responsible for only a very small subset of tasks that are required to boot t
 
 start DXE. As improvements in the hardware occur, some of these tasks may migrate out of the PEI phase of execution.
 
- 
+
 
 DOI 10.1515/9781501505690-015
 
-**210** \| Chapter 13 – Pre-EFI Initialization (PEI)
 
- 
+
 
 **Rationale**
 
- 
+
 
 The design for PEI is essentially a miniature version of DXE that addresses many of the same issues. The PEI phase consists of several parts:
 
@@ -64,7 +63,7 @@ The design for PEI is essentially a miniature version of DXE that addresses many
 
 ■ One or more Pre-EFI Initialization Modules (PEIMs)
 
- 
+
 
 The goal is for the PEI Foundation to remain relatively constant for a particular pro-
 
@@ -72,7 +71,7 @@ cessor architecture and to support add-in modules from various vendors for parti
 
 cannot be coded without some interaction between one another and, even if they could, it would be inefficient to do so.
 
- 
+
 
 PEI is unlike DXE in that DXE assumes that reasonable amounts of permanent system
 
@@ -86,11 +85,11 @@ ples of this difference:
 
 ■ PEI lacks a rich module hierarchy such as the DXE driver model.
 
- 
+
 
 **Overview**
 
- 
+
 
 The PEI phase consists of some Foundation code and specialized drivers known as
 
@@ -110,35 +109,34 @@ PEI can be viewed from both temporal and spatial perspectives. Figure 13.1 pro-v
 
 13.2. This picture describes the layering of the UEFI PI components. This figure has often been referred to as the “H”. PEI compromises the lower half of the “H”. The
 
-Rationale \| **211**
 
- 
+
 
 temporal perspective entails “when” the PEI foundation and its associated modules execute. Figure 13.3 highlights the portions of Figure 13.1 that include PEI.
 
- 
+
 
 Exposed
 
- 
+
 
 **Verifier** Interface **OS-Absent** **Pre** Platform
 
 **App**
 
- 
+
 
 **ver** **Chipset** **Device,** **Environment** **Init** **Bus, or** **Service** **Board** **Transient OS** **Init** **Driver** **Boot Loader** **ify** **Init** **Transient OS** **CPU**
 
- 
+
 
 **EFI Driver** **Boot** **OS-Present** **Dispatcher** **Manager** **App**
 
- 
+
 
 **Services** **Intrinsic** **Final OS** **Final OS** **?** **Boot Loader** **Environment** ***security***
 
- 
+
 
 **Security** **Pre EFI** **Driver** **Boot** **Transient** **Run Time** **After**
 
@@ -150,11 +148,11 @@ Exposed
 
 **Power on** **\[ . . Platform initialization . . \]** **\[ . . . . OS boot . . . . \]** **Shutdown**
 
- 
+
 
 **Figure 13.1:** Overall Boot Flow
 
- 
+
 
 **Chipset/Processor** **OEM, ISV &**
 
@@ -162,37 +160,37 @@ Exposed
 
 **specs** **specs**
 
- 
+
 
 **A** **Dr** **Dr** **EF** **EF** **iv** **iv** **er** **I** **er** **EF** **EF** **EF****I**
 
- 
+
 
 **rc** **I D** **I D** **I D** **riv** **riv****riv** **hit** **Dr** **er** **er****er** **Dr** **ec** **EF** **EF** **EF** **iv** **• • •** **EF** **EF** **iv** **EF** **I Dr** **I Dr** **er** **I** **I Dr** **tu** **er** **I** **I Dr** **re** **iv** **iv** **iv****iv** **er** **er** **er****er** **S** **pe** **cif** **ic** **Dr** **Dr** **Dr** **EF** **EF** **EF** **atio** **iv** **iv** **iv** **er** **I** **er** **I** **er** **I** **n**
 
- 
+
 
 **Driver Execution Environment (DXE) Spec**
 
- 
+
 
 **Pre-EFI Initialization (PEI) Spec**
 
- 
+
 
 **CPU Module Spec(s)** **CS Module Spec(s)**
 
- 
+
 
 **Legend**
 
 **API**
 
- 
 
-**Figure 13.2:** System Components **212** \| Chapter 13 – Pre-EFI Initialization (PEI)
 
- 
+**Figure 13.2:** System Components
+
+
 
 **Chipset/Processor** **OEM, ISV &**
 
@@ -200,13 +198,13 @@ Exposed
 
 **specs** **specs**
 
- 
+
 
 **A** **Dr** **DX** **Dr** Exposed **EFI** **iv** **DX** **DE** **EFI** **iv** Platform **E** **er** **Pre** Interface **XE** **er** **E Dr** **DX** **Verifier** **OS-Absent** **EFI** **Dr** **App** **rc** **DX** **Dri** **Dr** **CPU** **DX** **iv** **iv** **Dr** **EFI** **CSM** **hit** **Init** **EDr** **E Dr** **iv** **er** **ve** **• • •** **er** **iv** **er** **E** **ify** **r** **Dr** **iv** **er** **Transient OS** **iv** **ver** **ect** **iv** **Chipset** **Environment** **er** **er** **er** **Init** **Device,** **Bus, or** **Dr** **Dr** **DX** **Dr** **ure** **Service** **DX** **EFI** **Board Init** **Driver** **iv** **iv** **iv** **Transient OS** **er** **E** **er** **E** **Boot Loader** **er** **S** **pecifi** **EFI Driver** **OS-Present** **Dispatcher** **Boot Manager** **App** **Driver Execution Environment (DXE)**
 
 **cati** **Spec** **Intrinsic Services** **Final OS Boot** **Final OS** **?** **Loader** **Environment**
 
- 
+
 
 **on** **Pre-EFI Initialization (PEI)** ***security*** **Spec**
 
@@ -216,25 +214,25 @@ Exposed
 
 **Power on** **\[ . . Platform initialization . . \]** **\[ . . . . OS boot . . . . \]** **Shutdown**
 
- 
+
 
 **Figure 13.3:** Portion of the Overall Boot Flow and Components for PEI
 
- 
+
 
 **Phase Prerequisites**
 
- 
+
 
 The following sections describe the prerequisites necessary for the successful com-
 
 pletion of the PEI phase.
 
- 
+
 
 **Temporary RAM**
 
- 
+
 
 The PEI Foundation requires that the SEC phase initialize a minimum amount of
 
@@ -244,11 +242,11 @@ ties similar to normal system RAM—through memory cycles on the front side bus,
 
 figured for other uses. Typical provision for the temporary RAM is an architectural mode of the processor’s internal caches.
 
- 
+
 
 **Boot Firmware Volume**
 
- 
+
 
 The Boot Firmware Volume (BFV) contains the PEI Foundation and PEIMs. It must appear in the memory address space of the system without prior firmware interven-
 
@@ -260,9 +258,8 @@ Foundation follows the UEFI PI flash file system format to find PEIMs in the BFV
 
 ware volumes in the system, which allows the PEI Foundation to find PEIMs in other
 
-Concepts \| **213**
 
- 
+
 
 firmware volumes. The PEI Foundation and PEIMs are named by unique IDs in the UEFI PI flash file system.
 
@@ -272,29 +269,29 @@ into a non-updateable BFV or be able to be updated using a fault-tolerant mechan
 
 and the PEI Foundation can determine which is valid.
 
- 
+
 
 **Security Primitives**
 
- 
+
 
 The SEC phase provides an interface to the PEI Foundation to perform verification
 
 operations. To continue the root of trust, the PEI Foundation will use this mechanism to validate various PEIMs.
 
- 
+
 
 **Concepts**
 
- 
+
 
 The following sections describe the concepts in the PEI phase design.
 
- 
+
 
 **PEI Foundation**
 
- 
+
 
 The PEI Foundation is a single binary executable that is compiled to function with
 
@@ -304,7 +301,7 @@ each processor architecture. It performs two main functions:
 
 ■ Providing a set of common core services used by PEIMs
 
- 
+
 
 The PEI Dispatcher’s job is to transfer control to the PEIMs in an orderly manner. The common core services are provided through a service table referred to as the PEI Ser-
 
@@ -322,7 +319,7 @@ n Assist in PEIM-to-PEIM communication.
 
 – Preparing the handoff state for the next phase of the UEFI PI
 
- 
+
 
 When the SEC phase is complete, SEC invokes the PEI Foundation and provides the PEI Foundation with several parameters:
 
@@ -330,9 +327,8 @@ When the SEC phase is complete, SEC invokes the PEI Foundation and provides the 
 
 for the initial set of PEIMs.
 
-**214** \| Chapter 13 – Pre-EFI Initialization (PEI)
 
- 
+
 
 ■ A minimum amount of temporary RAM that the PEI phase can use ■ A verification service callback to allow the PEI Foundation to verify that PEIMs
 
@@ -340,7 +336,7 @@ that it discovers are authenticated to run before the PEI Foundation dispatches
 
 them
 
- 
+
 
 The PEI Foundation assists PEIMs in communicating with each other. The PEI Foun-
 
@@ -348,17 +344,17 @@ dation maintains a database of registered interfaces for the PEIMs, as shown in 
 
 provides the interfaces to allow PEIMs to register PPIs and to be notified (called back) when another PEIM installs a PPI.
 
- 
+
 
 **GUID Pointer** PPI Descriptor Ptr A
 
- 
+
 
 **PPI Pointer** PPI Descriptor Ptr B **PPI Descriptor** **Flags**
 
 PPI Descriptor Ptr C1
 
- 
+
 
 **PPI** PPI Descriptor Ptr D
 
@@ -366,17 +362,17 @@ PPI Descriptor Ptr C2
 
 NULL
 
- 
+
 
 **GUID**
 
 **Example Foundation Database**
 
- 
+
 
 **Figure 13.4:** How a PPI Is Registered
 
- 
+
 
 The PEI Dispatcher consists of a single phase. It is during this phase that the PEI Foun-
 
@@ -386,11 +382,11 @@ PEIM can run. A dependency expression is code associated with each driver that d
 
 coding of dependency expressions for PEIMs is the same as that of dependency ex-pressions associated with a DXE driver.
 
- 
+
 
 **Pre-EFI Initialization Modules (PEIMs)**
 
- 
+
 
 Pre-EFI Initialization Modules (PEIMs) are executable binaries that encapsulate pro-cessor, chipset, device, or other platform-specific functionality. PEIMs may provide
 
@@ -398,9 +394,8 @@ interface(s) that allow other PEIMs or the PEI Foundation to communicate with th
 
 modules that typically reside in ROM and are therefore uncompressed. A small subset
 
-Concepts \| **215**
 
- 
+
 
 of PEIMs exist that may run from RAM for performance reasons. These PEIMs reside in ROM in a compressed format. PEIMs that reside in ROM are execute-in-place mod-
 
@@ -408,11 +403,11 @@ ules that may consist of either position-independent code or position-dependent 
 
 with relocation information.
 
- 
+
 
 **PEI Services**
 
- 
+
 
 The PEI Foundation establishes a system table named the PEI Services Table that is
 
@@ -442,11 +437,11 @@ port 080h or a serial port for simple text output for debug. ■ *Reset Services
 
 tem.
 
- 
+
 
 **PEIM-to-PEIM Interfaces (PPIs)**
 
- 
+
 
 PEIMs may invoke other PEIMs through interfaces named PEIM-to-PEIM Interfaces
 
@@ -454,9 +449,9 @@ PEIMs may invoke other PEIMs through interfaces named PEIM-to-PEIM Interfaces
 
 faces without naming collision. A GUID is a 128-bit value used to differentiate services and structures in the boot services. The PPIs are defined as structures that may con-
 
-tain functions, data, or a combination of the two. PEIMs must register their PPIs with the PEI Foundation, which manages a database of registered PPIs. A PEIM that wants **216** \| Chapter 13 – Pre-EFI Initialization (PEI)
+tain functions, data, or a combination of the two. PEIMs must register their PPIs with the PEI Foundation, which manages a database of registered PPIs. A PEIM that wants
 
- 
+
 
 to use a specific PPI can then query the PEI Foundation to find the interface it needs. The two types of PPIs are:
 
@@ -464,17 +459,17 @@ to use a specific PPI can then query the PEI Foundation to find the interface it
 
 ■ Notifications
 
- 
+
 
 PPI services allow a PEIM to provide functions or data for another PEIM to use. PPI
 
 notifications allow a PEIM to register for a callback when another PPI is registered with the PEI Foundation.
 
- 
+
 
 **Simple Heap**
 
- 
+
 
 The PEI Foundation uses temporary RAM to provide a simple heap store before per-manent system memory is installed. PEIMs may request allocations from the heap,
 
@@ -482,11 +477,11 @@ but no mechanism exists to free memory from the heap. Once permanent memory is i
 
 does not fix up existing data within the heap. Therefore, a PEIM cannot store pointers in the heap when the target is other data within the heap, such as linked lists.
 
- 
+
 
 **Hand-Off Blocks (HOBs)**
 
- 
+
 
 Hand-Off Blocks (HOBs) are the architectural mechanism for passing system state in-formation from the PEI phase to the DXE phase in the UEFI PI architecture. A HOB is
 
@@ -498,7 +493,7 @@ to know two items:
 
 ■ The total size of the HOB
 
- 
+
 
 HOBs are allocated sequentially in the memory that is available to PEIMs after perma-nent memory has been installed. A series of core services facilitate This sequential list
 
@@ -506,23 +501,22 @@ of HOBs in memory is referred to as the *HOB list.* This first HOB in the HOB li
 
 memory used by the PEI phase and the boot mode discovered during the PEI phase, as illustrated in Figure 13.5.
 
-Operation \| **217**
 
- 
+
 
 **Memory** **System** **System** **System** **System** **System** **System** **I/O** **MMIO** **Firmware** **Firmware** **System** **DXE** **Memory** **Memory** **Memory** **Memory** **Memory** **Resources** **Resources** **Devices** **Volumes** **Memory** **Drivers**
 
 **HOB List**
 
- 
+
 
 **PHIT** **System** **DXE** **Memory** **HOB** **HOB** **HOB** **HOB** **. . .** **HOB** **Drivers** **HOB**
 
- 
+
 
 **Figure 13.5:** The HOB List
 
- 
+
 
 Only PEI components are allowed to make additions or changes to HOBs. Once the HOB list is passed into DXE, it is effectively read-only for DXE components. The ram-
 
@@ -542,11 +536,11 @@ that HOB to other DXE components that need the information. The methods that the
 
 mechanisms defined by the DXE architecture.
 
- 
+
 
 **Operation**
 
- 
+
 
 PEI phase operation consists of invoking the PEI Foundation, dispatching all PEIMs
 
@@ -562,43 +556,43 @@ and discovers PEIMs according to the flash file system definition. The PEI Dispa
 
 ■ The PEIM’s dependency requirements have been met.
 
- 
+
 
 After dispatching a PEIM, the PEI Dispatcher continues traversing the firmware vol-
 
-ume(s) until either all discovered PEIMs have been invoked or no more PEIMs can be invoked because the requirements listed above cannot be met for any PEIMs. Once **218** \| Chapter 13 – Pre-EFI Initialization (PEI)
+ume(s) until either all discovered PEIMs have been invoked or no more PEIMs can be invoked because the requirements listed above cannot be met for any PEIMs. Once
 
- 
+
 
 this condition has been reached, the PEI Dispatcher’s job is complete and it invokes an architectural PPI for starting the next phase of the UEFI PI, the DXE Initial Program
 
 Load (IPL) PPI.
 
- 
+
 
 SEC
 
 Memory
 
- 
+
 
 PEI Core Services BFV PPI Map FV(s) Core Boot Mode R/O F Me Handoff Block Status T-RAM
 
- 
+
 
 Initialization W or D m
 
 Core ata Code ba V y Se
 
- 
+
 
 Dispatcher se System rv ol Memory ic s es
 
- 
+
 
 Entry Entry Entry Entry Entry
 
- 
+
 
 PPI(s) DXE PPI(s) PPI(s) PPI(s)
 
@@ -606,15 +600,15 @@ IPL
 
 PEIM PEIM PEIM PEIM PEIM
 
- 
+
 
 **Figure 13.6:** PEI Boot Flow
 
- 
+
 
 **Dependency Expressions**
 
- 
+
 
 The sequencing of PEIMs is determined by evaluating a *dependency expression* asso-ciated with each PEIM. This Boolean expression describes the requirements that are
 
@@ -628,13 +622,12 @@ PEIMs and registered PPIs. Operations that may be performed on dependencies are 
 
 AFTER.
 
-Operation \| **219**
 
- 
+
 
 **Verification/Authentication**
 
- 
+
 
 The PEI Foundation is stateless with respect to security. Instead, security decisions
 
@@ -646,21 +639,21 @@ Foundation, which in turn conveys the result to the Security PPI. The Security P
 
 tion, the Security PPI provider may choose to generate an attestation log entry of the dispatched PEIM or provide some other security exception.
 
- 
+
 
 **PEIM Execution**
 
- 
+
 
 PEIMs run to completion when invoked by the PEI Foundation. Each PEIM is invoked only once and must perform its job with that invocation and install other PPIs to allow
 
 other PEIMs to call it as necessary. PEIMs may also register for a notification callback if it is necessary for the PEIM to get control again after another PEIM has run.
 
- 
+
 
 **Memory Discovery**
 
- 
+
 
 Memory discovery is an important architectural event during the PEI phase. When a PEIM has successfully discovered, initialized, and tested a contiguous range of sys-
 
@@ -676,7 +669,7 @@ nent system memory.
 
 HOBs) to real system RAM.
 
- 
+
 
 Once this process is complete, the PEI Foundation installs an architectural PPI to no-tify any interested PEIMs that real system memory has been installed. This notifica-
 
@@ -684,13 +677,12 @@ tion allows PEIMs that ran before memory was installed to be called back so that
 
 real system memory.
 
-**220** \| Chapter 13 – Pre-EFI Initialization (PEI)
 
- 
+
 
 **Intel® Itanium® Processor MP Considerations**
 
- 
+
 
 This section gives special consideration to the PEI phase operation in Intel Itanium
 
@@ -720,11 +712,11 @@ to be executed upon INIT and MCA events. The buffer also holds some important va
 
 events.
 
- 
+
 
 **Recovery**
 
- 
+
 
 Recovery is the process of reconstituting a system’s firmware devices when they have
 
@@ -738,9 +730,8 @@ A PEIM or the PEI Foundation itself can discover the need to do recovery. A PEIM
 
 PEI Foundation might discover that a particular PEIM does not validate correctly or that an entire firmware volume has become corrupted.
 
-Operation \| **221**
 
- 
+
 
 The concept behind recovery is that enough of the system firmware is preserved so that the system can boot to a point that it can read a copy of the data that was lost
 
@@ -762,11 +753,11 @@ covery dispatch is completed when a PEIM finds a recovery firmware volume on a r
 
 within that DXE firmware volume can perform the recovery process.
 
- 
+
 
 **S3 Resume**
 
- 
+
 
 The PEI phase on S3 resume (save-to-RAM resume) differs in several fundamental
 
@@ -792,13 +783,12 @@ to a state that the OS can use to restore devices. This saved information is loc
 
 in the Hardware Save Table.
 
-**222** \| Chapter 13 – Pre-EFI Initialization (PEI)
 
- 
+
 
 **The “Terse Executable” and Cache-as-RAM**
 
- 
+
 
 The flash storage where the PEI modules and core execute has several constraints.
 
@@ -824,7 +814,7 @@ between the PE and TE images, the signature field has been slightly modified. Fo
 
 age format, the origin of the PE/COFF image. For the TE image, the signature is “VZ”, as found at the end of Volume 1 of the UEFI PI specification:
 
- 
+
 
 \#define EFI_TE_IMAGE_HEADER_SIGNATURE 0x5A56 // “VZ”
 
@@ -846,9 +836,8 @@ Other approaches to this challenge in the past include the Coreboot use of the r
 
 the “temporary memory.” This approach has proven difficult to maintain and entails
 
-Operation \| **223**
 
- 
+
 
 a custom compiler. The other approach is to have dedicated memory on the platform immediately available after reset. Given the economics of modern systems and the
 
@@ -864,11 +853,11 @@ cl.exe in Visual Studio† and the GNU C compiler (GCC) available in the open so
 
 Environment (MDE) module package at www.tianocore.org provides such as example of a generic PEI Core source collection.
 
- 
+
 
 **Example System**
 
- 
+
 
 All of the concepts regarding PEI can be synthesized when reviewing a specific plat-form. The following list represents an 865 system with all of the associated system
 
@@ -886,19 +875,18 @@ of the memory controller, and reporting memory available to the PEI core ■ Pla
 
 ■ DXE IPL: Generic services to launch DXE, invoke S3 or recovery flow
 
-**224** \| Chapter 13 – Pre-EFI Initialization (PEI)
 
- 
+
 
 **Processor**
 
- 
+
 
 **AGP Graphics** **AGP** **Front-Side Bus**
 
 **Card**
 
- 
+
 
 **Video Capture** **DAC Out** **82865** **DDR** **GMCH** **TV Out**
 
@@ -916,19 +904,19 @@ Audio Codec **AC97**
 
 Modem Codec **LPC I/F** **KBC/** **FWH** **SIO**
 
- 
+
 
 **Figure 13.7:** Specific System
 
- 
+
 
 **Intel**
 
- 
+
 
 **AGP** **Pentium 4** **AGP**
 
- 
+
 
 **Video** **Bridge** **Modules** **Modules** **Video** **SM Bus** **IDE** **IDE** **South** **PCI** **PCI** **AGP** **North** **Memory** **Memory** **AGP** **Slot** **Slot**
 
@@ -938,25 +926,25 @@ Modem Codec **LPC I/F** **KBC/** **FWH** **SIO**
 
 ![](media/index-243_2.png)
 
- 
+
 
 **LAN** **LPC Bus** **LAN**
 
 ![](media/index-243_3.png)
 
- 
+
 
 **Audio** **Super** **FLASH** **FLASH** **Audio** **I/O**
 
 ![](media/index-243_4.png)
 
- 
+
 
 **Figure 13.8:** Idealization of Actual System
 
 ![](media/index-243_5.png)
 
- 
+
 
 typedef
 
@@ -982,23 +970,22 @@ EFI_STATUS
 
 ![](media/index-243_14.png)
 
-Operation \| **225**
 
- 
+
 
 IN EFI_SMBUS_DEVICE_ADDRESS SlaveAddress, IN EFI_SMBUS_DEVICE_COMMAND Command, IN EFI_SMBUS_OPERATION Operation, IN BOOLEAN PecCheck, IN OUT UINTN \*Length, IN OUT VOID \*Buffer );
 
- 
+
 
 typedef struct {
 
 PEI_SMBUS_PPI_EXECUTE_OPERATION Execute; PEI_SMBUS_PPI_ARP_DEVICE ArpDevice; } EFI_PEI_SMBUS_PPI;
 
- 
+
 
 **Figure 13.9:** Instance of a PPI
 
- 
+
 
 What is notable about a PPI is that it is like an EFI protocol in that it has member services and/or static data. The PPI is named by a GUID and can have several in-
 
@@ -1006,13 +993,13 @@ stances. The SMBUS PPI, for example, could be implemented for SMBUS controllers 
 
 13.10 illustrates an instance of an SMBUS PPI for an Intel ICH.
 
- 
+
 
 \#define SMBUS_R_HD0 0xEFA5
 
 \#define SMBUS_R_HBD 0xEFA7
 
- 
+
 
 EFI_PEI_SERVICES \*PeiServices; SMBUS_PRIVATE_DATA \*Private;
 
@@ -1020,7 +1007,7 @@ UINT8 Index, BlockCount \*Length;
 
 UINT8 \*Buffer;
 
- 
+
 
 BlockCount = Private-\>CpuIo.IoRead8 (
 
@@ -1042,15 +1029,15 @@ Buffer\[Index\] = Private-\>CpuIo.IoRead8 (
 
 }
 
- 
 
-**Figure 13.10:** Code that Supports a PPI Service **226** \| Chapter 13 – Pre-EFI Initialization (PEI)
 
- 
+**Figure 13.10:** Code that Supports a PPI Service
+
+
 
 **Summary**
 
- 
+
 
 This chapter has provided an overview of the PEI phase of the UEFI PI environment. PEI provides a unique combination of software modularity so that various business
 

@@ -34,7 +34,7 @@ When we add new functionality, we validate correctness by writing tests—Lox pr
 
 The Lox programs we write to accomplish those goals are **benchmarks**. These are carefully crafted programs that stress some part of the language implementation. They measure not *what* the program does, but how *long* it takes to do it.
 
-Most benchmarks measure running time. But, of course, you’ll eventually find yourself needing to write benchmarks that measure memory allocation, how much time is spent in the garbage collector, startup time, etc.
+> Most benchmarks measure running time. But, of course, you’ll eventually find yourself needing to write benchmarks that measure memory allocation, how much time is spent in the garbage collector, startup time, etc.
 
 By measuring the performance of a benchmark before and after a change, you can see what your change does. When you land an optimization, all of the tests should behave exactly the same as they did before, but hopefully the benchmarks run faster.
 
@@ -42,13 +42,13 @@ Once you have an entire *suite* of benchmarks, you can measure not just *that* a
 
 The suite of benchmarks you choose to write is a key part of that decision. In the same way that your tests encode your choices around what correct behavior looks like, your benchmarks are the embodiment of your priorities when it comes to performance. They will guide which optimizations you implement, so choose your benchmarks carefully, and don’t forget to periodically reflect on whether they are helping you reach your larger goals.
 
-In the early proliferation of JavaScript VMs, the first widely used benchmark suite was SunSpider from WebKit. During the browser wars, marketing folks used SunSpider results to claim their browser was fastest. That highly incentivized VM hackers to optimize to those benchmarks.
-
-Unfortunately, SunSpider programs often didn’t match real-world JavaScript. They were mostly microbenchmarks—tiny toy programs that completed quickly. Those benchmarks penalize complex just-in-time compilers that start off slower but get *much* faster once the JIT has had enough time to optimize and re-compile hot code paths. This put VM hackers in the unfortunate position of having to choose between making the SunSpider numbers get better, or actually optimizing the kinds of programs real users ran.
-
-Google’s V8 team responded by sharing their Octane benchmark suite, which was closer to real-world code at the time. Years later, as JavaScript use patterns continued to evolve, even Octane outlived its usefulness. Expect that your benchmarks will evolve as your language’s ecosystem does.
-
-Remember, the ultimate goal is to make *user programs* faster, and benchmarks are only a proxy for that.
+> In the early proliferation of JavaScript VMs, the first widely used benchmark suite was SunSpider from WebKit. During the browser wars, marketing folks used SunSpider results to claim their browser was fastest. That highly incentivized VM hackers to optimize to those benchmarks.
+>
+> Unfortunately, SunSpider programs often didn’t match real-world JavaScript. They were mostly microbenchmarks—tiny toy programs that completed quickly. Those benchmarks penalize complex just-in-time compilers that start off slower but get *much* faster once the JIT has had enough time to optimize and re-compile hot code paths. This put VM hackers in the unfortunate position of having to choose between making the SunSpider numbers get better, or actually optimizing the kinds of programs real users ran.
+>
+> Google’s V8 team responded by sharing their Octane benchmark suite, which was closer to real-world code at the time. Years later, as JavaScript use patterns continued to evolve, even Octane outlived its usefulness. Expect that your benchmarks will evolve as your language’s ecosystem does.
+>
+> Remember, the ultimate goal is to make *user programs* faster, and benchmarks are only a proxy for that.
 
 Benchmarking is a subtle art. Like tests, you need to balance not overfitting to your implementation while ensuring that the benchmark does actually tickle the code paths that you care about. When you measure performance, you need to compensate for variance caused by CPU throttling, caching, and other weird hardware and operating system quirks. I won’t give you a whole sermon here, but treat benchmarking as its own skill that improves with practice.
 
@@ -58,9 +58,9 @@ OK, so you’ve got a few benchmarks now. You want to make them go faster. Now w
 
 Since the hardware is too complex to reason about our program’s performance from first principles, we have to go out into the field. That means *profiling*. A **profiler**, if you’ve never used one, is a tool that runs your program and tracks hardware resource use as the code executes. Simple ones show you how much time was spent in each function in your program. Sophisticated ones log data cache misses, instruction cache misses, branch mispredictions, memory allocations, and all sorts of other metrics.
 
-“Your program” here means the Lox VM itself running some *other* Lox program. We are trying to optimize clox, not the user’s Lox script. Of course, the choice of which Lox program to load into our VM will highly affect which parts of clox get stressed, which is why benchmarks are so important.
-
-A profiler *won’t* show us how much time is spent in each *Lox* function in the script being run. We’d have to write our own “Lox profiler” to do that, which is slightly out of scope for this book.
+> “Your program” here means the Lox VM itself running some *other* Lox program. We are trying to optimize clox, not the user’s Lox script. Of course, the choice of which Lox program to load into our VM will highly affect which parts of clox get stressed, which is why benchmarks are so important.
+>
+> A profiler *won’t* show us how much time is spent in each *Lox* function in the script being run. We’d have to write our own “Lox profiler” to do that, which is slightly out of scope for this book.
 
 There are many profilers out there for various operating systems and languages. On whatever platform you program, it’s worth getting familiar with a decent profiler. You don’t need to be a master. I have learned things within minutes of throwing a program at a profiler that would have taken me *days* to discover on my own through trial and error. Profilers are wonderful, magical tools.
 
@@ -104,13 +104,13 @@ print clock() - start;
 print sum;
 ```
 
-Another thing this benchmark is careful to do is *use* the result of the code it executes. By calculating a rolling sum and printing the result, we ensure the VM *must* execute all that Lox code. This is an important habit. Unlike our simple Lox VM, many compilers do aggressive dead code elimination and are smart enough to discard a computation whose result is never used.
-
-Many a programming language hacker has been impressed by the blazing performance of a VM on some benchmark, only to realize that it’s because the compiler optimized the entire benchmark program away to nothing.
+> Another thing this benchmark is careful to do is *use* the result of the code it executes. By calculating a rolling sum and printing the result, we ensure the VM *must* execute all that Lox code. This is an important habit. Unlike our simple Lox VM, many compilers do aggressive dead code elimination and are smart enough to discard a computation whose result is never used.
+>
+> Many a programming language hacker has been impressed by the blazing performance of a VM on some benchmark, only to realize that it’s because the compiler optimized the entire benchmark program away to nothing.
 
 If you’ve never seen a benchmark before, this might seem ludicrous. *What* is going on here? The program itself doesn’t intend to do anything useful. What it does do is call a bunch of methods and access a bunch of fields since those are the parts of the language we’re interested in. Fields and methods live in hash tables, so it takes care to populate at least a *few* interesting keys in those tables. That is all wrapped in a big loop to ensure our profiler has enough execution time to dig in and see where the cycles are going.
 
-If you really want to benchmark hash table performance, you should use many tables of different sizes. The six keys we add to each table here aren’t even enough to get over our hash table’s eight-element minimum threshold. But I didn’t want to throw an enormous benchmark script at you. Feel free to add more critters and treats if you like.
+> If you really want to benchmark hash table performance, you should use many tables of different sizes. The six keys we add to each table here aren’t even enough to get over our hash table’s eight-element minimum threshold. But I didn’t want to throw an enormous benchmark script at you. Feel free to add more critters and treats if you like.
 
 Before I tell you what my profiler showed me, spend a minute taking a few guesses. Where in clox’s codebase do you think the VM spent most of its time? Is there any code we’ve written in previous chapters that you suspect is particularly slow?
 
@@ -152,11 +152,13 @@ static Entry* findEntry(Entry* entries, int capacity,
 
 When running that previous benchmark—on my machine, at least—the VM spends 70% of the total execution time on *one line* in this function. Any guesses as to which one? No? It’s this:
 
-      uint32_t index = key->hash % capacity;
+```
+  uint32_t index = key->hash % capacity;
+```
 
 That pointer dereference isn’t the problem. It’s the little `%`. It turns out the modulo operator is *really* slow. Much slower than other arithmetic operators. Can we do something better?
 
-Pipelining makes it hard to talk about the performance of an individual CPU instruction, but to give you a feel for things, division and modulo are about 30-50 *times* slower than addition and subtraction on x86.
+> Pipelining makes it hard to talk about the performance of an individual CPU instruction, but to give you a feel for things, division and modulo are about 30-50 *times* slower than addition and subtraction on x86.
 
 In the general case, it’s really hard to re-implement a fundamental arithmetic operator in user code in a way that’s faster than what the CPU itself can do. After all, our C code ultimately compiles down to the CPU’s own arithmetic operations. If there were tricks we could use to go faster, the chip would already be using them.
 
@@ -189,7 +191,7 @@ static Entry* findEntry(Entry* entries, int capacity,
 
 CPUs love bitwise operators, so it’s hard to improve on that.
 
-Another potential improvement is to eliminate the decrement by storing the bit mask directly instead of the capacity. In my tests, that didn’t make a difference. Instruction pipelining makes some operations essentially free if the CPU is bottlenecked elsewhere.
+> Another potential improvement is to eliminate the decrement by storing the bit mask directly instead of the capacity. In my tests, that didn’t make a difference. Instruction pipelining makes some operations essentially free if the CPU is bottlenecked elsewhere.
 
 Our linear probing search may need to wrap around the end of the array, so there is another modulo in `findEntry()` to update.
 
@@ -251,7 +253,7 @@ Let’s see if our fixes were worth it. I tweaked that zoological benchmark to c
 
 That’s almost exactly twice as much work in the same amount of time. We made the VM twice as fast (usual caveat: on this benchmark). That is a massive win when it comes to optimization. Usually you feel good if you can claw a few percentage points here or there. Since methods, fields, and global variables are so prevalent in Lox programs, this tiny optimization improves performance across the board. Almost every Lox program benefits.
 
-Our original benchmark fixed the amount of *work* and then measured the *time*. Changing the script to count how many batches of calls it can do in ten seconds fixes the time and measures the work. For performance comparisons, I like the latter measure because the reported number represents *speed*. You can directly compare the numbers before and after an optimization. When measuring execution time, you have to do a little arithmetic to get to a good relative measure of performance.
+> Our original benchmark fixed the amount of *work* and then measured the *time*. Changing the script to count how many batches of calls it can do in ten seconds fixes the time and measures the work. For performance comparisons, I like the latter measure because the reported number represents *speed*. You can directly compare the numbers before and after an optimization. When measuring execution time, you have to do a little arithmetic to get to a good relative measure of performance.
 
 Now, the point of this section is *not* that the modulo operator is profoundly evil and you should stamp it out of every program you ever write. Nor is it that micro-optimization is a vital engineering skill. It’s rare that a performance problem has such a narrow, effective solution. We got lucky.
 
@@ -265,9 +267,9 @@ This next optimization has a very different feel. Thankfully, despite the odd na
 
 This optimization is more subtle, and its performance effects more scattered across the virtual machine. The profiler won’t help us come up with this. Instead, it was invented by someone thinking deeply about the lowest levels of machine architecture.
 
-I’m not sure who first came up with this trick. The earliest source I can find is David Gudeman’s 1993 paper “Representing Type Information in Dynamically Typed Languages”. Everyone else cites that. But Gudeman himself says the paper isn’t novel work, but instead “gathers together a body of folklore”.
-
-Maybe the inventor has been lost to the mists of time, or maybe it’s been reinvented a number of times. Anyone who ruminates on IEEE 754 long enough probably starts thinking about trying to stuff something useful into all those unused NaN bits.
+> I’m not sure who first came up with this trick. The earliest source I can find is David Gudeman’s 1993 paper “Representing Type Information in Dynamically Typed Languages”. Everyone else cites that. But Gudeman himself says the paper isn’t novel work, but instead “gathers together a body of folklore”.
+>
+> Maybe the inventor has been lost to the mists of time, or maybe it’s been reinvented a number of times. Anyone who ruminates on IEEE 754 long enough probably starts thinking about trying to stuff something useful into all those unused NaN bits.
 
 Like the heading says, this optimization is called **NaN boxing** or sometimes **NaN tagging**. Personally I like the latter name because “boxing” tends to imply some kind of heap-allocated representation, but the former seems to be the more widely used term. This technique changes how we represent values in the VM.
 
@@ -289,7 +291,7 @@ Before we start optimizing, we need to really understand how our friend the CPU 
 
 In the eyes of your computer, a 64-bit, double-precision, IEEE floating-point number looks like this:
 
-That’s a lot of hyphens for one sentence.
+> That’s a lot of hyphens for one sentence.
 
 ![Bit representation of an IEEE 754 double.](media/image/optimization/double.png)
 
@@ -301,13 +303,13 @@ That’s a lot of hyphens for one sentence.
 
 I know that’s a little vague, but this chapter isn’t a deep dive on floating point representation. If you want to know how the exponent and mantissa play together, there are already better explanations out there than I could write.
 
-Since the sign bit is always present, even if the number is zero, that implies that “positive zero” and “negative zero” have different bit representations, and indeed, IEEE 754 does distinguish those.
+> Since the sign bit is always present, even if the number is zero, that implies that “positive zero” and “negative zero” have different bit representations, and indeed, IEEE 754 does distinguish those.
 
 The important part for our purposes is that the spec carves out a special case exponent. When all of the exponent bits are set, then instead of just representing a really big number, the value has a different meaning. These values are “Not a Number” (hence, **NaN**) values. They represent concepts like infinity or the result of division by zero.
 
 *Any* double whose exponent bits are all set is a NaN, regardless of the mantissa bits. That means there’s lots and lots of *different* NaN bit patterns. IEEE 754 divides those into two categories. Values where the highest mantissa bit is 0 are called **signalling NaNs**, and the others are **quiet NaNs**. Signalling NaNs are intended to be the result of erroneous computations, like division by zero. A chip may detect when one of these values is produced and abort a program completely. They may self-destruct if you try to read one.
 
-I don’t know if any CPUs actually *do* trap signalling NaNs and abort. The spec just says they *could*.
+> I don’t know if any CPUs actually *do* trap signalling NaNs and abort. The spec just says they *could*.
 
 Quiet NaNs are supposed to be safer to use. They don’t represent useful numeric values, but they should at least not set your hand on fire if you touch them.
 
@@ -319,7 +321,7 @@ This means a 64-bit double has enough room to store all of the various different
 
 Fortunately, we have another trick up our other sleeve. Yes, technically pointers on a 64-bit architecture are 64 bits. But, no architecture I know of actually uses that entire address space. Instead, most widely used chips today only ever use the low 48 bits. The remaining 16 bits are either unspecified or always zero.
 
-48 bits is enough to address 262,144 gigabytes of memory. Modern operating systems also give each process its own address space, so that should be plenty.
+> 48 bits is enough to address 262,144 gigabytes of memory. Modern operating systems also give each process its own address space, so that should be plenty.
 
 If we’ve got 51 bits, we can stuff a 48-bit pointer in there with three bits to spare. Those three bits are just enough to store tiny type tags to distinguish between `nil`, Booleans, and Obj pointers.
 
@@ -399,11 +401,11 @@ We’ll start with numbers since they have the most direct representation under 
 
 We need to get the compiler to take a set of bits that it thinks are a double and use those same bits as a uint64_t, or vice versa. This is called **type punning**. C and C++ programmers have been doing this since the days of bell bottoms and 8-tracks, but the language specifications have hesitated to say which of the many ways to do this is officially sanctioned.
 
-Spec authors don’t like type punning because it makes optimization harder. A key optimization technique is reordering instructions to fill the CPU’s execution pipelines. A compiler can reorder code only when doing so doesn’t have a user-visible effect, obviously.
-
-Pointers make that harder. If two pointers point to the same value, then a write through one and a read through the other cannot be reordered. But what about two pointers of *different* types? If those could point to the same object, then basically *any* two pointers could be aliases to the same value. That drastically limits the amount of code the compiler is free to rearrange.
-
-To avoid that, compilers want to assume **strict aliasing**—pointers of incompatible types cannot point to the same value. Type punning, by nature, breaks that assumption.
+> Spec authors don’t like type punning because it makes optimization harder. A key optimization technique is reordering instructions to fill the CPU’s execution pipelines. A compiler can reorder code only when doing so doesn’t have a user-visible effect, obviously.
+>
+> Pointers make that harder. If two pointers point to the same value, then a write through one and a read through the other cannot be reordered. But what about two pointers of *different* types? If those could point to the same object, then basically *any* two pointers could be aliases to the same value. That drastically limits the amount of code the compiler is free to rearrange.
+>
+> To avoid that, compilers want to assume **strict aliasing**—pointers of incompatible types cannot point to the same value. Type punning, by nature, breaks that assumption.
 
 I know one way to convert a `double` to `Value` and back that I believe is supported by both the C and C++ specs. Unfortunately, it doesn’t fit in a single expression, so the conversion macros have to call out to helper functions. Here’s the first macro:
 
@@ -481,18 +483,18 @@ static inline Value numToValue(double num) {
 
 It works exactly the same except we swap the types. Again, the compiler will eliminate all of it. Even though those calls to `memcpy()` will disappear, we still need to show the compiler *which* `memcpy()` we’re calling so we also need an include.
 
-If you find yourself with a compiler that does not optimize the `memcpy()` away, try this instead:
-
-```
-double valueToNum(Value value) {
-  union {
-    uint64_t bits;
-    double num;
-  } data;
-  data.bits = value;
-  return data.num;
-}
-```
+> If you find yourself with a compiler that does not optimize the `memcpy()` away, try this instead:
+>
+> ```
+> double valueToNum(Value value) {
+>   union {
+>     uint64_t bits;
+>     double num;
+>   } data;
+>   data.bits = value;
+>   return data.num;
+> }
+> ```
 
 ```
 #define clox_value_h
@@ -528,7 +530,7 @@ We know that every Value that is *not* a number will use a special quiet NaN rep
 
 If the double has all of its NaN bits set, and the quiet NaN bit set, and one more for good measure, we can be pretty certain it is one of the bit patterns we ourselves have set aside for other types. To check that, we mask out all of the bits except for our set of quiet NaN bits. If *all* of those bits are set, it must be a NaN-boxed value of some other Lox type. Otherwise, it is actually a number.
 
-Pretty certain, but not strictly guaranteed. As far as I know, there is nothing preventing a CPU from producing a NaN value as the result of some operation whose bit representation collides with ones we have claimed. But in my tests across a number of architectures, I haven’t seen it happen.
+> Pretty certain, but not strictly guaranteed. As far as I know, there is nothing preventing a CPU from producing a NaN value as the result of some operation whose bit representation collides with ones we have claimed. But in my tests across a number of architectures, I haven’t seen it happen.
 
 The set of quiet NaN bits are declared like this:
 
@@ -705,9 +707,9 @@ The last value type is the hardest. Unlike the singleton values, there are billi
 
 The tag bits we used for the singleton values are in the region where I decided to store the pointer itself, so we can’t easily use a different bit there to indicate that the value is an object reference. However, there is another bit we aren’t using. Since all our NaN values are not numbers—it’s right there in the name—the sign bit isn’t used for anything. We’ll go ahead and use that as the type tag for objects. If one of our quiet NaNs has its sign bit set, then it’s an Obj pointer. Otherwise, it must be one of the previous singleton values.
 
-We actually *could* use the lowest bits to store the type tag even when the value is an Obj pointer. That’s because Obj pointers are always aligned to an 8-byte boundary since Obj contains a 64-bit field. That, in turn, implies that the three lowest bits of an Obj pointer will always be zero. We could store whatever we wanted in there and just mask it off before dereferencing the pointer.
-
-This is another value representation optimization called **pointer tagging**.
+> We actually *could* use the lowest bits to store the type tag even when the value is an Obj pointer. That’s because Obj pointers are always aligned to an 8-byte boundary since Obj contains a 64-bit field. That, in turn, implies that the three lowest bits of an Obj pointer will always be zero. We could store whatever we wanted in there and just mask it off before dereferencing the pointer.
+>
+> This is another value representation optimization called **pointer tagging**.
 
 If the sign bit is set, then the remaining low bits store the pointer to the Obj:
 
@@ -732,9 +734,9 @@ static inline double valueToNum(Value value) {
 
 The pointer itself is a full 64 bits, and in principle, it could thus overlap with some of those quiet NaN and sign bits. But in practice, at least on the architectures I’ve tested, everything above the 48th bit in a pointer is always zero. There’s a lot of casting going on here, which I’ve found is necessary to satisfy some of the pickiest C compilers, but the end result is just jamming some bits together.
 
-I try to follow the letter of the law when it comes to the code in this book, so this paragraph is dubious. There comes a point when optimizing where you push the boundary of not just what the *spec says* you can do, but what a real compiler and chip let you get away with.
-
-There are risks when stepping outside of the spec, but there are rewards in that lawless territory too. It’s up to you to decide if the gains are worth it.
+> I try to follow the letter of the law when it comes to the code in this book, so this paragraph is dubious. There comes a point when optimizing where you push the boundary of not just what the *spec says* you can do, but what a real compiler and chip let you get away with.
+>
+> There are risks when stepping outside of the spec, but there are rewards in that lawless territory too. It’s up to you to decide if the gains are worth it.
 
 We define the sign bit like so:
 
@@ -887,7 +889,7 @@ Our new representation breaks that by defining Value to be a uint64_t. If we wan
 
 I know, it’s weird. And there is a performance cost to doing this type test every time we check two Lox values for equality. If we are willing to sacrifice a little compatibility—who *really* cares if NaN is not equal to itself?—we could leave this off. I’ll leave it up to you to decide how pedantic you want to be.
 
-In fact, jlox gets NaN equality wrong. Java does the right thing when you compare primitive doubles using `==`, but not if you box those to Double or Object and compare them using `equals()`, which is how jlox implements equality.
+> In fact, jlox gets NaN equality wrong. Java does the right thing when you compare primitive doubles using `==`, but not if you box those to Double or Object and compare them using `equals()`, which is how jlox implements equality.
 
 Finally, we close the conditional compilation section around the old implementation.
 
@@ -913,9 +915,9 @@ The code is done, but we still need to figure out if we actually made anything b
 
 The effects of changing the value representation are more diffused. The macros are expanded in place wherever they are used, so the performance changes are spread across the codebase in a way that’s hard for many profilers to track well, especially in an optimized build.
 
-When doing profiling work, you almost always want to profile an optimized “release” build of your program since that reflects the performance story your end users experience. Compiler optimizations, like inlining, can dramatically affect which parts of the code are performance hotspots. Hand-optimizing a debug build risks sending you off “fixing” problems that the optimizing compiler will already solve for you.
-
-Make sure you don’t accidentally benchmark and optimize your debug build. I seem to make that mistake at least once a year.
+> When doing profiling work, you almost always want to profile an optimized “release” build of your program since that reflects the performance story your end users experience. Compiler optimizations, like inlining, can dramatically affect which parts of the code are performance hotspots. Hand-optimizing a debug build risks sending you off “fixing” problems that the optimizing compiler will already solve for you.
+>
+> Make sure you don’t accidentally benchmark and optimize your debug build. I seem to make that mistake at least once a year.
 
 We also can’t easily *reason* about the effects of our change. We’ve made values smaller, which reduces cache misses all across the VM. But the actual real-world performance effect of that change is highly dependent on the memory use of the Lox program being run. A tiny Lox microbenchmark may not have enough values scattered around in memory for the effect to be noticeable, and even things like the addresses handed out to us by the C memory allocator can impact the results.
 
@@ -937,7 +939,7 @@ You have also learned a handful of important, fundamental data structures and go
 
 I also hope I gave you a new way of looking at and solving problems. Even if you never work on a language again, you may be surprised to discover how many programming problems can be seen as language-*like*. Maybe that report generator you need to write can be modeled as a series of stack-based “instructions” that the generator “executes”. That user interface you need to render looks an awful lot like traversing an AST.
 
-This goes for other domains too. I don’t think there’s a single topic I’ve learned in programming—or even outside of programming—that I haven’t ended up finding useful in other areas. One of my favorite aspects of software engineering is how much it rewards those with eclectic interests.
+> This goes for other domains too. I don’t think there’s a single topic I’ve learned in programming—or even outside of programming—that I haven’t ended up finding useful in other areas. One of my favorite aspects of software engineering is how much it rewards those with eclectic interests.
 
 If you do want to go further down the programming language rabbit hole, here are some suggestions for which branches in the tunnel to explore:
 
@@ -945,15 +947,15 @@ If you do want to go further down the programming language rabbit hole, here are
 
   Dynamic typing will place some restrictions on how far you can go, but there is still a lot you can do. Or maybe you want to take a big leap and add static types and a type checker to Lox. That will certainly give your front end a lot more to chew on.
 
-  I like Cooper and Torczon’s *Engineering a Compiler* for this. Appel’s *Modern Compiler Implementation* books are also well regarded.
+  > I like Cooper and Torczon’s *Engineering a Compiler* for this. Appel’s *Modern Compiler Implementation* books are also well regarded.
 
 - In this book, I aim to be correct, but not particularly rigorous. My goal is mostly to give you an *intuition* and a feel for doing language work. If you like more precision, then the whole world of programming language academia is waiting for you. Languages and compilers have been studied formally since before we even had computers, so there is no shortage of books and papers on parser theory, type systems, semantics, and formal logic. Going down this path will also teach you how to read CS papers, which is a valuable skill in its own right.
 
 - Or, if you just really enjoy hacking on and making languages, you can take Lox and turn it into your own plaything. Change the syntax to something that delights your eye. Add missing features or remove ones you don’t like. Jam new optimizations in there.
 
-  The *text* of this book is copyrighted to me, but the *code* and the implementations of jlox and clox use the very permissive [MIT license](https://en.wikipedia.org/wiki/MIT_License). You are more than welcome to [take either of those interpreters](https://github.com/munificent/craftinginterpreters) and do whatever you want with them. Go to town.
-
-  If you make significant changes to the language, it would be good to also change the name, mostly to avoid confusing people about what the name “Lox” represents.
+  > The *text* of this book is copyrighted to me, but the *code* and the implementations of jlox and clox use the very permissive [MIT license](https://en.wikipedia.org/wiki/MIT_License). You are more than welcome to [take either of those interpreters](https://github.com/munificent/craftinginterpreters) and do whatever you want with them. Go to town.
+  >
+  > If you make significant changes to the language, it would be good to also change the name, mostly to avoid confusing people about what the name “Lox” represents.
 
   Eventually you may get to a point where you have something you think others could use as well. That gets you into the very distinct world of programming language *popularity*. Expect to spend a ton of time writing documentation, example programs, tools, and useful libraries. The field is crowded with languages vying for users. To thrive in that space you’ll have to put on your marketing hat and *sell*. Not everyone enjoys that kind of public-facing work, but if you do, it can be incredibly gratifying to see people use your language to express themselves.
 

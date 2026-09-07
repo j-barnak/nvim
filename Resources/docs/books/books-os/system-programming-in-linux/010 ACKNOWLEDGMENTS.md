@@ -49,5 +49,3 @@ Lastly, I am grateful to the many authors who’ve written excellent
 books about the Unix and Linux operating systems. Those resources
 
 were invaluable during the writing of this book.
-
-![](media/index-32_1.jpg)

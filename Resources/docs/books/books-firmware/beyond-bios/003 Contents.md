@@ -1,12 +1,12 @@
 ## **Contents** 
 
- 
+
 
 **Acknowledgements ****\|**** v**
 
 **Preface ****\|**** vii**
 
- 
+
 
 **Chapter 1 – Introduction** \| **1**
 
@@ -28,7 +28,7 @@ Optimized/Embedded Boot \| **13**
 
 Summary \| **14**
 
- 
+
 
 **Chapter 2 – Basic UEFI Architecture** \| **15**
 
@@ -56,7 +56,7 @@ Events and Task Priority Levels \| **27**
 
 Summary \| **30**
 
- 
+
 
 **Chapter 3 – UEFI Driver Model** \| **31**
 
@@ -80,7 +80,7 @@ Device Driver \| **41**
 
 **xii** \| Contents
 
- 
+
 
 Bus Driver that Creates All of Its Child Handles on the First Call to
 
@@ -100,7 +100,7 @@ Networking \| **49**
 
 Summary \| **52**
 
- 
+
 
 ## **Chapter 4 – Protocols You Should Know** \| **53**
 
@@ -122,7 +122,7 @@ Transitioning to an OS Kernel \| **63**
 
 Summary \| **63**
 
- 
+
 
 ## **Chapter 5 – UEFI Runtime** \| **65**
 
@@ -166,11 +166,11 @@ QueryCapsuleCapabilities \| **80**
 
 Contents \| **xiii**
 
- 
+
 
 Summary \| **80**
 
- 
+
 
 ## **Chapter 6 – UEFI Console Services** \| **81**
 
@@ -188,13 +188,13 @@ Network Consoles \| **93**
 
 Summary \| **95**
 
- 
+
 
 ## **Chapter 7 – Different Types of Platforms** \| **97**
 
 Summary \| **110**
 
- 
+
 
 ## **Chapter 8 – DXE Basics: Core, Dispatching, and Drivers** \| **111**
 
@@ -232,7 +232,7 @@ Boot Services Terminate \| **129**
 
 Summary \| **130**
 
- 
+
 
 ## **Chapter 9 – Some Common UEFI and PI Functions**\| **131**
 
@@ -244,7 +244,7 @@ Real Time Clock Architectural Protocol \| **135** Timer Architectural Protocol
 
 Reset Architectural Protocol \| **136** Boot Device Selection Architectural Protocol \| **137 xiv** \| Contents
 
- 
+
 
 Variable Architectural Protocol \| **138** Watchdog Timer Architectural Protocol \| **138**
 
@@ -272,7 +272,7 @@ Provisioning the Platform \| **155**
 
 Summary \| **156**
 
- 
+
 
 ## **Chapter 10 – Platform Security and Trust** \| **157**
 
@@ -302,7 +302,7 @@ Roots of Trust/Guards \| **180**
 
 Summary \| **181**
 
- 
+
 
 ## **Chapter 11 – Boot Device Selection** \| **183**
 
@@ -324,7 +324,7 @@ Summary \| **194**
 
 Contents \| **xv**
 
- 
+
 
 ## **Chapter 12 – Boot Flows** \| **195**
 
@@ -362,7 +362,7 @@ Discovery \| **208**
 
 Summary \| **208**
 
- 
+
 
 ## **Chapter 13 – Pre-EFI Initialization (PEI)** \| **209**
 
@@ -404,7 +404,7 @@ Memory Discovery \| **219**
 
 Intel® Itanium® Processor MP Considerations \| **220 xvi** \| Contents
 
- 
+
 
 Recovery \| **220**
 
@@ -414,7 +414,7 @@ The “Terse Executable” and Cache-as-RAM \| **222** Example System \| **2
 
 Summary \| **226**
 
- 
+
 
 ## **Chapter 14 – Putting It All Together—Firmware Emulation** \| **227**
 
@@ -426,7 +426,7 @@ Hardware Pass-Through \| **235**
 
 Summary \| **236**
 
- 
+
 
 ## **Chapter 15 – Reducing Platform Boot Times** \| **237**
 
@@ -462,7 +462,7 @@ The Primary Adjustments \| **250**
 
 Suggested Next Steps \| **251**
 
- 
+
 
 ## **Chapter 16 – Embedded Boot Solution** \| **253**
 
@@ -478,7 +478,7 @@ Generic Requirements \| **258**
 
 Contents \| **xvii**
 
- 
+
 
 Boot Strategies \| **259**
 
@@ -492,7 +492,7 @@ Manageability \| **267**
 
 Summary \| **268**
 
- 
+
 
 ## **Chapter 17 – Manageability** \| **269**
 
@@ -534,14 +534,14 @@ Namespace Entries \| **292**
 
 Summary \| **293**
 
- 
+
 
 **Appendix A – Data Types** \| **295**
 
- 
+
 
 **Appendix B – Status Codes** \| **297**
 
- 
+
 
 **Index** \| **301**

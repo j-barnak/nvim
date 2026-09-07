@@ -1,6 +1,6 @@
 The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes
 
- 
+
 
 **THE LINUX MEMORY MANAGER.**
 

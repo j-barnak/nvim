@@ -1,3 +1,5 @@
+![](media/index-443_1.jpg)
+
 7 THE DIRECTORY HIERARCHY
 
 So far, we’ve concentrated on the programming interface related to
@@ -3143,5 +3145,3 @@ version of find named findlinks that when run as \$ **./findlinks**
 ***dirpath pathname***
 
 searches in the directory tree rooted at *dirpath* for all filenames that are links to the same file as *pathname* and prints out their pathnames relative to *dirpath*.
-
-![](media/index-527_1.jpg)

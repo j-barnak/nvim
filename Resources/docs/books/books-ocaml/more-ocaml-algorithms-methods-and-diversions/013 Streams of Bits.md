@@ -6,9 +6,9 @@ We have dealt with byte-by-byte streams of information. Often, though, we need t
 We could start with a function which builds a list of bits from a byte, and use that for each byte in the stream, building a final list. This has two disadvantages: it is inefficient in space and time (there are eight times as many bits as bytes, of course), and it processes all the bytes at once, rather than as required. Instead, let us build a bit stream based on our input type:
 
 `type input_bits =`  
-`     {input : input;`  
-`      mutable byte : int;`  
-`      mutable bit : int}`
+`     {input : input;`  
+`      mutable byte : int;`  
+`      mutable bit : int}`
 
 The `input `field is the input this bit stream is based upon. It will start from the most significant bit of the current byte of that input. The `byte `field holds the byte just read from the input, or an undefined value if no byte has yet been read. The `bit `field records the current bit position, but instead of 0..7 we will use 128, 64, 32, 16, 8, 4, 2, 1 so this field can be used directly to extract the bit using the built-in logical AND operator `land`, and then halved:
 
@@ -46,26 +46,26 @@ The code in Figure 5.1, to print out pertinent information from the header, uses
 
 > ![](media/images/00013.jpg)
 
- 
+
 
 > Figure 5.1:
 
 ------------------------------------------------------------------------
 
-` Source port = 38  `  
-`Destination = 47892  `  
-`Sequence = 1656212531  `  
-`Acknowledgement Number = 1481973485  `  
-`Flags:  `  
-` Urgent = false  `  
-` Ack = false  `  
-` Push = false  `  
-` Reset = false  `  
-` Syn = false  `  
-` Fin = false  `  
-`Receive window size = 17664  `  
-`Checksum = 888  `  
-`Urgent pointer = 63404 `
+` Source port = 38  `  
+`Destination = 47892  `  
+`Sequence = 1656212531  `  
+`Acknowledgement Number = 1481973485  `  
+`Flags:  `  
+` Urgent = false  `  
+` Ack = false  `  
+` Push = false  `  
+` Reset = false  `  
+` Syn = false  `  
+` Fin = false  `  
+`Receive window size = 17664  `  
+`Checksum = 888  `  
+`Urgent pointer = 63404 `
 
 Note we must use `open_in_bin `for binary data files in case the program is executed on Microsoft Windows, where text and binary files are considered different and read differently.
 
@@ -74,9 +74,9 @@ Output bit streams
 The type for output bit streams is rather similar to that for input bit streams, but it must be used rather differently.
 
 `type output_bits =`  
-`     {output : output;`  
-`      mutable obyte : int;`  
-`      mutable obit : int}`
+`     {output : output;`  
+`      mutable obyte : int;`  
+`      mutable obit : int}`
 
 Here, `output `is the underlying output. The current output byte which is being constructed bit-by-bit is `obyte`, and a number `obit `from 7 down to 0 to represent the current shift required to add a bit to the byte in the correct place. When it is time to move on to the next byte, `obit `is -1. We can build a fresh output_bits from an output:
 
@@ -102,7 +102,7 @@ We can rebuild the datagram we took apart earlier using `putbit`, `putval`, and 
 
 > ![](media/images/00037.jpg)
 
- 
+
 
 > Figure 5.2:
 
@@ -110,7 +110,7 @@ We can rebuild the datagram we took apart earlier using `putbit`, `putval`, and 
 
 Questions
 
- 
+
 
 1.  Specialize the function `getval `so that writing 8 bits at a time when the input is aligned is optimized. Benchmark this function against the naive one.
 2.  Write the function `getval_32 `which can get a value of type Int32.t in the same fashion as `getval`.

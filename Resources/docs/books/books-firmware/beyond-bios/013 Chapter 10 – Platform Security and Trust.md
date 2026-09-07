@@ -1,12 +1,12 @@
 ## **Chapter 10 – Platform Security and Trust** 
 
- 
+
 
 We will bankrupt ourselves in the vain search for absolute security.
 
 —Dwight D. Eisenhower
 
- 
+
 
 The Unified Extensible Firmware Interface (UEFI) and Platform Initialization (PI)
 
@@ -28,11 +28,11 @@ other words, how can the platform manufacturer who ships a system board have con
 
 This chapter describes some of the security and trusted computing capabilities. Then it discusses how to construct and integrate elements.
 
- 
+
 
 **Trust Overview**
 
- 
+
 
 We begin the discussion of trusted platforms with some background on trust—specif-ically, the definition of *trust,* and some related concepts, *measurement* and *security:*
 
@@ -44,25 +44,24 @@ intended purpose.
 
 fluences (from http://www.thefreedictionary.com/security).
 
- 
+
 
 In fact, trust is an amalgam of several elements of the platform that span the enter-prise to consumer, including reliability, safety, confidentiality, integrity, and availa-
 
 bility, as illustrated in Figure 10.1.
 
- 
+
 
 DOI 10.1515/9781501505690-012
 
-**158** \| Chapter 10 – Platform Security and Trust
 
 ![](media/index-177_1.png)
 
- 
+
 
 **Figure 10.1:** The Elements of Trust
 
- 
+
 
 Where should the solution reside, given the problems to be solved and some of the
 
@@ -76,15 +75,14 @@ Figure 10.2 shows all of the layers of a security architecture. The network laye
 
 delve too deeply into this layer. The firmware layer is highlighted to show that a sin-gle-layer of security is not sufficient.
 
-Trust Overview \| **159**
 
 ![](media/index-178_1.png)
 
- 
+
 
 **Figure 10.2:** All Layers of a Security Architecture
 
- 
+
 
 In fact, the scope of this chapter largely addresses firmware. Some description of
 
@@ -92,11 +90,11 @@ hardware elements and interaction are provided. Figure 10.3 highlights the area 
 
 ![](media/index-178_2.png)
 
- 
+
 
 **Figure 10.3:** Layers Examined in this Chapter
 
- 
+
 
 As seen in Figure 10.3, all layers are important, but if you do not have firmware/hard-
 
@@ -104,9 +102,8 @@ ware assurance, you cannot have a security architecture. As the logicians would 
 
 will be described later, the layer of hardware and firmware provide a “root of trust” for the rest of the security architecture.
 
-**160** \| Chapter 10 – Platform Security and Trust
 
- 
+
 
 So now that we have trust, security, measurement, and a layered picture of the security architecture, the goals of the security architecture and assets that are pro-
 
@@ -140,11 +137,11 @@ And given the trust definition above, we see that these features are especially 
 
 are co-equal to the other concerns like integrity and confidentiality.
 
- 
+
 
 **Trusted Platform Module (TPM) and Measured Boot**
 
- 
+
 
 In building out the hardware layer of the security architecture, one problem with open
 
@@ -162,9 +159,8 @@ dors that span many of these categories. Intel also participates in the TCG as C
 
 To begin, what is a trusted platform module? It features a series of protected re-gions and capabilities. Typically, a TPM is built as a microcontroller with integrated
 
-Trusted Platform Module (TPM) and Measured Boot \| **161**
 
- 
+
 
 flash/storage that is attached to the LPC bus on PC, but it can also be a virtual device or more deeply integrated in the platform chipset complex. The TPM interacts with
 
@@ -176,11 +172,11 @@ that a TPM must carry out in service of the host. Figure 10.4 shows some of the 
 
 ![](media/index-180_1.png)
 
- 
+
 
 **Figure 10.4:** TCG Specification Hierarchy
 
- 
+
 
 The interoperability of the Trusted Computing elements is managed through the Trusted Computing Group (TCG) and a series of specifications. For purposes of this
 
@@ -190,15 +186,14 @@ Figure 10.6 shows an instance of a TPM diagrammatically. Given the existence of 
 
 stances of this technology with the ability to differentiate their implementations.
 
-**162** \| Chapter 10 – Platform Security and Trust
 
 ![](media/index-181_1.png)
 
- 
+
 
 **Figure 10.5:** TPM Overview
 
- 
+
 
 Figure 10.6 is a picture of the elements that are typically found within a TPM. The protected execution and storage of the TPM allow for hosting the RSA asymmetric key
 
@@ -214,21 +209,20 @@ tempts to both describe the requirements on the TPM and the binding into the pla
 
 files, conformance tests, and so on.
 
-Trusted Platform Module (TPM) and Measured Boot \| **163**
 
 ![](media/index-182_1.png)
 
- 
+
 
 **Figure 10.6:** TPM Block Diagram
 
 ![](media/index-182_2.png)
 
- 
+
 
 **What Is a Trusted Building Block (TBB)?**
 
- 
+
 
 The TBB includes the components that make up the platform. These can include the
 
@@ -248,9 +242,8 @@ Following is a quick overview to clarify the roots-of-trust in the platform and
 
 which business entity delivers them.
 
-**164** \| Chapter 10 – Platform Security and Trust
 
- 
+
 
 Taxonomy of terms in the platform:
 
@@ -320,7 +313,7 @@ above; these resettable PCRs zeroed upon initiation of the DRTM launch
 
 to perform privacy or administrative activities with the TPM.
 
- 
+
 
 In general, a hardware instantiation of the trusted platform module (TPM) is a passive
 
@@ -328,15 +321,14 @@ hardware device on the system board. It serves as the root of trust for storage 
 
 and root of trust for reporting (RTR). The former is the use of the storage root key (SRK) and the Platform Configuration Registers (PCRs). Figure 10.7 shows the synthesis of the various roots in the platform.
 
-Trusted Platform Module (TPM) and Measured Boot \| **165**
 
 ![](media/index-184_1.png)
 
- 
+
 
 **Figure 10.7:** Functions of a TPM
 
- 
+
 
 The active agent on the platform is the root of trust for measurement (RTM). The RTM
 
@@ -348,11 +340,11 @@ ating system is shown in Figure 10.8.
 
 ![](media/index-184_2.png)
 
- 
 
-**Figure 10.8:** Boot Flow that Includes a Static Root of Trust **166** \| Chapter 10 – Platform Security and Trust
 
- 
+**Figure 10.8:** Boot Flow that Includes a Static Root of Trust
+
+
 
 There needs to be UEFI APIs available so that the UEFI OS loader can continue to measure the operating system kernel, pass commands to the TPM to possibly unseal
 
@@ -362,11 +354,11 @@ In addition, this API can be installed at the beginning of DXE to enable measure
 
 ![](media/index-185_1.png)
 
- 
+
 
 **Figure 10.9:** UEFI API Layering
 
- 
+
 
 The UEFI specifications are cross-listed in the TCG PC and Server Working Groups
 
@@ -376,15 +368,14 @@ The UEFI TCG Platform specification describes which objects to measure in an UEF
 
 10.10 shows which objects in a UEFI system correspond to measures in PCRs.
 
-Trusted Platform Module (TPM) and Measured Boot \| **167**
 
 ![](media/index-186_1.png)
 
- 
+
 
 **Figure 10.10:** Measured Objects in UEFI
 
- 
+
 
 Prior to the UEFI phase of platform execution, the PI describe the PEI and DXE phases.
 
@@ -394,15 +385,15 @@ face, or PPI) to allow for fine-grain measurement in that phase of execution, to
 
 ![](media/index-186_2.png)
 
- 
 
-**Figure 10.11:** SRTM boot flow **168** \| Chapter 10 – Platform Security and Trust
 
- 
+**Figure 10.11:** SRTM boot flow
+
+
 
 **What Is the Point of Measurements?**
 
- 
+
 
 The process of measurements records the state of the platform, for both executable
 
@@ -440,15 +431,14 @@ Regarding the cryptographic-based update, Figure 10.12 shows a possible imple-me
 
 be found in the UEFI 2.0 specification.
 
-UEFI Secure Boot \| **169**
 
 ![](media/index-188_1.png)
 
- 
+
 
 **Figure 10.12:** Firmware Volume Update
 
- 
+
 
 As noted above, a signed capsule is one implementation path. The system flash is not directly updated by a flash utility but instead the CRTM update capsule is stored in a staging area. The next time the CRTM gains control of the system (at reset), it will
 
@@ -456,11 +446,11 @@ check for any pending updates. If updates are found, they will be validated and 
 
 cryptographically verified. If they are valid, the CRTM update can be applied. It’s im-portant to note that when validating the update this all must be done by using only CRTM code and data. Code or data outside the CRTM cannot be trusted until verified.
 
- 
+
 
 **UEFI Secure Boot**
 
- 
+
 
 There are several terms that will be introduced in the context of UEFI and trust. These include *executable verification, driver signing, user identification, network authentica-*
 
@@ -474,19 +464,18 @@ Figure 10.13 shows where in the stack the emergent UEFI features described in
 
 this chapter exist, namely in the UEFI Services and boot manager.
 
-**170** \| Chapter 10 – Platform Security and Trust
 
 ![](media/index-189_1.png)
 
- 
+
 
 **Fig10.13:** UEFI Software Stack
 
- 
+
 
 **UEFI Executable Verification**
 
- 
+
 
 The first feature from UEFI to discuss is driver signing or executable verification.
 
@@ -502,7 +491,7 @@ databases.
 
 dates to the lists.
 
- 
+
 
 One evolution beyond the SRTM described in earlier chapters, is that UEFI can pro-vide “verification.” Recall that the SRTM records the state of the code and data in the
 
@@ -512,9 +501,8 @@ ment (RTE) or root-of-trust-for-verification (RTV) wherein the boot process can 
 
 Authenticode-signed images, for example.
 
-UEFI Secure Boot \| **171**
 
- 
+
 
 Figure 10.14 shows the steps necessary for signing of UEFI images. The signing can include RSA asymmetric encryption and the hash function a member of the secu-
 
@@ -522,11 +510,11 @@ rity hash algorithm family.
 
 ![](media/index-190_1.png)
 
- 
+
 
 **Figure 10.14:** Driver signing
 
- 
+
 
 This preparation would happen at the manufacturer facility or could be facilitated by
 
@@ -536,15 +524,14 @@ Once the signed images are deployed in the field, whether loaded across the net-
 
 work, from a host-bus adapter card, or via the UEFI system partition, the UEFI 2.6 firmware verifies the image integrity, as illustrated in Figure 10.15.
 
-**172** \| Chapter 10 – Platform Security and Trust
 
 ![](media/index-191_1.png)
 
- 
+
 
 **Fig10.15:** Verification of UEFI images
 
- 
+
 
 The figure above shows a single logical firmware volume from the system board man-
 
@@ -558,9 +545,8 @@ UEFI images, respectively, but it does not talk about boot time verification of 
 
 can be used. This logically maps to the PI SEC phase. One embodiment of this hard-ware verification of the system board vendor PI code is shown below.
 
-UEFI Networking \| **173**
 
- 
+
 
 CPU/SOC BIOS OS Start Block
 
@@ -568,17 +554,17 @@ PEI DXE/UEFI Loader/Kernel
 
 (OEM) (OEM) (OSV)
 
- 
+
 
 **Boot Guard** **Intel** **Executable** **Executable** **Executable**
 
 **Enforces** **Enforces** **Enforces** **Policy Engine** **Policy Engine** **Policy Engine**
 
- 
+
 
 **Policy** **Policy** **Policy**
 
- 
+
 
 **Intel® Device Protection** OEM PI OEM UEFI 2.6 **Technology with Boot Guard** Verification Secure Boot
 
@@ -586,11 +572,11 @@ Using PI Signed
 
 Firmware Volumes
 
- 
+
 
 **Fig. 16:** Verification of OEM flow
 
- 
+
 
 This flow above shows the UEFI 2.6 chapter 30 UEFI Secure boot flow on the right
 
@@ -604,11 +590,11 @@ The combination of robust UEFI implements and interoperable trust infrastruc-
 
 ture will allow for evolving the extensibility of UEFI in a safe, robust fashion.
 
- 
+
 
 **UEFI Networking**
 
- 
+
 
 Another element that appears in UEFI entails additional network security, including IPsec support. Trusted hardware like the TPM can be used to help store the IPsec cre-
 
@@ -618,15 +604,14 @@ the preceding chapter. IPSec can be used for platform network boot to harden sce
 
 Figure 10.17 shows the EFI IPsec implementation using the UEFI IPsec protocol and IPV6 network stack, including a pre-deployed security association (SA).
 
-**174** \| Chapter 10 – Platform Security and Trust
 
 ![](media/index-193_1.png)
 
- 
+
 
 **Figure 10.17:** UEFI IPsec
 
- 
+
 
 IPsec in the platform will allow for performing both an IPV4 and IPV6-based ISCSI boot and provisioning. Figure 10.18 shows an iSCSI layering on top of the UEFI net-
 
@@ -634,11 +619,11 @@ work stack, for example.
 
 ![](media/index-193_2.png)
 
- 
 
-**Figure 10.18:** An iSCSI Application with UEFI Network Stack UEFI Networking \| **175**
 
- 
+**Figure 10.18:** An iSCSI Application with UEFI Network Stack
+
+
 
 Beyond the IP6 and IPsec UEFI interfaces, the wire-protocol for network booting has commensurate evolution to the UEFI APIs. Specifically, in the DHCPv6 extensions
 
@@ -652,15 +637,15 @@ Beyond IPSec, the Transport Layer Security (TLS) has been added to the UEFI Spec
 
 HTTP-S, is shown below.
 
- 
+
 
 HpDxe HpDxe
 
- 
+
 
 comsume
 
- 
+
 
 TLS_CONFIGRATION TLS_CONFIGRATION
 
@@ -670,45 +655,44 @@ TCP_PROTOCOL TCP_PROTOCOL TLS_PROTOCOL TLS_PROTOCOL
 
 Produce Produce
 
- 
+
 
 TcpDxe TcpDxe TlsDxe TlsDxe
 
- 
+
 
 **Figure 10.19:** UEFI TLS
 
- 
+
 
 TLS allows for confidentiality on HTTP boot via HTTP-S, but it can be used for other usages. These other usages include support for EAP-TLS for a WIFI supplicant, as
 
 shown in the following diagram of the UEFI 2.6 WIFI stack.
 
-**176** \| Chapter 10 – Platform Security and Trust
 
- 
+
 
 MnpSb Protocol
 
- 
+
 
 MNP Driver
 
- 
+
 
 SNP Protocol
 
- 
+
 
 SNP Driver
 
- 
+
 
 UNDI / NII
 
 Device Path AIP Protocol
 
- 
+
 
 EFI_WIRELESS_MAC\_ Wireless Connection
 
@@ -728,11 +712,11 @@ E_BINDING_PROTOCOL
 
 Supplicant Driver
 
- 
+
 
 **Figure 10.20:** UEFI WIFI
 
- 
+
 
 Wherein the ‘supplicant driver’ would produce the EFI_EAP_CONFIGURATION_PRO-TOCOL, with the embodiment can include EAP-TLS.
 
@@ -740,11 +724,11 @@ More details on the EFI_TLS_PROTOOCL can be found in chapter 27 of the UEFI 2.6 
 
 the UEFI 2.6 specification, too.
 
- 
+
 
 **UEFI User Identification (UID)**
 
- 
+
 
 A final ingredient in UEFI includes the user identity support. This is infrastructure
 
@@ -752,25 +736,24 @@ that allows for loading drivers from token vendors to abstract authentication of
 
 This can include limiting service access for certain users. Figure 10.21 shows this ca-pability.
 
-Hardware Evolution: SRTM-to-DRTM \| **177**
 
 ![](media/index-196_1.png)
 
- 
+
 
 **Figure 10.21:** User Identity
 
- 
+
 
 Implementation of these UEFI features would also build upon and require the assur-
 
 ance/best practices in firmware discussed earlier. More information on the UEFI-based features can be found in the UEFI main specification.
 
- 
+
 
 **Hardware Evolution: SRTM-to-DRTM**
 
- 
+
 
 As a final element getting introduced into the platform going forward is the dynamic root of trust for measurement, or D-RTM. The D-RTM provides platform hardware ca-
 
@@ -778,27 +761,26 @@ pabilities to support a measured launch environment (MLE). An S-RTM and D-RTM fe
 
 Figure 10.22 compares the two RTMs and their temporal evolution and features.
 
-**178** \| Chapter 10 – Platform Security and Trust
 
 ![](media/index-197_1.png)
 
- 
+
 
 **Figure 10.22:** DRTM Boot Flow
 
 ![](media/index-197_2.png)
 
- 
+
 
 A DRTM implementation can also include a root-of-trust for verification (RTV), too. More information on Intel’s D-RTM implementation can be found in the following
 
 book by David Grawrock, *Dynamics of a Trusted Platform* from Intel Press.
 
- 
+
 
 **Platform Manufacturer**
 
- 
+
 
 There are several terms that will be introduced in order to facilitate the following dis-
 
@@ -818,15 +800,14 @@ As noted above, integrity forms one of the key security goals of the platform. I
 
 third party can replace or impersonate a PI module without the PM’s knowledge, there is an opportunity to introduce a vulnerability into the system.
 
-Platform Manufacturer \| **179**
 
 ![](media/index-198_1.png)
 
- 
+
 
 **Figure 10.23:** Overall View of Boot Time Line
 
- 
+
 
 When we refer to PM_AUTH, we mean “components that are under the authority of
 
@@ -848,19 +829,18 @@ core, DXE drivers, firmware volumes, UEFI variables used only by PEI + DXE, BDS,
 
 Non-PM_AUTH is non-signed UEFI drivers from a host-bus adapter (HBA), non-signed UEFI OS loaders.
 
-**180** \| Chapter 10 – Platform Security and Trust
 
- 
+
 
 **Vulnerability Classification**
 
- 
+
 
 There are several terms that will be introduced in this section. These include spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of
 
 privilege.
 
- 
+
 
 In order to talk about platform security, some terms will be introduced. Specifically, a vulnerability in a software or firmware product can subject the computer on which
 
@@ -888,11 +868,11 @@ level (such as a user), acquires higher privileges (such as those of an administ
 
 tor).
 
- 
+
 
 **Roots of Trust/Guards**
 
- 
+
 
 When discussing integrity, a more formal model helps define some of the terms. A
 
@@ -908,19 +888,18 @@ UEFI variables, and the Guard. Typically the caller would be a UEFI or OS applic
 
 tion of the variable services, and the variable itself could include the EFI_VARIA-BLE_AUTHENTICATED_WRITE_ACCESS bit set.
 
-Summary \| **181**
 
 ![](media/index-200_1.png)
 
- 
+
 
 **Figure 10.24:** Example of a CDI
 
- 
+
 
 **Summary**
 
- 
+
 
 This chapter has reviewed the static root of trust for measurement, or trusted boot, and the associated trusted computing hardware, including the TPM. It then described
 

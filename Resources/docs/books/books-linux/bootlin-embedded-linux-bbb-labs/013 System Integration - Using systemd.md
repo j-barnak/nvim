@@ -1,12 +1,12 @@
 **System Integration - Using systemd**
 
- 
 
- 
+
+
 
 *Objectives: Get familiar with the* systemd *init system.*
 
- 
+
 
 **Goals**
 
@@ -56,7 +56,6 @@ This time, we will use a Bootlin ready-made toolchain for *glibc*, as this is ne
 
 **–** Toolchain origin: Toolchain to be downloaded and installed
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 59
 
 **–** Bootlin toolchain variant: armv7-eabihf glibc bleeding-edge
 
@@ -126,7 +125,7 @@ To test the new system, create a new nfsroot directory, extract the new root fil
 
 You should see the system booting through *systemd*, with all the *systemd* targets and system services starting one by one, with a total boot time which looks slower than before. That’s because the system configuration is more complex, but also more versatile, being ready to run more complex services and applications.
 
-60 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license You can ask *systemd* to show you the various services which were started:
+You can ask *systemd* to show you the various services which were started:
 
 \# systemctl status
 
@@ -172,13 +171,13 @@ alias usb:v2B53p0031d\*dc\*dsc\*dp\*ic\*isc\*ip\*in\* snd_usb_audio ...
 
 alias of:N\*T\*Cnintendo,nunchuk nunchuk
 
- 
+
 
 For snd_usb_audio, there are many possible matching values, so it’s not straightforward to be sure which matched your particular device.
 
 However, you can find in *sysfs* which MODALIAS was emitted for your device:
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 61 \# cd /sys/class/sound/card0/device
+\# cd /sys/class/sound/card0/device
 
 \# ls -la
 
@@ -236,6 +235,4 @@ Make sure that audio playback still works on your system:
 
 If it doesn’t, look at the *systemd* logs in your serial console history. *systemd* should let you know about the failing services and the commands to run to get more details.
 
- 
 
-62 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license

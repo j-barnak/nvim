@@ -4,14 +4,14 @@
 
 In this appendix we present some of the most commonly used definitions from the Haskell standard prelude. For expository purposes, a number of the definitions are presented in simplified form. The full version of the prelude is available from the Haskell home page, [http://www.haskell.org](http://www.haskell.org).
 
-### **B.1Basic classes**
+### **B.1 Basic classes**
 
 Equality types:
 
 ``` haskell
 class Eq a where
-(==), (/=) :: a -> a -> Bool
-x /= y = not (x == y)
+  (==), (/=) :: a -> a -> Bool
+  x /= y = not (x == y)
 ```
 
 Ordered types:
@@ -22,47 +22,47 @@ Showable types:
 
 ``` haskell
 class Show a where
-show :: a -> String
+  show :: a -> String
 ```
 
 Readable types:
 
 ``` haskell
 class Read a where
-read :: String -> a
+  read :: String -> a
 ```
 
 Numeric types:
 
 ``` haskell
 class Num a where
-(+), (-), (*) :: a -> a -> a
-negate, abs, signum :: a -> a
+  (+), (-), (*) :: a -> a -> a
+  negate, abs, signum :: a -> a
 ```
 
 Integral types:
 
 ``` haskell
 class Num a => Integral a where
-div, mod :: a -> a -> a
+  div, mod :: a -> a -> a
 ```
 
 Fractional types:
 
 ``` haskell
 class Num a => Fractional a where
-(/) :: a -> a -> a
-recip :: a -> a
-recip n = 1/n
+  (/) :: a -> a -> a
+  recip :: a -> a
+  recip n = 1/n
 ```
 
-### **B.2Booleans**
+### **B.2 Booleans**
 
 Type declaration:
 
 ``` haskell
 data Bool = False | True
-deriving (Eq, Ord, Show, Read)
+         deriving (Eq, Ord, Show, Read)
 ```
 
 Logical conjunction:
@@ -96,13 +96,13 @@ otherwise :: Bool
 otherwise = True
 ```
 
-### **B.3Characters**
+### **B.3 Characters**
 
 Type declaration:
 
 ``` haskell
 data Char = ...
-deriving (Eq, Ord, Show, Read)
+         deriving (Eq, Ord, Show, Read)
 ```
 
 The definitions below are provided in the library Data.Char, which can be loaded by entering the following in GHCi or at the start of a script:
@@ -186,7 +186,7 @@ Convert a letter to lower-case:
 ``` haskell
 toLower :: Char -> Char
 toLower c | isUpper c = chr (ord c - ord ’A’ + ord ’a’)
-| otherwise = c
+        | otherwise = c
 ```
 
 Convert a letter to upper-case:
@@ -194,10 +194,10 @@ Convert a letter to upper-case:
 ``` haskell
 toUpper :: Char -> Char
 toUpper c | isLower c = chr (ord c - ord ’a’ + ord ’A’)
-| otherwise = c
+        | otherwise = c
 ```
 
-### **B.4Strings**
+### **B.4 Strings**
 
 Type declaration:
 
@@ -205,7 +205,7 @@ Type declaration:
 type String = [Char]
 ```
 
-### **B.5Numbers**
+### **B.5 Numbers**
 
 Type declarations:
 
@@ -233,7 +233,7 @@ _ ^ 0 = 1
 x ^ n = x * (x ^ (n-1))
 ```
 
-### **B.6Tuples**
+### **B.6 Tuples**
 
 Type declarations:
 
@@ -267,22 +267,22 @@ uncurry :: (a -> b -> c) -> ((a,b) -> c)
 uncurry f = \(x,y) -> f x y
 ```
 
-### **B.7Maybe**
+### **B.7 Maybe**
 
 Type declaration:
 
 ``` haskell
 data Maybe a = Nothing | Just a
-deriving (Eq, Ord, Show, Read)
+         deriving (Eq, Ord, Show, Read)
 ```
 
-### **B.8Lists**
+### **B.8 Lists**
 
 Type declaration:
 
 ``` haskell
 data [a] = [] | a:[a]
-deriving (Eq, Ord, Show, Read)
+         deriving (Eq, Ord, Show, Read)
 ```
 
 Select the first element of a non-empty list:
@@ -406,7 +406,7 @@ map :: (a -> b) -> [a] -> [b]
 map f xs = [f x | x <- xs]
 ```
 
-### **B.9Functions**
+### **B.9 Functions**
 
 Type declaration:
 
@@ -449,7 +449,7 @@ flip :: (a -> b -> c) -> (b -> a -> c)
 flip f = \y x -> f x y
 ```
 
-### **B.10Input/output**
+### **B.10 Input/output**
 
 Type declaration:
 
@@ -473,7 +473,7 @@ Read a value from the keyboard:
 ``` haskell
 readLn :: Read a => IO a
 readLn = do xs <- getLine
-return (read xs)
+         return (read xs)
 ```
 
 Write a character to the screen:
@@ -505,38 +505,38 @@ error :: String -> a
 error xs = ...
 ```
 
-### **B.11Functors**
+### **B.11 Functors**
 
 Class declaration:
 
 ``` haskell
 class Functor f where
-fmap :: (a -> b) -> f a -> f b
+  fmap :: (a -> b) -> f a -> f b
 ```
 
 Maybe functor:
 
 ``` haskell
 instance Functor Maybe where
--- fmap :: (a -> b) -> Maybe a -> Maybe b
-fmap _ Nothing = Nothing
-fmap g (Just x) = Just (g x)
+  -- fmap :: (a -> b) -> Maybe a -> Maybe b
+  fmap _ Nothing = Nothing
+  fmap g (Just x) = Just (g x)
 ```
 
 List functor:
 
 ``` haskell
 instance Functor [] where
--- fmap :: (a -> b) -> [a] -> [b]
-fmap = map
+  -- fmap :: (a -> b) -> [a] -> [b]
+  fmap = map
 ```
 
 IO functor:
 
 ``` haskell
 instance Functor IO where
--- fmap :: (a -> b) -> IO a -> IO b
-fmap g mx = do {x <- mx; return (g x)}
+  -- fmap :: (a -> b) -> IO a -> IO b
+  fmap g mx = do {x <- mx; return (g x)}
 ```
 
 Infix version of fmap:
@@ -546,86 +546,86 @@ Infix version of fmap:
 g <$> x = fmap g x
 ```
 
-### **B.12Applicatives**
+### **B.12 Applicatives**
 
 Class declaration:
 
 ``` haskell
 class Functor f => Applicative f where
-pure :: a -> f a
-(<*>) :: f (a -> b) -> f a -> f b
+  pure :: a -> f a
+  (<*>) :: f (a -> b) -> f a -> f b
 ```
 
 Maybe applicative:
 
 ``` haskell
 instance Applicative Maybe where
--- pure :: a -> Maybe a
-pure = Just
--- (<*>) :: Maybe (a -> b) -> Maybe a -> Maybe b
-Nothing <*> _ = Nothing
-(Just g) <*> mx = fmap g mx
+  -- pure :: a -> Maybe a
+  pure = Just
+  -- (<*>) :: Maybe (a -> b) -> Maybe a -> Maybe b
+  Nothing <*> _ = Nothing
+  (Just g) <*> mx = fmap g mx
 ```
 
 List applicative:
 
 ``` haskell
 instance Applicative [] where
--- pure :: a -> [a]
-pure x = [x]
--- (<*>) :: [a -> b] -> [a] -> [b]
-gs <*> xs = [g x | g <- gs, x <- xs]
+  -- pure :: a -> [a]
+  pure x = [x]
+  -- (<*>) :: [a -> b] -> [a] -> [b]
+  gs <*> xs = [g x | g <- gs, x <- xs]
 ```
 
 IO applicative:
 
 ``` haskell
 instance Applicative IO where
--- pure :: a -> IO a
-pure = return
--- (<*>) :: IO (a -> b) -> IO a -> IO b
-mg <*> mx = do {g <- mg; x <- mx; return (g x)}
+  -- pure :: a -> IO a
+  pure = return
+  -- (<*>) :: IO (a -> b) -> IO a -> IO b
+  mg <*> mx = do {g <- mg; x <- mx; return (g x)}
 ```
 
-### **B.13Monads**
+### **B.13 Monads**
 
 Class declaration:
 
 ``` haskell
 class Applicative m => Monad m where
-return :: a -> m a
-(>>=) :: m a -> (a -> m b) -> m b
-return = pure
+  return :: a -> m a
+  (>>=) :: m a -> (a -> m b) -> m b
+  return = pure
 ```
 
 Maybe monad:
 
 ``` haskell
 instance Monad Maybe where
--- (>>=) :: Maybe a -> (a -> Maybe b) -> Maybe b
-Nothing >>= _ = Nothing
-(Just x) >>= f = f x
+  -- (>>=) :: Maybe a -> (a -> Maybe b) -> Maybe b
+  Nothing >>= _ = Nothing
+  (Just x) >>= f = f x
 ```
 
 List monad:
 
 ``` haskell
 instance Monad [] where
--- (>>=) :: [a] -> (a -> [b]) -> [b]
-xs >>= f = [y | x <- xs, y <- f x]
+  -- (>>=) :: [a] -> (a -> [b]) -> [b]
+  xs >>= f = [y | x <- xs, y <- f x]
 ```
 
 IO monad:
 
 ``` haskell
 instance Monad IO where
--- return :: a -> IO a
-return x = ...
--- (>>=) :: IO a -> (a -> IO b) -> IO b
-mx >>= f = ...
+  -- return :: a -> IO a
+  return x = ...
+  -- (>>=) :: IO a -> (a -> IO b) -> IO b
+  mx >>= f = ...
 ```
 
-### **B.14Alternatives**
+### **B.14 Alternatives**
 
 The declarations below are provided in the library Control.Applicative, which can be loaded by entering the following in GHCi or at the start of a script:
 
@@ -637,36 +637,36 @@ Class declaration:
 
 ``` haskell
 class Applicative f => Alternative f where
-empty :: f a
-(<|>) :: f a -> f a -> f a
-many :: f a -> f [a]
-some :: f a -> f [a]
-many x = some x <|> pure []
-some x = pure (:) <*> x <*> many x
+  empty :: f a
+  (<|>) :: f a -> f a -> f a
+  many :: f a -> f [a]
+  some :: f a -> f [a]
+  many x = some x <|> pure []
+  some x = pure (:) <*> x <*> many x
 ```
 
 Maybe alternative:
 
 ``` haskell
 instance Alternative Maybe where
--- empty :: Maybe a
-empty = Nothing
--- (<|>) :: Maybe a -> Maybe a -> Maybe a
-Nothing <|> my = my
-(Just x) <|> _ = Just x
+  -- empty :: Maybe a
+  empty = Nothing
+  -- (<|>) :: Maybe a -> Maybe a -> Maybe a
+  Nothing <|> my = my
+  (Just x) <|> _ = Just x
 ```
 
 List alternative:
 
 ``` haskell
 instance Alternative [] where
--- empty :: [a]
-empty = []
--- (<|>) :: [a] -> [a] -> [a]
-(<|>) = (++)
+  -- empty :: [a]
+  empty = []
+  -- (<|>) :: [a] -> [a] -> [a]
+  (<|>) = (++)
 ```
 
-### **B.15MonadPlus**
+### **B.15 MonadPlus**
 
 The declarations below are provided in the library Control.Monad, which can be loaded by entering the following in GHCi or at the start of a script:
 
@@ -678,10 +678,10 @@ Class declaration:
 
 ``` haskell
 class (Alternative m, Monad m) => MonadPlus m where
-mzero :: m a
-mplus :: m a -> m a -> m a
-mzero = empty
-mplus = (<|>)
+  mzero :: m a
+  mplus :: m a -> m a -> m a
+  mzero = empty
+  mplus = (<|>)
 ```
 
 Maybe monadplus:
@@ -696,16 +696,16 @@ List monadplus:
 instance MonadPlus []
 ```
 
-### **B.16Monoids**
+### **B.16 Monoids**
 
 Class declaration:
 
 ``` haskell
 class Monoid a where
-mempty :: a
-mappend :: a -> a -> a
-mconcat :: [a] -> a
-mconcat = foldr mappend mempty
+  mempty :: a
+  mappend :: a -> a -> a
+  mconcat :: [a] -> a
+  mconcat = foldr mappend mempty
 ```
 
 The declarations below are provided in a library Data.Monoid, which can be loaded by entering the following in GHCi or at the start of a script:
@@ -722,66 +722,66 @@ List monoid:
 
 ``` haskell
 instance Monoid [a] where
--- mempty :: [a]
-mempty = []
--- mappend :: [a] -> [a] -> [a]
-mappend = (++)
+  -- mempty :: [a]
+  mempty = []
+  -- mappend :: [a] -> [a] -> [a]
+  mappend = (++)
 ```
 
 Numeric monoid for addition:
 
 ``` haskell
 newtype Sum a = Sum a
-deriving (Eq, Ord, Show, Read)
+         deriving (Eq, Ord, Show, Read)
 getSum :: Sum a -> a
 getSum (Sum x) = x
 instance Num a => Monoid (Sum a) where
--- mempty :: Sum a
-mempty = Sum 0
--- mappend :: Sum a -> Sum a -> Sum a
-Sum x ‘mappend‘ Sum y = Sum (x+y)
+  -- mempty :: Sum a
+  mempty = Sum 0
+  -- mappend :: Sum a -> Sum a -> Sum a
+  Sum x ‘mappend‘ Sum y = Sum (x+y)
 ```
 
 Numeric monoid for multiplication:
 
 ``` haskell
 newtype Product a = Product a
-deriving (Eq, Ord, Show, Read)
+         deriving (Eq, Ord, Show, Read)
 getProduct :: Product a -> a
 getProduct (Product x) = x
 instance Num a => Monoid (Product a) where
--- mempty :: Product a
-mempty = Product 1
--- mappend :: Product a -> Product a -> Product a
-Product x ‘mappend‘ Product y = Product (x*y)
+  -- mempty :: Product a
+  mempty = Product 1
+  -- mappend :: Product a -> Product a -> Product a
+  Product x ‘mappend‘ Product y = Product (x*y)
 ```
 
 Boolean monoid for conjunction:
 
 ``` haskell
 newtype All = All Bool
-deriving (Eq, Ord, Show, Read)
+         deriving (Eq, Ord, Show, Read)
 getAll :: All -> Bool
 getAll (All b) = b
 instance Monoid All where
--- mempty :: All
-mempty = All True
--- mappend :: All -> All -> All
-All b ‘mappend‘ All c = All (b && c)
+  -- mempty :: All
+  mempty = All True
+  -- mappend :: All -> All -> All
+  All b ‘mappend‘ All c = All (b && c)
 ```
 
 Boolean monoid for disjunction:
 
 ``` haskell
 newtype Any = Any Bool
-deriving (Eq, Ord, Show, Read)
+         deriving (Eq, Ord, Show, Read)
 getAny :: Any -> Bool
 getAny (Any b) = b
 instance Monoid Any where
--- mempty :: Any
-mempty = Any False
--- mappend :: Any -> Any -> Any
-Any b ‘mappend‘ Any c = Any (b || c)
+  -- mempty :: Any
+  mempty = Any False
+  -- mappend :: Any -> Any -> Any
+  Any b ‘mappend‘ Any c = Any (b || c)
 ```
 
 Infix version of mappend:
@@ -791,7 +791,7 @@ Infix version of mappend:
 x <> y = x ‘mappend‘ y
 ```
 
-### **B.17Foldables**
+### **B.17 Foldables**
 
 The declarations below are provided in the library Data.Foldable, which can be loaded by entering the following in GHCi or at the start of a script:
 
@@ -850,7 +850,7 @@ concat :: Foldable t => t [a] -> [a]
 concat = fold
 ```
 
-### **B.18Traversables**
+### **B.18 Traversables**
 
 Class declaration:
 

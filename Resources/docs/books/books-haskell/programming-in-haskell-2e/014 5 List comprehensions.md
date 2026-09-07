@@ -4,7 +4,7 @@
 
 In this chapter we introduce list comprehensions, which allow many functions on lists to be defined in simple manner. We start by explaining generators and guards, then introduce the function zip and the idea of string comprehensions, and conclude by developing a program to crack the Caesar cipher.
 
-### **5.1Basic concepts**
+### **5.1 Basic concepts**
 
 In mathematics, the *comprehension* notation can be used to construct new sets from existing sets. For example, the comprehension {*x*² \| *x* ∈ {1 *. .* 5}} produces the set {1*,* 4*,* 9*,* 16*,* 25} of all numbers *x*² such that *x* is an element of the set {1 *. .* 5}. In Haskell, a similar comprehension notation can be used to construct new lists from existing lists. For example:
 
@@ -59,7 +59,7 @@ length xs = sum [1 | _ <- xs]
 
 In this case, the generator \_ \<- xs simply serves as a counter to govern the production of the appropriate number of ones.
 
-### **5.2Guards**
+### **5.2 Guards**
 
 List comprehensions can also use logical expressions called *guards* to filter the values produced by earlier generators. If a guard is True, then the current values are retained; if it is False, then they are discarded. For example, the comprehension \[x \| x \<- \[1..10\], even x\] produces the list \[2,4,6,8,10\] of all even numbers from the list \[1..10\]. Similarly, a function that maps a positive integer to its list of positive factors can be defined by:
 
@@ -125,7 +125,7 @@ For example:
 [2,4]
 ```
 
-### **5.3The** zip **function**
+### **5.3 The** zip **function**
 
 The library function zip produces a new list by pairing successive elements from two existing lists until either or both lists are exhausted. For example:
 
@@ -182,7 +182,7 @@ For example:
 
 Within the definition for positions, the expression \[0..\] produces the list of indices \[0,1,2,3,...\]. This list is notionally *infinite*, but under lazy evaluation only as many elements of the list as required by the context in which it is used, in this case zipping with the input list xs, will actually be produced. Exploiting lazy evaluation in this manner avoids the need to explicitly produce a list of indices of the same length as the input list.
 
-### **5.4String comprehensions**
+### **5.4 String comprehensions**
 
 Up to this point we have viewed strings as a primitive notion in Haskell. In fact they are not primitive, but are constructed as lists of characters. For example, the string "abc" :: String is just an abbreviation for the list of characters \[’a’,’b’,’c’\] :: \[Char\]. Because strings are lists, any polymorphic function on lists can also be used with strings. For example:
 
@@ -215,7 +215,7 @@ For example:
 4
 ```
 
-### **5.5The Caesar cipher**
+### **5.5 The Caesar cipher**
 
 We conclude this chapter with an extended programming example. Consider the problem of encoding a string in order to disguise its contents. A well-known encoding method is the *Caesar cipher*, named after its use by Julius Caesar more than 2,000 years ago. To encode a string, Caesar simply replaced each letter in the string by the letter three places further down in the alphabet, wrapping around at the end of the alphabet. For example, the string
 
@@ -268,7 +268,7 @@ Using these two functions, we can define a function shift that applies a shift f
 ``` haskell
 shift :: Int -> Char -> Char
 shift n c | isLower c = int2let ((let2int c + n) ‘mod‘ 26)
-| otherwise = c
+          | otherwise = c
 ```
 
 (The library function isLower :: Char -\> Bool decides if a character is a lower-case letter.) Note that this function accepts both positive and negative shift factors, and that only lower-case letters are changed. For example:
@@ -307,8 +307,8 @@ The key to cracking the Caesar cipher is the observation that some letters are u
 ``` haskell
 table :: [Float]
 table = [8.1, 1.5, 2.8, 4.2, 12.7, 2.2, 2.0, 6.1, 7.0,
-0.2, 0.8, 4.0, 2.4, 6.7, 7.5, 1.9, 0.1, 6.0,
-6.3, 9.0, 2.8, 1.0, 2.4, 0.2, 2.0, 0.1]
+        0.2, 0.8, 4.0, 2.4, 6.7, 7.5, 1.9, 0.1, 6.0,
+        6.3, 9.0, 2.8, 1.0, 2.4, 0.2, 2.0, 0.1]
 ```
 
 For example, the letter ’e’ occurs most often, with a frequency of 12*.*7%, while ’q’ and ’z’ occur least often, with a frequency of just 0*.*1%. It is also useful to produce frequency tables for individual strings. To this end, we first define a function that calculates the percentage of one integer with respect to another, returning the result as a floating-point number:
@@ -330,7 +330,7 @@ Using percent within a list comprehension, together with the functions lowers an
 ``` haskell
 freqs :: String -> [Float]
 freqs xs = [percent (count x xs) n | x <- [’a’..’z’]]
-where n = lowers xs
+           where n = lowers xs
 ```
 
 For example:
@@ -386,10 +386,10 @@ in which the minimum value, 202.42024, appears at position three in this list. H
 ``` haskell
 crack :: String -> String
 crack xs = encode (-factor) xs
-where
-factor = head (positions (minimum chitab) chitab)
-chitab = [chisqr (rotate n table’) table | n <- [0..25]]
-table’ = freqs xs
+  where
+   factor = head (positions (minimum chitab) chitab)
+   chitab = [chisqr (rotate n table’) table | n <- [0..25]]
+   table’ = freqs xs
 ```
 
 For example:
@@ -410,54 +410,54 @@ More generally, the crack function can decode most strings produced using the Ca
 "wjsdib rduvmyn ephk lpdxfgt"
 ```
 
-### **5.6Chapter remarks**
+### **5.6 Chapter remarks**
 
 The term *comprehension* comes from the *axiom of comprehension* in set theory, which makes precise the idea of constructing a set by selecting all values that satisfy a particular property. A formal meaning for list comprehensions by translation using more primitive features of the language is given in the Haskell Report \[4\]. A popular account of the Caesar cipher, and many other famous cryptographic methods, is given in *The Code Book* \[7\].
 
-### **5.7Exercises**
+### **5.7 Exercises**
 
-1.Using a list comprehension, give an expression that calculates the sum 1² + 2² + *...* 100² of the first one hundred integer squares.
+1. Using a list comprehension, give an expression that calculates the sum 1² + 2² + *...* 100² of the first one hundred integer squares.
 
-2.Suppose that a *coordinate grid* of size *m* × *n* is given by the list of all pairs (*x, y*) of integers such that ![image](media/Images/ch5-01.png) Using a list comprehension, define a function grid :: Int -\> Int -\> \[(Int,Int)\] that returns a coordinate grid of a given size. For example:
+2\. Suppose that a *coordinate grid* of size *m* × *n* is given by the list of all pairs (*x, y*) of integers such that ![image](media/Images/ch5-01.png) Using a list comprehension, define a function grid :: Int -\> Int -\> \[(Int,Int)\] that returns a coordinate grid of a given size. For example:
 
 ``` haskell
 > grid 1 2
 [(0,0),(0,1),(0,2),(1,0),(1,1),(1,2)]
 ```
 
-3.Using a list comprehension and the function grid above, define a function square :: Int -\> \[(Int,Int)\] that returns a coordinate square of size *n*, excluding the diagonal from (0*,* 0) to (*n, n*). For example:
+3\. Using a list comprehension and the function grid above, define a function square :: Int -\> \[(Int,Int)\] that returns a coordinate square of size *n*, excluding the diagonal from (0*,* 0) to (*n, n*). For example:
 
 ``` haskell
 > square 2
 [(0,1),(0,2),(1,0),(1,2),(2,0),(2,1)]
 ```
 
-4.In a similar way to the function length, show how the library function replicate :: Int -\> a -\> \[a\] that produces a list of identical elements can be defined using a list comprehension. For example:
+4\. In a similar way to the function length, show how the library function replicate :: Int -\> a -\> \[a\] that produces a list of identical elements can be defined using a list comprehension. For example:
 
 ``` haskell
 > replicate 3 True
 [True,True,True]
 ```
 
-5.A triple (*x, y, z*) of positive integers is *Pythagorean* if it satisfies the equation *x*² + *y*² = *z*². Using a list comprehension with three generators, define a function pyths :: Int -\> \[(Int,Int,Int)\] that returns the list of all such triples whose components are at most a given limit. For example:
+5\. A triple (*x, y, z*) of positive integers is *Pythagorean* if it satisfies the equation *x*² + *y*² = *z*². Using a list comprehension with three generators, define a function pyths :: Int -\> \[(Int,Int,Int)\] that returns the list of all such triples whose components are at most a given limit. For example:
 
 ``` haskell
 > pyths 10
 [(3,4,5),(4,3,5),(6,8,10),(8,6,10)]
 ```
 
-6.A positive integer is *perfect* if it equals the sum of all of its factors, excluding the number itself. Using a list comprehension and the function factors, define a function perfects :: Int -\> \[Int\] that returns the list of all perfect numbers up to a given limit. For example:
+6\. A positive integer is *perfect* if it equals the sum of all of its factors, excluding the number itself. Using a list comprehension and the function factors, define a function perfects :: Int -\> \[Int\] that returns the list of all perfect numbers up to a given limit. For example:
 
 ``` haskell
 > perfects 500
 [6,28,496]
 ```
 
-7.Show how the list comprehension \[(x,y) \| x \<- \[1,2\], y \<- \[3,4\]\] with two generators can be re-expressed using two comprehensions with single generators. Hint: nest one comprehension within the other and make use of the library function concat :: \[\[a\]\] -\> \[a\].
+7\. Show how the list comprehension \[(x,y) \| x \<- \[1,2\], y \<- \[3,4\]\] with two generators can be re-expressed using two comprehensions with single generators. Hint: nest one comprehension within the other and make use of the library function concat :: \[\[a\]\] -\> \[a\].
 
-8.Redefine the function positions using the function find.
+8\. Redefine the function positions using the function find.
 
-9.The *scalar product* of two lists of integers *xs* and *ys* of length *n* is given by the sum of the products of corresponding integers:
+9\. The *scalar product* of two lists of integers *xs* and *ys* of length *n* is given by the sum of the products of corresponding integers:
 
 ![image](media/Images/Chapter_5_image_12_13.png)
 
@@ -468,6 +468,6 @@ In a similar manner to chisqr, show how a list comprehension can be used to defi
 32
 ```
 
-10.Modify the Caesar cipher program to also handle upper-case letters.
+10\. Modify the Caesar cipher program to also handle upper-case letters.
 
 Solutions to exercises 1–5 are given in appendix A.

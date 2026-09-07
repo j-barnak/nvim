@@ -1,6 +1,6 @@
 ## Solutions to Selected Problems
 
- 
+
 
 Problem 7.1: Conditions (a) and (c) are satisfied by some sparse graphs (such as a star graph) and some dense graphs (such as a complete graph with one extra edge glued on). Condition (b) is satisfied only by sparse graphs, and condition (d) only by dense graphs.
 
@@ -28,7 +28,7 @@ a graph and its reversal have exactly the same SCCs (Quiz 8.6),
 
 Solutions to Selected Problems 201
 
- 
+
 
 the algorithm remains correct. The modifications in (c) and (d) are equivalent, as in the argument for (a) above, and do not result in a correct algorithm. For a counterexample, revisit our running example
 
@@ -58,7 +58,7 @@ Problem 11.1: (a). Statement (a) holds because there are at most i 2 nodes in th
 
 false for unbalanced binary search trees (see footnote 4 in Chapter 11). 202 Solutions to Selected Problems
 
- 
+
 
 Statement (c) is false because the heap and search tree properties are
 

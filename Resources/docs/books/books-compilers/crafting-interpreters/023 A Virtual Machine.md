@@ -55,11 +55,11 @@ OK, calling those functions “implementations” is a stretch. We don’t have 
 
 The slightly more interesting line here is that declaration of `vm`. This module is eventually going to have a slew of functions and it would be a chore to pass around a pointer to the VM to all of them. Instead, we declare a single global VM object. We need only one anyway, and this keeps the code in the book a little lighter on the page.
 
-The choice to have a static VM instance is a concession for the book, but not necessarily a sound engineering choice for a real language implementation. If you’re building a VM that’s designed to be embedded in other host applications, it gives the host more flexibility if you *do* explicitly take a VM pointer and pass it around.
-
-That way, the host app can control when and where memory for the VM is allocated, run multiple VMs in parallel, etc.
-
-What I’m doing here is a global variable, and [everything bad you’ve heard about global variables](http://gameprogrammingpatterns.com/singleton.html) is still true when programming in the large. But when keeping things small for a book . . . 
+> The choice to have a static VM instance is a concession for the book, but not necessarily a sound engineering choice for a real language implementation. If you’re building a VM that’s designed to be embedded in other host applications, it gives the host more flexibility if you *do* explicitly take a VM pointer and pass it around.
+>
+> That way, the host app can control when and where memory for the VM is allocated, run multiple VMs in parallel, etc.
+>
+> What I’m doing here is a global variable, and [everything bad you’ve heard about global variables](http://gameprogrammingpatterns.com/singleton.html) is still true when programming in the large. But when keeping things small for a book . . . 
 
 Before we start pumping fun code into our VM, let’s go ahead and wire it up to the interpreter’s main entrypoint.
 
@@ -184,7 +184,7 @@ First, we store the chunk being executed in the VM. Then we call `run()`, an int
 
 As the VM works its way through the bytecode, it keeps track of where it is—the location of the instruction currently being executed. We don’t use a local variable inside `run()` for this because eventually other functions will need to access it. Instead, we store it as a field in VM.
 
-If we were trying to squeeze every ounce of speed out of our bytecode interpreter, we would store `ip` in a local variable. It gets modified so often during execution that we want the C compiler to keep it in a register.
+> If we were trying to squeeze every ounce of speed out of our bytecode interpreter, we would store `ip` in a local variable. It gets modified so often during execution that we want the C compiler to keep it in a register.
 
 ```
 typedef struct {
@@ -205,7 +205,7 @@ Its type is a byte pointer. We use an actual real C pointer pointing right into 
 
 The name “IP” is traditional, and—unlike many traditional names in CS—actually makes sense: it’s an **[instruction pointer](https://en.wikipedia.org/wiki/Program_counter)**. Almost every instruction set in the world, real and virtual, has a register or variable like this.
 
-x86, x64, and the CLR call it “IP”. 68k, PowerPC, ARM, p-code, and the JVM call it “PC”, for **program counter**.
+> x86, x64, and the CLR call it “IP”. 68k, PowerPC, ARM, p-code, and the JVM call it “PC”, for **program counter**.
 
 We initialize `ip` by pointing it at the first byte of code in the chunk. We haven’t executed that instruction yet, so `ip` points to the instruction *about to be executed*. This will be true during the entire time the VM is running: the IP always points to the next instruction, not the one currently being handled.
 
@@ -232,17 +232,17 @@ static InterpretResult run() {
 
 This is the single most important function in all of clox, by far. When the interpreter executes a user’s program, it will spend something like 90% of its time inside `run()`. It is the beating heart of the VM.
 
-Or, at least, it *will* be in a few chapters when it has enough content to be useful. Right now, it’s not exactly a wonder of software wizardry.
+> Or, at least, it *will* be in a few chapters when it has enough content to be useful. Right now, it’s not exactly a wonder of software wizardry.
 
 Despite that dramatic intro, it’s conceptually pretty simple. We have an outer loop that goes and goes. Each turn through that loop, we read and execute a single bytecode instruction.
 
 To process an instruction, we first figure out what kind of instruction we’re dealing with. The `READ_BYTE` macro reads the byte currently pointed at by `ip` and then advances the instruction pointer. The first byte of any instruction is the opcode. Given a numeric opcode, we need to get to the right C code that implements that instruction’s semantics. This process is called **decoding** or **dispatching** the instruction.
 
-Note that `ip` advances as soon as we read the opcode, before we’ve actually started executing the instruction. So, again, `ip` points to the *next* byte of code to be used.
+> Note that `ip` advances as soon as we read the opcode, before we’ve actually started executing the instruction. So, again, `ip` points to the *next* byte of code to be used.
 
 We do that process for every single instruction, every single time one is executed, so this is the most performance critical part of the entire virtual machine. Programming language lore is filled with clever techniques to do bytecode dispatch efficiently, going all the way back to the early days of computers.
 
-If you want to learn some of these techniques, look up “direct threaded code”, “jump table”, and “computed goto”.
+> If you want to learn some of these techniques, look up “direct threaded code”, “jump table”, and “computed goto”.
 
 Alas, the fastest solutions require either non-standard extensions to C, or handwritten assembly code. For clox, we’ll keep it simple. Just like our disassembler, we have a single giant `switch` statement with a case for each opcode. The body of each case implements that opcode’s behavior.
 
@@ -315,7 +315,7 @@ Like the previous `READ_BYTE` macro, `READ_CONSTANT` is only used inside `run()`
 
 *vm.c*, in *run*()
 
-Undefining these macros explicitly might seem needlessly fastidious, but C tends to punish sloppy users, and the C preprocessor doubly so.
+> Undefining these macros explicitly might seem needlessly fastidious, but C tends to punish sloppy users, and the C preprocessor doubly so.
 
 ### 15.1.2 Execution tracing
 
@@ -386,7 +386,7 @@ print 3 - 2;
 
 We obviously need instructions for the constants 3 and 2, the `print` statement, and the subtraction. But how does the subtraction instruction know that 3 is the minuend and 2 is the subtrahend? How does the print instruction know to print the result of that?
 
-Yes, I did have to look up “subtrahend” and “minuend” in a dictionary. But aren’t they delightful words? “Minuend” sounds like a kind of Elizabethan dance and “subtrahend” might be some sort of underground Paleolithic monument.
+> Yes, I did have to look up “subtrahend” and “minuend” in a dictionary. But aren’t they delightful words? “Minuend” sounds like a kind of Elizabethan dance and “subtrahend” might be some sort of underground Paleolithic monument.
 
 To put a finer point on it, look at this thing right here:
 
@@ -403,9 +403,9 @@ I wrapped each subexpression in a call to `echo()` that prints and returns its a
 
 Don’t worry about the VM for a minute. Think about just the semantics of Lox itself. The operands to an arithmetic operator obviously need to be evaluated before we can perform the operation itself. (It’s pretty hard to add `a + b` if you don’t know what `a` and `b` are.) Also, when we implemented expressions in jlox, we decided that the left operand must be evaluated before the right.
 
-We could have left evaluation order unspecified and let each implementation decide. That leaves the door open for optimizing compilers to reorder arithmetic expressions for efficiency, even in cases where the operands have visible side effects. C and Scheme leave evaluation order unspecified. Java specifies left-to-right evaluation like we do for Lox.
-
-I think nailing down stuff like this is generally better for users. When expressions are not evaluated in the order users intuit—possibly in different orders across different implementations\!—it can be a burning hellscape of pain to figure out what’s going on.
+> We could have left evaluation order unspecified and let each implementation decide. That leaves the door open for optimizing compilers to reorder arithmetic expressions for efficiency, even in cases where the operands have visible side effects. C and Scheme leave evaluation order unspecified. Java specifies left-to-right evaluation like we do for Lox.
+>
+> I think nailing down stuff like this is generally better for users. When expressions are not evaluated in the order users intuit—possibly in different orders across different implementations\!—it can be a burning hellscape of pain to figure out what’s going on.
 
 Here is the syntax tree for the `print` statement:
 
@@ -427,7 +427,7 @@ After evaluating the left operand, jlox needs to store that result somewhere tem
 
 In clox, our `run()` function is not recursive—the nested expression tree is flattened out into a linear series of instructions. We don’t have the luxury of using C local variables, so how and where should we store these temporary values? You can probably guess already, but I want to really drill into this because it’s an aspect of programming that we take for granted, but we rarely learn *why* computers are architected this way.
 
-Hint: it’s in the name of this section, and it’s how Java and C manage recursive calls to functions.
+> Hint: it’s in the name of this section, and it’s how Java and C manage recursive calls to functions.
 
 Let’s do a weird exercise. We’ll walk through the execution of the above program a step at a time:
 
@@ -443,9 +443,9 @@ In the above diagram, I gave each unique number its own visual column. Let’s b
 
 There’s some interesting stuff going on here. When we shift everything over, each number still manages to stay in a single column for its entire life. Also, there are no gaps left. In other words, whenever a number appears earlier than another, then it will live at least as long as that second one. The first number to appear is the last to be consumed. Hmm . . . last-in, first-out . . . why, that’s a stack!
 
-This is also a stack:
-
-![A stack... of pancakes.](media/image/a-virtual-machine/pancakes.png)
+> This is also a stack:
+>
+> ![A stack... of pancakes.](media/image/a-virtual-machine/pancakes.png)
 
 In the second diagram, each time we introduce a number, we push it onto the stack from the right. When numbers are consumed, they are always popped off from rightmost to left.
 
@@ -455,11 +455,11 @@ Since the temporary values we need to track naturally have stack-like behavior, 
 
 Maybe this doesn’t seem like a revelation, but I *love* stack-based VMs. When you first see a magic trick, it feels like something actually magical. But then you learn how it works—usually some mechanical gimmick or misdirection—and the sense of wonder evaporates. There are a couple of ideas in computer science where even after I pulled them apart and learned all the ins and outs, some of the initial sparkle remained. Stack-based VMs are one of those.
 
-Heaps—[the data structure](https://en.wikipedia.org/wiki/Heap_(data_structure)), not [the memory management thing](https://en.wikipedia.org/wiki/Memory_management#HEAP)—are another. And Vaughan Pratt’s top-down operator precedence parsing scheme, which we’ll learn about in due time.
+> Heaps—[the data structure](https://en.wikipedia.org/wiki/Heap_(data_structure)), not [the memory management thing](https://en.wikipedia.org/wiki/Memory_management#HEAP)—are another. And Vaughan Pratt’s top-down operator precedence parsing scheme, which we’ll learn about in due time.
 
 As you’ll see in this chapter, executing instructions in a stack-based VM is dead simple. In later chapters, you’ll also discover that compiling a source language to a stack-based instruction set is a piece of cake. And yet, this architecture is fast enough to be used by production language implementations. It almost feels like cheating at the programming language game.
 
-To take a bit of the sheen off: stack-based interpreters aren’t a silver bullet. They’re often *adequate*, but modern implementations of the JVM, the CLR, and JavaScript all use sophisticated [just-in-time compilation](https://en.wikipedia.org/wiki/Just-in-time_compilation) pipelines to generate *much* faster native code on the fly.
+> To take a bit of the sheen off: stack-based interpreters aren’t a silver bullet. They’re often *adequate*, but modern implementations of the JVM, the CLR, and JavaScript all use sophisticated [just-in-time compilation](https://en.wikipedia.org/wiki/Just-in-time_compilation) pipelines to generate *much* faster native code on the fly.
 
 Alrighty, it’s codin’ time! Here’s the stack:
 
@@ -492,7 +492,7 @@ The pointer points at the array element just *past* the element containing the t
 
 If we pointed to the top element, then for an empty stack we’d need to point at element -1. That’s undefined in C. As we push values onto the stack . . . 
 
-What about when the stack is *full*, you ask, Clever Reader? The C standard is one step ahead of you. It *is* allowed and well-specified to have an array pointer that points just past the end of an array.
+> What about when the stack is *full*, you ask, Clever Reader? The C standard is one step ahead of you. It *is* allowed and well-specified to have an array pointer that points just past the end of an array.
 
 ![An array with 'c' at element zero.](media/image/a-virtual-machine/stack-c.png)
 
@@ -754,7 +754,7 @@ Magical!
 
 OK, unary operators aren’t *that* impressive. We still only ever have a single value on the stack. To really see some depth, we need binary operators. Lox has four binary arithmetic operators: addition, subtraction, multiplication, and division. We’ll go ahead and implement them all at the same time.
 
-Lox has some other binary operators—comparison and equality—but those don’t produce numbers as a result, so we aren’t ready for them yet.
+> Lox has some other binary operators—comparison and equality—but those don’t produce numbers as a result, so we aren’t ready for them yet.
 
 ```
   OP_CONSTANT,
@@ -815,9 +815,9 @@ The only difference between these four instructions is which underlying C operat
 
 I admit this is a fairly adventurous use of the C preprocessor. I hesitated to do this, but you’ll be glad in later chapters when we need to add the type checking for each operand and stuff. It would be a chore to walk you through the same code four times.
 
-Did you even know you can pass an *operator* as an argument to a macro? Now you do. The preprocessor doesn’t care that operators aren’t first class in C. As far as it’s concerned, it’s all just text tokens.
-
-I know, you can just *feel* the temptation to abuse this, can’t you?
+> Did you even know you can pass an *operator* as an argument to a macro? Now you do. The preprocessor doesn’t care that operators aren’t first class in C. As far as it’s concerned, it’s all just text tokens.
+>
+> I know, you can just *feel* the temptation to abuse this, can’t you?
 
 If you aren’t familiar with the trick already, that outer `do while` loop probably looks really weird. This macro needs to expand to a series of statements. To be careful macro authors, we want to ensure those statements all end up in the same scope when the macro is expanded. Imagine if you defined:
 
@@ -981,7 +981,7 @@ You may as well get it out of your system now. This is the last chunk we’ll bu
 
 For the remainder of this book, we’ll meticulously implement an interpreter around a stack-based bytecode instruction set. There’s another family of bytecode architectures out there—*register-based*. Despite the name, these bytecode instructions aren’t quite as difficult to work with as the registers in an actual chip like x64. With real hardware registers, you usually have only a handful for the entire program, so you spend a lot of effort [trying to use them efficiently and shuttling stuff in and out of them](https://en.wikipedia.org/wiki/Register_allocation).
 
-Register-based bytecode is a little closer to the [*register windows*](https://en.wikipedia.org/wiki/Register_window) supported by SPARC chips.
+> Register-based bytecode is a little closer to the [*register windows*](https://en.wikipedia.org/wiki/Register_window) supported by SPARC chips.
 
 In a register-based VM, you still have a stack. Temporary values still get pushed onto it and popped when no longer needed. The main difference is that instructions can read their inputs from anywhere in the stack and can store their outputs into specific stack slots.
 
@@ -1016,7 +1016,7 @@ There’s only a single instruction to decode and dispatch, and the whole thing 
 
 The main implementation of Lua used to be stack-based. For Lua 5.0, the implementers switched to a register instruction set and noted a speed improvement. The amount of improvement, naturally, depends heavily on the details of the language semantics, specific instruction set, and compiler sophistication, but that should get your attention.
 
-The Lua dev team—Roberto Ierusalimschy, Waldemar Celes, and Luiz Henrique de Figueiredo—wrote a *fantastic* paper on this, one of my all time favorite computer science papers, “[The Implementation of Lua 5.0](https://www.lua.org/doc/jucs05.pdf)” (PDF).
+> The Lua dev team—Roberto Ierusalimschy, Waldemar Celes, and Luiz Henrique de Figueiredo—wrote a *fantastic* paper on this, one of my all time favorite computer science papers, “[The Implementation of Lua 5.0](https://www.lua.org/doc/jucs05.pdf)” (PDF).
 
 That raises the obvious question of why I’m going to spend the rest of the book doing a stack-based bytecode. Register VMs are neat, but they are quite a bit harder to write a compiler for. For what is likely to be your very first compiler, I wanted to stick with an instruction set that’s easy to generate and easy to execute. Stack-based bytecode is marvelously simple.
 

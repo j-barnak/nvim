@@ -54,9 +54,7 @@ Finally, run
 
 8
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 make
 
@@ -118,9 +116,7 @@ Twice the number of CPU cores is a good value.
 
 GB SD cards that we use in our labs, 8 MB will be the smallest partition that cfdisk will allow you to create.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 9
 
-Embedded Linux System Development
 
 Press Write when you are done.
 
@@ -182,9 +178,7 @@ Of course, make this script executable:
 
 10
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 \$ chmod +x qemu-myifup
 
@@ -242,9 +236,7 @@ You can verify that the download was successful by dumping the contents of the m
 
 =\> md 0x61000000
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 11
 
-Embedded Linux System Development
 
 **Rescue binary**
 
@@ -252,6 +244,3 @@ If you have trouble generating binaries that work properly, or later make a mist
 
 12
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
-
-Embedded Linux System Development

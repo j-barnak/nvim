@@ -1,13 +1,13 @@
 
- 
+
 
 **6**
 
- 
+
 
 **P A G E F A U L T S**
 
- 
+
 
 In linux, the actual physical allocation of userland
 
@@ -50,7 +50,7 @@ When this occurs, the pages are said to be ‘faulted in’ (which we can fur-
 ther subdivide into ‘read faulting’ and ‘write faulting’). Note that a page
 
 
- 
+
 
 fault can be pre-triggered when using [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html) via the MAP_POPULATE flag. This is, from the kernel’s point of view, equivalent to write faulting them in.
 
@@ -70,11 +70,11 @@ When it comes to architecture-specific functionality we must speak about
 
 a specific architecture as otherwise discussing the topic would quickly be-come impractical.
 
- 
+
 
 **6.1 Hardware page fault handling**
 
- 
+
 
 Implementations differ in how they handle hardware page fault handling, but after doing so they each share common fault handling code.
 
@@ -82,21 +82,21 @@ We examine how x86-64 invokes the general fault handling logic from an
 
 x86-64 hardware fault in Figure 6-1.
 
- 
 
 
 
- 
+
+
 
 [handle_page_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1476)
 
- 
+
 
 Yes No
 
 [do_kern_addr_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1147) Kernel address? [do_user_addr_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1220)
 
- 
+
 
 Spurious? Kernel exec fault?
 
@@ -108,7 +108,7 @@ Yes
 
 **Ignore** **Bad area handling** Reserved bit fault?
 
- 
+
 
 Yes No Yes No
 
@@ -120,11 +120,11 @@ Yes
 
 No Lock [mm-\>mmap_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) No
 
- 
+
 
 No Found? [find_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2253)
 
- 
+
 
 Lock [mm-\>mmap_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)
 
@@ -132,15 +132,15 @@ From figure 6-2 (retry)
 
 [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129)
 
- 
+
 
 To figure 6-3
 
- 
+
 
 *Figure 6-1: Overview of x86-64 hardware page faulting*
 
- 
+
 
 The x86-64 architecture defines a handler for the hardware page fault at
 
@@ -148,7 +148,7 @@ The x86-64 architecture defines a handler for the hardware page fault at
 
 6-1.
 
- 
+
 
 1475 **static \_\_always_inline void** 1476 **handle_page_fault**(**struct** pt_regs \*regs, **unsigned long** error_code, 1477 **unsigned long** address) 1478 {
 
@@ -164,11 +164,11 @@ The x86-64 architecture defines a handler for the hardware page fault at
 
 1493 *\* doable w/o creating an unholy mess or turning the code* 1494 *\* upside down.*
 
- 
 
 
 
- 
+
+
 
 1495 *\*/*
 
@@ -176,11 +176,11 @@ The x86-64 architecture defines a handler for the hardware page fault at
 
 1498 }
 
- 
+
 
 *Listing 6-1:* arch/x86/mm/fault.c: [*handle_page_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1476)
 
- 
+
 
 We start by determining whether the fault occurred in kernel space
 
@@ -188,7 +188,7 @@ via [fault_in_kernel_space()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 [do_kern_addr_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1147) or [do_user_addr_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1220) to invoke.
 
- 
+
 
 ***6.1.1 Kernel page faults***
 
@@ -200,7 +200,7 @@ page faults, which is handled by [fault_in_kernel_space()](https://git.kernel.or
 
 6-2.
 
- 
+
 
 1128 **bool fault_in_kernel_space**(**unsigned long** address) 1129 {
 
@@ -212,11 +212,11 @@ page faults, which is handled by [fault_in_kernel_space()](https://git.kernel.or
 
 1138 **return** address \>= **TASK_SIZE_MAX**; 1139 }
 
- 
+
 
 *Listing 6-2:* arch/x86/mm/fault.c: [*fault_in_kernel_space()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1128)
 
- 
+
 
 This first checks if the page fault is for the legacy vsyscall page via
 
@@ -230,17 +230,17 @@ Faults in kernel address space is handled by [do_kern_addr_fault()](https://git.
 
 irrelevant 32-bit and kprobe cases) as shown in Listing 6-3.
 
- 
+
 
 1141 */\**
 
 1142 *\* Called for all faults where 'address' is part of the kernel address*
 
- 
 
 
 
- 
+
+
 
 1143 *\* space. Might get called for faults that originate from \*code\* that* 1144 *\* ran in userspace or the kernel.* 1145 *\*/*
 
@@ -262,11 +262,11 @@ irrelevant 32-bit and kprobe cases) as shown in Listing 6-3.
 
 1207 **bad_area_nosemaphore**(regs, hw_error_code, address); 1208 }
 
- 
+
 
 *Listing 6-3:* arch/x86/mm/fault.c: [*do_kern_addr_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1147)
 
- 
+
 
 Firstly we determine whether the kernel fault was spurious – that is, due
 
@@ -276,7 +276,7 @@ invalid access to a write-protected or execution-protected region of memory
 
 may occur due to the TLB entry (see section 7.1).
 
- 
+
 
 **N O T E** The Transaction Lookaside Buffer (TLB) is a key hardware cache between virtual
 
@@ -284,7 +284,7 @@ and physical addresses used to avoid having to walk the page table for every mem
 
 access.
 
- 
+
 
 Therefore, if the kernel tries to write to read-only memory or execute in
 
@@ -294,7 +294,7 @@ ally does permit this despite the fault. We do this in [spurious_kernel_fault()]
 
 as shown in Listing 6-4.
 
- 
+
 
 985 */\**
 
@@ -306,11 +306,11 @@ as shown in Listing 6-4.
 
 994 *\* Spurious faults may only occur if the TLB contains an entry with*
 
- 
 
 
 
- 
+
+
 
 995 *\* fewer permission than the page table entry. Non-present (P = 0)* 996 *\* and reserved bit (R = 1) faults are never spurious.* 997 *\**
 
@@ -358,11 +358,11 @@ as shown in Listing 6-4.
 
 1040 pud = **pud_offset**(p4d, address); 1041 **if** (!**pud_present**(\*pud))
 
- 
 
 
 
- 
+
+
 
 1042 **return** 0; 1043
 
@@ -388,11 +388,11 @@ as shown in Listing 6-4.
 
 1070 }
 
- 
+
 
 *Listing 6-4:* arch/x86/mm/fault.c: [*spurious_kernel_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1007)
 
- 
+
 
 This simply walks the page tables, checking whether each page table level
 
@@ -412,7 +412,7 @@ Each of these checks is performed by [spurious_kernel_fault_check()](https://git
 
 shown in Listing 6-5.
 
- 
+
 
 974 **static int spurious_kernel_fault_check**(**unsigned long** error_code, **pte_t** \*pte) 975 {
 
@@ -422,11 +422,11 @@ shown in Listing 6-5.
 
 979 **if** ((error_code & **X86_PF_INSTR**) && !**pte_exec**(\*pte)) 980 **return** 0;
 
- 
 
 
 
- 
+
+
 
 981
 
@@ -434,11 +434,11 @@ shown in Listing 6-5.
 
 983 }
 
- 
+
 
 *Listing 6-5:* arch/x86/mm/fault.c: [*spurious_kernel_fault_check()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n974)
 
- 
+
 
 This simply checks whether the PTE (or PTE equivalent) page table en-
 
@@ -458,7 +458,7 @@ when no [struct mm_struct-\>mmap_lock](https://git.kernel.org/pub/scm/linux/kern
 
 Listing 6-6.
 
- 
+
 
 799 **static void**
 
@@ -476,11 +476,11 @@ Listing 6-6.
 
 849 }
 
- 
+
 
 *Listing 6-6:* arch/x86/mm/fault.c: *Kernel handling in [\_\_bad_area_nosemaphore()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n800)*
 
- 
+
 
 Note that we elide the user-mode handling of this function which we
 
@@ -488,7 +488,7 @@ discuss in section 6.11. This passes through to [kernelmode_fixup_or_oops()](htt
 
 shown in Listing 6-7.
 
- 
+
 
 711 **static noinline void**
 
@@ -502,11 +502,11 @@ shown in Listing 6-7.
 
 722 *\* the below recursive fault logic only apply to a faults from*
 
- 
 
 
 
- 
+
+
 
 723 *\* task context.* 724 *\*/*
 
@@ -572,11 +572,11 @@ shown in Listing 6-7.
 
 760 **page_fault_oops**(regs, error_code, address); 761 }
 
- 
+
 
 *Listing 6-7:* arch/x86/mm/fault.c: [*kernelmode_fixup_or_oops()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n712)
 
- 
+
 
 We first check to see if we are fixing up an exception from the kernel
 
@@ -584,11 +584,11 @@ uaccess interface via [fixup_exception()](https://git.kernel.org/pub/scm/linux/k
 
 briefly – this is a means by which the kernel can access userland mappings
 
- 
 
 
 
- 
+
+
 
 directly, i.e. by simply accessing a userland virtual address, but it can only be performed in certain designated places in the kernel in case of unhandled page faults.
 
@@ -606,17 +606,17 @@ that this was an invalid access and thus a kernel oops must be raised and
 
 invoking [page_fault_oops()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n632).
 
- 
+
 
 **N O T E** A kernel oops means that something has gone terribly wrong in the kernel. It will,
 
 under ordinary circumstances, simply cause the running userland process to be *SIGKILL* ’d with a message reported to the kernel log, however if this is a kernel thread or under other circumstances (such as the tunable *kernel.panic_on_oops* being set) then this results in the kernel panicking, i.e. the kernel being halted altogether.
 
- 
+
 
 Examining [page_fault_oops()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n632) as shown in Listing 6-8.
 
- 
+
 
 631 **static noinline void**
 
@@ -646,11 +646,11 @@ Examining [page_fault_oops()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 655 **if** (**is_vmalloc_addr**((**void** \*)address) && 656 **get_stack_guard_info**((**void** \*)address, &info)) { 657 */\**
 
- 
 
 
 
- 
+
+
 
 658 *\* We're likely to be running with very little stack space*
 
@@ -718,11 +718,11 @@ Examining [page_fault_oops()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 701 sig = **SIGKILL**;
 
- 
 
 
 
- 
+
+
 
 702 **if** (**\_\_die**("Oops", regs, error_code)) 703 sig = 0;
 
@@ -734,17 +734,17 @@ Examining [page_fault_oops()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 708 **oops_end**(flags, regs, sig); 709 }
 
- 
+
 
 *Listing 6-8:* arch/x86/mm/fault.c: [*page_fault_oops()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n632)
 
- 
+
 
 Note this function is explicitly invoked for invalid accesses to kernel map-
 
 pings. It performs a few specific checks if we are in kernel context, if we are in userland trying to access kernel memory then these are skipped:
 
- 
+
 
 • Was this was a stack overflow due to hitting a ‘guard page’? (i.e. a page
 
@@ -758,7 +758,7 @@ dling for buggy firmware.
 
 handle the fault if it arose due to the memory not being present.
 
- 
+
 
 After these checks are complete, we perform the oops itself, updat-
 
@@ -766,7 +766,7 @@ ing the kernel log and performing ordinary kernel oops handling via
 
 [oops_begin()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/dumpstack.c?h=v6.0#n324), [show_fault_oops()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n507), [\_\_die()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/dumpstack.c?h=v6.0#n422) and [oops_end()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/dumpstack.c?h=v6.0#n350) (this topic is out of scope for the book).
 
- 
+
 
 ***6.1.2 Userland page faults***
 
@@ -778,7 +778,7 @@ Let’s start by examining the initial checks performed by this function
 
 (eliding out of scope kprobe and SMAP handling) as shown in Listing 6-9.
 
- 
+
 
 1219 **static inline**
 
@@ -786,11 +786,11 @@ Let’s start by examining the initial checks performed by this function
 
 1224 **struct** vm_area_struct \*vma; 1225 **struct** task_struct \*tsk; 1226 **struct** mm_struct \*mm; 1227 **vm_fault_t** fault; 1228 **unsigned int** flags = **FAULT_FLAG_DEFAULT**; 1229
 
- 
 
 
 
- 
+
+
 
 1230 tsk = current;
 
@@ -848,11 +848,11 @@ Let’s start by examining the initial checks performed by this function
 
 1293 **if** (**user_mode**(regs)) { 1294 **local_irq_enable**(); 1295 flags \|= **FAULT_FLAG_USER**;
 
- 
 
 
 
- 
+
+
 
 1296 } **else** {
 
@@ -878,15 +878,15 @@ Let’s start by examining the initial checks performed by this function
 
 1324 **\#endif**
 
- 
+
 
 *Listing 6-9:* arch/x86/mm/fault.c: [*do_user_addr_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1220) *Initial checks*
 
- 
+
 
 The logic is as follows:
 
- 
+
 
 • Check whether the fault is arising from the kernel (indicated by the er-
 
@@ -908,11 +908,11 @@ or there is no [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 [bad_area_nosemaphore(). ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n852)We discuss the various userland address bad ad-dress scenarios below.
 
- 
 
 
 
- 
+
+
 
 • If the fault occurred in user mode, we set the [FAULT_FLAG_USER](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n870) flag to in-
 
@@ -926,13 +926,13 @@ fault or [FAULT_FLAG_INSTRUCTION](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 for this if appropriate. Discussion of this is out of scope for the book.
 
- 
+
 
 Next, we acquire the [struct mm_struct-\>mmap_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_struct.h?h=v6.0#n486) and invoke the generic
 
 fault handling logic as shown in Listing 6-10.
 
- 
+
 
 1326 */\**
 
@@ -962,11 +962,11 @@ fault handling logic as shown in Listing 6-10.
 
 1358 vma = **find_vma**(mm, address); 1359 **if** (**unlikely**(!vma)) { 1360 **bad_area**(regs, error_code, address); 1361 **return**;
 
- 
 
 
 
- 
+
+
 
 1362 }
 
@@ -1008,11 +1008,11 @@ fault handling logic as shown in Listing 6-10.
 
 1397 fault = **handle_mm_fault**(vma, address, flags, regs);
 
- 
+
 
 *Listing 6-10:* arch/x86/mm/fault.c: [*do_user_addr_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1220) *fault handling*
 
- 
+
 
 If we can’t immediately acquire the [struct mm_struct-\>mmap_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_struct.h?h=v6.0#n486), we enter
 
@@ -1022,11 +1022,11 @@ a very specific edge case – to avoid a deadlock occurring in kernel uaccess ha
 
 land fault handler is unable to handle the fault. See section 8.1.1 for more on uaccess.
 
- 
 
 
 
- 
+
+
 
 We now find ourselves in the core page fault handling logic with the
 
@@ -1072,7 +1072,7 @@ the access is OK, 1 otherwise (eliding out of scope protection keys and SGX
 
 checks) as shown in Listing 6-11.
 
- 
+
 
 1075 **static inline int**
 
@@ -1094,19 +1094,19 @@ checks) as shown in Listing 6-11.
 
 1126 }
 
- 
+
 
 *Listing 6-11:* arch/x86/mm/fault.c: [*access_error()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1076)
 
- 
 
 
 
- 
+
+
 
 We indicate an access error if:
 
- 
+
 
 • The fault was a write fault but the VMA does not permit writes (so this is
 
@@ -1122,7 +1122,7 @@ mitted to be read.
 
 [VM_READ ,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n266) [VM_WRITE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n267) nor [VM_EXEC](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n268)).
 
- 
+
 
 If at any point a bad access is detected, we handle this in [bad_area()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n873)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n873) We
 
@@ -1136,7 +1136,7 @@ fault actions as determined by the results of the page fault as shown in List-
 
 ing 6-12.
 
- 
+
 
 1399 **if** (**fault_signal_pending**(fault, regs)) { 1400 */\**
 
@@ -1164,11 +1164,11 @@ ing 6-12.
 
 1425 **mmap_read_unlock**(mm); 1426 **if** (**likely**(!(fault & **VM_FAULT_ERROR**))) 1427 **return**;
 
- 
 
 
 
- 
+
+
 
 1428
 
@@ -1198,7 +1198,7 @@ ing 6-12.
 
 1459 }
 
- 
+
 
 *Listing 6-12:* arch/x86/mm/fault.c: [*do_user_addr_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1220) *post-fault handling*
 
@@ -1208,7 +1208,7 @@ This logic behaves according to the [enum vm_fault_reason](https://git.kernel.or
 
 thus can be combined:
 
- 
+
 
 ***6.1.3 Success conditions***
 
@@ -1226,11 +1226,11 @@ lock can occur in [maybe_unlock_mmap_for_io()](https://git.kernel.org/pub/scm/li
 
 via [balance_dirty_pages_ratelimited()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1949)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1949) We discuss the dirty shared page
 
- 
 
 
 
- 
+
+
 
 faulting logic and FAULT_FLAG_ALLOW_RETRY logic below and writeback in the page cache chapter.
 
@@ -1238,7 +1238,7 @@ faulting logic and FAULT_FLAG_ALLOW_RETRY logic below and writeback in the page 
 
 ever the mmap_lock is still held and must be released. VM_FAULT_ERROR is a bitmask of the error conditions described below.
 
- 
+
 
 ***6.1.4 Informational***
 
@@ -1272,7 +1272,7 @@ handled the Copy-on-Write operation. Used only by the [Direct Access for](https:
 
 Discussion of DAX is out of scope for the book.
 
- 
+
 
 ***6.1.5 Error conditions***
 
@@ -1290,11 +1290,11 @@ allocate the memory and any direct reclaim performed has been insuf-ficient to c
 
 in a mapping (e.g. reading past the extant pages of a memory-mapped file). the process will be sent the SIGBUS signal.
 
- 
 
 
 
- 
+
+
 
 • [VM_FAULT_SIGSEGV](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n748) – Indicates that an access was made to either unmapped
 
@@ -1308,19 +1308,19 @@ being accessed has been marked as hardware ‘poisoned’ as part of the CONFIG_
 
 fallback to using ordinary base pages. We defer discussion of huge pages to the huge page chapter so won’t examine this case in detail here.
 
- 
+
 
 We examine the post-fault logic in Figure 6-2.
 
- 
+
 
 From figure 6-3
 
- 
+
 
 [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129) complete
 
- 
+
 
 Yes No
 
@@ -1328,7 +1328,7 @@ Yes No
 
 [mm-\>mmap_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) unlkd
 
- 
+
 
 No Yes
 
@@ -1350,7 +1350,7 @@ Yes To figure 6-1, set [FAULT_FLAG_TRIED](https://git.kernel.org/pub/scm/linux/k
 
 [kernelmode_fixup_or_oops()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n712) Kernel [fatal_signal_pending()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/signal.h?h=v6.0#n408)?
 
- 
+
 
 Yes
 
@@ -1360,7 +1360,7 @@ Yes
 
 Kernel mode? [VM_FAULT_OOM](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n742)?
 
- 
+
 
 No No
 
@@ -1376,15 +1376,15 @@ Any other
 
 [VM_FAULT_HWPOISON_LARGE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n747)
 
- 
+
 
 [do_sigbus()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n934) [bad_area_nosemaphore()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n852)
 
- 
+
 
 *Figure 6-2: Overview of post-fault handling in* [*do_user_addr_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree//arch/x86/mm/fault.c?h=v6.0#n1220)
 
- 
+
 
 Note that after the page fault handler returns and the process can still be
 
@@ -1394,11 +1394,11 @@ page fault handler will, on a successful page fault, have updated the page
 
 tables and thus the access will now succeed.
 
- 
 
 
 
- 
+
+
 
 We start by checking whether a fault-specific signal is pending for the
 
@@ -1408,7 +1408,7 @@ generic page fault handled has returned [VM_FAULT_RETRY](https://git.kernel.org/
 
 in Listing 6-13.
 
- 
+
 
 423 */\**
 
@@ -1420,11 +1420,11 @@ in Listing 6-13.
 
 432 **return unlikely**((fault_flags & **VM_FAULT_RETRY**) && 433 (**fatal_signal_pending**(**current**) \|\| 434 (**user_mode**(regs) && **signal_pending**(**current**)))); 435 }
 
- 
+
 
 *Listing 6-13:* include/linux/sched/signal.h: [*fault_signal_pending()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/signal.h?h=v6.0#n429)
 
- 
+
 
 If we are in kernel mode and a fatal signal (i.e. SIGKILL) is pending
 
@@ -1456,7 +1456,7 @@ with [VM_FAULT_ERROR](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/l
 
 Otherwise we examine the different possible error states:
 
- 
+
 
 • A fatal signal (i.e. SIGKILL is pending and we are in kernel mode – if we
 
@@ -1468,11 +1468,11 @@ case we invoke [kernelmode_fixup_or_oops()](https://git.kernel.org/pub/scm/linux
 
 with direct reclaim. If in kernel mode we have no choice but to invoke
 
- 
 
 
 
- 
+
+
 
 the [kernelmode_fixup_or_oops()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n712) handler, however in usermode we can in-
 
@@ -1494,11 +1494,11 @@ other than a corrupted return value would be for handler to return
 
 either case with an oops-causing [BUG()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/bug.h?h=v6.0#n66)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/bug.h?h=v6.0#n66)
 
- 
+
 
 **6.2 Page fault handling**
 
- 
+
 
 We now reach the core of page fault handling in the kernel – the generic
 
@@ -1520,7 +1520,7 @@ function (and threaded through the fault logic itself) to indicate both the
 
 type of page fault to be handled and properties of it:
 
- 
+
 
 • [FAULT_FLAG_WRITE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n864) – Indicates that the fault was a write protection fault, i.e.
 
@@ -1550,11 +1550,11 @@ invoked in turn by [lock_folio_maybe_drop_mmap()](https://git.kernel.org/pub/scm
 
 sistent with one another, either in [do_swap_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3718) (covered in the swap
 
- 
 
 
 
- 
+
+
 
 chapter), DAX logic (out of scope), or most likely, on file-backed page
 
@@ -1614,11 +1614,11 @@ be interrupted by non-fatal signals, this is only relevant to
 
 [userfaultfd](https://man7.org/linux/man-pages/man2/userfaultfd.2.html), which is out of scope for the book which checks for
 
- 
 
 
 
- 
+
+
 
 this in [userfaultfd_get_blocking_state()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/userfaultfd.c?h=v6.0#n350) which is referenced by
 
@@ -1644,7 +1644,7 @@ This is set or cleared in [handle_pte_fault()](https://git.kernel.org/pub/scm/li
 
 struct vm_fault-\>pmd field is empty (as determined by [pmd_none()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n788)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n788)
 
- 
+
 
 The default set of flags are set to [FAULT_FLAG_DEFAULT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n436) – this consists of the
 
@@ -1664,7 +1664,7 @@ and [fixup_user_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 Now, let’s examine [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129) as shown in Listing 6-14.
 
- 
+
 
 5123 */\**
 
@@ -1684,11 +1684,11 @@ Now, let’s examine [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/ke
 
 5139 */\* do counter updates before entering really critical section. \*/*
 
- 
 
 
 
- 
+
+
 
 5140 **check_sync_rss_stat**(current); 5141
 
@@ -1718,11 +1718,11 @@ Now, let’s examine [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/ke
 
 5174 }
 
- 
+
 
 *Listing 6-14:* mm/memory.c: [*handle_mm_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129)
 
- 
+
 
 This starts by setting the task to the [TASK_RUNNING](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n84) state, as the process is
 
@@ -1732,17 +1732,17 @@ There’s numerous statistical updates, out of scope for this section cgroup
 
 handling (see the cgroup chapter for a detailed examination), leaving us with three core steps:
 
- 
+
 
 • [arch_vma_access_permitted()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/mmu_context.h?h=v6.0#n207) – We perform architecture-specific checks
 
 to ensure the VMA is accessible parameterised by the fault being write, execute and/or remote.
 
- 
 
 
 
- 
+
+
 
 • [\_\_handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4967) – This is the core of the generic page fault handler,
 
@@ -1752,13 +1752,13 @@ which we will examine shortly.
 
 – this tracks major (the page was not present in RAM at all and likely had to be read from disk) and minor faults (the page was present in memory and at worst had to be allocated by the physical allocator) as well as tracking performance statistics.
 
- 
+
 
 Throughout the generic page fault handler, \_\_handle_mm_fault() threads
 
 state through a [struct vm_fault](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n481) object as shown in Listing 6-15.
 
- 
+
 
 481 **struct** vm_fault {
 
@@ -1804,11 +1804,11 @@ state through a [struct vm_fault](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 507 *\* VM_FAULT_ERROR).* 508 *\*/* 509 */\* These three entries are valid only while holding ptl lock \*/* 510 **pte_t** \*pte; */\* Pointer to pte entry matching* 511 *\* the 'address'. NULL if the page*
 
- 
 
 
 
- 
+
+
 
 512 *\* table hasn't been allocated.* 513 *\*/* 514 **spinlock_t** \*ptl; */\* Page table lock.* 515 *\* Protects pte page table if 'pte'*
 
@@ -1820,11 +1820,11 @@ state through a [struct vm_fault](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 523 *\* atomic context.* 524 *\*/* 525 };
 
- 
+
 
 *Listing 6-15:* include/linux/mm.h: [*struct vm_fault*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n481)
 
- 
+
 
 This consists of a set of constant fields which define the page
 
@@ -1862,21 +1862,21 @@ A
 
 B
 
- 
 
 
 
- 
+
+
 
 • This diagram elides huge page, device mapping and other non-core
 
 functionality, assumes x86-64 architecture and simplifies aspects of the logic for clarity.
 
- 
+
 
 [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129)
 
- 
+
 
 [\_\_handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4967)
 
@@ -1884,13 +1884,13 @@ Allocate/set P4D, PUD, PMD page tables
 
 [handle_pte_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4860)
 
- 
+
 
 [pte_none()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n723)?
 
 Update mapping No Yes Allocate mapping
 
- 
+
 
 [pte_present()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n734)? [vma_is_anonymous()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n629)[?](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n629)
 
@@ -1904,7 +1904,7 @@ Is NUMA page if
 
 [vma_is_accessible()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n659)
 
- 
+
 
 Yes No
 
@@ -1936,7 +1936,7 @@ Yes
 
 or FAULT_FLAG_UNSHARE [do_read_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4509) [do_shared_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4574) [do_cow_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4535)
 
- 
+
 
 Unlock PTE
 
@@ -1966,27 +1966,27 @@ FAULT_FLAG_WRITE?
 
 [set_pte_at()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n1004)
 
- 
+
 
 *Figure 6-3: Overview of simplified non-huge generic page fault logic*
 
- 
+
 
 Examining the core function, [\_\_handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4967), eliding huge page han-
 
 dling which we address in the huge page chapter as shown in Listing 6-16.
 
- 
+
 
 4961 */\**
 
 4962 *\* By the time we get here, we already hold the mm semaphore*
 
- 
 
 
 
- 
+
+
 
 4963 *\**
 
@@ -2026,11 +2026,11 @@ dling which we address in the huge page chapter as shown in Listing 6-16.
 
 5059 **return handle_pte_fault**(&vmf); 5060 }
 
- 
+
 
 *Listing 6-16:* mm/memory.c: [*\_\_handle_mm_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4967)
 
- 
+
 
 This sets up the [struct vm_fault](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n481) object as previously described, then walks
 
@@ -2038,11 +2038,11 @@ the page tables to the address, allocating new page tables if necessary via
 
 [p4d_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2195), [pud_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2202) and [pmd_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2209)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2209) We examine page table structure and allocation in detail in the virtual memory chapter, however to be explicit about how we are allocating page tables here (if allocation is required) it is done so as follows (for x86-64):
 
- 
 
 
 
- 
+
+
 
 **P4D** – Allocated via [p4d_alloc_one()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgalloc.h?h=v6.0#n150) with the [GFP_KERNEL_ACCOUNT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n334) GFP flags set
 
@@ -2058,7 +2058,7 @@ set obtaining a physical page via [get_zeroed_page()](https://git.kernel.org/pub
 
 obtaining a physical page via [alloc_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n2252). Sets the relevant PUD entry to point at it.
 
- 
+
 
 Note that in each potential page table allocation we explicitly check to
 
@@ -2070,7 +2070,7 @@ The remainder of the fault handling logic is deferred to
 
 [handle_pte_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4860) (eliding huge page logic) as shown in Listing 6-17.
 
- 
+
 
 4860 **static vm_fault_t handle_pte_fault**(**struct** vm_fault \*vmf) 4861 {
 
@@ -2100,11 +2100,11 @@ The remainder of the fault handling logic is deferred to
 
 4913 **if** (!vmf-\>pte) {
 
- 
 
 
 
- 
+
+
 
 4914 **if** (**vma_is_anonymous**(vmf-\>vma)) 4915 **return do_anonymous_page**(vmf); 4916 **else**
 
@@ -2140,15 +2140,15 @@ The remainder of the fault handling logic is deferred to
 
 4959 }
 
- 
+
 
 *Listing 6-17:* mm/memory.c: [*handle_pte_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4860)
 
- 
 
 
 
- 
+
+
 
 We start by checking whether the PMD is newly allocated (and thus
 
@@ -2178,17 +2178,17 @@ mapping) and the fault is about allocating memory or looking up a page
 
 cache entry, as determined by [vma_is_anonymous()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n629) as shown in Listing 6-18.
 
- 
+
 
 629 **static inline bool vma_is_anonymous**(**struct** vm_area_struct \*vma) 630 {
 
 631 **return** !vma-\>vm_ops; 632 }
 
- 
+
 
 *Listing 6-18:* include/linux/mm.h: [*vma_is_anonymous()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n629)
 
- 
+
 
 This is a key definition – if a [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA) lacks customised
 
@@ -2222,7 +2222,7 @@ write-protect faults, including the vitally important case of handling a Copy
 
 on Write (CoW) page faulting.
 
- 
+
 
 ***6.2.1 Edge cases***
 
@@ -2240,11 +2240,11 @@ Next, we have logic dealing with the case where either a read fault or a
 
 spurious write fault has occurred. In this case, if a write fault has arisen,
 
- 
 
 
 
- 
+
+
 
 the entry we are building based on the original PTE is marked dirty via
 
@@ -2260,7 +2260,7 @@ dated TLB entry\* – on x86-64 this requires no additional handling and
 
 [flush_tlb_fix_spurious_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n1082) is therefore a no-op.
 
- 
+
 
 ***6.2.2 Page flags***
 
@@ -2274,11 +2274,11 @@ Importantly – All mappings which are not VM_SHARED are marked read-only
 
 by default and are thus copy-on-write mappings. This applies both to anony-mous mappings and MAP_PRIVATE file-backed mappings.
 
- 
+
 
 **6.3 Anonymous page fault**
 
- 
+
 
 At this point, the page fault has occurred in a memory range described by an anonymous VMA, and that VMA has no Copy on Write mapping or any other established and requires a page to be allocated.
 
@@ -2286,7 +2286,7 @@ This is handled via [do_anonymous_page()](https://git.kernel.org/pub/scm/linux/k
 
 userfaultfd and cgroup logic) as shown in Listing 6-19.
 
- 
+
 
 4026 */\**
 
@@ -2300,13 +2300,13 @@ userfaultfd and cgroup logic) as shown in Listing 6-19.
 
 4038 */\* File mapping without -\>vm_ops ? \*/* 4039 **if** (vma-\>vm_flags & **VM_SHARED**)
 
- 
+
 
 \*. The TLB is the Transaction Lookaside Buffer – a cache that maps virtual addresses to phys-ical ones with all relevant page table flags. This being outdated can cause faults to occur when the mapping in the page table is in fact valid.
 
 
 
- 
+
 
 4040 **return VM_FAULT_SIGBUS**; 4041
 
@@ -2348,11 +2348,11 @@ userfaultfd and cgroup logic) as shown in Listing 6-19.
 
 4097 **\_\_SetPageUptodate**(page); 4098
 
- 
 
 
 
- 
+
+
 
 4099 entry = **mk_pte**(page, vma-\>vm_page_prot); 4100 entry = **pte_sw_mkyoung**(entry); 4101 **if** (vma-\>vm_flags & **VM_WRITE**) 4102 entry = **pte_mkwrite**(**pte_mkdirty**(entry)); 4103
 
@@ -2388,11 +2388,11 @@ userfaultfd and cgroup logic) as shown in Listing 6-19.
 
 4139 **return VM_FAULT_OOM**; 4140 }
 
- 
+
 
 *Listing 6-19:* mm/memory.c: [*do_anonymous_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4031)
 
- 
+
 
 We start by checking whether the [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA) has the
 
@@ -2402,11 +2402,11 @@ This might seem counter-intuitive, as memory can indeed be mapped
 
 as both ‘anonymous’ and shared via MAP_SHARED and MAP_ANONYMOUS, however doing so does not result in an anonymous mapping, rather it memory-maps
 
- 
 
 
 
- 
+
+
 
 an unlinked tmpfs clone of /dev/zero which is assigned its own inode. (see
 
@@ -2418,7 +2418,7 @@ Next we go right ahead and allocate a new PTE (if necessary) via
 
 if so. If this fails, we report out of memory via [VM_FAULT_OOM](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n742).
 
- 
+
 
 ***6.3.1 Zero page***
 
@@ -2446,7 +2446,7 @@ The PFN of the zero page is determined via [my_zero_pfn()](https://git.kernel.or
 
 references an external variable [zero_pfn](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n159) as shown in Listing 6-20.
 
- 
+
 
 1221 **static inline unsigned long my_zero_pfn**(**unsigned long** addr) 1222 {
 
@@ -2454,11 +2454,11 @@ references an external variable [zero_pfn](https://git.kernel.org/pub/scm/linux/
 
 1225 }
 
- 
+
 
 *Listing 6-20:* include/linux/pgtable.h: [*my_zero_pfn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pgtable.h?h=v6.0#n1221)
 
- 
+
 
 this PFN is set up in [init_zero_pfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n167) which obtains the actual zero page
 
@@ -2466,7 +2466,7 @@ via [ZERO_PAGE()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux
 
 Listing 6-21.
 
- 
+
 
 164 */\**
 
@@ -2480,11 +2480,11 @@ Listing 6-21.
 
 172 **early_initcall**(**init_zero_pfn**);
 
- 
+
 
 *Listing 6-21:* mm/memory.c: [*init_zero_pfn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n167)
 
- 
+
 
 \*. [mmap_region()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1681) invokes the functions [shmem_zero_setup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/shmem.c?h=v6.0#n4226)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/shmem.c?h=v6.0#n4226) [shmem_kernel_file_setup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/shmem.c?h=v6.0#n4191) and
 
@@ -2492,11 +2492,11 @@ Listing 6-21.
 
 to the anonymous LRU list
 
- 
 
 
 
- 
+
+
 
 Using [early_initcall()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/init.h?h=v6.0#n269) to declare that it must be run during early initiali-
 
@@ -2508,7 +2508,7 @@ memory reserved in the static .bss (therefore zeroed) section of the kernel
 
 image, [empty_zero_page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/head_64.S?h=v6.0#n670) as shown in Listing 6-22.
 
- 
+
 
 50 */\**
 
@@ -2518,11 +2518,11 @@ image, [empty_zero_page](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 56 **\#define ZERO_PAGE**(vaddr) ((**void**)(vaddr),**virt_to_page**(**empty_zero_page**))
 
- 
+
 
 *Listing 6-22:* arch/x86/include/asm/pgtable.h: [*ZERO_PAGE()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n56)
 
- 
+
 
 This uses [virt_to_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page.h?h=v6.0#n69) to convert this kernel image address to a
 
@@ -2552,7 +2552,7 @@ Finally, we check to see whether the [struct mm_struct](https://git.kernel.org/p
 
 [check_stable_address_space()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/oom.h?h=v6.0#n102) – an ‘unstable’ address space being one where the Out of Memory (OOM) killer has started to reap the address space. If so, a mapping can be pulled out from underneath us, so simply unlock and exit, otherwise we proceed to setting the PTE entry.
 
- 
+
 
 ***6.3.2 anon_vma preparation***
 
@@ -2574,11 +2574,11 @@ Note that, while we are setting up an anon_vma object here, we have yet to
 
 point a folio at it, this is performed later, as described below.
 
- 
 
 
 
- 
+
+
 
 ***6.3.3 Physical page allocation***
 
@@ -2588,17 +2588,17 @@ macro [alloc_zeroed_user_highpage_movable()](https://git.kernel.org/pub/scm/linu
 
 version) as shown in Listing 6-23.
 
- 
+
 
 37 **\#define alloc_zeroed_user_highpage_movable**(vma, vaddr) \\
 
 38 **alloc_page_vma**(**GFP_HIGHUSER_MOVABLE** \| **\_\_GFP_ZERO**, vma, vaddr)
 
- 
+
 
 *Listing 6-23:* arch/x86/include/asm/page.h: [*alloc_zeroed_user_highpage_movable()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page.h?h=v6.0#n37)
 
- 
+
 
 This invokes [alloc_page_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n287) with [GFP_HIGHUSER_MOVABLE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n342) and [\_\_GFP_ZERO](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n249) set,
 
@@ -2606,7 +2606,7 @@ the former being a set of other physical allocation flags specifically intended
 
 for userland memory allocation which, for a 64-bit system amount to:
 
- 
+
 
 • [\_\_GFP_ZERO](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n249) – Zero the memory after allocating it. This is critical for user
 
@@ -2650,7 +2650,7 @@ tion.
 
 ory’s cpuset.mems setting should honoured. See the cgroup chapter for more details on this.
 
- 
+
 
 See section 2.6 for an in-depth explanation of GFP flags and chapter 2 in
 
@@ -2658,11 +2658,11 @@ general for a broad examination of physical memory allocation as a whole.
 
 Examining [alloc_page_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n287) itself as shown in Listing 6-24.
 
- 
 
 
 
- 
+
+
 
 287 **static inline struct** page \***alloc_page_vma**(**gfp_t** gfp, 288 **struct** vm_area_struct \*vma, **unsigned long** addr) 289 {
 
@@ -2670,11 +2670,11 @@ Examining [alloc_page_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 292 **return** &folio-\>page; 293 }
 
- 
+
 
 *Listing 6-24:* include/linux/gfp.h: [*alloc_page_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n287)
 
- 
+
 
 This invokes [vma_alloc_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n2151) which takes into account the NUMA mem-
 
@@ -2688,7 +2688,7 @@ After the memory is allocated we set the folio flag [PG_uptodate](https://git.ke
 
 \_\_SetPageUptodate(), a flag indicating whether memory is sychronised with disk. For anonymous memory, this is trivially true.
 
- 
+
 
 ***6.3.4 Setting up the PTE entry***
 
@@ -2732,11 +2732,11 @@ We then increment the anonymous page statistics via
 
 [inc_mm_counter_fast() .](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n203)
 
- 
 
 
 
- 
+
+
 
 ***6.3.5 Adding to the reverse mapping and LRU and setting the PTE***
 
@@ -2768,17 +2768,17 @@ faulted in, with all page tables correctly set up and the memory added to
 
 both the reverse mapping and LRU mechanisms as appropriate.
 
- 
+
 
 **6.4 Non-anonymous page fault**
 
- 
+
 
 Non-anonymous page faults are handled by [do_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4617)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4617) which determines
 
 which handler to invoke as shown in Listing 6-25.
 
- 
+
 
 4609 */\**
 
@@ -2806,11 +2806,11 @@ which handler to invoke as shown in Listing 6-25.
 
 4634 vmf-\>pte = **pte_offset_map_lock**(vmf-\>vma-\>vm_mm,
 
- 
 
 
 
- 
+
+
 
 4635 vmf-\>pmd, 4636 vmf-\>address, 4637 &vmf-\>ptl); 4638 */\** 4639 *\* Make sure this is not a temporary clearing of pte*
 
@@ -2834,11 +2834,11 @@ which handler to invoke as shown in Listing 6-25.
 
 4665 }
 
- 
+
 
 *Listing 6-25:* mm/memory.c: [*do_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4617)
 
- 
+
 
 This starts with specific handling for an edge case – non-anonymous
 
@@ -2860,11 +2860,11 @@ this case we unconditionally return VM_FAULT_SIGBUS, otherwise we perform
 
 the same [pte_none()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n723) check we performed in [handle_pte_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4860), only this time
 
- 
 
 
 
- 
+
+
 
 having acquired the PTE lock – either returning VM_FAULT_SIGBUS if the entry
 
@@ -2880,7 +2880,7 @@ then being being written to as described in the commit
 
 What remains are the various types of faults which are delegated:
 
- 
+
 
 **Read fault** – [do_read_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4509) is invoked when a read fault arises (i.e.
 
@@ -2896,7 +2896,7 @@ a file-backed MAP_PRIVATE mapping experiences a page write fault (see
 
 curred for a shared mapping (i.e. within a VMA which has the [VM_SHARED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n269) flag set).
 
- 
+
 
 After invoking the handlers to service the fault, the
 
@@ -2918,7 +2918,7 @@ and the PTE installed (and added to the reverse mapping and LRU lists) via
 
 [do_set_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4290).
 
- 
+
 
 ***6.4.1 Folio locks***
 
@@ -2952,11 +2952,11 @@ It’s important to note that these functions are not simply setting or clear-
 
 ing the folio [PG_locked](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n101) flag but sleep and wait on the flag to be cleared.
 
- 
 
 
 
- 
+
+
 
 There is a lot of intricate machinery around these locks and their interac-
 
@@ -2966,7 +2966,7 @@ We will examine the aforementioned \_\_do_fault() and finish_fault()
 
 shared logic in section 6.8, meanwhile let’s examine each of these handlers individually:
 
- 
+
 
 **6.5 Non-anonymous read page fault**
 
@@ -2974,7 +2974,7 @@ Non-anonymous read faults are handled by [do_read_fault()](https://git.kernel.or
 
 ing 6-26.
 
- 
+
 
 4509 **static vm_fault_t do_read_fault**(**struct** vm_fault \*vmf) 4510 {
 
@@ -3006,7 +3006,7 @@ ing 6-26.
 
 4533 }
 
- 
+
 
 *Listing 6-26:* mm/memory.c: [*do_read_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4509)
 
@@ -3018,11 +3018,11 @@ The key difference however is in the fault-around logic – when reading in
 
 from a file, it is useful to try to map easily obtained pages if we can on the usually reasonable assumption that subsequent pages are likely to be read next (i.e. only performing minor faults).
 
- 
 
 
 
- 
+
+
 
 A typical example of this would be where a number of folios of a file ex-
 
@@ -3078,7 +3078,7 @@ E.g. if the faulting address was 0xe000, then addresses in the range 0 to
 
 Examining [should_fault_around()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4497) as shown in Listing 6-27.
 
- 
+
 
 4496 */\* Return true if we should do read fault-around, false otherwise \*/* 4497 **static inline bool should_fault_around**(**struct** vm_fault \*vmf) 4498 {
 
@@ -3088,11 +3088,11 @@ Examining [should_fault_around()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 4506 **return fault_around_bytes** \>\> **PAGE_SHIFT** \> 1; 4507 }
 
- 
+
 
 *Listing 6-27:* mm/memory.c: [*should_fault_around()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4497)
 
- 
+
 
 Other than a userfaultfd-specific check (out of scope for the book),
 
@@ -3104,11 +3104,11 @@ The actual fault-around is performed in [do_fault_around()](https://git.kernel.o
 
 anything other than 0 then this indicates that either an error has occurred or
 
- 
 
 
 
- 
+
+
 
 the read faulting address has already been faulted in (which will be reported
 
@@ -3116,7 +3116,7 @@ as [VM_FAULT_NOPAGE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 Examining this function as shown in Listing 6-28.
 
- 
+
 
 4443 */\**
 
@@ -3168,11 +3168,11 @@ Examining this function as shown in Listing 6-28.
 
 1,
 
- 
 
 
 
- 
+
+
 
 4485 start_pgoff + nr_pages - 1); 4486
 
@@ -3182,7 +3182,7 @@ Examining this function as shown in Listing 6-28.
 
 4493 **return** vmf-\>vma-\>vm_ops-\>**map_pages**(vmf, start_pgoff, end_pgoff); 4494 }
 
- 
+
 
 *Listing 6-28:* mm/memory.c: [*do_fault_around()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4463)
 
@@ -3210,7 +3210,7 @@ The remaining code calculates what start_pgoff and end_pgoff should be.
 
 This is quite tricky so we’ll go over it carefully:
 
- 
+
 
 • We determine the number of pages specified by fault_around_bytes and
 
@@ -3228,7 +3228,7 @@ cross a page table boundary †. Why? Virtual addresses are, by the structure of
 
 Since we explicitly restrict fault_around_bytes to being at last equal to the size of a base page, less than 2 MiB and a power-of-2 which we align the start and end range of the faulted in addresses to, it’s simply not pos-
 
- 
+
 
 \*. This uses a very common bit-wise trick – if you subtract 1 from a power of 2 you obtain a 0b01000 mask for its lower bits (e.g. yields 0b00111 ) and then if you complement that you mask
 
@@ -3242,11 +3242,11 @@ or one PMD or another and so on (if the page table entries mapping an address si
 
 entry of more than one page tables, then it’s possible for many to be crossed at once).
 
- 
 
 
 
- 
+
+
 
 sible to step outside of the bounds of the page table (note that we also clamp this range to that of the containing VMA).
 
@@ -3276,23 +3276,23 @@ of [PTRS_PER_PTE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux
 
 the map_pages handler.
 
- 
+
 
 We discuss the specifies of the default map_pages handler in the page
 
 cache chapter in section 9.8.
 
- 
 
 
 
- 
+
+
 
 **6.6 Non-anonymous MAP_PRIVATE Copy on Write page**
 
 **fault**
 
- 
+
 
 When a mapping is obtained via [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html)’d for a file but with MAP_PRIVATE spec-
 
@@ -3330,7 +3330,7 @@ This edge case is handled via [do_cow_fault()](https://git.kernel.org/pub/scm/li
 
 handling) as shown in Listing 6-29.
 
- 
+
 
 4535 **static vm_fault_t do_cow_fault**(**struct** vm_fault \*vmf) 4536 {
 
@@ -3358,11 +3358,11 @@ handling) as shown in Listing 6-29.
 
 4563 ret \|= **finish_fault**(vmf); 4564 **unlock_page**(vmf-\>page); 4565 **put_page**(vmf-\>page);
 
- 
 
 
 
- 
+
+
 
 4566 **if** (**unlikely**(ret & (**VM_FAULT_ERROR** \| **VM_FAULT_NOPAGE** \| **VM_FAULT_RETRY**)
 
@@ -3376,11 +3376,11 @@ handling) as shown in Listing 6-29.
 
 4572 }
 
- 
+
 
 *Listing 6-29:* mm/memory.c: [*do_cow_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4535)
 
- 
+
 
 This somewhat mirrors [do_anonymous_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4031) (see listing 6-
 
@@ -3430,27 +3430,27 @@ The page at this stage will be locked (having been so by \_\_do_fault()), so
 
 we unlock it, then remove our reference to it via [put_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1167). Finally, we check against error conditions or ones which indicate that cow_page was not used (in which case dropping a reference from it) before returning.
 
- 
+
 
 **6.7 Non-anonymous shared write fault**
 
- 
+
 
 When a non-anonymous page faults which is mapped shared (i.e. [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html)’d us-
 
 ing MAP_SHARED), translating into the VMA possessing a [VM_SHARED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n269) flag, having
 
- 
 
 
 
- 
+
+
 
 not been read faulted before, it undergoes a shared write fault, handled by
 
 [do_shared_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4574) as shown in Listing 6-30.
 
- 
+
 
 4574 **static vm_fault_t do_shared_fault**(**struct** vm_fault \*vmf) 4575 {
 
@@ -3482,11 +3482,11 @@ not been read faulted before, it undergoes a shared write fault, handled by
 
 4607 }
 
- 
+
 
 *Listing 6-30:* mm/memory.c: [*do_shared_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4574)
 
- 
+
 
 As with the other non-anonymous fault handlers, this performs
 
@@ -3504,17 +3504,17 @@ folio becomes writable and secondly, dirty page state is updated via
 
 [fault_dirty_shared_page().](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n2993)
 
- 
 
 
 
- 
+
+
 
 Examining [do_page_mkwrite()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n2959) (eliding out of scope swap logic) as shown in
 
 Listing 6-31.
 
- 
+
 
 2953 */\**
 
@@ -3544,11 +3544,11 @@ Listing 6-31.
 
 2986 }
 
- 
+
 
 *Listing 6-31:* mm/memory.c: [*do_page_mkwrite()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n2959)
 
- 
+
 
 This allows an underlying filesystem to be able to deny write access to
 
@@ -3570,11 +3570,11 @@ wise been handled. We relock the folio if necessary and, should the address spac
 
 validation of the folio in respect of its associated [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424)), the
 
- 
 
 
 
- 
+
+
 
 function returns 0 which indicates to [do_shared_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4574) that the fault is com-
 
@@ -3596,11 +3596,11 @@ plete. We defer discussion of the details of this function to the page cache
 
 chapter.
 
- 
+
 
 **6.8 Shared non-anonymous fault logic**
 
- 
+
 
 The non-anonymous fault handlers all share logic – [\_\_do_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4147) which
 
@@ -3614,7 +3614,7 @@ Let’s examine \_\_do_fault() to begin with, eliding the out of scope page
 
 poisoning logic as shown in Listing 6-32.
 
- 
+
 
 4142 */\**
 
@@ -3640,11 +3640,11 @@ poisoning logic as shown in Listing 6-32.
 
 4167 **if** (**pmd_none**(\*vmf-\>pmd) && !vmf-\>prealloc_pte) { 4168 vmf-\>prealloc_pte = **pte_alloc_one**(vma-\>vm_mm); 4169 **if** (!vmf-\>prealloc_pte)
 
- 
 
 
 
- 
+
+
 
 4170 **return VM_FAULT_OOM**; 4171 }
 
@@ -3666,11 +3666,11 @@ poisoning logic as shown in Listing 6-32.
 
 4201 }
 
- 
+
 
 *Listing 6-32:* mm/memory.c: [*\_\_do_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4147)
 
- 
+
 
 This logic begins with some careful handling of the pre-allocation of
 
@@ -3698,7 +3698,7 @@ ping and perform final setup while the folio is locked. This is handled by
 
 shown in Listing 6-33.
 
- 
+
 
 4330 */\*\**
 
@@ -3714,11 +3714,11 @@ shown in Listing 6-33.
 
 4337 *\* given page, adds reverse page mapping, handles memcg charges and LRU*
 
- 
 
 
 
- 
+
+
 
 4338 *\* addition.*
 
@@ -3772,11 +3772,11 @@ shown in Listing 6-33.
 
 4395 **update_mmu_cache**(vma, vmf-\>address, vmf-\>pte);
 
- 
 
 
 
- 
+
+
 
 4396
 
@@ -3792,11 +3792,11 @@ shown in Listing 6-33.
 
 4405 }
 
- 
+
 
 *Listing 6-33:* mm/memory.c: [*finish_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4345)
 
- 
+
 
 We start by determining which field of the [struct vm_fault](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n481) object actually
 
@@ -3818,7 +3818,7 @@ via [vmf_pte_changed()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds
 
 this function as shown in Listing 6-34.
 
- 
+
 
 4322 **static bool vmf_pte_changed**(**struct** vm_fault \*vmf) 4323 {
 
@@ -3826,11 +3826,11 @@ this function as shown in Listing 6-34.
 
 4327 **return** !**pte_none**(\*vmf-\>pte); 4328 }
 
- 
+
 
 *Listing 6-34:* mm/memory.c: [*vmf_pte_changed()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4322)
 
- 
+
 
 If an original PTE entry was stored (i.e. a PTE table was assigned to the
 
@@ -3848,11 +3848,11 @@ the newly faulted-in page and perform various housekeeping tasks via
 
 [do_set_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4290) as shown in Listing 6-35.
 
- 
 
 
 
- 
+
+
 
 4290 **void do_set_pte**(**struct** vm_fault \*vmf, **struct** page \*page, **unsigned long** addr) 4291 {
 
@@ -3874,11 +3874,11 @@ the newly faulted-in page and perform various housekeeping tasks via
 
 4319 **set_pte_at**(vma-\>vm_mm, addr, vmf-\>pte, entry); 4320 }
 
- 
+
 
 *Listing 6-35:* mm/memory.c: [*do_set_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4290)
 
- 
+
 
 For architectures that require it, the instruction cache is manually
 
@@ -3906,11 +3906,11 @@ shared one – in both cases the relevant statistics are updated and in the for-
 
 mer case the newly faulted page is added to the anonymous reverse mapping
 
- 
 
 
 
- 
+
+
 
 via [page_add_new_anon_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1262) (see listing 7-20 and section 7.0.12 for a detailed examination of this).
 
@@ -3920,11 +3920,11 @@ In the latter case the folio is added to the file reverse mapping via
 
 ## Chapter 7).
 
- 
+
 
 **6.9 Write-protected page fault**
 
- 
+
 
 When a mapping exists on a write fault but the existing mapping is read-only
 
@@ -3936,11 +3936,11 @@ to perform a Copy on Write operation. This case is handled by [do_wp_page()](htt
 
 as shown in Figure 6-4.
 
- 
+
 
 [do_wp_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3360) (PTE lock held)
 
- 
+
 
 Set vmf-\>pageto copyable page via Return 0
 
@@ -4008,15 +4008,15 @@ No
 
 [unlock_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n18) [page_move_anon_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1102)
 
- 
+
 
 *Figure 6-4: Simplified overview of write-protect fault handler* [*do_wp_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3360)
 
- 
 
 
 
- 
+
+
 
 Note that the case of an attempted write access to a VMA area
 
@@ -4038,7 +4038,7 @@ tion locked. Examining this, eliding out of scope userfaultfd and KSM logic
 
 as shown in Listing 6-36.
 
- 
+
 
 3338 */\**
 
@@ -4066,11 +4066,11 @@ as shown in Listing 6-36.
 
 3384 vmf-\>page = **vm_normal_page**(vma, vmf-\>address, vmf-\>orig_pte); 3385 **if** (!vmf-\>page) { 3386 **if** (**unlikely**(unshare)) { 3387 */\* No anonymous page -\> nothing to do. \*/* 3388 **pte_unmap_unlock**(vmf-\>pte, vmf-\>ptl); 3389 **return** 0;
 
- 
 
 
 
- 
+
+
 
 3390 }
 
@@ -4132,11 +4132,11 @@ as shown in Listing 6-36.
 
 3434 *\*/*
 
- 
 
 
 
- 
+
+
 
 3435 **lru_add_drain**(); 3436 **if** (**page_count**(page) \> 1 + **PageSwapCache**(page)) 3437 **goto copy**; 3438 **if** (!**trylock_page**(page)) 3439 **goto copy**; 3440 **if** (**PageSwapCache**(page)) 3441 **try_to_free_swap**(page); 3442 **if** (**PageKsm**(page) \|\| **page_count**(page) != 1) { 3443 **unlock_page**(page); 3444 **goto copy**; 3445 }
 
@@ -4166,21 +4166,21 @@ as shown in Listing 6-36.
 
 3479 **return wp_page_copy**(vmf); 3480 }
 
- 
+
 
 *Listing 6-36:* mm/memory.c: [*do_wp_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3360)
 
- 
+
 
 This starts by asserting that, if the [FAULT_FLAG_UNSHARE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n874) flag has been spec-
 
 ified, that the [FAULT_FLAG_WRITE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n864) cannot be – i.e. they are mutually exclusive.
 
- 
 
 
 
- 
+
+
 
 Equally, if FAULT_FLAG_UNSHARE has not been specified, then FAULT_FLAG_WRITE must be.
 
@@ -4210,7 +4210,7 @@ Next we have separate handling for anonymous and non-anonymous
 
 mappings – dealing with non-anonymous first, as this is far simpler.
 
- 
+
 
 ***6.9.1 Non-anonymous folios***
 
@@ -4232,7 +4232,7 @@ a memory region’s protection on [mprotect()](https://man7.org/linux/man-pages/
 
 as determined by [vma_wants_writenotify()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1630)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1630)
 
- 
+
 
 ***6.9.2 Anonymous folios***
 
@@ -4244,7 +4244,7 @@ Examining this (note we elide out of scope [Kernel Samepage Merging](https://ker
 
 [(KSM)](https://kernel.org/doc/html/v6.0/mm/ksm.html) logic):
 
- 
+
 
 **Anonymous exclusive** folio – The [PG_anon_exclusive](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n152) folio flag is set, meaning
 
@@ -4252,11 +4252,11 @@ that there is one and only one reference to the folio which can simply be
 
 reused via [wp_page_reuse()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3046)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3046)
 
- 
 
 
 
- 
+
+
 
 **Excessive folio references** – Since the folio is not yet locked, we try to avoid
 
@@ -4310,11 +4310,11 @@ Afterwards, the folio is unlocked via [unlock_page()](https://git.kernel.org/pub
 
 Finally, for all other cases we reuse the folio via [wp_page_reuse()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3046)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3046)
 
- 
 
 
 
- 
+
+
 
 ***6.9.3 Folio/PFN sharing***
 
@@ -4334,7 +4334,7 @@ the mkwrite handler, only [wp_page_shared()](https://git.kernel.org/pub/scm/linu
 
 derlying folio. Examining the PFN case first as shown in Listing 6-37.
 
- 
+
 
 3282 */\**
 
@@ -4352,11 +4352,11 @@ derlying folio. Examining the PFN case first as shown in Listing 6-37.
 
 3300 **wp_page_reuse**(vmf); 3301 **return VM_FAULT_WRITE**; 3302 }
 
- 
+
 
 *Listing 6-37:* mm/memory.c: [*wp_pfn_shared()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3286)
 
- 
+
 
 If there is no pfn_mkwrite handler then this simply forwards the fault han-
 
@@ -4370,11 +4370,11 @@ ror, otherwise we finalise the operation in [finish_mkwrite_fault()](https://git
 
 Listing 6-38.
 
- 
 
 
 
- 
+
+
 
 3248 */\*\**
 
@@ -4414,11 +4414,11 @@ Listing 6-38.
 
 3280 }
 
- 
+
 
 *Listing 6-38:* mm/memory.c: [*finish_mkwrite_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3264)
 
- 
+
 
 For more details on the [VM_MIXEDMAP](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n306) and [VM_PFNMAP](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n279) mappings which neces-
 
@@ -4432,17 +4432,17 @@ ping which has a read-only mapping (most likely because the VMA fulfils
 
 shown in Listing 6-39.
 
- 
+
 
 3304 **static vm_fault_t wp_page_shared**(**struct** vm_fault \*vmf) 3305 **\_\_releases**(vmf-\>ptl) 3306 {
 
 3307 **struct** vm_area_struct \*vma = vmf-\>vma;
 
- 
 
 
 
- 
+
+
 
 3308 **vm_fault_t** ret = **VM_FAULT_WRITE**; 3309
 
@@ -4464,11 +4464,11 @@ shown in Listing 6-39.
 
 3336 }
 
- 
+
 
 *Listing 6-39:* mm/memory.c: [*wp_page_shared()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3304)
 
- 
+
 
 This maintains the same structure as [wp_pfn_shared()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3286)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3286) only with ma-
 
@@ -4490,11 +4490,11 @@ If the VMA does not require notifying of a shared mapping being made
 
 writable (i.e. it does not possess a page_mkwrite handler), then the function simply invokes wp_page_reuse() and locks the folio.
 
- 
 
 
 
- 
+
+
 
 Handling the fact that this mapping has now been marked dirty is per-
 
@@ -4506,7 +4506,7 @@ have to be concerned about it disappearing beneath us during this opera-
 
 tion. Examining this function as shown in Listing 6-40.
 
- 
+
 
 2988 */\**
 
@@ -4548,11 +4548,11 @@ tion. Examining this function as shown in Listing 6-40.
 
 3027 fpin = **maybe_unlock_mmap_for_io**(vmf, **NULL**); 3028 **balance_dirty_pages_ratelimited**(mapping);
 
- 
 
 
 
- 
+
+
 
 3029 **if** (fpin) { 3030 **fput**(fpin); 3031 **return VM_FAULT_COMPLETED**; 3032 }
 
@@ -4564,11 +4564,11 @@ tion. Examining this function as shown in Listing 6-40.
 
 3036 }
 
- 
+
 
 *Listing 6-40:* mm/memory.c: [*fault_dirty_shared_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n2993)
 
- 
+
 
 This somewhat overlaps with the page cache logic which, being such a
 
@@ -4598,7 +4598,7 @@ We determine whether we can do so via [maybe_unlock_mmap_for_io()](https://git.k
 
 shown in Listing 6-41.
 
- 
+
 
 607 **static inline struct** file \***maybe_unlock_mmap_for_io**(**struct** vm_fault \*vmf, 608 **struct** file \*fpin) 609 {
 
@@ -4622,11 +4622,11 @@ shown in Listing 6-41.
 
 620 **if** (**fault_flag_allow_retry_first**(flags) && 621 !(flags & **FAULT_FLAG_RETRY_NOWAIT**)) { 622 fpin = **get_file**(vmf-\>vma-\>vm_file); 623 **mmap_read_unlock**(vmf-\>vma-\>vm_mm);
 
- 
 
 
 
- 
+
+
 
 624 }
 
@@ -4634,11 +4634,11 @@ shown in Listing 6-41.
 
 626 }
 
- 
+
 
 *Listing 6-41:* mm/internal.h: [*maybe_unlock_mmap_for_io()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n607)
 
- 
+
 
 We only drop the lock if retry is still permitted as determined by
 
@@ -4664,7 +4664,7 @@ turned to indicate that the fault has been handled and lock released, oth-
 
 erwise we return 0 to indicate that no additional fault flags need be set.
 
- 
+
 
 ***6.9.4 Page reuse***
 
@@ -4676,7 +4676,7 @@ determined to possess only a single reference reuse of the underlying folio is
 
 handled by [wp_page_reuse()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3046) as shown in Listing 6-42
 
- 
+
 
 3038 */\**
 
@@ -4702,11 +4702,11 @@ handled by [wp_page_reuse()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 3057 *\* Clear the pages cpupid information as the existing* 3058 *\* information potentially belongs to a now completely* 3059 *\* unrelated process.* 3060 *\*/*
 
- 
 
 
 
- 
+
+
 
 3061 **if** (page)
 
@@ -4714,11 +4714,11 @@ handled by [wp_page_reuse()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 3064 **flush_cache_page**(vma, vmf-\>address, pte_pfn(vmf-\>orig_pte)); 3065 entry = **pte_mkyoung**(vmf-\>orig_pte); 3066 entry = **maybe_mkwrite**(**pte_mkdirty**(entry), vma); 3067 **if** (**ptep_set_access_flags**(vma, vmf-\>address, vmf-\>pte, entry, 1)) 3068 **update_mmu_cache**(vma, vmf-\>address, vmf-\>pte); 3069 **pte_unmap_unlock**(vmf-\>pte, vmf-\>ptl); 3070 **count_vm_event**(**PGREUSE**); 3071 }
 
- 
+
 
 *Listing 6-42:* mm/memory.c: [*wp_page_reuse()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3046)
 
- 
+
 
 The [NUMA balancing](https://kernel.org/doc/html/v6.0/mm/balance.html) logic tracks the last CPU which accessed a folio via
 
@@ -4742,7 +4742,7 @@ The flags are updated by [ptep_set_access_flags()](https://git.kernel.org/pub/sc
 
 table lock is released and statistics are updated.
 
- 
+
 
 ***6.9.5 Folio copying***
 
@@ -4752,7 +4752,7 @@ go ahead and copy it. This is handled by [wp_page_copy()](https://git.kernel.org
 
 Listing 6-43.
 
- 
+
 
 3073 */\**
 
@@ -4768,11 +4768,11 @@ Listing 6-43.
 
 3082 *\* - Allocate a page, copy the content of the old page to the new one.* 3083 *\* - Handle book keeping and accounting - cgroups, mmu-notifiers, etc.*
 
- 
 
 
 
- 
+
+
 
 3084 *\* - Take the PTL. If the pte changed, bail out and release the allocated page*
 
@@ -4812,11 +4812,11 @@ Listing 6-43.
 
 3137 **\_\_SetPageUptodate**(new_page);
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -4826,11 +4826,11 @@ Listing 6-43.
 
 3147 vmf-\>pte = **pte_offset_map_lock**(mm, vmf-\>pmd, vmf-\>address, &vmf-\>ptl);
 
- 
+
 
 *Listing 6-43:* mm/memory.c: [*wp_page_copy()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3090) *folio copying*
 
- 
+
 
 The function is called with a reference on the input folio (if it is backed
 
@@ -4880,17 +4880,17 @@ housekeeping tasks. We start by acquiring the PTE table lock via
 
 Examining the remaining logic as shown in Listing 6-44.
 
- 
+
 
 3148 **if** (**likely**(**pte_same**(\*vmf-\>pte, vmf-\>orig_pte))) { 3149 **if** (old_page) { 3150 **if** (!**PageAnon**(old_page)) { 3151 **dec_mm_counter_fast**(mm, 3152 **mm_counter_file**(old_page)); 3153 **inc_mm_counter_fast**(mm, **MM_ANONPAGES**); 3154 } 3155 } **else** {
 
 3156 **inc_mm_counter_fast**(mm, **MM_ANONPAGES**); 3157 }
 
- 
 
 
 
- 
+
+
 
 3158 **flush_cache_page**(vma, vmf-\>address, **pte_pfn**(vmf-\>orig_pte)); 3159 entry = **mk_pte**(new_page, vma-\>vm_page_prot); 3160 entry = **pte_sw_mkyoung**(entry); 3161 **if** (**unlikely**(unshare)) { 3162 **if** (**pte_soft_dirty**(vmf-\>orig_pte)) 3163 entry = **pte_mksoft_dirty**(entry);
 
@@ -4946,11 +4946,11 @@ Examining the remaining logic as shown in Listing 6-44.
 
 3200 *\* Those stores are ordered by (if nothing else,)* 3201 *\* the barrier present in the atomic_add_negative*
 
- 
 
 
 
- 
+
+
 
 3202 *\* in page_remove_rmap.* 3203 *\** 3204 *\* Then the TLB flush in ptep_clear_flush ensures that*
 
@@ -4994,21 +4994,21 @@ Examining the remaining logic as shown in Listing 6-44.
 
 3245 **return VM_FAULT_OOM**; 3246 }
 
- 
+
 
 *Listing 6-44:* mm/memory.c: [*wp_page_copy()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3090) *PTE update, housekeeping*
 
- 
+
 
 Given that we previously dropped the PTE page table lock and have only
 
 just reacquired, we need to check that the PTE has not changed from be-neath us. If not, then we proceed to set up the PTE, starting by updating statistics.
 
- 
 
 
 
- 
+
+
 
 On x86-64 we do not need to flush the cache manually so
 
@@ -5040,7 +5040,7 @@ is out of scope for the book, we consider only [ptep_clear_flush()](https://git.
 
 called in turn by ptep_clear_flush_notify() as shown in Listing 6-45.
 
- 
+
 
 91 **pte_t ptep_clear_flush**(**struct** vm_area_struct \*vma, **unsigned long** address,
 
@@ -5062,11 +5062,11 @@ called in turn by ptep_clear_flush_notify() as shown in Listing 6-45.
 
 100 }
 
- 
+
 
 *Listing 6-45:* mm/pgtable-generic.c: [*ptep_clear_flush()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/pgtable-generic.c?h=v6.0#n91)
 
- 
+
 
 This clears the PTE via [ptep_get_and_clear()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n1048) which retrieves the previous
 
@@ -5078,7 +5078,7 @@ might be present in a TLB at all) via [pte_accessible()](https://git.kernel.org/
 
 46.
 
- 
+
 
 747 **static inline bool pte_accessible**(**struct** mm_struct \*mm, **pte_t** a) 748 {
 
@@ -5094,15 +5094,15 @@ might be present in a TLB at all) via [pte_accessible()](https://git.kernel.org/
 
 757 }
 
- 
+
 
 *Listing 6-46:* arch/x86/include/asm/pgtable.h: [*pte_accessible()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n747)
 
- 
 
 
 
- 
+
+
 
 If the PTE entry was marked present, or if it had the [\_PAGE_PROTNONE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n120)
 
@@ -5162,19 +5162,19 @@ Finally, if a page was copied and it was not an unshare operation, we indi-
 
 cate so by returning [VM_FAULT_WRITE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n745)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n745)
 
- 
+
 
 **6.10 Stack expansion**
 
- 
+
 
 In [do_user_addr_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1220), if a [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA) cannot be found which contains the faulting address, but one was found that sits above it
 
- 
 
 
 
- 
+
+
 
 which possesses the [VM_GROWSDOWN](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n277) flag, then we invoke [expand_stack()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2553) to ex-
 
@@ -5196,7 +5196,7 @@ faulting address and the VMA which sits above it (eliding out of scope huge
 
 page, performance event tracking and debug logic) as shown in Listing 6-47.
 
- 
+
 
 2438 */\**
 
@@ -5226,11 +5226,11 @@ page, performance event tracking and debug logic) as shown in Listing 6-47.
 
 2472 */\* Somebody else might have raced and expanded it already \*/* 2473 **if** (address \< vma-\>vm_start) { 2474 **unsigned long** size, grow;
 
- 
 
 
 
- 
+
+
 
 2475
 
@@ -5266,11 +5266,11 @@ page, performance event tracking and debug logic) as shown in Listing 6-47.
 
 2513 }
 
- 
+
 
 *Listing 6-47:* mm/mmap.c: [*expand_downwards()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2441)
 
- 
+
 
 We start by examining the nearest VMA beneath the stack VMA and,
 
@@ -5280,11 +5280,11 @@ whether either [VM_READ](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 the end of that VMA sits at least [stack_guard_gap](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2516) bytes below this one (this defaults to 256 base pages, which for an architecture with 4 KiB pages is 1 MiB below, but can be adjusted via the kernel command line parameter stack_guard_gap).
 
- 
 
 
 
- 
+
+
 
 We then ensure that a [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) object is assigned to the VMA. We then must perform some intricate lock negotiation in order to pre-
 
@@ -5354,7 +5354,7 @@ Returning to [acct_stack_growth()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 Listing 6-48.
 
- 
+
 
 2307 */\**
 
@@ -5366,11 +5366,11 @@ Listing 6-48.
 
 2318 */\* address space limit tests \*/*
 
- 
 
 
 
- 
+
+
 
 2319 **if** (!**may_expand_vm**(mm, vma-\>vm_flags, grow)) 2320 **return**-**ENOMEM**; 2321
 
@@ -5390,7 +5390,7 @@ Listing 6-48.
 
 2344 }
 
- 
+
 
 *Listing 6-48:* mm/mmap.c: [*acct_stack_growth()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2312)
 
@@ -5410,11 +5410,11 @@ Finally, [security_vm_enough_memory_mm()](https://git.kernel.org/pub/scm/linux/k
 
 exceed available memory depending on overcommit mode (see section 4.1) as well as performing any existing security hook checks.
 
- 
+
 
 **6.11 Userland bad area handling**
 
- 
+
 
 All accesses to incorrect areas of the address space in userland end up
 
@@ -5426,7 +5426,7 @@ Examining this function, eliding kernel handling as shown in Listing 6-
 
 49.
 
- 
+
 
 799 **static void**
 
@@ -5438,11 +5438,11 @@ Examining this function, eliding kernel handling as shown in Listing 6-
 
 811 **if** (!(error_code & **X86_PF_USER**)) { 812 */\* Implicit user access to kernel memory -- just oops \*/*
 
- 
 
 
 
- 
+
+
 
 813 **page_fault_oops**(regs, error_code, address); 814 **return**;
 
@@ -5494,13 +5494,13 @@ Examining this function, eliding kernel handling as shown in Listing 6-
 
 848 **local_irq_disable**(); 849 }
 
- 
+
 
 *Listing 6-49:* arch/x86/mm/fault.c: *x86-64 [\_\_bad_area_nosemaphore()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n800) userland*
 
 *handling*
 
- 
+
 
 We start by considering an edge case – a kernel-mode fault but from a
 
@@ -5518,11 +5518,11 @@ We make sure for the rest of the handling to enable local IRQ handling
 
 as there is now no reason for this these to be suppressed. We then check
 
- 
 
 
 
- 
+
+
 
 two very specific cases – was this a fault that arose from the CPU prefetching
 
@@ -5536,7 +5536,7 @@ kernel page tables in case of user mode access to kernel addresses via
 
 [sanitize_error_code()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n605) as shown in Listing 6-50.
 
- 
+
 
 605 **static void sanitize_error_code**(**unsigned long** address, 606 **unsigned long** \*error_code) 607 {
 
@@ -5548,11 +5548,11 @@ kernel page tables in case of user mode access to kernel addresses via
 
 617 **if** (address \>= **TASK_SIZE_MAX**) 618 \*error_code \|= **X86_PF_PROT**; 619 }
 
- 
+
 
 *Listing 6-50:* arch/x86/mm/fault.c: [*sanitize_error_code()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n605)
 
- 
+
 
 We check whether we need to perform a fixup for VDSO via
 
@@ -5564,7 +5564,7 @@ If unhandled segfaults are set to be displayed in the kernel log via
 
 many programmers will be familiar with as shown in Listing 6-51.
 
- 
+
 
 763 */\**
 
@@ -5584,11 +5584,11 @@ many programmers will be familiar with as shown in Listing 6-51.
 
 776 **if** (!**printk_ratelimit**()) 777 **return**;
 
- 
 
 
 
- 
+
+
 
 778
 
@@ -5606,7 +5606,7 @@ many programmers will be familiar with as shown in Listing 6-51.
 
 787 **show_opcodes**(regs, loglvl); 788 }
 
- 
+
 
 *Listing 6-51:* arch/x86/mm/fault.c: [*show_signal_msg()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n768)
 
@@ -5626,11 +5626,11 @@ Finally, local IRQs are disabled as the fault handling expects them to be
 
 when this function is completed.
 
- 
+
 
 **6.12 Special mappings**
 
- 
+
 
 Some userland mappings are deemed ‘special’, defined by there being no
 
@@ -5666,7 +5666,7 @@ vmap logic and logic for architectures that do not support a special mapping
 
 page table flag) as shown in Listing 6-52.
 
- 
+
 
 570 */\**
 
@@ -5680,11 +5680,11 @@ page table flag) as shown in Listing 6-52.
 
 *either*
 
- 
 
 
 
- 
+
+
 
 574 *\* it doesn't exist, or it exists but they don't want to touch it). In this*
 
@@ -5758,11 +5758,11 @@ page table flag) as shown in Listing 6-52.
 
 617 **if** (**IS_ENABLED**(**CONFIG_ARCH_HAS_PTE_SPECIAL**)) {
 
- 
 
 
 
- 
+
+
 
 618 **if** (**likely**(!**pte_special**(pte))) 619 **goto check_pfn**; 620 **if** (vma-\>vm_ops && vma-\>vm_ops-\>**find_special_page**) 621 **return** vma-\>vm_ops-\>**find_special_page**(vma, addr); 622 **if** (vma-\>vm_flags & (**VM_PFNMAP** \| **VM_MIXEDMAP**)) 623 **return NULL**; 624 **if** (**is_zero_pfn**(pfn)) 625 **return NULL**;
 
@@ -5786,11 +5786,11 @@ page table flag) as shown in Listing 6-52.
 
 672 **return pfn_to_page**(pfn); 673 }
 
- 
+
 
 *Listing 6-52:* mm/memory.c: [*vm_normal_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n612)
 
- 
+
 
 This will return NULL in the case of the zero page or special mappings ex-
 
@@ -5822,7 +5822,7 @@ ory into userland, typically via [remap_pfn_range()](https://git.kernel.org/pub/
 
 [remap_pfn_range_notrack()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n2475) to do the heavy lifting as shown in Listing 6-53.
 
- 
+
 
 2471 */\**
 
@@ -5830,11 +5830,11 @@ ory into userland, typically via [remap_pfn_range()](https://git.kernel.org/pub/
 
 2473 *\* must have pre-validated the caching bits of the pgprot_t.* 2474 *\*/*
 
- 
 
 
 
- 
+
+
 
 2475 **int remap_pfn_range_notrack**(**struct** vm_area_struct \*vma, **unsigned long** addr, 2476 **unsigned long** pfn, **unsigned long** size, **pgprot_t** prot) 2477 {
 
@@ -5866,11 +5866,11 @@ ory into userland, typically via [remap_pfn_range()](https://git.kernel.org/pub/
 
 2518 next = **pgd_addr_end**(addr, end); 2519 err = **remap_p4d_range**(mm, pgd, addr, next, 2520 pfn + (addr \>\> **PAGE_SHIFT**), prot); 2521 **if** (err)
 
- 
 
 
 
- 
+
+
 
 2522 **return** err; 2523 } **while** (pgd++, addr = next, addr != end); 2524
 
@@ -5878,11 +5878,11 @@ ory into userland, typically via [remap_pfn_range()](https://git.kernel.org/pub/
 
 2526 }
 
- 
+
 
 *Listing 6-53:* mm/memory.c: [*remap_pfn_range_notrack()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n2475)
 
- 
+
 
 This walks the page tables of the userland mappings, allocating where
 
@@ -5904,7 +5904,7 @@ for architectures that don’t have hardware accessed bits) as shown in Listing
 
 6-54.
 
- 
+
 
 2844 **static inline bool \_\_wp_page_copy_user**(**struct** page \*dst, **struct** page \*src, 2845 **struct** vm_fault \*vmf) 2846 {
 
@@ -5930,11 +5930,11 @@ for architectures that don’t have hardware accessed bits) as shown in Listing
 
 2894 *\* This really shouldn't fail, because the page is there* 2895 *\* in the page tables. But it might just be unreadable,* 2896 *\* in which case we just give up and fill the result with* 2897 *\* zeroes.*
 
- 
 
 
 
- 
+
+
 
 2898 *\*/*
 
@@ -5972,11 +5972,11 @@ for architectures that don’t have hardware accessed bits) as shown in Listing
 
 2937 }
 
- 
+
 
 *Listing 6-54:* mm/memory.c: [*\_\_wp_page_copy_user()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n2844)
 
- 
+
 
 This is also used for non-special mapping copying, however this is a triv-
 
@@ -5986,11 +5986,11 @@ In order to perform the Copy On Write, the kernel simply copies from
 
 the source page using its userland mapping (which will have the appropriate
 
- 
 
 
 
- 
+
+
 
 PFN set) into the newly allocated page via [\_\_copy_from_user_inatomic()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/uaccess.h?h=v6.0#n59), which
 
@@ -6008,5 +6008,5 @@ of these types of mappings and how they’re handled on page fault, the intri-
 
 cate details of how these are used sit outside the scope of the book.
 
- 
+
 

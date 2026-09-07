@@ -1,6 +1,50 @@
+**8. Non-Static Data Member**
+
+
+
+**Initialization**
+
+You’ve learned a lot of techniques related to constructors! You can initialize data members in various constructors, delegate them to reuse code, and inherit them from base classes. Yet, we can still improve on assigning default values for data members. I mentioned this feature in the first chapter, where we gave default values for aggregates. We can do the same for classes. And in this chapter, we’ll look at the full syntax and options related to this feature.
+
+Please have a look at the example below:
+
+**Ex 8.1. NSDMI Basics. Run** [**@Compiler Explorer**](https://godbolt.org/z/dc88fd3Y1) **class DataPacket** {
+
+std::string data\_;
+
+**size_t** checkSum\_ { 0 };
+
+**size_t** serverId\_ { 0 };
+
+**public**:
+
+DataPacket() = **default**;
+
+DataPacket(**const** std::string& data, **size_t** serverId)
+
+: data\_{data}, checkSum\_{calcCheckSum(data)}, serverId\_{serverId}
+
+{ }
+
+// getters and setters...
+
+};
+
+As you can see, the data members have their default values set at the point of declaration. There’s no need to assign default values inside constructors. This feature is much better than a default constructor because it combines declaration and initialization code. This way, it’s harder to leave data members uninitialized!
+
+Let’s explore this handy feature of Modern C++ in detail.
+
+
+
+**How it works**
+
+This section shows how the compiler “expands” the code to initialize data members.
+
+112
+
 Non-Static Data Member Initialization 113
 
- 
+
 
 For a simple declaration:
 
@@ -38,11 +82,11 @@ SimpleType st;
 
 std::cout \<\< "st.field is " \<\< st.field \<\< '\n'; }
 
- 
+
 
 As a small exercise, you can experiment with the above sample, assign different values to the field data member, and see the changes in the output.
 
- 
+
 
 **Investigation**
 
@@ -86,7 +130,7 @@ std::cout \<\< "initB() called**\n**";
 
 This allows us to see when the code is called.
 
- 
+
 
 **Experiments**
 
@@ -106,7 +150,7 @@ Here’s the test code scenario:
 
 Non-Static Data Member Initialization 115
 
- 
+
 
 **Ex 8.3. Calling** **initA** **and** **initB** **functions. Run** [**@Compiler Explorer**](https://godbolt.org/z/hGav6M8PT) \#include \<iostream\>
 
@@ -184,7 +228,7 @@ We can also visualize it using the following diagram:
 
 ![](media/index-131_1.png)
 
- 
+
 
 **Other forms of NSDMI**
 
@@ -192,7 +236,7 @@ Let’s try some other examples and see all options that we can initialize a dat
 
 Non-Static Data Member Initialization 117
 
- 
+
 
 **Ex 8.4. Various syntax for NSDMI. Run** [**@Compiler Explorer**](https://godbolt.org/z/a4f5E1r4s)
 
@@ -219,7 +263,7 @@ Non-Static Data Member Initialization 117
 20   };
 ```
 
- 
+
 
 Here’s the summary:
 
@@ -245,7 +289,7 @@ new and delete and prefer smart pointers, this code is only for demonstration),
 
 • pInts declares a unique_ptr to an array of 10 integers, Non-Static Data Member Initialization 118
 
- 
+
 
 • arr\[4\] declares and initializes an array, but you need to provide the number of
 
@@ -353,7 +397,7 @@ std::string data\_ {"empty"};
 
 /\* rest of the code\*/
 
- 
+
 
 Since checkSum\_ is after data\_, we know the order of initialization, and thus we can safely use data\_ and pass it into calcCheckSum.
 
@@ -375,7 +419,7 @@ sequence. Here’s the corrected version [@Compiler Explorer²](https://godbolt.
 
 variables in a separate chapter.
 
- 
+
 
 **Copy constructor and NSDMI**
 
@@ -417,7 +461,7 @@ SimpleType() { }
 
 ²<https://godbolt.org/z/9vezbWfbs> Non-Static Data Member Initialization 121
 
- 
+
 
 SimpleType(**const** SimpleType& other) {
 
@@ -483,7 +527,7 @@ SimpleType(**const** SimpleType& other) = **default**;
 
 See the live code [@Compiler Explorer](https://godbolt.org/z/jM8863Wo3)³.
 
- 
+
 
 **Move constructor and NSDMI**
 
@@ -575,7 +619,7 @@ SimpleType(SimpleType&& other) **noexcept**
 
 You can now experiment with the code example above and see if changing the move constructor reduces the number of invocations of initA() and initB(). Non-Static Data Member Initialization 124
 
- 
+
 
 **C++14 changes**
 
@@ -601,7 +645,7 @@ Point myPt { 10.0f };
 
 std::cout \<\< myPt.x \<\< ", " \<\< myPt.y \<\< '\n'; }
 
- 
+
 
 **C++20 changes**
 
@@ -617,7 +661,7 @@ Unfortunately, in C++11, it wasn’t possible to default-initialize the value bi
 
 Non-Static Data Member Initialization 125
 
- 
+
 
 **Ex 8.9. Bit fields and NSDMI in C++20. Run** [**@Compiler Explorer**](https://godbolt.org/z/7GoaaTMn5)
 
@@ -639,17 +683,17 @@ std::cout \<\< t.value \<\< '\n';
 
 std::cout \<\< t.second \<\< '\n'; }
 
- 
+
 
 As you can see above, C++20 offers improved syntax where you can specify the default value after the bit size: var : bit_count { default_value }.
 
- 
+
 
 **Limitations of NSDMI**
 
 In this section, we’ll discuss the current (as of C++20) limitations of non-static data member initialization.
 
- 
+
 
 **The case with** **auto** **type deduction**
 
@@ -661,11 +705,11 @@ Since we can declare and initialize a variable inside a class, can we also/still
 
 [GotW \#94 Solution: AAA Style (Almost Always Auto)](https://herbsutter.com/2013/08/12/gotw-94-solution-aaa-style-almost-always-auto/)⁴
 
- 
+
 
 You can use auto for static variables:
 
- 
+
 
 ⁴<https://herbsutter.com/2013/08/12/gotw-94-solution-aaa-style-almost-always-auto/>
 
@@ -699,7 +743,7 @@ It’s easy for the compiler to deduce the type of a static data member as the i
 
 ![](media/index-141_1.png)
 
- 
+
 
 **The case with Class Template Argument Deduction (CTAD)**
 
@@ -741,7 +785,7 @@ Hopefully, both issues presented here are not big blockers, but it’s good to b
 
 Non-Static Data Member Initialization 128
 
- 
+
 
 **The case with direct initialization and parens** ⁵
 
@@ -769,7 +813,7 @@ std::cout \<\< stars \<\< '\n';
 
 std::cout \<\< moreStars \<\< '\n'; }
 
- 
+
 
 If you run the code, you’ll see the following:
 
@@ -779,7 +823,7 @@ If you run the code, you’ll see the following:
 
 It’s because {40, '\*'} converts 40 into a character ( (using its) ASCI code), and passes those two characters through std::initializer_list to create a string with two characters only. The problem is that direct initialization with parens won’t work inside a class member declaration:
 
- 
+
 
 ⁵Thanks to Nicolai Josuttis for discussing and clarifying this topic.
 
@@ -813,7 +857,7 @@ There’s a separate section on std::initializer_list in the book that shares mo
 
 How about other constructor types? We’ll cover those in the next section.
 
- 
+
 
 **NSDMI: Advantages and Disadvantages**
 
@@ -837,7 +881,7 @@ to duplicate the initialization code for members or write a custom method, like 
 
 Non-Static Data Member Initialization 130
 
- 
+
 
 **Any negative sides of NSDMI?**
 
@@ -871,7 +915,7 @@ dependent compilation units. This is not the case if the values are set only in 
 
 members.
 
- 
+
 
 **NSDMI summary**
 
@@ -887,17 +931,17 @@ The C++ Core Guidelines advise using NSDMI in at least two sections: [C++ Core G
 
 [constructors-for-constant-initializers](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c48-prefer-in-class-initializers-to-member-initializers-in-constructors-for-constant-initializers) Non-Static Data Member Initialization 131
 
- 
+
 
 **C.48** Prefer in-class initializers to member initializers in constructors for constant initializers:
 
 **Reason**: Makes it explicit that the same value is expected to be used in all constructors. Avoids repetition. Avoids maintenance problems. It leads to the shortest and most efficient code.
 
- 
+
 
 And in [C++ Core Guidelines - C.45⁷](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c45-dont-define-a-default-constructor-that-only-initializes-data-members-use-in-class-member-initializers-instead):
 
- 
+
 
 **C.45**Don’t define a default constructor that only initializes data members; use in-class member initializers instead
 
@@ -905,11 +949,11 @@ And in [C++ Core Guidelines - C.45⁷](https://isocpp.github.io/CppCoreGuideline
 
 ![](media/index-146_1.png)
 
- 
+
 
 If you like to read more about NSDMI, I highly recommend reading the book “Embracing Modern C++ Safely”, chapter 2, page 318. There’s a whole section on advanced cases for this powerful C++ feature.
 
- 
+
 
 ⁷[https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c45-dont-define-a-default-constructor-that-only-](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c45-dont-define-a-default-constructor-that-only-initializes-data-members-use-in-class-member-initializers-instead)
 

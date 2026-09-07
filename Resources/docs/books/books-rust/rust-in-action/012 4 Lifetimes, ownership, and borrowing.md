@@ -26,7 +26,6 @@ This chapter explains one of the concepts that trip up most newcomers to Rust—
 
 This chapter will explain how this system operates and help you learn how to comply with it when an error is discovered. It uses the somewhat lofty example of **107**
 
-**108**
 
 CHAPTER 4
 
@@ -66,9 +65,7 @@ Figure 4.1
 
 CubeSats in orbit
 
-***Implementing a mock CubeSat ground station***
 
-**109**
 
 In figure 4.1, we have three CubeSats. To model this, we’ll create a variable for each.
 
@@ -160,10 +157,8 @@ Checking the status of our integer-based CubeSats
 
 23 let a_status = check_status(sat_a);
 
-**110**
 
 
-***Lifetimes, ownership, and borrowing***
 
 24 let b_status = check_status(sat_b);
 
@@ -259,9 +254,7 @@ Checking the status of our integer-based CubeSats
 
 21
 
-***Implementing a mock CubeSat ground station***
 
-**111**
 
 22 let a_status = check_status(sat_a);
 
@@ -321,10 +314,8 @@ Every value in Rust is *owned*. In both listings 4.1 and 4.3, sat_a, sat_b, and 
 
 1 Remember the phrase *zero-cost abstractions*? One of the ways this manifests is by not adding extra data around values within structs.
 
-**112**
 
 
-***Lifetimes, ownership, and borrowing***
 
 The next listing provides a stripped-down version of the main() function from listing 4.3. It is centered on sat_a and attempts to show how ownership moves from main() into check_status().
 
@@ -394,9 +385,7 @@ The distinction between a value’s lifetime and its scope—which is what many 
 
 Before carrying on, it might be wise to explain why listing 4.1 compiled at all. Indeed, the only change that we made in listing 4.3 was to wrap our satellite variables in a custom type. As it happens, primitive types in Rust have special behavior. These implement the Copy trait.
 
-***Implementing a mock CubeSat ground station***
 
-**113**
 
 **Program flow of listing 4.4**
 
@@ -484,10 +473,8 @@ The copy semantics of Rust’s primitive types
 
 7
 
-**114**
 
 
-***Lifetimes, ownership, and borrowing***
 
 8 println!("{}", a);
 
@@ -625,7 +612,6 @@ How to interpret the figures in this chapter
 
 ***How ownership moves***
 
-**115**
 
 ***4.3***
 
@@ -669,10 +655,8 @@ Another possibility is that sat_a relinquishes its ownership to another variable
 
 2 Within the Rust community, the term *variable binding* is preferred because it is more technically correct.
 
-**116**
 
 
-***Lifetimes, ownership, and borrowing***
 
 fn main() {
 
@@ -762,9 +746,7 @@ Returning ownership back to the original scope
 
 21 let sat_c = CubeSat { id: 2 };
 
-***How ownership moves***
 
-**117**
 
 22
 
@@ -908,10 +890,8 @@ Figure 4.4
 
 The ownership changes within listing 4.7
 
-**118**
 
 
-***Lifetimes, ownership, and borrowing***
 
 ***4.5***
 
@@ -971,9 +951,7 @@ Adding a **Mailbox** type to our system
 
 3 id: u64,
 
-***Resolving ownership issues***
 
-**119**
 
 4 mailbox: Mailbox,
 
@@ -1039,10 +1017,8 @@ The most common change you will make to your code is to reduce the level of acce
 
 Ownership might be needed in advanced cases, such as when functions want to adjust the lifetime of their arguments. Table 4.1 compares the two different approaches.
 
-**120**
 
 
-***Lifetimes, ownership, and borrowing***
 
 Table 4.1
 
@@ -1136,9 +1112,7 @@ Notice that both GroundStation.send() and CubeSat.recv() require mutable access 
 
 This provides us with some quality assurance later, notifying us if we access a message after it’s already sent. Figure 4.6 illustrates how we can avoid ownership issues.
 
-***Resolving ownership issues***
 
-**121**
 
 **main()**
 
@@ -1198,10 +1172,8 @@ Use references to avoid
 
 ownership issues.
 
-**122**
 
 
-***Lifetimes, ownership, and borrowing***
 
 Listing 4.13 (ch4/ch4-sat-mailbox.rs) brings together all of the code snippets in this section thus far and prints the following output. The messages starting with t0
 
@@ -1315,9 +1287,7 @@ Avoiding ownership issues with references
 
 **String (aka Message).**
 
-***Resolving ownership issues***
 
-**123**
 
 41
 
@@ -1371,10 +1341,8 @@ CubeSat { id: sat_id, mailbox: Mailbox { messages: vec\![\] } }
 
 Now we are a bit closer to our intended outcome. Our main function looks like the following code snippet. In effect, we’ve implemented the first half of figure 4.7.
 
-**124**
 
 
-***Lifetimes, ownership, and borrowing***
 
 **main()**
 
@@ -1460,9 +1428,7 @@ Game plan: Short-lived
 
 variables to avoid ownership issues
 
-***Resolving ownership issues***
 
-**125**
 
 fn main() {
 
@@ -1516,10 +1482,8 @@ Modifications to **Mailbox**
 
 3 &self,
 
-**126**
 
 
-***Lifetimes, ownership, and borrowing***
 
 4 mailbox: &mut Mailbox,
 
@@ -1639,9 +1603,7 @@ With that groundwork in place, we’re now able to fully implement the strategy 
 
 CubeSat { id: 1 }: Some(Message { to: 1, content: "hello" }) CubeSat { id: 2 }: Some(Message { to: 2, content: "hello" }) CubeSat { id: 3 }: Some(Message { to: 3, content: "hello" })
 
-***Resolving ownership issues***
 
-**127**
 
 Listing 4.15
 
@@ -1753,10 +1715,8 @@ Implementing the short-lived variables strategy
 
 53 }
 
-**128**
 
 
-***Lifetimes, ownership, and borrowing***
 
 54 }
 
@@ -1822,9 +1782,7 @@ One alternative to refactoring is to simply copy values. Doing this often is typ
 
 Types can opt into two modes of duplication: cloning and copying. Each mode is provided by a trait. Cloning is defined by std::clone::Clone, and the copying mode is defined by std::marker::Copy. Copy acts implicitly. Whenever ownership would otherwise be moved to an inner scope, the value is duplicated instead. (The bits of object *a* are replicated to create object *b*.) Clone acts explicitly. Types that implement Clone have a .clone() method that is permitted to do whatever it needs to do to create a new value. Table 4.2 outlines the major differences between the two modes.
 
-***Resolving ownership issues***
 
-**129**
 
 Table 4.2
 
@@ -1902,10 +1860,8 @@ let a_status = check_status(sat_a);
 
 println!("a: {:?}", a_status);
 
-**130**
 
 
-***Lifetimes, ownership, and borrowing***
 
 let a_status = check_status(sat_a);
 
@@ -1999,9 +1955,7 @@ Now that we know how to implement them, let’s put Clone and Copy to work. We�
 
 Clone requires an explicit call to .clone(). That’s a useful marker in non-trivial cases, such as in listing 4.18, because it warns the programmer that the process may be expensive. You’ll find the source for this listing in ch4/ch4-check-sats-clone-and-copy-traits.rs.
 
-***Resolving ownership issues***
 
-**131**
 
 Listing 4.18
 
@@ -2081,10 +2035,8 @@ Wrapping T involves a calling Rc::new(). The following listing, at ch4/ch4-rc-gr
 
 3 Garbage collection (often abbreviated as GC) is a strategy for memory management used by many programming languages, including Python and JavaScript, and all languages built on the JVM (Java, Scala, Kotlin) or the CLR (C#, F#).
 
-**132**
 
 
-***Lifetimes, ownership, and borrowing***
 
 Listing 4.19
 
@@ -2192,7 +2144,6 @@ Using **Rc\<RefCell\<T\>\>** to mutate an immutable object 1 use std::rc::Rc;
 
 ***Summary***
 
-**133**
 
 15
 

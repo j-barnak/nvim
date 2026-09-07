@@ -60,7 +60,6 @@ There are two default capture modes in C++11: by-reference and by-value. Default
 
 That’s the executive summary for this Item. If you’re more engineer than executive, you’ll want some meat on those bones, so let’s start with the danger of default by-reference capture.
 
-**216 \| Item 30**
 
 A by-reference capture causes a closure to contain a reference to a local variable or to a parameter that’s available in the scope where the lambda is defined. If the lifetime of a closure created from that lambda exceeds the lifetime of the local variable or parameter, the reference in the closure will dangle. For example, suppose we have a container of filtering functions, each of which takes an int and returns a bool indicating whether a passed-in value satisfies the filter:
 
@@ -108,7 +107,6 @@ Now, the same problem would exist if divisor’s by-reference capture were expli
 
 ); // still dangle!
 
-**Item 31 \| 217**
 
 but with an explicit capture, it’s easier to see that the viability of the lambda is dependent on divisor’s lifetime. Also, writing out the name, “divisor,” reminds us to ensure that divisor lives at least as long as the lambda’s closures. That’s a more specific memory jog than the general “make sure nothing dangles” admonition that
 
@@ -162,7 +160,7 @@ begin(container), end(container), // in container
 
 }
 
-It’s true, this is safe, but its safety is somewhat precarious. If the lambda were found to be useful in other contexts (e.g., as a function to be added to the filters container) and was copy-and-pasted into a context where its closure could outlive divi **218 \| Item 31**
+It’s true, this is safe, but its safety is somewhat precarious. If the lambda were found to be useful in other contexts (e.g., as a function to be added to the filters container) and was copy-and-pasted into a context where its closure could outlive divi
 
 sor, you’d be back in dangle-city, and there’d be nothing in the capture clause to specifically remind you to perform lifetime analysis on divisor.
 
@@ -208,7 +206,6 @@ int divisor; // used in Widget's filter
 
 Widget::addFilter could be defined like this:
 
-**Item 31 \| 219**
 
 void Widget::addFilter() const
 
@@ -260,7 +257,6 @@ So if the default by-value capture clause isn’t capturing divisor, yet without
 
 The explanation hinges on the implicit use of a raw pointer: this. Every non-static member function has a this pointer, and you use that pointer every time you mention a data member of the class. Inside any Widget member function, for example, compilers internally replace uses of divisor with this-\>divisor. In the version of Widget::addFilter with a default by-value capture,
 
-**220 \| Item 31**
 
 void Widget::addFilter() const
 
@@ -322,7 +318,7 @@ pw-\>addFilter(); // add filter that uses
 
 // now holds dangling pointer!
 
-When a call is made to doSomeWork, a filter is created that depends on the Widget object produced by std::make_unique, i.e., a filter that contains a copy of a pointer to that Widget—the Widget’s this pointer. This filter is added to filters, but when doSomeWork finishes, the Widget is destroyed by the std::unique_ptr managing its **Item 31 \| 221**
+When a call is made to doSomeWork, a filter is created that depends on the Widget object produced by std::make_unique, i.e., a filter that contains a copy of a pointer to that Widget—the Widget’s this pointer. This filter is added to filters, but when doSomeWork finishes, the Widget is destroyed by the std::unique_ptr managing its
 
 lifetime (see Item 18). From that point on, filters contains an entry with a dangling pointer.
 
@@ -384,7 +380,7 @@ There’s no such thing as a default capture mode for a generalized lambda captu
 
 —stands.
 
-An additional drawback to default by-value captures is that they can suggest that the corresponding closures are self-contained and insulated from changes to data outside **222 \| Item 31**
+An additional drawback to default by-value captures is that they can suggest that the corresponding closures are self-contained and insulated from changes to data outside
 
 the closures. In general, that’s not true, because lambdas may be dependent not just on local variables and parameters (which may be captured), but also on objects with *static storage duration*. Such objects are defined at global or namespace scope or are declared static inside classes, functions, or files. These objects can be used inside lambdas, but they can’t be captured. Yet specification of a default by-value capture mode can lend the impression that they are. Consider this revised version of the add DivisorFilter function we saw earlier:
 
@@ -418,7 +414,6 @@ A casual reader of this code could be forgiven for seeing “\[=\]” and thinki
 
 • Default by-value capture is susceptible to dangling pointers (especially this), and it misleadingly suggests that lambdas are self-contained.
 
-**Item 31 \| 223**
 
 **Item 32: Use init capture to move objects into closures.**
 
@@ -450,7 +445,6 @@ private:
 
 };
 
-**224 \| Item 32**
 
 auto pw = std::make_unique\<Widget\>(); // create Widget; see
 
@@ -484,7 +478,6 @@ This should make clear that the C++14 notion of “capture” is considerably ge
 
 But what if one or more of the compilers you use lacks support for C++14’s init capture? How can you accomplish move capture in a language lacking support for move capture?
 
-**Item 32 \| 225**
 
 Remember that a lambda expression is simply a way to cause a class to be generated and an object of that type to be created. There is nothing you can do with a lambda that you can’t do by hand. The example C++14 code we just saw, for example, can be written in C++11 like this:
 
@@ -532,7 +525,6 @@ auto func = \[data = **std::move(data)**\] // C++14 init capture
 
 { /\* uses of data \*/ };
 
-**226 \| Item 32**
 
 I’ve highlighted key parts of this code: the type of object you want to move (std::vector\<double\>), the name of that object (data), and the initializing expression for the init capture (std::move(data)). The C++11 equivalent is as follows, where I’ve highlighted the same key things:
 
@@ -560,7 +552,7 @@ When a bind object is “called” (i.e., its function call operator is invoked)
 
 This lambda is the same as the lambda we’d use in C++14, except a parameter, data, has been added to correspond to our pseudo-move-captured object. This parameter is an lvalue reference to the copy of data in the bind object. (It’s not an rvalue reference, because although the expression used to initialize the copy of data (“std::move(data)”) is an rvalue, the copy of data itself is an lvalue.) Uses of data inside the lambda will thus operate on the move-constructed copy of data inside the bind object.
 
-By default, the operator() member function inside the closure class generated from a lambda is const. That has the effect of rendering all data members in the closure **Item 32 \| 227**
+By default, the operator() member function inside the closure class generated from a lambda is const. That has the effect of rendering all data members in the closure
 
 const within the body of the lambda. The move-constructed copy of data inside the bind object is not const, however, so to prevent that copy of data from being modified inside the lambda, the lambda’s parameter is declared reference-to-const. If the lambda were declared mutable, operator() in its closure class would not be declared const, and it would be appropriate to omit const in the lambda’s parameter declaration:
 
@@ -606,7 +598,6 @@ auto func = std::bind(
 
 && pw-\>isArchived(); },
 
-**228 \| Item 32**
 
 **std::make_unique\<Widget\>()**
 
@@ -648,9 +639,7 @@ In this example, the only thing the lambda does with its parameter x is forward 
 
 The correct way to write the lambda is to have it perfect-forward x to normalize.
 
-Doing that requires two changes to the code. First, x has to become a universal refer-Item 32 \| 229
-
-ence (see Item 24), and second, it has to be passed to normalize via std::forward
+Doing that requires two changes to the code. First, x has to become a universal reference (see Item 24), and second, it has to be passed to normalize via std::forward
 
 (see Item 25). In concept, these are trivial modifications:
 
@@ -690,7 +679,6 @@ return static_cast\< **Widget**&&\>(param); // T is *Widget*
 
 }
 
-**230 \| Item 33**
 
 But consider what would happen if the client code wanted to perfect-forward the same rvalue of type Widget, but instead of following the convention of specifying T to be a non-reference type, it specified it to be an rvalue reference. That is, consider what would happen if T were specified to be Widget&&. After initial instantiation of std::forward and application of std::remove_reference_t, but before reference
 
@@ -736,7 +724,6 @@ From there, it’s just a hop, skip, and six dots to a perfect-forwarding lambda
 
 lambdas can also be variadic:
 
-**Item 33 \| 231**
 
 auto f =
 
@@ -772,7 +759,6 @@ enum class Sound { Beep, Siren, Whistle };
 
 // typedef for a length of time
 
-**232 \| Item 33**
 
 using Duration = std::chrono::steady_clock::duration;
 
@@ -828,7 +814,6 @@ s, // same meaning
 
 };
 
-**Item 34 \| 233**
 
 Our first attempt to write the corresponding std::bind call is below. It has an error that we’ll fix in a moment, but the correct code is more complicated, and even this simplified version brings out some important issues:
 
@@ -870,7 +855,6 @@ std::bind(setAlarm,
 
 30s);
 
-**234 \| Item 34**
 
 If you’re familiar with the std::plus template from C++98, you may be surprised to see that in this code, no type is specified between the angle brackets, i.e., the code contains “std::plus**\<\>** ”, not “std::plus**\<** *type***\>** ”. In C++14, the template type argument for the standard operator templates can generally be omitted, so there’s no need to provide it here. C++11 offers no such feature, so the C++11 std::bind equivalent to the lambda is:
 
@@ -928,7 +912,6 @@ std::bind(std::plus\<\>(),
 
 steady_clock::now(),
 
-**Item 34 \| 235**
 
 1h),
 
@@ -970,7 +953,6 @@ It’s thus possible that using lambdas generates faster code than using std::bi
 
 The setAlarm example involves only a simple function call. If you want to do anything more complicated, the scales tip even further in favor of lambdas. For example, consider this C++14 lambda, which returns whether its argument is between a mini-mum value (lowVal) and a maximum value (highVal), where lowVal and highVal are local variables:
 
-**236 \| Item 34**
 
 auto betweenL =
 
@@ -1024,7 +1006,7 @@ Widget compress(const Widget& w, // make compressed
 
 CompLevel lev); // copy of w
 
-and we want to create a function object that allows us to specify how much a particular Widget w should be compressed. This use of std::bind will create such an object: **Item 34 \| 237**
+and we want to create a function object that allows us to specify how much a particular Widget w should be compressed. This use of std::bind will create such an object:
 
 Widget w;
 
@@ -1064,7 +1046,6 @@ Compared to lambdas, then, code using std::bind is less readable, less expressiv
 
 auto compressRateB = std::bind(compress, **std::ref(**w**)**, \_1); is that compressRateB acts as if it holds a reference to w, rather than a copy.
 
-**238 \| Item 34**
 
 • **Move capture**. C++11 lambdas don’t offer move capture, but it can be emulated through a combination of a lambda and std::bind. For details, consult Item 32, which also explains that in C++14, lambdas’ support for init capture eliminates the need for the emulation.
 
@@ -1112,12 +1093,9 @@ These are edge cases, of course, and they’re transient edge cases at that, bec
 
 When bind was unofficially added to C++ in 2005, it was a big improvement over its 1998 predecessors. The addition of lambda support to C++11 rendered std::bind all but obsolete, however, and as of C++14, there are just no good use cases for it.
 
-**Item 34 \| 239**
 
 **Things to Remember**
 
 • Lambdas are more readable, more expressive, and may be more efficient than using std::bind.
 
 • In C++11 only, std::bind may be useful for implementing move capture or for binding objects with templatized function call operators.
-
-**240 \| Item 34**

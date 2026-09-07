@@ -12,13 +12,13 @@ This chapter is exciting for not one, not two, but *three* reasons. First, it pr
 
 Second, we get to write an actual, honest-to-God *compiler*. It parses source code and outputs a low-level series of binary instructions. Sure, it’s bytecode and not some chip’s native instruction set, but it’s way closer to the metal than jlox was. We’re about to be real language hackers.
 
-Bytecode was good enough for Niklaus Wirth, and no one questions his street cred.
+> Bytecode was good enough for Niklaus Wirth, and no one questions his street cred.
 
 Third and finally, I get to show you one of my absolute favorite algorithms: Vaughan Pratt’s “top-down operator precedence parsing”. It’s the most elegant way I know to parse expressions. It gracefully handles prefix operators, postfix, infix, *mixfix*, any kind of *-fix* you got. It deals with precedence and associativity without breaking a sweat. I love it.
 
-Pratt parsers are a sort of oral tradition in industry. No compiler or language book I’ve read teaches them. Academia is very focused on generated parsers, and Pratt’s technique is for handwritten ones, so it gets overlooked.
-
-But in production compilers, where hand-rolled parsers are common, you’d be surprised how many people know it. Ask where they learned it, and it’s always, “Oh, I worked on this compiler years ago and my coworker said they took it from this old front end . . . ”
+> Pratt parsers are a sort of oral tradition in industry. No compiler or language book I’ve read teaches them. Academia is very focused on generated parsers, and Pratt’s technique is for handwritten ones, so it gets overlooked.
+>
+> But in production compilers, where hand-rolled parsers are common, you’d be surprised how many people know it. Ask where they learned it, and it’s always, “Oh, I worked on this compiler years ago and my coworker said they took it from this old front end . . . ”
 
 As usual, before we get to the fun stuff, we’ve got some preliminaries to work through. You have to eat your vegetables before you get dessert. First, let’s ditch that temporary scaffolding we wrote for testing the scanner and replace it with something more useful.
 
@@ -110,7 +110,7 @@ We’re going to spend the rest of the chapter making this function work, especi
 
 This chapter is different. Pratt’s parsing technique is remarkably simple once you have it all loaded in your head, but it’s a little tricky to break into bite-sized pieces. It’s recursive, of course, which is part of the problem. But it also relies on a big table of data. As we build up the algorithm, that table grows additional columns.
 
-If this chapter isn’t clicking with you and you’d like another take on the concepts, I wrote an article that teaches the same algorithm but using Java and an object-oriented style: [“Pratt Parsing: Expression Parsing Made Easy”](http://journal.stuffwithstuff.com/2011/03/19/pratt-parsers-expression-parsing-made-easy/).
+> If this chapter isn’t clicking with you and you’d like another take on the concepts, I wrote an article that teaches the same algorithm but using Java and an object-oriented style: [“Pratt Parsing: Expression Parsing Made Easy”](http://journal.stuffwithstuff.com/2011/03/19/pratt-parsers-expression-parsing-made-easy/).
 
 I don’t want to revisit 40-something lines of code each time we extend the table. So we’re going to work our way into the core of the parser from the outside and cover all of the surrounding bits before we get to the juicy center. This will require a little more patience and mental scratch space than most chapters, but it’s the best I could do.
 
@@ -118,15 +118,15 @@ I don’t want to revisit 40-something lines of code each time we extend the tab
 
 A compiler has roughly two jobs. It parses the user’s source code to understand what it means. Then it takes that knowledge and outputs low-level instructions that produce the same semantics. Many languages split those two roles into two separate passes in the implementation. A parser produces an AST—just like jlox does—and then a code generator traverses the AST and outputs target code.
 
-In fact, most sophisticated optimizing compilers have a heck of a lot more than two passes. Determining not just *what* optimization passes to have, but how to order them to squeeze the most performance out of the compiler—since the optimizations often interact in complex ways—is somewhere between an “open area of research” and a “dark art”.
+> In fact, most sophisticated optimizing compilers have a heck of a lot more than two passes. Determining not just *what* optimization passes to have, but how to order them to squeeze the most performance out of the compiler—since the optimizations often interact in complex ways—is somewhere between an “open area of research” and a “dark art”.
 
 In clox, we’re taking an old-school approach and merging these two passes into one. Back in the day, language hackers did this because computers literally didn’t have enough memory to store an entire source file’s AST. We’re doing it because it keeps our compiler simpler, which is a real asset when programming in C.
 
 Single-pass compilers like we’re going to build don’t work well for all languages. Since the compiler has only a peephole view into the user’s program while generating code, the language must be designed such that you don’t need much surrounding context to understand a piece of syntax. Fortunately, tiny, dynamically typed Lox is well-suited to that.
 
-Not that this should come as much of a surprise. I did design the language specifically for this book after all.
-
-![Peering through a keyhole at 'var x;'](media/image/compiling-expressions/keyhole.png)
+> Not that this should come as much of a surprise. I did design the language specifically for this book after all.
+>
+> ![Peering through a keyhole at 'var x;'](media/image/compiling-expressions/keyhole.png)
 
 What this means in practical terms is that our “compiler” C module has functionality you’ll recognize from jlox for parsing—consuming tokens, matching expected token types, etc. And it also has functions for code gen—emitting bytecode and adding constants to the destination chunk. (And it means I’ll use “parsing” and “compiling” interchangeably throughout this and later chapters.)
 
@@ -261,7 +261,7 @@ I’ve got another flag to introduce for error handling. We want to avoid error 
 
 We fixed that in jlox using panic mode error recovery. In the Java interpreter, we threw an exception to unwind out of all of the parser code to a point where we could skip tokens and resynchronize. We don’t have exceptions in C. Instead, we’ll do a little smoke and mirrors. We add a flag to track whether we’re currently in panic mode.
 
-There is `setjmp()` and `longjmp()`, but I’d rather not go there. Those make it too easy to leak memory, forget to maintain invariants, or otherwise have a Very Bad Day.
+> There is `setjmp()` and `longjmp()`, but I’d rather not go there. Those make it too easy to leak memory, forget to maintain invariants, or otherwise have a Very Bad Day.
 
 ```
   bool hadError;
@@ -535,9 +535,9 @@ static uint8_t makeConstant(Value value) {
 
 Most of the work happens in `addConstant()`, which we defined back in an earlier chapter. That adds the given value to the end of the chunk’s constant table and returns its index. The new function’s job is mostly to make sure we don’t have too many constants. Since the `OP_CONSTANT` instruction uses a single byte for the index operand, we can store and load only up to 256 constants in a chunk.
 
-Yes, that limit is pretty low. If this were a full-sized language implementation, we’d want to add another instruction like `OP_CONSTANT_16` that stores the index as a two-byte operand so we could handle more constants when needed.
-
-The code to support that isn’t particularly illuminating, so I omitted it from clox, but you’ll want your VMs to scale to larger programs.
+> Yes, that limit is pretty low. If this were a full-sized language implementation, we’d want to add another instruction like `OP_CONSTANT_16` that stores the index as a two-byte operand so we could handle more constants when needed.
+>
+> The code to support that isn’t particularly illuminating, so I omitted it from clox, but you’ll want your VMs to scale to larger programs.
 
 That’s basically all it takes. Provided there is some suitable code that consumes a `TOKEN_NUMBER` token, looks up `number()` in the function pointer array, and then calls it, we can now compile number literals to bytecode.
 
@@ -558,7 +558,7 @@ static void grouping() {
 
 Again, we assume the initial `(` has already been consumed. We recursively call back into `expression()` to compile the expression between the parentheses, then parse the closing `)` at the end.
 
-A Pratt parser isn’t a recursive *descent* parser, but it’s still recursive. That’s to be expected since the grammar itself is recursive.
+> A Pratt parser isn’t a recursive *descent* parser, but it’s still recursive. That’s to be expected since the grammar itself is recursive.
 
 As far as the back end is concerned, there’s literally nothing to a grouping expression. Its sole function is syntactic—it lets you insert a lower-precedence expression where a higher precedence is expected. Thus, it has no runtime semantics on its own and therefore doesn’t emit any bytecode. The inner call to `expression()` takes care of generating bytecode for the expression inside the parentheses.
 
@@ -593,20 +593,22 @@ As in `grouping()`, we recursively call `expression()` to compile the operand. A
 
 So the `OP_NEGATE` instruction should be emitted last. This is part of the compiler’s job—parsing the program in the order it appears in the source code and rearranging it into the order that execution happens.
 
-Emitting the `OP_NEGATE` instruction after the operands does mean that the current token when the bytecode is written is *not* the `-` token. That mostly doesn’t matter, except that we use that token for the line number to associate with that instruction.
-
-This means if you have a multi-line negation expression, like:
-
-```
-print -
-  true;
-```
-
-Then the runtime error will be reported on the wrong line. Here, it would show the error on line 2, even though the `-` is on line 1. A more robust approach would be to store the token’s line before compiling the operand and then pass that into `emitByte()`, but I wanted to keep things simple for the book.
+> Emitting the `OP_NEGATE` instruction after the operands does mean that the current token when the bytecode is written is *not* the `-` token. That mostly doesn’t matter, except that we use that token for the line number to associate with that instruction.
+>
+> This means if you have a multi-line negation expression, like:
+>
+> ```
+> print -
+>   true;
+> ```
+>
+> Then the runtime error will be reported on the wrong line. Here, it would show the error on line 2, even though the `-` is on line 1. A more robust approach would be to store the token’s line before compiling the operand and then pass that into `emitByte()`, but I wanted to keep things simple for the book.
 
 There is one problem with this code, though. The `expression()` function it calls will parse any expression for the operand, regardless of precedence. Once we add binary operators and other syntax, that will do the wrong thing. Consider:
 
-    -a.b + c;
+```
+-a.b + c;
+```
 
 Here, the operand to `-` should be just the `a.b` expression, not the entire `a.b + c`. But if `unary()` calls `expression()`, the latter will happily chew through all of the remaining code including the `+`. It will erroneously treat the `-` as lower precedence than the `+`.
 
@@ -652,7 +654,9 @@ Parser parser;
 
 These are all of Lox’s precedence levels in order from lowest to highest. Since C implicitly gives successively larger numbers for enums, this means that `PREC_CALL` is numerically larger than `PREC_UNARY`. For example, say the compiler is sitting on a chunk of code like:
 
-    -a.b + c
+```
+-a.b + c
+```
 
 If we call `parsePrecedence(PREC_ASSIGNMENT)`, then it will parse the entire expression because `+` has higher precedence than assignment. If instead we call `parsePrecedence(PREC_UNARY)`, it will compile the `-a.b` and stop there. It doesn’t keep going through the `+` because the addition has lower precedence than unary operators.
 
@@ -690,7 +694,7 @@ We simply parse the lowest precedence level, which subsumes all of the higher-pr
 
 We use the unary operator’s own `PREC_UNARY` precedence to permit nested unary expressions like `!!doubleNegative`. Since unary operators have pretty high precedence, that correctly excludes things like binary operators. Speaking of which . . . 
 
-Not that nesting unary expressions is particularly useful in Lox. But other languages let you do it, so we do too.
+> Not that nesting unary expressions is particularly useful in Lox. But other languages let you do it, so we do too.
 
 ## 17.5 Parsing Infix Expressions
 
@@ -752,29 +756,31 @@ When we parse the right operand of the `*` expression, we need to just capture `
 
 But that’s kind of tedious. Each binary operator’s right-hand operand precedence is one level higher than its own. We can look that up dynamically with this `getRule()` thing we’ll get to soon. Using that, we call `parsePrecedence()` with one level higher than this operator’s level.
 
-We use one *higher* level of precedence for the right operand because the binary operators are left-associative. Given a series of the *same* operator, like:
-
-```
-1 + 2 + 3 + 4
-```
-
-We want to parse it like:
-
-    ((1 + 2) + 3) + 4
-
-Thus, when parsing the right-hand operand to the first `+`, we want to consume the `2`, but not the rest, so we use one level above `+`’s precedence. But if our operator was *right*-associative, this would be wrong. Given:
-
-```
-a = b = c = d
-```
-
-Since assignment is right-associative, we want to parse it as:
-
-```
-a = (b = (c = d))
-```
-
-To enable that, we would call `parsePrecedence()` with the *same* precedence as the current operator.
+> We use one *higher* level of precedence for the right operand because the binary operators are left-associative. Given a series of the *same* operator, like:
+>
+> ```
+> 1 + 2 + 3 + 4
+> ```
+>
+> We want to parse it like:
+>
+> ```
+> ((1 + 2) + 3) + 4
+> ```
+>
+> Thus, when parsing the right-hand operand to the first `+`, we want to consume the `2`, but not the rest, so we use one level above `+`’s precedence. But if our operator was *right*-associative, this would be wrong. Given:
+>
+> ```
+> a = b = c = d
+> ```
+>
+> Since assignment is right-associative, we want to parse it as:
+>
+> ```
+> a = (b = (c = d))
+> ```
+>
+> To enable that, we would call `parsePrecedence()` with the *same* precedence as the current operator.
 
 This way, we can use a single `binary()` function for all binary operators even though they have different precedences.
 
@@ -788,7 +794,7 @@ We now have all of the pieces and parts of the compiler laid out. We have a func
 
 - the precedence of an infix expression that uses that token as an operator.
 
-We don’t need to track the precedence of the *prefix* expression starting with a given token because all prefix operators in Lox have the same precedence.
+> We don’t need to track the precedence of the *prefix* expression starting with a given token because all prefix operators in Lox have the same precedence.
 
 We wrap these three properties in a little struct which represents a single row in the parser table.
 
@@ -812,7 +818,7 @@ Parser parser;
 
 That ParseFn type is a simple typedef for a function type that takes no arguments and returns nothing.
 
-C’s syntax for function pointer types is so bad that I always hide it behind a typedef. I understand the intent behind the syntax—the whole “declaration reflects use” thing—but I think it was a failed syntactic experiment.
+> C’s syntax for function pointer types is so bad that I always hide it behind a typedef. I understand the intent behind the syntax—the whole “declaration reflects use” thing—but I think it was a failed syntactic experiment.
 
 ```
 } Precedence;
@@ -877,9 +883,9 @@ ParseRule rules[] = {
 
 *compiler.c*, add after *unary*()
 
-See what I mean about not wanting to revisit the table each time we needed a new column? It’s a beast.
-
-If you haven’t seen the `[TOKEN_DOT] =` syntax in a C array literal, that is C99’s designated initializer syntax. It’s clearer than having to count array indexes by hand.
+> See what I mean about not wanting to revisit the table each time we needed a new column? It’s a beast.
+>
+> If you haven’t seen the `[TOKEN_DOT] =` syntax in a C array literal, that is C99’s designated initializer syntax. It’s clearer than having to count array indexes by hand.
 
 You can see how `grouping` and `unary` are slotted into the prefix parser column for their respective token types. In the next column, `binary` is wired up to the four arithmetic infix operators. Those infix operators also have their precedences set in the last column.
 
@@ -901,7 +907,7 @@ It simply returns the rule at the given index. It’s called by `binary()` to lo
 
 Instead, we wrap the lookup in a function. That lets us forward declare `getRule()` before the definition of `binary()`, and then *define* `getRule()` after the table. We’ll need a couple of other forward declarations to handle the fact that our grammar is recursive, so let’s get them all out of the way.
 
-This is what happens when you write your VM in a language that was designed to be compiled on a PDP-11.
+> This is what happens when you write your VM in a language that was designed to be compiled on a PDP-11.
 
 ```
   emitReturn();
@@ -979,7 +985,7 @@ That’s a lot of prose, but if you really want to mind meld with Vaughan Pratt 
 
 ![The various parsing functions and how they call each other.](media/image/compiling-expressions/connections.png)
 
-The ![A solid arrow.](media/image/compiling-expressions/calls.png) arrow connects a function to another function it directly calls. The ![An open arrow.](media/image/compiling-expressions/points-to.png) arrow shows the table’s pointers to the parsing functions.
+> The ![A solid arrow.](media/image/compiling-expressions/calls.png) arrow connects a function to another function it directly calls. The ![An open arrow.](media/image/compiling-expressions/points-to.png) arrow shows the table’s pointers to the parsing functions.
 
 Later, we’ll need to tweak the code in this chapter to handle assignment. But, otherwise, what we wrote covers all of our expression compiling needs for the rest of the book. We’ll plug additional parsing functions into the table when we add new kinds of expressions, but `parsePrecedence()` is complete.
 
@@ -1051,7 +1057,9 @@ Fire up the VM and type in an expression. If we did everything right, it should 
 
 1.  To really understand the parser, you need to see how execution threads through the interesting parsing functions—`parsePrecedence()` and the parser functions stored in the table. Take this (strange) expression:
 
-        (-1 + 2) * 3 - -4
+    ```
+    (-1 + 2) * 3 - -4
+    ```
 
     Write a trace of how those functions are called. Show the order they are called, which calls which, and the arguments passed to them.
 
@@ -1069,11 +1077,11 @@ I’m going to make a claim here that will be unpopular with some compiler and l
 
 Over the years, many programming language people, especially in academia, have gotten *really* into parsers and taken them very seriously. Initially, it was the compiler folks who got into compiler-compilers, LALR, and other stuff like that. The first half of the dragon book is a long love letter to the wonders of parser generators.
 
-All of us suffer from the vice of “when all you have is a hammer, everything looks like a nail”, but perhaps none so visibly as compiler people. You wouldn’t believe the breadth of software problems that miraculously seem to require a new little language in their solution as soon as you ask a compiler hacker for help.
-
-Yacc and other compiler-compilers are the most delightfully recursive example. “Wow, writing compilers is a chore. I know, let’s write a compiler to write our compiler for us.”
-
-For the record, I don’t claim immunity to this affliction.
+> All of us suffer from the vice of “when all you have is a hammer, everything looks like a nail”, but perhaps none so visibly as compiler people. You wouldn’t believe the breadth of software problems that miraculously seem to require a new little language in their solution as soon as you ask a compiler hacker for help.
+>
+> Yacc and other compiler-compilers are the most delightfully recursive example. “Wow, writing compilers is a chore. I know, let’s write a compiler to write our compiler for us.”
+>
+> For the record, I don’t claim immunity to this affliction.
 
 Later, the functional programming folks got into parser combinators, packrat parsers, and other sorts of things. Because, obviously, if you give a functional programmer a problem, the first thing they’ll do is whip out a pocketful of higher-order functions.
 

@@ -22,7 +22,6 @@ Understanding the limitations of each should foster a healthy skepticism about m
 
 Some of the hardest software engineering involves distributed systems that need to agree on what the time is. If you have the resources of Google, then **293**
 
-**294**
 
 CHAPTER 9
 
@@ -76,7 +75,6 @@ In addition to the issues with earth’s fickle rotational speed, the physics of
 
 ***Background***
 
-**295**
 
 Dealing with hardware platforms without a real-time clock
 
@@ -98,10 +96,8 @@ Real-time clock board
 
 Real-time clock chip
 
-**296**
 
 
-***Time and timekeeping***
 
 ***9.2***
 
@@ -139,7 +135,6 @@ All applications derive their idea of time from the system time. The system cloc
 
 ***Encoding time***
 
-**297**
 
 log messages will never have a repeated timestamp. Unfortunately, preventing time adjustments means being permanently bound to the local clock’s skew.
 
@@ -181,10 +176,8 @@ The starting point is arbitrary. The most common epoch in UNIX-based systems is 
 
 – *Imprecise*—Integers are discrete, while time is continuous. Different systems make different trade-offs relating to subsecond accuracy, leading to rounding errors.
 
-**298**
 
 
-***Time and timekeeping***
 
 It’s also important to note that the general approach is inconsistently implemented.
 
@@ -270,7 +263,6 @@ An application gets time information from the OS, usually functionally provided 
 
 ***clock v0.1.1: Formatting timestamps to comply with ISO 8601 and email standards***
 
-**299**
 
 Listing 9.2, which reads the system time in the local time zone, might almost feel too small to be a full-fledged example. But running the code results in the current timestamp formatted according to the ISO 8601 standard. The following listing provides its configuration. You’ll find the source for this listing in ch9/ch9-clock0/Cargo.toml.
 
@@ -338,10 +330,8 @@ warning: associated function is never used: \`set\`
 
 --\> src/main.rs:12:8
 
-**300**
 
 
-***Time and timekeeping***
 
 \|
 
@@ -417,7 +407,6 @@ A struct with no fields is known as a *zero-sized type* or ZST. It does not occu
 
 ***clock v0.1.1: Formatting timestamps to comply with ISO 8601 and email standards***
 
-**301**
 
 ***9.6.2***
 
@@ -461,10 +450,8 @@ There are two main types that are useful for getting started: clap::App and clap
 
 Listing 9.5 is an excerpt from listing 9.7. It demonstrates how to implement the API presented in table 9.1 using clap.
 
-**302**
 
 
-***Time and timekeeping***
 
 Table 9.1
 
@@ -594,7 +581,6 @@ Using clap to parse command-line arguments
 
 ***clock v0.1.1: Formatting timestamps to comply with ISO 8601 and email standards***
 
-**303**
 
 clap automatically generates some usage documentation for our clock application on your behalf. Using the --help option triggers its output.
 
@@ -684,10 +670,8 @@ Otherwise, ignore.
 
 Creating the project step by step takes slightly more work. As clock v0.1.1 is a project managed by cargo, it follows the standard structure:
 
-**304**
 
 
-***Time and timekeeping***
 
 clock
 
@@ -787,7 +771,6 @@ Producing formatted dates from the command line, clock v0.1.1
 
 ***clock v0.1.2: Setting the time***
 
-**305**
 
 16
 
@@ -891,10 +874,8 @@ Producing formatted dates from the command line, clock v0.1.1
 
 Setting the time is complicated because each OS has its own mechanism for doing so. This requires that we use OS-specific conditional compilation to create a cross-portable tool.
 
-**306**
 
 
-***Time and timekeeping***
 
 ***9.7.1***
 
@@ -948,9 +929,7 @@ On line 64 of listing 9.8, you will encounter this line:
 
 libc::{timeval, time_t, suseconds_t};
 
-***clock v0.1.2: Setting the time***
 
-**307**
 
 It represents two type aliases and a struct definition. In Rust syntax, these are defined like this:
 
@@ -1048,10 +1027,8 @@ Setting the time in a libc environment
 
 78 }
 
-**308**
 
 
-***Time and timekeeping***
 
 Makes OS-specific imports within the function to avoid polluting the global scope.
 
@@ -1139,9 +1116,7 @@ overflow bugs without finicky type casting, which is why
 
 it’s not employed here.
 
-***clock v0.1.2: Setting the time***
 
-**309**
 
 WINDOWS CLOCK CODE
 
@@ -1277,10 +1252,8 @@ Setting the time using the Windows kernel32.dll API
 
 **Windows kernel will be well-behaved.**
 
-**310**
 
 
-***Time and timekeeping***
 
 ***9.7.4***
 
@@ -1374,9 +1347,7 @@ Cross-portable code for setting the system time
 
 18
 
-***clock v0.1.2: Setting the time***
 
-**311**
 
 19 \#\[cfg(windows)\]
 
@@ -1488,10 +1459,8 @@ Cross-portable code for setting the system time
 
 73
 
-**312**
 
 
-***Time and timekeeping***
 
 74 unsafe {
 
@@ -1595,7 +1564,6 @@ Cross-portable code for setting the system time
 
 ***Improving error handling***
 
-**313**
 
 129 t\_, std
 
@@ -1675,10 +1643,8 @@ Some(\_) =\> eprintln!("Unable to set the time: {:?}", maybe_error), None =\> ()
 
 After calls to Clock::set(t), Rust happily talks to the OS via std::io::Error::last \_os_error(). Rust checks to see if an error code has been generated.
 
-**314**
 
 
-***Time and timekeeping***
 
 ***9.9***
 
@@ -1728,7 +1694,6 @@ t4 in code.
 
 ***clock v0.1.3: Resolving differences between clocks with the Network Time Protocol (NTP)***
 
-**315**
 
 The names T –T are designated by the RFC 2030 specification. Figure 9.2 shows the 1
 
@@ -1876,10 +1841,8 @@ Defining a function that sends NTP messages
 
 **perfectly well and requires fractionally less work.**
 
-**316**
 
 
-***Time and timekeeping***
 
 18 udp.send(&message)?;
 
@@ -1983,7 +1946,6 @@ The NTP documentation provides two equations to help resolve the situation. Our 
 
 ***clock v0.1.3: Resolving differences between clocks with the Network Time Protocol (NTP)***
 
-**317**
 
 Table 9.2
 
@@ -2093,10 +2055,8 @@ Adjusting the time according to the responses
 
 192 let calc = ntp_roundtrip(&server, NTP_PORT);
 
-**318**
 
 
-***Time and timekeeping***
 
 193
 
@@ -2186,7 +2146,6 @@ Converting between **chrono::DateTime** and NTP timestamps
 
 ***clock v0.1.3: Resolving differences between clocks with the Network Time Protocol (NTP)***
 
-**319**
 
 22 \#\[derive(Default,Debug,Copy,Clone)\]
 
@@ -2292,10 +2251,8 @@ Full listing for the command-line NTP client, clock
 
 7
 
-**320**
 
 
-***Time and timekeeping***
 
 8 use byteorder::{BigEndian, ReadBytesExt};
 
@@ -2413,7 +2370,6 @@ Full listing for the command-line NTP client, clock
 
 ***clock v0.1.3: Resolving differences between clocks with the Network Time Protocol (NTP)***
 
-**321**
 
 63 impl From\<DateTime\<Utc\>\> for NTPTimestamp {
 
@@ -2557,10 +2513,8 @@ Full listing for the command-line NTP client, clock
 
 117 ) -\> Result\<NTPTimestamp, std::io::Error\> {
 
-**322**
 
 
-***Time and timekeeping***
 
 118 self.parse_timestamp(40)
 
@@ -2672,7 +2626,6 @@ Full listing for the command-line NTP client, clock
 
 ***clock v0.1.3: Resolving differences between clocks with the Network Time Protocol (NTP)***
 
-**323**
 
 173 }
 
@@ -2778,10 +2731,8 @@ Full listing for the command-line NTP client, clock
 
 227 fn get() -\> DateTime\<Local\> {
 
-**324**
 
 
-***Time and timekeeping***
 
 228 Local::now()
 
@@ -2895,7 +2846,6 @@ Full listing for the command-line NTP client, clock
 
 ***clock v0.1.3: Resolving differences between clocks with the Network Time Protocol (NTP)***
 
-**325**
 
 283
 
@@ -2991,10 +2941,8 @@ Full listing for the command-line NTP client, clock
 
 337
 
-**326**
 
 
-***Time and timekeeping***
 
 338 } else if action == "check-ntp" {
 
@@ -3062,7 +3010,6 @@ Full listing for the command-line NTP client, clock
 
 ***Summary***
 
-**327**
 
  System calls are used to make function calls to the OS. This invokes a complex interaction between the OS, the CPU, and the application.
 

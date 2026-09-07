@@ -1,13 +1,13 @@
 
- 
+
 
 **3**
 
- 
+
 
 **V I R T U A L M E M O R Y**
 
- 
+
 
 Arguably the most important memory feature pro-
 
@@ -33,7 +33,7 @@ cess all available physical memory on a machine. This is problematic in a
 
 number of respects:
 
- 
+
 
 **Stability** A program can access memory regardless of whose it is—its own,
 
@@ -44,7 +44,7 @@ another program’s or the system’s. This means that a programming er-ror resu
 ensure that it loads programs in such a position in memory that it not
 
 
- 
+
 
 only doesn’t overlap that of other programs but also doesn’t overlap the memory they are yet to use.
 
@@ -60,7 +60,7 @@ range without gaps. If you expose physical memory directly, then ob-taining cont
 
 the physical memory available to the system. This might seem a moot point, but facilities like paging are unavailable rendering running out of memory a critical system failure.
 
- 
+
 
 Different approaches to solving these problems have been tried through-
 
@@ -70,13 +70,13 @@ The concept is simple. Rather than expose physical memory directly, use
 
 virtual addresses that can be mapped arbitrarily to physical addresses at page granularity and alignment. Once this is place, you can have each process be-lieve it has all of the memory available to itself, which at a stroke eliminates all of the aforementioned issues.
 
- 
+
 
 **N O T E** I differentiate between programs and processes here because without virtual memory,
 
 the concept of a process is rather meaningless.
 
- 
+
 
 The concept of virtual memory really does necessitate a separation be-
 
@@ -94,11 +94,11 @@ When user space processes access unmapped memory or memory they
 
 are not permitted to, or try to perform an operation that’s not permitted
 
- 
 
 
 
- 
+
+
 
 in that virtual memory range (for example, write in a read-only mapping or
 
@@ -114,7 +114,7 @@ However, page faults can also be used to facilitate other useful functionality
 
 (a non-exhaustive list):
 
- 
+
 
 **Demand paging** We said earlier that userland memory allocation from the
 
@@ -132,7 +132,7 @@ system is the ability to fork processes. This is where a process makes an exact 
 
 memory that is not “local”—that is, physically near it. It may not be ob-vious which core will ultimately access a particular memory page, so in order to ensure that memory allocations are efficiently distributed, user-land memory can be periodically unmapped, allowing for migrate-on-fault semantics—that is, if the current core accessing the memory on fault is not local to it, migrate and re-map.
 
- 
+
 
 As the hardware mechanics virtual memory relies upon are inevitably
 
@@ -146,11 +146,11 @@ code examined here, so the majority of the contents of this chapter remain
 
 relevant regardless of architecture.
 
- 
+
 
 **3.1 Page Tables**
 
- 
+
 
 In the previous chapter on physical memory allocation, I remarked that
 
@@ -160,11 +160,11 @@ same applies to virtual memory mappings that also have to be mapped at a
 
 page granularity to remain manageable.
 
- 
 
 
 
- 
+
+
 
 This leaves us with a question: how should we map virtual pages to phys-
 
@@ -198,23 +198,23 @@ Since 512 = 2 9 12 and 4,096 = 2, we require 12 bits for the data page offset
 
 that the virtual address points at and 9 bits for each page table level. Modern x86-64 hardware can support up to 57 bits of physical memory. Since virtu-ally addressing memory that cannot exist physically is pointless, this implies that only the lower 57 bits of a virtual memory address are meaningful, and thus we require up to five page table levels to map virtual memory.
 
- 
+
 
 **N O T E** In x84-64, virtual addresses must be of canonical form, which means that all upper
 
 bits must be equal to the highest permissible bit. For example, if bit-56 is 0, then bits 57 through 63 must be 0 also. If it is 1, they must also be 1.
 
- 
+
 
 It turns out five-level x86-64 virtual addresses are the maximum any ar-
 
 chitecture supports. Most consumer x86-64 systems support only 48 bits
 
- 
 
 
 
- 
+
+
 
 (four levels), and other architectures or configurations might support sig-
 
@@ -228,7 +228,7 @@ Table 3-1 shows the page tables within the kernel (note that type declara-
 
 tions are architecture-specific).
 
- 
+
 
 Table 3-1: Page Table Levels
 
@@ -244,7 +244,7 @@ PMD [pmd_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/t
 
 PTE [pte_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64_types.h?h=v6.0#n21) [PTRS_PER_PTE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64_types.h?h=v6.0#n96) [PAGE_SHIFT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page_types.h?h=v6.0#n10) Page table entry directory
 
- 
+
 
 Each of these entry types defines an individual entry in these tables that
 
@@ -264,7 +264,7 @@ ing fundamental data types in, for x86-64, 64-bit specific wrappers shown in
 
 Listing 3-1.
 
- 
+
 
 14 **typedef unsigned long** pteval_t;
 
@@ -280,19 +280,19 @@ Listing 3-1.
 
 21 **typedef struct** { pteval_t pte; } **pte_t**;
 
- 
+
 
 *Listing 3-1:* arch/x86/include/asm/pgtable_64_types.h:
 
 [*page table entry value types*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64_types.h?h=v6.0#n14)
 
- 
+
 
 These value types are then wrapped by the actual page table type wrap-
 
 pers shown in Listing 3-2.
 
- 
+
 
 265 **typedef struct** { pgdval_t pgd; } **pgd_t**;
 
@@ -308,21 +308,21 @@ pers shown in Listing 3-2.
 
 364 **typedef struct** { pmdval_t pmd; } **pmd_t**;
 
- 
+
 
 *Listing 3-2:* arch/x86/include/asm/pgtable_types.h: [*page table entry types*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n265)
 
- 
 
 
 
- 
+
+
 
 Declaring these this way means the compiler checks to ensure that a PGD
 
 entry is never supplanted for a P4D, a P4D for a PUD, and so on.
 
- 
+
 
 ***3.1.1 Page Table Operations***
 
@@ -332,7 +332,7 @@ First, we’ll consider the page table flags specific to the PGD and P4D
 
 page table levels shown in Table 3-2. As these levels don’t map pages directly and normally don’t have their flags altered, fewer operations are defined for them.
 
- 
+
 
 Table 3-2: Page Table Helper Functions: PGD and P4D
 
@@ -392,7 +392,7 @@ Free [pgd_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux
 
 Set from [**struct page**](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) [pgd_populate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgalloc.h?h=v6.0#n134) [p4d_populate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgalloc.h?h=v6.0#n113)
 
- 
+
 
 We then examine page table helper functions for the PUD, PMD, and
 
@@ -406,11 +406,11 @@ via [pte_alloc_kernel_track()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 *†* – We can also use [pgd_offset_k()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pgtable.h?h=v6.0#n141) for kernel mappings.
 
- 
 
 
 
- 
+
+
 
 Table 3-3: Page Table Helper Functions: PUD, PMD, PTE
 
@@ -470,7 +470,7 @@ Free [pud_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux
 
 Set from [**struct page**](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) [pud_populate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/pgtable.c?h=v6.0#n188) [pmd_populate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgalloc.h?h=v6.0#n78) -
 
- 
+
 
 These helper functions are used through the memory manager for page
 
@@ -506,7 +506,7 @@ We start by examining the layout of a five-level, 4 KiB page size configu-
 
 ration in Figure 3-1.
 
- 
+
 
 
 
@@ -516,25 +516,25 @@ PGD P4D PUD PMD PTE offset
 
 Virtual address: 1111111 110101110 011100110 011000111 011110101 011011011 111011101111
 
- 
+
 
 mm-\>pgd
 
 PGD P4D PUD PMD PTE
 
- 
+
 
 Physical address: 000000000000 0000000000000000000010111000111010010010 111011101111
 
- 
+
 
 [MAX_PHYSMEM_BITS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/sparsemem.h?h=v6.0#n27)
 
- 
+
 
 *Figure 3-1: x86-64 five-level page table layout, 4 KiB pages*
 
- 
+
 
 Note that the PGD’s address is determined using the process’s
 
@@ -548,7 +548,7 @@ We can remove the PTE page table level to obtain 2 MiB huge page sizes,
 
 as shown in Figure 3-2.
 
- 
+
 
 
 
@@ -558,25 +558,25 @@ PGD P4D PUD PMD offset
 
 Virtual address: 1111111 110101110 011100110 011000111 011110101 011011011111011101111
 
- 
+
 
 mm-\>pgd
 
 PGD P4D PUD PMD
 
- 
+
 
 Physical address: 000000000000 0000000000000000000010111000111 011011011111011101111
 
- 
+
 
 [MAX_PHYSMEM_BITS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/sparsemem.h?h=v6.0#n27)
 
- 
+
 
 *Figure 3-2: x86-64 5-level page table layout, 2 MiB huge pages*
 
- 
+
 
 As you can see, the data page offset simply extended to consume the
 
@@ -584,7 +584,7 @@ next page table level and a page table level is dropped. We can do this again
 
 to obtain 5-level x86-64 1 GiB huge page tables, as shown in Figure 3-3.
 
- 
+
 
 
 
@@ -594,25 +594,25 @@ PGD P4D PUD offset
 
 Virtual address: 1111111 110101110 011100110 011000111 011110101011011011111011101111
 
- 
+
 
 mm-\>pgd
 
 PGD P4D PUD
 
- 
+
 
 Physical address: 000000000000 0000000000000000000010 011110101011011011111011101111
 
- 
+
 
 [MAX_PHYSMEM_BITS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/sparsemem.h?h=v6.0#n27)
 
- 
+
 
 *Figure 3-3: x86-64 five-level page table layout, 1 GiB huge pages*
 
- 
+
 
 Again we drop a page table level and expand the data page offset to ac-
 
@@ -622,7 +622,7 @@ The four-level page table configuration is very similar, only with the P4D
 
 level elided. Figure 3-4 shows the 4KiB page case.
 
- 
+
 
 
 
@@ -632,25 +632,25 @@ PGD offset PUD PMD PTE
 
 Virtual address: 1111111111111111 110101110 011000111 011110101 011011011 111011101111
 
- 
+
 
 mm-\>pgd
 
 PGD PUD PMD PTE
 
- 
+
 
 Physical address: 000000000000000000 0000000000000010111000111010010010 111011101111
 
- 
+
 
 [MAX_PHYSMEM_BITS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/sparsemem.h?h=v6.0#n27)
 
- 
+
 
 *Figure 3-4: x86-64 4-level page table layout, 4 KiB pages*
 
- 
+
 
 We drop the P4D page table level, but also note that [MAX_PHYSMEM_BITS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/sparsemem.h?h=v6.0#n27) goes
 
@@ -668,7 +668,7 @@ tables by dropping the lowest page table levels. Figure 3-5 shows the the 4-
 
 level 2 MiB huge page case.
 
- 
+
 
 
 
@@ -678,31 +678,31 @@ PGD PUD PMD offset
 
 Virtual address: 1111111111111111 110101110 011000111 011110101 011011011111011101111
 
- 
+
 
 mm-\>pgd
 
 PGD PUD PMD
 
- 
+
 
 Physical address: 000000000000000000 0000000000000010111000111 011011011111011101111
 
- 
+
 
 [MAX_PHYSMEM_BITS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/sparsemem.h?h=v6.0#n27)
 
- 
+
 
 *Figure 3-5: x86-64 four-level page table layout, 2MiB huge pages*
 
- 
+
 
 Finally, similar to the five-level case, we can obtain 2GiB huge pages by
 
 also dropping the PMD level, as shown in Figure 3-6.
 
- 
+
 
 
 
@@ -712,25 +712,25 @@ PGD PUD offset
 
 Virtual address: 1111111111111111 110101110 011000111 011110101011011011111011101111
 
- 
+
 
 mm-\>pgd
 
 PGD PUD
 
- 
+
 
 Physical address: 000000000000000000 0000000000000010 011110101011011011111011101111
 
- 
+
 
 [MAX_PHYSMEM_BITS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/sparsemem.h?h=v6.0#n27)
 
- 
+
 
 *Figure 3-6: x86-64 four-level page table layout, 1GiB huge pages*
 
- 
+
 
 ***3.1.2 Page Table Flags***
 
@@ -764,17 +764,17 @@ x86-64, but the concepts remain similar for all architectures, so it’s not a m
 
 jor task to adapt these to whatever architecture you are using.
 
- 
 
 
 
- 
+
+
 
 Figure 3-7 shows how page table flags are extracted from page table en-
 
 tries.
 
- 
+
 
 101100 001001000001010110110101101100001001000001010 1101101011010
 
@@ -818,15 +818,15 @@ tries.
 
 [\_PAGE_NX](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n111)
 
- 
+
 
 *Figure 3-7: x86-64 page table flags*
 
- 
+
 
 Table 3-4 shows which page tables each of these flags relate to.
 
- 
+
 
 Table 3-4: x86-64 page table flags
 
@@ -872,11 +872,11 @@ Flag Bit Description PGD P4D PUD PMD PTE
 
 [\_PAGE_NX](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n111) 63 Non-executable *•* *•* *•* *•* *•*
 
- 
 
 
 
- 
+
+
 
 Note that, while the hardware might support these flags (in this instance
 
@@ -888,7 +888,7 @@ In addition a number of flags overload others for specific purposes
 
 (mostly the software-defined flags), as shown in Table 3-5.
 
- 
+
 
 Table 3-5: x86-64 Overloaded Page Table Flags
 
@@ -906,11 +906,11 @@ Flag Overloads Bit Description
 
 [\_PAGE_DEVMAP](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n112) \_PAGE_SOFTW4 58 ZONE_DEVICE page
 
- 
+
 
 The following list describes each flag:
 
- 
+
 
 **\_PAGE_PRESENT** Indicates that the page directory/data page referred to is ac-
 
@@ -952,11 +952,11 @@ page. Again this is typically used for memory-mapped devices, for exam-ple, regi
 
 page is read from (this is what makes it sticky). The kernel can clear it,
 
- 
 
 
 
- 
+
+
 
 which means it can be used to determine if a page is in active use or not (an important trick!)
 
@@ -1012,11 +1012,11 @@ tool as it prevents exploit code from being able to execute arbitrary code in re
 
 Checked by [pte_exec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n172) and set by [pte_mkexec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n323)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n323)
 
- 
 
 
 
- 
+
+
 
 **\_PAGE_PROTNONE** Overloads \_PAGE_GLOBAL, and is only set if \_PAGE_PRESENT is not
 
@@ -1062,7 +1062,7 @@ Cleared by [pte_clear_soft_dirty()](https://git.kernel.org/pub/scm/linux/kernel/
 
 out of scope for this book.
 
- 
+
 
 ***3.1.3 Page Flag Combinations***
 
@@ -1072,11 +1072,11 @@ purposes such as setting flags for user and kernel pages (excluding out of
 
 scope encrypted memory flags), as shown in Table 3-6.
 
- 
 
 
 
- 
+
+
 
 Table 3-6: x86-64 Page Flag Combinations
 
@@ -1140,11 +1140,11 @@ Flag \_\_PP \_\_RW \_USR \_\_\_A \_\_NX \_\_\_D \_PSE \_\_\_G \_\_WP \_\_NC
 
 [PAGE_KERNEL_VVAR](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n198) *⋆* *•* *•* *•* *•* *•*
 
- 
+
 
 Key:
 
- 
+
 
 [\_\_PP](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n163) is an abbreviation of \_PAGE_PRESENT.
 
@@ -1162,11 +1162,11 @@ Key:
 
 [\_\_\_G](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n168) is an abbreviation of \_PAGE_GLOBAL.
 
- 
 
 
 
- 
+
+
 
 [\_\_WP](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n172) is an abbreviation of \_\_PAGE_PWT.
 
@@ -1180,7 +1180,7 @@ vulnerability is available. Otherwise [Page Table Isolation (PTI)](https://kerne
 
 [probe_page_size_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n225) on boot. Note that, while this is a CPU feature flag, it is software-only and does not reflect a hardware mitigation.
 
- 
+
 
 Kernel page mappings will use one of the PAGE_KERNEL\_\* flag variants
 
@@ -1194,7 +1194,7 @@ VM_WRITE, and VM_EXEC) and mapped in [vm_get_page_prot()](https://git.kernel.org
 
 3-7.
 
- 
+
 
 Table 3-7: x86-64 VM Flag to Page Flag Mappings
 
@@ -1220,13 +1220,13 @@ PAGE_NONE
 
 *•* PAGE_NONE *•* *•* PAGE_READONLY *•* *•* PAGE_SHARED *•* *•* *•* PAGE_SHARED *•* *•* PAGE_READONLY_EXEC *•* *•* *•* PAGE_READONLY_EXEC *•* *•* *•* PAGE_SHARED_EXEC *•* *•* *•* *•* PAGE_SHARED_EXEC
 
- 
+
 
 ## Chapter 4 on Process Memory will go into more detail as to how these
 
 VM\_ flags are determined.
 
- 
+
 
 ***3.1.4 Page Table Traversal***
 
@@ -1236,7 +1236,7 @@ We will go into detail as to how page table entries are managed in Chapter
 
 traversed manually, consider [follow_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5269) as shown in Listing 3-3.
 
- 
+
 
 5269 **int follow_pte**(**struct** mm_struct \*mm, **unsigned long** address, 5270 **pte_t** \*\*ptepp, **spinlock_t** \*\*ptlp) 5271 {
 
@@ -1244,11 +1244,11 @@ traversed manually, consider [follow_pte()](https://git.kernel.org/pub/scm/linux
 
 5273 **p4d_t** \*p4d;
 
- 
 
 
 
- 
+
+
 
 5274 **pud_t** \*pud;
 
@@ -1280,11 +1280,11 @@ traversed manually, consider [follow_pte()](https://git.kernel.org/pub/scm/linux
 
 5305 }
 
- 
+
 
 *Listing 3-3:* mm/memory.c: [*follow_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5269)
 
- 
+
 
 This uses the address to determine indexes of each page table entry, us-
 
@@ -1298,7 +1298,7 @@ Each retrieval entry is checked to ensure it is not empty via pXX_offset()
 
 and is a valid state via pXX_bad().
 
- 
+
 
 ***3.1.5 Page Table Locking***
 
@@ -1306,11 +1306,11 @@ When page table entries are modified, a lock must be acquired. There is a
 
 per-process spin lock, [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)-\>page_table_lock, which is used for all page levels other than PMD and PTE.
 
- 
 
 
 
- 
+
+
 
 For example, [\_\_p4d_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5182) allocates a P4D page and installs it in a
 
@@ -1344,7 +1344,7 @@ named [ptlock_ptr()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 these defines in Listing 3-4.
 
- 
+
 
 22 **\#define USE_SPLIT_PTE_PTLOCKS** (**NR_CPUS** \>= **CONFIG_SPLIT_PTLOCK_CPUS**)
 
@@ -1354,7 +1354,7 @@ these defines in Listing 3-4.
 
 25 **\#define ALLOC_SPLIT_PTLOCKS** (**SPINLOCK_SIZE** \> **BITS_PER_LONG**/8)
 
- 
+
 
 *Listing 3-4:* include/linux/mm_types_task.h: [*Page table locking defines*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n22)
 
@@ -1378,7 +1378,7 @@ See Chapter 4 on Process Memory for some discussion of the nuances of
 
 the use of page_table_lock.
 
- 
+
 
 **3.2 The Address Space**
 
@@ -1406,11 +1406,11 @@ form. Therefore, if the most significant bit is 0, then so are all the remaining
 
 higher bits and equally so if it is 1. Therefore, userland addresses will always
 
- 
 
 
 
- 
+
+
 
 have the most significant bit cleared, and kernel addresses will have the most significant bit set, making it easy to differentiate between the two.
 
@@ -1436,19 +1436,19 @@ able address space and is entirely dedicated to the current userland pro-
 
 cess. The [kernel space](https://kernel.org/doc/html/v6.0/x86/x86_64/mm.html) (in the upper half of available address space), however, has specific regions mapped. Kernel Address Space Layout Randomisation (KASLR), a security mitigation mechanism (the details of which are out of scope for the book), results in offsets to these regions, but the subdivision remains the same.
 
- 
+
 
 **N O T E** Kernel Address Space Layout Randomisation (KASLR) is a technique whereby ker-
 
 nel regions of memory are offset in order to prevent exploits from reliably targeting specific memory.
 
- 
+
 
 The exact addresses vary depending on whether the hardware supports
 
 4-level or 5-level page tables. Let’s examine the 5-level case first in Figure 3-8.
 
- 
+
 
 
 
@@ -1534,17 +1534,17 @@ The exact addresses vary depending on whether the hardware supports
 
 0xff00000000000000 address
 
- 
+
 
 *Figure 3-8: x86-64 5-level kernel virtual address layout*
 
- 
+
 
 Next, we examine the 4-level case, which is similar but restricted to 48
 
 bits, shown in Figure 3-9.
 
- 
+
 
 
 
@@ -1630,19 +1630,19 @@ bits, shown in Figure 3-9.
 
 0xffff800000000000 address
 
- 
+
 
 *Figure 3-9: x86-64 4-level kernel virtual address layout*
 
- 
 
 
 
- 
+
+
 
 **3.3 Direct Mapping**
 
- 
+
 
 As we limit maximum physical memory while at the same time possessing a
 
@@ -1684,7 +1684,7 @@ invokes \_\_va()). Addresses are converted the other way via [\_\_pa()](https://
 
 [virt_to_phys()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/io.h?h=v6.0#n131), as shown in Listing 3-5.
 
- 
+
 
 42 **\#define \_\_pa**(x) **\_\_phys_addr**((**unsigned long**)(x))
 
@@ -1692,11 +1692,11 @@ invokes \_\_va()). Addresses are converted the other way via [\_\_pa()](https://
 
 59 **\#define \_\_va**(x) ((**void** \*)((**unsigned long**)(x)+**PAGE_OFFSET**))
 
- 
+
 
 *Listing 3-5:* arch/x86/include/asm/page.h: [*\_\_pa()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page.h?h=v6.0#n42) *and* [*\_\_va()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page.h?h=v6.0#n59)
 
- 
+
 
 The translation from physical to virtual is, due to the direct mapping,
 
@@ -1718,7 +1718,7 @@ address space which contains the kernel text mapping (without taking into
 
 account KASLR) as shown in Listing 3-6.
 
- 
+
 
 19 **static \_\_always_inline unsigned long \_\_phys_addr_nodebug**(**unsigned long** x)
 
@@ -1738,15 +1738,15 @@ account KASLR) as shown in Listing 3-6.
 
 27 }
 
- 
 
 
 
- 
+
+
 
 *Listing 3-6:* arch/x86/include/asm/page_64.h: [*\_\_phys_addr_nodebug()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page_64.h?h=v6.0#n19)
 
- 
+
 
 Since the kernel places the text mapping at a higher address than the di-
 
@@ -1754,7 +1754,7 @@ rect mapping, this means y is either negative (meaning this is not located withi
 
 KASLR adjustment set in [phys_base](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page_64.h?h=v6.0#n13)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page_64.h?h=v6.0#n13)
 
- 
+
 
 ***3.3.1 Bootstrapping***
 
@@ -1784,7 +1784,7 @@ ing these early page tables, with [pgt_buf_start](https://git.kernel.org/pub/scm
 
 and [pgt_buf_top](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n108) specifying capacity as shown in Listing 3-7.
 
- 
+
 
 187 **RESERVE_BRK**(early_pgt_alloc, **INIT_PGT_BUF_SIZE**); 188 **void \_\_init early_alloc_pgt_buf**(**void**) 189 {
 
@@ -1794,21 +1794,21 @@ and [pgt_buf_top](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux
 
 195 pgt_buf_start = base \>\> **PAGE_SHIFT**; 196 pgt_buf_end = pgt_buf_start; 197 pgt_buf_top = pgt_buf_start + (tables \>\> **PAGE_SHIFT**); 198 }
 
- 
+
 
 *Listing 3-7:* arch/x86/mm/init.c: [*early_alloc_pgt_buf()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n188)
 
- 
+
 
 In x86-64 we absolutely must have access to the ‘ISA’ memory range (that
 
 is, the first megabyte of physical memory) before doing anything else for
 
- 
 
 
 
- 
+
+
 
 architecture-specific reasons, so this reserved space must have sufficient
 
@@ -1816,7 +1816,7 @@ room for page tables to map this, as well as sufficient space for page tables
 
 to map wherever future page table allocations will go.
 
- 
+
 
 ***3.3.2 Direct Mapping Initialization***
 
@@ -1848,7 +1848,7 @@ mapped (omitting the 32-bit case and some code not relevant to the discus-
 
 sion), as shown in Listing 3-8.
 
- 
+
 
 738 **void \_\_init init_mem_mapping**(**void**) 739 {
 
@@ -1890,11 +1890,11 @@ sion), as shown in Listing 3-8.
 
 767 *\* allocate page tables above the kernel. So we first map*
 
- 
 
 
 
- 
+
+
 
 768 *\* \[kernel_end, end) to make memory above the kernel be mapped*
 
@@ -1912,11 +1912,11 @@ sion), as shown in Listing 3-8.
 
 793 }
 
- 
+
 
 *Listing 3-8:* arch/x86/mm/init.c: *Simplified [init_mem_mapping()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n738)*
 
- 
+
 
 The [pti_check_boottime_disable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/pti.c?h=v6.0#n78), [setup_pcid()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n263), and [init_trampoline()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n723) func-
 
@@ -1928,7 +1928,7 @@ flags can be used via a mask as well as whether 2MiB and 1GiB huge pages
 
 are enabled. Let’s examine this in Listing 3-9, stripping the irrelevant page flag mask code.
 
- 
+
 
 225 **static void \_\_init probe_page_size_mask**(**void**) 226 {
 
@@ -1956,15 +1956,15 @@ are enabled. Let’s examine this in Listing 3-9, stripping the irrelevant page 
 
 261 }
 
- 
 
 
 
- 
+
+
 
 *Listing 3-9:* arch/x86/mm/init.c: *Simplified [probe_page_size_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n225)*
 
- 
+
 
 First, we determine whether 2MiB pages are available by check-
 
@@ -1996,7 +1996,7 @@ We’ll see where these pages are allocated from later. In the meantime,
 
 let’s examine how mappings are performed. We have two choices:
 
- 
+
 
 1. Allocate bottom-up using [memory_map_bottom_up()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n677), starting from the end
 
@@ -2008,7 +2008,7 @@ variable [max_pfn](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linu
 
 available physical memory to the end of the ISA mapping.
 
- 
+
 
 **N O T E** The *max_pfn* global explicitly indicates the end of available physical memory, and sets
 
@@ -2016,7 +2016,7 @@ the upper bound for the direct mapping. This is determined very early in the boo
 
 process.
 
- 
+
 
 The choice of which approach is used is based on where we want page ta-
 
@@ -2028,7 +2028,7 @@ cated as high as possible in memory. Which way we go is determined by
 
 [memblock_bottom_up()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/memblock.h?h=v6.0#n473).
 
- 
+
 
 **N O T E** An example of a situation where we would allocate bottom-up is [memory hotplug](https://kernel.org/doc/html/v6.0/admin-guide/mm/memory-hotplug.html) be-
 
@@ -2046,17 +2046,17 @@ is the lowest point above which physical memory is broadly available without ove
 
 lap).
 
- 
+
 
 Let’s examine the bottom-up approach performed by
 
 [memory_map_bottom_up()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n677) in Listing 3-10.
 
- 
 
 
 
- 
+
+
 
 677 **static void \_\_init memory_map_bottom_up**(**unsigned long** map_start, 678 **unsigned long** map_end) 679 {
 
@@ -2080,11 +2080,11 @@ Let’s examine the bottom-up approach performed by
 
 709 }
 
- 
+
 
 *Listing 3-10:* arch/x86/mm/init.c: [*memory_map_bottom_up()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n677)
 
- 
+
 
 We initialize direct mappings from map_start to the exclusive bound
 
@@ -2100,17 +2100,17 @@ block of memory allocated by [init_range_memory_mapping()](https://git.kernel.or
 
 size determined by [get_new_step_size()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n583). We’ll come to the actual allocation shortly.
 
- 
 
 
 
- 
+
+
 
 Next, let’s examine how we determine the next step in [get_new_step_size()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n583)
 
 in Listing 3-11.
 
- 
+
 
 583 **static unsigned long \_\_init get_new_step_size**(**unsigned long** step_size) 584 {
 
@@ -2128,11 +2128,11 @@ in Listing 3-11.
 
 599 **return** step_size \<\< (**PMD_SHIFT**-**PAGE_SHIFT**- 1); 600 }
 
- 
+
 
 *Listing 3-11:* arch/x86/mm/init.c: [*get_new_step_size()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n583)
 
- 
+
 
 As the comment suggests, in the worst case of allocating 1GiB of address
 
@@ -2156,7 +2156,7 @@ We examine the opposite direction performed by [memory_map_top_down()](https://g
 
 Listing 3-12.
 
- 
+
 
 612 **static void \_\_init memory_map_top_down**(**unsigned long** map_start, 613 **unsigned long** map_end) 614 {
 
@@ -2168,11 +2168,11 @@ Listing 3-12.
 
 621 *\* Systems that have many reserved areas near top of the memory,* 622 *\* e.g. QEMU with less than 1G RAM and EFI enabled, or Xen, will* 623 *\* require lots of 4K mappings which may exhaust pgt_buf.* 624 *\* Start with top-most PMD_SIZE range aligned at PMD_SIZE to ensure*
 
- 
 
 
 
- 
+
+
 
 625 *\* there is enough mapped memory that can be allocated from* 626 *\* memblock.*
 
@@ -2202,11 +2202,11 @@ Listing 3-12.
 
 662 **if** (real_end \< map_end) 663 **init_range_memory_mapping**(real_end, map_end); 664 }
 
- 
+
 
 *Listing 3-12:* arch/x86/mm/init.c: [*memory_map_top_down()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n612)
 
- 
+
 
 This is significantly more complicated than [memory_map_bottom_up()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n677),
 
@@ -2218,11 +2218,11 @@ cal memory from memblock (an early memory allocator, out of scope for
 
 the book), calling [memblock_phys_alloc_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memblock.c?h=v6.0#n1441) for [PMD_SIZE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64_types.h?h=v6.0#n98) size and align-
 
- 
 
 
 
- 
+
+
 
 ment, retrieves the allocated physical address and immediately frees it via
 
@@ -2272,7 +2272,7 @@ performed. This is via init_range_memory_mapping(), which in turn invokes
 
 Let’s examine [init_range_memory_mapping()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n555) in Listing 3-13.
 
- 
+
 
 542 */\**
 
@@ -2292,11 +2292,11 @@ Let’s examine [init_range_memory_mapping()](https://git.kernel.org/pub/scm/lin
 
 563 **for_each_mem_pfn_range**(i, **MAX_NUMNODES**, &start_pfn, &end_pfn, **NULL**) { 564 **u64** start = **clamp_val**(**PFN_PHYS**(start_pfn), r_start, r_end);
 
- 
 
 
 
- 
+
+
 
 565 **u64** end = **clamp_val**(**PFN_PHYS**(end_pfn), r_start, r_end); 566 **if** (start \>= end) 567 **continue**; 568
 
@@ -2310,11 +2310,11 @@ Let’s examine [init_range_memory_mapping()](https://git.kernel.org/pub/scm/lin
 
 580 **return** mapped_ram_size; 581 }
 
- 
+
 
 *Listing 3-13:* arch/x86/mm/init.c: [*init_range_memory_mapping()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n555)
 
- 
+
 
 This is the core method for mapping ranges of memory from
 
@@ -2334,7 +2334,7 @@ this space is exhausted, before the core memory mapping function
 
 Listing 3-14.
 
- 
+
 
 519 **unsigned long** \_\_ref **init_memory_mapping**(**unsigned long** start, 520 **unsigned long** end, **pgprot_t** prot) 521 {
 
@@ -2348,11 +2348,11 @@ Listing 3-14.
 
 532 **for** (i = 0; i \< nr_range; i++) 533 ret = **kernel_physical_mapping_init**(mr\[i\].start, mr\[i\].end, 534 mr\[i\].page_size_mask,
 
- 
 
 
 
- 
+
+
 
 535 prot);
 
@@ -2364,7 +2364,7 @@ Listing 3-14.
 
 539 **return** ret \>\> **PAGE_SHIFT**; 540 }
 
- 
+
 
 *Listing 3-14:* arch/x86/mm/init.c: [*init_memory_mapping()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n519)
 
@@ -2386,19 +2386,19 @@ worst case, we may have to allocate 4KiB, 2MiB, 1GiB, 2MiB, and 4KiB
 
 pages, or five different page sizes, as shown in Figure 3-10.
 
- 
+
 
 0x3fdff000 0x80201000
 
- 
+
 
 0x3fe00000 0x80200000
 
- 
+
 
 start 0x40000000 0x80000000 end
 
- 
+
 
 1GiB boundaries
 
@@ -2406,11 +2406,11 @@ start 0x40000000 0x80000000 end
 
 4KiB boundaries
 
- 
+
 
 *Figure 3-10: Worst-case direct mapping page size combination*
 
- 
+
 
 We store this maximum number of map ranges in [NR_RANGE_MR](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n308)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n308) We keep
 
@@ -2418,13 +2418,13 @@ track of these memory ranges using the [struct map_range](https://git.kernel.org
 
 in Listing 3-15.
 
- 
+
 
 204 **struct** map_range {
 
 205 **unsigned long** start; 206 **unsigned long** end; 207 **unsigned** page_size_mask; 208 };
 
- 
+
 
 *Listing 3-15:* arch/x86/mm/init.c: [*struct map_range*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n204)
 
@@ -2436,11 +2436,11 @@ the actual page mapping. This therefore subdivides the input range into up
 
 to five memory ranges, saving each via [save_mr()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n311) as shown in Listing 3-16.
 
- 
 
 
 
- 
+
+
 
 311 **static int \_\_meminit save_mr**(**struct** map_range \*mr, **int** nr_range, 312 **unsigned long** start_pfn, **unsigned long** end_pfn, 313 **unsigned long** page_size_mask) 314 {
 
@@ -2452,11 +2452,11 @@ to five memory ranges, saving each via [save_mr()](https://git.kernel.org/pub/sc
 
 325 }
 
- 
+
 
 *Listing 3-16:* arch/x86/mm/init.c: [*save_mr()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n311)
 
- 
+
 
 The check to determine whether the range is actually valid is performed
 
@@ -2472,7 +2472,7 @@ small to large, designated head pages, then large to small, designated tail page
 
 head in Listing 3-17.
 
- 
+
 
 386 **static int \_\_meminit split_mem_range**(**struct** map_range \*mr, **int** nr_range, 387 **unsigned long** start, 388 **unsigned long** end) 389 {
 
@@ -2490,11 +2490,11 @@ head in Listing 3-17.
 
 412 **if** (end_pfn \> limit_pfn)
 
- 
 
 
 
- 
+
+
 
 413 end_pfn = limit_pfn; 414 **if** (start_pfn \< end_pfn) { 415 nr_range = **save_mr**(mr, nr_range, start_pfn, end_pfn, 0); 416 pfn = end_pfn; 417 }
 
@@ -2514,15 +2514,15 @@ head in Listing 3-17.
 
 436 */\* big page (1G) range \*/* 437 start_pfn = **round_up**(pfn, **PFN_DOWN**(**PUD_SIZE**)); 438 end_pfn = **round_down**(limit_pfn, **PFN_DOWN**(**PUD_SIZE**)); 439 **if** (start_pfn \< end_pfn) { 440 nr_range = **save_mr**(mr, nr_range, start_pfn, end_pfn, 441 page_size_mask & 442 ((1\<\<**PG_LEVEL_2M**)\|(1\<\<**PG_LEVEL_1G**))); 443 pfn = end_pfn; 444 }
 
- 
+
 
 *Listing 3-17:* arch/x86/mm/init.c: [*split_mem_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n386) *head pages*
 
- 
+
 
 Examining the head page logic:
 
- 
+
 
 **4KiB head pages** Set pfn to start_pfn, that is, the PFN of the start argument
 
@@ -2536,19 +2536,19 @@ the first 1GiB aligned PFN in the range. If this is invalid then set end_pfn to 
 
 to last 1GiB aligned PFN of limit_pfn, noting that this is an exclusive bound. This can therefore encompass multiple gigabyte-sized pages. If the range is valid, it is saved and pfn set to end_pfn. Both 2MiB and 1Gib page size flags are set.
 
- 
+
 
 Let’s examine the remainder of [split_mem_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n386) in Listing 3-18.
 
- 
+
 
 446 */\* tail is not big page (1G) alignment \*/*
 
- 
 
 
 
- 
+
+
 
 447 start_pfn = **round_up**(pfn, **PFN_DOWN**(**PMD_SIZE**)); 448 end_pfn = **round_down**(limit_pfn, **PFN_DOWN**(**PMD_SIZE**)); 449 **if** (start_pfn \< end_pfn) { 450 nr_range = **save_mr**(mr, nr_range, start_pfn, end_pfn, 451 page_size_mask & (1\<\<**PG_LEVEL_2M**)); 452 pfn = end_pfn; 453 }
 
@@ -2570,15 +2570,15 @@ Let’s examine the remainder of [split_mem_range()](https://git.kernel.org/pub/
 
 484 }
 
- 
+
 
 *Listing 3-18:* arch/x86/mm/init.c: [*split_mem_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n386) *tail pages and merge*
 
- 
+
 
 The tail page logic is as follows:
 
- 
+
 
 **2MiB tail pages** We set start_pfn to the next 2MiB aligned page, and end_pfn
 
@@ -2588,11 +2588,11 @@ to the last 2MiB aligned page and save the range if valid, setting pfn to the en
 
 to limit_pfn to pick up all remaining pages, saving the range if it is valid.
 
- 
 
 
 
- 
+
+
 
 Note that [PFN_DOWN()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pfn.h?h=v6.0#n20) simply determines the PFN for the input physical ad-
 
@@ -2624,7 +2624,7 @@ we need to perform a few more steps. The first step involves invoking
 
 [adjust_range_page_size_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n331), which we’ll examine in Listing 3-19.
 
- 
+
 
 **N O T E** The [*adjust_range_page_size_mask()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n331) function is only called if the global flag
 
@@ -2636,7 +2636,7 @@ when the direct mapping is being initialized, which we’re examining, so we can
 
 sume not.
 
- 
+
 
 331 **static void** \_\_ref **adjust_range_page_size_mask**(**struct** map_range \*mr, 332 **int** nr_range) 333 {
 
@@ -2666,19 +2666,19 @@ sume not.
 
 358 }
 
- 
 
 
 
- 
+
+
 
 359 }
 
- 
+
 
 *Listing 3-19:* arch/x86/mm/init.c: [*adjust_range_page_size_mask()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n331)
 
- 
+
 
 This checks each memory range to see if it is contiguous to physical
 
@@ -2706,7 +2706,7 @@ create the actual mappings via [kernel_physical_mapping_init()](https://git.kern
 
 Listing 3-20.
 
- 
+
 
 781 **unsigned long \_\_meminit**
 
@@ -2714,11 +2714,11 @@ Listing 3-20.
 
 786 **return \_\_kernel_physical_mapping_init**(paddr_start, paddr_end, 787 page_size_mask, prot, **true**); 788 }
 
- 
+
 
 *Listing 3-20:* arch/x86/mm/init_64.c: [*kernel_physical_mapping_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n782)
 
- 
+
 
 This simply invokes [\_\_kernel_physical_mapping_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n725) with the init argu-
 
@@ -2732,15 +2732,15 @@ struct mm_struct in Chapter 4 on Process Memory in considerable detail but for n
 
 Next let’s examine [\_\_kernel_physical_mapping_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n725) in Listing 3-21.
 
- 
+
 
 724 **static unsigned long \_\_meminit** 725 **\_\_kernel_physical_mapping_init**(**unsigned long** paddr_start, 726 **unsigned long** paddr_end, 727 **unsigned long** page_size_mask,
 
- 
 
 
 
- 
+
+
 
 728 **pgprot_t** prot, **bool** init) 729 {
 
@@ -2786,15 +2786,15 @@ Next let’s examine [\_\_kernel_physical_mapping_init()](https://git.kernel.org
 
 771 **return** paddr_last; 772 }
 
- 
+
 
 *Listing 3-21:* arch/x86/mm/init_64.c: [*\_\_kernel_physical_mapping_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n725)
 
- 
 
 
 
- 
+
+
 
 We iterate over the virtual address range of the input physical range that
 
@@ -2822,13 +2822,13 @@ Additionally, if PTI is enabled then each PGD will be a separate kernel
 
 page table, if not then they are each shared with userspace mappings.
 
- 
+
 
 **N O T E** PGD synchronisation is only a concern during kernel initialization. Once the direct
 
 mapping is set up and the memory management subsystem is established, PGDs do not need to be synchronized again.
 
- 
+
 
 While setting up mappings, we move through each page level performing
 
@@ -2836,7 +2836,7 @@ similar actions. We’ll look at each level in detail, but let’s take some tim
 
 shown in Listing 3-22.
 
- 
+
 
 208 */\**
 
@@ -2848,11 +2848,11 @@ shown in Listing 3-22.
 
 217 **sync_global_pgds_l4**(start, end); 218 }
 
- 
+
 
 *Listing 3-22:* arch/x86/mm/init_64.c: [*sync_global_pgds()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n212)
 
- 
+
 
 There is separate logic for 5-level and 4-level. As they are very similar,
 
@@ -2862,11 +2862,11 @@ linked list, which is added to via [pgd_list_add()](https://git.kernel.org/pub/s
 
 [pgd_list_del()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/pgtable.c?h=v6.0#n100).
 
- 
 
 
 
- 
+
+
 
 PGDs are added to these lists when they are constructed in [pgd_ctor()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/pgtable.c?h=v6.0#n123)
 
@@ -2876,7 +2876,7 @@ ted in [pgd_dtor()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/lin
 
 Let’s examine [sync_global_pgds_l5()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n127) in Listing 3-23.
 
- 
+
 
 127 **static void sync_global_pgds_l5**(**unsigned long** start, **unsigned long** end) 128 {
 
@@ -2920,11 +2920,11 @@ Let’s examine [sync_global_pgds_l5()](https://git.kernel.org/pub/scm/linux/ker
 
 162 }
 
- 
+
 
 *Listing 3-23:* arch/x86/mm/init_64.c: [*sync_global_pgds_l5()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n127)
 
- 
+
 
 This function takes the current kernel PGD and synchronizes all map-
 
@@ -2934,11 +2934,11 @@ rent reference PGD entry is stored in pgd_ref. The global [pgd_lock](https://git
 
 protect accesses to [pgd_list](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n170).
 
- 
 
 
 
- 
+
+
 
 For present entries, we retrieve the address of the PGD via [page_address()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1708)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1708)
 
@@ -2960,7 +2960,7 @@ Returning to [\_\_kernel_physical_mapping_init()](https://git.kernel.org/pub/scm
 
 self invokes [alloc_low_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n123) with num set to 1, as shown in Listing 3-24.
 
- 
+
 
 123 **\_\_ref void** \***alloc_low_pages**(**unsigned int** num) 124 {
 
@@ -2992,11 +2992,11 @@ self invokes [alloc_low_pages()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 155
 
- 
 
 
 
- 
+
+
 
 156 **for** (i = 0; i \< num; i++) { 157 **void** \*adr;
 
@@ -3008,11 +3008,11 @@ self invokes [alloc_low_pages()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 163 **return \_\_va**(pfn \<\< **PAGE_SHIFT**); 164 }
 
- 
+
 
 *Listing 3-24:* arch/x86/mm/init.c: [*alloc_low_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n123)
 
- 
+
 
 Again, we can assume that [after_bootmem](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init.c?h=v6.0#n200) is not set as we are initializing
 
@@ -3036,7 +3036,7 @@ Now let’s examine the next stage of this process in [phys_p4d_init()](https://
 
 in Listing 3-25.
 
- 
+
 
 673 **static unsigned long \_\_meminit** 674 **phys_p4d_init**(**p4d_t** \*p4d_page, **unsigned long** paddr, **unsigned long** paddr_end, 675 **unsigned long** page_size_mask, **pgprot_t** prot, **bool** init) 676 {
 
@@ -3062,11 +3062,11 @@ in Listing 3-25.
 
 694 **if** (paddr \>= paddr_end) { 695 paddr_next = **\_\_pa**(vaddr_next); 696 **if** (!after_bootmem && 697 !**e820\_\_mapped_any**(paddr & **P4D_MASK**, paddr_next,
 
- 
 
 
 
- 
+
+
 
 698 **E820_TYPE_RAM**) && 699 !**e820\_\_mapped_any**(paddr & **P4D_MASK**, paddr_next, 700 **E820_TYPE_RESERVED_KERN**)) 701 **set_p4d_init**(p4d, \_\_p4d(0), init); 702 **continue**; 703 }
 
@@ -3088,11 +3088,11 @@ in Listing 3-25.
 
 721 **return** paddr_last; 722 }
 
- 
+
 
 *Listing 3-25:* arch/x86/mm/init_64.c: [*phys_p4d_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n674)
 
- 
+
 
 This is broadly similar to [\_\_kernel_physical_mapping_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n725) but has a num-
 
@@ -3110,17 +3110,17 @@ where, somehow, the physical address is out of range. If it is, we clear the P4D
 
 ified by the E820 PC architecture memory map via [e820\_\_mapped_any()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/e820.c?h=v6.0#n100)—this is used to explicitly clear page table entries for memory holes (places where no accessible physical memory exists).
 
- 
+
 
 **N O T E** E820 refers to a BIOS call, which is used on PCs early in boot to get a physical mem-
 
 ory map. *e820* refers to what to place in the AX register to invoke the call.
 
- 
 
 
 
- 
+
+
 
 The [phys_p4d_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n674) function returns the exclusive bound of physically
 
@@ -3148,7 +3148,7 @@ changed in commit 432c833218dd.
 
 We’ll examine the initial part of [phys_pud_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n587) in Listing 3-26.
 
- 
+
 
 586 **static unsigned long \_\_meminit** 587 **phys_pud_init**(**pud_t** \*pud_page, **unsigned long** paddr, **unsigned long** paddr_end, 588 **unsigned long** page_size_mask, **pgprot_t** \_prot, **bool** init) 589 {
 
@@ -3158,11 +3158,11 @@ We’ll examine the initial part of [phys_pud_init()](https://git.kernel.org/pub
 
 595 **for** (; i \< **PTRS_PER_PUD**; i++, paddr = paddr_next) {
 
- 
+
 
 *Listing 3-26:* arch/x86/mm/init_64.c: [*phys_pud_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n587) *preamble and loop*
 
- 
+
 
 Note that here we loop through all entries in the PUD starting at the be-
 
@@ -3182,7 +3182,7 @@ potentially incorrect page table entries spanning memory holes as we go,
 
 which is shown in Listing 3-27.
 
- 
+
 
 596 **pud_t** \*pud; 597 **pmd_t** \*pmd; 598 **pgprot_t** prot = \_prot;
 
@@ -3194,19 +3194,19 @@ which is shown in Listing 3-27.
 
 604 **if** (paddr \>= paddr_end) { 605 **if** (!after_bootmem && 606 !**e820\_\_mapped_any**(paddr & **PUD_MASK**, paddr_next, 607 **E820_TYPE_RAM**) &&
 
- 
 
 
 
- 
+
+
 
 608 !**e820\_\_mapped_any**(paddr & **PUD_MASK**, paddr_next, 609 **E820_TYPE_RESERVED_KERN**)) 610 **set_pud_init**(pud, **\_\_pud**(0), init); 611 **continue**; 612 }
 
- 
+
 
 *Listing 3-27:* arch/x86/mm/init_64.c: [*phys_pud_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n587) *loop initialisation and PA check*
 
- 
+
 
 Next, if we are reusing an existing PUD entry, we have to consider 1GiB
 
@@ -3214,7 +3214,7 @@ huge pages and the ordinary 2MiB/4KiB case. If the PUD entry isn’t large, we p
 
 amine this in Listing 3-28.
 
- 
+
 
 614 **if** (!**pud_none**(\*pud)) { 615 **if** (!**pud_large**(\*pud)) { 616 pmd = **pmd_offset**(pud, 0); 617 paddr_last = **phys_pmd_init**(pmd, paddr, 618 paddr_end, 619 page_size_mask,
 
@@ -3232,15 +3232,15 @@ amine this in Listing 3-28.
 
 632 *\* not differ with respect to page frame and* 633 *\* attributes.* 634 *\*/* 635 **if** (page_size_mask & (1 \<\< **PG_LEVEL_1G**)) { 636 **if** (!after_bootmem) 637 pages++; 638 paddr_last = paddr_next; 639 **continue**; 640 } 641 prot = **pte_pgprot**(**pte_clrhuge**(\*(**pte_t** \*)pud)); 642 }
 
- 
+
 
 *Listing 3-28:* arch/x86/mm/init_64.c: [*phys_pud_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n587) *existing entry*
 
- 
 
 
 
- 
+
+
 
 If there is no existing entry, we have to either mark the page as huge or
 
@@ -3256,7 +3256,7 @@ Next let’s examine the case of a new entry in [phys_pud_init()](https://git.ke
 
 Listing 3-29.
 
- 
+
 
 644 **if** (page_size_mask & (1\<\<**PG_LEVEL_1G**)) { 645 pages++; 646 **spin_lock**(&init_mm.page_table_lock);
 
@@ -3276,11 +3276,11 @@ Listing 3-29.
 
 663 **spin_lock**(&init_mm.page_table_lock); 664 **pud_populate_init**(&init_mm, pud, pmd, init); 665 **spin_unlock**(&init_mm.page_table_lock); 666 }
 
- 
+
 
 *Listing 3-29:* arch/x86/mm/init_64.c: [*phys_pud_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n587) *new entry*
 
- 
+
 
 Finally, we keep a track of the number of 1GiB huge pages allocated via
 
@@ -3288,7 +3288,7 @@ the pages variable, which we use to update stats with before returning the last
 
 mapped physical address, paddr_last, as shown in Listing 3-30.
 
- 
+
 
 668 **update_page_count**(**PG_LEVEL_1G**, pages);
 
@@ -3296,25 +3296,25 @@ mapped physical address, paddr_last, as shown in Listing 3-30.
 
 670 **return** paddr_last; 671 }
 
- 
+
 
 *Listing 3-30:* arch/x86/mm/init_64.c: [*phys_pud_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n587) *after loop*
 
- 
+
 
 The structure of [phys_pmd_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n502) is very similar to [phys_pud_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n587) as shown
 
 in Listing 3-31.
 
- 
+
 
 501 **static unsigned long \_\_meminit** 502 **phys_pmd_init**(**pmd_t** \*pmd_page, **unsigned long** paddr, **unsigned long** paddr_end,
 
- 
 
 
 
- 
+
+
 
 503 **unsigned long** page_size_mask, **pgprot_t** prot, **bool** init) 504 {
 
@@ -3346,11 +3346,11 @@ in Listing 3-31.
 
 545 *\* not differ with respect to page frame and* 546 *\* attributes.* 547 *\*/* 548 **if** (page_size_mask & (1 \<\< **PG_LEVEL_2M**)) {
 
- 
 
 
 
- 
+
+
 
 549 **if** (!after_bootmem) 550 pages++; 551 paddr_last = paddr_next; 552 **continue**; 553 } 554 new_prot = **pte_pgprot**(**pte_clrhuge**(\*(**pte_t** \*)pmd)); 555 }
 
@@ -3374,11 +3374,11 @@ init);
 
 576 **update_page_count**(**PG_LEVEL_2M**, pages); 577 **return** paddr_last; 578 }
 
- 
+
 
 *Listing 3-31:* arch/x86/mm/init_64.c: [*phys_pmd_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n502)
 
- 
+
 
 The only difference is that 2MiB huge pages are considered and the pop-
 
@@ -3390,7 +3390,7 @@ Finally, let’s consider the far simpler [phys_pte_init()](https://git.kernel.o
 
 32.
 
- 
+
 
 447 **static unsigned long \_\_meminit** 448 **phys_pte_init**(**pte_t** \*pte_page, **unsigned long** paddr, **unsigned long** paddr_end, 449 **pgprot_t** prot, **bool** init) 450 {
 
@@ -3398,11 +3398,11 @@ Finally, let’s consider the far simpler [phys_pte_init()](https://git.kernel.o
 
 454 **int** i;
 
- 
 
 
 
- 
+
+
 
 455
 
@@ -3440,11 +3440,11 @@ Finally, let’s consider the far simpler [phys_pte_init()](https://git.kernel.o
 
 493 **return** paddr_last; 494 }
 
- 
+
 
 *Listing 3-32:* arch/x86/mm/init_64.c: [*phys_pte_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n448)
 
- 
+
 
 This is similar to the other functions, only with no need to consider huge
 
@@ -3454,11 +3454,11 @@ In each case of 1GiB, 2MiB huge pages, and 4KiB non-huge pages we
 
 initialize the final entry via [set_pte_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/init_64.c?h=v6.0#n91) (this and the other set\_\*\_init func-
 
- 
 
 
 
- 
+
+
 
 tions being generated by macros), using [pfn_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n577) to encode the data page
 
@@ -3472,7 +3472,7 @@ standing how this is initialized but also to see page table manipulation in
 
 action.
 
- 
+
 
 **3.4 An Introduction to the Transaction Lookaside Buffer**
 
@@ -3506,7 +3506,7 @@ invlpg instruction and ultimately performed by [native_flush_tlb_one_user()](htt
 
 shown in Listing 3-33.
 
- 
+
 
 **N O T E** Note that this makes reference to the x86-64 feature Process Context Identifiers
 
@@ -3514,7 +3514,7 @@ shown in Listing 3-33.
 
 tion against the meltdown vulnerability. Discussion of this is out of scope here.
 
- 
+
 
 1120 **STATIC_NOPV void native_flush_tlb_one_user**(**unsigned long** addr) 1121 {
 
@@ -3536,15 +3536,15 @@ tion against the meltdown vulnerability. Discussion of this is out of scope here
 
 1136 **invpcid_flush_one**(**user_pcid**(loaded_mm_asid), addr); 1137 }
 
- 
 
 
 
- 
+
+
 
 *Listing 3-33:* arch/x86/mm/tlb.c: [*native_flush_tlb_one_user()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n1120)
 
- 
+
 
 The [native_flush_tlb_one_user()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n1120) function is called by
 
@@ -3560,11 +3560,11 @@ The discussion is kept intentionally brief here as we will go into more
 
 detail on TLB maintenance in Chapter 7 on the Reverse Mapping.
 
- 
+
 
 **3.5 The Kernel Virtual Memory Allocator (vmalloc)**
 
- 
+
 
 Allocating memory in the kernel is typically performed using the slab allo-
 
@@ -3584,7 +3584,7 @@ via [vmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/
 
 Let’s examine [vmalloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3292) in Listing 3-34.
 
- 
+
 
 3280 */\*\**
 
@@ -3596,41 +3596,41 @@ Let’s examine [vmalloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 3290 *\* Return: pointer to the allocated memory or %NULL on error* 3291 *\*/*
 
- 
 
 
 
- 
+
+
 
 3292 **void** \***vmalloc**(**unsigned long** size) 3293 {
 
 3294 **return \_\_vmalloc_node**(size, 1, **GFP_KERNEL**, **NUMA_NO_NODE**, 3295 **\_\_builtin_return_address**(0)); 3296 }
 
- 
+
 
 *Listing 3-34:* mm/vmalloc.c: [*vmalloc()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3292)
 
- 
+
 
 If a caller wishes to allocate memory that is automatically zeroed,
 
 [vzalloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3332) provides this functionality, as shown in Listing 3-35.
 
- 
+
 
 3332 **void** \***vzalloc**(**unsigned long** size) 3333 {
 
 3334 **return \_\_vmalloc_node**(size, 1, **GFP_KERNEL** \| **\_\_GFP_ZERO**, **NUMA_NO_NODE**, 3335 **\_\_builtin_return_address**(0)); 3336 }
 
- 
+
 
 *Listing 3-35:* mm/vmalloc.c: [*vzalloc()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3332)
 
- 
+
 
 Each of these invoke [\_\_vmalloc_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3258)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3258) which is shown in Listing 3-36.
 
- 
+
 
 3239 */\*\**
 
@@ -3652,21 +3652,21 @@ Each of these invoke [\_\_vmalloc_node()](https://git.kernel.org/pub/scm/linux/k
 
 3261 **return \_\_vmalloc_node_range**(size, align, **VMALLOC_START**, **VMALLOC_END**, 3262 gfp_mask, **PAGE_KERNEL**, 0, node, caller); 3263 }
 
- 
+
 
 *Listing 3-36:* mm/vmalloc.c: [*\_\_vmalloc_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3258)
 
- 
+
 
 You can see that [vmalloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3292) invokes this with alignment set to 1, the GFP
 
 mask set to GFP_KERNEL, the node mas set to NUMA_NO_NODE (specifying that no
 
- 
 
 
 
- 
+
+
 
 specific node is required to be allocated on), and caller set to the return ad-
 
@@ -3678,37 +3678,37 @@ to perform a kernel virtual memory allocation, but all ultimately invoke
 
 [\_\_vmalloc_node_range(). ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3111)Figure 3-11 illustrates these allocators.
 
- 
+
 
 [vcalloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n740) [\_\_vcalloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n729)
 
- 
+
 
 [vmalloc_array()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n717) [\_\_vmalloc_array()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n702)
 
- 
+
 
 [vmalloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3292) [vzalloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3332) [\_\_vmalloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3273) [vmalloc_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3370) [vzalloc_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3388)
 
- 
+
 
 [vmalloc_32()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3416) [\_\_vmalloc_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3258) [vmalloc_user()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3348)
 
- 
+
 
 [vmalloc_32_user()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3432) [\_\_vmalloc_node_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3111) [vmalloc_huge()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3311)
 
- 
+
 
 *Figure 3-11: vmalloc allocators*
 
- 
+
 
 Each of these end up invoking [\_\_vmalloc_node_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3111), the “heart” of the
 
 virtual allocator. Let’s examine the beginning of this function in Listing 3-37 (stripping out of scope KASAN and kmemleak logic).
 
- 
+
 
 3111 **void** \***\_\_vmalloc_node_range**(**unsigned long** size, **unsigned long** align, 3112 **unsigned long** start, **unsigned long** end, **gfp_t** gfp_mask
 
@@ -3726,11 +3726,11 @@ virtual allocator. Let’s examine the beginning of this function in Listing 3-3
 
 3126 **if** ((size \>\> **PAGE_SHIFT**) \> **totalram_pages**()) { 3127 **warn_alloc**(gfp_mask, **NULL**, 3128 "vmalloc error: size %lu, exceeds total pages", 3129 real_size); 3130 **return NULL**; 3131 }
 
- 
 
 
 
- 
+
+
 
 3132
 
@@ -3752,11 +3752,11 @@ virtual allocator. Let’s examine the beginning of this function in Listing 3-3
 
 3151 align = **max**(real_align, 1UL \<\< shift); 3152 size = **ALIGN**(real_size, 1UL \<\< shift); 3153 }
 
- 
+
 
 *Listing 3-37:* mm/vmalloc.c: [*\_\_vmalloc_node_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3111) *preface*
 
- 
+
 
 Note that the start and (exclusive) end bound parameters specify the
 
@@ -3786,7 +3786,7 @@ PC architecture edge case. Size and alignment are adjusted accordingly.
 
 Listing 3-38 shows the remainder of the [\_\_vmalloc_node_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3111) function.
 
- 
+
 
 3155 **again**:
 
@@ -3798,11 +3798,11 @@ node,
 
 3160 **bool** nofail = gfp_mask & **\_\_GFP_NOFAIL**; 3161 **warn_alloc**(gfp_mask, **NULL**,
 
- 
 
 
 
- 
+
+
 
 3162 "vmalloc error: size %lu, vm_struct allocation failed%
 
@@ -3844,11 +3844,11 @@ s",
 
 3237 }
 
- 
+
 
 *Listing 3-38:* mm/vmalloc.c: [*\_\_vmalloc_node_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n3111) *core*
 
- 
+
 
 A virtual memory area node of type [struct vm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/vmalloc.h?h=v6.0#n48) (more on this data
 
@@ -3858,11 +3858,11 @@ Next, the actual allocation and mapping is performed by
 
 [\_\_vmalloc_area_node() , ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2988)before clearing the VM_UNINITIALIZED flag in the gener-ated vm_struct (this structure is still referenced within vmalloc).
 
- 
 
 
 
- 
+
+
 
 On failure, if huge pages were used, we try again only this time using an
 
@@ -3870,7 +3870,7 @@ ordinary page size.
 
 We examine [struct vm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/vmalloc.h?h=v6.0#n48) in Listing 3-39.
 
- 
+
 
 48 **struct** vm_struct {
 
@@ -3898,15 +3898,15 @@ We examine [struct vm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 60 };
 
- 
+
 
 *Listing 3-39:* include/linux/vmalloc.h: [*struct vm_struct*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/vmalloc.h?h=v6.0#n48)
 
- 
+
 
 Let’s go over each field:
 
- 
+
 
 next – Used by early initialization functions to maintain a list of early vmal-
 
@@ -3936,7 +3936,7 @@ caller – A pointer containing the return address of the function that in-
 
 voked the entrypoint into vmalloc. This is used for debug output (for example, via /proc/vmallocinfo) to indicate what function requested each block.
 
- 
+
 
 The vmalloc flags determine how vmalloc allocations are performed and
 
@@ -3944,7 +3944,7 @@ are either set by the function the user has called into, or if calling via some-
 
 thing like [get_vm_area()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2526)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2526) these can be specified. Flags can be combined:
 
- 
+
 
 • VM_IOREMAP – This indicates that the allocation will be used for I/O opera-
 
@@ -3952,11 +3952,11 @@ tions in the vein of [ioremap()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 • VM_ALLOC – Indicates that this is an ordinary vmalloc allocation.
 
- 
 
 
 
- 
+
+
 
 • VM_MAP – Indicates the memory is to be mapped. This field is used as the
 
@@ -4010,7 +4010,7 @@ cation. If this is set, the requested allocation size is sufficiently large, and
 
 sion.
 
- 
+
 
 ***3.5.1 Finding a Free Block***
 
@@ -4018,11 +4018,11 @@ The [\_\_vmalloc_node_range()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 memory block, which we examine in Listing 3-40 (stripping out of scope KASAN and I/O remap logic).
 
- 
 
 
 
- 
+
+
 
 2459 **static struct** vm_struct \***\_\_get_vm_area_node**(**unsigned long** size, 2460 **unsigned long** align, **unsigned long** shift, **unsigned long** flags, 2461 **unsigned long** start, **unsigned long** end, **int** node, 2462 **gfp_t** gfp_mask, **const void** \*caller) 2463 {
 
@@ -4048,11 +4048,11 @@ memory block, which we examine in Listing 3-40 (stripping out of scope KASAN and
 
 2505 }
 
- 
+
 
 *Listing 3-40:* mm/vmalloc.c: *Simplified [\_\_get_vm_area_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2459)*
 
- 
+
 
 The function starts by asserting we are not in an interrupt context, align-
 
@@ -4080,11 +4080,11 @@ be mapped or allocated so any attempt to access it (like a buffer overrun) will
 
 result in a page fault.
 
- 
 
 
 
- 
+
+
 
 You can see this is the case as the additional page is added here
 
@@ -4102,7 +4102,7 @@ acquires the [vmap_area_lock](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 assign the initial vm_struct fields, shown in Listing 3-41.
 
- 
+
 
 2430 **static inline void setup_vmalloc_vm_locked**(**struct** vm_struct \*vm, 2431 **struct** vmap_area \*va, **unsigned long** flags, **const void** \*caller) 2432 {
 
@@ -4116,11 +4116,11 @@ assign the initial vm_struct fields, shown in Listing 3-41.
 
 2443 **spin_lock**(&vmap_area_lock); 2444 **setup_vmalloc_vm_locked**(vm, va, flags, caller); 2445 **spin_unlock**(&vmap_area_lock); 2446 }
 
- 
+
 
 *Listing 3-41:* mm/vmalloc.c: [*setup_vmalloc_vm()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2440) *and* [*setup_vmalloc_vm_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2430)
 
- 
+
 
 As you can see, there is a direct relationship between the vm_struct and
 
@@ -4136,17 +4136,17 @@ Returning to [\_\_get_vm_area_node()](https://git.kernel.org/pub/scm/linux/kerne
 
 3-42 (removing out of scope KASAN and kmemleak logic).
 
- 
+
 
 1569 **static struct** vmap_area \***alloc_vmap_area**(**unsigned long** size, 1570 **unsigned long** align, 1571 **unsigned long** vstart, **unsigned long** vend, 1572 **int** node, **gfp_t** gfp_mask) 1573 {
 
 1574 **struct** vmap_area \*va; 1575 **unsigned long** freed;
 
- 
 
 
 
- 
+
+
 
 1576 **unsigned long** addr; 1577 **int** purged = 0;
 
@@ -4166,11 +4166,11 @@ Returning to [\_\_get_vm_area_node()](https://git.kernel.org/pub/scm/linux/kerne
 
 1590 va = **kmem_cache_alloc_node**(vmap_area_cachep, gfp_mask, node); 1591 **if** (**unlikely**(!va)) 1592 **return ERR_PTR**(-**ENOMEM**);
 
- 
+
 
 *Listing 3-42:* mm/vmalloc.c: [*alloc_vmap_area()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1569) *preface*
 
- 
+
 
 Here, we ensure that the inputs are sane, ensuring that vmalloc is initial-
 
@@ -4184,7 +4184,7 @@ At this point we’ve allocated the vmap_area but have yet to insert it into
 
 vmalloc state. Let’s examine the core logic in Listing 3-43.
 
- 
+
 
 1600 **retry**:
 
@@ -4204,11 +4204,11 @@ vmalloc state. Let’s examine the core logic in Listing 3-43.
 
 1621 **BUG_ON**(!**IS_ALIGNED**(va-\>va_start, align));
 
- 
 
 
 
- 
+
+
 
 1622 **BUG_ON**(va-\>va_start \< vstart); 1623 **BUG_ON**(va-\>va_end \> vend);
 
@@ -4216,15 +4216,15 @@ vmalloc state. Let’s examine the core logic in Listing 3-43.
 
 1631 **return** va;
 
- 
+
 
 *Listing 3-43:* mm/vmalloc.c: [*alloc_vmap_area()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1569) *core*
 
- 
+
 
 This logic is divided into two parts:
 
- 
+
 
 1. Find and allocate a free block of vmalloc memory via [\_\_alloc_vmap_area()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1476)
 
@@ -4238,7 +4238,7 @@ tree rooted in [free_vmap_area_root](https://git.kernel.org/pub/scm/linux/kernel
 
 [vmap_area_root](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n723) and headed by [vmap_area_list](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n722) (with [vmap_area_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n719) held).
 
- 
+
 
 We’ll examine each of these shortly.
 
@@ -4250,7 +4250,7 @@ vend to indicate this and we jump to the overflow branch described in Listing
 
 Finally, we handle overflow in [alloc_vmap_area()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1569)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1569) shown in Listing 3-44.
 
- 
+
 
 1633 **overflow**:
 
@@ -4278,15 +4278,15 @@ size\> to increase size\n",
 
 1652 **kmem_cache_free**(vmap_area_cachep, va); 1653 **return ERR_PTR**(-**EBUSY**); 1654 }
 
- 
+
 
 *Listing 3-44:* mm/vmalloc.c: [*alloc_vmap_area()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1569) *overflow handling*
 
- 
 
 
 
- 
+
+
 
 This code attempts to free up vmalloc space, first by invoking
 
@@ -4298,7 +4298,7 @@ shrinkers registered by vmalloc users. If memory is freed, the operation is
 
 retried. If not, it is aborted and an EBUSY error code returned.
 
- 
+
 
 **N O T E** Shrinkers are a means by which kernel slab memory can be freed under mem-
 
@@ -4312,7 +4312,7 @@ register or unregister shrinkers via [*register_vmap_purge_notifier()*](https://
 
 by a couple of GPU drivers at present.
 
- 
+
 
 By default the vmalloc address space area is 32TiB in size for 4-level
 
@@ -4334,7 +4334,7 @@ Both ultimately invoke [\_\_purge_vmap_area_lazy()](https://git.kernel.org/pub/s
 
 We examine the core [\_\_alloc_vmap_area()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1476) in Listing 3-45.
 
- 
+
 
 1471 */\**
 
@@ -4350,11 +4350,11 @@ We examine the core [\_\_alloc_vmap_area()](https://git.kernel.org/pub/scm/linux
 
 1486 *\* Do not adjust when:* 1487 *\** *a) align \<= PAGE_SIZE, because it does not make any sense.* 1488 *\** *All blocks(their start addresses) are at least PAGE_SIZE* 1489 *\** *aligned anyway;* 1490 *\** *b) a short range where a requested size corresponds to exactly* 1491 *\** *specified \[vstart:vend\] interval and an alignment \> PAGE_SIZE.* 1492 *\** *With adjusted search length an allocation would not succeed.* 1493 *\*/*
 
- 
 
 
 
- 
+
+
 
 1494 **if** (align \<= **PAGE_SIZE** \|\| (align \> **PAGE_SIZE** && (vend - vstart) ==
 
@@ -4382,11 +4382,11 @@ adjust_search_size);
 
 1519 **return** nva_start_addr; 1520 }
 
- 
+
 
 *Listing 3-45:* mm/vmalloc.c: [*\_\_alloc_vmap_area()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1476)
 
- 
+
 
 This function starts by determining whether the search size can be ad-
 
@@ -4406,11 +4406,11 @@ We then perform the deferred check against vend using this start address
 
 and exit returning vend to indicate failure if we exceed this.
 
- 
 
 
 
- 
+
+
 
 The only remaining task (excluding an out of scope debug check) is
 
@@ -4420,7 +4420,7 @@ the allocation.
 
 We examine [find_vmap_lowest_match()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1236) in Listing 3-46.
 
- 
+
 
 */\**
 
@@ -4442,25 +4442,25 @@ We examine [find_vmap_lowest_match()](https://git.kernel.org/pub/scm/linux/kerne
 
 **unsigned long** length;
 
- 
+
 
 */\* Start from the root. \*/*
 
 node = root-\>rb_node;
 
- 
+
 
 */\* Adjust the search size for alignment overhead. \*/*
 
 length = adjust_search_size ? size + align - 1 : size;
 
- 
+
 
 **while** (node) {
 
 va = **rb_entry**(node, **struct** vmap_area, rb_node);
 
- 
+
 
 **if** (**get_subtree_max_size**(node-\>rb_left) \>= length &&
 
@@ -4474,7 +4474,7 @@ node = node-\>rb_left;
 
 **return** va;
 
- 
+
 
 */\**
 
@@ -4494,17 +4494,17 @@ node = node-\>rb_right;
 
 }
 
- 
+
 
 */\**
 
 *\* OK. We roll back and find the first right sub-tree,*
 
- 
 
 
 
- 
+
+
 
 *\* that will satisfy the search criteria. It can happen \* due to "vstart" restriction or an alignment overhead \* that is bigger then PAGE_SIZE.*
 
@@ -4516,7 +4516,7 @@ va = **rb_entry**(node, **struct** vmap_area, rb_node); **if** (**is_within_this
 
 **return** va;
 
- 
+
 
 **if** (**get_subtree_max_size**(node-\>rb_right) \>= length &&
 
@@ -4554,17 +4554,17 @@ node = node-\>rb_right;
 
 }
 
- 
+
 
 **return NULL**;
 
 }
 
- 
+
 
 *Listing 3-46:* mm/vmalloc.c: [*find_vmap_lowest_match()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1236)
 
- 
+
 
 This walks the red/black search tree using the twin workhorses of
 
@@ -4574,7 +4574,7 @@ node’s [struct vmap_area](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 amine in Listing 3-47.
 
- 
+
 
 1209 **static \_\_always_inline bool** 1210 **is_within_this_va**(**struct** vmap_area \*va, **unsigned long** size, 1211 **unsigned long** align, **unsigned long** vstart) 1212 {
 
@@ -4584,11 +4584,11 @@ amine in Listing 3-47.
 
 1218 nva_start_addr = **ALIGN**(vstart, align);
 
- 
 
 
 
- 
+
+
 
 1219
 
@@ -4596,17 +4596,17 @@ amine in Listing 3-47.
 
 1225 **return** (nva_start_addr + size \<= va-\>va_end); 1226 }
 
- 
+
 
 *Listing 3-47:* mm/vmalloc.c: [*is_within_this_va()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1210)
 
- 
+
 
 **N O T E** As the comment states, this function takes special care to avoid underflow or overflow
 
 in the case of being supplied an overly large size or alignment.
 
- 
+
 
 The [find_vmap_lowest_match()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1236) function walks through the tree, finding
 
@@ -4656,7 +4656,7 @@ ficiently large to contain our requirements from find_vmap_lowest_match(),
 
 quired from the free block and adjust it as required, as shown in Listing 3-48.
 
- 
+
 
 **static \_\_always_inline int**
 
@@ -4670,15 +4670,15 @@ quired from the free block and adjust it as required, as shown in Listing 3-48.
 
 **enum** fit_type type = **classify_va_fit_type**(va, nva_start_addr, size);
 
- 
+
 
 **if** (type == **FL_FIT_TYPE**) {
 
- 
 
 
 
- 
+
+
 
 */\**
 
@@ -4762,11 +4762,11 @@ lva = **\_\_this_cpu_xchg**(ne_fit_preload_node, **NULL**); **if** (**unlikely**
 
 *\* There are a few exceptions though, as an example it is \* a first allocation (early boot up) when we have "one"*
 
- 
 
 
 
- 
+
+
 
 *\* big free space that has to be split.*
 
@@ -4792,7 +4792,7 @@ lva = **kmem_cache_alloc**(vmap_area_cachep, GFP_NOWAIT); **if** (!lva)
 
 }
 
- 
+
 
 */\**
 
@@ -4804,7 +4804,7 @@ lva-\>va_start = va-\>va_start;
 
 lva-\>va_end = nva_start_addr;
 
- 
+
 
 */\**
 
@@ -4820,13 +4820,13 @@ va-\>va_start = nva_start_addr + size;
 
 }
 
- 
+
 
 **if** (type != **FL_FIT_TYPE**) {
 
 **augment_tree_propagate_from**(va);
 
- 
+
 
 **if** (lva) */\* type == NE_FIT_TYPE \*/*
 
@@ -4834,13 +4834,13 @@ va-\>va_start = nva_start_addr + size;
 
 }
 
- 
+
 
 **return** 0;
 
 }
 
- 
+
 
 *Listing 3-48:* mm/vmalloc.c: [*adjust_va_to_fit_type()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1372)
 
@@ -4848,11 +4848,11 @@ The comments here are excellent and give a good idea as to what is going
 
 on. First, they classify the type of fit via [enum fit_type](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1337), shown in Listing 3-49.
 
- 
 
 
 
- 
+
+
 
 1337 **enum** fit_type {
 
@@ -4860,13 +4860,13 @@ on. First, they classify the type of fit via [enum fit_type](https://git.kernel.
 
 1339 **FL_FIT_TYPE** = 1, */\* full fit \*/* 1340 **LE_FIT_TYPE** = 2, */\* left edge fit \*/* 1341 **RE_FIT_TYPE** = 3, */\* right edge fit \*/* 1342 **NE_FIT_TYPE** = 4 */\* no edge fit \*/* 1343 };
 
- 
+
 
 *Listing 3-49:* mm/vmalloc.c: [*enum fit_type*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1337)
 
 These are:
 
- 
+
 
 **NOTHING_FIT** No fit at all.
 
@@ -4886,13 +4886,13 @@ addresses), but the right fits perfectly.
 
 “gaps” at either side.
 
- 
+
 
 The logic that performs this classification is defined in
 
 [classify_va_fit_type(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1346)shown in Listing 3-50.
 
- 
+
 
 1345 **static \_\_always_inline enum** fit_type 1346 **classify_va_fit_type**(**struct** vmap_area \*va, 1347 **unsigned long** nva_start_addr, **unsigned long** size) 1348 {
 
@@ -4908,21 +4908,21 @@ The logic that performs this classification is defined in
 
 1367
 
- 
 
 
 
- 
+
+
 
 1368 **return** type;
 
 1369 }
 
- 
+
 
 *Listing 3-50:* mm/vmalloc.c: [*classify_va_fit_type()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1346)
 
- 
+
 
 Once we’ve classified the kind of fit, this indicates what we need to do. If
 
@@ -4956,7 +4956,7 @@ subtree_max_size values are recalculated via [augment_tree_propagate_from()](htt
 
 if a new node was added, it is inserted via [insert_vmap_area_augment()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1078).
 
- 
+
 
 ***3.5.2 Inserting a Newly Allocated Block***
 
@@ -4964,7 +4964,7 @@ Finally, we can look to the final step in [alloc_vmap_area()](https://git.kernel
 
 [insert_vmap_area()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1066) on the newly allocated vmap area, shown in Listing 3-51.
 
- 
+
 
 1065 **static void**
 
@@ -4976,11 +4976,11 @@ Finally, we can look to the final step in [alloc_vmap_area()](https://git.kernel
 
 1074 **link_va**(va, root, parent, link, head); 1075 }
 
- 
+
 
 *Listing 3-51:* mm/vmalloc.c: [*insert_vmap_area()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n1066)
 
- 
+
 
 We’ll gloss over [link_va()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n953) here as it essentially uses the kernel’s red/black
 
@@ -4992,17 +4992,17 @@ at which to insert the node, returning a pointer to the parent node’s free lef
 
 or right node as well as the parent node itself, shown in Listing 3-52.
 
- 
+
 
 839 */\**
 
 840 *\* This function returns back addresses of parent node* 841 *\* and its left or right link for further processing.*
 
- 
 
 
 
- 
+
+
 
 842 *\**
 
@@ -5048,11 +5048,11 @@ tmp_va-\>va_end);
 
 886 **return NULL**;
 
- 
 
 
 
- 
+
+
 
 887 }
 
@@ -5064,11 +5064,11 @@ tmp_va-\>va_end);
 
 892 }
 
- 
+
 
 *Listing 3-52:* mm/vmalloc.c: [*find_va_links()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n848)
 
- 
+
 
 If the root argument is specified, then we begin our search here, check
 
@@ -5084,7 +5084,7 @@ laps) and ending once we have a pointer to an empty pointer either in left or
 
 right of the parent before returning it.
 
- 
+
 
 ***3.5.3 Physical Allocation***
 
@@ -5100,7 +5100,7 @@ these pages are mapped in.
 
 Let’s examine the first part of this function in Listing 3-53.
 
- 
+
 
 2988 **static void** \***\_\_vmalloc_area_node**(**struct** vm_struct \*area, **gfp_t** gfp_mask, 2989 **pgprot_t** prot, **unsigned int** page_shift, 2990 **int** node) 2991 {
 
@@ -5112,11 +5112,11 @@ Let’s examine the first part of this function in Listing 3-53.
 
 3007 */\* Please note that the recursion is strictly bounded. \*/* 3008 **if** (array_size \> **PAGE_SIZE**) { 3009 area-\>pages = **\_\_vmalloc_node**(array_size, 1, nested_gfp, node, 3010 area-\>caller);
 
- 
 
 
 
- 
+
+
 
 3011 } **else** {
 
@@ -5130,11 +5130,11 @@ array size %lu",
 
 3018 nr_small_pages \* **PAGE_SIZE**, array_size); 3019 **free_vm_area**(area); 3020 **return NULL**; 3021 }
 
- 
+
 
 *Listing 3-53:* mm/vmalloc.c: [*\_\_vmalloc_area_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2988) *preface*
 
- 
+
 
 We start by determining how many base pages will be need to be allo-
 
@@ -5142,7 +5142,7 @@ cated via [get_vm_area_size()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 shown in Listing 3-54.
 
- 
+
 
 198 **static inline size_t get_vm_area_size**(**const struct** vm_struct \*area) 199 {
 
@@ -5152,11 +5152,11 @@ shown in Listing 3-54.
 
 206 }
 
- 
+
 
 *Listing 3-54:* include/linux/vmalloc.h: [*get_vm_area_size()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/vmalloc.h?h=v6.0#n198)
 
- 
+
 
 Returning to [\_\_vmalloc_area_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2988), we then focus on allocating
 
@@ -5170,7 +5170,7 @@ the slab allocator via [kmalloc_node()](https://git.kernel.org/pub/scm/linux/ker
 
 shown in Listing 3-55.
 
- 
+
 
 3023 **set_vm_area_page_order**(area, page_shift -**PAGE_SHIFT**); 3024 page_order = **vm_area_page_order**(area); 3025
 
@@ -5178,11 +5178,11 @@ shown in Listing 3-55.
 
 3029 **atomic_long_add**(area-\>nr_pages, &nr_vmalloc_pages); 3030 **if** (gfp_mask & **\_\_GFP_ACCOUNT**) {
 
- 
 
 
 
- 
+
+
 
 3031 **int** i;
 
@@ -5206,11 +5206,11 @@ allocate pages",
 
 3044 area-\>nr_pages \* **PAGE_SIZE**, page_order); 3045 **goto fail**; 3046 }
 
- 
+
 
 *Listing 3-55:* mm/vmalloc.c: [*\_\_vmalloc_area_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2988) *physical allocation*
 
- 
+
 
 We set the [struct vm_struct-\>page_order](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/vmalloc.h?h=v6.0#n48) field via [set_vm_area_page_order()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2280)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2280)
 
@@ -5226,7 +5226,7 @@ failure if not.
 
 Finally, we map the memory, as shown in Listing 3-56.
 
- 
+
 
 3048 */\**
 
@@ -5240,11 +5240,11 @@ Finally, we map the memory, as shown in Listing 3-56.
 
 3064 **if** ((gfp_mask & (**\_\_GFP_FS** \| **\_\_GFP_IO**)) == **\_\_GFP_IO**) 3065 **memalloc_nofs_restore**(flags); 3066 **else if** ((gfp_mask & (**\_\_GFP_FS** \| **\_\_GFP_IO**)) == 0) 3067 **memalloc_noio_restore**(flags);
 
- 
 
 
 
- 
+
+
 
 3068
 
@@ -5262,11 +5262,11 @@ Finally, we map the memory, as shown in Listing 3-56.
 
 3081 }
 
- 
+
 
 *Listing 3-56:* mm/vmalloc.c: [*\_\_vmalloc_area_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2988) *virtual mapping*
 
- 
+
 
 We start by ensuring that \_\_GFP_FS and \_\_GFP_IO flags are honored
 
@@ -5280,7 +5280,7 @@ Let’s dive into how physical allocation is performed in
 
 tion in Listing 3-57.
 
- 
+
 
 **static inline unsigned int**
 
@@ -5296,7 +5296,7 @@ tion in Listing 3-57.
 
 **int** i;
 
- 
+
 
 */\**
 
@@ -5310,13 +5310,13 @@ tion in Listing 3-57.
 
 **gfp_t** bulk_gfp = gfp & ~**\_\_GFP_NOFAIL**;
 
- 
+
 
 **while** (nr_allocated \< nr_pages) {
 
 **unsigned int** nr, nr_pages_request;
 
- 
+
 
 */\**
 
@@ -5324,11 +5324,11 @@ tion in Listing 3-57.
 
 *\* pages per call. That is done in order to prevent a*
 
- 
 
 
 
- 
+
+
 
 *\* long preemption off scenario in the bulk-allocator*
 
@@ -5338,7 +5338,7 @@ tion in Listing 3-57.
 
 nr_pages_request = **min**(100U, nr_pages - nr_allocated);
 
- 
+
 
 */\* memory allocation should consider mempolicy, we can't*
 
@@ -5356,7 +5356,7 @@ nr_pages_request,
 
 pages + nr_allocated);
 
- 
+
 
 **else**
 
@@ -5366,13 +5366,13 @@ nr_pages_request,
 
 pages + nr_allocated);
 
- 
+
 
 nr_allocated += nr;
 
 **cond_resched**();
 
- 
+
 
 */\**
 
@@ -5390,11 +5390,11 @@ nr_allocated += nr;
 
 }
 
- 
+
 
 *Listing 3-57:* mm/vmalloc.c: [*vm_area_alloc_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2897) *preface and order-0 allocation*
 
- 
+
 
 If the allocations are of order-0 pages, then we simply allo-
 
@@ -5418,17 +5418,17 @@ then we fall through to the code used for higher order pages where we allo-
 
 cate a page at a time as a fallback, shown in Listing 3-58.
 
- 
+
 
 2951 */\* High-order pages or fallback path if "bulk" fails. \*/* 2952
 
 2953 **while** (nr_allocated \< nr_pages) {
 
- 
 
 
 
- 
+
+
 
 2954 **if** (**fatal_signal_pending**(current)) 2955 **break**; 2956
 
@@ -5458,11 +5458,11 @@ cate a page at a time as a fallback, shown in Listing 3-58.
 
 2985 **return** nr_allocated; 2986 }
 
- 
+
 
 *Listing 3-58:* mm/vmalloc.c: [*vm_area_alloc_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n2897) *higher order allocation*
 
- 
+
 
 After checking to see if we are possibly blocking a fatal signal via
 
@@ -5478,11 +5478,11 @@ The pages array is then filled with the allocated pages and the number of
 
 allocations returned.
 
- 
 
 
 
- 
+
+
 
 ***3.5.4 Virtual Mapping***
 
@@ -5494,7 +5494,7 @@ and [vmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/
 
 We examine this function in Listing 3-59.
 
- 
+
 
 604 */\*\**
 
@@ -5516,11 +5516,11 @@ We examine this function in Listing 3-59.
 
 624 }
 
- 
+
 
 *Listing 3-59:* mm/vmalloc.c: [*vmap_pages_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n616)
 
- 
+
 
 This performs the core mapping logic in [vmap_pages_range_noflush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n578) be-
 
@@ -5530,7 +5530,7 @@ chitecture requires it (this is a no-op on x86-64 and arm64). We examine
 
 [vmap_pages_range_noflush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n578) in Listing 3-60.
 
- 
+
 
 578 **int vmap_pages_range_noflush**(**unsigned long** addr, **unsigned long** end, 579 **pgprot_t** prot, **struct** page \*\*pages, **unsigned int** page_shift) 580 {
 
@@ -5550,11 +5550,11 @@ chitecture requires it (this is a no-op on x86-64 and arm64). We examine
 
 591
 
- 
 
 
 
- 
+
+
 
 592 err = **vmap_range_noflush**(addr, addr + (1UL \<\< page_shift), 593 **\_\_pa**(**page_address**(pages\[i\])), prot, 594 page_shift); 595 **if** (err)
 
@@ -5568,11 +5568,11 @@ chitecture requires it (this is a no-op on x86-64 and arm64). We examine
 
 602 }
 
- 
+
 
 *Listing 3-60:* mm/vmalloc.c: [*vmap_pages_range_noflush()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n578)
 
- 
+
 
 If the architecture doesn’t support huge pages or huge
 
@@ -5586,7 +5586,7 @@ For brevity, we’ll examine [vmap_small_pages_range_noflush()](https://git.kern
 
 3-61.
 
- 
+
 
 542 **static int vmap_small_pages_range_noflush**(**unsigned long** addr, **unsigned long**
 
@@ -5618,15 +5618,15 @@ end,
 
 567 }
 
- 
 
 
 
- 
+
+
 
 *Listing 3-61:* mm/vmalloc.c: [*vmap_small_pages_range_noflush()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n542)
 
- 
+
 
 This follows a similar pattern through each page table level, keeping
 
@@ -5650,7 +5650,7 @@ cess page tables are derived.
 
 We examine [vmap_pages_p4d_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n524) in Listing 3-62.
 
- 
+
 
 524 **static int vmap_pages_p4d_range**(**pgd_t** \*pgd, **unsigned long** addr, 525 **unsigned long** end, **pgprot_t** prot, **struct** page \*\*pages, **int** \*nr
 
@@ -5676,11 +5676,11 @@ mask))
 
 540 }
 
- 
+
 
 *Listing 3-62:* mm/vmalloc.c: [*vmap_pages_p4d_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n524)
 
- 
+
 
 This follows a similar pattern except that [p4d_alloc_track()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/pgalloc-track.h?h=v6.0#n6) is used, which
 
@@ -5702,15 +5702,15 @@ The equivalent function for PUD page table entries is
 
 [vmap_pages_pud_range(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n506)shown in Listing 3-63.
 
- 
+
 
 506 **static int vmap_pages_pud_range**(**p4d_t** \*p4d, **unsigned long** addr,
 
- 
 
 
 
- 
+
+
 
 507 **unsigned long** end, **pgprot_t** prot, **struct** page \*\*pages, **int** \*nr
 
@@ -5734,15 +5734,15 @@ mask))
 
 522 }
 
- 
+
 
 *Listing 3-63:* mm/vmalloc.c: [*vmap_pages_pud_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n506)
 
- 
+
 
 The equivalent for PMDs is [vmap_pages_pmd_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n488)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n488) shown in Listing 3-64.
 
- 
+
 
 488 **static int vmap_pages_pmd_range**(**pud_t** \*pud, **unsigned long** addr, 489 **unsigned long** end, **pgprot_t** prot, **struct** page \*\*pages, **int** \*nr
 
@@ -5766,25 +5766,25 @@ mask))
 
 504 }
 
- 
+
 
 *Listing 3-64:* mm/vmalloc.c: [*vmap_pages_pmd_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n488)
 
- 
+
 
 These are each broadly equivalent to one another, however
 
 [vmap_pages_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n457) does more, as shown in Listing 3-65.
 
- 
+
 
 457 **static int vmap_pages_pte_range**(**pmd_t** \*pmd, **unsigned long** addr,
 
- 
 
 
 
- 
+
+
 
 458 **unsigned long** end, **pgprot_t** prot, **struct** page \*\*pages, **int** \*nr
 
@@ -5820,11 +5820,11 @@ These are each broadly equivalent to one another, however
 
 486 }
 
- 
+
 
 *Listing 3-65:* mm/vmalloc.c: [*vmap_pages_pte_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmalloc.c?h=v6.0#n457)
 
- 
+
 
 This function differs from the others in that it both allocates the PTE
 
@@ -5848,5 +5848,5 @@ allocator), we will not examine [vfree()](https://git.kernel.org/pub/scm/linux/k
 
 patterns.
 
- 
+
 

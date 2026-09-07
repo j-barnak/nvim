@@ -1,6 +1,6 @@
 ## Index
 
- 
+
 
 \|x \| (absolute value), 196 binary search, 127, 133
 
@@ -12,11 +12,11 @@ bxc (floor), 115 bloom filter
 
 \|S \| (set size), 4 Insert, 179, 182
 
- 
+
 
 adjacency matrix, 8–10 input size, 11 heuristic assumptions, 185 vs. adjacency matrix, 10 in network routers, 181 operation running times, 179 applications, 10 raison d’être, 178 input size, 12 scorecard, 180 sparse representation, 12 space-accuracy trade-o ff , 179, vs. adjacency lists, 10 183, 188–189, 191 arc, see edge (of a graph), directed supported operations, 178– asymptotic notation, 5, 193–199 179 acknowledgments, xi has false positives, 179, 183 adjacency lists, 7–8 has no false negatives, 183 in graph search, 27 heuristic analysis, 185–189 abstract data type, 95 applications, 180–181 Lookup , 179, 183
 
- 
+
 
 big-omega notation, 197 when to use, 180 Bloom, Burton H., 178 big-theta notation, 198 bow tie, see Web graph in seven words, 193 big-O notation, 194–195 vs. hash tables, 178–180 as a sweet spot, 193
 
@@ -44,7 +44,7 @@ big-theta notation, 198 Broder, Andrei, 67
 
 204 Index
 
- 
+
 
 broken clock, 83 correctness, 44
 
@@ -130,7 +130,7 @@ degree (of a vertex), 13 directed acyclic graph, 47
 
 depth-first search, 23, 40–44 has a source vertex, 47 Index 205
 
- 
+
 
 has a topological ordering, 47– input size, 3
 
@@ -148,19 +148,19 @@ Draper, Don, 16 tree, 6
 
 Easley, David, 69 Web, undirected, 2
 
- 
+
 
 edge (of a graph), 2 graph search see Web graph directed, 2 A⇤, 159 length, 76 applications, 15–18 parallel, 4, 9 breadth-first search,
 
- 
+
 
 Egoyan, Atom, 16 weighted, 9 depth-first search, see depth-first search Einstein, Albert, 96 for planning, 17 undirected, 2 breadth-first search see
 
- 
+
 
 endpoints (of an edge), 2 generic algorithm, 19–24 equivalence class, 35 in game playing, 159 equivalence relation, 35 problem definition, 18 Erdös number, 16 greatest hits, ix Erdös, Paul, 16
 
- 
+
 
 Firth, Colin, 16 Hamm, Jon, 16 hash function for-free primitive, 18 and the birthday paradox,
 
@@ -202,7 +202,7 @@ directed acyclic, see directed state-of-the-art, 176–177
 
 acyclic graph universal, 169 206 Index
 
- 
+
 
 hash map, see hash table with linear probing, 166–167,
 
@@ -292,7 +292,7 @@ with chaining, 163–165, 177 inductive step, 85
 
 with double hashing, 167, 175 interview questions, ix Index 207
 
- 
+
 
 invariant, 105 Pigeonhole Principle, 162, 169
 
@@ -300,29 +300,29 @@ planning (as graph search), 17
 
 Java, 130, 171 principle of parsimony, 96
 
- 
+
 
 Kleinberg, Jon, 69 programming, x, 20 Knuth, Donald E., 175 programming problems, xi Kosaraju , 62 proofs, x key, 98 probability, 175 priority queue, see heap
 
- 
+
 
 Kosaraju’s algorithm by contradiction, 24 correctness, 65 by induction, 85 example, 63 on reading, 85 from 30,000 feet, 57 proposition, 21 implementation, 62, 75 pseudocode, 20 pseudocode, 62
 
- 
+
 
 Kosaraju, S. Rao, 57 running time analysis, 65 QE D (q.e.d.), 24 why the reversed graph?, 58– queue, 26, 95 61 quizzes, x
 
 Kumar, Ravi, 67 Raghavan, Prabhakar, 67
 
- 
+
 
 Leighton, F. Thomson, x reduction, 79, 83 Leiserson, Charles E., 145 Rivest, Ronald L., 145 lemma, 21 Lehman, Eric, x recursion, 43 Rajagopalan, Sridhar, 67
 
- 
+
 
 length SCC, see strongly connected com-of a path, 77 ponents of an edge, 76 scorecards, 12, 100, 128, 129, 153, linearity of expectation, 175 160, 175, 180 Linux kernel, 130 search tree
 
- 
+
 
 Maghoul, Farzin, 67 Delete, 129, 139, 144 Insert , 129, 138, 144 mathematical background, x Max , 126, 135 median, 104 Min , 126, 135 Meyer, Albert R., x OutputSorted , 127, 137
 
@@ -346,7 +346,7 @@ pathological data set, 168–169 AVL, 145
 
 paying the piper, 109, 144 B, 145 208 Index
 
- 
+
 
 balanced, 130, 144–148 sorting, 101–103
 
@@ -438,7 +438,7 @@ vs. search trees, 131 running time analysis, 52
 
 Index 209
 
- 
+
 
 tree, 6
 

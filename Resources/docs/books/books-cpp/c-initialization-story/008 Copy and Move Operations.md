@@ -2,7 +2,7 @@
 
 Regular constructors allow you to invoke some logic and initialize data members when an object is created from a list of arguments. But C++ also has two special constructor types that let you control a situation when an object is created using an instance of the same class type. Those constructors are called copy and move constructors. Additionally, you can provide custom assignment operators that the compiler calls when you assign new values to existing objects. Let’s have a look.
 
- 
+
 
 **Copy constructor**
 
@@ -40,19 +40,19 @@ The situation for a shallow copy is illustrated by the following diagram:
 
 ![](media/index-54_1.png)
 
- 
+
 
 **Shallow vs. Deep Copy**
 
 On the diagram, you can see a comparison of a shallow (bitwise copy) vs. the deep copy approach. If you copy the resource handles, the resulting object will point to the same Copy and Move Operations 40
 
- 
+
 
 resource. For the full version, you need to copy the resource and then correctly assign the resource handle to that new copy.
 
 Standard library containers like std::vector or std::string internally contain pointers to memory buffers to store the elements. They all have support for full data copy, so when you copy one vector to another, the memory buffers will also be copied. You don’t have to think about those internal mechanisms when using those types in your code.
 
- 
+
 
 **A canonical implementation of a copy constructor**
 
@@ -98,7 +98,7 @@ Copy and Move Operations 41
 
 Copy constructors can be marked with explicit, but this is not a common practice and might prevent copy initialization.
 
- 
+
 
 Here’s another example where basic logging is enabled. Such console output is helpful to see how and what constructors are called:
 
@@ -159,7 +159,7 @@ Copy and Move Operations 42
 17   }
 ```
 
- 
+
 
 If you run the code, you should see the following output:
 
@@ -195,7 +195,7 @@ In line 10, we construct base product, and then use it to copy-construct all oth
 
 Later we call a function foo(), and when you pass an argument as a value, a copy has to be created using a copy constructor call.
 
- 
+
 
 **Copy elision**
 
@@ -203,7 +203,7 @@ Now, let’s consider the following code:
 
 Copy and Move Operations 43
 
- 
+
 
 **Ex3.2.NamedCop[yElision.Run](https://godbolt.org/z/h81GTe3hc)**[**@CompilerExplorer**](https://godbolt.org/z/h81GTe3hc)
 
@@ -221,7 +221,7 @@ std::cout \<\< "calling createProduct()**\n**";
 
 Product created = createProduct(); }
 
- 
+
 
 The output is:
 
@@ -255,7 +255,7 @@ Starting from C++17, there’s a mandatory copy elision, also called “deferred
 
 Copy and Move Operations 44
 
- 
+
 
 have language rules that clearly express the new behavior this time. Not going into details, it will elide additional copies when there’s an unnamed temporary object from which we initialize a new entity: For example:
 
@@ -271,7 +271,7 @@ std::cout \<\< "calling createProduct()**\n**";
 
 Product created = createProduct(); }
 
- 
+
 
 This time the compiler will always generate the following output:
 
@@ -285,7 +285,7 @@ If you want to know more about this feature, have a look at my book: [C++17 in D
 
 see this blog post:[Guaranteed Copy Elision Does Not Elide Copies⁴](https://devblogs.microsoft.com/cppblog/guaranteed-copy-elision-does-not-elide-copies/) @VisualC++ Team Blog.
 
- 
+
 
 **A compiler-generated copy constructor**
 
@@ -305,7 +305,7 @@ accessible, not delete);
 
 Copy and Move Operations 45
 
- 
+
 
 • Your class doesn’t have a user-defined move constructor or move assignment operator.
 
@@ -359,7 +359,7 @@ Product second { first };
 
 Please look at the line where we are trying to call the copy constructor. It won’t compile:
 
- 
+
 
 ⁵<https://en.cppreference.com/w/cpp/language/copy_constructor#Deleted_implicitly-declared_copy_constructor> Copy and Move Operations 46
 
@@ -381,7 +381,7 @@ We can also observe this by looking at the output from C++Insights [@see this li
 
 // inline ~Product() noexcept = default;
 
- 
+
 
 **Move constructor**
 
@@ -403,13 +403,13 @@ Above, the expression hello + world creates a temporary object. It doesn’t hav
 
 Copy and Move Operations 47
 
- 
+
 
 after the expression completes (unless it’s assigned to a const or rvalue reference⁷), so we can steal resources from them safely. It doesn’t make sense in the case of built-in types like integers or floats, as we need to copy values anyway. But in the case of strings or memory buffers, we can avoid data copy and reassign the pointers. The situation is illustrated with the following diagram:
 
 ![](media/index-62_1.png)
 
- 
+
 
 **Idea of a move constructor**
 
@@ -427,7 +427,7 @@ at https://en.cppreference.com/w/cpp/language/lifetime.
 
 Copy and Move Operations 48
 
- 
+
 
 **Ex 3.5. Move Constructor. Run** [**@Compiler Explorer**](https://godbolt.org/z/GTebjGfo4) \#include \<iostream\>
 
@@ -471,7 +471,7 @@ std::cout \<\< setV2.name() \<\< " created...**\n**";
 
 std::cout \<\< "old value: " \<\< tvSet.name() \<\< '\n'; }
 
- 
+
 
 When you run the code, you can see the following output:
 
@@ -501,7 +501,7 @@ The move constructor must ensure that the other object is left in an unspecified
 
 Move constructors can be marked with explicit, but it’s not a common practice and might affect generic code that relies on implicit move constructors (like standard algorithms).
 
- 
+
 
 **noexcept** **and move constructors**
 
@@ -535,7 +535,7 @@ prods.emplace_back(404, "mug");
 
 prods.emplace_back(505, "pencil"); }
 
- 
+
 
 We’ll see the following output:
 
@@ -567,7 +567,7 @@ Let’s try to decipher the output.
 
 The emplace_back function (available since C++11) creates a new element at the end of the container using the arguments you pass. Alternatively, we could use push_back, but Copy and Move Operations 51
 
- 
+
 
 this requires an additional copy of the Product object. When we add the first element, you can see that a regular constructor is called. Now, with the second element, the vector must grow its internal buffer and copy existing elements to a new buffer. That’s why you can see a regular constructor for the "box" object and then a copy constructor for "car". Similarly, when I add the third element, its constructor is called, and then copies of "car" and "box"must be invoked. Later the process continues as we add more elements and the container grows. It’s implementation-specific, but usually, std::vector might grow 1.5x or 2x each time it has to resize. For example, it starts with one element and a capacity of one, then two elements and a capacity of 2, 3 elements and a capacity of 4, 5 elements and a capacity of 6 or 8, and so on. This helps to amortize the cost of adding new values.
 
@@ -581,7 +581,7 @@ Product(Product&& other) **noexcept**
 
 std::cout \<\< "Product(move): " \<\< id\_ \<\< ", " \<\< name\_ \<\< '\n'; }
 
- 
+
 
 When we run the code, you’ll see the following log:
 
@@ -613,13 +613,13 @@ Now, the compiler calls a move constructor rather than a copy! In many cases, th
 
 Copy and Move Operations 52
 
- 
+
 
 Below you can find a basic illustration of this “growth” process:
 
 ![](media/index-67_1.png)
 
- 
+
 
 **Vector resize process for three elements**
 
@@ -639,7 +639,7 @@ You can read more about this approach in the following C++ Core Guideline: [C.66
 
 Copy and Move Operations 53
 
- 
+
 
 **A compiler-generated move constructor**
 
@@ -665,7 +665,7 @@ The rules are logical. For example, if you declare a custom copy constructor, th
 
 You can find all the rules in this handy list [@C++Reference¹⁰](https://en.cppreference.com/w/cpp/language/move_constructor#Implicitly-declared_move_constructor).
 
- 
+
 
 **Distinguishing from assignment**
 
@@ -737,7 +737,7 @@ Product& **operator**=(**const** Product& other) {
 
 Copy and Move Operations 55
 
- 
+
 
 id\_ = other.id\_;
 
@@ -833,7 +833,7 @@ As you can see, after we move from an object, it’s left in an unspecified but 
 
 Copy and Move Operations 57
 
- 
+
 
 **Adding debug logging to constructors**
 
@@ -895,7 +895,7 @@ Copy and Move Operations 58
 46   };
 ```
 
- 
+
 
 And here’s the main() function:
 
@@ -926,7 +926,7 @@ And here’s the main() function:
 
 Copy and Move Operations 59
 
- 
+
 
 When you run the example, you should see the following output:
 
@@ -952,7 +952,7 @@ The logging part in the example is a bit crude, as the class directly calls a gl
 
 in the section about references as static data members.
 
- 
+
 
 **Trivial classes and user-provided default**
 
@@ -998,11 +998,11 @@ As you can see, there are four ways you can end up with an “empty” construct
 
 First of all: what does it mean “user-provided”? From the Standard [dcl.fct.def.default#5¹²](https://timsong-cpp.github.io/cppwp/n4868/dcl.fct.def.default#5):
 
- 
+
 
 A function is user-provided if it is user-declared and not explicitly defaulted or deleted on its first declaration.
 
- 
+
 
 **struct X** {
 
@@ -1016,21 +1016,21 @@ Above, the first declaration, // 1 is not user-provided. It’s user-declared (s
 
 Copy and Move Operations 61
 
- 
+
 
 same happens for MyType0, where we don’t provide any special member function, or for MyType2, where we declare a default constructor, but we explicitly make it default, and thus it’s not user-provided.
 
 According to [the C++ Standard](https://timsong-cpp.github.io/cppwp/n4868/class.prop#1)¹³:
 
- 
+
 
 A trivial class is a class that is trivially copyable and has one or more eligible default constructors, all of which are trivial.
 
- 
+
 
 And a *trivially copyable* class is:
 
- 
+
 
 A trivially copyable class is a class:
 
@@ -1044,13 +1044,13 @@ and move assignment operator is trivial, and
 
 • that has a trivial, non-deleted destructor.
 
- 
+
 
 Now, we have to understand *a trivial special member function*:
 
 For default constructors, see [this section in the C++ Standard - class.default.ctor#3¹⁴](https://timsong-cpp.github.io/cppwp/n4868/class.default.ctor#3):
 
- 
+
 
 A default constructor is trivial if it is not user-provided and if:
 
@@ -1060,7 +1060,7 @@ each such class has a trivial default constructor.
 
 Otherwise, the default constructor is non-trivial.
 
- 
+
 
 ¹³<https://timsong-cpp.github.io/cppwp/n4868/class.prop#1>
 
@@ -1068,11 +1068,11 @@ Otherwise, the default constructor is non-trivial.
 
 Copy and Move Operations 62
 
- 
+
 
 For copy/move constructors, see [this section in the C++ Standard - class.copy.ctor#11](https://timsong-cpp.github.io/cppwp/n4868/class.copy.ctor#11)¹⁵:
 
- 
+
 
 A copy/move constructor for class X is trivial if it is not user-provided and if:
 
@@ -1082,7 +1082,7 @@ constructor selected to copy/move that member is trivial;
 
 otherwise the copy/move constructor is non-trivial.
 
- 
+
 
 As I mentioned, MyType0 and MyType2 are *trivial* because they have trivial default constructors and don’t violate any of the above rules. MyType1 and MyType3 have empty constructors, but they are *user-provided*, so they cannot be *trivial* types.
 
@@ -1100,7 +1100,7 @@ its data members will also be zero-initialized ¹⁷
 
 Let’s try some code:
 
- 
+
 
 ¹⁵<https://timsong-cpp.github.io/cppwp/n4868/class.copy.ctor#11>
 
@@ -1156,62 +1156,10 @@ the C language modules is easy. Read more at [Trivial, standard-layout, POD, and
 
 ![](media/index-78_2.png)
 
- 
+
 
 If you like to read more about trivial types, layout, and more, I highly recommend reading the book “Embracing Modern C++ Safely”, chapter 2, page 401, “General—ized PODs”.
 
 ¹⁸<https://godbolt.org/z/7bKnP6qea>
 
 ¹⁹<https://docs.microsoft.com/en-us/cpp/cpp/trivial-standard-layout-and-pod-types?view=msvc-170>
-
-**4. Delegating and Inheriting**
-
- 
-
-**Constructors**
-
-In this chapter, we’ll look at improvements from C++11 related to inheritance and the ability to call constructors from other constructors.
-
- 
-
-**Delegating constructors**
-
-Sometimes, when your class contains many data members and several constructors, it might be convenient to reuse their initialization code. Fortunately, since C++11, you can use **delegating constructors**. Let’s look at an example:
-
-**Ex 4.1. Delegating constructors. Run** [**@Compiler Explorer**](https://godbolt.org/z/qrYa9zq6e)
-
-**class Product** {
-
-**public**:
-
-Product(**int** id, **unsigned** quantity, **const** std::string& name)
-
-: id\_{id}, quantity\_{quantity}, name\_{name} { verifyData();
-
-}
-
-Product(**const** std::string& name)
-
-: Product{0, 0, name}
-
-{ }
-
-**void** verifyData() {
-
-**if** (quantity\_ \> MaxQuantity)
-
-**throw** std::invalid_argument("quantity is too large!");
-
-}
-
-**const** std::string& getName() **const** { **return** name\_; } **private**:
-
-**int** id\_;
-
-**unsigned** quantity\_;
-
-std::string name\_;
-
- 
-
-64

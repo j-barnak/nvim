@@ -8,9 +8,9 @@
 
 The first step in any compiler or interpreter is scanning. The scanner takes in raw source code as a series of characters and groups it into a series of chunks we call **tokens**. These are the meaningful “words” and “punctuation” that make up the language’s grammar.
 
-This task has been variously called “scanning” and “lexing” (short for “lexical analysis”) over the years. Way back when computers were as big as Winnebagos but had less memory than your watch, some people used “scanner” only to refer to the piece of code that dealt with reading raw source code characters from disk and buffering them in memory. Then “lexing” was the subsequent phase that did useful stuff with the characters.
-
-These days, reading a source file into memory is trivial, so it’s rarely a distinct phase in the compiler. Because of that, the two terms are basically interchangeable.
+> This task has been variously called “scanning” and “lexing” (short for “lexical analysis”) over the years. Way back when computers were as big as Winnebagos but had less memory than your watch, some people used “scanner” only to refer to the piece of code that dealt with reading raw source code characters from disk and buffering them in memory. Then “lexing” was the subsequent phase that did useful stuff with the characters.
+>
+> These days, reading a source file into memory is trivial, so it’s rarely a distinct phase in the compiler. Because of that, the two terms are basically interchangeable.
 
 Scanning is a good starting point for us too because the code isn’t very hard—pretty much a `switch` statement with delusions of grandeur. It will help us warm up before we tackle some of the more interesting material later. By the end of this chapter, we’ll have a full-featured, fast scanner that can take any string of Lox source code and produce the tokens that we’ll feed into the parser in the next chapter.
 
@@ -45,38 +45,44 @@ public class Lox {
 
 *lox/Lox.java*, create new file
 
-For exit codes, I’m using the conventions defined in the UNIX [“sysexits.h”](https://www.freebsd.org/cgi/man.cgi?query=sysexits&apropos=0&sektion=0&manpath=FreeBSD+4.3-RELEASE&format=html) header. It’s the closest thing to a standard I could find.
+> For exit codes, I’m using the conventions defined in the UNIX [“sysexits.h”](https://www.freebsd.org/cgi/man.cgi?query=sysexits&apropos=0&sektion=0&manpath=FreeBSD+4.3-RELEASE&format=html) header. It’s the closest thing to a standard I could find.
 
 Stick that in a text file, and go get your IDE or Makefile or whatever set up. I’ll be right here when you’re ready. Good? OK!
 
 Lox is a scripting language, which means it executes directly from source. Our interpreter supports two ways of running code. If you start jlox from the command line and give it a path to a file, it reads the file and executes it.
 
-      private static void runFile(String path) throws IOException {
-        byte[] bytes = Files.readAllBytes(Paths.get(path));
-        run(new String(bytes, Charset.defaultCharset()));
-      }
+```
+  private static void runFile(String path) throws IOException {
+    byte[] bytes = Files.readAllBytes(Paths.get(path));
+    run(new String(bytes, Charset.defaultCharset()));
+  }
+```
 
 *lox/Lox.java*, add after *main*()
 
 If you want a more intimate conversation with your interpreter, you can also run it interactively. Fire up jlox without any arguments, and it drops you into a prompt where you can enter and execute code one line at a time.
 
-An interactive prompt is also called a “REPL” (pronounced like “rebel” but with a “p”). The name comes from Lisp where implementing one is as simple as wrapping a loop around a few built-in functions:
+> An interactive prompt is also called a “REPL” (pronounced like “rebel” but with a “p”). The name comes from Lisp where implementing one is as simple as wrapping a loop around a few built-in functions:
+>
+> ```
+> (print (eval (read)))
+> ```
+>
+> Working outwards from the most nested call, you **R**ead a line of input, **E**valuate it, **P**rint the result, then **L**oop and do it all over again.
 
-    (print (eval (read)))
+```
+  private static void runPrompt() throws IOException {
+    InputStreamReader input = new InputStreamReader(System.in);
+    BufferedReader reader = new BufferedReader(input);
 
-Working outwards from the most nested call, you **R**ead a line of input, **E**valuate it, **P**rint the result, then **L**oop and do it all over again.
-
-      private static void runPrompt() throws IOException {
-        InputStreamReader input = new InputStreamReader(System.in);
-        BufferedReader reader = new BufferedReader(input);
-
-        for (;;) {
-          System.out.print("> ");
-          String line = reader.readLine();
-          if (line == null) break;
-          run(line);
-        }
-      }
+    for (;;) {
+      System.out.print("> ");
+      String line = reader.readLine();
+      if (line == null) break;
+      run(line);
+    }
+  }
+```
 
 *lox/Lox.java*, add after *runFile*()
 
@@ -84,15 +90,17 @@ The `readLine()` function, as the name so helpfully implies, reads a line of inp
 
 Both the prompt and the file runner are thin wrappers around this core function:
 
-      private static void run(String source) {
-        Scanner scanner = new Scanner(source);
-        List<Token> tokens = scanner.scanTokens();
+```
+  private static void run(String source) {
+    Scanner scanner = new Scanner(source);
+    List<Token> tokens = scanner.scanTokens();
 
-        // For now, just print the tokens.
-        for (Token token : tokens) {
-          System.out.println(token);
-        }
-      }
+    // For now, just print the tokens.
+    for (Token token : tokens) {
+      System.out.println(token);
+    }
+  }
+```
 
 *lox/Lox.java*, add after *runPrompt*()
 
@@ -106,18 +114,20 @@ The tools our language provides for dealing with errors make up a large portion 
 
 When that happens, it’s up to us to give the user all the information they need to understand what went wrong and guide them gently back to where they are trying to go. Doing that well means thinking about error handling all through the implementation of our interpreter, starting now.
 
-Having said all that, for *this* interpreter, what we’ll build is pretty bare bones. I’d love to talk about interactive debuggers, static analyzers, and other fun stuff, but there’s only so much ink in the pen.
+> Having said all that, for *this* interpreter, what we’ll build is pretty bare bones. I’d love to talk about interactive debuggers, static analyzers, and other fun stuff, but there’s only so much ink in the pen.
 
-      static void error(int line, String message) {
-        report(line, "", message);
-      }
+```
+  static void error(int line, String message) {
+    report(line, "", message);
+  }
 
-      private static void report(int line, String where,
-                                 String message) {
-        System.err.println(
-            "[line " + line + "] Error" + where + ": " + message);
-        hadError = true;
-      }
+  private static void report(int line, String where,
+                             String message) {
+    System.err.println(
+        "[line " + line + "] Error" + where + ": " + message);
+    hadError = true;
+  }
+```
 
 *lox/Lox.java*, add after *run*()
 
@@ -185,7 +195,7 @@ Various phases of the front end will detect errors, but it’s not really their 
 
 Ideally, we would have an actual abstraction, some kind of “ErrorReporter” interface that gets passed to the scanner and parser so that we can swap out different reporting strategies. For our simple interpreter here, I didn’t do that, but I did at least move the code for error reporting into a different class.
 
-I had exactly that when I first implemented jlox. I ended up tearing it out because it felt over-engineered for the minimal interpreter in this book.
+> I had exactly that when I first implemented jlox. I ended up tearing it out because it felt over-engineered for the minimal interpreter in this book.
 
 With some rudimentary error handling in place, our application shell is ready. Once we have a Scanner class with a `scanTokens()` method, we can start running it. Before we get to that, let’s get more precise about what tokens are.
 
@@ -211,7 +221,7 @@ Keywords are part of the shape of the language’s grammar, so the parser often 
 
 The parser could categorize tokens from the raw lexeme by comparing the strings, but that’s slow and kind of ugly. Instead, at the point that we recognize a lexeme, we also remember which *kind* of lexeme it represents. We have a different type for each keyword, operator, bit of punctuation, and literal type.
 
-After all, string comparison ends up looking at individual characters, and isn’t that the scanner’s job?
+> After all, string comparison ends up looking at individual characters, and isn’t that the scanner’s job?
 
 ```
 package com.craftinginterpreters.lox;
@@ -248,9 +258,9 @@ There are lexemes for literal values—numbers and strings and the like. Since t
 
 Back when I was preaching the gospel about error handling, we saw that we need to tell users *where* errors occurred. Tracking that starts here. In our simple interpreter, we note only which line the token appears on, but more sophisticated implementations include the column and length too.
 
-Some token implementations store the location as two numbers: the offset from the beginning of the source file to the beginning of the lexeme, and the length of the lexeme. The scanner needs to know these anyway, so there’s no overhead to calculate them.
-
-An offset can be converted to line and column positions later by looking back at the source file and counting the preceding newlines. That sounds slow, and it is. However, you need to do it *only when you need to actually display a line and column to the user*. Most tokens never appear in an error message. For those, the less time you spend calculating position information ahead of time, the better.
+> Some token implementations store the location as two numbers: the offset from the beginning of the source file to the beginning of the lexeme, and the length of the lexeme. The scanner needs to know these anyway, so there’s no overhead to calculate them.
+>
+> An offset can be converted to line and column positions later by looking back at the source file and counting the preceding newlines. That sounds slow, and it is. However, you need to do it *only when you need to actually display a line and column to the user*. Most tokens never appear in an error message. For those, the less time you spend calculating position information ahead of time, the better.
 
 We take all of this data and wrap it in a class.
 
@@ -288,7 +298,7 @@ Then it loops back and does it again, starting from the very next character in t
 
 ![An alligator eating characters and, well, you don't want to know.](media/image/scanning/lexigator.png)
 
-Lexical analygator.
+> Lexical analygator.
 
 The part of the loop where we look at a handful of characters to figure out which kind of lexeme it “matches” may sound familiar. If you know regular expressions, you might consider defining a regex for each kind of lexeme and using those to match characters. For example, Lox has the same rules as C for identifiers (variable names and the like). This regex matches one:
 
@@ -296,11 +306,11 @@ The part of the loop where we look at a handful of characters to figure out whic
 
 If you did think of regular expressions, your intuition is a deep one. The rules that determine how a particular language groups characters into lexemes are called its **lexical grammar**. In Lox, as in most programming languages, the rules of that grammar are simple enough for the language to be classified a **[regular language](https://en.wikipedia.org/wiki/Regular_language)**. That’s the same “regular” as in regular expressions.
 
-It pains me to gloss over the theory so much, especially when it’s as interesting as I think the [Chomsky hierarchy](https://en.wikipedia.org/wiki/Chomsky_hierarchy) and [finite-state machines](https://en.wikipedia.org/wiki/Finite-state_machine) are. But the honest truth is other books cover this better than I could. [*Compilers: Principles, Techniques, and Tools*](https://en.wikipedia.org/wiki/Compilers:_Principles,_Techniques,_and_Tools) (universally known as “the dragon book”) is the canonical reference.
+> It pains me to gloss over the theory so much, especially when it’s as interesting as I think the [Chomsky hierarchy](https://en.wikipedia.org/wiki/Chomsky_hierarchy) and [finite-state machines](https://en.wikipedia.org/wiki/Finite-state_machine) are. But the honest truth is other books cover this better than I could. [*Compilers: Principles, Techniques, and Tools*](https://en.wikipedia.org/wiki/Compilers:_Principles,_Techniques,_and_Tools) (universally known as “the dragon book”) is the canonical reference.
 
 You very precisely *can* recognize all of the different lexemes for Lox using regexes if you want to, and there’s a pile of interesting theory underlying why that is and what it means. Tools like [Lex](http://dinosaur.compilertools.net/lex/) or [Flex](https://github.com/westes/flex) are designed expressly to let you do this—throw a handful of regexes at them, and they give you a complete scanner back.
 
-Lex was created by Mike Lesk and Eric Schmidt. Yes, the same Eric Schmidt who was executive chairman of Google. I’m not saying programming languages are a surefire path to wealth and fame, but we *can* count at least one mega billionaire among us.
+> Lex was created by Mike Lesk and Eric Schmidt. Yes, the same Eric Schmidt who was executive chairman of Google. I’m not saying programming languages are a surefire path to wealth and fame, but we *can* count at least one mega billionaire among us.
 
 Since our goal is to understand how a scanner does what it does, we won’t be delegating that task. We’re about handcrafted goods.
 
@@ -330,20 +340,22 @@ class Scanner {
 
 *lox/Scanner.java*, create new file
 
-I know static imports are considered bad style by some, but they save me from having to sprinkle `TokenType.` all over the scanner and parser. Forgive me, but every character counts in a book.
+> I know static imports are considered bad style by some, but they save me from having to sprinkle `TokenType.` all over the scanner and parser. Forgive me, but every character counts in a book.
 
 We store the raw source code as a simple string, and we have a list ready to fill with tokens we’re going to generate. The aforementioned loop that does that looks like this:
 
-      List<Token> scanTokens() {
-        while (!isAtEnd()) {
-          // We are at the beginning of the next lexeme.
-          start = current;
-          scanToken();
-        }
+```
+  List<Token> scanTokens() {
+    while (!isAtEnd()) {
+      // We are at the beginning of the next lexeme.
+      start = current;
+      scanToken();
+    }
 
-        tokens.add(new Token(EOF, "", null, line));
-        return tokens;
-      }
+    tokens.add(new Token(EOF, "", null, line));
+    return tokens;
+  }
+```
 
 *lox/Scanner.java*, add after *Scanner*()
 
@@ -371,9 +383,11 @@ The `start` and `current` fields are offsets that index into the string. The `st
 
 Then we have one little helper function that tells us if we’ve consumed all the characters.
 
-      private boolean isAtEnd() {
-        return current >= source.length();
-      }
+```
+  private boolean isAtEnd() {
+    return current >= source.length();
+  }
+```
 
 *lox/Scanner.java*, add after *scanTokens*()
 
@@ -381,40 +395,44 @@ Then we have one little helper function that tells us if we’ve consumed all th
 
 In each turn of the loop, we scan a single token. This is the real heart of the scanner. We’ll start simple. Imagine if every lexeme were only a single character long. All you would need to do is consume the next character and pick a token type for it. Several lexemes *are* only a single character in Lox, so let’s start with those.
 
-      private void scanToken() {
-        char c = advance();
-        switch (c) {
-          case '(': addToken(LEFT_PAREN); break;
-          case ')': addToken(RIGHT_PAREN); break;
-          case '{': addToken(LEFT_BRACE); break;
-          case '}': addToken(RIGHT_BRACE); break;
-          case ',': addToken(COMMA); break;
-          case '.': addToken(DOT); break;
-          case '-': addToken(MINUS); break;
-          case '+': addToken(PLUS); break;
-          case ';': addToken(SEMICOLON); break;
-          case '*': addToken(STAR); break;
-        }
-      }
+```
+  private void scanToken() {
+    char c = advance();
+    switch (c) {
+      case '(': addToken(LEFT_PAREN); break;
+      case ')': addToken(RIGHT_PAREN); break;
+      case '{': addToken(LEFT_BRACE); break;
+      case '}': addToken(RIGHT_BRACE); break;
+      case ',': addToken(COMMA); break;
+      case '.': addToken(DOT); break;
+      case '-': addToken(MINUS); break;
+      case '+': addToken(PLUS); break;
+      case ';': addToken(SEMICOLON); break;
+      case '*': addToken(STAR); break;
+    }
+  }
+```
 
 *lox/Scanner.java*, add after *scanTokens*()
 
-Wondering why `/` isn’t in here? Don’t worry, we’ll get to it.
+> Wondering why `/` isn’t in here? Don’t worry, we’ll get to it.
 
 Again, we need a couple of helper methods.
 
-      private char advance() {
-        return source.charAt(current++);
-      }
+```
+  private char advance() {
+    return source.charAt(current++);
+  }
 
-      private void addToken(TokenType type) {
-        addToken(type, null);
-      }
+  private void addToken(TokenType type) {
+    addToken(type, null);
+  }
 
-      private void addToken(TokenType type, Object literal) {
-        String text = source.substring(start, current);
-        tokens.add(new Token(type, text, literal, line));
-      }
+  private void addToken(TokenType type, Object literal) {
+    String text = source.substring(start, current);
+    tokens.add(new Token(type, text, literal, line));
+  }
+```
 
 *lox/Scanner.java*, add after *isAtEnd*()
 
@@ -446,7 +464,7 @@ Note also that we *keep scanning*. There may be other errors later in the progra
 
 (Don’t worry. Since `hadError` gets set, we’ll never try to *execute* any of the code, even though we keep going and scan the rest of it.)
 
-The code reports each invalid character separately, so this shotguns the user with a blast of errors if they accidentally paste a big blob of weird text. Coalescing a run of invalid characters into a single error would give a nicer user experience.
+> The code reports each invalid character separately, so this shotguns the user with a blast of errors if they accidentally paste a big blob of weird text. Coalescing a run of invalid characters into a single error would give a nicer user experience.
 
 ### 4.5.2 Operators
 
@@ -481,13 +499,15 @@ For all of these, we need to look at the second character.
 
 Those cases use this new method:
 
-      private boolean match(char expected) {
-        if (isAtEnd()) return false;
-        if (source.charAt(current) != expected) return false;
+```
+  private boolean match(char expected) {
+    if (isAtEnd()) return false;
+    if (source.charAt(current) != expected) return false;
 
-        current++;
-        return true;
-      }
+    current++;
+    return true;
+  }
+```
 
 *lox/Scanner.java*, add after *scanToken*()
 
@@ -526,16 +546,18 @@ This is our general strategy for handling longer lexemes. After we detect the be
 
 We’ve got another helper:
 
-      private char peek() {
-        if (isAtEnd()) return '\0';
-        return source.charAt(current);
-      }
+```
+  private char peek() {
+    if (isAtEnd()) return '\0';
+    return source.charAt(current);
+  }
+```
 
 *lox/Scanner.java*, add after *match*()
 
 It’s sort of like `advance()`, but doesn’t consume the character. This is called **lookahead**. Since it only looks at the current unconsumed character, we have *one character of lookahead*. The smaller this number is, generally, the faster the scanner runs. The rules of the lexical grammar dictate how much lookahead we need. Fortunately, most languages in wide use peek only one or two characters ahead.
 
-Technically, `match()` is doing lookahead too. `advance()` and `peek()` are the fundamental operators and `match()` combines them.
+> Technically, `match()` is doing lookahead too. `advance()` and `peek()` are the fundamental operators and `match()` combines them.
 
 Comments are lexemes, but they aren’t meaningful, and the parser doesn’t want to deal with them. So when we reach the end of the comment, we *don’t* call `addToken()`. When we loop back around to start the next lexeme, `start` gets reset and the comment’s lexeme disappears in a puff of smoke.
 
@@ -594,24 +616,26 @@ Now that we’re comfortable with longer lexemes, we’re ready to tackle litera
 
 That calls:
 
-      private void string() {
-        while (peek() != '"' && !isAtEnd()) {
-          if (peek() == '\n') line++;
-          advance();
-        }
+```
+  private void string() {
+    while (peek() != '"' && !isAtEnd()) {
+      if (peek() == '\n') line++;
+      advance();
+    }
 
-        if (isAtEnd()) {
-          Lox.error(line, "Unterminated string.");
-          return;
-        }
+    if (isAtEnd()) {
+      Lox.error(line, "Unterminated string.");
+      return;
+    }
 
-        // The closing ".
-        advance();
+    // The closing ".
+    advance();
 
-        // Trim the surrounding quotes.
-        String value = source.substring(start + 1, current - 1);
-        addToken(STRING, value);
-      }
+    // Trim the surrounding quotes.
+    String value = source.substring(start + 1, current - 1);
+    addToken(STRING, value);
+  }
+```
 
 *lox/Scanner.java*, add after *scanToken*()
 
@@ -625,20 +649,20 @@ Finally, the last interesting bit is that when we create the token, we also prod
 
 All numbers in Lox are floating point at runtime, but both integer and decimal literals are supported. A number literal is a series of digits optionally followed by a `.` and one or more trailing digits.
 
-Since we look only for a digit to start a number, that means `-123` is not a number *literal*. Instead, `-123`, is an *expression* that applies `-` to the number literal `123`. In practice, the result is the same, though it has one interesting edge case if we were to add method calls on numbers. Consider:
-
-```
-print -123.abs();
-```
-
-This prints `-123` because negation has lower precedence than method calls. We could fix that by making `-` part of the number literal. But then consider:
-
-```
-var n = 123;
-print -n.abs();
-```
-
-This still produces `-123`, so now the language seems inconsistent. No matter what you do, some case ends up weird.
+> Since we look only for a digit to start a number, that means `-123` is not a number *literal*. Instead, `-123`, is an *expression* that applies `-` to the number literal `123`. In practice, the result is the same, though it has one interesting edge case if we were to add method calls on numbers. Consider:
+>
+> ```
+> print -123.abs();
+> ```
+>
+> This prints `-123` because negation has lower precedence than method calls. We could fix that by making `-` part of the number literal. But then consider:
+>
+> ```
+> var n = 123;
+> print -n.abs();
+> ```
+>
+> This still produces `-123`, so now the language seems inconsistent. No matter what you do, some case ends up weird.
 
 ```
 1234
@@ -647,8 +671,10 @@ This still produces `-123`, so now the language seems inconsistent. No matter wh
 
 We don’t allow a leading or trailing decimal point, so these are both invalid:
 
-    .1234
-    1234.
+```
+.1234
+1234.
+```
 
 We could easily support the former, but I left it out to keep things simple. The latter gets weird if we ever want to allow methods on numbers like `123.sqrt()`.
 
@@ -674,30 +700,34 @@ To recognize the beginning of a number lexeme, we look for any digit. It’s kin
 
 This relies on this little utility:
 
-      private boolean isDigit(char c) {
-        return c >= '0' && c <= '9';
-      }
+```
+  private boolean isDigit(char c) {
+    return c >= '0' && c <= '9';
+  }
+```
 
 *lox/Scanner.java*, add after *peek*()
 
-The Java standard library provides [`Character.isDigit()`](http://docs.oracle.com/javase/7/docs/api/java/lang/Character.html#isDigit(char)), which seems like a good fit. Alas, that method allows things like Devanagari digits, full-width numbers, and other funny stuff we don’t want.
+> The Java standard library provides [`Character.isDigit()`](http://docs.oracle.com/javase/7/docs/api/java/lang/Character.html#isDigit(char)), which seems like a good fit. Alas, that method allows things like Devanagari digits, full-width numbers, and other funny stuff we don’t want.
 
 Once we know we are in a number, we branch to a separate method to consume the rest of the literal, like we do with strings.
 
-      private void number() {
-        while (isDigit(peek())) advance();
+```
+  private void number() {
+    while (isDigit(peek())) advance();
 
-        // Look for a fractional part.
-        if (peek() == '.' && isDigit(peekNext())) {
-          // Consume the "."
-          advance();
+    // Look for a fractional part.
+    if (peek() == '.' && isDigit(peekNext())) {
+      // Consume the "."
+      advance();
 
-          while (isDigit(peek())) advance();
-        }
+      while (isDigit(peek())) advance();
+    }
 
-        addToken(NUMBER,
-            Double.parseDouble(source.substring(start, current)));
-      }
+    addToken(NUMBER,
+        Double.parseDouble(source.substring(start, current)));
+  }
+```
 
 *lox/Scanner.java*, add after *scanToken*()
 
@@ -705,14 +735,16 @@ We consume as many digits as we find for the integer part of the literal. Then w
 
 Looking past the decimal point requires a second character of lookahead since we don’t want to consume the `.` until we’re sure there is a digit *after* it. So we add:
 
-      private char peekNext() {
-        if (current + 1 >= source.length()) return '\0';
-        return source.charAt(current + 1);
-      }
+```
+  private char peekNext() {
+    if (current + 1 >= source.length()) return '\0';
+    return source.charAt(current + 1);
+  }
+```
 
 *lox/Scanner.java*, add after *peek*()
 
-I could have made `peek()` take a parameter for the number of characters ahead to look instead of defining two functions, but that would allow *arbitrarily* far lookahead. Providing these two functions makes it clearer to a reader of the code that our scanner looks ahead at most two characters.
+> I could have made `peek()` take a parameter for the number of characters ahead to look instead of defining two functions, but that would allow *arbitrarily* far lookahead. Providing these two functions makes it clearer to a reader of the code that our scanner looks ahead at most two characters.
 
 Finally, we convert the lexeme to its numeric value. Our interpreter uses Java’s `Double` type to represent numbers, so we produce a value of that type. We’re using Java’s own parsing method to convert the lexeme to a real Java double. We could implement that ourselves, but, honestly, unless you’re trying to cram for an upcoming programming interview, it’s not worth your time.
 
@@ -734,19 +766,25 @@ Consider what would happen if a user named a variable `orchid`. The scanner woul
 
 That rule states that if we can match `orchid` as an identifier and `or` as a keyword, then the former wins. This is also why we tacitly assumed, previously, that `<=` should be scanned as a single `<=` token and not `<` followed by `=`.
 
-Consider this nasty bit of C code:
-
-    ---a;
-
-Is it valid? That depends on how the scanner splits the lexemes. What if the scanner sees it like this:
-
-    - --a;
-
-Then it could be parsed. But that would require the scanner to know about the grammatical structure of the surrounding code, which entangles things more than we want. Instead, the maximal munch rule says that it is *always* scanned like:
-
-    -- -a;
-
-It scans it that way even though doing so leads to a syntax error later in the parser.
+> Consider this nasty bit of C code:
+>
+> ```
+> ---a;
+> ```
+>
+> Is it valid? That depends on how the scanner splits the lexemes. What if the scanner sees it like this:
+>
+> ```
+> - --a;
+> ```
+>
+> Then it could be parsed. But that would require the scanner to know about the grammatical structure of the surrounding code, which entangles things more than we want. Instead, the maximal munch rule says that it is *always* scanned like:
+>
+> ```
+> -- -a;
+> ```
+>
+> It scans it that way even though doing so leads to a syntax error later in the parser.
 
 Maximal munch means we can’t easily detect a reserved word until we’ve reached the end of what might instead be an identifier. After all, a reserved word *is* an identifier, it’s just one that has been claimed by the language for its own use. That’s where the term **reserved word** comes from.
 
@@ -773,51 +811,57 @@ So we begin by assuming any lexeme starting with a letter or underscore is an id
 
 The rest of the code lives over here:
 
-      private void identifier() {
-        while (isAlphaNumeric(peek())) advance();
+```
+  private void identifier() {
+    while (isAlphaNumeric(peek())) advance();
 
-        addToken(IDENTIFIER);
-      }
+    addToken(IDENTIFIER);
+  }
+```
 
 *lox/Scanner.java*, add after *scanToken*()
 
 We define that in terms of these helpers:
 
-      private boolean isAlpha(char c) {
-        return (c >= 'a' && c <= 'z') ||
-               (c >= 'A' && c <= 'Z') ||
-                c == '_';
-      }
+```
+  private boolean isAlpha(char c) {
+    return (c >= 'a' && c <= 'z') ||
+           (c >= 'A' && c <= 'Z') ||
+            c == '_';
+  }
 
-      private boolean isAlphaNumeric(char c) {
-        return isAlpha(c) || isDigit(c);
-      }
+  private boolean isAlphaNumeric(char c) {
+    return isAlpha(c) || isDigit(c);
+  }
+```
 
 *lox/Scanner.java*, add after *peekNext*()
 
 That gets identifiers working. To handle keywords, we see if the identifier’s lexeme is one of the reserved words. If so, we use a token type specific to that keyword. We define the set of reserved words in a map.
 
-      private static final Map<String, TokenType> keywords;
+```
+  private static final Map<String, TokenType> keywords;
 
-      static {
-        keywords = new HashMap<>();
-        keywords.put("and",    AND);
-        keywords.put("class",  CLASS);
-        keywords.put("else",   ELSE);
-        keywords.put("false",  FALSE);
-        keywords.put("for",    FOR);
-        keywords.put("fun",    FUN);
-        keywords.put("if",     IF);
-        keywords.put("nil",    NIL);
-        keywords.put("or",     OR);
-        keywords.put("print",  PRINT);
-        keywords.put("return", RETURN);
-        keywords.put("super",  SUPER);
-        keywords.put("this",   THIS);
-        keywords.put("true",   TRUE);
-        keywords.put("var",    VAR);
-        keywords.put("while",  WHILE);
-      }
+  static {
+    keywords = new HashMap<>();
+    keywords.put("and",    AND);
+    keywords.put("class",  CLASS);
+    keywords.put("else",   ELSE);
+    keywords.put("false",  FALSE);
+    keywords.put("for",    FOR);
+    keywords.put("fun",    FUN);
+    keywords.put("if",     IF);
+    keywords.put("nil",    NIL);
+    keywords.put("or",     OR);
+    keywords.put("print",  PRINT);
+    keywords.put("return", RETURN);
+    keywords.put("super",  SUPER);
+    keywords.put("this",   THIS);
+    keywords.put("true",   TRUE);
+    keywords.put("var",    VAR);
+    keywords.put("while",  WHILE);
+  }
+```
 
 *lox/Scanner.java*, in class *Scanner*
 
@@ -917,7 +961,7 @@ In all of these, either treating the newline as a separator or not would both pr
 
   Python would need a different set of rules for implicitly joining lines if you could get back *into* a statement where newlines should become meaningful while still nested inside brackets.
 
-And now you know why Python’s `lambda` allows only a single expression body.
+> And now you know why Python’s `lambda` allows only a single expression body.
 
 - JavaScript’s “[automatic semicolon insertion](https://www.ecma-international.org/ecma-262/5.1/#sec-7.9)” rule is the real odd one. Where other languages assume most newlines *are* meaningful and only a few should be ignored in multi-line statements, JS assumes the opposite. It treats all of your newlines as meaningless whitespace *unless* it encounters a parse error. If it does, it goes back and tries turning the previous newline into a semicolon to get something grammatically valid.
 

@@ -1,3 +1,5 @@
+![](media/index-1135_1.jpg)
+
 19 INTERACTIVE PROGRAMMING AND
 
 THE NCURSES LIBRARY
@@ -3163,5 +3165,3 @@ obvious cycles. As an extra feature, give the program a command
 line argument that is the name of a file containing screen
 
 coordinates, one per line, at which the initial cells will be filled.
-
-![](media/index-1211_1.jpg)

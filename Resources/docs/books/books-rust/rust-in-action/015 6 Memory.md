@@ -14,9 +14,7 @@ Memory is a shared resource, and the OS is an arbiter. To make its life easier, 
 
 Each of the four sections in this chapter builds on the previous one. None of these sections assume that you’ve encountered the topic before. There is a fairly large body of theory to cover, but all of it is explained by examples.
 
-**175**
 
-**176**
 
 CHAPTER 6
 
@@ -66,7 +64,6 @@ A computer doesn’t experience frustration. It also lacks any intuition that it
 
 ***Pointers***
 
-**177**
 
 We can think of data stored within the program’s memory as being scattered around somewhere within physical RAM. To make use of that RAM, there needs to be some sort of retrieval system in place. An *address space* is that retrieval system.
 
@@ -98,10 +95,8 @@ Rust’s references offer substantial benefits over pointers:
 
  *References are correctly aligned to multiples of usize.* For technical reasons, CPUs become quite temperamental when asked to fetch unaligned memory.
 
-**178**
 
 
-***Memory***
 
 ***(continued)***
 
@@ -167,9 +162,7 @@ println!("a: {}, b: {:p}, c: {:p}", a, b, c);
 
 }
 
-***Exploring Rust’s reference and pointer types***
 
-**179**
 
 **Variables *c*** **and *b*** **are references.**
 
@@ -267,10 +260,8 @@ For a more thorough examination of what happens under the hood, listing 6.2
 
 produces much more output. It uses more sophisticated types instead of references to
 
-**180**
 
 
-***Memory***
 
 Variable
 
@@ -558,9 +549,7 @@ size: 16 bytes
 
 points to: 0x558762130a40
 
-***Exploring Rust’s reference and pointer types***
 
-**181**
 
 B (an array of 10 bytes):
 
@@ -666,10 +655,8 @@ Comparing references and **Box\<T\>** to several types
 
 41 }
 
-**182**
 
 
-***Memory***
 
 For readers who are interested in decoding the text within B and C, listing 6.3 is a short program that (almost) creates a memory address layout that resembles figure 6.3 more closely. It contains a number of new Rust features and some relatively arcane syntax, both of which haven’t been introduced yet. These will be explained shortly.
 
@@ -789,9 +776,7 @@ In listing 6.3, Cow stands for *copy on write*. This smart pointer type is handy
 
 std::ffi is the foreign function interface module from Rust’s standard library. use std::os::raw::c_char; is not strictly needed, but it does make the code’s intent clear. C does not define the width of its char type in its standard, although it’s one byte wide in practice. Retrieving the type alias c_char from the std::os:raw module allows for differences.
 
-***Exploring Rust’s reference and pointer types***
 
-**183**
 
 To thoroughly understand the code in listing 6.3, there is quite a bit of ground to cover. We first need to work through what raw pointers are and then discuss a number of feature-rich alternatives that have been built around them.
 
@@ -843,10 +828,8 @@ An i64 is 8-bytes wide (64 bits ÷ 8 bits per byte). Therefore, if an i64 is sto
 
 from a pointer is known as *dereferencing a pointer*. The following listing identifies a value’s address by casting a reference to it as a raw pointer via std::mem::transmute.
 
-**184**
 
 
-***Memory***
 
 Listing 6.5
 
@@ -918,9 +901,7 @@ To reiterate, raw pointers are not safe. These have a number of properties that 
 
 Notwithstanding those warnings, there are a small number of valid reasons to make use of raw pointers:
 
-***Exploring Rust’s reference and pointer types***
 
-**185**
 
  *It’s unavoidable.* Perhaps some OS call or third-party code requires a raw pointer.
 
@@ -976,10 +957,8 @@ With shared ownership, some objects, such as a network connection or, perhaps, a
 
 ![](media/index-212_12.png)
 
-**186**
 
 
-***Memory***
 
 **Raw Pointer**
 
@@ -1293,7 +1272,6 @@ You might find yourself in a situation where you want to build your own smart po
 
 ***Providing programs with memory for their data***
 
-**187**
 
 research. Regardless, it might be useful to know that Rust’s pointer types are extensible—these are designed with extension in mind.
 
@@ -1333,10 +1311,8 @@ Some people hate wading through the details, though. For those readers, here is 
 
 That difference leads to the following axiom: “When in doubt, prefer the stack.” To place data onto the stack, the compiler must know the type’s size at compile time.
 
-**188**
 
 
-***Memory***
 
 Translated to Rust, that means, “When in doubt, use types that implement Sized.”
 
@@ -1378,9 +1354,7 @@ To understand what is happening more fully, let’s consider a thought experimen
 
 Imagine a diligent, yet absurdly single-minded cook in a commercial kitchen. The cook takes each table’s docket and places those in a queue. The cook has a fairly bad memory, so each current order is written down a notebook. As new orders come in, 1 To be precise, the activation frame is called a stack frame when allocated on the stack.
 
-***Providing programs with memory for their data***
 
-**189**
 
 the cook updates the notebook to refer to the new order. When orders are complete, the notebook page is changed to the next item in the queue. Unfortunately, for cus-tomers in this restaurant, the book operates in a LIFO manner. Hopefully, you will not be one of the early orders during tomorrow’s lunch rush.
 
@@ -1422,10 +1396,8 @@ password.as_ref().len() \> 5
 
 When read-write access to the argument is required, normally you can make use of AsRef\<T\>'s sibling trait AsMut\<T\>. Unfortunately for this example, &'static str cannot become mutable and so another strategy can be deployed: implicit conversion.
 
-**190**
 
 
-***Memory***
 
 ***(continued)***
 
@@ -1461,9 +1433,7 @@ At times, there are gaps and perhaps a bit of clutter. But overall, there is a g
 
 Another mistake is that the heap has no relationship to the data structure that is also known as a heap. That data structure is often used to create priority queues. It’s an incredibly clever tool in its own right, but right now it’s a complete distraction. The heap is not a data structure. It’s an area of memory.
 
-***Providing programs with memory for their data***
 
-**191**
 
 Now that those two distinctions are made, let’s inch toward an explanation. The critical difference from a usage point of view is that variables on the heap must be accessed via a pointer, whereas this is not required with variables accessed on the stack.
 
@@ -1509,10 +1479,8 @@ The code for the next listing is in the file ch6/ch6-heap-via-box/src/main.rs. A
 
 3 3
 
-**192**
 
 
-***Memory***
 
 Listing 6.7
 
@@ -1590,9 +1558,7 @@ Using the --release flag actually ends up optimizing all the allocations and ari
 
 --codegen opt-level=0.
 
-***Providing programs with memory for their data***
 
-**193**
 
 **Program execution over time**
 
@@ -1824,10 +1790,8 @@ Figure 6.5
 
 A view into a program’s memory layout during the execution of listing 6.7
 
-**194**
 
 
-***Memory***
 
 ***6.3.3***
 
@@ -1885,9 +1849,7 @@ A contiguous layout is cache-friendly. Alternatively, variables allocated on the
 
 ![](media/index-221_3.png)
 
-***Providing programs with memory for their data***
 
-**195**
 
 Table 6.1
 
@@ -1937,10 +1899,8 @@ contains three major sections:
 
  The main() function deals with window creation and initialization.
 
-**196**
 
 
-***Memory***
 
 The following listing shows the dependencies for our toy program (listing 6.9). The source for the following listing is in ch6/ch6-particles/Cargo.toml. The source for listing 6.9 is in ch6/ch6-particles/main.rs.
 
@@ -2090,9 +2050,7 @@ A graphical application to create and destroy objects on the heap **graphics::ma
 
 29 unsafe fn dealloc(&self, ptr: \*mut u8, layout: Layout) {
 
-***Providing programs with memory for their data***
 
-**197**
 
 30 System.dealloc(ptr, layout);
 
@@ -2250,10 +2208,8 @@ A graphical application to create and destroy objects on the heap **graphics::ma
 
 **over time**
 
-**198**
 
 
-***Memory***
 
 85 impl World {
 
@@ -2401,9 +2357,7 @@ A graphical application to create and destroy objects on the heap **graphics::ma
 
 139 }
 
-***Providing programs with memory for their data***
 
-**199**
 
 140 self.current_turn += 1;
 
@@ -2475,10 +2429,8 @@ In the interim, it’s sufficient to say that these are a convenient shorthand f
 
 If you run listing 6.9 from a terminal window, you’ll soon see two columns of numbers filling it up. These columns represent the number of bytes allocated, and the duration in nanoseconds taken to fulfil the request. That output can be sent to a file for further
 
-**200**
 
 
-***Memory***
 
 analysis, as shown in the following listing, which redirects stderr from ch6-particles to a file.
 
@@ -2556,9 +2508,7 @@ Figure 6.8
 
 Plotting heap allocation times against allocation size shows that there is no clear relationship between the two. The time taken to allocate memory is essentially unpredictable, even when requesting the same amount of memory multiple times.
 
-***Providing programs with memory for their data***
 
-**201**
 
 To generate your own version of figure 6.8, the following listing shows a gnuplot script that can be tweaked as desired. You’ll find this source in the file ch6/alloc.plot.
 
@@ -2610,10 +2560,8 @@ nanosecond delay between each of those operations, your computer can only perfor
 
  *Investigate arena::Arena and arena::TypedArena.* These allow objects to be created on the fly, but alloc() and free() are only called when the arena is created and destroyed.
 
-**202**
 
 
-***Memory***
 
 ***6.4***
 
@@ -2651,9 +2599,7 @@ Terminology within this area is particularly arcane. It is often tied to decisio
 
  *Page table*—The data structure maintained by the OS to manage translating from virtual to real memory.
 
-***Virtual memory***
 
-**203**
 
  *Segment*—A block within virtual memory. Virtual memory is divided into blocks to minimize the space required to translate between virtual and physical addresses.
 
@@ -2725,10 +2671,8 @@ Attempting to scan a running program’s memory byte by byte
 
 13 println!("non-zero bytes in memory: {}", n_nonzero); 14 }
 
-**204**
 
 
-***Memory***
 
 Listing 6.12 crashes because it is attempting to dereference a NULL pointer. When i equals 0, ptr can’t really be dereferenced. Incidentally, this is why all raw pointer dereferences must occur within an unsafe block.
 
@@ -2790,9 +2734,7 @@ fn_int: 0x23d492f8ec
 
 As you can see, values appear to be scattered across a wide range. So despite your program (hopefully) only needing a few kilobytes of RAM, a few variables live in giant locations. These are *virtual addresses*.
 
-***Virtual memory***
 
-**205**
 
 As explained in the heap versus stack section, the stack starts at the top of the address space and the heap starts near the bottom. In this run, the highest value is 0x7ff6d6ec9314. That’s approximately 264 ÷ 2. That number is due to the OS reserving half of the address space for itself.
 
@@ -2856,10 +2798,8 @@ Before pressing on with the cheat program, let’s step back and look at the sys
 
 Accessing data in a program requires virtual addresses—the only addresses that the program itself has access to. These get translated into physical addresses. This process involves a dance between the program, the OS, the CPU, the RAM hardware, and occasionally hard drives and other devices. The CPU is responsible for performing this translation, but the OS stores the instructions.
 
-**206**
 
 
-***Memory***
 
 CPUs contain a *memory management unit* (MMU) that is designed for this one job.
 
@@ -2887,9 +2827,7 @@ The OS and CPU can play some interesting tricks when data lives within pages of 
 
  *Programs are able to share data quickly.* If your program requests a large block of zeroes, say, for a newly created array, the OS might point you towards a page filled with zeroes that is currently being used by three other programs. None of the programs are aware that the others are looking at the same physical memory, and the zeroes have different positions within their virtual address space.
 
-***Virtual memory***
 
-**207**
 
  *Paging can speed up the loading of shared libraries.* As a special case of the previous point, if a shared library is already loaded by another program, the OS
 
@@ -2923,10 +2861,8 @@ loads the right bytes into the right places. Once the virtual address space is c
 
 ![](media/index-234_2.png)
 
-**208**
 
 
-***Memory***
 
 ***(continued)***
 
@@ -3044,9 +2980,7 @@ BaseAddress: 0x00007ffbe8d9b000,
 
 **within the Windows API.**
 
-***Virtual memory***
 
-**209**
 
 AllocationBase: 0x0000000000000000,
 
@@ -3188,10 +3122,8 @@ MEMORY_BASIC_INFORMATION as MEMINFO,
 
 };
 
-**210**
 
 
-***Memory***
 
 fn main() {
 
@@ -3325,7 +3257,6 @@ Finally, we have been able to explore an address space without the OS killing ou
 
 ***Summary***
 
-**211**
 
 ***6.4.5***
 

@@ -1,13 +1,13 @@
 
- 
+
 
 **7**
 
- 
+
 
 **R E V E R S E M A P P I N G S**
 
- 
+
 
 When we try to reclaim or migrate memory, we oper-
 
@@ -50,7 +50,7 @@ In this section we will focus on how we trace back folios to their VMAs dur-
 ing VMA lifetime.
 
 
- 
+
 
 ***7.0.1 Anonymous reverse mappings***
 
@@ -72,7 +72,7 @@ Firstly let’s examine how a newly initialised [struct anon_vma](https://git.ke
 
 related [struct anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82) (AVC) and [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA) objects interact, noting that:-
 
- 
+
 
 A
 
@@ -86,7 +86,7 @@ A
 
 B
 
- 
+
 
 [vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403)
 
@@ -94,7 +94,7 @@ B
 
 .anon_vma_chain
 
- 
+
 
 [anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82)
 
@@ -106,7 +106,7 @@ B
 
 .rb
 
- 
+
 
 [anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)
 
@@ -120,15 +120,15 @@ B
 
 .rb_root
 
- 
+
 
 *Figure 7-1: Initial* [*struct anon_vma*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) *state*
 
- 
 
 
 
- 
+
+
 
 It’s important to note that a newly initialised VMA object will not have a
 
@@ -200,7 +200,7 @@ decrement this object’s count. The initial case is trivial, things get more in
 
 teresting once we fork a process:-
 
- 
+
 
 \*. An interval tree is a red/black search tree which makes it easy to traverse ordered interval
 
@@ -212,35 +212,35 @@ imagine all base pages of virtual memory to be an array, this would be an entry�
 
 that if a VMA is moved via [mremap()](https://man7.org/linux/man-pages/man2/mremap.2.html)[,](https://man7.org/linux/man-pages/man2/mremap.2.html) the original virtual page offset is retained.
 
- 
 
 
 
- 
+
+
 
 Parent process Child process
 
- 
+
 
 [vm_area_struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403)
 
 .anon_vma .anon_vma .anon_vma_chain .anon_vma_chain
 
- 
+
 
 [anon_vma_chain anon_vma_chain anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82)
 
 .vma .vma .vma .anon_vma .anon_vma .anon_vma .same_vma .same_vma .same_vma .rb .rb .rb
 
- 
+
 
 [anon_vma anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) .root .root .num_children = 2 .num_children = 0 .num_active_vmas = 1 .num_active_vmas = 1 .parent .parent .rb_root .rb_root
 
- 
+
 
 *Figure 7-2: Forked* [*struct anon_vma*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)
 
- 
+
 
 After the process forks we have two sets of folios we need to track – those
 
@@ -262,11 +262,11 @@ The above demonstrates that we must maintain separate interval trees of
 
 VMAs for each anon_vma and separate lists of anon_vmas for each VMA since CoW implies that parent and child process address spaces have asymmetric dependencies upon each other’s anonymous folios.
 
- 
 
 
 
- 
+
+
 
 Since no node can exist in more than one tree at any one time, nor can
 
@@ -316,7 +316,7 @@ tree, create a new VMA and associated AVC, then link to the appropriate
 
 AVC based on the [struct folio-\>index](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) field:-
 
- 
+
 
 \*. To see why, consider what make up these data structures – list nodes can only reference pre-
 
@@ -326,17 +326,17 @@ becoming one aggregate list, equally binary tree nodes must reference up to two 
 
 them, traversing from one tree to another is not possible.
 
- 
+
 
 
 
 [vm_area_struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) .anon_vma .anon_vma .anon_vma_chain .anon_vma_chain
 
- 
+
 
 [anon_vma_chain anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82) .vma .vma .anon_vma .anon_vma .same_vma .same_vma .rb .rb
 
- 
+
 
 [anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)
 
@@ -350,11 +350,11 @@ them, traversing from one tree to another is not possible.
 
 .rb_root
 
- 
+
 
 *Figure 7-3:* [*struct anon_vma*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) *state after VMA split*
 
- 
+
 
 Here we simply create a new [anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82) object for the newly split
 
@@ -378,7 +378,7 @@ functionality is implemented.
 
 Let’s examine what happens after figure 7-3 is merged back together:-
 
- 
+
 
 
 
@@ -388,7 +388,7 @@ Let’s examine what happens after figure 7-3 is merged back together:-
 
 .anon_vma_chain
 
- 
+
 
 [anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82)
 
@@ -400,7 +400,7 @@ Let’s examine what happens after figure 7-3 is merged back together:-
 
 .rb
 
- 
+
 
 [anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)
 
@@ -414,11 +414,11 @@ Let’s examine what happens after figure 7-3 is merged back together:-
 
 .rb_root
 
- 
+
 
 *Figure 7-4:* [*struct anon_vma*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) *state after split VMAs merged*
 
- 
+
 
 As you can see, this is identical to figure 7-1, i.e. the original state is re-
 
@@ -440,31 +440,31 @@ a single anon_vma. This is checked by [is_mergeable_anon_vma()](https://git.kern
 
 examine in detail shortly:-
 
- 
+
 
 
 
 [vm_area_struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) .anon_vma .anon_vma .anon_vma_chain .anon_vma_chain
 
- 
+
 
 [anon_vma_chain anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82) .vma .vma .anon_vma .anon_vma .same_vma .same_vma .rb .rb
 
- 
+
 
 [anon_vma anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) .root .root .num_children = 1 .num_children = 1 .num_active_vmas = 1 .num_active_vmas = 1 .parent .parent .rb_root .rb_root
 
- 
+
 
 *Figure 7-5: VMAs with separate* [*struct anon_vma*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)[*s*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) *after attempted merge*
 
- 
+
 
 ***7.0.2 Key points***
 
 Since this is such a complicated and confusing topic, let’s highlight some useful key points which can help us reason about anonymous reverse mappings:-
 
- 
+
 
 • The purpose of a reverse mapping is simply to be able to locate all the
 
@@ -494,11 +494,11 @@ AVC objects as connectors using its interval tree rooted in rb_root.
 
 index field, which for anonymous mappings specifies the virtual page off-set of the folio. This is then indexed into the interval tree rooted in the
 
- 
 
 
 
- 
+
+
 
 anon_vma’s rb_root field to obtain an AVC from which we can determine the VMA.
 
@@ -532,7 +532,7 @@ the reverse mapping (see section 9.9.3) to determine whether the folio actually 
 
 this must in general be checked. See section 7.0.16 for more on this.
 
- 
+
 
 ***7.0.3 File reverse mappings***
 
@@ -570,39 +570,39 @@ Obtaining VMAs that may map a cache entry is straightforward – the
 
 i_mmap field is a red/black interval tree containing VMA nodes contained
 
- 
 
 
 
- 
+
+
 
 within each VMA’s shared.rb union field (the lack of Copy-on-Write obviates the need for an intermediate object equivalent to anon_vma_chain).
 
 *Figure 7-6: Page cache-backed reverse mapping*
 
- 
+
 
 [vm_area_struct vm_area_struct vm_area_struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) .shared.rb .shared.rb .shared.rb .shared.rb .vm_file .vm_file .vm_file .vm_file
 
- 
+
 
 [file file file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940)
 
 .f_mapping .f_mapping .f_mapping
 
- 
+
 
 [address_space address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424)
 
 .i_mmap .i_mmap .i_pages .i_pages
 
- 
+
 
 [folio folio folio folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256)
 
 .mapping .mapping .mapping .mapping
 
- 
+
 
 Each page cache-backed folio provides a reverse mapping via the mapping
 
@@ -632,11 +632,11 @@ An interesting thing to note is that address_space objects actually do ref-
 
 erence their folios in i_pages. This field is an [eXtensible array](https://kernel.org/doc/html/v6.0/core-api/xarray.html) which is a clever means of storing an (extensible of course) array of pointers to, in this case, folios.
 
- 
 
 
 
- 
+
+
 
 This permits the efficient lookup of folios associated with a page cache
 
@@ -694,7 +694,7 @@ For more details on the address_space type and a broader discussion of
 
 the page cache, see the chapter dedicated to this topic.
 
- 
+
 
 ***7.0.4 Anonymous reverse mapping types***
 
@@ -706,7 +706,7 @@ and examine each type in detail, starting with the fields relevant to anon_vma
 
 objects present in the [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) data type:-
 
- 
+
 
 403 **struct** vm_area_struct {
 
@@ -722,11 +722,11 @@ objects present in the [struct vm_area_struct](https://git.kernel.org/pub/scm/li
 
 460 **struct** list_head anon_vma_chain; */\* Serialized by mmap_lock &* 461 *\* page_table_lock \*/*
 
- 
 
 
 
- 
+
+
 
 462 **struct** anon_vma \*anon_vma; */\* Serialized by page_table_lock \*/*
 
@@ -734,15 +734,15 @@ objects present in the [struct vm_area_struct](https://git.kernel.org/pub/scm/li
 
 483 } \_\_randomize_layout;
 
- 
+
 
 *Listing 7-1:* include/linux/mm_types.h: [*struct vm_area_struct*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) *anon_vma fields*
 
- 
+
 
 Examining each field:-
 
- 
+
 
 • anon_vma_chain – This heads the list containing AVC objects related to this
 
@@ -752,13 +752,13 @@ VMA, linked by the same_vma field.
 
 anonymous folios will be mapped to, which is referred to as its active VMA. Importantly – if no folios have yet been faulted in, this field will be NULL.
 
- 
+
 
 **7.0.4.2 struct anon_vma**
 
 And now examining [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31), the core anonymous reverse mapping data structure:-
 
- 
+
 
 17 */\**
 
@@ -784,11 +784,11 @@ And now examining [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/
 
 44 *\* Count of child anon_vmas. Equals to the count of all anon_vmas that*
 
- 
 
 
 
- 
+
+
 
 45 *\* have -\>parent pointing to this one, including itself.*
 
@@ -838,15 +838,15 @@ And now examining [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/
 
 67 };
 
- 
+
 
 *Listing 7-2:* include/linux/rmap.h: [*struct anon_vma*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)
 
- 
+
 
 Examining each field:-
 
- 
+
 
 • root – This points at the [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)object which sits at the top of all
 
@@ -872,11 +872,11 @@ times this object is referenced. Incremented by [get_anon_vma()](https://git.ker
 
 decremented by [put_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n113) (which performs heavy lifting in
 
- 
 
 
 
- 
+
+
 
 [\_\_put_anon_vma()). ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2343)This is also manipulated elsewhere directly within in-ternal rmap functions.
 
@@ -902,13 +902,13 @@ connecting the anon_vma object to VMAs which map folios referencing it. The inte
 
 originally mapped\* (via [\_\_page_set_anon_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1129)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1129) Each VMA specifies its starting virtual page offset in their vm_pgoff field. There can be multiple VMAs present within the same interval range (e.g. forked process VMAs), different VMAs can be mapped to different virtual page offsets (e.g. split VMAs) or a combination of both.
 
- 
+
 
 **7.0.4.3 struct anon_vma_chain**
 
 Examining the [struct anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82) object:-
 
- 
+
 
 69 */\**
 
@@ -922,13 +922,13 @@ Examining the [struct anon_vma_chain](https://git.kernel.org/pub/scm/linux/kerne
 
 *\*/*
 
- 
+
 
 \*. [mremap()](https://man7.org/linux/man-pages/man2/mremap.2.html) retains the original virtual page offsets if it moves a VMA. See section 8.2.3 for a detailed discussion of this.
 
 
 
- 
+
 
 86 **struct** rb_node rb; */\* locked by anon_vma-\>rwsem*
 
@@ -944,15 +944,15 @@ Examining the [struct anon_vma_chain](https://git.kernel.org/pub/scm/linux/kerne
 
 91 };
 
- 
+
 
 *Listing 7-3:* include/linux/rmap.h: [*struct anon_vma_chain*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82)
 
- 
+
 
 Examining each field:-
 
- 
+
 
 • vma – This is the [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA) object which this object is
 
@@ -986,7 +986,7 @@ tree implementation (see [include/linux/interval_tree_generic.h](https://elixir.
 
 virtual page offsets of the end of the referenced VMA is correct.
 
- 
+
 
 ***7.0.5 Anonymous reverse mapping initialisation***
 
@@ -1016,15 +1016,15 @@ page and migration functions but these are out of scope here) as shown in
 
 Listing 7-4.
 
- 
+
 
 154 **static inline int anon_vma_prepare**(**struct** vm_area_struct \*vma)
 
- 
 
 
 
- 
+
+
 
 155 {
 
@@ -1032,11 +1032,11 @@ Listing 7-4.
 
 159 **return \_\_anon_vma_prepare**(vma); 160 }
 
- 
+
 
 *Listing 7-4:* include/linux/rmap.h: [*anon_vma_prepare()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n154)
 
- 
+
 
 This is invoked unconditionally and only actually performs the allocation
 
@@ -1044,7 +1044,7 @@ and initialisation of an anon_vma object if none already exists, which is done i
 
 [\_\_anon_vma_prepare()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n187), as shown in Listing 7-5.
 
- 
+
 
 159 */\*\**
 
@@ -1072,11 +1072,11 @@ and initialisation of an anon_vma object if none already exists, which is done i
 
 194
 
- 
 
 
 
- 
+
+
 
 195 avc = **anon_vma_chain_alloc**(**GFP_KERNEL**); 196 **if** (!avc)
 
@@ -1112,11 +1112,11 @@ and initialisation of an anon_vma object if none already exists, which is done i
 
 233 }
 
- 
+
 
 *Listing 7-5:* mm/rmap.c: [*\_\_anon_vma_prepare()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n187)
 
- 
+
 
 There is a lot to unpack here, so let’s start by examining how we actually
 
@@ -1128,11 +1128,11 @@ We start by allocating the [struct anon_vma_chain](https://git.kernel.org/pub/sc
 
 candidate anon_vma. Note that we are only performing this action because the
 
- 
 
 
 
- 
+
+
 
 VMA does not have a anon_vma to point at, so we might not have to allocate a new anon_vma but instead might be able to reuse an existing one.
 
@@ -1142,17 +1142,17 @@ anon_vma_chain, as this represents the connection between a VMA and an
 
 anon_vma. We do this in [anon_vma_chain_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n139) as shown in Listing 7-6.
 
- 
+
 
 139 **static inline struct** anon_vma_chain \***anon_vma_chain_alloc**(**gfp_t** gfp) 140 {
 
 141 **return kmem_cache_alloc**(**anon_vma_chain_cachep**, gfp); 142 }
 
- 
+
 
 *Listing 7-6:* mm/rmap.c: [*anon_vma_chain_alloc()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n139)
 
- 
+
 
 The actual allocation is performed by the slab function
 
@@ -1166,17 +1166,17 @@ We free anon_vma_chain objects via [anon_vma_chain_free()](https://git.kernel.or
 
 ing 7-7.
 
- 
+
 
 144 **static void** anon_vma_chain_free(**struct** anon_vma_chain \*anon_vma_chain) 145 {
 
 146 **kmem_cache_free**(anon_vma_chain_cachep, anon_vma_chain); 147 }
 
- 
+
 
 *Listing 7-7:* mm/rmap.c: [*anon_vma_chain_free()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n144)
 
- 
+
 
 Which simply invokes the standard slab free function [kmem_cache_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slub.c?h=v6.0#n3550)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slub.c?h=v6.0#n3550)
 
@@ -1184,7 +1184,7 @@ Turning now to the allocation of anon_vma objects via [anon_vma_alloc()](https:/
 
 shown in Listing 7-8.
 
- 
+
 
 89 **static inline struct** anon_vma \***anon_vma_alloc**(**void**) 90 {
 
@@ -1204,21 +1204,21 @@ shown in Listing 7-8.
 
 105
 
- 
 
 
 
- 
+
+
 
 106 **return** anon_vma;
 
 107 }
 
- 
+
 
 *Listing 7-8:* mm/rmap.c: [*anon_vma_alloc()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n89)
 
- 
+
 
 Again, we use [kmem_cache_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slub.c?h=v6.0#n3271) to allocate the actual object, this time
 
@@ -1228,7 +1228,7 @@ allocations here is that this is set up to invoke a constructor on allocation,
 
 [anon_vma_ctor()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n450) as shown in Listing 7-9.
 
- 
+
 
 450 **static void anon_vma_ctor**(**void** \*data) 451 {
 
@@ -1238,11 +1238,11 @@ allocations here is that this is set up to invoke a constructor on allocation,
 
 454 **init_rwsem**(&anon_vma-\>rwsem); 455 **atomic_set**(&anon_vma-\>refcount, 0); 456 anon_vma-\>rb_root = **RB_ROOT_CACHED**; 457 }
 
- 
+
 
 *Listing 7-9:* mm/rmap.c: [*anon_vma_ctor()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n450)
 
- 
+
 
 So taking into account this and anon_vma_alloc(), on initialisation a
 
@@ -1250,7 +1250,7 @@ So taking into account this and anon_vma_alloc(), on initialisation a
 
 that:-
 
- 
+
 
 • root – Set to point to itself. This is required as all locking performed on
 
@@ -1280,11 +1280,11 @@ This field is used to update the child count of a forked anon_vma’s parent whi
 
 it to the default NULL state defined by [RB_ROOT_CACHED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rbtree_types.h?h=v6.0#n32).
 
- 
 
 
 
- 
+
+
 
 ***7.0.6 Reusing adjacent VMA’s anon_vma objects***
 
@@ -1304,7 +1304,7 @@ We therefore do attempt to do so in order to minimise kernel overhead,
 
 which is performed in [find_mergeable_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1276) as shown in Listing 7-10.
 
- 
+
 
 1268 */\**
 
@@ -1326,11 +1326,11 @@ which is performed in [find_mergeable_anon_vma()](https://git.kernel.org/pub/scm
 
 1292 *\* We might reach here with anon_vma == NULL if we can't find* 1293 *\* any reusable anon_vma.* 1294 *\* There's no absolute need to look only at touching neighbours:* 1295 *\* we could search further afield for "compatible" anon_vmas.* 1296 *\* But it would probably just be a waste of time searching,* 1297 *\* or lead to too many vmas hanging off the same anon_vma.* 1298 *\* We're trying to allow mprotect remerging later on,*
 
- 
 
 
 
- 
+
+
 
 1299 *\* not trying to minimize memory used for anon_vmas.* 1300 *\*/*
 
@@ -1338,11 +1338,11 @@ which is performed in [find_mergeable_anon_vma()](https://git.kernel.org/pub/scm
 
 1302 }
 
- 
+
 
 *Listing 7-10:* mm/mmap.c: [*find_mergeable_anon_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1276)
 
- 
+
 
 This simply attempts to determine whether either the previous or next
 
@@ -1354,7 +1354,7 @@ We test what constitutes an anon_vma-mergeable VMA via
 
 [reusable_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1257) as shown in Listing 7-11.
 
- 
+
 
 1235 */\**
 
@@ -1384,15 +1384,15 @@ vm_area_struct \*a, **struct** vm_area_struct \*b)
 
 1266 }
 
- 
+
 
 *Listing 7-11:* mm/mmap.c: [*reusable_anon_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1257)
 
- 
 
 
 
- 
+
+
 
 The fundamental check is performed via [anon_vma_compatible()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1226) which we
 
@@ -1404,7 +1404,7 @@ condition with those imposed by [anon_vma_compatible()](https://git.kernel.org/p
 
 7-12.
 
- 
+
 
 1213 */\**
 
@@ -1430,17 +1430,17 @@ condition with those imposed by [anon_vma_compatible()](https://git.kernel.org/p
 
 1233 }
 
- 
+
 
 *Listing 7-12:* mm/mmap.c: [*anon_vma_compatible()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1226)
 
- 
+
 
 In aggregate, [reusable_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1257) and anon_vma_compatible() impose the
 
 following conditions in order for two VMAs to be considered [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)[-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)mergeable are as follows (designating the preceding VMA A and the follow-ing VMA B:-
 
- 
+
 
 1. The end of A’s virtual mapping must be exactly equal to the beginning of
 
@@ -1454,11 +1454,11 @@ checked by [mpol_equal()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 mous, or both are MAP_PRIVATE mappings mapping the same file (a sim-ple file mapping would not be applicable here as it would not possess an anon_vma object).
 
- 
 
 
 
- 
+
+
 
 4. Both A and B’s VMA flags must be identical, except for the basic ac-
 
@@ -1474,7 +1474,7 @@ preceding VMA offset by the different in their vm_start fields, in other words, 
 
 anon_vma_chain list larger than one, i.e. it must not part of a forked child process which has inherited this mapping from its parent.
 
- 
+
 
 Looking more closely at this final re-
 
@@ -1516,7 +1516,7 @@ jects – on cloning an existing VMA’s anon_vma structure in [anon_vma_clone()
 
 We discuss this below.
 
- 
+
 
 ***7.0.7 Connecting anon_vma objects***
 
@@ -1524,25 +1524,25 @@ We connect a [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 via [anon_vma_chain_link()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n149):-
 
- 
+
 
 149 **static void anon_vma_chain_link**(**struct** vm_area_struct \*vma, 150 **struct** anon_vma_chain \*avc, 151 **struct** anon_vma \*anon_vma) 152 {
 
 153 avc-\>vma = vma;
 
- 
 
 
 
- 
+
+
 
 154 avc-\>anon_vma = anon_vma; 155 **list_add**(&avc-\>same_vma, &vma-\>anon_vma_chain); 156 **anon_vma_interval_tree_insert**(avc, &anon_vma-\>rb_root); 157 }
 
- 
+
 
 *Listing 7-13:* mm/rmap.c: [*anon_vma_chain_link()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n149)
 
- 
+
 
 This is a convenience function which assigns the AVC’s vma and anon_vma
 
@@ -1556,7 +1556,7 @@ Note that [\_\_anon_vma_prepare()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 anon_vma and [struct anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82) in addition to a number of other callers.
 
- 
+
 
 ***7.0.8 Cloning anon_vma objects***
 
@@ -1576,7 +1576,7 @@ This clone operation is performed in [anon_vma_clone()](https://git.kernel.org/p
 
 7-14.
 
- 
+
 
 261 */\**
 
@@ -1608,11 +1608,11 @@ This clone operation is performed in [anon_vma_clone()](https://git.kernel.org/p
 
 279 **int anon_vma_clone**(**struct** vm_area_struct \*dst, **struct** vm_area_struct \*src)
 
- 
 
 
 
- 
+
+
 
 280 {
 
@@ -1658,17 +1658,17 @@ This clone operation is performed in [anon_vma_clone()](https://git.kernel.org/p
 
 323 dst-\>anon_vma = **NULL**; 324 **unlink_anon_vmas**(dst);
 
- 
 
 
 
- 
+
+
 
 325 **return**-**ENOMEM**;
 
 326 }
 
- 
+
 
 *Listing 7-14:* mm/rmap.c: [*anon_vma_clone()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n279)
 
@@ -1700,7 +1700,7 @@ when splitting VMAs, [copy_vma()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 [mremap()](https://man7.org/linux/man-pages/man2/mremap.2.html) operation and finally [anon_vma_fork()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n333) when a VMA is in the process of being forked.
 
- 
+
 
 ***7.0.9 Reusing anon_vma objects on fork***
 
@@ -1710,7 +1710,7 @@ We first determine that this is a fork operation by checking that the desti-
 
 nation VMA has no anon_vma set, then checks the following criteria:-
 
- 
+
 
 1. A source anon_vma is present.
 
@@ -1722,7 +1722,7 @@ has forked already)
 
 no VMAs pointing at it whatsoever.
 
- 
+
 
 Under what circumstances does this occur? If a process repeatedly
 
@@ -1730,13 +1730,13 @@ forks with each child process quickly exiting (and thus each invoking
 
 [unlink_anon_vmas() ), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n395)they leave behind empty anon_vma objects simply point-ing to child AVC objects resulting in an otherwise unnecessary growth in anon_vma objects.
 
- 
+
 
 \*. In reverse order because newer [struct anon_vma_chain](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82) objects are appended to the front of this list rather than the rear, and when we add these to the target VMA’s list we are appending to the front so in order to maintain the same order we must iterate backwards.
 
 
 
- 
+
 
 ***7.0.10 Forking anon_vma objects***
 
@@ -1752,7 +1752,7 @@ of all existing memory mappings. This in turn invokes [anon_vma_fork()](https://
 
 form the forking with respect to anon_vma objects as shown in Listing 7-15.
 
- 
+
 
 328 */\**
 
@@ -1796,11 +1796,11 @@ form the forking with respect to anon_vma objects as shown in Listing 7-15.
 
 366
 
- 
 
 
 
- 
+
+
 
 367 */\**
 
@@ -1826,11 +1826,11 @@ form the forking with respect to anon_vma objects as shown in Listing 7-15.
 
 393 }
 
- 
+
 
 *Listing 7-15:* mm/rmap.c: [*anon_vma_fork()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n333)
 
- 
+
 
 This firstly checks whether the existing VMA is even pointed at a
 
@@ -1838,7 +1838,7 @@ This firstly checks whether the existing VMA is even pointed at a
 
 Otherwise, the function:-
 
- 
+
 
 1. Invokes the above described [anon_vma_clone()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n279) function to clone links to
 
@@ -1858,17 +1858,17 @@ and sets its parent, then acquires an additional reference on the root anon_vma.
 
 and links everything together via [anon_vma_chain_link()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n149).
 
- 
+
 
 When a page is un-CoW’d in [do_wp_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3360) it either creates a new
 
 anon_vma mapping via [page_add_new_anon_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1262) or, if it is now exclusively owned by a single process, it moves the page from the parent anon_vma via
 
- 
 
 
 
- 
+
+
 
 [page_move_anon_rmap() . ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1102)We examine this and other folio reverse mapping ma-
 
@@ -1896,7 +1896,7 @@ when walking the reverse mapping – we discuss precisely how we do this in
 
 section 7.0.16.
 
- 
+
 
 ***7.0.11 VMA split and merge***
 
@@ -1936,7 +1936,7 @@ of which are used by the interval tree to determine which VMA to map to),
 
 invokes [anon_vma_interval_tree_pre_update_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n471) as shown in Listing 7-16.
 
- 
+
 
 456 */\**
 
@@ -1948,11 +1948,11 @@ invokes [anon_vma_interval_tree_pre_update_vma()](https://git.kernel.org/pub/scm
 
 467 *\* The entire update must be protected by exclusive mmap_lock and by* 468 *\* the root anon_vma's mutex.*
 
- 
 
 
 
- 
+
+
 
 469 *\*/*
 
@@ -1964,11 +1964,11 @@ invokes [anon_vma_interval_tree_pre_update_vma()](https://git.kernel.org/pub/scm
 
 475 **list_for_each_entry**(avc, &vma-\>anon_vma_chain, same_vma) 476 **anon_vma_interval_tree_remove**(avc, &avc-\>anon_vma-\>rb_root); 477 }
 
- 
+
 
 *Listing 7-16:* mm/mmap.c: [*anon_vma_interval_tree_pre_update_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n471)
 
- 
+
 
 This simply rips through all [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) objects linked to the VMA
 
@@ -1978,7 +1978,7 @@ Once the adjustment is made, [anon_vma_interval_tree_post_update_vma()](https://
 
 ing 7-17.
 
- 
+
 
 479 **static inline void**
 
@@ -1988,11 +1988,11 @@ ing 7-17.
 
 484 **list_for_each_entry**(avc, &vma-\>anon_vma_chain, same_vma) 485 **anon_vma_interval_tree_insert**(avc, &avc-\>anon_vma-\>rb_root); 486 }
 
- 
+
 
 *Listing 7-17:* mm/mmap.c: [*anon_vma_interval_tree_post_update_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n480)
 
- 
+
 
 Another task performed in [\_\_vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) when merging two VMAs
 
@@ -2002,17 +2002,17 @@ tion is performed via [anon_vma_merge()](https://git.kernel.org/pub/scm/linux/ke
 
 state as shown in Listing 7-18.
 
- 
+
 
 162 **static inline void anon_vma_merge**(**struct** vm_area_struct \*vma, 163 **struct** vm_area_struct \*next) 164 {
 
 165 **VM_BUG_ON_VMA**(vma-\>anon_vma != next-\>anon_vma, vma); 166 **unlink_anon_vmas**(next); 167 }
 
- 
+
 
 *Listing 7-18:* include/linux/rmap.h: [*anon_vma_merge()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n162)
 
- 
+
 
 The removal of the absorbed VMA’s [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) objects is performed
 
@@ -2024,15 +2024,15 @@ termines whether anon_vma objects can be merged via [is_mergeable_anon_vma()](ht
 
 as shown in Listing 7-19.
 
- 
+
 
 1015 **static inline int is_mergeable_anon_vma**(**struct** anon_vma \*anon_vma1,
 
- 
 
 
 
- 
+
+
 
 1016 **struct** anon_vma \*anon_vma2, 1017 **struct** vm_area_struct \*vma) 1018 {
 
@@ -2044,11 +2044,11 @@ as shown in Listing 7-19.
 
 1023 **if** ((!anon_vma1 \|\| !anon_vma2) && (!vma \|\| 1024 **list_is_singular**(&vma-\>anon_vma_chain))) 1025 **return** 1; 1026 **return** anon_vma1 == anon_vma2; 1027 }
 
- 
+
 
 *Listing 7-19:* mm/mmap.c: [*is_mergeable_anon_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1015)
 
- 
+
 
 If both VMAs possess anon_vma objects then the test is simple – they must
 
@@ -2068,7 +2068,7 @@ vma_merge() when checking whether preceding and succeeding VMAs are
 
 anon_vma-mergeable in which case this check is not relevant.
 
- 
+
 
 ***7.0.12 Folio anon_vma operations***
 
@@ -2078,7 +2078,7 @@ The principle means by which a folio is linked to a [struct anon_vma](https://gi
 
 and thus less care need be taken with existing folio state:-
 
- 
+
 
 1249 */\*\**
 
@@ -2094,11 +2094,11 @@ and thus less care need be taken with existing folio state:-
 
 1265 **const bool** compound = **PageCompound**(page);
 
- 
 
 
 
- 
+
+
 
 1266 **int** nr = compound ? **thp_nr_pages**(page) : 1; 1267
 
@@ -2112,11 +2112,11 @@ and thus less care need be taken with existing folio state:-
 
 1281 **\_\_mod_lruvec_page_state**(page, **NR_ANON_MAPPED**, nr); 1282 **\_\_page_set_anon_rmap**(page, vma, address, 1); 1283 }
 
- 
+
 
 *Listing 7-20:* mm/rmap.c: [*page_add_new_anon_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1262)
 
- 
+
 
 This sets the [PG_swapbacked](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n120) folio flag as this folio is now established as
 
@@ -2144,7 +2144,7 @@ If we are adding a new mapping to a folio that already possesses map-
 
 ping, we have to be a little more careful as shown in Listing 7-21.
 
- 
+
 
 1188 */\*\**
 
@@ -2152,11 +2152,11 @@ ping, we have to be a little more careful as shown in Listing 7-21.
 
 1195 *\* The caller needs to hold the pte lock, and the page must be locked in*
 
- 
 
 
 
- 
+
+
 
 1196 *\* the anon_vma case: to serialize mapping,index checking after setting,* 1197 *\* and to ensure that PageAnon is not being upgraded racily to PageKsm* 1198 *\* (but PageKsm is never downgraded to PageAnon).* 1199 *\*/*
 
@@ -2200,11 +2200,11 @@ ping, we have to be a little more careful as shown in Listing 7-21.
 
 1241 **\_\_page_set_anon_rmap**(page, vma, address, 1242 !!(flags & **RMAP_EXCLUSIVE**));
 
- 
 
 
 
- 
+
+
 
 1243 **else**
 
@@ -2212,11 +2212,11 @@ ping, we have to be a little more careful as shown in Listing 7-21.
 
 1246 **mlock_vma_page**(page, vma, compound); 1247 }
 
- 
+
 
 *Listing 7-21:* mm/rmap.c: [*page_add_anon_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1200)
 
- 
+
 
 This is broadly similar to [page_add_new_anon_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1262) with some additional
 
@@ -2228,7 +2228,7 @@ An additional difference is the use of the [rmap_t](https://git.kernel.org/pub/s
 
 ing characteristics of the mapping:-
 
- 
+
 
 • [RMAP_NONE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n178) – No special treatment, if the [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) pointer page is in
 
@@ -2240,7 +2240,7 @@ a single process.
 
 • [RMAP_COMPOUND](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n187) – Indicates that the folio is mapped as a huge page.
 
- 
+
 
 We also invoke [mlock_vma_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n527) which sets the folios as [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html)[’d](https://man7.org/linux/man-pages/man2/mlock.2.html) if the
 
@@ -2264,7 +2264,7 @@ mapping of the folio is performed in [\_\_page_set_anon_rmap()](https://git.kern
 
 ing 7-22.
 
- 
+
 
 1122 */\*\**
 
@@ -2276,11 +2276,11 @@ ing 7-22.
 
 1134 **BUG_ON**(!anon_vma);
 
- 
 
 
 
- 
+
+
 
 1135
 
@@ -2312,15 +2312,15 @@ ing 7-22.
 
 1158 **SetPageAnonExclusive**(page); 1159 }
 
- 
+
 
 *Listing 7-22:* mm/rmap.c: [*\_\_page_set_anon_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1129)
 
- 
+
 
 The logic of this function is as follows:-
 
- 
+
 
 1. Check whether the folio has already been marked anonymous via
 
@@ -2348,15 +2348,15 @@ the VMA via [linear_page_index()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 5. If the mapping is exclusive, the [PG_anon_exclusive](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n152) folio flag is set.
 
- 
 
 
 
- 
+
+
 
 Examining [linear_page_index()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n845) as shown in Listing 7-23.
 
- 
+
 
 845 **static inline pgoff_t linear_page_index**(**struct** vm_area_struct \*vma, 846 **unsigned long** address) 847 {
 
@@ -2366,11 +2366,11 @@ Examining [linear_page_index()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 854 }
 
- 
+
 
 *Listing 7-23:* include/linux/pagemap.h: [*linear_page_index()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n845)
 
- 
+
 
 Putting aside the out of scope huge page edge case, this determines the
 
@@ -2386,7 +2386,7 @@ If a folio is CoW’d but is the sole remaining instance, instead of adding it
 
 to an anon_vma we move it via [page_move_anon_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1102) as shown in Listing 7-24.
 
- 
+
 
 1092 */\*\**
 
@@ -2406,11 +2406,11 @@ to an anon_vma we move it via [page_move_anon_rmap()](https://git.kernel.org/pub
 
 1112 anon_vma = (**void** \*) anon_vma + **PAGE_MAPPING_ANON**;
 
- 
 
 
 
- 
+
+
 
 1113 */\**
 
@@ -2420,17 +2420,17 @@ to an anon_vma we move it via [page_move_anon_rmap()](https://git.kernel.org/pub
 
 1118 **WRITE_ONCE**(page-\>mapping, (**struct** address_space \*) anon_vma); 1119 **SetPageAnonExclusive**(subpage); 1120 }
 
- 
+
 
 *Listing 7-24:* mm/rmap.c: [*page_move_anon_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1102)
 
- 
+
 
 This simply sets the mapping and the [PG_anon_exclusive](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n152) folio flag. Removing the anon_vma mapping from a folio is performed by
 
 [page_remove_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1429) as shown in Listing 7-73.
 
- 
+
 
 1421 */\*\**
 
@@ -2462,11 +2462,11 @@ This simply sets the mapping and the [PG_anon_exclusive](https://git.kernel.org/
 
 1453 **\_\_dec_lruvec_page_state**(page, **NR_ANON_MAPPED**); 1454
 
- 
 
 
 
- 
+
+
 
 1455 **if** (**PageTransCompound**(page)) 1456 **deferred_split_huge_page**(compound_head(page)); 1457
 
@@ -2480,11 +2480,11 @@ This simply sets the mapping and the [PG_anon_exclusive](https://git.kernel.org/
 
 1470 **munlock_vma_page**(page, vma, compound); 1471 }
 
- 
+
 
 *Listing 7-25:* mm/rmap.c: [*page_remove_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1429)
 
- 
+
 
 This either defers to [page_remove_file_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1342) if a file mapping,
 
@@ -2508,7 +2508,7 @@ Note the importance of the folio’s \_mapcount field – this is incremented
 
 when the folio is mapped and decremented where, as here, it is unmapped. It is used here and in other places to determine whether a folio is mapped at all, exclusively mapped or part of a shared mapping.
 
- 
+
 
 ***7.0.13 File-backed reverse mapping folio operations***
 
@@ -2516,17 +2516,17 @@ File-backed folios also count the number of mapping VMAs via \_mapcount,
 
 adding the mapping to the folio reverse mapping via [page_add_file_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1293):-
 
- 
+
 
 1285 */\*\**
 
 1286 *\* page_add_file_rmap - add pte mapping to a file page* 1287 *\* @page:* *the page to add the mapping to*
 
- 
 
 
 
- 
+
+
 
 1288 *\* @vma:* *the vm area in which the mapping is added* 1289 *\* @compound:* *charge the page as compound or small page* 1290 *\**
 
@@ -2552,11 +2552,11 @@ adding the mapping to the folio reverse mapping via [page_add_file_rmap()](https
 
 1339 **mlock_vma_page**(page, vma, compound); 1340 }
 
- 
+
 
 *Listing 7-26:* mm/rmap.c: [*page_add_file_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1293)
 
- 
+
 
 We elide out of scope huge page handling. Here we simply increment
 
@@ -2566,7 +2566,7 @@ Removal of file-backed folio mappings is performed via [page_remove_rmap()](http
 
 which in turn invokes [page_remove_file_rmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1342) as shown in Listing 7-74.
 
- 
+
 
 1342 **static void page_remove_file_rmap**(**struct** page \*page, **bool** compound) 1343 {
 
@@ -2586,21 +2586,21 @@ which in turn invokes [page_remove_file_rmap()](https://git.kernel.org/pub/scm/l
 
 1377 **\_\_mod_lruvec_page_state**(page, **NR_FILE_MAPPED**, -nr); 1378 }
 
- 
+
 
 *Listing 7-27:* mm/rmap.c: [*page_remove_file_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1342)
 
- 
+
 
 Eliding the out of scope huge page considerations, this simply deducts
 
 the folio’s mapcount.
 
- 
 
 
 
- 
+
+
 
 ***7.0.14 Unlinking anon_vma objects***
 
@@ -2608,7 +2608,7 @@ When a [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) mappings, the code doing so invokes [unlink_anon_vmas()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n395):-
 
- 
+
 
 395 **void unlink_anon_vmas**(**struct** vm_area_struct \*vma) 396 {
 
@@ -2654,11 +2654,11 @@ When a [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 434 *\* Iterate the list once more, it now only contains empty and unlinked*
 
- 
 
 
 
- 
+
+
 
 435 *\* anon_vmas, destroy them. Could not do before due to \_\_put_anon_vma*
 
@@ -2678,11 +2678,11 @@ When a [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 448 }
 
- 
+
 
 *Listing 7-28:* mm/rmap.c: [*unlink_anon_vmas()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n395)
 
- 
+
 
 This iterates through a [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA)’s anon_vma_chain
 
@@ -2736,31 +2736,31 @@ anon_vma_chain_free() as above.
 
 Examining [put_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n113) as shown in Listing 7-29.
 
- 
+
 
 113 **static inline void put_anon_vma**(**struct** anon_vma \*anon_vma) 114 {
 
 115 **if** (**atomic_dec_and_test**(&anon_vma-\>refcount)) 116 **\_\_put_anon_vma**(anon_vma);
 
- 
 
 
 
- 
+
+
 
 117 }
 
- 
+
 
 *Listing 7-29:* include/linux/rmap.h: [*put_anon_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n113)
 
- 
+
 
 The refcount is decremented and if it reaches zero, [\_\_put_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2343) as
 
 shown in Listing 7-30.
 
- 
+
 
 2343 **void \_\_put_anon_vma**(**struct** anon_vma \*anon_vma) 2344 {
 
@@ -2768,17 +2768,17 @@ shown in Listing 7-30.
 
 2347 **anon_vma_free**(anon_vma); 2348 **if** (root != anon_vma && **atomic_dec_and_test**(&root-\>refcount)) 2349 **anon_vma_free**(root); 2350 }
 
- 
+
 
 *Listing 7-30:* mm/rmap.c: [*\_\_put_anon_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2343)
 
- 
+
 
 This frees the anon_vma and, if the roots reference count is 1, frees that
 
 too.
 
- 
+
 
 ***7.0.15 Walking the reverse mapping***
 
@@ -2788,7 +2788,7 @@ The key function which perform this action is [rmap_walk()](https://git.kernel.o
 
 Listing 7-31.
 
- 
+
 
 2494 **void rmap_walk**(**struct** folio \*folio, **struct** rmap_walk_control \*rwc) 2495 {
 
@@ -2796,11 +2796,11 @@ Listing 7-31.
 
 2501 **rmap_walk_file**(folio, rwc, **false**); 2502 }
 
- 
+
 
 *Listing 7-31:* mm/rmap.c: [*rmap_walk()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2494)
 
- 
+
 
 Alternatively the same thing can be achieved via [rmap_walk_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2505)
 
@@ -2812,27 +2812,27 @@ which assumes the relevant reverse mapping locks are held
 
 32.
 
- 
+
 
 2504 */\* Like rmap_walk, but caller holds relevant rmap lock \*/* 2505 **void rmap_walk_locked**(**struct** folio \*folio, **struct** rmap_walk_control \*rwc) 2506 {
 
 2507 */\* no ksm support for now \*/*
 
- 
 
 
 
- 
+
+
 
 2508 **VM_BUG_ON_FOLIO**(**folio_test_ksm**(folio), folio); 2509 **if** (folio_test_anon(folio)) 2510 **rmap_walk_anon**(folio, rwc, **true**); 2511 **else**
 
 2512 **rmap_walk_file**(folio, rwc, **true**); 2513 }
 
- 
+
 
 *Listing 7-32:* mm/rmap.c: [*rmap_walk_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2505)
 
- 
+
 
 The Kernel Same-page Merging (KSM) handling is out of scope, so we
 
@@ -2840,7 +2840,7 @@ will elide this discussion. Before we dive into the individual walk functions,
 
 let’s examine [struct rmap_walk_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n390) as shown in Listing 7-33.
 
- 
+
 
 379 */\**
 
@@ -2864,27 +2864,27 @@ let’s examine [struct rmap_walk_control](https://git.kernel.org/pub/scm/linux/
 
 398 **bool** (\*rmap_one)(**struct** folio \*folio, **struct** vm_area_struct \*vma, 399 **unsigned long** addr, **void** \*arg); 400 **int** (\*done)(**struct** folio \*folio); 401 **struct** anon_vma \*(\*anon_lock)(**struct** folio \*folio, 402 **struct** rmap_walk_control \*rwc); 403 **bool** (\*invalid_vma)(**struct** vm_area_struct \*vma, **void** \*arg); 404 };
 
- 
+
 
 *Listing 7-33:* include/linux/rmap.h: [*struct rmap_walk_control*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n390)
 
- 
+
 
 This allows a caller to specify parameters for the walk and a series of
 
 functions that will be invoked at specific points during the walk:-
 
- 
+
 
 • arg – This is an arbitrary user-defined value which will be passed to the
 
 rmap_one() and invalid_vma() on invocation during the walk (and available to anon_lock()) via the rwc object). This can be useful if the walk has to thread some kind of state through it.
 
- 
 
 
 
- 
+
+
 
 • try_lock – Indicates whether to abort the walk if the root [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31)
 
@@ -2912,11 +2912,11 @@ locking mechanism, [rmap_walk_anon_lock()](https://git.kernel.org/pub/scm/linux/
 
 it returns true then this VMA is skipped.
 
- 
+
 
 Examining the [rmap_walk_anon()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2393) function as shown in Listing 7-34.
 
- 
+
 
 2384 */\**
 
@@ -2944,11 +2944,11 @@ Examining the [rmap_walk_anon()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 2408 **return**;
 
- 
 
 
 
- 
+
+
 
 2409
 
@@ -2966,11 +2966,11 @@ Examining the [rmap_walk_anon()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 2430 **anon_vma_unlock_read**(anon_vma); 2431 }
 
- 
+
 
 *Listing 7-34:* mm/rmap.c: [*rmap_walk_anon()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2393)
 
- 
+
 
 If a lock is held elsewhere (i.e. [rmap_walk_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2505) was invoked), then the
 
@@ -2978,7 +2978,7 @@ If a lock is held elsewhere (i.e. [rmap_walk_locked()](https://git.kernel.org/pu
 
 shown in Listing 7-35.
 
- 
+
 
 778 **struct** anon_vma \***folio_anon_vma**(**struct** folio \*folio) 779 {
 
@@ -2988,11 +2988,11 @@ shown in Listing 7-35.
 
 782 **if** ((mapping & **PAGE_MAPPING_FLAGS**) != **PAGE_MAPPING_ANON**) 783 **return NULL**; 784 **return** (**void** \*)(mapping -**PAGE_MAPPING_ANON**); 785 }
 
- 
+
 
 *Listing 7-35:* mm/util.c: [*folio_anon_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n778)
 
- 
+
 
 This function extracts the anon_vma mapping from a folio. Since the folio’s
 
@@ -3010,11 +3010,11 @@ returns it.
 
 Examining [rmap_walk_anon_lock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2352) as shown in Listing 7-36.
 
- 
 
 
 
- 
+
+
 
 2352 **static struct** anon_vma \***rmap_walk_anon_lock**(**struct** folio \*folio, 2353 **struct** rmap_walk_control \*rwc) 2354 {
 
@@ -3046,11 +3046,11 @@ Examining [rmap_walk_anon_lock()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 2382 }
 
- 
+
 
 *Listing 7-36:* mm/rmap.c: [*rmap_walk_anon_lock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2352)
 
- 
+
 
 If a custom anon_lock() function is supplied, then this is used. Otherwise,
 
@@ -3072,23 +3072,23 @@ We determine which AVCs span this range via the macro defined in
 
 [anon_vma_interval_tree_foreach()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2572) as shown in Listing 7-37.
 
- 
+
 
 2572 **\#define anon_vma_interval_tree_foreach**(avc, root, start, last) \\
 
- 
 
 
 
- 
+
+
 
 2573 **for** (avc = **anon_vma_interval_tree_iter_first**(root, start, last); \\ 2574 avc; avc = **anon_vma_interval_tree_iter_next**(avc, start, last))
 
- 
+
 
 *Listing 7-37:* include/linux/mm.h: [*anon_vma_interval_tree_foreach()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2572)
 
- 
+
 
 This iterates through all of the [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA)s connected
 
@@ -3108,7 +3108,7 @@ Examining the equivalent walk function for file-backed folios,
 
 [rmap_walk_file()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2441) as shown in Listing 7-38.
 
- 
+
 
 2433 */\**
 
@@ -3144,11 +3144,11 @@ Examining the equivalent walk function for file-backed folios,
 
 2462 **if** (**i_mmap_trylock_read**(mapping)) 2463 **goto lookup**; 2464
 
- 
 
 
 
- 
+
+
 
 2465 **if** (rwc-\>try_lock) { 2466 rwc-\>contended = **true**; 2467 **return**; 2468 }
 
@@ -3174,7 +3174,7 @@ Examining the equivalent walk function for file-backed folios,
 
 2491 **i_mmap_unlock_read**(mapping); 2492 }
 
- 
+
 
 *Listing 7-38:* mm/rmap.c: [*rmap_walk_file()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n2441)
 
@@ -3186,7 +3186,7 @@ In both cases, we determine a folio’s virtual address via [vma_address()](http
 
 shown in Listing 7-39.
 
- 
+
 
 573 */\**
 
@@ -3196,15 +3196,15 @@ shown in Listing 7-39.
 
 581 **VM_BUG_ON_PAGE**(**PageKsm**(page), page); */\* KSM page-\>index unusable \*/* 582 **return vma_pgoff_address**(**page_to_pgoff**(page), **compound_nr**(page), vma); 583 }
 
- 
+
 
 *Listing 7-39:* mm/internal.h: [*vma_address()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n579)
 
- 
 
 
 
- 
+
+
 
 This functions by determining the page offset of the folio within the
 
@@ -3214,7 +3214,7 @@ simply be the [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 to do the heavy lifting, as shown in Listing 7-40.
 
- 
+
 
 548 */\**
 
@@ -3240,11 +3240,11 @@ to do the heavy lifting, as shown in Listing 7-40.
 
 571 }
 
- 
+
 
 *Listing 7-40:* mm/internal.h: [*vma_pgoff_address()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n553)
 
- 
+
 
 For non-compound (i.e. in this scenario, non-huge) pages, this is sim-
 
@@ -3270,7 +3270,7 @@ The equivalent to [folio_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel
 
 7-41.
 
- 
+
 
 787 */\*\**
 
@@ -3278,11 +3278,11 @@ The equivalent to [folio_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel
 
 790 *\**
 
- 
 
 
 
- 
+
+
 
 791 *\* For folios which are in the page cache, return the mapping that this* 792 *\* page belongs to. Folios in the swap cache return the swap mapping* 793 *\* this page is stored in (which is different from the mapping for the* 794 *\* swap file or swap device where the data is stored).* 795 *\**
 
@@ -3304,7 +3304,7 @@ The equivalent to [folio_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel
 
 815 }
 
- 
+
 
 *Listing 7-41:* mm/util.c: [*folio_mapping()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n799)
 
@@ -3332,19 +3332,19 @@ We loop over the mappings using [vma_interval_tree_foreach()](https://git.kernel
 
 Listing 7-42.
 
- 
+
 
 2555 **\#define vma_interval_tree_foreach**(vma, root, start, last) \\ 2556 **for** (vma = **vma_interval_tree_iter_first**(root, start, last); \\ 2557 vma; vma = **vma_interval_tree_iter_next**(vma, start, last))
 
- 
+
 
 *Listing 7-42:* include/linux/mm.h: [*vma_interval_tree_foreach()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2555)
 
- 
 
 
 
- 
+
+
 
 Which iterates through i_mmap returning all of the related
 
@@ -3362,7 +3362,7 @@ tricate use of this functionality. For brevity, we won’t examine these closely
 
 but instead list some core examples:-
 
- 
+
 
 • [folio_referenced()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n900) – An absolutely critical function used in reclaim to
 
@@ -3390,7 +3390,7 @@ owned by a specific device, as invoked by [make_device_exclusive_range()](https:
 
 page mappings as part of the migration process. This can call either the unlocked or the locked version of the walk function depending on its locked parameter.
 
- 
+
 
 ***7.0.16 Walking the VMA***
 
@@ -3418,11 +3418,11 @@ we do so. This is performed by [page_vma_mapped_walk()](https://git.kernel.org/p
 
 Listing 7-43.
 
- 
 
 
 
- 
+
+
 
 316 **struct** page_vma_mapped_walk { 317 **unsigned long** pfn; 318 **unsigned long** nr_pages; 319 **pgoff_t** pgoff;
 
@@ -3434,15 +3434,15 @@ Listing 7-43.
 
 325 **unsigned int** flags; 326 };
 
- 
+
 
 *Listing 7-43:* include/linux/rmap.h: [*struct page_vma_mapped_walk*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n316)
 
- 
+
 
 Examining each field:-
 
- 
+
 
 • pfn – required – The Page Frame Number (PFN) of the folio we are check-
 
@@ -3484,7 +3484,7 @@ walk – can either be zero if there are no special requirements, [PVMW_SYNC](ht
 
 [PVMW_MIGRATION](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n314) if, instead of PTEs, we are looking for migration entries (see the migration chapter for more on this).
 
- 
+
 
 Often these parameters are set by macro, specifically
 
@@ -3492,23 +3492,23 @@ Often these parameters are set by macro, specifically
 
 Examining the former as shown in Listing 7-44.
 
- 
+
 
 338 **\#define DEFINE_FOLIO_VMA_WALK**(name, \_folio, \_vma, \_address, \_flags) \\ 339 **struct** page_vma_mapped_walk name = { \\
 
- 
 
 
 
- 
+
+
 
 340 .pfn = **folio_pfn**(\_folio), \\ 341 .nr_pages = **folio_nr_pages**(\_folio), \\ 342 .pgoff = **folio_pgoff**(\_folio), \\ 343 .vma = \_vma, \\ 344 .address = \_address, \\ 345 .flags = \_flags, \\ 346 }
 
- 
+
 
 *Listing 7-44:* include/linux/rmap.h: [*DEFINE_FOLIO_VMA_WALK*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n338)
 
- 
+
 
 This determines the PFN via [folio_pfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1463)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1463) the page count via
 
@@ -3530,7 +3530,7 @@ to handle huge page cases. If this process needs to be exited early,
 
 thus aborting the process as shown in Listing 7-45.
 
- 
+
 
 348 **static inline void** page_vma_mapped_walk_done(**struct** page_vma_mapped_walk \*pvmw
 
@@ -3546,11 +3546,11 @@ thus aborting the process as shown in Listing 7-45.
 
 354 **spin_unlock**(pvmw-\>ptl); 355 }
 
- 
+
 
 *Listing 7-45:* include/linux/rmap.h: [*page_vma_mapped_walk_done()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n348)
 
- 
+
 
 For anything resembling a modern system, [pte_unmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pgtable.h?h=v6.0#n104) is a no-op, so this
 
@@ -3560,7 +3560,7 @@ Examining [page_vma_mapped_walk()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 devmap logic) as shown in Listing 7-46.
 
- 
+
 
 127 */\*\**
 
@@ -3578,11 +3578,11 @@ devmap logic) as shown in Listing 7-46.
 
 135 *\* adjusted if needed (for PTE-mapped THPs).* 136 *\**
 
- 
 
 
 
- 
+
+
 
 137 *\* If @pvmw-\>pmd is set but @pvmw-\>pte is not, you have found PMD-mapped page*
 
@@ -3636,11 +3636,11 @@ devmap logic) as shown in Listing 7-46.
 
 193 p4d = **p4d_offset**(pgd, pvmw-\>address); 194 **if** (!**p4d_present**(\*p4d)) { 195 **step_forward**(pvmw, **P4D_SIZE**); 196 **continue**; 197 }
 
- 
 
 
 
- 
+
+
 
 198 pud = **pud_offset**(p4d, pvmw-\>address); 199 **if** (!**pud_present**(\*pud)) { 200 **step_forward**(pvmw, **PUD_SIZE**); 201 **continue**; 202 }
 
@@ -3676,11 +3676,11 @@ devmap logic) as shown in Listing 7-46.
 
 261 pvmw-\>address += **PAGE_SIZE**; 262 **if** (pvmw-\>address \>= end) 263 **return not_found**(pvmw); 264 */\* Did we cross page table boundary? \*/* 265 **if** ((pvmw-\>address & (**PMD_SIZE**-**PAGE_SIZE**)) == 0) { 266 **if** (pvmw-\>ptl) { 267 **spin_unlock**(pvmw-\>ptl); 268 pvmw-\>ptl = **NULL**; 269 } 270 **pte_unmap**(pvmw-\>pte); 271 pvmw-\>pte = **NULL**; 272 **goto restart**; 273 } 274 pvmw-\>pte++; 275 **if** ((pvmw-\>flags & **PVMW_SYNC**) && !pvmw-\>ptl) { 276 pvmw-\>ptl = **pte_lockptr**(mm, pvmw-\>pmd); 277 **spin_lock**(pvmw-\>ptl); 278 }
 
- 
 
 
 
- 
+
+
 
 279 } **while** (**pte_none**(\*pvmw-\>pte)); 280
 
@@ -3692,11 +3692,11 @@ devmap logic) as shown in Listing 7-46.
 
 289 }
 
- 
+
 
 *Listing 7-46:* mm/page_vma_mapped.c: [*page_vma_mapped_walk()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_vma_mapped.c?h=v6.0#n151)
 
- 
+
 
 This uses helper functions to adjust the state of the
 
@@ -3706,7 +3706,7 @@ former simply invokes [page_vma_mapped_walk_done()](https://git.kernel.org/pub/s
 
 7-47.
 
- 
+
 
 120 **static void step_forward**(**struct** page_vma_mapped_walk \*pvmw, **unsigned long** size
 
@@ -3716,11 +3716,11 @@ former simply invokes [page_vma_mapped_walk_done()](https://git.kernel.org/pub/s
 
 122 pvmw-\>address = (pvmw-\>address + size) & ~(size - 1); 123 **if** (!pvmw-\>address) 124 pvmw-\>address = **ULONG_MAX**; 125 }
 
- 
+
 
 *Listing 7-47:* mm/page_vma_mapped.c: [*step_forward()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_vma_mapped.c?h=v6.0#n120)
 
- 
+
 
 This advances the address field by the specified size, clearing the lower
 
@@ -3732,7 +3732,7 @@ first address after that spanned by the folio (i.e. an exclusive bound). Exam-
 
 ining it as shown in Listing 7-48.
 
- 
+
 
 585 */\**
 
@@ -3748,11 +3748,11 @@ ining it as shown in Listing 7-48.
 
 595 */\* Common case, plus -\>pgoff is invalid for KSM \*/* 596 **if** (pvmw-\>nr_pages == 1)
 
- 
 
 
 
- 
+
+
 
 597 **return** pvmw-\>address + **PAGE_SIZE**;
 
@@ -3762,11 +3762,11 @@ ining it as shown in Listing 7-48.
 
 605 }
 
- 
+
 
 *Listing 7-48:* mm/internal.h: [*vma_address_end()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n589)
 
- 
+
 
 For single-page folios (i.e. non-huge), this simply returns the address field
 
@@ -3778,7 +3778,7 @@ PTEs are mapped via [map_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 gration cases, is rather simple as shown in Listing 7-49.
 
- 
+
 
 16 **static bool map_pte**(**struct** page_vma_mapped_walk \*pvmw)
 
@@ -3808,11 +3808,11 @@ gration cases, is rather simple as shown in Listing 7-49.
 
 54 }
 
- 
+
 
 *Listing 7-49:* mm/page_vma_mapped.c: [*map_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_vma_mapped.c?h=v6.0#n16)
 
- 
+
 
 The PTE entry is obtained via [pte_offset_map()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pgtable.h?h=v6.0#n103) from the previously ob-
 
@@ -3826,7 +3826,7 @@ With migration and swap cases elided as out of scope for this section, the
 
 function is relatively simple as shown in Listing 7-50.
 
- 
+
 
 56 */\*\**
 
@@ -3844,11 +3844,11 @@ function is relatively simple as shown in Listing 7-50.
 
 62 *\**
 
- 
 
 
 
- 
+
+
 
 63 *\* pvmw-\>pte may point to empty PTE, swap PTE or PTE pointing to* 64 *\* arbitrary page.*
 
@@ -3890,11 +3890,11 @@ function is relatively simple as shown in Listing 7-50.
 
 107 **return** (pfn - pvmw-\>pfn) \< pvmw-\>nr_pages; 108 }
 
- 
+
 
 *Listing 7-50:* mm/page_vma_mapped.c: [*check_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_vma_mapped.c?h=v6.0#n75)
 
- 
+
 
 This simply checks whether the PTE entry has its present bit set via
 
@@ -3904,7 +3904,7 @@ Now we have examined the helper functions, we can return to the logic
 
 of [page_vma_mapped_walk()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_vma_mapped.c?h=v6.0#n151):-
 
- 
+
 
 1. Determine the PGD entry for the target address via [pgd_offset()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pgtable.h?h=v6.0#n133) and
 
@@ -3918,11 +3918,11 @@ firm it has its present bit set via [p4d_present()](https://git.kernel.org/pub/s
 
 confirm it has its present bit set via [pud_present()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n832)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n832) if not we advance to the next PUD entry.
 
- 
 
 
 
- 
+
+
 
 4. Determine the PMD entry for the target address via [pmd_offset()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pgtable.h?h=v6.0#n109) and
 
@@ -3944,7 +3944,7 @@ find the first non-empty PTE in the folio range, which is then subject to the sa
 
 span only one and exit quickly by invoking [not_found()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_vma_mapped.c?h=v6.0#n10).
 
- 
+
 
 ***7.0.17 Summary***
 
@@ -3974,11 +3974,11 @@ might map the folio being sought, but examining of the ‘forward’ mappings
 
 is still required via [page_vma_mapped_walk()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_vma_mapped.c?h=v6.0#n151)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_vma_mapped.c?h=v6.0#n151)
 
- 
+
 
 **7.1 Freeing userland memory and the TLB**
 
- 
+
 
 Freeing pages mapped by userland is more complicated than it might seem
 
@@ -4000,11 +4000,11 @@ there is only one kernel mapping, memory allocated from the slab or page
 
 allocators are mapped through the direct mapping which requires very little
 
- 
 
 
 
- 
+
+
 
 TLB maintenance\* and cases where memory is actually mapped and un-mapped like vmalloc are infrequent enough that they require little special handling.
 
@@ -4024,7 +4024,7 @@ MMU-gather and described in detail in the generic assembly header
 
 The order in which operations are performed is:-
 
- 
+
 
 1. Remove page table mappings (but TLB entries may remain in multiple
 
@@ -4034,7 +4034,7 @@ CPU caches)
 
 3. (If freeing memory) Finally, free the underlying pages
 
- 
+
 
 ***7.1.1 Unmapping memory mapped regions***
 
@@ -4048,7 +4048,7 @@ functionality is the code which unmaps [mmap()](https://man7.org/linux/man-pages
 
 mately performed by [unmap_region()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2612) as shown in Listing 7-51.
 
- 
+
 
 2607 */\**
 
@@ -4064,15 +4064,15 @@ mately performed by [unmap_region()](https://git.kernel.org/pub/scm/linux/kernel
 
 2620 **tlb_gather_mmu**(&tlb, mm); 2621 **update_hiwater_rss**(mm);
 
- 
+
 
 \*. Mappings which exist there will always be mapped to the same physical memory under most circumstances (though a few exist where the direct mapping might get updated like memory hotplug).
 
- 
 
 
 
- 
+
+
 
 2622 **unmap_vmas**(&tlb, vma, start, end); 2623 **free_pgtables**(&tlb, vma, prev ? prev-\>vm_end : **FIRST_USER_ADDRESS**, 2624 next ? next-\>vm_start : **USER_PGTABLES_CEILING**
 
@@ -4080,11 +4080,11 @@ mately performed by [unmap_region()](https://git.kernel.org/pub/scm/linux/kernel
 
 2625 **tlb_finish_mmu**(&tlb); 2626 }
 
- 
+
 
 *Listing 7-51:* mm/mmap.c: [*unmap_region()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2612)
 
- 
+
 
 We start by invoking [tlb_gather_mmu()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n297) which initialises a [struct mmu_gather](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n267)
 
@@ -4106,7 +4106,7 @@ This is important as later we rely on this fact to iterate through affected
 
 VMAs (described in section 7.1.5).
 
- 
+
 
 ***7.1.2 MMU gather initialisation***
 
@@ -4114,7 +4114,7 @@ The [struct mmu_gather](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds
 
 operation:-
 
- 
+
 
 263 */\**
 
@@ -4144,11 +4144,11 @@ operation:-
 
 283 *\* we have performed an operation which* 284 *\* requires a complete flush of the tlb* 285 *\*/*
 
- 
 
 
 
- 
+
+
 
 286 **unsigned int** need_flush_all : 1; 287
 
@@ -4180,11 +4180,11 @@ operation:-
 
 319 };
 
- 
+
 
 *Listing 7-52:* include/asm-generic/tlb.h: [*struct mmu_gather*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n267)
 
- 
+
 
 This stores mm, a pointer to the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) which describes the pro-
 
@@ -4198,11 +4198,11 @@ The local and \_\_pages fields overlap one another as the
 
 struct mmu_gather_batch object has a variable array as its final field and this forms the initial batch (further batches are allocated).
 
- 
 
 
 
- 
+
+
 
 Finally there are a number of well-documented flags and a
 
@@ -4226,15 +4226,15 @@ we will proceed on the assumption they are all set.
 
 Examining [struct mmu_gather_batch](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n241) as shown in Listing 7-53.
 
- 
+
 
 241 **struct** mmu_gather_batch { 242 **struct** mmu_gather_batch \*next; 243 **unsigned int** nr; 244 **unsigned int** max; 245 **struct** page \*pages\[\]; 246 };
 
- 
+
 
 *Listing 7-53:* include/asm-generic/tlb.h: [*struct mmu_gather_batch*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n241)
 
- 
+
 
 The batch consists of pages, an array of [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) objects which are un-
 
@@ -4252,7 +4252,7 @@ is allocated for each new batch with these fields adjusted accordingly.
 
 We examine [tlb_gather_mmu()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n297) in Listing 7-54.
 
- 
+
 
 289 */\*\**
 
@@ -4270,11 +4270,11 @@ We examine [tlb_gather_mmu()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 299 **\_\_tlb_gather_mmu**(tlb, mm, **false**); 300 }
 
- 
+
 
 *Listing 7-54:* mm/mmu_gather.c: [*tlb_gather_mmu()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n297)
 
- 
+
 
 It’s worth noting that there is an alternative to this function which
 
@@ -4282,11 +4282,11 @@ performs this operation across the entirety of the process address space,
 
 [tlb_gather_mmu_fullmm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n313) as shown in Listing 7-55.
 
- 
 
 
 
- 
+
+
 
 302 */\*\**
 
@@ -4308,11 +4308,11 @@ performs this operation across the entirety of the process address space,
 
 315 **\_\_tlb_gather_mmu**(tlb, mm, **true**); 316 }
 
- 
+
 
 *Listing 7-55:* mm/mmu_gather.c: [*tlb_gather_mmu_fullmm*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n313)
 
- 
+
 
 These each differ only in whether they specify the fullmm boolean argu-
 
@@ -4320,7 +4320,7 @@ ment to [\_\_tlb_gather_mmu()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 7-56.
 
- 
+
 
 265 **static void \_\_tlb_gather_mmu**(**struct** mmu_gather \*tlb, **struct** mm_struct \*mm, 266 **bool** fullmm) 267 {
 
@@ -4338,15 +4338,15 @@ ment to [\_\_tlb_gather_mmu()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 285 **\_\_tlb_reset_range**(tlb); 286 **inc_tlb_flush_pending**(tlb-\>mm); 287 }
 
- 
+
 
 *Listing 7-56:* mm/mmu_gather.c: [*\_\_tlb_gather_mmu()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n265)
 
- 
 
 
 
- 
+
+
 
 This initialises all fields in the [struct mmu_gather](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n267) object, setting active to
 
@@ -4356,7 +4356,7 @@ point to the local stack object before initialising it.
 
 and the start and end values to preset initial values as shown in Listing 7-57.
 
- 
+
 
 331 **static inline void \_\_tlb_reset_range**(**struct** mmu_gather \*tlb) 332 {
 
@@ -4370,7 +4370,7 @@ and the start and end values to preset initial values as shown in Listing 7-57.
 
 349 }
 
- 
+
 
 *Listing 7-57:* include/asm-generic/tlb.h: [*\_\_tlb_reset_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n331)
 
@@ -4384,7 +4384,7 @@ cate that a TLB flush is pending \*. This value will be decremented via
 
 via [mm_tlb_flush_pending()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n296) and [mm_tlb_flush_nested()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n309) for the nested case.
 
- 
+
 
 ***7.1.3 VMA unmapping***
 
@@ -4392,13 +4392,13 @@ Once we establish the [struct mmu_gather](https://git.kernel.org/pub/scm/linux/k
 
 tions upon it we do so via [unmap_vmas()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1716):-
 
- 
+
 
 1698 */\*\**
 
 1699 *\* unmap_vmas - unmap a range of memory covered by a list of vma's* 1700 *\* @tlb: address of the caller's struct mmu_gather* 1701 *\* @vma: the starting vma* 1702 *\* @start_addr: virtual address at which to start unmapping*
 
- 
+
 
 \*. One of the primary place where this value is utilised is in the x86-64 specific [pte_accessible()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n747)
 
@@ -4408,11 +4408,11 @@ introduced to avoid a data race with a concurrent NUMA balance, added in commit
 
 [20841405940e7: mm: fix TLB flush race between migration, and change_protection_range.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=20841405940e7)
 
- 
 
 
 
- 
+
+
 
 1703 *\* @end_addr: virtual address at which to end unmapping* 1704 *\**
 
@@ -4438,7 +4438,7 @@ introduced to avoid a data race with a concurrent NUMA balance, added in commit
 
 1727 **mmu_notifier_range_init**(&range, **MMU_NOTIFY_UNMAP**, 0, vma, vma-\>vm_mm, 1728 start_addr, end_addr); 1729 **mmu_notifier_invalidate_range_start**(&range); 1730 **for** ( ; vma && vma-\>vm_start \< end_addr; vma = vma-\>vm_next) 1731 **unmap_single_vma**(tlb, vma, start_addr, end_addr, &details); 1732 **mmu_notifier_invalidate_range_end**(&range); 1733 }
 
- 
+
 
 *Listing 7-58:* mm/memory.c: [*unmap_vmas()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1716)
 
@@ -4462,11 +4462,11 @@ which we iterate through, passing each to [unmap_single_vma()](https://git.kerne
 
 scope huge page and uprobe handling) as shown in Listing 7-59.
 
- 
 
 
 
- 
+
+
 
 1652 **static void unmap_single_vma**(**struct** mmu_gather \*tlb, 1653 **struct** vm_area_struct \*vma, **unsigned long** start_addr, 1654 **unsigned long** end_addr, 1655 **struct** zap_details \*details) 1656 {
 
@@ -4488,11 +4488,11 @@ scope huge page and uprobe handling) as shown in Listing 7-59.
 
 1696 }
 
- 
+
 
 *Listing 7-59:* mm/memory.c: [*unmap_single_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1652)
 
- 
+
 
 The [untrack_pfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/pat/memtype.c?h=v6.0#n1094) handling for PFN mappings is architecture-specific
 
@@ -4502,13 +4502,13 @@ to be within the current VMA the per-VMA unmapping is forwarded to
 
 [unmap_page_range() , ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1631)which zaps the page rage in the specified vma.
 
- 
+
 
 ***7.1.4 Zapping memory ranges***
 
 Examining [unmap_page_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1631):-
 
- 
+
 
 1631 **void unmap_page_range**(**struct** mmu_gather \*tlb, 1632 **struct** vm_area_struct \*vma, 1633 **unsigned long** addr, **unsigned long** end, 1634 **struct** zap_details \*details) 1635 {
 
@@ -4520,19 +4520,19 @@ Examining [unmap_page_range()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 1643 next = **pgd_addr_end**(addr, end);
 
- 
 
 
 
- 
+
+
 
 1644 **if** (**pgd_none_or_clear_bad**(pgd)) 1645 **continue**; 1646 next = **zap_p4d_range**(tlb, vma, pgd, addr, next, details); 1647 } **while** (pgd++, addr = next, addr != end); 1648 **tlb_end_vma**(tlb, vma); 1649 }
 
- 
+
 
 *Listing 7-60:* mm/memory.c: [*unmap_page_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1631)
 
- 
+
 
 This follows the typical page table walking pattern – obtaining a pointer
 
@@ -4558,7 +4558,7 @@ These indicate that a TLB flush operation is about to begin and about to
 
 finish, respectively. Examining [tlb_start_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n489) as shown in Listing 7-61.
 
- 
+
 
 484 */\**
 
@@ -4580,11 +4580,11 @@ finish, respectively. Examining [tlb_start_vma()](https://git.kernel.org/pub/scm
 
 498 }
 
- 
+
 
 *Listing 7-61:* include/asm-generic/tlb.h: [*tlb_start_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n489)
 
- 
+
 
 In the case that the fullmm flag has been specified, we are in any case per-
 
@@ -4592,11 +4592,11 @@ forming this operation over the entire process address space and thus indi-vidua
 
 exits. Of course, in the context of the [unmap_region()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2612) operation, this will not be set.
 
- 
 
 
 
- 
+
+
 
 The [flush_cache_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/cacheflush.h?h=v6.0#n33) function is called to ensure the TLB cache for
 
@@ -4612,7 +4612,7 @@ In any case, [tlb_update_vma_flags()](https://git.kernel.org/pub/scm/linux/kerne
 
 Listing 7-62.
 
- 
+
 
 397 **static inline void**
 
@@ -4638,11 +4638,11 @@ Listing 7-62.
 
 411 tlb-\>vma_huge = **is_vm_hugetlb_page**(vma); 412 tlb-\>vma_exec = !!(vma-\>vm_flags & **VM_EXEC**); 413 tlb-\>vma_pfn = !!(vma-\>vm_flags & (**VM_PFNMAP**\|**VM_MIXEDMAP**)); 414 }
 
- 
+
 
 *Listing 7-62:* include/asm-generic/tlb.h: [*tlb_update_vma_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n398)
 
- 
+
 
 In order to keep the order of this analysis in line with the order in which
 
@@ -4652,7 +4652,7 @@ at which it would be invoked in a zap operation.
 
 Returning to our traversal of the page tables as shown in Listing 7-63.
 
- 
+
 
 1612 **static inline unsigned long zap_p4d_range**(**struct** mmu_gather \*tlb, 1613 **struct** vm_area_struct \*vma, **pgd_t** \*pgd, 1614 **unsigned long** addr, **unsigned long** end, 1615 **struct** zap_details \*details) 1616 {
 
@@ -4664,11 +4664,11 @@ Returning to our traversal of the page tables as shown in Listing 7-63.
 
 1622 next = **p4d_addr_end**(addr, end); 1623 **if** (**p4d_none_or_clear_bad**(p4d)) 1624 **continue**; 1625 next = **zap_pud_range**(tlb, vma, p4d, addr, next, details); 1626 } **while** (p4d++, addr = next, addr != end);
 
- 
 
 
 
- 
+
+
 
 1627
 
@@ -4676,11 +4676,11 @@ Returning to our traversal of the page tables as shown in Listing 7-63.
 
 1629 }
 
- 
+
 
 *Listing 7-63:* mm/memory.c: [*zap_p4d_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1612)
 
- 
+
 
 This mirrors [unmap_page_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1631) (see listing 7-60) except referenc-
 
@@ -4692,7 +4692,7 @@ Examining the PUD equivalent (eliding out of scope huge page and de-
 
 vice mapping handling) as shown in Listing 7-64.
 
- 
+
 
 1583 **static inline unsigned long zap_pud_range**(**struct** mmu_gather \*tlb, 1584 **struct** vm_area_struct \*vma, **p4d_t** \*p4d, 1585 **unsigned long** addr, **unsigned long** end, 1586 **struct** zap_details \*details) 1587 {
 
@@ -4716,11 +4716,11 @@ vice mapping handling) as shown in Listing 7-64.
 
 1610 }
 
- 
+
 
 *Listing 7-64:* mm/memory.c: [*zap_pud_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1583)
 
- 
+
 
 This resembles the two levels above, except referencing the PUD equiva-
 
@@ -4730,7 +4730,7 @@ Examining the PMD equivalent (eliding out of scope swap, huge page
 
 and device mapping handling) as shown in Listing 7-65.
 
- 
+
 
 1537 **static inline unsigned long zap_pmd_range**(**struct** mmu_gather \*tlb, 1538 **struct** vm_area_struct \*vma, **pud_t** \*pud, 1539 **unsigned long** addr, **unsigned long** end, 1540 **struct** zap_details \*details) 1541 {
 
@@ -4740,11 +4740,11 @@ and device mapping handling) as shown in Listing 7-65.
 
 1545 pmd = **pmd_offset**(pud, addr); 1546 **do** {
 
- 
 
 
 
- 
+
+
 
 1547 next = **pmd_addr_end**(addr, end);
 
@@ -4766,11 +4766,11 @@ and device mapping handling) as shown in Listing 7-65.
 
 1581 }
 
- 
+
 
 *Listing 7-65:* mm/memory.c: [*zap_pmd_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1537)
 
- 
+
 
 This maintains much of the logic as seen previously, differing in that
 
@@ -4786,7 +4786,7 @@ Finally we reach the key function which performs the operation,
 
 ware poisioning logic) as shown in Listing 7-66.
 
- 
+
 
 1402 **static unsigned long zap_pte_range**(**struct** mmu_gather \*tlb, 1403 **struct** vm_area_struct \*vma, **pmd_t** \*pmd, 1404 **unsigned long** addr, **unsigned long** end, 1405 **struct** zap_details \*details) 1406 {
 
@@ -4802,15 +4802,15 @@ ware poisioning logic) as shown in Listing 7-66.
 
 1420 **flush_tlb_batched_pending**(mm); 1421 **arch_enter_lazy_mmu_mode**();
 
- 
 
 
 
- 
+
+
 
 *Listing 7-66:* mm/memory.c: [*zap_pte_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1402) *preface*
 
- 
+
 
 We start by setting the page size to [PAGE_SIZE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page_types.h?h=v6.0#n11) via [tlb_change_page_size()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n452)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n452)
 
@@ -4828,7 +4828,7 @@ Finally two interesting functions are called here –
 
 [flush_tlb_batched_pending()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n721) as shown in Listing 7-67.
 
- 
+
 
 706 */\**
 
@@ -4874,15 +4874,15 @@ Finally two interesting functions are called here –
 
 736 }
 
- 
 
 
 
- 
+
+
 
 *Listing 7-67:* mm/rmap.c: [*flush_tlb_batched_pending()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n721)
 
- 
+
 
 This function, as its name implies, flushes any pending batched TLB op-
 
@@ -4906,7 +4906,7 @@ userfaultfd, swap, migration and hardware poison logic) as shown in Listing
 
 **??**.
 
- 
+
 
 1422 **do** {
 
@@ -4924,11 +4924,11 @@ userfaultfd, swap, migration and hardware poison logic) as shown in Listing
 
 1444 **if** (!**PageAnon**(page)) { 1445 **if** (**pte_dirty**(ptent)) { 1446 force_flush = 1; 1447 **set_page_dirty**(page); 1448 } 1449 **if** (**pte_young**(ptent) && 1450 **likely**(!(vma-\>vm_flags & **VM_SEQ_READ**))) 1451 **mark_page_accessed**(page); 1452 } 1453 rss\[**mm_counter**(page)\]--; 1454 **page_remove_rmap**(page, vma, **false**); 1455 **if** (**unlikely**(**page_mapcount**(page) \< 0))
 
- 
 
 
 
- 
+
+
 
 1456 **print_bad_pte**(vma, addr, ptent, page); 1457 **if** (**unlikely**(**\_\_tlb_remove_page**(tlb, page))) { 1458 force_flush = 1; 1459 addr += **PAGE_SIZE**; 1460 **break**; 1461 } 1462 **continue**; 1463 }
 
@@ -4936,11 +4936,11 @@ userfaultfd, swap, migration and hardware poison logic) as shown in Listing
 
 1508 } **while** (pte++, addr += **PAGE_SIZE**, addr != end);
 
- 
+
 
 *Listing 7-68:* mm/memory.c: [*zap_pte_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1402) *main loop*
 
- 
+
 
 The top-level logic here checks whether the PTE entry is empty via
 
@@ -4956,7 +4956,7 @@ We next call [should_zap_page()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 ject can be zapped as shown in Listing 7-69.
 
- 
+
 
 1364 */\* Decides whether we should zap this page with the page pointer specified \*/* 1365 **static inline bool should_zap_page**(**struct** zap_details \*details, **struct** page \*
 
@@ -4972,11 +4972,11 @@ page)
 
 1375 */\* Otherwise we should only zap non-anon pages \*/* 1376 **return** !**PageAnon**(page); 1377 }
 
- 
+
 
 *Listing 7-69:* mm/memory.c: [*should_zap_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1365)
 
- 
+
 
 This primarily determines whether this is a Copy On Write (i.e. anony-
 
@@ -4988,11 +4988,11 @@ The next step is subtle – [ptep_get_and_clear_full()](https://git.kernel.org/p
 
 and clears the PTE entry. This is important as, prior to the TLB operation, we must ensure that page table entries do not point to the page whose entry
 
- 
 
 
 
- 
+
+
 
 we are clearing, otherwise the TLB could immediately be repopulated with
 
@@ -5002,7 +5002,7 @@ The TLB entry is marked removed via [tlb_remove_tlb_entry()](https://git.kernel.
 
 Listing 7-70.
 
- 
+
 
 556 */\*\**
 
@@ -5016,11 +5016,11 @@ Listing 7-70.
 
 563 **\#define tlb_remove_tlb_entry**(tlb, ptep, address) \\ 564 **do** { \\ 565 **tlb_flush_pte_range**(tlb, address, **PAGE_SIZE**); \\ 566 **\_\_tlb_remove_tlb_entry**(tlb, ptep, address); \\ 567 } **while** (0)
 
- 
+
 
 *Listing 7-70:* include/asm-generic/tlb.h: [*tlb_remove_tlb_entry()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n563)
 
- 
+
 
 The [\_\_tlb_remove_tlb_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n553) function is used for architectures which re-
 
@@ -5030,7 +5030,7 @@ moved, however this is a no-op for x86-64.
 
 Examining [tlb_flush_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n524) as shown in Listing 7-71.
 
- 
+
 
 520 */\**
 
@@ -5046,11 +5046,11 @@ Examining [tlb_flush_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 527 **\_\_tlb_adjust_range**(tlb, address, size); 528 tlb-\>cleared_ptes = 1; 529 }
 
- 
+
 
 *Listing 7-71:* include/asm-generic/tlb.h: [*tlb_flush_pte_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n524)
 
- 
+
 
 This marks that PTEs have been cleared and updates the
 
@@ -5058,21 +5058,21 @@ This marks that PTEs have been cleared and updates the
 
 ing 7-72.
 
- 
+
 
 323 **static inline void \_\_tlb_adjust_range**(**struct** mmu_gather \*tlb, 324 **unsigned long** address, 325 **unsigned int** range_size) 326 {
 
 327 tlb-\>start = **min**(tlb-\>start, address); 328 tlb-\>end = **max**(tlb-\>end, address + range_size); 329 }
 
- 
 
 
 
- 
+
+
 
 *Listing 7-72:* include/asm-generic/tlb.h: [*\_\_tlb_adjust_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n323)
 
- 
+
 
 As we walk through each PTE entry we adjust the start and end values
 
@@ -5082,7 +5082,7 @@ At this point we check to see whether we are dealing with a special map-
 
 ping – i.e. one for which a [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) does not exist (again see section 6.12 for more details on this), if so we have no further action to perform. Other-wise we process the page object:-
 
- 
+
 
 • If the page is not anonymous (i.e. not [PageAnon()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n661)[):-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n661)
 
@@ -5104,7 +5104,7 @@ ping, then the underlying folio is updated via [mark_page_accessed()](https://gi
 
 (which ultimately calls [folio_mark_accessed()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n441)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n441)
 
- 
+
 
 After this the rss field containing statistics for various different types of
 
@@ -5116,7 +5116,7 @@ The page is marked for removal from the reverse mapping via
 
 7-73.
 
- 
+
 
 1421 */\*\**
 
@@ -5130,11 +5130,11 @@ The page is marked for removal from the reverse mapping via
 
 1434 **if** (!**PageAnon**(page)) {
 
- 
 
 
 
- 
+
+
 
 1435 **page_remove_file_rmap**(page, compound); 1436 **goto out**; 1437 }
 
@@ -5162,11 +5162,11 @@ The page is marked for removal from the reverse mapping via
 
 1470 **munlock_vma_page**(page, vma, compound); 1471 }
 
- 
+
 
 *Listing 7-73:* mm/rmap.c: [*page_remove_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1429)
 
- 
+
 
 It’s important to note that in actual fact this does not clear the mapped field
 
@@ -5198,15 +5198,15 @@ instead invoked (eliding out of scope huge page logic) as shown in Listing
 
 7-74.
 
- 
+
 
 1342 **static void page_remove_file_rmap**(**struct** page \*page, **bool** compound) 1343 {
 
- 
 
 
 
- 
+
+
 
 1344 **int** i, nr = 0;
 
@@ -5220,7 +5220,7 @@ instead invoked (eliding out of scope huge page logic) as shown in Listing
 
 1377 **\_\_mod_lruvec_page_state**(page, **NR_FILE_MAPPED**, -nr); 1378 }
 
- 
+
 
 *Listing 7-74:* mm/rmap.c: [*page_remove_file_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1342)
 
@@ -5240,7 +5240,7 @@ This adds the page to the active batch [struct mmu_gather_batch](https://git.ker
 
 shown in Listing 7-75.
 
- 
+
 
 79 **bool \_\_tlb_remove_page_size**(**struct** mmu_gather \*tlb, **struct** page \*page, **int**
 
@@ -5268,15 +5268,15 @@ page_size)
 
 103 }
 
- 
+
 
 *Listing 7-75:* mm/mmu_gather.c: [*\_\_tlb_remove_page_size()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n79)
 
- 
 
 
 
- 
+
+
 
 We simply add the page to the active batch’s pages array, then checks to
 
@@ -5286,7 +5286,7 @@ next one, if it can, indicating whether it succeeded or not.
 
 Examining [tlb_next_batch()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n17) as shown in Listing 7-76.
 
- 
+
 
 17 **static bool tlb_next_batch**(**struct** mmu_gather \*tlb)
 
@@ -5342,11 +5342,11 @@ Examining [tlb_next_batch()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 43 }
 
- 
+
 
 *Listing 7-76:* mm/mmu_gather.c: [*tlb_next_batch()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n17)
 
- 
+
 
 This checks whether the batch already has a next batch object available,
 
@@ -5366,17 +5366,17 @@ Returning to [zap_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 [zap_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1402) operation is finalised as shown in Listing 7-77.
 
- 
+
 
 1510 **add_mm_rss_vec**(mm, rss); 1511 **arch_leave_lazy_mmu_mode**(); 1512
 
 1513 */\* Do the actual TLB flush before dropping ptl \*/*
 
- 
 
 
 
- 
+
+
 
 1514 **if** (force_flush)
 
@@ -5398,11 +5398,11 @@ Returning to [zap_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 1535 }
 
- 
+
 
 *Listing 7-77:* mm/memory.c: [*zap_pte_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1402) *finalisation*
 
- 
+
 
 Firstly, this registers RSS statistics changes via [add_mm_rss_vec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n501)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n501) exits
 
@@ -5426,7 +5426,7 @@ Returning to [unmap_page_range()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 VMA has been flushed as shown in Listing 7-78.
 
- 
+
 
 500 **static inline void tlb_end_vma**(**struct** mmu_gather \*tlb, **struct** vm_area_struct \*
 
@@ -5444,11 +5444,11 @@ vma)
 
 506 *\* VM_PFNMAP is more fragile because the core mm will not track the*
 
- 
 
 
 
- 
+
+
 
 507 *\* page mapcount -- there might not be page-frames for these PFNs*
 
@@ -5472,11 +5472,11 @@ vma)
 
 518 }
 
- 
+
 
 *Listing 7-78:* include/asm-generic/tlb.h: [*tlb_end_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n500)
 
- 
+
 
 This takes special care to avoid races for PFN only mappings (see section
 
@@ -5488,7 +5488,7 @@ section 7.1.5 below) and then [tlb_finish_mmu()](https://git.kernel.org/pub/scm/
 
 eration as shown in Listing 7-79.
 
- 
+
 
 318 */\*\**
 
@@ -5524,11 +5524,11 @@ eration as shown in Listing 7-79.
 
 341 *\* The aarch64 yields better performance with fullmm by* 342 *\* avoiding multiple CPUs spamming TLBI messages at the*
 
- 
 
 
 
- 
+
+
 
 343 *\* same time.* 344 *\**
 
@@ -5546,11 +5546,11 @@ eration as shown in Listing 7-79.
 
 358 **dec_tlb_flush_pending**(tlb-\>mm); 359 }
 
- 
+
 
 *Listing 7-79:* mm/mmu_gather.c: [*tlb_finish_mmu()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n325)
 
- 
+
 
 This checks whether another TLB flush has been initiated by calling
 
@@ -5568,13 +5568,13 @@ and finally the number of concurrent TLB flushes is decremented via
 
 [dec_tlb_flush_pending()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n283).
 
- 
+
 
 ***7.1.5 Freeing page tables***
 
 Page tables are freed via [free_pgtables()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n405) (eliding out of scope huge page logic):-
 
- 
+
 
 405 **void** free_pgtables(**struct** mmu_gather \*tlb, **struct** vm_area_struct \*vma, 406 **unsigned long** floor, **unsigned long** ceiling) 407 {
 
@@ -5590,11 +5590,11 @@ Page tables are freed via [free_pgtables()](https://git.kernel.org/pub/scm/linux
 
 416 **unlink_anon_vmas**(vma); 417 **unlink_file_vma**(vma);
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -5612,11 +5612,11 @@ Page tables are freed via [free_pgtables()](https://git.kernel.org/pub/scm/linux
 
 438 }
 
- 
+
 
 *Listing 7-80:* mm/memory.c: [*free_pgtables()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n405)
 
- 
+
 
 This both removes page tables and unlinks reverse mapping via
 
@@ -5624,7 +5624,7 @@ This both removes page tables and unlinks reverse mapping via
 
 ping objects via [unlink_file_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n122) as shown in Listing 7-81.
 
- 
+
 
 118 */\**
 
@@ -5642,11 +5642,11 @@ ping objects via [unlink_file_vma()](https://git.kernel.org/pub/scm/linux/kernel
 
 132 }
 
- 
+
 
 *Listing 7-81:* mm/mmap.c: [*unlink_file_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n122)
 
- 
+
 
 This removes the VMA object from the [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424)’s interval tree
 
@@ -5654,17 +5654,17 @@ via [\_\_remove_shared_vm_struct()](https://git.kernel.org/pub/scm/linux/kernel/
 
 nance logic irrelevant to x86-64) as shown in Listing 7-82.
 
- 
+
 
 104 */\**
 
 105 *\* Requires inode-\>i_mapping-\>i_mmap_rwsem* 106 *\*/*
 
- 
 
 
 
- 
+
+
 
 107 **static void \_\_remove_shared_vm_struct**(**struct** vm_area_struct \*vma, 108 **struct** file \*file, **struct** address_space \*mapping) 109 {
 
@@ -5678,11 +5678,11 @@ nance logic irrelevant to x86-64) as shown in Listing 7-82.
 
 116 }
 
- 
+
 
 *Listing 7-82:* mm/mmap.c: [*\_\_remove_shared_vm_struct()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n107)
 
- 
+
 
 This atomically decrements the [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424)-\>i_mmap_writable
 
@@ -5712,7 +5712,7 @@ We pass the PMD-level range of addresses to [free_pgd_range()](https://git.kerne
 
 huge page logic) as shown in Listing 7-83.
 
- 
+
 
 340 */\**
 
@@ -5724,11 +5724,11 @@ huge page logic) as shown in Listing 7-83.
 
 348 **unsigned long** next; 349
 
- 
 
 
 
- 
+
+
 
 350 */\**
 
@@ -5758,25 +5758,25 @@ huge page logic) as shown in Listing 7-83.
 
 398 next = **pgd_addr_end**(addr, end); 399 **if** (**pgd_none_or_clear_bad**(pgd)) 400 **continue**;
 
- 
 
 
 
- 
+
+
 
 401 **free_p4d_range**(tlb, pgd, addr, next, floor, ceiling); 402 } **while** (pgd++, addr = next, addr != end); 403 }
 
- 
+
 
 *Listing 7-83:* mm/memory.c: [*free_pgd_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n343)
 
- 
+
 
 The initial operations are quite intricate as the very large comment
 
 suggests:-
 
- 
+
 
 • We perform a test to ensure the range is valid at a PMD granularity
 
@@ -5798,13 +5798,13 @@ address space), would be equal to zero, then we do not span at least a PTE direc
 
 we must round end down to keep it below ceiling. If this would result in addr no longer being in range, we exit.
 
- 
+
 
 After this, we perform a fairly typical page table walk, deferring the next
 
 level of the operation to [free_p4d_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n307)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n307) Note that the entry of the level above is cleared at the level below, i.e. it is the P4D freeing function that will clear the PGD entry, the PUD freeing function that will clear the P4D entry etc.
 
- 
+
 
 307 **static inline void free_p4d_range**(**struct** mmu_gather \*tlb, **pgd_t** \*pgd, 308 **unsigned long** addr, **unsigned long** end, 309 **unsigned long** floor, **unsigned long** ceiling) 310 {
 
@@ -5818,11 +5818,11 @@ level of the operation to [free_p4d_range()](https://git.kernel.org/pub/scm/linu
 
 318 next = **p4d_addr_end**(addr, end); 319 **if** (**p4d_none_or_clear_bad**(p4d))
 
- 
 
 
 
- 
+
+
 
 320 **continue**; 321 **free_pud_range**(tlb, p4d, addr, next, floor, ceiling); 322 } **while** (p4d++, addr = next, addr != end);
 
@@ -5842,11 +5842,11 @@ level of the operation to [free_p4d_range()](https://git.kernel.org/pub/scm/linu
 
 337 **p4d_free_tlb**(tlb, p4d, start); 338 }
 
- 
+
 
 *Listing 7-84:* mm/memory.c: [*free_p4d_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n307)
 
- 
+
 
 This begins by performing page table freeing at the PUD level, before
 
@@ -5868,7 +5868,7 @@ virtualised host that this has occurred).
 
 Examining the PUD level as shown in Listing 7-85.
 
- 
+
 
 273 **static inline void free_pud_range**(**struct** mmu_gather \*tlb, **p4d_t** \*p4d, 274 **unsigned long** addr, **unsigned long** end, 275 **unsigned long** floor, **unsigned long** ceiling) 276 {
 
@@ -5884,11 +5884,11 @@ Examining the PUD level as shown in Listing 7-85.
 
 284 next = **pud_addr_end**(addr, end); 285 **if** (**pud_none_or_clear_bad**(pud)) 286 **continue**; 287 **free_pmd_range**(tlb, pud, addr, next, floor, ceiling); 288 } **while** (pud++, addr = next, addr != end);
 
- 
 
 
 
- 
+
+
 
 289
 
@@ -5906,11 +5906,11 @@ Examining the PUD level as shown in Listing 7-85.
 
 303 **pud_free_tlb**(tlb, pud, start); 304 **mm_dec_nr_puds**(tlb-\>mm); 305 }
 
- 
+
 
 *Listing 7-85:* mm/memory.c: [*free_pud_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n273)
 
- 
+
 
 This is almost entirely identical to the P4D level, only dif-
 
@@ -5920,7 +5920,7 @@ fering in that it invokes [mm_dec_nr_puds()](https://git.kernel.org/pub/scm/linu
 
 At the PMD level as shown in Listing 7-86.
 
- 
+
 
 239 **static inline void free_pmd_range**(**struct** mmu_gather \*tlb, **pud_t** \*pud, 240 **unsigned long** addr, **unsigned long** end, 241 **unsigned long** floor, **unsigned long** ceiling) 242 {
 
@@ -5940,11 +5940,11 @@ At the PMD level as shown in Listing 7-86.
 
 260 ceiling &= **PUD_MASK**; 261 **if** (!ceiling) 262 **return**;
 
- 
 
 
 
- 
+
+
 
 263 }
 
@@ -5956,11 +5956,11 @@ At the PMD level as shown in Listing 7-86.
 
 269 **pmd_free_tlb**(tlb, pmd, start); 270 **mm_dec_nr_pmds**(tlb-\>mm); 271 }
 
- 
+
 
 *Listing 7-86:* mm/memory.c: [*free_pmd_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n239)
 
- 
+
 
 This again follows the same pattern, invoking [mm_dec_nr_pmds()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2150) to update
 
@@ -5978,7 +5978,7 @@ moves the [PG_table](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 Finally the PTE function as shown in Listing 7-87.
 
- 
+
 
 226 */\**
 
@@ -5990,11 +5990,11 @@ Finally the PTE function as shown in Listing 7-87.
 
 235 **pte_free_tlb**(tlb, token, addr); 236 **mm_dec_nr_ptes**(tlb-\>mm); 237 }
 
- 
+
 
 *Listing 7-87:* mm/memory.c: [*free_pte_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n230)
 
- 
+
 
 This is significantly less involved, as we have already established
 
@@ -6012,11 +6012,11 @@ turn. Other than paravirtualised calls, this invokes the PTE destructor via
 
 clears the folio flag and adjusts statistics.
 
- 
 
 
 
- 
+
+
 
 ***7.1.6 Flushing the TLB***
 
@@ -6034,17 +6034,17 @@ The key function for flushing the TLB and freeing pages is
 
 [tlb_flush_mmu()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n259) as shown in Listing 7-88.
 
- 
+
 
 259 **void tlb_flush_mmu**(**struct** mmu_gather \*tlb) 260 {
 
 261 **tlb_flush_mmu_tlbonly**(tlb); 262 **tlb_flush_mmu_free**(tlb); 263 }
 
- 
+
 
 *Listing 7-88:* mm/mmu_gather.c: [*tlb_flush_mmu()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n259)
 
- 
+
 
 With the [tlb_flush_mmu_tlbonly()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n416) function performing the TLB flushing
 
@@ -6054,7 +6054,7 @@ Examining [tlb_flush_mmu_tlbonly()](https://git.kernel.org/pub/scm/linux/kernel/
 
 call) as shown in Listing 7-89.
 
- 
+
 
 416 **static inline void** tlb_flush_mmu_tlbonly(**struct** mmu_gather \*tlb) 417 {
 
@@ -6076,25 +6076,25 @@ call) as shown in Listing 7-89.
 
 428 **\_\_tlb_reset_range**(tlb); 429 }
 
- 
+
 
 *Listing 7-89:* include/asm-generic/tlb.h: [*tlb_flush_mmu_tlbonly()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n416)
 
- 
+
 
 Not that the fields indicating that individual page table levels have been
 
 cleared like cleared_ptes are huge table-specific and out of scope.
 
- 
+
 
 \*. We use ‘invalidate’ and ‘flush’ interchangeably here. Typically the difference between the two is that the former simply marks the cache invalid while the latter also write what is cached to the backing store, however in the case of a TLB this doesn’t make sense so the two can be considered equivalent.
 
- 
 
 
 
- 
+
+
 
 If something has changed in the range, then [tlb_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/tlb.h?h=v6.0#n10) is invoked and
 
@@ -6102,7 +6102,7 @@ the range is reset by [\_\_tlb_reset_range()](https://git.kernel.org/pub/scm/lin
 
 Examining the flush function as shown in Listing 7-90.
 
- 
+
 
 10 **static inline void tlb_flush**(**struct** mmu_gather \*tlb)
 
@@ -6130,11 +6130,11 @@ freed_tables);
 
 21 }
 
- 
+
 
 *Listing 7-90:* arch/x86/include/asm/tlb.h: [*tlb_flush()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/tlb.h?h=v6.0#n10)
 
- 
+
 
 Note that stride_shift will be set to [PAGE_SHIFT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/page_types.h?h=v6.0#n10) for non-huge pages. The start and end values will either span the range specified by the
 
@@ -6148,7 +6148,7 @@ The heavy lifting is performed by [flush_tlb_mm_range()](https://git.kernel.org/
 
 7-91.
 
- 
+
 
 981 **void flush_tlb_mm_range**(**struct** mm_struct \*mm, **unsigned long** start, 982 **unsigned long** end, **unsigned int** stride_shift, 983 **bool** freed_tables) 984 {
 
@@ -6172,11 +6172,11 @@ The heavy lifting is performed by [flush_tlb_mm_range()](https://git.kernel.org/
 
 1001 info = **get_flush_tlb_info**(mm, start, end, stride_shift, freed_tables,
 
- 
 
 
 
- 
+
+
 
 1002 new_tlb_gen); 1003
 
@@ -6198,11 +6198,11 @@ The heavy lifting is performed by [flush_tlb_mm_range()](https://git.kernel.org/
 
 1020 }
 
- 
+
 
 *Listing 7-91:* arch/x86/mm/tlb.c: [*flush_tlb_mm_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n981)
 
- 
+
 
 We start by disabling preemption and obtaining the processor CPU via
 
@@ -6230,7 +6230,7 @@ The [get_flush_tlb_info()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 object which is threaded through remaining logic as shown in Listing 7-92.
 
- 
+
 
 174 */\**
 
@@ -6242,11 +6242,11 @@ object which is threaded through remaining logic as shown in Listing 7-92.
 
 182 *\* - flush_tlb_multi(cpumask, info) flushes TLBs on multiple cpus* 183 *\**
 
- 
 
 
 
- 
+
+
 
 184 *\* ..but the i386 has somewhat limited tlb flushing capabilities,* 185 *\* and page-granular flushes are available only on i486 and up.* 186 *\*/*
 
@@ -6264,11 +6264,11 @@ object which is threaded through remaining logic as shown in Listing 7-92.
 
 204 **struct** mm_struct \*mm; 205 **unsigned long** start; 206 **unsigned long** end; 207 **u64** new_tlb_gen; 208 **unsigned int** initiating_cpu; 209 u8 stride_shift; 210 u8 freed_tables; 211 };
 
- 
+
 
 *Listing 7-92:* arch/x86/include/asm/tlbflush.h: [*struct flush_tlb_info*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/tlbflush.h?h=v6.0#n187)
 
- 
+
 
 We then reach an important part of the logic and an absolutely key part
 
@@ -6304,11 +6304,11 @@ which re-enables preemption (note that the info object does not require any
 
 ‘put’ operation other than in debug modes).
 
- 
 
 
 
- 
+
+
 
 The function which is invoked when a remote shootdown is re-
 
@@ -6318,7 +6318,7 @@ quired is [flush_tlb_multi()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 ing 7-93.
 
- 
+
 
 889 STATIC_NOPV **void native_flush_tlb_multi**(**const struct** cpumask \*cpumask, 890 **const struct** flush_tlb_info \*info) 891 {
 
@@ -6338,11 +6338,11 @@ ing 7-93.
 
 917 **on_each_cpu_cond_mask**(tlb_is_not_lazy, flush_tlb_func, 918 (**void** \*)info, 1, cpumask); 919 }
 
- 
+
 
 *Listing 7-93:* arch/x86/mm/tlb.c: [*native_flush_tlb_multi()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n889)
 
- 
+
 
 The heavy lifting of the IPI is performed via [on_each_cpu_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/smp.h?h=v6.0#n90) and
 
@@ -6358,7 +6358,7 @@ Both the remote and local shootdown variants ultimately invoke
 
 tics and ASID logic) as shown in Listing 7-94.
 
- 
+
 
 716 */\**
 
@@ -6370,11 +6370,11 @@ tics and ASID logic) as shown in Listing 7-94.
 
 726 *\* We have three different tlb_gen values in here. They are:*
 
- 
 
 
 
- 
+
+
 
 727 *\**
 
@@ -6428,11 +6428,11 @@ tlb_gen);
 
 777 *\* The TLB is already up to date in respect to f-\>new_tlb_gen.*
 
- 
 
 
 
- 
+
+
 
 778 *\* While the core might be still behind mm_tlb_gen, checking*
 
@@ -6474,11 +6474,11 @@ tlb_gen);
 
 801 **WARN_ON_ONCE**(local_tlb_gen \> mm_tlb_gen); 802 **WARN_ON_ONCE**(f-\>new_tlb_gen \> mm_tlb_gen);
 
- 
+
 
 *Listing 7-94:* arch/x86/mm/tlb.c: [*flush_tlb_func()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n723) *initialisation and guard clauses*
 
- 
+
 
 We start by retrieving per-CPU state from [cpu_tlbstate](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/tlbflush.h?h=v6.0#n138) indicating the cur-
 
@@ -6504,11 +6504,11 @@ Finally, we perform some sanity checks on the TLB generation, before
 
 moving ahead with the TLB flush itself as shown in Listing 7-95.
 
- 
 
 
 
- 
+
+
 
 804 */\**
 
@@ -6542,11 +6542,11 @@ moving ahead with the TLB flush itself as shown in Listing 7-95.
 
 849
 
- 
 
 
 
- 
+
+
 
 850 */\* Partial flush must have valid mm \*/* 851 **VM_WARN_ON**(f-\>mm == **NULL**); 852
 
@@ -6578,11 +6578,11 @@ moving ahead with the TLB flush itself as shown in Listing 7-95.
 
 879 }
 
- 
+
 
 *Listing 7-95:* arch/x86/mm/tlb.c: [*flush_tlb_func()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n723) *flushing*
 
- 
+
 
 At this point the flush is either performed per each stride,
 
@@ -6600,7 +6600,7 @@ forms the flush by replacing the contents of the x86-64 cr3 control register.
 
 After the flush is complete, the CPU’s TLB generation is updated.
 
- 
+
 
 ***7.1.7 Freeing pages***
 
@@ -6608,7 +6608,7 @@ After the flush is complete, the CPU’s TLB generation is updated.
 
 [tlb_batch_pages_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n45) in turn:-
 
- 
+
 
 45 **static void tlb_batch_pages_flush**(**struct** mmu_gather \*tlb) 46 {
 
@@ -6616,11 +6616,11 @@ After the flush is complete, the CPU’s TLB generation is updated.
 
 49 **for** (batch = &tlb-\>local; batch && batch-\>nr; batch = batch-\>next) { 50 **struct** page \*\*pages = batch-\>pages;
 
- 
 
 
 
- 
+
+
 
 51
 
@@ -6654,17 +6654,17 @@ After the flush is complete, the CPU’s TLB generation is updated.
 
 66 }
 
- 
+
 
 *Listing 7-96:* mm/mmu_gather.c: [*tlb_batch_pages_flush()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmu_gather.c?h=v6.0#n45)
 
- 
+
 
 This walks all of the [struct mmu_gather_batch](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/tlb.h?h=v6.0#n241) objects, freeing via
 
 [free_pages_and_swap_cache()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n303) as shown in Listing 7-97.
 
- 
+
 
 299 */\**
 
@@ -6684,11 +6684,11 @@ This walks all of the [struct mmu_gather_batch](https://git.kernel.org/pub/scm/l
 
 309 **for** (i = 0; i \< nr; i++) 310 **free_swap_cache**(pagep\[i\]); 311 **release_pages**(pagep, nr); 312 }
 
- 
+
 
 *Listing 7-97:* mm/swap_state.c: [*free_pages_and_swap_cache()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n303)
 
- 
+
 
 This drains folio batches to ensure that there are no odd non-LRU cases
 
@@ -6704,17 +6704,17 @@ is achieved via [release_pages()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 cgroup and statistics logic) as shown in Listing 7-98.
 
- 
+
 
 926 */\*\**
 
 927 *\* release_pages - batched put_page()* 928 *\* @pages: array of pages to release*
 
- 
 
 
 
- 
+
+
 
 929 *\* @nr: number of pages*
 
@@ -6764,11 +6764,11 @@ cgroup and statistics logic) as shown in Listing 7-98.
 
 998 *\* "unevictable_pgs_cleared" appears worryingly large.*
 
- 
 
 
 
- 
+
+
 
 999 *\*/*
 
@@ -6790,11 +6790,11 @@ cgroup and statistics logic) as shown in Listing 7-98.
 
 1012 **free_unref_page_list**(&pages_to_free); 1013 }
 
- 
+
 
 *Listing 7-98:* mm/swap.c: [*release_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n934)
 
- 
+
 
 We won’t go into extensive detail here as this is the purview of the phys-
 
@@ -6816,7 +6816,7 @@ incremented – this may exceed the map count (the kernel may need to take
 
 a reference) but will never be below it.
 
- 
+
 
 ***7.1.8 Lazy TLB mode***
 
@@ -6832,7 +6832,7 @@ The fact that a process has entered lazy TLB mode is set by
 
 [enter_lazy_tlb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n663) as shown in Listing 7-99.
 
- 
+
 
 650 */\**
 
@@ -6848,11 +6848,11 @@ The fact that a process has entered lazy TLB mode is set by
 
 660 *\* in a row. It will notify us that we're going back to a real mm by* 661 *\* calling switch_mm_irqs_off().* 662 *\*/*
 
- 
 
 
 
- 
+
+
 
 663 **void enter_lazy_tlb**(**struct** mm_struct \*mm, **struct** task_struct \*tsk) 664 {
 
@@ -6862,11 +6862,11 @@ The fact that a process has entered lazy TLB mode is set by
 
 668 **this_cpu_write**(cpu_tlbstate_shared.is_lazy, **true**); 669 }
 
- 
+
 
 *Listing 7-99:* arch/x86/mm/tlb.c: [*enter_lazy_tlb()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n663)
 
- 
+
 
 This stores the fact that a process is lazy so the TLB logic can know that
 
@@ -6878,4 +6878,5 @@ When a process is switched and it is no longer appropriate to maintain
 
 lazy TLB mode, this is achieved in [switch_mm_irqs_off()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n489)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/tlb.c?h=v6.0#n489)
 
- 
+
+

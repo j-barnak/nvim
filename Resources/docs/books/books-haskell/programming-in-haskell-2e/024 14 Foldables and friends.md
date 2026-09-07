@@ -4,16 +4,16 @@
 
 In this chapter we introduce three common patterns for processing the values in a data structure. We start with monoids, which capture the idea of combining values using an associative operator, then consider foldables, which generalise the concept of folding from lists to a range of parameterised types, and conclude with traversables, which further generalise the notion of mapping.
 
-### **14.1Monoids**
+### **14.1 Monoids**
 
 In mathematics, a *monoid* is a set together with an associative operator that combines two elements from the set, and an identity element for the operator. For example, the set of integers forms a monoid with the operator given by addition and the identity element by the value zero. In Haskell, the notion of a monoid is captured by the following built-in class declaration:
 
 ``` haskell
 class Monoid a where
-mempty :: a
-mappend :: a -> a -> a
-mconcat :: [a] -> a
-mconcat = foldr mappend mempty
+  mempty :: a
+  mappend :: a -> a -> a
+  mconcat :: [a] -> a
+  mconcat = foldr mappend mempty
 ```
 
 That is, for a type a to be an instance of the class Monoid, it must support a value mempty and a function mappend of the specified types, which respectively play the role of the identity element and the operator for the monoid. In practice, the function mappend is often written as an infix operator by enclosing its name in single back quotes, as in x ‘mappend‘ y.
@@ -42,10 +42,10 @@ A number of standard monoids are provided in the library Data.Monoid. The simple
 
 ``` haskell
 instance Monoid [a] where
--- mempty :: [a]
-mempty = []
--- mappend :: [a] -> [a] -> [a]
-mappend = (++)
+  -- mempty :: [a]
+  mempty = []
+  -- mappend :: [a] -> [a] -> [a]
+  mappend = (++)
 ```
 
 The method names mempty and mappend are inspired by this instance, but the choice of names is unfortunate as in general the monoid primitives do not need to correspond to an empty value or provide a means of appending values. All that is required is two primitives that satisfy the monoid laws.
@@ -54,12 +54,12 @@ For our second example, the type Maybe a can also be made into a monoid, provide
 
 ``` haskell
 instance Monoid a => Monoid (Maybe a) where
--- mempty :: Maybe a
-mempty = Nothing
--- mappend :: Maybe a -> Maybe a -> Maybe a
-Nothing ‘mappend‘ my = my
-mx ‘mappend‘ Nothing = mx
-Just x ‘mappend‘ Just y = Just (x ‘mappend‘ y)
+  -- mempty :: Maybe a
+  mempty = Nothing
+  -- mappend :: Maybe a -> Maybe a -> Maybe a
+  Nothing ‘mappend‘ my = my
+  mx ‘mappend‘ Nothing = mx
+  Just x ‘mappend‘ Just y = Just (x ‘mappend‘ y)
 ```
 
 That is, mempty is given by the failure value Nothing, while mappend combines the results of two arguments that may fail. In the latter case, if either argument fails the other argument is returned, and if both arguments succeed the two result values are combined using mappend for the parameter type a.
@@ -68,20 +68,20 @@ A particular type may give rise to a monoid in a number of different ways. For e
 
 ``` haskell
 instance Monoid Int where
--- mempty :: Int
-mempty = 0
--- mappend :: Int -> Int -> Int
-mappend = (+)
+  -- mempty :: Int
+  mempty = 0
+  -- mappend :: Int -> Int -> Int
+  mappend = (+)
 ```
 
 The integers also form a monoid under multiplication, with the identity element given by the value one, so we could also declare:
 
 ``` haskell
 instance Monoid Int where
--- mempty :: Int
-mempty = 1
--- mappend :: Int -> Int -> Int
-mappend = (*)
+  -- mempty :: Int
+  mempty = 1
+  -- mappend :: Int -> Int -> Int
+  mappend = (*)
 ```
 
 However, multiple instance declarations of the same type for the same class are not permitted in Haskell, so attempting to declare two separate instances for Monoid Int in this manner will result in an error. The solution is to introduce special-purpose wrapper types for each of the two instances.
@@ -90,7 +90,7 @@ In the case of addition, the monoid library declares a new type Sum a with a dum
 
 ``` haskell
 newtype Sum a = Sum a
-deriving (Eq, Ord, Show, Read)
+  deriving (Eq, Ord, Show, Read)
 getSum :: Sum a -> a
 getSum (Sum x) = x
 ```
@@ -99,10 +99,10 @@ The deriving clause above ensures that values of type Sum a support the standard
 
 ``` haskell
 instance Num a => Monoid (Sum a) where
--- mempty :: Sum a
-mempty = Sum 0
--- mappend :: Sum a -> Sum a -> Sum a
-Sum x ‘mappend‘ Sum y = Sum (x+y)
+  -- mempty :: Sum a
+  mempty = Sum 0
+  -- mappend :: Sum a -> Sum a -> Sum a
+  Sum x ‘mappend‘ Sum y = Sum (x+y)
 ```
 
 For example, using this instance we have:
@@ -118,7 +118,7 @@ In turn, in the case of multiplication of numbers, the monoid library declares a
 
 ``` haskell
 newtype Product a = Product a
-deriving (Eq, Ord, Show, Read)
+  deriving (Eq, Ord, Show, Read)
 getProduct :: Product a -> a
 getProduct (Product x) = x
 ```
@@ -127,10 +127,10 @@ The type Product a can then be made into an instance of the Monoid class by defi
 
 ``` haskell
 instance Num a => Monoid (Product a) where
--- mempty :: Product a
-mempty = Product 1
--- mappend :: Product a -> Product a -> Product a
-Product x ‘mappend‘ Product y = Product (x*y)
+  -- mempty :: Product a
+  mempty = Product 1
+  -- mappend :: Product a -> Product a -> Product a
+  Product x ‘mappend‘ Product y = Product (x*y)
 ```
 
 For example:
@@ -151,7 +151,7 @@ Any False
 
 We conclude this section by noting that the library also provides an infix version of mappend, defined by x \<\> y = x ‘mappend‘ y, which allows monoid expressions to be written more concisely, as in x \<\> y \<\> z. This operator is often used in practical applications, however for expository purposes in this chapter we prefer to use the mappend primitive directly.
 
-### **14.2Foldables**
+### **14.2 Foldables**
 
 One of the primary applications of monoids in Haskell is to combine all the values in a data structure to give a single value. For example, in the case of lists we could define a function fold that implements this idea as follows:
 
@@ -171,7 +171,7 @@ In other words, fold provides a simple means of ‘folding up’ a list using a 
 
 ``` haskell
 data Tree a = Leaf a | Node (Tree a) (Tree a)
-deriving Show
+         deriving Show
 fold :: Monoid a => Tree a -> a
 fold (Leaf x) = x
 fold (Node l r) = fold l ‘mappend‘ fold r
@@ -183,10 +183,10 @@ More generally, the idea of folding up the values in data structure using a mono
 
 ``` haskell
 class Foldable t where
-fold :: Monoid a => t a -> a
-foldMap :: Monoid b => (a -> b) -> t a -> b
-foldr :: (a -> b -> b) -> b -> t a -> b
-foldl :: (a -> b -> a) -> a -> t b -> a
+  fold :: Monoid a => t a -> a
+  foldMap :: Monoid b => (a -> b) -> t a -> b
+  foldr :: (a -> b -> b) -> b -> t a -> b
+  foldl :: (a -> b -> a) -> a -> t b -> a
 ```
 
 That is, for a parameterised type to be an instance of the class Foldable, it must support a range of fold functions of the specified types. As in the above declaration, by convention foldable types are usually denoted by t.
@@ -203,18 +203,18 @@ As we would expect, the type of lists can be made into a foldable type by defini
 
 ``` haskell
 instance Foldable [] where
--- fold :: Monoid a => [a] -> a
-fold [] = mempty
-fold (x:xs) = x ‘mappend‘ fold xs
--- foldMap :: Monoid b => (a -> b) -> [a] -> b
-foldMap _ [] = mempty
-foldMap f (x:xs) = f x ‘mappend‘ foldMap f xs
--- foldr :: (a -> b -> b) -> b -> [a] -> b
-foldr _ v [] = v
-foldr f v (x:xs) = f x (foldr f v xs)
--- foldl :: (a -> b -> a) -> a -> [b] -> a
-foldl _ v [] = v
-foldl f v (x:xs) = foldl f (f v x) xs
+  -- fold :: Monoid a => [a] -> a
+  fold [] = mempty
+  fold (x:xs) = x ‘mappend‘ fold xs
+  -- foldMap :: Monoid b => (a -> b) -> [a] -> b
+  foldMap _ [] = mempty
+  foldMap f (x:xs) = f x ‘mappend‘ foldMap f xs
+  -- foldr :: (a -> b -> b) -> b -> [a] -> b
+  foldr _ v [] = v
+  foldr f v (x:xs) = f x (foldr f v xs)
+  -- foldl :: (a -> b -> a) -> a -> [b] -> a
+  foldl _ v [] = v
+  foldl f v (x:xs) = foldl f (f v x) xs
 ```
 
 For example, using the numeric monoids from the previous section, foldMap can now be used to calculate the sum and product of a list of numbers:
@@ -230,18 +230,18 @@ For example, using the numeric monoids from the previous section, foldMap can no
 
 ``` haskell
 instance Foldable Tree where
--- fold :: Monoid a => Tree a -> a
-fold (Leaf x) = x
-fold (Node l r) = fold l ‘mappend‘ fold r
--- foldMap :: Monoid b => (a -> b) -> Tree a -> b
-foldMap f (Leaf x) = f x
-foldMap f (Node l r) = foldMap f l ‘mappend‘ foldMap f r
--- foldr :: (a -> b -> b) -> b -> Tree a -> b
-foldr f v (Leaf x) = f x v
-foldr f v (Node l r) = foldr f (foldr f v r) l
--- foldl :: (a -> b -> a) -> a -> Tree b -> a
-foldl f v (Leaf x) = f v x
-foldl f v (Node l r) = foldl f (foldl f v l) r
+  -- fold :: Monoid a => Tree a -> a
+  fold (Leaf x) = x
+  fold (Node l r) = fold l ‘mappend‘ fold r
+  -- foldMap :: Monoid b => (a -> b) -> Tree a -> b
+  foldMap f (Leaf x) = f x
+  foldMap f (Node l r) = foldMap f l ‘mappend‘ foldMap f r
+  -- foldr :: (a -> b -> b) -> b -> Tree a -> b
+  foldr f v (Leaf x) = f x v
+  foldr f v (Node l r) = foldr f (foldr f v r) l
+  -- foldl :: (a -> b -> a) -> a -> Tree b -> a
+  foldl f v (Leaf x) = f v x
+  foldl f v (Node l r) = foldl f (foldl f v l) r
 ```
 
 For example, consider the following tree of integers:
@@ -392,13 +392,13 @@ For example:
 
 In conclusion, when declaring a new type in Haskell it is useful to consider whether it can be made into a foldable type, for which it suffices to define either of the primitives foldMap or foldr. The advantage of doing so is that we are then provided with a range of useful functions for the type essentially ‘for free’, by means of the default definitions that are included in the Foldable class, as well as any other generic functions defined in terms of these primitives.
 
-### **14.3Traversables**
+### **14.3 Traversables**
 
 As we saw in chapter 12, the idea of mapping a function over each element of a data structure is captured by the notion of a functor:
 
 ``` haskell
 class Functor f where
-fmap :: (a -> b) -> f a -> f b
+  fmap :: (a -> b) -> f a -> f b
 ```
 
 For example, in the case of lists the primitive fmap is given by the familiar library function map, which can be defined recursively as follows:
@@ -439,7 +439,7 @@ Not surprisingly, the idea of traversing a data structure in the above manner is
 
 ``` haskell
 class (Functor t, Foldable t) => Traversable t where
-traverse :: Applicative f => (a -> f b) -> t a -> f (t b)
+  traverse :: Applicative f => (a -> f b) -> t a -> f (t b)
 ```
 
 That is, for a parameterised type t that is both functorial and foldable to be an instance of the class Traversable, it must support a traverse function of the specified type. The requirement that t is a functor reflects the fact that traversables generalise the idea of mapping, and are hence expected to support the fmap primitive. The requirement that t is foldable ensures that values in a traversable type can also be folded up if desired.
@@ -450,20 +450,20 @@ Because lists are functorial and foldable, the list type can be made traversable
 
 ``` haskell
 instance Traversable [] where
--- traverse :: Applicative f => (a -> f b) -> [a] -> f [b]
-traverse g [] = pure []
-traverse g (x:xs) = pure (:) <*> g x <*> traverse g xs
+  -- traverse :: Applicative f => (a -> f b) -> [a] -> f [b]
+  traverse g [] = pure []
+  traverse g (x:xs) = pure (:) <*> g x <*> traverse g xs
 ```
 
 An instance for trees can be defined in a similar manner, except that the application of the argument function then takes place in the base case:
 
 ``` haskell
 instance Traversable Tree where
--- traverse :: Applicative f =>
--- (a -> f b) -> Tree a -> f (Tree b)
-traverse g (Leaf x) = pure Leaf <*> g x
-traverse g (Node l r) =
-pure Node <*> traverse g l <*> traverse g r
+  -- traverse :: Applicative f =>
+  -- (a -> f b) -> Tree a -> f (Tree b)
+  traverse g (Leaf x) = pure Leaf <*> g x
+  traverse g (Node l r) =
+   pure Node <*> traverse g l <*> traverse g r
 ```
 
 For example, traverse can now be used to map a function that may fail, such as dec from the previous section, over both lists and trees:
@@ -521,34 +521,34 @@ sequence = sequenceA
 
 In conclusion, when declaring a new type it is also useful to consider whether it can be made into a traversable type, by defining either of the primitives traverse or sequenceA. The advantage of doing so is that we are then provided with a number of useful functions for effectful programming with the type, by means of the default definitions in the Traversable class.
 
-### **14.4Chapter remarks**
+### **14.4 Chapter remarks**
 
 Further information on the use of monoids in Haskell can be found in \[26\]. There are two standard ways to generalise foldr from lists to other data structures, known in the literature as *catamorphisms* \[27\] and *crush operators* \[28\]. The generalised form of folding that is captured by the Foldable class corresponds to a crush, hence it can be argued that the Foldable class should really be called Crushable, and the fold primitive should be called crush. Traversables were introduced in \[19\], which also discusses the issue of laws.
 
-### **14.5Exercises**
+### **14.5 Exercises**
 
-1.Complete the following instance declaration from Data.Monoid to make a pair type into a monoid provided the two component types are monoids:
+1\. Complete the following instance declaration from Data.Monoid to make a pair type into a monoid provided the two component types are monoids:
 
 ``` haskell
 instance (Monoid a, Monoid b) => Monoid (a,b) where
--- mempty :: (a,b)
-mempty = ...
--- mappend :: (a,b) -> (a,b) -> (a,b)
-(x1,y1) ‘mappend‘ (x2,y2) = ...
+  -- mempty :: (a,b)
+  mempty = ...
+  -- mappend :: (a,b) -> (a,b) -> (a,b)
+  (x1,y1) ‘mappend‘ (x2,y2) = ...
 ```
 
-2.In a similar manner, show how a function type a -\> b can be made into a monoid provided that the result type b is a monoid.
+2\. In a similar manner, show how a function type a -\> b can be made into a monoid provided that the result type b is a monoid.
 
-3.Show how the Maybe type can be made foldable and traversable, by giving explicit definitions for fold, foldMap, foldr, foldl and traverse.
+3\. Show how the Maybe type can be made foldable and traversable, by giving explicit definitions for fold, foldMap, foldr, foldl and traverse.
 
-4.In a similar manner, show how the following type of binary trees with data in their nodes can be made into a foldable and traversable type:
+4\. In a similar manner, show how the following type of binary trees with data in their nodes can be made into a foldable and traversable type:
 
 ``` haskell
 data Tree a = Leaf | Node (Tree a) a (Tree a)
-deriving Show
+     deriving Show
 ```
 
-5.Using foldMap, define a generic version of the higher-order function filter on lists that can be used with any foldable type:
+5. Using foldMap, define a generic version of the higher-order function filter on lists that can be used with any foldable type:
 
 ``` haskell
 filterF :: Foldable t => (a -> Bool) -> t a -> [a]

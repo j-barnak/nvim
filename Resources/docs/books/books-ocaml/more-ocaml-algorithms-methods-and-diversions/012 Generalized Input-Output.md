@@ -9,7 +9,7 @@ A type for inputs
 
 The fundamental operations on an input, once it has been created, will be:
 
- 
+
 
 - finding the current position;
 - setting the current position;
@@ -19,10 +19,10 @@ The fundamental operations on an input, once it has been created, will be:
 We need a way to group them together, and to refer to them easily. A record is ideal:
 
 `type input =`  
-`     {pos_in : unit -> int;`  
-`      seek_in : int -> unit;`  
-`      input_char : unit -> char;`  
-`      in_channel_length : int}`
+`     {pos_in : unit -> int;`  
+`      seek_in : int -> unit;`  
+`      input_char : unit -> char;`  
+`      in_channel_length : int}`
 
 Now we can build an input from an OCaml in_channel easily (we have re-used some of the standard OCaml names):
 
@@ -40,11 +40,11 @@ Example: reading words
 
 We should like to write a program which can extract the words from a given input, such as a string or a file. For example, given the string
 
-`"There were four of them; more than before."`
+`"There were four of them; more than before."`
 
 we wish to produce
 
-`["there"; "were"; "four"; "of"; "them"; "more"; "than"; "before"]`
+`["there"; "were"; "four"; "of"; "them"; "more"; "than"; "before"]`
 
 removing spaces, punctuation and making the words lower case. First, let us define a function to rewind the input by one character (useful when we have read a character and decided we do not wish to consume it), and another, a predicate to determine if a character is considered a non-letter, and thus may be skipped:
 
@@ -60,14 +60,14 @@ Finally, we can write `read_word `which finds the next word, if there is one. Th
 
 > ![](media/images/00124.jpg)
 
- 
+
 
 > Figure 4.1:
 
 ------------------------------------------------------------------------
 
-`# read_words (input_of_string "There were four of them; more than before.");;`  
-`- : string list = ["there"; "were"; "four"; "of"; "them"; "more"; "than"; "before"]`
+`# read_words (input_of_string "There were four of them; more than before.");;`  
+`- : string list = ["there"; "were"; "four"; "of"; "them"; "more"; "than"; "before"]`
 
 A type for outputs
 
@@ -77,7 +77,7 @@ What do we need for a generic output? We must have an `output_char `function to 
 
 > ![](media/images/00127.jpg)
 
- 
+
 
 > Figure 4.2:
 
@@ -89,15 +89,15 @@ Note that whilst we have unified the interface for writing to strings and channe
 
 Note that `o.output_char `has an appropriate type for use with standard functions such as `String.iter`. We can test with an output built from standard output:
 
-`# output_int_list (output_of_channel stdout) [1; 2; 3; 4; 5];;`  
-`[1; 2; 3; 4; 5 ]`  
-`- : unit = ()`
+`# output_int_list (output_of_channel stdout) [1; 2; 3; 4; 5];;`  
+`[1; 2; 3; 4; 5 ]`  
+`- : unit = ()`
 
 Can you find a way to suppress the extraneous space before the `] `character?
 
 Questions
 
- 
+
 
 1.  Write a function to build an input from an array of characters.
 2.  Write a function `input_string `of type input → int → string which returns the given number of characters from the input as a string, or fewer if the input has ended.

@@ -34,7 +34,6 @@ A more fundamental difference between thread-based and task-based programming is
 
 Software threads are a limited resource. If you try to create more than the system can provide, a std::system_error exception is thrown. This is true even if the function you want to run can’t throw. For example, even if doAsyncWork is noexcept, 1 Assuming you have one. Some embedded systems don’t.
 
-**242 \| Item 35**
 
 int doAsyncWork() **noexcept**; // see Item 14 for noexcept this statement could result in an exception:
 
@@ -62,7 +61,6 @@ auto fut = **std::async**(doAsyncWork); // onus of thread mgmt is
 
 // the Standard Library
 
-**Item 35 \| 243**
 
 This call shifts the thread management responsibility to the implementer of the C++
 
@@ -76,9 +74,7 @@ State-of-the-art thread schedulers employ system-wide thread pools to avoid over
 
 Nevertheless, some vendors take advantage of this technology in their Standard Library implementations, and it’s reasonable to expect that progress will continue in this area. If you take a task-based approach to your concurrent programming, you automatically reap the benefits of such technology as it becomes more widespread. If, on the other hand, you program directly with std::threads, you assume the burden of dealing with thread exhaustion, oversubscription, and load balancing yourself, not to mention how your solutions to these problems mesh with the solutions implemented in programs running in other processes on the same machine.
 
-Compared to thread-based programming, a task-based design spares you the travails of manual thread management, and it provides a natural way to examine the results of asynchronously executed functions (i.e., return values or exceptions). Neverthe-244 \| Item 35
-
-less, there are some situations where using threads directly may be appropriate. They include:
+Compared to thread-based programming, a task-based design spares you the travails of manual thread management, and it provides a natural way to examine the results of asynchronously executed functions (i.e., return values or exceptions). Nevertheless, there are some situations where using threads directly may be appropriate. They include:
 
 • **You need access to the API of the underlying threading implementation**. The C++ concurrency API is typically implemented using a lower-level platform-specific API, usually pthreads or Windows’ Threads. Those APIs are currently richer than what C++ offers. (For example, C++ has no notion of thread priorities or affinities.) To provide access to the API of the underlying threading implementation, std::thread objects typically offer the native_handle member function. There is no counterpart to this functionality for std::futures (i.e., for what std::async returns).
 
@@ -100,7 +96,7 @@ These are uncommon cases, however. Most of the time, you should choose task-base
 
 **asynchronicity is essential.**
 
-When you call std::async to execute a function (or other callable object), you’re generally intending to run the function asynchronously. But that’s not necessarily what you’re asking std::async to do. You’re really requesting that the function be run in accord with a std::async *launch policy*. There are two standard policies, each **Item 35 \| 245**
+When you call std::async to execute a function (or other callable object), you’re generally intending to run the function asynchronously. But that’s not necessarily what you’re asking std::async to do. You’re really requesting that the function be run in accord with a std::async *launch policy*. There are two standard policies, each
 
 represented by an enumerator in the std::launch scoped enum. (See Item 10 for information on scoped enums.) Assuming a function f is passed to std::async for execution,
 
@@ -132,7 +128,6 @@ auto fut = std::async(f); // run f using default launch policy
 
 2 This is a simplification. What matters isn’t the future on which get or wait is invoked, it’s the shared state to which the future refers. (Item 38 discusses the relationship between futures and shared states.) Because std::futures support moving and can also be used to construct std::shared_futures, and because std::shared_futures can be copied, the future object referring to the shared state arising from the call to std::async to which f was passed is likely to be different from the one returned by std::async. That’s a mouthful, however, so it’s common to fudge the truth and simply talk about invoking get or wait on the future returned from std::async.
 
-**246 \| Item 36**
 
 • **It’s not possible to predict whether f will run concurrently with t**, because f might be scheduled to run deferred.
 
@@ -178,7 +173,6 @@ while (fut. **wait_for**(100ms) != // loop until f has
 
 }
 
-**Item 36 \| 247**
 
 If f runs concurrently with the thread calling std::async (i.e., if the launch policy chosen for f is std::launch::async), there’s no problem here (assuming f eventually finishes), but if f is deferred, fut.wait_for will always return std:: future_status::deferred. That will never be equal to std::future_status:: ready, so the loop will never terminate.
 
@@ -220,7 +214,6 @@ std::future_status::ready) { // possible (assuming
 
 **}**
 
-**248 \| Item 36**
 
 The upshot of these various considerations is that using std::async with the default launch policy for a task is fine as long as the following conditions are fulfilled:
 
@@ -266,7 +259,6 @@ auto fut = **reallyAsync**(f); // run f asynchronously;
 
 // would throw
 
-**Item 36 \| 249**
 
 In C++14, the ability to deduce reallyAsync’s return type streamlines the function declaration:
 
@@ -308,7 +300,6 @@ Unjoinable std::thread objects include:
 
 • **Default-constructed std::threads**. Such std::threads have no function to execute, hence don’t correspond to an underlying thread of execution.
 
-**250 \| Item 36**
 
 • **std::thread objects that have been moved from**. The result of a move is that the underlying thread of execution a std::thread used to correspond to (if any) now corresponds to a different std::thread.
 
@@ -354,7 +345,6 @@ for (auto i = 0; i \<= maxVal; ++i)
 
 { if (filter(i)) goodVals.push_back(i); }
 
-**Item 37 \| 251**
 
 });
 
@@ -394,9 +384,7 @@ You might wonder why the std::thread destructor behaves this way. It’s because
 
 • **An implicit join**. In this case, a std::thread’s destructor would wait for its underlying asynchronous thread of execution to complete. That sounds reasonable, but it could lead to performance anomalies that would be difficult to track down. For example, it would be counterintuitive that doWork would wait for its filter to be applied to all values if *conditionsAreSatisfied()* had already returned false.
 
-• **An implicit detach**. In this case, a std::thread’s destructor would sever the connection between the std::thread object and its underlying thread of execution. The underlying thread would continue to run. This sounds no less reason-252 \| Item 37
-
-able than the join approach, but the debugging problems it can lead to are worse. In doWork, for example, goodVals is a local variable that is captured by reference. It’s also modified inside the lambda (via the call to push_back). Suppose, then, that while the lambda is running asynchronously, *conditionsAreSa* *tisfied()* returns false. In that case, doWork would return, and its local variables (including goodVals) would be destroyed. Its stack frame would be popped, and execution of its thread would continue at doWork’s call site.
+• **An implicit detach**. In this case, a std::thread’s destructor would sever the connection between the std::thread object and its underlying thread of execution. The underlying thread would continue to run. This sounds no less reasonable than the join approach, but the debugging problems it can lead to are worse. In doWork, for example, goodVals is a local variable that is captured by reference. It’s also modified inside the lambda (via the call to push_back). Suppose, then, that while the lambda is running asynchronously, *conditionsAreSa* *tisfied()* returns false. In that case, doWork would return, and its local variables (including goodVals) would be destroyed. Its stack frame would be popped, and execution of its thread would continue at doWork’s call site.
 
 Statements following that call site would, at some point, make additional function calls, and at least one such call would probably end up using some or all of the memory that had once been occupied by the doWork stack frame. Let’s call such a function f. While f was running, the lambda that doWork initiated would still be running asynchronously. That lambda could call push_back on the stack memory that used to be goodVals but that is now somewhere inside f’s stack frame. Such a call would modify the memory that used to be goodVals, and that means that from f’s perspective, the content of memory in its stack frame could spontaneously change! Imagine the fun you’d have debugging *that*.
 
@@ -410,7 +398,6 @@ Any time you want to perform some action along every path out of a block, the no
 
 ers (Items 18–20 explain that std::unique_ptr’s destructor invokes its deleter on the object it points to, and the destructors in std::shared_ptr and std::weak_ptr decrement reference counts), std::fstream objects (their destructors close the files they correspond to), and many more. And yet there is no standard RAII class for std::thread objects, perhaps because the Standardization Committee, having rejected both join and detach as default options, simply didn’t know what such a class should do.
 
-**Item 37 \| 253**
 
 Fortunately, it’s not difficult to write one yourself. For example, the following class allows callers to specify whether join or detach should be called when a Threa dRAII object (an RAII object for a std::thread) is destroyed:
 
@@ -460,7 +447,7 @@ I hope this code is largely self-explanatory, but the following points may be he
 
 • The constructor accepts only std::thread rvalues, because we want to move the passed-in std::thread into the ThreadRAII object. (Recall that std::thread objects aren’t copyable.)
 
-• The parameter order in the constructor is designed to be intuitive to callers (specifying the std::thread first and the destructor action second makes more sense than vice versa), but the member initialization list is designed to match the order of the data members’ declarations. That order puts the std::thread object last. In this class, the order makes no difference, but in general, it’s possible for the initialization of one data member to depend on another, and because std::thread objects may start running a function immediately after they are **254 \| Item 37**
+• The parameter order in the constructor is designed to be intuitive to callers (specifying the std::thread first and the destructor action second makes more sense than vice versa), but the member initialization list is designed to match the order of the data members’ declarations. That order puts the std::thread object last. In this class, the order makes no difference, but in general, it’s possible for the initialization of one data member to depend on another, and because std::thread objects may start running a function immediately after they are
 
 initialized, it’s a good habit to declare them last in a class. That guarantees that at the time they are constructed, all the data members that precede them have already been initialized and can therefore be safely accessed by the asynchronously running thread that corresponds to the std::thread data member.
 
@@ -494,7 +481,6 @@ If there are simultaneous calls, there is certainly a race, but it isn’t insid
 
 Employing ThreadRAII in our doWork example would look like this:
 
-**Item 37 \| 255**
 
 bool doWork(std::function\<bool(int)\> filter, // as before int maxVal = tenMillion)
 
@@ -538,7 +524,7 @@ return false;
 
 In this case, we’ve chosen to do a join on the asynchronously running thread in the ThreadRAII destructor, because, as we saw earlier, doing a detach could lead to some truly nightmarish debugging. We also saw earlier that doing a join could lead to performance anomalies (that, to be frank, could also be unpleasant to debug), but given a choice between undefined behavior (which detach would get us), program termination (which use of a raw std::thread would yield), or performance anomalies, performance anomalies seems like the best of a bad lot.
 
-Alas, Item 39 demonstrates that using ThreadRAII to perform a join on std::thread destruction can sometimes lead not just to a performance anomaly, but to a hung program. The “proper” solution to these kinds of problems would be to communicate to the asynchronously running lambda that we no longer need its work and that it should return early, but there’s no support in C++11 for *interruptible* **256 \| Item 37**
+Alas, Item 39 demonstrates that using ThreadRAII to perform a join on std::thread destruction can sometimes lead not just to a performance anomaly, but to a hung program. The “proper” solution to these kinds of problems would be to communicate to the asynchronously running lambda that we no longer need its work and that it should return early, but there’s no support in C++11 for *interruptible*
 
 *threads*. They can be implemented by hand, but that’s a topic beyond the scope of this book.3
 
@@ -582,7 +568,6 @@ std::thread t;
 
 3 You’ll find a nice treatment in Anthony Williams’ *C++ Concurrency in Action* (Manning Publications, 2012), section 9.2.
 
-**Item 37 \| 257**
 
 ![](media/index-276_1.jpg)
 
@@ -622,7 +607,6 @@ The result can’t be stored in the caller’s future, either, because (among ot
 
 Given that not all result types can be copied (i.e., move-only types) and that the result 4 Item 39 explains that the kind of communications channel associated with a future can be employed for other purposes. For this Item, however, we’ll consider only its use as a mechanism for a callee to convey its result to a caller.
 
-**258 \| Item 38**
 
 ![](media/index-277_1.jpg)
 
@@ -668,7 +652,6 @@ about reference counting, see Item 19.)
 
 The exception to this normal behavior arises only for a future for which all of the following apply:
 
-**Item 38 \| 259**
 
 • **It refers to a shared state that was created due to a call to std::async**.
 
@@ -704,7 +687,6 @@ class Widget { // Widget objects *might*
 
 public: // block in their dtors
 
-**260 \| Item 38**
 
 …
 
@@ -742,7 +724,6 @@ pt(calcValue);
 
 auto fut = pt.get_future();
 
-**Item 38 \| 261**
 
 std::thread t(std::move(pt));
 
@@ -774,7 +755,7 @@ In other words, when you have a future corresponding to a shared state that aros
 
 Sometimes it’s useful for a task to tell a second, asynchronously running task that a particular event has occurred, because the second task can’t proceed until the event has taken place. Perhaps a data structure has been initialized, a stage of computation has been completed, or a significant sensor value has been detected. When that’s the case, what’s the best way for this kind of inter-thread communication to take place?
 
-An obvious approach is to use a condition variable ( *condvar*). If we call the task that detects the condition the *detecting task* and the task reacting to the condition the **262 \| Item 38**
+An obvious approach is to use a condition variable ( *condvar*). If we call the task that detects the condition the *detecting task* and the task reacting to the condition the
 
 *reacting task*, the strategy is simple: the reacting task waits on a condition variable, and the detecting thread notifies that condvar when the event occurs. Given std::condition_variable cv; // condvar for event
 
@@ -812,7 +793,7 @@ std::unique_lock\<std::mutex\> lk(m); // lock mutex
 
 // (m now unlocked)
 
-The first issue with this approach is what’s sometimes termed a *code smell*: even if the code works, something doesn’t seem quite right. In this case, the odor emanates from the need to use a mutex. Mutexes are used to control access to shared data, but it’s entirely possible that the detecting and reacting tasks have no need for such media-tion. For example, the detecting task might be responsible for initializing a global data structure, then turning it over to the reacting task for use. If the detecting task **Item 39 \| 263**
+The first issue with this approach is what’s sometimes termed a *code smell*: even if the code works, something doesn’t seem quite right. In this case, the odor emanates from the need to use a mutex. Mutexes are used to control access to shared data, but it’s entirely possible that the detecting and reacting tasks have no need for such media-tion. For example, the detecting task might be responsible for initializing a global data structure, then turning it over to the reacting task for use. If the detecting task
 
 never accesses the data structure after initializing it, and if the reacting task never accesses it before the detecting task indicates that it’s ready, the two tasks will stay out of each other’s way through program logic. There will be no need for a mutex. The fact that the condvar approach requires one leaves behind the unsettling aroma of suspect design.
 
@@ -836,7 +817,6 @@ std::atomic\<bool\> flag(false); // shared flag; see
 
 … // detect event
 
-**264 \| Item 39**
 
 **flag = true;** // tell reacting task For its part, the reacting thread simply polls the flag. When it sees that the flag is set, it knows that the event it’s been waiting for has occurred:
 
@@ -874,7 +854,6 @@ std::mutex m;
 
 **}** // unlock m via g's dtor
 
-**Item 39 \| 265**
 
 cv.notify_one(); // tell reacting task
 
@@ -906,7 +885,7 @@ This approach avoids the problems we’ve discussed. It works regardless of whet
 
 An alternative is to avoid condition variables, mutexes, and flags by having the reacting task wait on a future that’s set by the detecting task. This may seem like an odd idea. After all, Item 38 explains that a future represents the receiving end of a communications channel from a callee to a (typically asynchronous) caller, and here there’s no callee-caller relationship between the detecting and reacting tasks. However, Item 38 also notes that a communications channel whose transmitting end is a std::promise and whose receiving end is a future can be used for more than just callee-caller communication. Such a communications channel can be used in any situation where you need to transmit information from one place in your program to another. In this case, we’ll use it to transmit information from the detecting task to the reacting task, and the information we’ll convey will be that the event of interest has taken place.
 
-The design is simple. The detecting task has a std::promise object (i.e., the writing end of the communications channel), and the reacting task has a corresponding **266 \| Item 39**
+The design is simple. The detecting task has a std::promise object (i.e., the writing end of the communications channel), and the reacting task has a corresponding
 
 future. When the detecting task sees that the event it’s looking for has occurred, it *sets* the std::promise (i.e., writes into the communications channel). Meanwhile, the reacting task waits on its future. That wait blocks the reacting task until the std::promise has been set.
 
@@ -936,7 +915,6 @@ and the reacting task’s code is equally simple:
 
 Like the approach using a flag, this design requires no mutex, works regardless of whether the detecting task sets its std::promise before the reacting task waits, and is immune to spurious wakeups. (Only condition variables are susceptible to that problem.) Like the condvar-based approach, the reacting task is truly blocked after making the wait call, so it consumes no system resources while waiting. Perfect, right?
 
-**Item 39 \| 267**
 
 Not exactly. Sure, a future-based approach skirts those shoals, but there are other
 
@@ -974,7 +952,6 @@ react(); // future is set
 
 // call react)
 
-**268 \| Item 39**
 
 … // do additional work t.join(); // make t unjoinable
 
@@ -1020,7 +997,6 @@ There are ways to address this problem, but I’ll leave them in the form of the
 
 [*teia*,](http://scottmeyers.blogspot.com/) [“ThreadRAII + Thread Suspension = Trouble?”](http://scottmeyers.blogspot.com/2013/12/threadraii-thread-suspension-trouble.html)
 
-**Item 39 \| 269**
 
 reacting task, but many. It’s a simple generalization, because the key is to use std::shared_futures instead of a std::future in the react code. Once you know that the std::future’s share member function transfers ownership of its shared state to the std::shared_future object produced by share, the code nearly writes itself. The only subtlety is that each reacting thread needs its own copy of the std::shared_future that refers to the shared state, so the std::shared_future obtained from share is captured by value by the lambdas running on the reacting threads:
 
@@ -1066,7 +1042,6 @@ t.join(); // unjoinable; see Item 2
 
 The fact that a design using futures can achieve this effect is noteworthy, and that’s why you should consider it for one-shot event communication.
 
-**270 \| Item 39**
 
 **Things to Remember**
 
@@ -1096,7 +1071,6 @@ std::cout \<\< ai; // atomically read ai's value
 
 ++ai; // atomically increment ai to 11
 
-**Item 39 \| 271**
 
 --ai; // atomically decrement ai to 10
 
@@ -1122,7 +1096,6 @@ std::cout \<\< vi; // read vi's value
 
 During execution of this code, if other threads are reading the value of vi, they may see anything, e.g, -12, 68, 4090727—anything! Such code would have undefined behavior, because these statements modify vi, so if other threads are reading vi at the same time, there are simultaneous readers and writers of memory that’s neither std::atomic nor protected by a mutex, and that’s the definition of a data race.
 
-**272 \| Item 40**
 
 As a concrete example of how the behavior of std::atomics and volatiles can differ in a multithreaded program, consider a simple counter of each type that’s incremented by multiple threads. We’ll initialize each to 0:
 
@@ -1156,7 +1129,7 @@ Compilers don’t use this leeway to be malicious, of course. Rather, they perfo
 
 The use of RMW operations isn’t the only situation where std::atomics comprise a concurrency success story and volatiles suffer failure. Suppose one task computes an important value needed by a second task. When the first task has computed the
 
-value, it must communicate this to the second task. Item 39 explains that one way for the first task to communicate the availability of the desired value to the second task is **Item 40 \| 273**
+value, it must communicate this to the second task. Item 39 explains that one way for the first task to communicate the availability of the desired value to the second task is
 
 by using a std::atomic\<bool\>. Code in the task computing the value would look something like this:
 
@@ -1192,7 +1165,6 @@ valAvailable = true; // tell other task
 
 not only must compilers retain the order of the assignments to imptValue and valAvailable, they must generate code that ensures that the underlying hardware 6 This is true only for std::atomics using *sequential consistency*, which is both the default and the only consistency model for std::atomic objects that use the syntax shown in this book. C++11 also supports consistency models with more flexible code-reordering rules. Such *weak* (aka *relaxed*) models make it possible to create software that runs faster on some hardware architectures, but the use of such models yields software that is *much* more difficult to get right, to understand, and to maintain. Subtle errors in code using relaxed atomics is not uncommon, even for experts, so you should stick to sequential consistency if at all possible.
 
-**274 \| Item 40**
 
 does, too. As a result, declaring valAvailable as std::atomic ensures that our critical ordering requirement—imptValue must be seen by all threads to change no later than valAvailable does—is maintained.
 
@@ -1230,7 +1202,6 @@ auto y = x; // read x
 
 y = x; // read x again
 
-**Item 40 \| 275**
 
 x = 10; // write x
 
@@ -1262,7 +1233,6 @@ volatile is the way we tell compilers that we’re dealing with special memory. 
 
 Consider the effect that has on our original code sequence:
 
-**276 \| Item 40**
 
 auto y = x; // read x
 
@@ -1300,7 +1270,6 @@ y = x; // error!
 
 That’s because the copy operations for std::atomic are deleted (see Item 11). And with good reason. Consider what would happen if the initialization of y with x com-7 y’s type is auto-deduced, so it uses the rules described in Item 2. Those rules dictate that for the declaration of non-reference non-pointer types (which is the case for y), const and volatile qualifiers are dropped. y’s type is therefore simply int. This means that redundant reads of and writes to y can be eliminated. In the example, compilers must perform both the initialization of and the assignment to y, because x is volatile, so the second read of x might yield a different value from the first one.
 
-**Item 40 \| 277**
 
 piled. Because x is std::atomic, y’s type would be deduced to be std::atomic, too
 
@@ -1324,7 +1293,6 @@ The situation should thus be clear:
 
 • volatile is useful for accessing special memory, but not for concurrent programming.
 
-**278 \| Item 40**
 
 Because std::atomic and volatile serve different purposes, they can even be used together:
 
@@ -1347,5 +1315,3 @@ This is largely a style issue, however, and as such is quite different from the 
 mutexes. It’s a tool for writing concurrent software.
 
 • volatile is for memory where reads and writes should not be optimized away. It’s a tool for working with special memory.
-
-**Item 40 \| 279**

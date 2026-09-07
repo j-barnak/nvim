@@ -4,7 +4,7 @@
 
 In this chapter we introduce the idea of reasoning about Haskell programs. We start by reviewing the notion of equational reasoning, then consider how it can be applied in Haskell, introduce the important technique of induction, show how induction can be used to eliminate uses of the append operator, and conclude by proving the correctness of a simple compiler.
 
-### **16.1Equational reasoning**
+### **16.1 Equational reasoning**
 
 At school we learn basic algebraic properties of numbers, such as the fact that multiplication is commutative, addition is associative, and multiplication distributes over addition on both the left- and right-hand sides:
 
@@ -13,24 +13,24 @@ At school we learn basic algebraic properties of numbers, such as the fact that 
 For example, using these properties we can show that a product of the form (*x* + *a*) (*x* + *b*) can be expanded to a summation *x*² +(*a* + *b*) *x* + *ab*:
 
 ``` haskell
-(x + a) (x + b)
-={ left distributivity }
-(x + a) x +(x + a) b
-={ right distributivity }
-xx + ax + xb + ab
-={ squaring }
-x2 + ax + xb + ab
-={ commutativity }
-x2 + ax + b x + ab
-={ right distributivity }
-x2 +(a + b) x + ab
+  (x + a) (x + b)
+=   { left distributivity }
+  (x + a) x +(x + a) b
+=   { right distributivity }
+  xx + ax + xb + ab
+=   { squaring }
+  x2 + ax + xb + ab
+=   { commutativity }
+  x2 + ax + b x + ab
+=   { right distributivity }
+  x2 +(a + b) x + ab
 ```
 
 Note that in this calculation we follow the common practice of implicitly exploiting associativity properties, in this case the associativity of addition by omitting parentheses when more than one addition is used in sequence.
 
 As well as being interesting in their own right, algebraic properties can also have a computational significance. For example, the expression *x* (*y* + *z*) requires two operations (one multiplication and one addition), whereas the equivalent expression *xy* + *xz* requires three operations (two multiplications and one addition). Hence even though these two expressions are algebraically equal, in terms of efficiency the former is preferable to the latter.
 
-### **16.2Reasoning about Haskell**
+### **16.2 Reasoning about Haskell**
 
 The same style of equational reasoning can also be used in Haskell. For example, in this context the equation x \* y = y \* x means that for any expressions x and y of the same numeric types, evaluation of x \* y and y \* x will always produce the same numeric value. Note that we use the mathematical equality operator = when stating such properties, rather than the equality operator == provided within Haskell itself, because we are aiming to use mathematics as a language to reason about Haskell, rather than using Haskell as a language to reason about itself, which would be somewhat circular.
 
@@ -56,34 +56,34 @@ The first equation, isZero 0 = True, can freely be viewed as a logical property 
 More generally, when a function is defined using multiple equations, the equations cannot be viewed as logical properties in isolation from one another, but need to be interpreted in light of the order in which patterns are matched within the equations. For this reason, it is preferable to define functions in a manner that does not rely on the order in which their equations are written. For example, if we rewrite the above definition using a guard
 
 ``` haskell
-isZero 0= True
+isZero 0     = True
 isZero n | n /= 0 = False
 ```
 
 then it is now made explicit that isZero n can only be replaced by False, and conversely that False can only be replaced by isZero n, when the guard n /= 0 is satisfied. Patterns that do not rely on the order in which they are matched are called *non-overlapping*. In order to simplify the process of reasoning about programs, it is good practice to use non-overlapping patterns whenever possible when defining functions. For example, most of the functions in the standard prelude given in appendix B are defined in this manner.
 
-### **16.3Simple examples**
+### **16.3 Simple examples**
 
 As a simple first example of equational reasoning in Haskell, recall the following definition of the library function that reverses a list:
 
 ``` haskell
 reverse :: [a] -> [a]
-reverse []= []
+reverse []     = []
 reverse (x:xs) = reverse xs ++ [x]
 ```
 
 Using this definition, we can show that reverse has no effect on singleton lists, in the sense that reverse \[x\] = \[x\] for any value x:
 
 ``` haskell
-reverse [x]
-={ list notation }
-reverse (x : [])
-={ applying reverse }
-reverse [] ++ [x]
-={ applying reverse }
-[] ++ [x]
-={ applying ++ }
-[x]
+  reverse [x]
+=   { list notation }
+  reverse (x : [])
+=   { applying reverse }
+  reverse [] ++ [x]
+=   { applying reverse }
+  [] ++ [x]
+=   { applying ++ }
+  [x]
 ```
 
 Hence any expression of the form reverse \[x\] in a program can freely be replaced by \[x\] without change in meaning, but with a change in efficiency by avoiding the need to apply the reverse function.
@@ -93,20 +93,20 @@ Equational reasoning is often combined with some form of case analysis. For exam
 ``` haskell
 not :: Bool -> Bool
 not False = True
-not True= False
+not True  = False
 ```
 
 Because this function is defined by pattern matching, properties of not are normally proved by case analysis on its argument. For example, the fact that not is its own inverse, not (not b) = b for all logical values b, can be shown by case analysis on the two possible values for b. For example, the case when b = False is verified below, and b = True follows similarly:
 
 ``` haskell
-not (not False)
-={ applying the inner not }
-not True
-={ applying not }
-False
+  not (not False)
+=   { applying the inner not }
+  not True
+=   { applying not }
+  False
 ```
 
-### **16.4Induction on numbers**
+### **16.4 Induction on numbers**
 
 Most interesting Haskell programs involve some form of recursion. Reasoning about such programs normally proceeds using the simple but powerful technique of *induction*. Let us begin by recalling the simplest example of a recursive type, namely the type of natural numbers:
 
@@ -138,26 +138,26 @@ As a concrete example, consider the definition of a recursive function that take
 
 ``` haskell
 add :: Nat -> Nat -> Nat
-add Zero m= m
+add Zero m     = m
 add (Succ n) m = Succ (add n m)
 ```
 
 From the first equation, it is immediate that add Zero m = m holds for any natural number m. Now let us show that the dual property, add n Zero = n, which we abbreviate by p, also holds for all natural numbers n. We proceed by induction on n. The base case, showing that p Zero holds, amounts to showing that add Zero Zero = Zero, which is immediate:
 
 ``` haskell
-add Zero Zero
-={ applying add }
-Zero
+  add Zero Zero
+=   { applying add }
+  Zero
 ```
 
 For the inductive case, we must show that if p holds for any natural number n, then p (Succ n) also holds. That is, using the induction hypothesis add n Zero = n as an assumption, we must show that the equation add (Succ n) Zero = Succ n holds, which can be verified as follows:
 
 ``` haskell
-add (Succ n) Zero
-={ applying add }
-Succ (add n Zero)
-={ induction hypothesis }
-Succ n
+  add (Succ n) Zero
+=   { applying add }
+  Succ (add n Zero)
+=   { induction hypothesis }
+  Succ n
 ```
 
 □
@@ -169,25 +169,25 @@ As another example, let us show that addition of natural numbers is associative.
 Base case:
 
 ``` haskell
-add Zero (add y z)
-={ applying the outer add }
-add y z
-={ unapplying add }
-add (add Zero y) z
+  add Zero (add y z)
+=   { applying the outer add }
+  add y z
+=   { unapplying add }
+  add (add Zero y) z
 ```
 
 Inductive case:
 
 ``` haskell
-add (Succ x) (add y z)
-={ applying the outer add }
-Succ (add x (add y z))
-={ induction hypothesis }
-Succ (add (add x y) z)
-={ unapplying the outer add }
-add (Succ (add x y) z)
-={ unapplying the inner add }
-add (add (Succ x) y) z)
+  add (Succ x) (add y z)
+=   { applying the outer add }
+  Succ (add x (add y z))
+=   { induction hypothesis }
+  Succ (add (add x y) z)
+=   { unapplying the outer add }
+  add (Succ (add x y) z)
+=   { unapplying the inner add }
+  add (add (Succ x) y) z)
 ```
 
 □
@@ -211,30 +211,30 @@ It is easy to show that this function does indeed produce a list with n elements
 Base case:
 
 ``` haskell
-length (replicate 0 x)
-={ applying replicate }
-length []
-={ applying length }
-0
+  length (replicate 0 x)
+=   { applying replicate }
+  length []
+=   { applying length }
+  0
 ```
 
 Inductive case:
 
 ``` haskell
-length (replicate (n+1) x)
-={ applying replicate }
-length (x : replicate n x)
-={ applying length }
-1 + length (replicate n x)
-={ induction hypothesis }
-1 + n
-={ commutativity of + }
-n + 1
+  length (replicate (n+1) x)
+=   { applying replicate }
+  length (x : replicate n x)
+=   { applying length }
+  1 + length (replicate n x)
+=   { induction hypothesis }
+  1 + n
+=   { commutativity of + }
+  n + 1
 ```
 
 □
 
-### **16.5Induction on lists**
+### **16.5 Induction on lists**
 
 Induction is not restricted to natural numbers, but can also be used to reason about other recursive types, such as the type of lists. Just as natural numbers are built up recursively from zero by applying the successor function, so lists are built up from the empty list by applying the cons operator.
 
@@ -243,27 +243,27 @@ Suppose we want to prove that some property p holds for all lists. Then the indu
 As a first example, let us show that the function reverse defined earlier in this chapter is its own inverse, reverse (reverse xs) = xs, by induction on xs. The base case is verified simply by applying the definition:
 
 ``` haskell
-reverse (reverse [])
-={ applying the inner reverse }
-reverse []
-={ applying reverse }
-[]
+  reverse (reverse [])
+=   { applying the inner reverse }
+  reverse []
+=   { applying reverse }
+  []
 ```
 
 For the inductive case, using the assumption reverse (reverse xs) = xs, we show that reverse (reverse (x:xs)) = x:xs, as follows:
 
 ``` haskell
-reverse (reverse (x:xs))
-={ applying the inner reverse }
-reverse (reverse xs ++ [x])
-={ distributivity – see below }
-reverse [x] ++ reverse (reverse xs)
-={ singleton lists – see below }
-[x] ++ reverse (reverse xs)
-={ induction hypothesis }
-[x] ++ xs
-={ applying ++ }
-x : xs
+  reverse (reverse (x:xs))
+=   { applying the inner reverse }
+  reverse (reverse xs ++ [x])
+=   { distributivity – see below }
+  reverse [x] ++ reverse (reverse xs)
+=   { singleton lists – see below }
+  [x] ++ reverse (reverse xs)
+=   { induction hypothesis }
+  [x] ++ xs
+=   { applying ++ }
+  x : xs
 ```
 
 □
@@ -279,29 +279,29 @@ Technically, we say that the distribution is *contravariant* . Because the appen
 Base case:
 
 ``` haskell
-reverse ([] ++ ys)
-={ applying ++ }
-reverse ys
-={ identity for ++ }
-reverse ys ++ []
-={ unapplying reverse }
-reverse ys ++ reverse []
+  reverse ([] ++ ys)
+=   { applying ++ }
+  reverse ys
+=   { identity for ++ }
+  reverse ys ++ []
+=   { unapplying reverse }
+  reverse ys ++ reverse []
 ```
 
 Inductive case:
 
 ``` haskell
-reverse ((x:xs) ++ ys)
-={ applying ++ }
-reverse (x : (xs ++ ys))
-={ applying reverse }
-reverse (xs ++ ys) ++ [x]
-={ induction hypothesis }
-(reverse ys ++ reverse xs) ++ [x]
-={ associativity of ++ }
-reverse ys ++ (reverse xs ++ [x])
-={ unapplying the second reverse }
-reverse ys ++ reverse (x:xs)
+  reverse ((x:xs) ++ ys)
+=   { applying ++ }
+  reverse (x : (xs ++ ys))
+=   { applying reverse }
+  reverse (xs ++ ys) ++ [x]
+=   { induction hypothesis }
+  (reverse ys ++ reverse xs) ++ [x]
+=   { associativity of ++ }
+  reverse ys ++ (reverse xs ++ [x])
+=   { unapplying the second reverse }
+  reverse ys ++ reverse (x:xs)
 ```
 
 □
@@ -316,7 +316,7 @@ As another example of the use of induction on lists, we now show how these laws 
 
 ``` haskell
 fmap :: (a -> b) -> [a] -> [b]
-fmap g []= []
+fmap g []     = []
 fmap g (x:xs) = g x : fmap g xs
 ```
 
@@ -325,21 +325,21 @@ By definition, two functions of the same type are equal if they always return th
 Base case:
 
 ``` haskell
-fmap id []
-={ applying fmap }
-[]
+  fmap id []
+=   { applying fmap }
+  []
 ```
 
 Inductive case:
 
 ``` haskell
-fmap id (x : xs)
-={ applying fmap }
-id x : fmap id xs
-={ applying id }
-x : fmap id xs
-={ induction hypothesis }
-x : xs
+  fmap id (x : xs)
+=   { applying fmap }
+  id x : fmap id xs
+=   { applying id }
+  x : fmap id xs
+=   { induction hypothesis }
+  x : xs
 ```
 
 □
@@ -349,42 +349,42 @@ In turn, for the second functor law we must show that fmap (g . h) xs = (fmap g 
 Base case:
 
 ``` haskell
-fmap (g . h) []
-={ applying fmap }
-[]
-={ unapplying fmap }
-fmap g []
-={ unapplying fmap }
-fmap g (fmap h [])
+  fmap (g . h) []
+=   { applying fmap }
+  []
+=   { unapplying fmap }
+  fmap g []
+=   { unapplying fmap }
+  fmap g (fmap h [])
 ```
 
 Inductive case:
 
 ``` haskell
-fmap (g . h) (x : xs)
-={ applying fmap }
-(g . h) x : fmap (g . h) xs
-={ applying . }
-g (h x) : fmap (g . h) xs
-={ induction hypothesis }
-g (h x) : fmap g (fmap h xs)
-={ unapplying fmap }
-fmap g (h x : fmap h xs)
-={ unapplying fmap }
-fmap g (fmap h (x : xs))
+  fmap (g . h) (x : xs)
+=   { applying fmap }
+  (g . h) x : fmap (g . h) xs
+=   { applying . }
+  g (h x) : fmap (g . h) xs
+=   { induction hypothesis }
+  g (h x) : fmap g (fmap h xs)
+=   { unapplying fmap }
+  fmap g (h x : fmap h xs)
+=   { unapplying fmap }
+  fmap g (fmap h (x : xs))
 ```
 
 □
 
 The exercises for this chapter include a number of other examples of verifying the functor laws, together with the applicative and monad laws.
 
-### **16.6Making append vanish**
+### **16.6 Making append vanish**
 
 Many recursive functions are naturally defined using the append operator ++ on lists, but this operator carries a considerable efficiency cost when used recursively. In this section, we show how induction can be used to eliminate such uses of append, and hence make functions more efficient. As a first example, consider again the following simple recursive definition:
 
 ``` haskell
 reverse :: [a] -> [a]
-reverse []= []
+reverse []     = []
 reverse (x:xs) = reverse xs ++ [x]
 ```
 
@@ -405,29 +405,29 @@ Rather than giving the definition for reverse’, and then showing that it satis
 Base case:
 
 ``` haskell
-reverse’ [] ys
-={ specification of reverse’ }
-reverse [] ++ ys
-={ applying reverse }
-[] ++ ys
-={ applying ++ }
-ys
+  reverse’ [] ys
+=   { specification of reverse’ }
+  reverse [] ++ ys
+=   { applying reverse }
+  [] ++ ys
+=   { applying ++ }
+  ys
 ```
 
 Inductive case:
 
 ``` haskell
-reverse’ (x:xs) ys
-={ specification of reverse’ }
-reverse (x:xs) ++ ys
-={ applying reverse }
-(reverse xs ++ [x]) ++ ys
-={ associativity of ++ }
-reverse xs ++ ([x] ++ ys)
-={ induction hypothesis }
-reverse’ xs ([x] ++ ys)
-={ applying ++ }
-reverse’ xs (x : ys)
+  reverse’ (x:xs) ys
+=   { specification of reverse’ }
+  reverse (x:xs) ++ ys
+=   { applying reverse }
+  (reverse xs ++ [x]) ++ ys
+=   { associativity of ++ }
+  reverse xs ++ ([x] ++ ys)
+=   { induction hypothesis }
+  reverse’ xs ([x] ++ ys)
+=   { applying ++ }
+  reverse’ xs (x : ys)
 ```
 
 □
@@ -436,7 +436,7 @@ We conclude from this proof that the definition
 
 ``` haskell
 reverse’ :: [a] -> [a] -> [a]
-reverse’ [] ys= ys
+reverse’ [] ys   = ys
 reverse’ (x:xs) ys = reverse’ xs (x : ys)
 ```
 
@@ -450,17 +450,17 @@ reverse xs = reverse’ xs []
 For example, we have:
 
 ``` haskell
-reverse [1,2,3]
-={ applying reverse }
-reverse’ [1,2,3] []
-={ applying reverse’ }
-reverse’ [2,3] (1:[])
-={ applying reverse’ }
-reverse’ [3] (2:(1:[]))
-={ applying reverse’ }
-reverse’ [] (3:(2:(1:[])))
-={ applying reverse’ }
-3:(2:(1:[]))
+  reverse [1,2,3]
+=   { applying reverse }
+  reverse’ [1,2,3] []
+=   { applying reverse’ }
+  reverse’ [2,3] (1:[])
+=   { applying reverse’ }
+  reverse’ [3] (2:(1:[]))
+=   { applying reverse’ }
+  reverse’ [] (3:(2:(1:[])))
+=   { applying reverse’ }
+  3:(2:(1:[]))
 ```
 
 That is, the list is reversed by using an extra argument to accumulate the final result. The new definition for reverse is perhaps less clear than the original version, but it is much more efficient. In particular, the number of reduction steps required to evaluate reverse xs for a list of length *n* using the new definition is simply *n* + 2, and hence reverse now takes linear time in the length of its argument. For example, reversing a list with ten thousand elements will now take approximately ten thousand steps, in contrast to some fifty million with the original definition – quite an improvement!
@@ -472,7 +472,7 @@ As another example of the elimination of append, which also illustrates the use 
 ``` haskell
 data Tree = Leaf Int | Node Tree Tree
 flatten :: Tree -> [Int]
-flatten (Leaf n)= [n]
+flatten (Leaf n)  = [n]
 flatten (Node l r) = flatten l ++ flatten r
 ```
 
@@ -487,27 +487,27 @@ In order to prove that some property holds for all trees, the induction principl
 Base case:
 
 ``` haskell
-flatten’ (Leaf n) ns
-={ specification of flatten’ }
-flatten (Leaf n) ++ ns
-={ applying flatten }
-[n] ++ ns
-={ applying ++ }
-n : ns
+  flatten’ (Leaf n) ns
+=   { specification of flatten’ }
+  flatten (Leaf n) ++ ns
+=   { applying flatten }
+  [n] ++ ns
+=   { applying ++ }
+  n : ns
 ```
 
 Inductive case:
 
 ``` haskell
-flatten’ (Node l r) ns
-={ specification of flatten’ }
-(flatten l ++ flatten r) ++ ns
-={ associativity of ++ }
-flatten l ++ (flatten r ++ ns)
-={ induction hypothesis for l }
-flatten’ l (flatten r ++ ns)
-={ induction hypothesis for r }
-flatten’ l (flatten’ r ns)
+  flatten’ (Node l r) ns
+=   { specification of flatten’ }
+  (flatten l ++ flatten r) ++ ns
+=   { associativity of ++ }
+  flatten l ++ (flatten r ++ ns)
+=   { induction hypothesis for l }
+  flatten’ l (flatten r ++ ns)
+=   { induction hypothesis for r }
+  flatten’ l (flatten’ r ns)
 ```
 
 □
@@ -516,7 +516,7 @@ We conclude that the definition
 
 ``` haskell
 flatten’ :: Tree -> [Int] -> [Int]
-flatten’ (Leaf n) ns= n : ns
+flatten’ (Leaf n) ns   = n : ns
 flatten’ (Node l r) ns = flatten’ l (flatten’ r ns)
 ```
 
@@ -529,14 +529,14 @@ flatten t = flatten’ t []
 
 Once again, the new definition for flatten is perhaps less clear than the original version, but is much more efficient, by using an extra argument to accumulate the final result, rather than using append.
 
-### **16.7Compiler correctness**
+### **16.7 Compiler correctness**
 
 We conclude this chapter with an extended example. Recall that in chapter 8 we defined a type of simple arithmetic expressions built up from integers using an addition operator, together with a function (here called eval) that evaluates an expression directly to an integer value:
 
 ``` haskell
 data Expr = Val Int | Add Expr Expr
 eval :: Expr -> Int
-eval (Val n)= n
+eval (Val n)   = n
 eval (Add x y) = eval x + eval y
 ```
 
@@ -546,7 +546,7 @@ Such expressions can also be evaluated indirectly, by means of code that execute
 type Stack = [Int]
 type Code = [Op]
 data Op = PUSH Int | ADD
-deriving Show
+          deriving Show
 ```
 
 The meaning of such code is given by defining a function that executes a piece of code using an initial stack to give a final stack:
@@ -557,7 +557,7 @@ That is, the push operation places a new integer on the top of the stack, while 
 
 ``` haskell
 comp :: Expr -> Code
-comp (Val n)= [PUSH n]
+comp (Val n)   = [PUSH n]
 comp (Add x y) = comp x ++ comp y ++ [ADD]
 ```
 
@@ -592,35 +592,35 @@ Using induction for the type Expr, which is the same as induction for the type T
 Base case:
 
 ``` haskell
-exec (comp (Val n)) s
-={ applying comp }
-exec [PUSH n] s
-={ applying exec }
-n : s
-={ unapplying eval }
-eval (Val n) : s
+  exec (comp (Val n)) s
+=   { applying comp }
+  exec [PUSH n] s
+=   { applying exec }
+  n : s
+=   { unapplying eval }
+  eval (Val n) : s
 ```
 
 Inductive case:
 
 ``` haskell
-exec (comp (Add x y)) s
-={ applying comp }
-exec (comp x ++ comp y ++ [ADD]) s
-={ associativity of ++ }
-exec (comp x ++ (comp y ++ [ADD])) s
-={ distributivity – see below }
-exec (comp y ++ [ADD]) (exec (comp x) s)
-={ induction hypothesis for x }
-exec (comp y ++ [ADD]) (eval x : s)
-={ distributivity again }
-exec [ADD] (exec (comp y) (eval x : s))
-={ induction hypothesis for y }
-exec [ADD] (eval y : eval x : s)
-={ applying exec }
-(eval x + eval y) : s
-={ unapplying eval }
-eval (Add x y) : s
+  exec (comp (Add x y)) s
+=   { applying comp }
+  exec (comp x ++ comp y ++ [ADD]) s
+=   { associativity of ++ }
+  exec (comp x ++ (comp y ++ [ADD])) s
+=   { distributivity – see below }
+  exec (comp y ++ [ADD]) (exec (comp x) s)
+=   { induction hypothesis for x }
+  exec (comp y ++ [ADD]) (eval x : s)
+=   { distributivity again }
+  exec [ADD] (exec (comp y) (eval x : s))
+=   { induction hypothesis for y }
+  exec [ADD] (eval y : eval x : s)
+=   { applying exec }
+  (eval x + eval y) : s
+=   { unapplying eval }
+  eval (Add x y) : s
 ```
 
 □
@@ -636,41 +636,41 @@ The proof of this property proceeds by induction on the code c, with the inducti
 Base case:
 
 ``` haskell
-exec ([] ++ d) s
-={ applying ++ }
-exec d s
-={ unapplying exec }
-exec d (exec [] s)
+  exec ([] ++ d) s
+=   { applying ++ }
+  exec d s
+=   { unapplying exec }
+  exec d (exec [] s)
 ```
 
 Inductive case:
 
 ``` haskell
-exec ((PUSH n : c) ++ d) s
-={ applying ++ }
-exec (PUSH n : (c ++ d)) s
-={ applying exec }
-exec (c ++ d) (n : s)
-={ induction hypothesis }
-exec d (exec c (n : s))
-={ unapplying exec }
-exec d (exec (PUSH n : c) s)
+  exec ((PUSH n : c) ++ d) s
+=   { applying ++ }
+  exec (PUSH n : (c ++ d)) s
+=   { applying exec }
+  exec (c ++ d) (n : s)
+=   { induction hypothesis }
+  exec d (exec c (n : s))
+=   { unapplying exec }
+  exec d (exec (PUSH n : c) s)
 ```
 
 Inductive case:
 
 ``` haskell
-exec ((ADD : c) ++ d) s
-={ applying ++ }
-exec (ADD : (c ++ d)) s
-={ assume s of the form m : n : s’ }
-exec (ADD : (c ++ d)) (m : n : s’)
-={ applying exec }
-exec (c ++ d) (n+m : s’)
-={ induction hypothesis }
-exec d (exec c (n+m : s’))
-={ unapplying exec }
-exec d (exec (ADD : c) (m : n : s’))
+  exec ((ADD : c) ++ d) s
+=   { applying ++ }
+  exec (ADD : (c ++ d)) s
+=   { assume s of the form m : n : s’ }
+  exec (ADD : (c ++ d)) (m : n : s’)
+=   { applying exec }
+  exec (c ++ d) (n+m : s’)
+=   { induction hypothesis }
+  exec d (exec c (n+m : s’))
+=   { unapplying exec }
+  exec d (exec (ADD : c) (m : n : s’))
 ```
 
 □
@@ -687,7 +687,7 @@ By induction on e, we can construct the definition
 
 ``` haskell
 comp’ :: Expr -> Code -> Code
-comp’ (Val n) c= PUSH n : c
+comp’ (Val n) c   = PUSH n : c
 comp’ (Add x y) c = comp’ x (comp’ y (ADD : c))
 ```
 
@@ -702,58 +702,58 @@ That is, compiling an expression and then executing the resulting code together 
 Base case:
 
 ``` haskell
-exec (comp’ (Val n) c) s
-={ applying comp’ }
-exec (PUSH n : c) s
-={ applying exec }
-exec c (n:s)
-={ unapplying eval }
-exec c (eval (Val n) : s)
+  exec (comp’ (Val n) c) s
+=   { applying comp’ }
+  exec (PUSH n : c) s
+=   { applying exec }
+  exec c (n:s)
+=   { unapplying eval }
+  exec c (eval (Val n) : s)
 ```
 
 Inductive case:
 
 ``` haskell
-exec (comp’ (Add x y) c) s
-={ applying comp’ }
-exec (comp’ x (comp’ y (ADD : c))) s
-={ induction hypothesis for x }
-exec (comp’ y (ADD : c)) (eval x : s)
-={ induction hypothesis for y }
-exec (ADD : c) (eval y : eval x : s)
-={ applying exec }
-exec c ((eval x + eval y) : s)
-={ unapplying eval }
-exec c (eval (Add x y) : s)
+  exec (comp’ (Add x y) c) s
+=   { applying comp’ }
+  exec (comp’ x (comp’ y (ADD : c))) s
+=   { induction hypothesis for x }
+  exec (comp’ y (ADD : c)) (eval x : s)
+=   { induction hypothesis for y }
+  exec (ADD : c) (eval y : eval x : s)
+=   { applying exec }
+  exec c ((eval x + eval y) : s)
+=   { unapplying eval }
+  exec c (eval (Add x y) : s)
 ```
 
 □
 
 Note that with s = c = \[\], this new compiler correctness result simplifies to exec (comp e) \[\] = \[eval e\], our original statement of correctness. In addition to avoiding the problem of stack underflow in the correctness proof, the accumulator version of the compiler has two further benefits. First of all, it avoids the use of ++, and is hence more efficient. And, secondly, the new proof is less than half the combined length of our previous two proofs. As is often the case in formal reasoning, generalising a result in the appropriate manner can considerably simplify its proof. Mathematics is an excellent tool for guiding the development of efficient programs with simple proofs!
 
-### **16.8Chapter remarks**
+### **16.8 Chapter remarks**
 
 Reasoning about functional programs is a subject for a book in its own right, and we have only touched the surface here. Topics for further reading include reasoning about partial and infinite structures \[33, 34\], automated testing of program properties \[35\], reasoning about computational effects \[36\], and techniques that avoid induction \[10\]. The compiler example is adapted from \[37\], and the phrase *making append vanish* is inspired by \[38\].
 
-### **16.9Exercises**
+### **16.9 Exercises**
 
-1.Show that add n (Succ m) = Succ (add n m), by induction on n.
+1\. Show that add n (Succ m) = Succ (add n m), by induction on n.
 
-2.Using this property, together with add n Zero = n, show that addition is commutative, add n m = add m n, by induction on n.
+2\. Using this property, together with add n Zero = n, show that addition is commutative, add n m = add m n, by induction on n.
 
-3.Using the following definition for the library function that decides if all elements of a list satisfy a predicate
+3\. Using the following definition for the library function that decides if all elements of a list satisfy a predicate
 
 ``` haskell
-all p []= True
+all p []     = True
 all p (x:xs) = p x && all p xs
 ```
 
 complete the proof of the correctness of replicate by showing that it produces a list with identical elements, all (== x) (replicate n x), by induction on ![image](media/Images/Chapter_16_image_19_19.png) Hint: show that the property is always True.
 
-4.Using the definition
+4\. Using the definition
 
 ``` haskell
-[] ++ ys= ys
+[] ++ ys     = ys
 (x:xs) ++ ys = x : (xs ++ ys)
 ```
 
@@ -766,13 +766,13 @@ xs ++ (ys ++ zs) = (xs ++ ys) ++ zs
 
 Hint: the proofs are similar to those for the add function.
 
-5.Using the above definition for ++, together with
+5\. Using the above definition for ++, together with
 
 ![image](media/Images/Chapter_16_image_20_31.png)
 
 show that take n xs ++ drop n xs = xs, by simultaneous induction on the integer n --img-- 0 and the list xs. Hint: there are three cases, one for each pattern of arguments in the definitions of take and drop.
 
-6.Given the type declaration
+6\. Given the type declaration
 
 ``` haskell
 data Tree = Leaf Int | Node Tree Tree
@@ -780,22 +780,22 @@ data Tree = Leaf Int | Node Tree Tree
 
 show that the number of leaves in such a tree is always one greater than the number of nodes, by induction on trees. Hint: start by defining functions that count the number of leaves and nodes in a tree.
 
-7.Verify the functor laws for the Maybe type. Hint: the proofs proceed by case analysis, and do not require the use of induction.
+7\. Verify the functor laws for the Maybe type. Hint: the proofs proceed by case analysis, and do not require the use of induction.
 
-8.Given the type and instance declarations below, verify the functor laws for the Tree type, by induction on trees.
+8\. Given the type and instance declarations below, verify the functor laws for the Tree type, by induction on trees.
 
 ``` haskell
 data Tree a = Leaf a | Node (Tree a) (Tree a)
 instance Functor Tree where
--- fmap :: (a -> b) -> Tree a -> Tree b
-fmap g (Leaf x)= Leaf (g x)
-fmap g (Node l r) = Node (fmap g l) (fmap g r)
+   -- fmap :: (a -> b) -> Tree a -> Tree b
+   fmap g (Leaf x)   = Leaf (g x)
+   fmap g (Node l r) = Node (fmap g l) (fmap g r)
 ```
 
-9.Verify the applicative laws for the Maybe type.
+9\. Verify the applicative laws for the Maybe type.
 
-10.Verify the monad laws for the list type. Hint: the proofs can be completed using simple properties of list comprehensions.
+10. Verify the monad laws for the list type. Hint: the proofs can be completed using simple properties of list comprehensions.
 
-11.Given the equation comp’ e c = comp e ++ c, show how to construct the recursive definition for comp’, by induction on e.
+11\. Given the equation comp’ e c = comp e ++ c, show how to construct the recursive definition for comp’, by induction on e.
 
 Solutions to exercises 1–5 are given in appendix A.

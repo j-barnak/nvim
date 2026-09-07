@@ -1,3 +1,5 @@
+![](media/index-658_1.jpg)
+
 10 PROCESS FUNDAMENTALS
 
 In this chapter, we examine the structure and representation of a process in Linux. If we think of a process as something that performs a task for an ordinary nonprivileged user such as you or me but that is managed
@@ -2275,5 +2277,3 @@ section.)
 The format specifiers can be of your own choosing, but if you look
 
 at the man page for ps, you’ll see that there is a list of specifiers in this form that you can emulate.
-
-![](media/index-715_1.jpg)

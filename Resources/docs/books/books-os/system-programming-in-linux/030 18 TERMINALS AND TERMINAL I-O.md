@@ -1,3 +1,5 @@
+![](media/index-1082_1.jpg)
+
 18 TERMINALS AND TERMINAL I/O
 
 This chapter sets the stage for the development of advanced interactive programs. It deals with terminals and their attributes. The programs in previous chapters haven’t manipulated the terminal except perhaps by
@@ -2521,5 +2523,3 @@ returns the absolute pathname of the device file corresponding to
 fd. Implement a simple version of this function. Hint: First try
 
 searching the */proc* pseudofilesystem for the pathname, and if that fails, get a stat structure for fd, try to find an entry in the */dev* directory with the same inode and device number as in that stat
-
-![](media/index-1135_1.jpg)

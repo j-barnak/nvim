@@ -1,18 +1,18 @@
 ## **Chapter 14 – Putting It All Together—Firmware** 
 
- 
+
 
 **Emulation**
 
- 
+
 
 An expert is a man who has made all the mistakes which can be made in a very narrow field.
 
- 
+
 
 —Niels Bohr
 
- 
+
 
 In the preceding chapters, various stages of the firmware initialization process were described. In addition, various possible usage models have been described that can
 
@@ -38,23 +38,22 @@ ware. It is much more difficult to emulate such components, though later in this
 
 an example of a firmware emulation environment running the UEFI shell within an operating system context.
 
- 
+
 
 DOI 10.1515/9781501505690-016
 
-**228** \| Chapter 14 – Putting It All Together—Firmware Emulation
 
 ![](media/index-247_1.png)
 
- 
+
 
 **Figure 14.1:** An Emulation Environment Contained within an Operating System Environment
 
- 
+
 
 **Virtual Platform**
 
- 
+
 
 This NT32 platform can be described as a hardware-agnostic platform in that it uses operating system APIs for its primary hardware abstractions. Figure 14.2 shows how the firmware emulation environment gets launched. It is part of a normal boot pro-
 
@@ -64,15 +63,14 @@ ing a standard platform, loading an operating system, and then building and exec
 
 application effectively executes the firmware that was built, and emulates the launch of a new system.
 
-Virtual Platform \| **229**
 
 ![](media/index-248_1.png)
 
- 
+
 
 **Figure 14.2:** The Normal Boot Process Launching an Operating System that Will Launch the Emula-tion Environment
 
- 
+
 
 In Figure 14.3, the timeline is actually intended to illustrate the emulated firmware
 
@@ -84,17 +82,16 @@ more involved.
 
 ![](media/index-248_2.png)
 
- 
+
 
 **Figure 14.3:** The Firmware Emulation Environment Itself
 
-**230** \| Chapter 14 – Putting It All Together—Firmware Emulation
 
- 
+
 
 **Emulation Firmware Phases**
 
- 
+
 
 It should be noted that the emulation environment has several distinct phases:
 
@@ -118,13 +115,13 @@ associating firmware calls to Windows APIs, but this could just as easily happen
 
 for any underlying operation system.
 
- 
+
 
 typedef struct {
 
 UINT64 Signature;
 
- 
+
 
 //
 
@@ -142,7 +139,7 @@ WinNtExitThread ExitThread;
 
 WinNtResumeThread ResumeThread; WinNtDuplicateHandle DuplicateHandle;
 
- 
+
 
 //
 
@@ -152,9 +149,8 @@ WinNtResumeThread ResumeThread; WinNtDuplicateHandle DuplicateHandle;
 
 WinNtInitializeCriticalSection InitializeCriticalSection; WinNtEnterCriticalSection EnterCriticalSection; WinNtLeaveCriticalSection LeaveCriticalSection; WinNtDeleteCriticalSection DeleteCriticalSection; WinNtTlsAlloc TlsAlloc;
 
-Virtual Platform \| **231**
 
- 
+
 
 WinNtTlsFree TlsFree;
 
@@ -164,7 +160,7 @@ WinNtTlsGetValue TlsGetValue;
 
 WinNtCreateSemaphore CreateSemaphore; WinNtWaitForSingleObject WaitForSingleObject; WinNtReleaseSemaphore ReleaseSemaphore;
 
- 
+
 
 //
 
@@ -174,7 +170,7 @@ WinNtCreateSemaphore CreateSemaphore; WinNtWaitForSingleObject WaitForSingleObje
 
 WinNtCreateConsoleScreenBuffer CreateConsoleScreenBuffer; WinNtFillConsoleOutputAttribute FillConsoleOutputAttribute; WinNtFillConsoleOutputCharacter FillConsoleOutputCharacter; WinNtGetConsoleCursorInfo GetConsoleCursorInfo; WinNtGetNumberOfConsoleInputEvents GetNumberOfConsoleInputEvents; WinNtPeekConsoleInput PeekConsoleInput; WinNtScrollConsoleScreenBuffer ScrollConsoleScreenBuffer; WinNtReadConsoleInput ReadConsoleInput; WinNtSetConsoleActiveScreenBuffer SetConsoleActiveScreenBuffer; WinNtSetConsoleCursorInfo SetConsoleCursorInfo; WinNtSetConsoleCursorPosition SetConsoleCursorPosition; WinNtSetConsoleScreenBufferSize SetConsoleScreenBufferSize; WinNtSetConsoleTitleW SetConsoleTitleW; WinNtWriteConsoleInput WriteConsoleInput; WinNtWriteConsoleOutput WriteConsoleOutput;
 
- 
+
 
 //
 
@@ -196,9 +192,8 @@ WinNtSetEndOfFile SetEndOfFile; WinNtSetFilePointer SetFilePointer; WinNtWriteFi
 
 WinNtGetFileInformationByHandle GetFileInformationByHandle; WinNtGetDiskFreeSpace GetDiskFreeSpace;
 
-**232** \| Chapter 14 – Putting It All Together—Firmware Emulation
 
- 
+
 
 WinNtGetDiskFreeSpaceEx GetDiskFreeSpaceEx; WinNtMoveFile MoveFile;
 
@@ -206,7 +201,7 @@ WinNtSetFileTime SetFileTime;
 
 WinNtSystemTimeToFileTime SystemTimeToFileTime;
 
- 
+
 
 //
 
@@ -216,7 +211,7 @@ WinNtSystemTimeToFileTime SystemTimeToFileTime;
 
 WinNtFileTimeToLocalFileTime FileTimeToLocalFileTime; WinNtFileTimeToSystemTime FileTimeToSystemTime; WinNtGetSystemTime GetSystemTime; WinNtSetSystemTime SetSystemTime; WinNtGetLocalTime GetLocalTime; WinNtSetLocalTime SetLocalTime; WinNtGetTimeZoneInformation GetTimeZoneInformation; WinNtSetTimeZoneInformation SetTimeZoneInformation; WinNttimeSetEvent timeSetEvent; WinNttimeKillEvent timeKillEvent;
 
- 
+
 
 //
 
@@ -228,7 +223,7 @@ WinNtClearCommError ClearCommError; WinNtEscapeCommFunction EscapeCommFunction; 
 
 WinNtSetCommTimeouts SetCommTimeouts;
 
- 
+
 
 WinNtExitProcess ExitProcess;
 
@@ -246,7 +241,7 @@ WinNtReleaseDC ReleaseDC;
 
 WinNtRegisterClassEx RegisterClassEx; WinNtUnregisterClass UnregisterClass;
 
- 
+
 
 WinNtBeginPaint BeginPaint;
 
@@ -254,9 +249,8 @@ WinNtEndPaint EndPaint;
 
 WinNtPostQuitMessage PostQuitMessage; WinNtDefWindowProc DefWindowProc;
 
-Virtual Platform \| **233**
 
- 
+
 
 WinNtLoadIcon LoadIcon;
 
@@ -272,11 +266,11 @@ WinNtHeapFree HeapFree;
 
 } EFI_WIN_NT_THUNK_PROTOCOL;
 
- 
+
 
 **Figure 14.4:** Thunk Protocol that Associates Some Firmware Names with Operating System APIs
 
- 
+
 
 ■ Construct an UEFI hardware API handler that will be specific to the emulation
 
@@ -288,17 +282,17 @@ variety of information associated with platform specific function data. In this
 
 case, these platform-specific functions are tuned to the emulation environment.
 
- 
+
 
 SerialIo.Revision = SERIAL_IO_INTERFACE_REVISION; SerialIo.Reset = WinNtSerialIoReset; SerialIo.SetAttributes = WinNtSerialIoSetAttributes; SerialIo.SetControl = WinNtSerialIoSetControl; SerialIo.GetControl = WinNtSerialIoGetControl; SerialIo.Write = WinNtSerialIoWrite; SerialIo.Read = WinNtSerialIoRead;
 
 SerialIo.Mode = SerialIoMode;
 
- 
+
 
 **Figure 14.5:** Establishing an UEFI API to Call Platform-Specific Operations
 
- 
+
 
 ■ Platform-specific functions (such as emulation platform) that are handling the
 
@@ -306,13 +300,12 @@ calls to UEFI interfaces and in turn will call the established WinNtThunk APIs
 
 that will end up making operating specific API calls.
 
- 
+
 
 Figure 14.6 features several calls that could occur from within an API handler to ac-complish several tasks.
 
-**234** \| Chapter 14 – Putting It All Together—Firmware Emulation
 
- 
+
 
 //
 
@@ -334,7 +327,7 @@ NULL
 
 );
 
- 
+
 
 //
 
@@ -358,11 +351,11 @@ WinNtThunk-\>GetLocalTime (&SystemTime);
 
 WinNtThunk-\>GetTimeZoneInformation (&TimeZone);
 
- 
+
 
 **Figure 14.6:** Example Calls to the WinNtThunk Protocol
 
- 
+
 
 In summary, Figure 14.7 shows the software logic contained within the operating sys-
 
@@ -372,19 +365,18 @@ tem, firmware emulation component, and their associated interaction logic. It sh
 
 ■ Firmware-to-Operating System thunk code
 
-Hardware Pass-Through \| **235**
 
 ![](media/index-254_1.png)
 
- 
+
 
 **Figure 14.7:** Firmware Emulation Software Logic Flow
 
- 
+
 
 **Hardware Pass-Through**
 
- 
+
 
 As is evident through the previous examples, the underlying firmware can enable calling to several operating system APIs. However, since the firmware emulation en-
 
@@ -404,19 +396,18 @@ able to advertise an interface that the emulation environment can call, the emul
 
 Figure 14.8 shows the logic flow associated with the various components and how they interact.
 
-**236** \| Chapter 14 – Putting It All Together—Firmware Emulation
 
 ![](media/index-255_1.png)
 
- 
+
 
 **Figure 14.8:** Software Flow for Hardware Enhanced Firmware Emulation
 
- 
+
 
 **Summary**
 
- 
+
 
 This chapter illustrated how the majority of the UEFI code can be run in an em-ulated environment so that development can occur on some modules even in the absence of physical hardware that would otherwise have been necessary. This emu-
 

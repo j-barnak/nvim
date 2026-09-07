@@ -1,6 +1,6 @@
 ## Preface
 
- 
+
 
 This book is the second of a four-part series based on my online algorithms courses that have been running regularly since 2012, which in turn are based on an undergraduate course that I’ve taught many times at Stanford University. The first part of the series is not a prerequisite for this one, and this book should be accessible to any reader who has the background described in the “Who Are You?” section below and is familiar with asymptotic notation (which is
 
@@ -18,7 +18,7 @@ Data structures. This book will make you an educated client of several different
 
 ### vii viii Preface
 
- 
+
 
 about which data structure is the right one for your application. The optional advanced sections provide guidance in how to implement these data structures from scratch.
 
@@ -28,7 +28,7 @@ For a more detailed look into the book’s contents, check out the “Upshot” 
 
 Topics covered in the other three parts. Algorithms Illumi-nated, Part 1 covers asymptotic notation (big-O notation and its close cousins), divide-and-conquer algorithms and the master method, randomized QuickSort and its analysis, and linear-time selection algo-rithms. Part 3 focuses on greedy algorithms (scheduling, minimum spanning trees, clustering, Huffman codes) and dynamic programming (knapsack, sequence alignment, shortest paths, optimal search trees). Part 4 is all about N P-completeness, what it means for the algorithm designer, and strategies for coping with computationally intractable problems, including the analysis of heuristics and local search.
 
- 
+
 
 Skills You’ll Learn
 
@@ -36,7 +36,7 @@ Mastering algorithms takes time and effort. Why bother?
 
 Become a better programmer. You’ll learn several blazingly fast subroutines for processing data as well as several useful data structures for organizing data that you can deploy directly in your own programs. Implementing and using these algorithms will stretch and improve your programming skills. You’ll also learn general algorithm design paradigms that are relevant for many different problems across different domains, as well as tools for predicting the performance of Preface ix
 
- 
+
 
 such algorithms. These “algorithmic design patterns” can help you come up with new algorithms for problems that arise in your own work.
 
@@ -56,11 +56,11 @@ There are a number of excellent more traditional and encyclopedic
 
 textbooks on algorithms, any of which usefully complement this book series with additional details, problems, and topics. I encourage you to explore and find your own favorites. There are also several books that, unlike these books, cater to programmers looking for ready-made x Preface
 
- 
+
 
 algorithm implementations in a specific programming language. Many such implementations are freely available on the Web as well.
 
- 
+
 
 Who Are You?
 
@@ -74,7 +74,7 @@ We also use mathematical analysis as needed to understand how and why algorithms
 
 and Albert R. Meyer is an excellent and entertaining refresher on P mathematical notation (like and 8 ), the basics of proofs (induction, contradiction, etc.), discrete probability, and much more.
 
- 
+
 
 Additional Resources
 
@@ -86,7 +86,7 @@ Videos. If you’re more in the mood to watch and listen than to read, check out
 
 Quizzes. How can you know if you’re truly absorbing the concepts in this book? Quizzes with solutions and explanations are scattered Preface xi
 
- 
+
 
 throughout the text; when you encounter one, I encourage you to pause and think about the answer before reading on.
 
@@ -108,7 +108,7 @@ I always appreciate suggestions and corrections from readers.
 
 These are best communicated through the discussion forums men-tioned above.
 
- 
+
 
 Tim Roughgarden
 

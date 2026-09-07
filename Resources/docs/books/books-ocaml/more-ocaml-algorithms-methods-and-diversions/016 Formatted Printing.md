@@ -15,25 +15,25 @@ In this example, the format string is `“%s = (%f, %f)”`. The conversion spec
 
 The `sprintf `function knows how to match up the conversion specification with the arguments following the format specification at compile time, so run-time errors are avoided:
 
-`        OCaml`  
+`        OCaml`  
   
 `# Printf.sprintf "%s = (%f, %f)" "A" ``40` `65.8;;`  
-`Error: This expression has type int but an expression was expected of type`  
-`         float`
+`Error: This expression has type int but an expression was expected of type`  
+`         float`
 
 Indeed, even if we use partial application, the type of the resulting function will be calculated:
 
-`        OCaml`  
+`        OCaml`  
   
-`# let f = Printf.sprintf "%s = (%f, %f)" "A" 2.45;;`  
-`val f : float -> string = <fun>`
+`# let f = Printf.sprintf "%s = (%f, %f)" "A" 2.45;;`  
+`val f : float -> string = <fun>`
 
 You might be able to guess that there is a little magic going on here – we could not write `sprintf `ourselves, for example. We can see the rather complicated type of the `sprintf `function, used for its internal implementation:
 
-`        OCaml`  
+`        OCaml`  
   
-`# Printf.sprintf;;`  
-`- : ('a, unit, string) format -> 'a = <fun>`
+`# Printf.sprintf;;`  
+`- : ('a, unit, string) format -> 'a = <fun>`
 
 For printing numbers, there are some additional pieces of information which can be provided. The format of a conversion specifier is in fact:
 
@@ -45,12 +45,12 @@ Fields enclosed in angle brackets are optional. So far, we have only used the `%
 
 This will result in the following output from `print_nums data`:
 
-`A     | B     | C`  
+`A     | B     | C`  
 `------+-------+-------`  
-`     1|      6|      5`  
-`     2|     18|      4`  
-`     3|     31|     12`  
-`     4|     16|      2`
+`     1|      6|      5`  
+`     2|     18|      4`  
+`     3|     31|     12`  
+`     4|     16|      2`
 
 Here are some possible values of the flags field:
 
@@ -62,12 +62,12 @@ The optional precision field specifies the number of digits after the decimal po
 
 This will result in the following output from `print_nums data`:
 
-`A     | B     | C`  
+`A     | B     | C`  
 `------+-------+-------`  
-`000001| 35.54 | 39.42`  
-`000002| 12.31 | 23.24`  
-`000003| 13.53 | 24.21`  
-`000004| 57.75 | 126.75`
+`000001| 35.54 | 39.42`  
+`000002| 12.31 | 23.24`  
+`000003| 13.53 | 24.21`  
+`000004| 57.75 | 126.75`
 
 Printing to other places
 
@@ -83,7 +83,7 @@ It might be argued, though, that it is better to keep `string_of_point `as the b
 
 Questions
 
- 
+
 
 1.  Given a list of pairs of integers such as `[(1, 2); (5, 6); (6, 6); (7, 5)]`, write a function to return a string representation such as `"(1, 2) --> (5, 6) --> (6, 6) --> (7, 5) --> (1,` `2)"`.
 
@@ -91,19 +91,19 @@ Questions
 
 3.  Why does the following code cause a type error?
 
-    ` # let mkstring () = "string";;  `  
-    `val mkstring : unit -> string = <fun>  `  
-    `# Printf.printf (mkstring ());  `  
-    `  ;;  `  
-    `Error: This expression has type string but an expression was expected of type  `  
-    `         ('a, out_channel, unit) format =  `  
-    `           ('a, out_channel, unit, unit, unit, unit) format6 `
+    ` # let mkstring () = "string";;  `  
+    `val mkstring : unit -> string = <fun>  `  
+    `# Printf.printf (mkstring ());  `  
+    `  ;;  `  
+    `Error: This expression has type string but an expression was expected of type  `  
+    `         ('a, out_channel, unit) format =  `  
+    `           ('a, out_channel, unit, unit, unit, unit) format6 `
 
     What can be done to fix it?
 
 4.  Use the `* `syntax described in the Printf module documentation to write a function which can print a table of integers to a given width. For example, given width 10, we might see:
 
-    ` (         1)  `  
-    `(        23)  `  
-    `(     33241)  `  
-    `(         0) `
+    ` (         1)  `  
+    `(        23)  `  
+    `(     33241)  `  
+    `(         0) `

@@ -1,12 +1,12 @@
 ## **Chapter 5 – UEFI Runtime** 
 
- 
+
 
 Adding manpower to a late software project makes it later.
 
 —Brook’s Law
 
- 
+
 
 This chapter describes the fundamental services that are made available in an UEFI-
 
@@ -16,7 +16,7 @@ age device access or extend platform capabilities. In this chapter, the runtime 
 
 both during UEFI operation and when the OS has been launched and running.
 
- 
+
 
 During boot, system resources are owned by the firmware and are controlled through a variety of system services that expose callable APIs. In UEFI there are two primary
 
@@ -32,23 +32,23 @@ function.
 
 to the launching of the boot target and after the boot target is executing.
 
- 
+
 
 Figure 5.1 illustrates the phases of boot operation that a platform evolves through.
 
- 
+
 
 **Exposed**
 
- 
+
 
 **Vectpr** **Reset** **Runtime** **Interface** **OS-Absent** **App** **CPU** **Init** **Transient OS** **Chipset** **Device,** **Environment** **Init** **Bus, or** **Service** **Board** **Transient OS** **Init** **Driver** **Boot Loader**
 
- 
+
 
 **Boot Manager** **OS-Present** **App**
 
- 
+
 
 **Boot Loader** **Final OS** **?** **Final OS**
 
@@ -74,13 +74,13 @@ Figure 5.1 illustrates the phases of boot operation that a platform evolves thro
 
 ![](media/index-84_5.png)
 
- 
+
 
 **Figure 5.1:** Phases of Boot Operation
 
 ![](media/index-84_6.png)
 
- 
+
 
 DOI 10.1515/9781501505690-007
 
@@ -102,9 +102,8 @@ DOI 10.1515/9781501505690-007
 
 ![](media/index-84_15.png)
 
-**66** \| Chapter 5 – UEFI Runtime
 
- 
+
 
 In Figure 5.1, it is clearly evident that the two previously mentioned forms of services (Boot Services and Runtime Services) are available during the early launch of the
 
@@ -126,11 +125,11 @@ whether or not such code is designed to make continued use of UEFI boot services
 
 the boot services environment.
 
- 
+
 
 **Isn’t There Only One Kind of Memory?**
 
- 
+
 
 When UEFI memory is allocated, it is “typed” according to certain classifications which designate the general purpose of a particular memory type. For instance, one
 
@@ -146,27 +145,26 @@ liferation of memory leaks if we simply assumed a single type of memory usage. W
 
 expected usage associated with each.
 
-Isn’t There Only One Kind of Memory? \| **67**
 
- 
+
 
 **Table 5.1:** UEFI Memory Types and Usage Prior to ExitBootServices()
 
- 
+
 
 **Mnemonic Description**
 
- 
+
 
 EfiReservedMemoryType Not used.
 
- 
+
 
 EfiLoaderCode The code portions of a loaded application. (Note that UEFI
 
 OS loaders are UEFI applications.)
 
- 
+
 
 EfiLoaderData The data portions of a loaded application and the default
 
@@ -174,11 +172,11 @@ data allocation type used by an application to allocate pool
 
 memory.
 
- 
+
 
 EfiBootServicesCode The code portions of a loaded Boot Services Driver.
 
- 
+
 
 EfiBootServicesData The data portions of a loaded Boot Serves Driver, and the
 
@@ -186,11 +184,11 @@ default data allocation type used by a Boot Services Driver
 
 to allocate pool memory.
 
- 
+
 
 EfiRuntimeServicesCode The code portions of a loaded Runtime Services Driver.
 
- 
+
 
 EfiRuntimeServicesData The data portions of a loaded Runtime Services Driver and
 
@@ -198,23 +196,23 @@ the default data allocation type used by a Runtime Services
 
 Driver to allocate pool memory.
 
- 
+
 
 EfiConventionalMemory Free (unallocated) memory.
 
- 
+
 
 EfiUnusableMemory Memory in which errors have been detected.
 
- 
+
 
 EfiACPIReclaimMemory Memory that holds the ACPI tables.
 
- 
+
 
 EfiACPIMemoryNVS Address space reserved for use by the firmware.
 
- 
+
 
 EfiMemoryMappedIO Used by system firmware to request that a memory-mapped
 
@@ -222,19 +220,19 @@ IO region be mapped by the OS to a virtual address so it can
 
 be accessed by UEFI runtime services.
 
- 
+
 
 EfiMemoryMappedIOPortSpace System memory-mapped IO region that is used to translate
 
 memory cycles to IO cycles by the processor.
 
- 
+
 
 EfiPalCode Address space reserved by the firmware for code that is part
 
 of the processor.
 
- 
+
 
 Table 5.1 lists memory types and their corresponding usage prior to launching a boot
 
@@ -244,61 +242,60 @@ However, to better illustrate how these memory types are used in the runtime pha
 
 are used after the OS loader has called ExitBootServices() to indicate the tran-sition from the pre-boot, to the runtime phase of operations.
 
-**68** \| Chapter 5 – UEFI Runtime
 
- 
+
 
 **Table 5.2:**UEFI Memory Types and Usage after ExitBootServices()
 
- 
+
 
 **Mnemonic Description**
 
- 
+
 
 EfiReservedMemoryType Not used.
 
- 
+
 
 EfiLoaderCode The Loader and/or OS may use this memory as they see fit.
 
 Note: the OS loader that called Exit-BootServices() is utilizing one or more Efi-LoaderCode ranges.
 
- 
+
 
 EfiLoaderData The Loader and/or OS may use this memory as they see fit.
 
 Note: the OS loader that called Exit-BootServices() is utilizing one or more Efi-LoaderData ranges.
 
- 
+
 
 EfiBootServicesCode Memory available for general use.
 
- 
+
 
 EfiBootServicesData Memory available for general use.
 
- 
+
 
 EfiRuntimeServicesCode The memory in this range is to be preserved by the loader
 
 and OS in the working and ACPI S1–S3 states.
 
- 
+
 
 EfiRuntimeServicesData The memory in this range is to be preserved by the loader
 
 and OS in the working and ACPI S1–S3 states.
 
- 
+
 
 EfiConventionalMemory Memory available for general use.
 
- 
+
 
 EfiUnusableMemory Memory that contains errors and is not to be used.
 
- 
+
 
 EfiACPIReclaimMemory This memory is to be preserved by the loader and OS until
 
@@ -306,19 +303,19 @@ ACPI is enabled. Once ACPI is enabled, the memory in this
 
 range is available for general use.
 
- 
+
 
 EfiACPIMemoryNVS This memory is to be preserved by the loader and OS in the
 
 working and ACPI S1–S3 states.
 
- 
+
 
 EfiMemoryMappedIO This memory is not used by the OS. All system memory-
 
 mapped IO information should come from ACPI tables.
 
- 
+
 
 EfiMemoryMappedIOPortSpace This memory is not used by the OS. All system memory-
 
@@ -326,7 +323,7 @@ mapped IO port space information should come from ACPI
 
 tables.
 
- 
+
 
 EfiPalCode This memory is to be preserved by the loader and OS in the
 
@@ -336,19 +333,18 @@ have other attributes that are defined by the processor im-
 
 plementation.
 
- 
+
 
 In Table 5.2, one can see how the runtime memory types are preserved, and the
 
 BootServices type of memory is available for the OS to reclaim as its own.
 
-How Are Runtime Services Exposed? \| **69**
 
- 
+
 
 **How Are Runtime Services Exposed?**
 
- 
+
 
 In UEFI, firmware services are exposed through a set of UEFI protocol definitions, a series of function pointers in some special purpose service tables, and finally in the
 
@@ -372,7 +368,7 @@ That is why a GUID is used to identify the configuration table type. This table 
 
 contain at most one instance of each table type.
 
- 
+
 
 The runtime services that are exposed in the UEFI Runtime Services Table at mini-mum define the core required runtime API capabilities of an UEFI-compliant plat-
 
@@ -390,17 +386,16 @@ ble and an example function prototype.
 
 ![](media/index-88_1.png)
 
- 
+
 
 **Figure 5.2:** Interactions between the UEFI Configuration Table and a Function Prototype
 
-**70** \| Chapter 5 – UEFI Runtime
 
- 
+
 
 **Time Services**
 
- 
+
 
 This section describes the core UEFI definitions for time-related functions that are specifically needed by operating systems at runtime to access underlying hardware
 
@@ -408,37 +403,37 @@ that manages time information and services. The purpose of these interfaces is t
 
 vide runtime consumers of these services an abstraction for hardware time devices, thereby relieving the need to access legacy hardware devices directly. The functions listed in Table 5.3 reside in the UEFI Runtime Services table.
 
- 
+
 
 **Table 5.3:** Time-based Functions in the UEFI Runtime Services Table
 
- 
+
 
 **Name Type** **Description**
 
- 
+
 
 GetTime Runtime Returns the current time and date, and the time-keeping capa-
 
 bilities of the platform.
 
- 
+
 
 SetTime Runtime Sets the current local time and date information.
 
- 
+
 
 GetWakeupTime Runtime Returns the current wakeup alarm clock setting.
 
- 
+
 
 SetWakeupTime Runtime Sets the system wakeup alarm clock time.
 
- 
+
 
 **Why Abstract Time?**
 
- 
+
 
 For a variety of reasons one might choose to abstract the access to the platform RealTime Clock (RTC). First, very poor standard mechanisms (if any) exist to access
 
@@ -452,17 +447,16 @@ stractions so that the caller would not have to worry about the vagaries of vary
 
 documented and completely nonstandard set of legacy interrupts to abstract this same data.
 
- 
+
 
 **Get Time**
 
- 
+
 
 Even though this function is called “GetTime”, it is intended to return the current time as well as the date information along with the capabilities of the current underlying
 
-Time Services \| **71**
 
- 
+
 
 time-based hardware. This service is not intended to provide highly accurate timings beyond certain described levels. During the Boot Services phase of platform initiali-
 
@@ -480,7 +474,7 @@ service function actually talking to the hardware device and this data then bein
 
 platform operations, the highly accurate timers that are needed for small granularity timing events would be provided by alternate (likely OS-based) solutions.
 
- 
+
 
 //\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*
 
@@ -514,47 +508,46 @@ UINT8 ***Daylight*****;**
 
 UINT8 ***Pad2*****;** } EFI_TIME;
 
- 
+
 
 Figure 5.3 Example Time Definition
 
- 
+
 
 **Set Time**
 
- 
+
 
 This function provides the ability to set the current time and date information on the
 
 platform.
 
-**72** \| Chapter 5 – UEFI Runtime
 
- 
+
 
 **Get Wakeup Time**
 
- 
+
 
 This function provides the abstraction for obtaining the alarm clock settings for the
 
 platform. This is often used to determine if a platform has been set for being woken up, and if so, at what time it should be woken up.
 
- 
+
 
 **Set Wakeup Time**
 
- 
+
 
 Setting a system wakeup alarm causes the system to wake up or power on at the set time. When the alarm fires, the alarm signal is latched until acknowledged by calling SetWakeupTime() to disable the alarm. If the alarm fires before the system is put
 
 into a sleeping or off state, since the alarm signal is latched the system will immedi-ately wake up.
 
- 
+
 
 **Virtual Memory Services**
 
- 
+
 
 This section contains function definitions for the virtual memory support that may be
 
@@ -562,27 +555,27 @@ optionally used by an operating system at runtime. If an operating system choose
 
 the UEFI runtime services from flat physical addressing to virtual addressing. Table 5.4 lists the virtual memory services functions that UEFI provides.
 
- 
+
 
 **Table 5.4:** Virtual Memory Services
 
- 
+
 
 **Name Type** **Description**
 
- 
+
 
 SetVirtualAddressMap Runtime Used by an OS loader to convert from physical address-
 
 ing to virtual addressing.
 
- 
+
 
 ConvertPointer Runtime Used by UEFI components to convert internal pointers
 
 when switching to virtual addressing.
 
- 
+
 
 By using these functions, the platform provides a mechanism by which components that will exist during the runtime phase of operations can adjust their own data ref-
 
@@ -594,9 +587,8 @@ This conversion applies to all functions in the runtime services table as well a
 
 the pointers in the UEFI System Table. However, this is not necessarily the case for the UEFI Configuration Table. In the UEFI Configuration Table, one is dealing with
 
-Virtual Memory Services \| **73**
 
- 
+
 
 GUID/pointer pairs, and since the pointers are all physical to start with in the firm-ware, one might think that the pointers are converted during the transition to the
 
@@ -616,11 +608,11 @@ pointers for this function would be converted, while other items that might be p
 
 to have any data be converted.
 
- 
+
 
 **Set Virtual Address Map**
 
- 
+
 
 By calling this service, the agent that is the owner of the system’s memory map (the
 
@@ -630,11 +622,11 @@ ing mode of the underlying UEFI firmware from physical to virtual. The inputs of
 
 When this service is called, all runtime-enabled agents will in turn be called through a notification event triggered by the SetVirtualAddressMap() function.
 
- 
+
 
 **ConvertPointer**
 
- 
+
 
 The ConvertPointer function is used by an UEFI component during the Set-VirtualAddressMap() operation. When the platform has passed control to an
 
@@ -644,13 +636,12 @@ most runtime drivers that responds to the virtual address change event that is t
 
 allocated should be updated using this mechanism.
 
-**74** \| Chapter 5 – UEFI Runtime
 
- 
+
 
 **Variable Services**
 
- 
+
 
 Variables are defined as key/value pairs that consist of identifying information, at-tributes, and some quantity of data. Variables are intended for use as a means to store
 
@@ -666,31 +657,31 @@ least until they are explicitly deleted or overwritten. Provision of this type o
 
 ingly in cases where other means of communicating information cannot be used. Ta-ble 5.5 lists the variable services functions that UEFI provides.
 
- 
+
 
 **Table 5.5:** Variable Services
 
- 
+
 
 **Name Type** **Description**
 
- 
+
 
 GetVariable Runtime Returns the value of a variable.
 
- 
+
 
 GetNextVariableName Runtime Enumerates the current variable names.
 
- 
+
 
 SetVariable Runtime Sets the value of a variable.
 
- 
+
 
 **GetVariable**
 
- 
+
 
 This function returns the value of a given UEFI variable. Since a fully qualified UEFI variable name is composed of both a human-readable text value paired with a GUID,
 
@@ -708,9 +699,8 @@ tent across platform resets. It should also be noted that the explicit absence o
 
 this bit being activated indicates that the variable is volatile, and is therefore a
 
-Variable Services \| **75**
 
- 
+
 
 temporary variable that will be absent once the system resets or the variable is
 
@@ -730,11 +720,11 @@ BootService attribute activated. With this, the variable is accessible during al
 
 phases of the platform evolution.
 
- 
+
 
 **GetNextVariableName**
 
- 
+
 
 Since the UEFI variable repository is very similar in concept to a file system, the ability
 
@@ -758,83 +748,82 @@ The usage of this service is typically initiated with a call that starts with a 
 
 entire list of variables must be retrieved, and the caller may act as a filter if you choose to have it do so.
 
- 
+
 
 **SetVariable**
 
- 
+
 
 UEFI variables are often used to provide a means by which to save platform-based context information. For instance, when the platform initializes the I/O infrastructure
 
 and has probed for all known console output devices, it will likely construct a
 
-**76** \| Chapter 5 – UEFI Runtime
 
- 
+
 
 ConOutDev global variable. These global variables have a unique purpose in the plat-form since they have a specific architectural role to play with a specific purpose. Table
 
 5.6 shows some of the defined global variables.
 
- 
+
 
 **Table 5.6:**Global Variables
 
- 
+
 
 **Variable Name** **Attribute Description**
 
- 
+
 
 LangCodes BS, RT The language codes that the firmware supports. This
 
 value is deprecated.
 
- 
+
 
 Lang NV, BS, RT The language code that the system is configured for.
 
 This value is deprecated.
 
- 
+
 
 Timeout NV, BS, RT The firmware boot manager’s timeout, in seconds, be-
 
 fore initiating the default boot selection.
 
- 
+
 
 PlatformLangCodes BS, RT The language codes that the firmware supports.
 
- 
+
 
 PlatformLang NV, BS, RT The language code that the system is configured for.
 
- 
+
 
 ConIn NV, BS, RT The device path of the default input console.
 
- 
+
 
 ConOut NV, BS, RT The device path of the default output console.
 
- 
+
 
 ErrOut NV, BS, RT The device path of the default error output device.
 
- 
+
 
 ConInDev BS, RT The device path of all possible console input devices.
 
- 
+
 
 ConOutDev BS, RT The device path of all possible console output devices.
 
- 
+
 
 ErrOutDev BS, RT The device path of all possible error output devices.
 
- 
+
 
 The examples in Table 5.6 show some of the common global variables, their descrip-tions, and their attributes. Some of the noted differences are the presence or absence
 
@@ -852,9 +841,8 @@ should be noted that a variable has no concept of a zero-byte data payload. All 
 
 the means by which you delete a target variable is by calling the SetVariable() service with a zero byte data payload.
 
-Miscellaneous Services \| **77**
 
- 
+
 
 There are certain rules that should definitely be noted when it comes to the use of the attributes:
 
@@ -900,7 +888,7 @@ memory to spill content to store a volatile variable, this capability is no long
 
 available during the runtime phase of operations.
 
- 
+
 
 By providing a mechanism for shared data content such as an UEFI variable, the use of variables can be seen as a fairly flexible and highly available mechanism for firm-
 
@@ -914,41 +902,40 @@ disk), yet can act as a temporary repository of data such as registry content th
 
 lot of flexibility in implementation.
 
- 
+
 
 **Miscellaneous Services**
 
- 
+
 
 This section contains the remaining function definitions for runtime services that
 
 were not talked about in previous sections but are required to complete a compliant
 
-**78** \| Chapter 5 – UEFI Runtime
 
- 
+
 
 implementation of an UEFI environment. The services that are in this section are as listed in Table 5.7.
 
- 
+
 
 **Table 5.7:** Miscellaneous Services
 
- 
+
 
 **Name Type** **Description**
 
- 
+
 
 GetNextHighMonotonicCount Runtime Returns the next high 32 bits of the platform’s
 
 monotonic counter.
 
- 
+
 
 ResetSystem Runtime Resets the entire platform.
 
- 
+
 
 UpdateCapsule Runtime Pass capsules to the firmware. The firmware
 
@@ -958,17 +945,17 @@ turn a value to be passed into Reset-System() that will cause the capsule to be 
 
 process.
 
- 
+
 
 QueryCapsuleCapabilities Runtime Returns if the capsule can be supported via
 
 UpdateCapsule()
 
- 
+
 
 **Reset System**
 
- 
+
 
 This service provides a caller the ability to reset the entire platform including all pro-cessors and devices, and reboots the system. This service provides the ability to stip-
 
@@ -1004,13 +991,12 @@ states. If the system does not support this reset type, then when the system is 
 
 booted, it should exhibit the same attributes as having booted from a Cold Reset.
 
-Miscellaneous Services \| **79**
 
- 
+
 
 **Get Next High Monotonic Count**
 
- 
+
 
 The platform provides a service to get the platform monotonic counter. The platform’s
 
@@ -1018,7 +1004,7 @@ monotonic counter is comprised of two 32-bit quantities: the high 32 bits and th
 
 The high 32-bit value is nonvolatile and will be increased by 1 whenever the system resets or whenever the low 32-bit count overflows.
 
- 
+
 
 Since the GetNextMonotonicCount() service is available only at boot services time, and if the operating system wishes to extend the platform monotonic counter to runtime, it may do so by utilizing the GetNextHighMonotonicCount() runtime service.
 
@@ -1032,15 +1018,15 @@ Count(). This will increase the high 32 bits of the platform’s nonvolatile por
 
 of the monotonic count by 1.
 
- 
+
 
 This function may only be called at runtime.
 
- 
+
 
 **UpdateCapsule**
 
- 
+
 
 This runtime function allows a caller to pass information to the firmware. UpdateCap-
 
@@ -1064,9 +1050,8 @@ physical address ranges. The firmware is passed both physical and virtual addres
 
 diately or defer processing of the capsule until after a system reset.
 
-**80** \| Chapter 5 – UEFI Runtime
 
- 
+
 
 Depending on the intended consumption, the firmware may process the capsule immediately. If the payload should persist across a system reset, the reset value re-
 
@@ -1074,21 +1059,21 @@ turned from QueryCapsuleCapabilities must be passed into ResetSystem() and will
 
 cause the capsule to be processed by the firmware as part of the reset process.
 
- 
+
 
 **QueryCapsuleCapabilities**
 
- 
+
 
 This runtime function allows a caller to check whether or not a particular capsule can
 
 be supported by the platform prior to sending it to the UpdateCapsule routine. Many of these checks are based on the type of capsule being passed and their associated flag values contained within the capsule header.
 
- 
+
 
 **Summary**
 
- 
+
 
 This chapter has introduced some of the basic UEFI runtime capabilities. These are unique in that they are the few aspects of the firmware that will reside in the system
 

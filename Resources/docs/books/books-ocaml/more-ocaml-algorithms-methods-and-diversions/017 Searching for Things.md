@@ -3,7 +3,7 @@ Searching for Things
 
 How do we look for a sequence in another, longer sequence? Suppose we want to write a function `search_list` which, given the list `p `(the pattern) to search for in the list `l `determines if it exists (i.e. if it is a sub-list). For example, the list `[1; 2] `is found in `[2; 1; 2; 2] `but not in `[2; 1; 1]`. A list `p `is defined to be a sub-list of a list `l `if there exist lists `x `and `y `such that `l = x @ p @ y`. One, two, three, or all four of `x`, `p`, `y`, `l `can be the empty list, of course. So, for example, `[] `is a sub-list of `[1; 2; 3] `and of `[]`. A list `p `is a sub-list of `l` if:
 
- 
+
 
 - The length of `p `is less than or equal to the length of `l `and either
 - The sub-list `p `is found at the beginning of `l`, or
@@ -41,7 +41,7 @@ More flexible searches
 
 We can make our searching function more interesting by allowing the use of some special characters. We shall introduce only these simple constructs:
 
- 
+
 
 - A `? `character matches zero or one instances of the following character. For example, the pattern `?abc `matches `abc`, `bc`, and `dbc`;
 - A `* `character matches zero or more instances of the following character. So, the pattern `*abc` matches `bc`, `abc`, and `aaabc`;
@@ -61,7 +61,7 @@ Note the behaviour of the `? `case carefully, with regard to its specification �
 
 > ![](media/images/00242.jpg)
 
- 
+
 
 > Figure 9.1:
 
@@ -73,7 +73,7 @@ The `+ `character can be added with `swallow_all `too, but we must check that th
 
 > ![](media/images/00247.jpg)
 
- 
+
 
 > Figure 9.2:
 
@@ -81,7 +81,7 @@ The `+ `character can be added with `swallow_all `too, but we must check that th
 
 Questions
 
- 
+
 
 1.  Write a function to return the number of matches of one string in another a) when all matches are considered and b) when only non-overlapping matches are considered.
 2.  Write functions which return the position and length of the longest prefix of a string in another. That is to say, the longest initial part of the pattern which matches anywhere in the string.

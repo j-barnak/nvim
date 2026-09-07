@@ -1,13 +1,13 @@
 
- 
+
 
 **2**
 
- 
+
 
 **P H Y S I C A L M E M O R Y**
 
- 
+
 
 Physical memory describes all of the memory on a sys-
 
@@ -50,7 +50,7 @@ to compromise and subdivide memory into aggregate blocks, which we call
 pages.
 
 
- 
+
 
 The base page size of an architecture is the hardware-configured mini-
 
@@ -68,13 +68,13 @@ Systems with memory arranged in this configuration are said to have a
 
 Non-Uniform Memory Access (NUMA) memory architecture.
 
- 
+
 
 **N O T E** In addition, systems may even have blocks of memory that don’t have a CPU asso-
 
 ciated with them and are slow for any core to access, or are attached to a CPU with locality to other memory also attached to the same CPU, but possess other characteris-tics which reduces the speed of access to them.
 
- 
+
 
 Even single-CPU systems on modern hardware are typically treated as
 
@@ -108,11 +108,11 @@ For convenience we define the useful notion of a Page Frame Number
 
 PFN is the index of a page in that array. [PFN_PHYS()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pfn.h?h=v6.0#n21) and [PHYS_PFN()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pfn.h?h=v6.0#n22) are used to convert between the two.
 
- 
 
 
 
- 
+
+
 
 Memory is further divided into page blocks (the order of which is defined
 
@@ -126,15 +126,15 @@ determines whether pages can be migrated i.e. moved around, described by
 
 Let’s examine an example physical memory layout in Figure 2-1.
 
- 
+
 
 Node 2
 
- 
+
 
 Zone C
 
- 
+
 
 Node 1
 
@@ -146,15 +146,15 @@ block
 
 Zone B
 
- 
+
 
 Node 0
 
- 
+
 
 Zone A
 
- 
+
 
 Physical
 
@@ -162,11 +162,11 @@ address
 
 0
 
- 
+
 
 *Figure 2-1: Example physical memory layout*
 
- 
+
 
 The line represents physical memory from zero to the maximum avail-
 
@@ -184,37 +184,37 @@ ous blocks of memory, with zones overlapping nodes. Each node and zone
 
 are page-aligned so base pages belong definitely to a node and a zone.
 
- 
 
 
 
- 
+
+
 
 **N O T E** It is actually possible for distinct nodes and zones to overlap one another, for instance
 
 in cases where access times for memory in the overlapping region are equivalent in each node, however for the sake of brevity we will assume these ranges are distinct.
 
- 
+
 
 **2.1 struct page**
 
- 
+
 
 In order to manage pages of memory we must store metadata about them— flags to identify what characteristics the page has, reference count to deter-mine whether we can free the page or not and a whole host of other meta-data specific to how they are used.
 
- 
+
 
 **N O T E** Rather than confuse matters and include every permutation of kernel configuration
 
 and platform we focus on modern 64-bit, little-endian architectures with sensible configurations. This might seem like heresy, but trying to cover everything would render this book unreadable and my sanity unknowable.
 
- 
+
 
 The data type that encapsulates this data is [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) which, for mod-
 
 ern 64-bit systems contains:
 
- 
+
 
 • A flags field which specifies attributes of the page and additionally en-
 
@@ -246,7 +246,7 @@ incremented by [get_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 cally a pointer to a cgroup data structure.
 
- 
+
 
 In total the size of the structure on a modern x86-64 system is 64 bytes
 
@@ -258,11 +258,11 @@ Each [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linu
 
 ically the system) supports (e.g. for x86-64 this is 4 KiB), however physi-cally contiguous pages can be compounded together resulting in compound
 
- 
 
 
 
- 
+
+
 
 pages allocated as a block. In order to square this circle we designate the first
 
@@ -334,7 +334,7 @@ After excising fields that aren’t relevant to a modern x86-64 system the
 
 definition is as follows, as shown in Listing 2-1.
 
- 
+
 
 72 **struct** page {
 
@@ -360,11 +360,11 @@ definition is as follows, as shown in Listing 2-1.
 
 186 };
 
- 
 
 
 
- 
+
+
 
 187
 
@@ -400,11 +400,11 @@ definition is as follows, as shown in Listing 2-1.
 
 229 } **\_struct_page_alignment**;
 
- 
+
 
 *Listing 2-1:* include/linux/mm_types.h: [*struct page*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) *definition*
 
- 
+
 
 The [\_struct_page_alignment](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n67) define specifies that the page should be
 
@@ -412,17 +412,17 @@ aligned to double system word size (e.g. 16 bytes for 64-bit systems) if CONFIG_
 
 bytes, as shown in Listing 2-2.
 
- 
+
 
 66 **\#ifdef CONFIG_HAVE_ALIGNED_STRUCT_PAGE** 67 **\#define** \_struct_page_alignment \_\_aligned(2 \* **sizeof**(**unsigned long**)) 68 **\#else**
 
 69 **\#define** \_struct_page_alignment 70 **\#endif**
 
- 
+
 
 *Listing 2-2:* include/linux/mm_types.h: [*\_struct_page_alignment*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n67)
 
- 
+
 
 In graphical form (the digits on the left indicate byte offset, the vertical
 
@@ -430,39 +430,39 @@ divisions indicate either different entries in a union or being cast to another
 
 type) as shown in Figure 2-2.
 
- 
 
 
 
- 
+
+
 
 0
 
- 
+
 
 4 unsigned long **flags**
 
- 
+
 
 8
 
- 
+
 
 12
 
- 
+
 
 16
 
- 
+
 
 20
 
- 
+
 
 24
 
- 
+
 
 28 **(metadata union)**
 
@@ -470,19 +470,19 @@ type) as shown in Figure 2-2.
 
 32
 
- 
+
 
 36
 
- 
+
 
 40
 
- 
+
 
 44
 
- 
+
 
 48
 
@@ -494,21 +494,21 @@ atomic_t **\_refcount**
 
 56
 
- 
+
 
 60 unsigned long **memcg_data**
 
- 
+
 
 64
 
 Userspace mappable Kernel non-slab page Slab page
 
- 
+
 
 *Figure 2-2:* [*struct page*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) *layout for a typical 64-bit architecture*
 
- 
+
 
 ***2.1.1 Metadata***
 
@@ -524,7 +524,7 @@ either explicitly mapped in or cached automatically, see later chapter on this
 
 topic) then the metadata union used is, as shown in Listing 2-3.
 
- 
+
 
 82 **struct** { */\* Page cache and anonymous pages \*/*
 
@@ -534,11 +534,11 @@ topic) then the metadata union used is, as shown in Listing 2-3.
 
 85 *\* lruvec-\>lru_lock. Sometimes used as a generic list*
 
- 
 
 
 
- 
+
+
 
 86 *\* by the page owner.* 87 *\*/* 88 **union** { 89 **struct** list_head lru; 90
 
@@ -560,15 +560,15 @@ topic) then the metadata union used is, as shown in Listing 2-3.
 
 111 *\*/* 112 **unsigned long** private; 113 };
 
- 
+
 
 *Listing 2-3:* include/linux/mm_types.h: [*Anonymous page/page cache*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n82) *metadata union struct*
 
- 
+
 
 This consists of:
 
- 
+
 
 • lru/mlock_count – A union of either a list head field, lru, which is used
 
@@ -590,11 +590,11 @@ points at a [struct movable_operations](https://git.kernel.org/pub/scm/linux/ker
 
 [PAGE_MAPPING_KSM](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n637) (a combination of the prior two) it points to a private
 
- 
 
 
 
- 
+
+
 
 KSM data structure. KSM is [Kernel Samepage Merging](https://kernel.org/doc/html/v6.0/admin-guide/mm/ksm.html), which allows for memory pages to be de-duplicated, typically used by virtual machines. All rather confusing!
 
@@ -606,7 +606,7 @@ the offset of this page within the mapped file.
 
 the page can use for its own purposes (see the [PG_private](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n52) comment for more details).
 
- 
+
 
 **N O T E** A list head is a structure containing pointers to previous and next nodes in a doubly-
 
@@ -616,19 +616,19 @@ statically known offset of the entry from the start of the structure to be able 
 
 node contents at compile-time, see [*include/linux/list.h*](https://elixir.bootlin.com/linux/v6.0/source/include/linux/list.h) to see the implementation.
 
- 
+
 
 We examine this in graphical form in Figure 2-3.
 
- 
+
 
 8
 
- 
+
 
 12
 
- 
+
 
 16 struct list_head **lru**
 
@@ -636,45 +636,45 @@ unsigned int **mlock_count**
 
 20
 
- 
+
 
 24
 
- 
+
 
 28 struct address_space **\*mapping**
 
- 
+
 
 32
 
- 
+
 
 36 pgoff_t **index**
 
- 
+
 
 40
 
- 
+
 
 44 unsigned long **private**
 
- 
+
 
 48
 
 Anonymous page Page cache
 
- 
+
 
 *Figure 2-3:* [*Anonymous page/page cache*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n82) *metadata union struct*
 
- 
 
 
 
- 
+
+
 
 **2.1.1.2 Tail pages**
 
@@ -682,7 +682,7 @@ Tail page metadata is represented in a slightly less clear fashion – two union
 
 Listing 2-4.
 
- 
+
 
 136 **struct** { */\* Tail pages of compound page \*/* 137 **unsigned long** compound_head; */\* Bit zero is set \*/* 138
 
@@ -694,7 +694,7 @@ Listing 2-4.
 
 148 **struct** { */\* Second tail page of compound page \*/* 149 **unsigned long** \_compound_pad_1; */\* compound_head \*/* 150 **unsigned long** \_compound_pad_2; 151 */\* For both global and memcg \*/* 152 **struct** list_head deferred_list; 153 };
 
- 
+
 
 *Listing 2-4:* include/linux/mm_types.h: [*Tail page*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n136) *metadata union structs*
 
@@ -706,7 +706,7 @@ pages via [PageTail()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 2-5.
 
- 
+
 
 806 **static \_\_always_inline void set_compound_head**(**struct** page \*page, **struct** page \*
 
@@ -716,7 +716,7 @@ head)
 
 808 **WRITE_ONCE**(page-\>compound_head, (**unsigned long**)head + 1); 809 }
 
- 
+
 
 *Listing 2-5:* include/linux/page-flags.h: [*set_compound_head()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n806)
 
@@ -724,7 +724,7 @@ The call stack for this is [prep_compound_page()](https://git.kernel.org/pub/scm
 
 [prep_compound_tail()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n801), as shown in Listing 2-6.
 
- 
+
 
 801 **static void prep_compound_tail**(**struct** page \*head, **int** tail_idx) 802 {
 
@@ -732,15 +732,15 @@ The call stack for this is [prep_compound_page()](https://git.kernel.org/pub/scm
 
 805 p-\>mapping = **TAIL_MAPPING**; 806 **set_compound_head**(p, head); 807 }
 
- 
+
 
 *Listing 2-6:* mm/page_alloc.c: [*prep_compound_tail()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n801)
 
- 
 
 
 
- 
+
+
 
 Note that this sets the mapping field to the known ‘poisoned’ value
 
@@ -764,13 +764,13 @@ compound_mapcount, compound_pincount and compound_nr fields as shown in Listing
 
 2-7.
 
- 
+
 
 793 **static void prep_compound_head**(**struct** page \*page, **unsigned int** order) 794 {
 
 795 **set_compound_page_dtor**(page, COMPOUND_PAGE_DTOR); 796 **set_compound_order**(page, order); 797 **atomic_set**(**compound_mapcount_ptr**(page), -1); 798 **atomic_set**(**compound_pincount_ptr**(page), 0); 799 }
 
- 
+
 
 *Listing 2-7:* mm/page_alloc.c: [*prep_compound_head()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n793)
 
@@ -780,13 +780,13 @@ has yet been established. Examining the setters and getters referenced here
 
 in Listing 2-8.
 
- 
+
 
 891 **static inline void set_compound_page_dtor**(**struct** page \*page, 892 **enum** compound_dtor_id compound_dtor) 893 {
 
 894 **VM_BUG_ON_PAGE**(compound_dtor \>= **NR_COMPOUND_DTORS**, page); 895 page\[1\].compound_dtor = compound_dtor; 896 }
 
- 
+
 
 *Listing 2-8:* include/linux/mm.h: [*set_compound_page_dtor()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n891)
 
@@ -794,7 +794,7 @@ The compound order is set in [set_compound_order()](https://git.kernel.org/pub/s
 
 2-9.
 
- 
+
 
 905 **static inline void set_compound_order**(**struct** page \*page, **unsigned int** order) 906 {
 
@@ -804,7 +804,7 @@ The compound order is set in [set_compound_order()](https://git.kernel.org/pub/s
 
 911 }
 
- 
+
 
 *Listing 2-9:* include/linux/mm.h: [*set_compound_order()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n905)
 
@@ -812,41 +812,41 @@ We obtain the compound mapcount via [compound_mapcount_ptr()](https://git.kernel
 
 in Listing 2-10.
 
- 
+
 
 309 **static inline atomic_t** \***compound_mapcount_ptr**(**struct** page \*page)
 
- 
 
 
 
- 
+
+
 
 310 {
 
 311 **return** &page\[1\].compound_mapcount; 312 }
 
- 
+
 
 *Listing 2-10:* include/linux/mm_types.h: [*compound_mapcount_ptr()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n309)
 
- 
+
 
 Finally, we obtain the compound pincount via [compound_pincount_ptr()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n314) as
 
 shown in Listing 2-11.
 
- 
+
 
 314 **static inline atomic_t** \***compound_pincount_ptr**(**struct** page \*page) 315 {
 
 316 **return** &page\[1\].compound_pincount; 317 }
 
- 
+
 
 *Listing 2-11:* include/linux/mm_types.h: [*compound_pincount_ptr()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n314)
 
- 
+
 
 The order referred to here defines the number of pages compounded
 
@@ -860,7 +860,7 @@ confirming that this data is stored in the first tail page.
 
 We can see how these are invoked by [prep_compound_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n809) in Listing 2-12.
 
- 
+
 
 809 **void prep_compound_page**(**struct** page \*page, **unsigned int** order) 810 {
 
@@ -872,11 +872,11 @@ We can see how these are invoked by [prep_compound_page()](https://git.kernel.or
 
 818 **prep_compound_head**(page, order); 819 }
 
- 
+
 
 *Listing 2-12:* mm/page_alloc.c: [*prep_compound_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n809)
 
- 
+
 
 Here \_\_SetPageHead() sets a flag to indicate that the page is a head page,
 
@@ -900,11 +900,11 @@ and therefore can safely reference a second tail page, as shown in Listing 2-
 
 13.
 
- 
 
 
 
- 
+
+
 
 294 **static inline struct** list_head \***page_deferred_list**(**struct** page \*page) 295 {
 
@@ -914,23 +914,23 @@ and therefore can safely reference a second tail page, as shown in Listing 2-
 
 300 **return** &page\[2\].deferred_list; 301 }
 
- 
+
 
 *Listing 2-13:* include/linux/huge_mm.h: [*page_deferred_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/huge_mm.h?h=v6.0#n294)
 
- 
+
 
 We examine this in graphical form in Figure 2-4.
 
- 
+
 
 8
 
- 
+
 
 12 unsigned long **compound_head**
 
- 
+
 
 16
 
@@ -952,33 +952,33 @@ unsigned int **compound_nr**
 
 32 struct list_head **deferred_list**
 
- 
+
 
 36
 
- 
+
 
 40
 
- 
+
 
 44
 
- 
+
 
 48
 
 First tail page Second tail page (if huge) All other tail pages
 
- 
+
 
 *Figure 2-4:* [*Tail page*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n136) *metadata union fields*
 
- 
+
 
 Reviewing what each field is used for:
 
- 
+
 
 • compound_head – Pointer to the head page of the compound page with its
 
@@ -990,11 +990,11 @@ head. This is achieved through the [compound_head()](https://git.kernel.org/pub/
 
 [PageTail()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n290) or more generally compound via [PageCompound()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n295)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n295)
 
- 
 
 
 
- 
+
+
 
 • compound_dtor – This determines the destructor for the compound
 
@@ -1006,7 +1006,7 @@ page, i.e. the function to invoke on freeing of the page. This is one of
 
 structor in [destroy_large_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n821)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n821)
 
- 
+
 
 877 */\* Keep the enum in sync with compound_page_dtors array in mm/page_alloc.c*
 
@@ -1018,15 +1018,15 @@ structor in [destroy_large_folio()](https://git.kernel.org/pub/scm/linux/kernel/
 
 887 **NR_COMPOUND_DTORS**, 888 };
 
- 
+
 
 *Listing 2-14:* include/linux/mm.h: [*enum compound_dtor_id*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n878)
 
- 
+
 
 We examine the compound page destructor array in Listing 2-15.
 
- 
+
 
 410 compound_page_dtor \* **const** compound_page_dtors\[**NR_COMPOUND_DTORS**\] = { 411 \[NULL_COMPOUND_DTOR\] = **NULL**, 412 \[COMPOUND_PAGE_DTOR\] = **free_compound_page**, 413 **\#ifdef CONFIG_HUGETLB_PAGE** 414 \[HUGETLB_PAGE_DTOR\] = **free_huge_page**, 415 **\#endif**
 
@@ -1034,11 +1034,11 @@ We examine the compound page destructor array in Listing 2-15.
 
 419 };
 
- 
+
 
 *Listing 2-15:* mm/page_alloc.c: [*compound_page_dtors\[\]*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n410)
 
- 
+
 
 • compound_order – As previously discussed, this defines the order of the
 
@@ -1058,11 +1058,11 @@ as [compound_mapcount()](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 and these pages are ‘pinned’ in place (i.e. made such that they cannot
 
- 
 
 
 
- 
+
+
 
 be moved or paged out, more on user pages and pinning later), this field is used to store a precise count of the number of times the compound page has been pinned.
 
@@ -1074,7 +1074,7 @@ is equal to 2compound_order i.e. the number of base pages this compound page occ
 
 parent huge page functionality, see later chapter on this topic.
 
- 
+
 
 **2.1.1.3 Page table pages**
 
@@ -1094,7 +1094,7 @@ store that is a [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 2-16.
 
- 
+
 
 **N O T E** Note as with the [*struct page*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) code listing we are assuming [*ALLOC_SPLIT_PTLOCKS*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n25) is not
 
@@ -1104,7 +1104,7 @@ by whether the spinlock size exceeds the number of bytes in an *unsigned long* w
 
 will not be the case unless lock debugging is configured.
 
- 
+
 
 154 **struct** { */\* Page table pages \*/* 155 **unsigned long** \_pt_pad_1; */\* compound_head \*/* 156 **pgtable_t** pmd_huge_pte; */\* protected by page-\>ptl \*/* 157 **unsigned long** \_pt_pad_2; */\* mapping \*/* 158 **union** { 159 **struct** mm_struct \*pt_mm; */\* x86 pgds only \*/* 160 **atomic_t** pt_frag_refcount; */\* powerpc \*/* 161 };
 
@@ -1116,11 +1116,11 @@ will not be the case unless lock debugging is configured.
 
 167 };
 
- 
+
 
 *Listing 2-16:* include/linux/mm_types.h: [*Page table*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n154) *metadata union struct*
 
- 
+
 
 Note that the padding in this struct ensures the tail page bit in
 
@@ -1138,15 +1138,15 @@ is kept zeroed to avoid mistaking the page for either an anonymous or page
 
 cache one.
 
- 
 
 
 
- 
+
+
 
 Considering each field:
 
- 
+
 
 • pmd_huge_pte – This is used by the transparent hugepage functionality
 
@@ -1172,65 +1172,65 @@ is set (when the maximum number of cores defined by CONFIG_NR_CPUS, which typica
 
 bles when [USE_SPLIT_PMD_PTLOCKS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n23) is set (when USE_SPLIT_PTE_PTLOCKS and CONFIG_ARCH_ENABLE_SPLIT_PMD_PTLOCK are set which is typically the case), otherwise a shared lock is used.
 
- 
+
 
 We examine this in graphical form in Figure 2-5.
 
- 
+
 
 8
 
- 
+
 
 12
 
- 
+
 
 16
 
- 
+
 
 20 pgtable_t **pmd_huge_pte**
 
- 
+
 
 24
 
- 
+
 
 28
 
- 
+
 
 32
 
- 
+
 
 36 struct mm_struct \***pt_mm** atomic_t **pt_frag_refcount**
 
- 
+
 
 40
 
- 
+
 
 44 spinlock_t **ptl**
 
- 
+
 
 48
 
 x86-64 PowerPC Other architectures
 
- 
+
 
 *Figure 2-5:* [*Page table*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n154) *metadata union struct*
 
- 
 
 
 
- 
+
+
 
 **2.1.1.4 Other metadata**
 
@@ -1244,77 +1244,77 @@ let’s examine them, starting with the [page_pool](https://git.kernel.org/pub/s
 
 shown in Listing 2-17.
 
- 
+
 
 114 **struct** { */\* page_pool used by netstack \*/* 115 */\*\** 116 *\* @pp_magic: magic value to avoid recycling non* 117 *\* page_pool allocated pages.* 118 *\*/* 119 **unsigned long** pp_magic; 120 **struct** page_pool \*pp; 121 **unsigned long** \_pp_mapping_pad; 122 **unsigned long** dma_addr; 123 **union** { 124 */\*\** 125 *\* dma_addr_upper: might require a 64-bit* 126 *\* value on 32-bit architectures.* 127 *\*/* 128 **unsigned long** dma_addr_upper; 129 */\*\** 130 *\* For frag page support, not supported in*
 
 131 *\* 32-bit architectures with 64-bit DMA.* 132 *\*/* 133 **atomic_long_t** pp_frag_count; 134 }; 135 };
 
- 
+
 
 *Listing 2-17:* include/linux/mm_types.h: [*page_pool*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n114) *metadata union struct*
 
- 
+
 
 We examine the [page_pool](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n114) metadata union struct in graphical form in
 
 Figure 2-6.
 
- 
 
 
 
- 
+
+
 
 8
 
- 
+
 
 12 unsigned long **pp_magic**
 
- 
+
 
 16
 
- 
+
 
 20 struct page_pool **\*pp**
 
- 
+
 
 24
 
- 
+
 
 28
 
- 
+
 
 32
 
- 
+
 
 36 unsigned long **dma_addr**
 
- 
+
 
 40
 
- 
+
 
 44 unsigned long **dma_addr_upper** atomic_long_t **pp_frag_count**
 
- 
+
 
 48
 
 32-bit architecture 64-bit architecture
 
- 
+
 
 *Figure 2-6:* [*page_pool*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n114) *metadata union struct*
 
- 
+
 
 Note that pp_magic maintains clear lower bits to ensure it isn’t misidenti-
 
@@ -1322,7 +1322,7 @@ fied as a compound tail page via [PageTail()](https://git.kernel.org/pub/scm/lin
 
 We examine the [ZONE_DEVICE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n168) metadata union struct in Listing 2-18.
 
- 
+
 
 168 **struct** { */\* ZONE_DEVICE pages \*/* 169 */\*\* @pgmap: Points to the hosting device page map. \*/*
 
@@ -1338,73 +1338,73 @@ We examine the [ZONE_DEVICE](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 177 *\* private memory.* 178 *\* ZONE_DEVICE MEMORY_DEVICE_FS_DAX pages also* 179 *\* use the mapping, index, and private fields when*
 
- 
 
 
 
- 
+
+
 
 180 *\* pmem backed DAX files are mapped.* 181 *\*/* 182 };
 
- 
+
 
 *Listing 2-18:* include/linux/mm_types.h: [*ZONE_DEVICE*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n168) *metadata union struct*
 
- 
+
 
 We examine the [ZONE_DEVICE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n168) metadata union struct in graphical form in
 
 Figure 2-7.
 
- 
+
 
 8
 
- 
+
 
 12 struct dev_pagemap **\*pgmap**
 
- 
+
 
 16
 
- 
+
 
 20 void **\*zone_device_data**
 
- 
+
 
 24
 
- 
+
 
 28 struct address_space **\*mapping**
 
- 
+
 
 32
 
- 
+
 
 36 pgoff_t **index**
 
- 
+
 
 40
 
- 
+
 
 44 unsigned long **private**
 
- 
+
 
 48
 
- 
+
 
 *Figure 2-7:* [*ZONE_DEVICE*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n168) *metadata union struct*
 
- 
+
 
 While the struct defines the upper two parameters (again noting
 
@@ -1414,7 +1414,7 @@ avoid misidentification of the page) the lower three are adapted from the
 
 [Anonymous page/page cache](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n82) metadata union struct.
 
- 
+
 
 **2.1.1.5 RCU head**
 
@@ -1426,11 +1426,11 @@ ciently. This appears to be unnecessary as [struct slab](https://git.kernel.org/
 
 and shares bits with the [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) object.
 
- 
 
 
 
- 
+
+
 
 ***2.1.2 struct slab***
 
@@ -1448,7 +1448,7 @@ I won’t dwell too long on what each field refers to as going into detail on
 
 this is better suited to the slab chapter however, briefly, each of the three dif-ferent slab allocators (SLAB, SLUB and SLOB) typically share the following fields:
 
- 
+
 
 • slab_list – The doubly-linked list node that allows slab pages to be
 
@@ -1464,11 +1464,11 @@ use of [Read, Copy, Update (RCU)](https://kernel.org/doc/html/v6.0/RCU/whatisRCU
 
 that this coincides with the anonymous page/page cache [mapping](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n104) field so we rely on alignment here to ensure the lower bits will not be set falsely indicating an anonymous or movable page.
 
- 
+
 
 We examine the [struct slab](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slab.h?h=v6.0#n9) data structure in Listing 2-19.
 
- 
+
 
 8 */\* Reuses the bits in struct page \*/* 9 **struct** slab {
 
@@ -1490,11 +1490,11 @@ We examine the [struct slab](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 26 **struct** list_head slab_list; 27 **struct** rcu_head rcu_head;
 
- 
 
 
 
- 
+
+
 
 28 **\#ifdef CONFIG_SLUB_CPU_PARTIAL**
 
@@ -1570,11 +1570,11 @@ We examine the [struct slab](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 64 };
 
- 
+
 
 *Listing 2-19:* mm/slab.h: [*struct slab*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slab.h?h=v6.0#n9)
 
- 
+
 
 There are different slab allocators available and the structure varies
 
@@ -1584,63 +1584,63 @@ CONFIG_SLUB_CPU_PARTIAL configuration options is set).
 
 We examine each class of slab allocator in turn.
 
- 
 
 
 
- 
+
+
 
 **2.1.2.1 SLAB allocator**
 
- 
+
 
 0
 
- 
+
 
 4
 
- 
+
 
 8
 
- 
+
 
 12
 
- 
+
 
 16 struct list_head **slab_list** struct rcu_head **rcu_head**
 
- 
+
 
 20
 
- 
+
 
 24
 
- 
+
 
 28 struct kmem_cache **\*slab_cache**
 
- 
+
 
 32
 
- 
+
 
 36 void **\*freelist**
 
- 
+
 
 40
 
- 
+
 
 44 void **\*s_mem**
 
- 
+
 
 48
 
@@ -1650,15 +1650,15 @@ unsigned int **active**
 
 Active slab page RCU freeing slab page
 
- 
+
 
 *Figure 2-8:* *CONFIG_SLAB [struct slab](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slab.h?h=v6.0#n9)*
 
- 
+
 
 Each different allocator has slightly different fields, examining fields specific to the SLAB allocator (unfortunately slab allocation is out of scope for the book):
 
- 
+
 
 • freelist – A First In-First Out (FIFO) queue of indexes of free objects
 
@@ -1670,31 +1670,31 @@ indexing into s_mem.
 
 have been allocated from this page).
 
- 
 
 
 
- 
+
+
 
 **2.1.2.2 SLUB allocator**
 
- 
+
 
 0
 
- 
+
 
 4
 
- 
+
 
 8
 
- 
+
 
 12 struct slab **\*next**
 
- 
+
 
 16 struct list_head **slab_list** struct rcu_head **rcu_head**
 
@@ -1702,45 +1702,45 @@ int **slabs**
 
 20
 
- 
+
 
 24
 
- 
+
 
 28 struct kmem_cache **\*slab_cache**
 
- 
+
 
 32
 
- 
+
 
 36 void **\*freelist**
 
- 
+
 
 40
 
- 
+
 
 44 unsigned long **counters** = unsigned **inuse**:16, **objects**:15, **frozen**:1
 
- 
+
 
 48
 
- 
+
 
 52
 
 Active slab page Active, per-CPU partial caches RCU freeing slab page
 
- 
+
 
 *Figure 2-9:* *CONFIG_SLUB [struct slab](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slab.h?h=v6.0#n9)*
 
- 
+
 
 Note that the ‘active, per-CPU partial caches’ fields here are enabled by set-
 
@@ -1748,7 +1748,7 @@ ting the CONFIG_SLUB_CPU_PARTIAL configuration option.
 
 Briefly examining each SLUB-specific field:
 
- 
+
 
 • next – (only if CONFIG_SLUB_CPU_PARTIAL is set) If the current slab object
 
@@ -1764,79 +1764,79 @@ particular cache.
 
 counters variable provided for convenience to enable copying all of them at once.
 
- 
 
 
 
- 
+
+
 
 **2.1.2.3 SLOB allocator**
 
- 
+
 
 0
 
- 
+
 
 4
 
- 
+
 
 8
 
- 
+
 
 12
 
- 
+
 
 16 struct list_head **slab_list**
 
- 
+
 
 20
 
- 
+
 
 24
 
- 
+
 
 28
 
- 
+
 
 32
 
- 
+
 
 36 void **\*freelist**
 
- 
+
 
 40
 
- 
+
 
 44 long **units**
 
- 
+
 
 48
 
- 
+
 
 52
 
- 
+
 
 *Figure 2-10:* *CONFIG_SLOB [struct slab](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slab.h?h=v6.0#n9)*
 
- 
+
 
 Briefly examining fields unique to the SLOB:
 
- 
+
 
 • freelist – Pointer to the first free [struct slob_block](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slob.c?h=v6.0#n91)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slob.c?h=v6.0#n91)
 
@@ -1844,7 +1844,7 @@ Briefly examining fields unique to the SLOB:
 
 the offset of the next block.
 
- 
+
 
 ***2.1.3 Page flags***
 
@@ -1852,11 +1852,11 @@ Page flags describing their attributes are kept in three separate fields in
 
 [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72):
 
- 
 
 
 
- 
+
+
 
 • [struct page-\>flags](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n73) – This field specialises any of a large number of flags
 
@@ -1872,7 +1872,7 @@ ther [PAGE_MAPPING_ANON](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 [PAGE_MAPPING_KSM. ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n637)These indicate whether the page is anonymous, mov-able or part of the Kernel Samepage Merging (KSM) functionality. These of course are prefixed with the PAGE_MAPPING\_ prefix.
 
- 
+
 
 The majority of page flags and related functions are defined in the
 
@@ -1884,7 +1884,7 @@ few which require special handling are manually declared. Regardless they
 
 all follow the same naming convention:
 
- 
+
 
 • **Page**xxx**()** – This is a boolean function that simply tests whether the flag
 
@@ -1908,13 +1908,13 @@ cally.
 
 boolean, guaranteed to be done atomically.
 
- 
+
 
 In most cases, flags specify a policy which performs a check on the page
 
 and potentially transforms which page the flags are accessed on:
 
- 
+
 
 • [PF_POISONED_CHECK](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n350) – Checks whether the flags field is set to a known ‘poi-
 
@@ -1936,17 +1936,17 @@ if not via [compound_head()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 clearing.
 
- 
 
 
 
- 
+
+
 
 • [PF_SECOND](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n364) – Always check to ensure it is a head page, accesses flags on
 
 second page (i.e. first tail page).
 
- 
+
 
 Note that these checks are performed via [VM_BUG_ON_PGFLAGS()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmdebug.h?h=v6.0#n104) which will
 
@@ -1954,11 +1954,11 @@ only do something meaningful at runtime if CONFIG_DEBUG_VM_PGTABLE is config-ure
 
 We examine all available page flag helpers in Table 2-1.
 
- 
 
 
 
- 
+
+
 
 Table 2-1: Page flag helpers
 
@@ -1998,15 +1998,15 @@ PageBuddy*∗* *∗* *∗* \_\_SetPageBuddy \_\_ClearPageBudy - PG_buddy PageChe
 
 [PageUptodate*∗∗*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n728) [*∗∗*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n755) ( [\_\_](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n750) [)](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n755) [SetPageUptodate](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n755) ClearPageUptodate PF_NO_TAIL PG_uptodate PageVmemmapSelfHosted SetPageVmemmapSelfHosted ClearPageVmemmapSelfHosted PF_ANY *←*PG_owner_priv_1 PageWaiters SetPageWaiters ClearPageWaiters PF_ONLY_HEAD PG_waiters PageWorkingset SetPageWorkingset (Test)ClearPageWorkingset PF_HEAD PG_workingset PageWriteback (Test)SetPageWriteback (Test)ClearPageWriteback PF_NO_TAIL PG_writeback PageXenRemapped SetPageXenRemapped ClearPageXenRemapped PF_NO_COMPOUND *←*PG_xen_remapped PageYoung SetPageYoung TestClearPageYoung PF_ANY PG_young
 
- 
+
 
 Key:
 
- 
 
 
 
- 
+
+
 
 • (no symbol) – Denotes that the flag is stored in [struct page-\>flags](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n73) and the
 
@@ -2032,7 +2032,7 @@ associated with it but follows the same naming convention.
 
 own bit assigned.
 
- 
+
 
 The PG_arch_1, PG_arch_2 and PG_fscache flags from [enum pageflags](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n100) do not
 
@@ -2042,11 +2042,11 @@ We will examine each flag individually, however before we do so let’s ex-
 
 amine the key [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) data structure.
 
- 
+
 
 **2.2 struct folio**
 
- 
+
 
 While compound pages are a useful abstraction they cause an unfortunate
 
@@ -2074,11 +2074,11 @@ The [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linu
 
 is a power-of-two in size, and it is aligned to that same power-of-two. It is at
 
- 
 
 
 
- 
+
+
 
 least as large as PAGE_SIZE. If it is in the page cache, it is at a file offset which
 
@@ -2096,7 +2096,7 @@ described here.
 
 We examining the [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) data structure in Listing 2-20.
 
- 
+
 
 231 */\*\**
 
@@ -2126,11 +2126,11 @@ We examining the [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 268 **unsigned int** mlock_count; 269 */\* private: \*/*
 
- 
 
 
 
- 
+
+
 
 270 }; 271 */\* public: \*/*
 
@@ -2144,11 +2144,11 @@ We examining the [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 285 };
 
- 
+
 
 *Listing 2-20:* include/linux/mm_types.h: [*struct folio*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256)
 
- 
+
 
 This mirrors the [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) structure for anonymous/page cache pages,
 
@@ -2158,27 +2158,27 @@ and is unioned with the struct page type for convenience (this is used by
 
 We examine this in graphical form in Figure 2-11.
 
- 
 
 
 
- 
+
+
 
 0
 
- 
+
 
 4 unsigned long **flags**
 
- 
+
 
 8
 
- 
+
 
 12
 
- 
+
 
 16 struct list_head **lru**
 
@@ -2186,11 +2186,11 @@ unsigned int **mlock_count**
 
 20
 
- 
+
 
 24
 
- 
+
 
 28 struct address_space **\*mapping**
 
@@ -2198,19 +2198,19 @@ unsigned int **mlock_count**
 
 32
 
- 
+
 
 36 pgoff_t **index**
 
- 
+
 
 40
 
- 
+
 
 44 unsigned long **private**
 
- 
+
 
 48
 
@@ -2222,21 +2222,21 @@ atomic_t **\_refcount**
 
 56
 
- 
+
 
 60 unsigned long **memcg_data**
 
- 
+
 
 64
 
 Anonymous page Page cache Page union
 
- 
+
 
 *Figure 2-11:* [*struct folio*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256)
 
- 
+
 
 As the majority of use cases of page structures are anonymous pages
 
@@ -2256,17 +2256,17 @@ they allow for the transition between [struct page](https://git.kernel.org/pub/s
 
 We examine [page_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n275) in Listing 2-21.
 
- 
+
 
 262 */\*\**
 
 263 *\* page_folio - Converts from page to folio.* 264 *\* @p: The page.*
 
- 
 
 
 
- 
+
+
 
 265 *\**
 
@@ -2278,15 +2278,15 @@ We examine [page_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 275 **\#define page_folio**(p) (**\_Generic**((p), \\ 276 **const struct** page \*: (**const struct** folio \*)**\_compound_head**(p), \\ 277 **struct** page \*: (**struct** folio \*)**\_compound_head**(p)))
 
- 
+
 
 *Listing 2-21:* include/linux/page-flags.h: [*page_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n275)
 
- 
+
 
 We examine [folio_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n288) in Listing 2-22.
 
- 
+
 
 279 */\*\**
 
@@ -2298,11 +2298,11 @@ We examine [folio_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 288 **\#define folio_page**(folio, n) **nth_page**(&(folio)-\>page, n)
 
- 
+
 
 *Listing 2-22:* include/linux/page-flags.h: [*folio_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n288)
 
- 
+
 
 As the transition from page to folio can be taken from any base page
 
@@ -2320,7 +2320,7 @@ function which retrieves page flags located on a specific page, which is pro-
 
 vided by [folio_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n315) as shown in Listing 2-23.
 
- 
+
 
 315 **static unsigned long** \***folio_flags**(**struct** folio \*folio, **unsigned** n) 316 {
 
@@ -2328,15 +2328,15 @@ vided by [folio_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 319 **VM_BUG_ON_PGFLAGS**(**PageTail**(page), page); 320 **VM_BUG_ON_PGFLAGS**(n \> 0 && !**test_bit**(PG_head, &page-\>flags), page); 321 **return** &page\[n\].flags; 322 }
 
- 
 
 
 
- 
+
+
 
 *Listing 2-23:* include/linux/page-flags.h: [*folio_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n315)
 
- 
+
 
 Which does what you’d expect, with debug assertions to check sanity (en-
 
@@ -2370,7 +2370,7 @@ This selects the appropriate page to check via folio_flags() but skips any
 
 CONFIG_DEBUG_VM_PGTABLE checks. Examining equivalent folio prefixes:
 
- 
+
 
 • **folio_test**\_xxx**()** (equivalent of **Page**xxx**()**
 
@@ -2386,15 +2386,15 @@ CONFIG_DEBUG_VM_PGTABLE checks. Examining equivalent folio prefixes:
 
 • **folio_test_clear**\_xxx**()** (equivalent of **TestClearPage**xxx**()**)
 
- 
+
 
 We Examine all folio flag helpers in Table 2-2.
 
- 
 
 
 
- 
+
+
 
 Table 2-2: Folio flag helpers Test Set Clear Page Flag folio_test_active folio_set_active (\_\_)folio\_(test\_)clear_active 0 PG_active
 
@@ -2418,11 +2418,11 @@ Table 2-2: Folio flag helpers Test Set Clear Page Flag folio_test_active folio_s
 
 [folio_test_uptodate](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n711)*∗∗* [*∗∗*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n739) [(](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n733) [\_\_](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n733) ) [folio_mark_uptodate](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n739) folio_clear_uptodate 0 PG_uptodate folio_test_vmemmap_self_hosted folio_set_vmemmap_self_hosted folio_clear_vmemmap_self_hosted 0 PG_owner_priv_1 *←* folio_test_waiters folio_set_waiters folio_clear_waiters 0 PG_waiters folio_test_workingset folio_set_workingset folio\_(test\_)clear_workingset 0 PG_workingset folio_test_writeback folio\_(test\_)set_writeback folio\_(test\_)clear_writeback 0 PG_writeback folio_test_xen_remapped folio_set_xen_remapped folio_clear_xen_remapped 0 PG_xen_remapped *←* folio_test_young folio_set_young folio_test_clear_young 0 PG_young
 
- 
+
 
 As before the key is as follows:
 
- 
+
 
 • (no symbol) – Denotes that the flag is stored in [struct folio-\>flags](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n261) and
 
@@ -2444,15 +2444,15 @@ associated with it but follows the same naming convention.
 
 own bit assigned.
 
- 
 
 
 
- 
+
+
 
 Notes:
 
- 
+
 
 • As no policies are actually applied for the folio flag helpers, the policy
 
@@ -2464,11 +2464,11 @@ column is replaced with a [struct page](https://git.kernel.org/pub/scm/linux/ker
 
 convention of folio flag tests being prefixed with folio_test\_.
 
- 
+
 
 **2.3 Physical memory model**
 
- 
+
 
 While we have discussed [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) (and equivalently [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) objects),
 
@@ -2518,7 +2518,7 @@ The sparse memory model maintains sections which represent disparate,
 
 can be further modified by additional configuration options:
 
- 
+
 
 • CONFIG_SPARSEMEM_VMEMMAP – Provides a virtual mapping global [vmemmap](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64.h?h=v6.0#n258) vari-
 
@@ -2530,17 +2530,17 @@ ory is discussed in Chapter 3—briefly, it allows for physical memory to be map
 
 scribed) below, allowing for complete flexibility in memory layout.
 
- 
+
 
 A modern system will use a sparse memory model and define both of
 
 these configuration options so we examine only this configuration.
 
- 
 
 
 
- 
+
+
 
 ***2.3.1 Sections***
 
@@ -2568,7 +2568,7 @@ Examining [struct mem_section](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 a sparse memory model we elide the CONFIG_PAGE_EXTENSION portion of this struct).
 
- 
+
 
 1424 **struct** mem_section {
 
@@ -2592,11 +2592,11 @@ a sparse memory model we elide the CONFIG_PAGE_EXTENSION portion of this struct)
 
 1452 };
 
- 
+
 
 *Listing 2-24:* include/linux/mmzone.h: [*struct mem_section*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1424)
 
- 
+
 
 The section_mem_map field contains a pointer to the [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) array and
 
@@ -2608,11 +2608,11 @@ The page array can be accessed via [\_\_section_mem_map_addr()](https://git.kern
 
 we are only considering systems which have CONFIG_SPARSEMEM_VMEMMAP set, we
 
- 
 
 
 
- 
+
+
 
 generally have no need to access pages this way as we can simply offset into
 
@@ -2626,17 +2626,17 @@ whether we can actually use it) and flags describing page blocks contained
 
 within the section.
 
- 
+
 
 **N O T E** A bitmap is a series of bytes which treat individual bits within the bytes as booleans
 
 at offset equal to the bit offset.
 
- 
+
 
 Section flags stored in section_mem_map are as follows:
 
- 
+
 
 • [SECTION_MARKED_PRESENT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1518) – Indicates that a section of memory is actually
 
@@ -2666,17 +2666,17 @@ to indicate that a section is part of a ZONE_DEVICE. Checked by
 
 [online_device_section()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1566). This topic is out of scope for the book.
 
- 
+
 
 We examine [struct mem_section_usage](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1412) in Listing 2-25.
 
- 
+
 
 1412 **struct** mem_section_usage { 1413 **\#ifdef CONFIG_SPARSEMEM_VMEMMAP** 1414 **DECLARE_BITMAP**(subsection_map, **SUBSECTIONS_PER_SECTION**); 1415 **\#endif**
 
 1416 */\* See declaration of similar field in struct zone \*/* 1417 **unsigned long** pageblock_flags\[0\]; 1418 };
 
- 
+
 
 *Listing 2-25:* include/linux/mmzone.h: [*struct mem_section_usage*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1412)
 
@@ -2700,15 +2700,15 @@ Note that we track only whether a subsection is valid, not a page, so the
 
 granularity of tracking whether pages are actually valid or not is 2 MiB. In
 
- 
 
 
 
- 
+
+
 
 the early stages of memory initialisation when memory ranges are identi-fied, the entire subsection containing valid pages are marked valid.
 
- 
+
 
 ***2.3.2 PFN validity***
 
@@ -2720,7 +2720,7 @@ ity of the section via [valid_section()](https://git.kernel.org/pub/scm/linux/ke
 
 [pfn_section_valid()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1602) as shown in Listing 2-26.
 
- 
+
 
 1602 **static inline int pfn_section_valid**(**struct** mem_section \*ms, **unsigned long** pfn) 1603 {
 
@@ -2728,7 +2728,7 @@ ity of the section via [valid_section()](https://git.kernel.org/pub/scm/linux/ke
 
 1606 **return test_bit**(idx, ms-\>usage-\>subsection_map); 1607 }
 
- 
+
 
 *Listing 2-26:* include/linux/mmzone.h: [*pfn_section_valid()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1602)
 
@@ -2738,13 +2738,13 @@ We determine the subsection index within the section via
 
 field of the section as shown in Listing 2-27.
 
- 
+
 
 1596 **static inline int subsection_map_index**(**unsigned long** pfn) 1597 {
 
 1598 **return** (pfn & ~(PAGE_SECTION_MASK)) / PAGES_PER_SUBSECTION; 1599 }
 
- 
+
 
 *Listing 2-27:* include/linux/mmzone.h: [*subsection_map_index()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1596)
 
@@ -2752,7 +2752,7 @@ Which simply finds the subsection offset by taking the lower bits of the
 
 PFN offsetting into the section and dividing by the number of pages per sub-section.
 
- 
+
 
 ***2.3.3 Converting between PFN and section***
 
@@ -2764,13 +2764,13 @@ Working with section necessitates converting between PFNs and
 
 shown in Listing 2-28.
 
- 
+
 
 1384 **static inline unsigned long pfn_to_section_nr**(**unsigned long** pfn) 1385 {
 
 1386 **return** pfn \>\> **PFN_SECTION_SHIFT**; 1387 }
 
- 
+
 
 *Listing 2-28:* include/linux/mmzone.h: [*pfn_to_section_nr()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1384)
 
@@ -2778,17 +2778,17 @@ A more useful function is [\_\_pfn_to_section()](https://git.kernel.org/pub/scm/
 
 rectly to a [struct mem_section](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1424) object as shown in Listing 2-29.
 
- 
 
 
 
- 
+
+
 
 1589 **static inline struct** mem_section \***\_\_pfn_to_section**(**unsigned long** pfn) 1590 {
 
 1591 **return \_\_nr_to_section**(**pfn_to_section_nr**(pfn)); 1592 }
 
- 
+
 
 *Listing 2-29:* include/linux/mmzone.h: [*\_\_pfn_to_section()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1589)
 
@@ -2798,7 +2798,7 @@ then [\_\_nr_to_section()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 ing 2-30.
 
- 
+
 
 1475 **static inline struct** mem_section \***\_\_nr_to_section**(**unsigned long** nr) 1476 {
 
@@ -2810,7 +2810,7 @@ ing 2-30.
 
 1486 **return** &mem_section\[root\]\[nr & **SECTION_ROOT_MASK**\]; 1487 }
 
- 
+
 
 *Listing 2-30:* include/linux/mmzone.h: [*\_\_nr_to_section()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1475)
 
@@ -2824,7 +2824,7 @@ placing this in the first index and determining the second array index via
 
 [SECTION_ROOT_MASK](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1462) which masks the lower bits.
 
- 
+
 
 ***2.3.4 Page block flags***
 
@@ -2838,11 +2838,11 @@ It is of [SECTION_BLOCKFLAGS_BITS](https://git.kernel.org/pub/scm/linux/kernel/g
 
 as shown in Listing 2-31
 
- 
+
 
 1377 **\#define SECTION_BLOCKFLAGS_BITS** \\ 1378 ((1UL \<\< (**PFN_SECTION_SHIFT**- pageblock_order)) \* **NR_PAGEBLOCK_BITS**)
 
- 
+
 
 *Listing 2-31:* include/linux/mmzone.h: [*SECTION_BLOCKFLAGS_BITS*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1377)
 
@@ -2852,15 +2852,15 @@ can contain by [NR_PAGEBLOCK_BITS](https://git.kernel.org/pub/scm/linux/kernel/g
 
 [enum_pageblock_bits](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pageblock-flags.h?h=v6.0#n18) denoting its size as shown in Listing 2-32.
 
- 
+
 
 18 **enum** pageblock_bits {
 
- 
 
 
 
- 
+
+
 
 19 PB_migrate,
 
@@ -2874,11 +2874,11 @@ can contain by [NR_PAGEBLOCK_BITS](https://git.kernel.org/pub/scm/linux/kernel/g
 
 28 **NR_PAGEBLOCK_BITS** 29 };
 
- 
+
 
 *Listing 2-32:* include/linux/pageblock-flags.h: [*enum pageblock_bits*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pageblock-flags.h?h=v6.0#n18)
 
- 
+
 
 This ‘reserves’ sufficient space for each of the migrate types declared in
 
@@ -2898,7 +2898,7 @@ Accessing these values is performed by [get_pfnblock_flags_mask()](https://git.k
 
 turn invokes [\_\_get_pfnblock_flags_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n551) as shown in Listing 2-33.
 
- 
+
 
 550 **static \_\_always_inline**
 
@@ -2916,15 +2916,15 @@ turn invokes [\_\_get_pfnblock_flags_mask()](https://git.kernel.org/pub/scm/linu
 
 568 word = **READ_ONCE**(bitmap\[word_bitidx\]); 569 **return** (word \>\> bitidx) & mask; 570 }
 
- 
+
 
 *Listing 2-33:* mm/page_alloc.c: [*\_\_get_pfnblock_flags_mask()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n551)
 
- 
 
 
 
- 
+
+
 
 This simply looks up the index within the bitmap determined by
 
@@ -2932,7 +2932,7 @@ This simply looks up the index within the bitmap determined by
 
 as shown in Listing 2-34.
 
- 
+
 
 540 **static inline int pfn_to_bitidx**(**const struct** page \*page, **unsigned long** pfn) 541 {
 
@@ -2946,11 +2946,11 @@ pageblock_nr_pages);
 
 546 **\#endif** */\* CONFIG_SPARSEMEM \*/* 547 **return** (pfn \>\> pageblock_order) \* **NR_PAGEBLOCK_BITS**; 548 }
 
- 
+
 
 *Listing 2-34:* mm/page_alloc.c: [*pfn_to_bitidx()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n540)
 
- 
+
 
 This takes the lower bits of the PFN by masking with the lower bits of
 
@@ -2960,13 +2960,13 @@ base pages so we neatly handle PFN being expressed in page units) and mul-
 
 tiplies by NR_PAGEBLOCK_BITS which is the size of data we are retrieving.
 
- 
+
 
 **N O T E** As this is a power-of-2 the classic bitwise trick of simply subtracting one for all bits
 
 below it to be set to use as a mask is applied. E.g. *0b1000*- 1 is *0b0111*.
 
- 
+
 
 These values are set by [set_pfnblock_flags_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n599) which performs a similar
 
@@ -2982,7 +2982,7 @@ The compaction skip flag is also retrieved from get_pfnblock_flags_mask()
 
 in [get_pageblock_skip()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pageblock-flags.h?h=v6.0#n71)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pageblock-flags.h?h=v6.0#n71)
 
- 
+
 
 ***2.3.5 Looking up struct page/struct folio objects***
 
@@ -2996,31 +2996,31 @@ Converting from PFN to page is achieved via [pfn_to_page()](https://git.kernel.o
 
 macro that invokes [\_\_pfn_to_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/memory_model.h?h=v6.0#n25) as shown in Listing 2-35.
 
- 
+
 
 25 **\#define \_\_pfn_to_page**(pfn) (**vmemmap** + (pfn))
 
- 
+
 
 *Listing 2-35:* include/asm-generic/memory_model.h: [*\_\_pfn_to_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/memory_model.h?h=v6.0#n25)
 
- 
+
 
 Equally converting the other way, as shown in Listing 2-36.
 
- 
+
 
 26 **\#define \_\_page_to_pfn**(page) (**unsigned long**)((page) -**vmemmap**)
 
- 
+
 
 *Listing 2-36:* include/asm-generic/memory_model.h: [*\_\_page_to_pfn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/asm-generic/memory_model.h?h=v6.0#n26)
 
- 
 
 
 
- 
+
+
 
 These are incredibly simple as the virtual memory map has already been
 
@@ -3030,7 +3030,7 @@ We will speak more about virtual memory in the next chapter but
 
 broadly it is a means by which disparate pages of physical memory can be mapped to arbitrary ‘virtual’ addresses.
 
- 
+
 
 **2.4 Nodes and Zones**
 
@@ -3064,15 +3064,15 @@ Each zone has watermarks specified which determine reclaim (the effort to
 
 free up, i.e. ‘reclaim’ memory) behaviour, as shown in Figure 2-12.
 
- 
 
 
 
- 
+
+
 
 Free pages
 
- 
+
 
 If any zone in a node
 
@@ -3086,7 +3086,7 @@ Start indirect equal to or exceeding reclaim on the high water mark, all nodes i
 
 Low for that node.
 
- 
+
 
 Minimum
 
@@ -3098,17 +3098,17 @@ allocated, or OOM.
 
 Time
 
- 
+
 
 *Figure 2-12: Zone Watermarks*
 
- 
+
 
 As seen above, when free pages in a zone pass these watermarks, then
 
 the following happens:
 
- 
+
 
 • [WMARK_MIN](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n350) – When free base pages in the zone are at or below the sum of
 
@@ -3134,13 +3134,13 @@ mode. This has a very specific purpose, see the [sysctl/kernel documen-](https:/
 
 [tation](https://kernel.org/doc/html/v6.0/admin-guide/sysctl/kernel.html#numa-balancing) for more details.
 
- 
+
 
 Examining a simplified version of [pg_data_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n905) stripping out all but the core
 
 fields as shown in Listing 2-37.
 
- 
+
 
 905 **typedef struct** pglist_data { 906 */\**
 
@@ -3156,11 +3156,11 @@ fields as shown in Listing 2-37.
 
 911 **struct** zone node_zones\[**MAX_NR_ZONES**\];
 
- 
 
 
 
- 
+
+
 
 912
 
@@ -3194,11 +3194,11 @@ fields as shown in Listing 2-37.
 
 1015 } **pg_data_t**;
 
- 
+
 
 *Listing 2-37:* include/linux/mmzone.h: *Simplified [pg_data_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n905)*
 
- 
+
 
 Each node’s pg_data_t object contains all of the struct zone objects associ-
 
@@ -3206,7 +3206,7 @@ ated with that node within it. It is often referred to as a pgdat.
 
 Examining each of these fields:
 
- 
+
 
 • node_zones – An array of [struct zone](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n515) objects each of which describing the
 
@@ -3218,27 +3218,27 @@ locations should try to allocate from, in order. Examining it as shown in
 
 Listing 2-38.
 
- 
+
 
 878 **struct** zonelist {
 
 879 **struct** zoneref \_zonerefs\[**MAX_ZONES_PER_ZONELIST** + 1\]; 880 };
 
- 
+
 
 *Listing 2-38:* include/linux/mmzone.h: [*struct zonelist*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n878)
 
- 
+
 
 There are [MAX_ZONELISTS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n852) of these struct zonelist, which on a NUMA sys-
 
 tem are [ZONELIST_FALLBACK](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n844) (index 0) and [ZONELIST_NOFALLBACK](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n850) (index 1). The default zonelist used is ZONELIST_FALLBACK which permits fallback to nodes other than the one requested one, The ZONELIST_NOFALLBACK option
 
- 
 
 
 
- 
+
+
 
 is to support the \_\_GFP_THISNODE allocation flag, and the zonelist is chosen
 
@@ -3246,7 +3246,7 @@ by [gfp_zonelist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/lin
 
 Examining [struct zoneref](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n859) as shown in Listing 2-39.
 
- 
+
 
 859 **struct** zoneref {
 
@@ -3256,11 +3256,11 @@ Examining [struct zoneref](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 862 };
 
- 
+
 
 *Listing 2-39:* include/linux/mmzone.h: [*struct zoneref*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n859)
 
- 
+
 
 This references [struct zone](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n515) with a zone index stored for convenience.
 
@@ -3310,11 +3310,11 @@ in order to service high priority allocations and prevent a total ex-haustion of
 
 [calculate_totalreserve_pages().](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n8607)
 
- 
 
 
 
- 
+
+
 
 • flags – Specifies flags that indicate various characteristics of the node
 
@@ -3338,7 +3338,7 @@ node and used to prevent concurrent reclaim attempts. Set and
 
 cleared in [node_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4808)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4808)
 
- 
+
 
 Accessing nodes is performed via the [NODE_DATA()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1186) helper function by node
 
@@ -3350,7 +3350,7 @@ Zones are described by [enum zone_type](https://git.kernel.org/pub/scm/linux/ker
 
 kernel configuration but for a modern 64-bit system typically consist of:
 
- 
+
 
 • ZONE_DMA – On the x86-64 architecture this spans the range a museum-
 
@@ -3368,23 +3368,23 @@ other zones.
 
 kernelcore and/or movablecore command line parameters. The kernelcore designated memory, will exist in zones other than ZONE_MOVABLE, the re-mainder will, if it would have otherwise been placed in ZONE_NORMAL, be contained within ZONE_MOVABLE. The purpose of doing this is to maintain allocations that can be moved around by the kernel in a physically con-tiguous region rather than mixing movable and unmovable memory together. This helps reduce fragmentation and improves the availability of higher order pages.
 
- 
+
 
 Examining a simplified version of [struct zone](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n515) stripping out all but the
 
 core fields as shown in Listing 2-40.
 
- 
+
 
 515 **struct** zone {
 
 516 */\* Read-mostly fields \*/* 517
 
- 
 
 
 
- 
+
+
 
 518 */\* zone watermarks, access with \*\_wmark_pages(zone) macros \*/* 519 **unsigned long** \_watermark\[**NR_WMARK**\]; 520 **unsigned long** watermark_boost;
 
@@ -3456,11 +3456,11 @@ core fields as shown in Listing 2-40.
 
 638 */\* Primarily protects free_area \*/* 639 **spinlock_t** lock;
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -3470,15 +3470,15 @@ core fields as shown in Listing 2-40.
 
 680 */\* Zone statistics \*/* 681 **atomic_long_t** vm_stat\[**NR_VM_ZONE_STAT_ITEMS**\]; 682 **atomic_long_t** vm_numa_event\[**NR_VM_NUMA_EVENT_ITEMS**\]; 683 } **\_\_\_\_cacheline_internodealigned_in_smp**;
 
- 
+
 
 *Listing 2-40:* include/linux/mmzone.h: *Simplified [struct zone](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n515)*
 
- 
+
 
 Looking at each field:
 
- 
+
 
 • \_watermark – An array of [NR_WMARK](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n354) watermark values expressed in base
 
@@ -3528,11 +3528,11 @@ the maximum number of base pages each page set should contain. Set
 
 by [pageset_update()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n7135) (which is set by [\_\_zone_set_pageset_high_and_batch()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n7164)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n7164)
 
- 
 
 
 
- 
+
+
 
 • pageset_batch – The value to set each [struct per_cpu_pages-\>batch](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n384) speci-
 
@@ -3576,7 +3576,7 @@ zone, which is used as an optimisation in [pageblock_pfn_to_page()](https://git.
 
 • vm_numa_event – NUMA-specific statistics for this zone.
 
- 
+
 
 Whether a PFN is spanned by a zone can be determined via
 
@@ -3584,7 +3584,7 @@ Whether a PFN is spanned by a zone can be determined via
 
 [struct zone](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n515)-\>zone_start_pfn and less than [zone_end_pfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n717).
 
- 
+
 
 ***2.4.1 Low memory reserve***
 
@@ -3602,7 +3602,7 @@ As discussed previously, a modern 64-bit system will consist of the follow-
 
 ing zones (though ZONE_MOVABLE and ZONE_DEVICE are optional):
 
- 
+
 
 1. ZONE_DMA
 
@@ -3614,11 +3614,11 @@ ing zones (though ZONE_MOVABLE and ZONE_DEVICE are optional):
 
 5. ZONE_DEVICE
 
- 
 
 
 
- 
+
+
 
 This is also the order in which the zones are declared in [enum zone_type](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n420)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n420)
 
@@ -3632,19 +3632,19 @@ In order to decide how to apply the low memory reserve to these alloca-
 
 tions, the tunable vm.lowmem_reserve_ratio is used. This specifies a range of integers which align with available zones. For example on my system I ob-serve:
 
- 
+
 
 \[~\]\$ sysctl vm.lowmem_reserve_ratio
 
 vm.lowmem_reserve_ratio = 256 128 32 0 0
 
- 
+
 
 Each integer relates to each zone in ascending order, so ratios are as-
 
 signed as shown in Table 2-3.
 
- 
+
 
 Table 2-3: Low memory zone ratios
 
@@ -3652,7 +3652,7 @@ ZONE_DMA ZONE_DMA32 ZONE_NORMAL ZONE_MOVABLE ZONE_DEVICE
 
 1*/*256 1*/*128 1*/*32 0 0
 
- 
+
 
 Note that non-zero ratios are inverted to determine the additional re-
 
@@ -3668,7 +3668,7 @@ portional to the available pages that could have been allocated from but were no
 
 We visualise this in table 2-4.
 
- 
+
 
 Table 2-4: Low memory zone penalties
 
@@ -3678,17 +3678,17 @@ ZONE_DMA 1 *•/*256 1*/*256 1*/*256 1*/*256 ZONE_DMA32 1*/*128 1*/*128 1*/*128 
 
 ZONE_NORMAL 1 *•/*32 1*/*32 ZONE_MOVABLE 0 *•* ZONE_DEVICE *•*
 
- 
+
 
 The low memory reserve values can be observed in /proc/zoneinfo listed
 
 under ‘protection’, providing low memory base page reserve counts for each requested zone sequentially, for example on my machine:
 
- 
 
 
 
- 
+
+
 
 Node 0, zone DMA
 
@@ -3720,11 +3720,11 @@ managed 0
 
 protection: (0, 0, 0, 0, 0)
 
- 
+
 
 We examine summed managed pages in Table 2-5.
 
- 
+
 
 Table 2-5: Bypassed zone pages
 
@@ -3736,13 +3736,13 @@ ZONE_DMA32 1,836,032 6,935,695 6,935,695 *•*
 
 ZONE_NORMAL 5,099,663 5,099,663 *•* ZONE_MOVABLE 0 *•* ZONE_DEVICE *•*
 
- 
+
 
 If we apply the ratios we can observe the reserve page requirements in
 
 Table 2-6.
 
- 
+
 
 Table 2-6: Reserve page requirements
 
@@ -3750,7 +3750,7 @@ Actual Requested zone zone ZONE_DMA ZONE_DMA32 ZONE_NORMAL ZONE_MOVABLE ZONE_DEV
 
 ZONE_DMA 2,991 *•* 10,163 30,084 30,084 ZONE_DMA32 14,344 *•* 54,185 54,185 ZONE_NORMAL 159,364 *•* 159,364 ZONE_MOVABLE 0 *•* ZONE_DEVICE *•*
 
- 
+
 
 And you can see that these values align with those reported by
 
@@ -3760,41 +3760,41 @@ These reserve values are added to the minimum watermark value as de-
 
 termined by [\_\_zone_watermark_ok()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3968) as shown in Listing 2-59.
 
- 
+
 
 3995 */\**
 
 3996 *\* Check watermarks for an order-0 allocation request. If these* 3997 *\* are not met, then a high-order request also cannot go ahead*
 
- 
 
 
 
- 
+
+
 
 3998 *\* even if a suitable page happened to be free.* 3999 *\*/*
 
 4000 **if** (free_pages \<= min + z-\>lowmem_reserve\[highest_zoneidx\]) 4001 **return false**;
 
- 
+
 
 *Listing 2-41:* mm/page_alloc.c: *Excerpt from [\_\_zone_watermark_ok()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3968)*
 
- 
+
 
 This is invoked by [zone_watermark_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4039) – if free pages exceed this value
 
 the allocation is not permitted as shown in Listing 2-58.
 
- 
+
 
 4060 **if** (usable_free \> mark + z-\>lowmem_reserve\[highest_zoneidx\]) 4061 **return true**;
 
- 
+
 
 *Listing 2-42:* mm/page_alloc.c: *Excerpt from [zone_watermark_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4039)*
 
- 
+
 
 In both cases the lowmem_reserve\[\] value is referenced using the
 
@@ -3810,7 +3810,7 @@ tunable via [lowmem_reserve_ratio_sysctl_handler()](https://git.kernel.org/pub/s
 
 Examining setup_per_zone_lowmem_reserve() as shown in Listing 2-43.
 
- 
+
 
 8642 */\**
 
@@ -3836,11 +3836,11 @@ Examining setup_per_zone_lowmem_reserve() as shown in Listing 2-43.
 
 8665 **if** (clear)
 
- 
 
 
 
- 
+
+
 
 8666 zone-\>lowmem_reserve\[j\] = 0; 8667 **else** 8668 zone-\>lowmem_reserve\[j\] =
 
@@ -3854,11 +3854,11 @@ managed_pages / ratio;
 
 8673 */\* update totalreserve_pages \*/* 8674 **calculate_totalreserve_pages**(); 8675 }
 
- 
+
 
 *Listing 2-43:* mm/page_alloc.c: [*setup_per_zone_lowmem_reserve()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n8648)
 
- 
+
 
 Here we can see that we iterate through each zone of each online node,
 
@@ -3872,7 +3872,7 @@ total reserved pages combining the lowmem reserve and high watermark of
 
 each node and zone.
 
- 
+
 
 ***2.4.2 Total reserved pages***
 
@@ -3898,7 +3898,7 @@ removed.
 
 We examine [calculate_totalreserve_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n8607) in Listing 2-44.
 
- 
+
 
 8603 */\**
 
@@ -3912,11 +3912,11 @@ We examine [calculate_totalreserve_pages()](https://git.kernel.org/pub/scm/linux
 
 8615 pgdat-\>totalreserve_pages = 0; 8616
 
- 
 
 
 
- 
+
+
 
 8617 **for** (i = 0; i \< **MAX_NR_ZONES**; i++) { 8618 **struct** zone \*zone = pgdat-\>node_zones + i; 8619 **long** max = 0; 8620 **unsigned long** managed_pages = **zone_managed_pages**(zone)
 
@@ -3944,11 +3944,11 @@ We examine [calculate_totalreserve_pages()](https://git.kernel.org/pub/scm/linux
 
 8639 totalreserve_pages = reserve_pages; 8640 }
 
- 
+
 
 *Listing 2-44:* mm/page_alloc.c: [*calculate_totalreserve_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n8607)
 
- 
+
 
 We obtain the most conservative value possible – a combination of the
 
@@ -3970,15 +3970,15 @@ This algorithm sums the high water mark with the maximum possible
 
 low memory zone protection – this is to account for the worst case scenario allocation in each zone, i.e. an allocation from the zone which bypasses the most pages in order to allocate from a lower one.
 
- 
 
 
 
- 
+
+
 
 **2.5 Migrate types**
 
- 
+
 
 Within the kernel physical memory is subdivided into node, zone, order and
 
@@ -4014,7 +4014,7 @@ These three cases form the fundamental migrate types, though there are
 
 additional types for specific use case. These are defined by [enum migratetype](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n42)[:](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n42)
 
- 
+
 
 • MIGRATE_UNMOVABLE – These pages cannot be migrated at all. This is typ-
 
@@ -4044,11 +4044,11 @@ tiguous Memory Allocator (CMA). This mechanism reserves memory early in boot whi
 
 ted to be allocated at all. This is used by the CMA mechanism early on to transfer memory from other migrate types to MIGRATE_CMA, as well as memory hot-plugging. The details of this are out of scope for this book.
 
- 
 
 
 
- 
+
+
 
 The purpose of categorising memory in this way is in furtherance of the
 
@@ -4102,11 +4102,11 @@ The fact we are able to ‘steal’ pages from other migrate types means it
 
 is possible for a page block to contain a mix of migrate types. This is un-
 
- 
 
 
 
- 
+
+
 
 desirable but sometimes necessary under memory pressure. As a result,
 
@@ -4154,11 +4154,11 @@ mechanism for the reduction of fragmentation which is itself by its nature a
 
 heuristic task.
 
- 
+
 
 **2.6 GFP flags**
 
- 
+
 
 When allocating memory GFP (‘Get Free Pages’) flags are used to specify
 
@@ -4174,13 +4174,13 @@ GFP_KERNEL. The flags can be bitwise-or combined as needed. The kernel di-
 
 vides modifiers into different categories, which we will examine in turn.
 
- 
+
 
 ***2.6.1 Physical address zone modifiers***
 
 These specify which zone the allocation should originate from:
 
- 
+
 
 • \_\_GFP_DMA – Indicates that the allocation should originate from ZONE_DMA.
 
@@ -4192,7 +4192,7 @@ ZONE_HIGHMEM. Not relevant for 64-bit systems.
 
 ZONE_DMA32.
 
- 
+
 
 The GFP_ZONEMASK values provides a mask for all of these values in ad-
 
@@ -4200,23 +4200,23 @@ ditional to \_\_GFP_MOVABLE which indicates that a page can be placed in
 
 ZONE_MOVABLE, if configured and available.
 
- 
 
 
 
- 
+
+
 
 **N O T E** *ZONE_MOVABLE* is a zone that exists if the *kernelcore* and/or *movablecore* command
 
 line parameters are specified which provides a physically contiguous range of memory where movable pages can be placed.
 
- 
+
 
 ***2.6.2 Page mobility and placement hints***
 
 These flags indicate how mobile pages can be (e.g. to what degree the kernel can move them around):
 
- 
+
 
 • \_\_GFP_MOVABLE – Indicates that the page should have a migrate type of
 
@@ -4250,11 +4250,11 @@ abled, this page should be ‘charged’ to it, and if not permitted by the cont
 
 in [\_\_alloc_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5513).
 
- 
 
 
 
- 
+
+
 
 ***2.6.3 Watermark modifiers***
 
@@ -4262,7 +4262,7 @@ These flags determine how watermark limits are enforced on allocation and
 
 relatedly how zone emergency reserves can be made us of:
 
- 
+
 
 • \_\_GFP_ATOMIC – This indicates that the caller can’t sleep (and as a result
 
@@ -4280,19 +4280,19 @@ within a zone available for allocation regardless of watermarks. It is in-tended
 
 serves altogether. Overrides \_\_GFP_MEMALLOC if both flags are set.
 
- 
+
 
 ***2.6.4 Reclaim modifiers***
 
 These flags indicate what reclaim can be performed on allocation:
 
- 
+
 
 **N O T E** Reclaim is the process by which physical memory is reclaimed by discarding file-
 
 backed pages and swapping out to disk, discussed in far more detail in Chapter 11.
 
- 
+
 
 • \_\_GFP_IO – Indicates that I/O may be performed. This is used by the re-
 
@@ -4310,11 +4310,11 @@ claim via the [may_enter_fs()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 this is where, under severe memory pressure, the allocator tries to re-claim memory immediately upon allocation. This should be cleared if failing to allocate is acceptable (e.g. there are fallback options). Direct
 
- 
 
 
 
- 
+
+
 
 reclaim might sleep. If this flag is cleared then the OOM killer will not
 
@@ -4342,13 +4342,13 @@ forward progress could have been made in another attempt. This also does not inv
 
 does the diametric opposite of \_\_GFP_NORETRY and direct reclaim instead loops indefinitely until a page is successfully obtained. Sanity prevails in that a kernel warning will be generated if you attempt this with pages of order 2 or greater.
 
- 
+
 
 ***2.6.5 Action modifiers***
 
 Action modifiers either enable or disable specific actions taken by the alloca-tor:
 
- 
+
 
 • \_\_GFP_NOWARN – Prevent the kernel from outputting warnings about allo-
 
@@ -4374,11 +4374,11 @@ turn invoked by [post_alloc_hook()](https://git.kernel.org/pub/scm/linux/kernel/
 
 propriate GFP flags are also set. Available and relevant only if CONFIG_KASAN_HW_TAGS is set.
 
- 
 
 
 
- 
+
+
 
 • \_\_GFP_SKIP_KASAN_UNPOISON – Causes KASAN to skip unpoisioning on page
 
@@ -4394,7 +4394,7 @@ CONFIG_LOCKDEP) this appears to disable direct reclaim in order to avoid
 
 lock dependency checking there in [\_\_need_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4656).
 
- 
+
 
 ***2.6.6 Predefined GFP flag combinations***
 
@@ -4402,7 +4402,7 @@ Rather than specifying individual flags it is far more convenient to use a sen-
 
 sible predefined combination of them. Examining each of these:
 
- 
+
 
 • GFP_KERNEL – \_\_GFP_RECLAIM, \_\_GFP_IO, \_\_GFP_FS – Standard kernel allocation,
 
@@ -4444,11 +4444,11 @@ and \_\_GFP_FS flags are not set meaning no I/O at all is permitted on di-rect r
 
 [memalloc_noio_save()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/mm.h?h=v6.0#n288) and unset by [memalloc_noio_restore()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/mm.h?h=v6.0#n303).
 
- 
 
 
 
- 
+
+
 
 • GFP_NOFS – \_\_GFP_RECLAIM, \_\_GFP_IO – Will direct reclaim and potentially
 
@@ -4472,7 +4472,7 @@ ZONE_DMA32. Used for device memory allocation where the device has a 32-bit addr
 
 flag which additionally enables direct reclaim.
 
- 
+
 
 ***2.6.7 Memalloc Flags***
 
@@ -4480,7 +4480,7 @@ It is possible to specify process-specific flags which, while they are set, ad-j
 
 [current_gfp_context()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/mm.h?h=v6.0#n203) except for PF_MEMALLOC. The process flags are as follows:
 
- 
+
 
 • PF_MEMALLOC_NOIO – This clears \_\_GFP_IO and \_\_GFP_FS flags disabling all di-
 
@@ -4508,15 +4508,15 @@ flag ALLOC_NO_WATERMARKS in [\_\_gfp_pfmemalloc_flags()](https://git.kernel.org/
 
 [memalloc_noreclaim_save()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/mm.h?h=v6.0#n339) and restored by [memalloc_noreclaim_restore()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/mm.h?h=v6.0#n346).
 
- 
 
 
 
- 
+
+
 
 **2.7 Buddy allocator**
 
- 
+
 
 ***2.7.1 Algorithm***
 
@@ -4596,21 +4596,21 @@ operation to achieve the bit flip which is done in [\_\_find_buddy_pfn()](https:
 
 in Listing 2-45.
 
- 
+
 
 307 **static inline unsigned long** 308 **\_\_find_buddy_pfn**(**unsigned long** page_pfn, **unsigned int** order) 309 {
 
 310 **return** page_pfn ^ (1 \<\< order); 311 }
 
- 
 
 
 
- 
+
+
 
 *Listing 2-45:* mm/internal.h: [*\_\_find_buddy_pfn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n308)
 
- 
+
 
 When freeing pages, we also try to coalesce them. This is the beauty of
 
@@ -4624,7 +4624,7 @@ The actual process of obtaining a buddy page involves a little more effort
 
 as shown in Listing 2-46.
 
- 
+
 
 327 **static inline struct** page \***find_buddy_page_pfn**(**struct** page \*page, 328 **unsigned long** pfn, **unsigned int** order, **unsigned long** \*
 
@@ -4642,11 +4642,11 @@ buddy_pfn)
 
 340 }
 
- 
+
 
 *Listing 2-46:* mm/internal.h: [*find_buddy_page_pfn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n327)
 
- 
+
 
 This function obtains both the buddy PFN and its [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) Note that
 
@@ -4656,7 +4656,7 @@ PFN. What is key here is the invocation of [page_is_buddy()](https://git.kernel.
 
 the buddy page is actually present and available as shown in Listing 2-47.
 
- 
+
 
 256 */\**
 
@@ -4666,11 +4666,11 @@ the buddy page is actually present and available as shown in Listing 2-47.
 
 265 *\* Setting, clearing, and testing PageBuddy is serialized by zone-\>lock.* 266 *\**
 
- 
 
 
 
- 
+
+
 
 267 *\* For recording page's order, we use page_private(page).* 268 *\*/*
 
@@ -4700,15 +4700,15 @@ the buddy page is actually present and available as shown in Listing 2-47.
 
 288 }
 
- 
+
 
 *Listing 2-47:* mm/internal.h: [*page_is_buddy()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n269)
 
- 
+
 
 Examining the logic:
 
- 
+
 
 1. Guard pages are out of scope for this chapter (and only relevant if
 
@@ -4722,13 +4722,13 @@ Buddy pages store their order in the private field of [struct page](https://git.
 
 3. Finally, we ensure that the buddies do not cross a zone boundary.
 
- 
+
 
 See the previous chapter on allocators for a detailed examination of the
 
 buddy allocator algorithm.
 
- 
+
 
 ***2.7.2 Free lists***
 
@@ -4744,11 +4744,11 @@ the [struct free_area](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 spinlock_t lock field.
 
- 
 
 
 
- 
+
+
 
 It’s important to note that one zone (which is fundamentally a physical
 
@@ -4756,17 +4756,17 @@ address range) might be subdivided into several struct zone objects, as each nod
 
 Examining the [struct free_area](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n105) type as shown in Listing 2-48.
 
- 
+
 
 105 **struct** free_area {
 
 106 **struct** list_head free_list\[**MIGRATE_TYPES**\]; 107 **unsigned long** nr_free; 108 };
 
- 
+
 
 *Listing 2-48:* include/linux/mmzone.h: [*struct free_area*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n105)
 
- 
+
 
 This simply contains the heads of the free lists themselves per-migrate
 
@@ -4778,7 +4778,7 @@ Pages are added to free lists via via [add_to_free_list()](https://git.kernel.or
 
 and deleted from a free list via [del_page_from_free_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1040).
 
- 
+
 
 ***2.7.3 Per-CPU free Pages (PCPs)/Pagesets***
 
@@ -4792,15 +4792,15 @@ Each physical allocation first tries to allocate from pageset pages, and
 
 each free tries to free to pageset pages. These pages are essentially in limbo (they are not actually freed) and act as a cache between allocations and the actual free lists as an optimisation.
 
- 
+
 
 **N O T E** You can obtain per-zone pagestat statistics via */proc/zoneinfo*.
 
- 
+
 
 We examine the [struct per_cpu_pages](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n384) type in Listing 2-49.
 
- 
+
 
 383 */\* Fields and list protected by pagesets local_lock in page_alloc.c \*/* 384 **struct** per_cpu_pages {
 
@@ -4814,15 +4814,15 @@ We examine the [struct per_cpu_pages](https://git.kernel.org/pub/scm/linux/kerne
 
 395 **struct** list_head lists\[**NR_PCP_LISTS**\]; 396 } **\_\_\_\_cacheline_aligned_in_smp**;
 
- 
 
 
 
- 
+
+
 
 *Listing 2-49:* include/linux/mmzone.h: [*struct per_cpu_pages*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n384)
 
- 
+
 
 This is stored in the [struct zone](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n515) type with an entry for each system
 
@@ -4836,7 +4836,7 @@ by [alloc_percpu()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/lin
 
 2-50.
 
- 
+
 
 515 **struct** zone {
 
@@ -4848,11 +4848,11 @@ by [alloc_percpu()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/lin
 
 683 } **\_\_\_\_cacheline_internodealigned_in_smp**;
 
- 
+
 
 *Listing 2-50:* include/linux/mmzone.h: [*struct zone*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n515) *per_cpu_pageset field*
 
- 
+
 
 Entries are initialised by [build_all_zonelists_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n6605) during early boot
 
@@ -4890,7 +4890,7 @@ an additional ‘order’ for transparent huge pages, more on this in the chapte
 
 on huge pages). Examining each field:
 
- 
+
 
 • lock – Lock to protect the lists field typically acquired via
 
@@ -4910,11 +4910,11 @@ pageset. If exceeded, pages are drained back to the ordinary free lists.
 
 This value is not read directly but rather via [nr_pcp_high()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3417) which either returns the high value, or a lesser value depending on whether the zone
 
- 
 
 
 
- 
+
+
 
 is undergoing reclaim/too many higher order pages are present on the
 
@@ -4942,11 +4942,11 @@ pagesets for remote zones (i.e. on node in which the core executing the refresh 
 
 der. The lists are of [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) objects tied together using their lru field.
 
- 
+
 
 **2.8 Allocator implementation**
 
- 
+
 
 ***2.8.1 Visualising the allocator***
 
@@ -4958,17 +4958,17 @@ follows. The key function underlying the allocator is [\_\_alloc_pages()](https:
 
 allocation of multiple pages in bulk as shown in Figure **??**.
 
- 
+
 
 
 
 [get_zeroed_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5605) [alloc_pages_exact()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5808)
 
- 
+
 
 [folio_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n2278) [alloc_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n286) [\_\_get_free_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5594) [kmalloc_order()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slab_common.c?h=v6.0#n924)
 
- 
+
 
 [alloc_slab_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/slub.c?h=v6.0#n1821) Node? [alloc_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n2252) [\_\_folio_alloc_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n247)
 
@@ -4976,7 +4976,7 @@ no
 
 yes
 
- 
+
 
 [alloc_pages_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n260) [\_\_alloc_pages_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n238) [\_\_alloc_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5513) [\_\_folio_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5577)
 
@@ -4984,27 +4984,27 @@ If fails
 
 [\_\_alloc_pages_bulk()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5360) [alloc_pages_bulk_array()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n219)
 
- 
+
 
 [alloc_pages_bulk_array_mempolicy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n2349) [alloc_pages_bulk_array_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n225)
 
- 
+
 
 *Figure 2-13: Physical page allocation in the kernel*
 
- 
+
 
 Note that:
 
- 
+
 
 • Denotes functions that are exported.
 
- 
+
 
 • Denotes the key functions which all others ultimately arrive at.
 
- 
+
 
 As this demonstrates, all non-bulk physical memory allocations are ul-
 
@@ -5014,15 +5014,15 @@ to analyse in order to understand physical allocation within the kernel as
 
 shown in Listing 2-51.
 
- 
+
 
 5513 **struct** page \***\_\_alloc_pages**(**gfp_t** gfp, **unsigned int** order, **int** preferred_nid, 5514 **nodemask_t** \*nodemask)
 
- 
+
 
 *Listing 2-51:* mm/page_alloc.c: [*\_\_alloc_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5513) *prototype*
 
- 
+
 
 The gfp field specifies GFP flags which includes any zone specification,
 
@@ -5040,7 +5040,7 @@ the allocation via [prepare_alloc_pages()](https://git.kernel.org/pub/scm/linux/
 
 in initial values of:
 
- 
+
 
 • order = order
 
@@ -5048,11 +5048,11 @@ in initial values of:
 
 **–** & ~\_\_GFP_FS if PF_MEMALLOC_NOIO/PF_MEMALLOC_NOFS is set. **–** & ~\_\_GFP_IO if PF_MEMALLOC_NOIO is set. **–** & ~\_\_GFP_MOVABLE if PF_MEMALLOC_PIN is set.
 
- 
 
 
 
- 
+
+
 
 • alloc_flags = ALLOC_WMARK_LOW
 
@@ -5074,43 +5074,43 @@ nodemask specified = cpuset_current_mems_allowed\]
 
 }
 
- 
+
 
 Let’s go on a whistle-stop tour of \_\_alloc_pages() and examine the entire
 
 call stack involved in allocating physical memory as shown in Figure 2-14.
 
- 
+
 
 Initialise GFP and alloc flags
 
- 
+
 
 Try to allocate from [get_page_from_freelist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166)
 
- 
+
 
 yes
 
 Success? Return [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72)
 
- 
+
 
 no
 
- 
+
 
 Reset gfp, nodemask and spread_dirty_pages
 
- 
+
 
 Try to allocate from [\_\_alloc_pages_slowpath()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015)
 
- 
+
 
 *Figure 2-14: Visualisation of* [*\_\_alloc_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5513)
 
- 
+
 
 Initialisation of flags consists of applying the global GFP mask
 
@@ -5130,17 +5130,17 @@ Note that we do not explore [\_\_alloc_pages_slowpath()](https://git.kernel.org/
 
 amine this in Listing 11-1 in Chapter 11 on reclaim, as this is where direct reclaim takes place.
 
- 
 
 
 
- 
+
+
 
 Get the next zone in ac-\>zonelist, starting at
 
 ac-\>preferred_zoneref, if none remain return NULL
 
- 
+
 
 If cpusets enabled and ALLOC_CPUSET set,
 
@@ -5152,7 +5152,7 @@ is permitted via [\_\_cpuset_node_allowed()](https://git.kernel.org/pub/scm/linu
 
 yes
 
- 
+
 
 If spread dirty pages enabled check no we are within limits
 
@@ -5160,7 +5160,7 @@ If spread dirty pages enabled check no we are within limits
 
 yes
 
- 
+
 
 If ALLOC_NOFALLBACK, more than 1 online
 
@@ -5172,7 +5172,7 @@ than preferred, check if on local node
 
 yes
 
- 
+
 
 Check if zone free pages are above
 
@@ -5184,19 +5184,19 @@ and ALLOC_NO_WATERMARKS not set
 
 yes
 
- 
+
 
 succeeded failed
 
 [node_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4808)?
 
- 
+
 
 no
 
 [rmqueue()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3821) page from this zone Success?
 
- 
+
 
 yes
 
@@ -5204,19 +5204,19 @@ Prepare page via [prep_new_page()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 via [reserve_highatomic_pageblock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2873)
 
- 
+
 
 Return [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72)
 
- 
+
 
 *Figure 2-15: Visualisation of* [*get_page_from_freelist()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166)
 
- 
 
 
 
- 
+
+
 
 Check if order is per-
 
@@ -5228,17 +5228,17 @@ via [pcp_allowed_order()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 no
 
- 
+
 
 Invoke [rmqueue_buddy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3700)
 
- 
+
 
 Check whether the
 
 zone is boosted
 
- 
+
 
 yes
 
@@ -5246,15 +5246,15 @@ Boosted? Wake up kswapd
 
 no
 
- 
+
 
 Return page
 
- 
+
 
 *Figure 2-16: Visualisation of* [*rmqueue()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3821)
 
- 
+
 
 Acquire zone-\>lock
 
@@ -5268,7 +5268,7 @@ and ALLOC_HARDER set
 
 no
 
- 
+
 
 no
 
@@ -5284,25 +5284,25 @@ Success?
 
 NULL stats, [check_new_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2389)
 
- 
+
 
 no
 
 OK?
 
- 
+
 
 yes
 
- 
+
 
 Update zone NUMA stats Return page
 
- 
+
 
 *Figure 2-17: Visualisation of* [*rmqueue_buddy()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3700)
 
- 
+
 
 [\_\_rmqueue()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3080) is a simple wrapper around [\_\_rmqueue_smallest()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2554) with the
 
@@ -5310,21 +5310,21 @@ added logic of falling back to [\_\_rmqueue_fallback()](https://git.kernel.org/p
 
 grate type if this fails as shown in Figure 2-18.
 
- 
 
 
 
- 
+
+
 
 Get page via [\_\_rmqueue_smallest()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2554)
 
- 
+
 
 Success?
 
 no yes
 
- 
+
 
 Get page from
 
@@ -5332,11 +5332,11 @@ Return page
 
 [\_\_rmqueue_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2998)
 
- 
+
 
 *Figure 2-18: Visualisation of* [*\_\_rmqueue()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3080)
 
- 
+
 
 [rmqueue_pcplist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3778) is a simple mechanism for retrieving a page from
 
@@ -5346,15 +5346,15 @@ the PCP lists so there is not much benefit in visualising it. Let’s examine
 
 lists as shown in Figure 2-19.
 
- 
+
 
 Set current_order to the requested order Return NULL
 
- 
+
 
 no
 
- 
+
 
 Check if current_order
 
@@ -5364,7 +5364,7 @@ valid (below MAX_ORDER)
 
 yes
 
- 
+
 
 Increment no Try to remove page from free
 
@@ -5374,31 +5374,31 @@ current_order list via [get_page_from_free_area()](https://git.kernel.org/pub/sc
 
 yes
 
- 
+
 
 Split buddies via [expand()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2340)
 
- 
+
 
 Return page of order
 
- 
+
 
 *Figure 2-19: Visualisation of* [*\_\_rmqueue_smallest()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2554)
 
- 
+
 
 We visualise [expand()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2340), whose logic is rather simple, in Figure **??**.
 
- 
 
 
 
- 
+
+
 
 Check if can split the page (order \> requested)
 
- 
+
 
 Add the second half of the page to a
 
@@ -5406,11 +5406,11 @@ free list via [add_to_free_list()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 ment page order and [set_buddy_order()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n951)
 
- 
+
 
 *Figure 2-20: Visualisation of* [*expand()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2340)
 
- 
+
 
 Finally, let’s examine [\_\_rmqueue_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2998)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2998) this is invoked when no page
 
@@ -5418,27 +5418,27 @@ of the required migrate type is available and a page needs to be ‘stolen’ fr
 
 another migrate type as shown in Figure 2-21.
 
- 
 
 
 
- 
+
+
 
 Check if ALLOC_NOFRAGMENT is set
 
- 
+
 
 Set?
 
 yes no
 
- 
+
 
 Set min_order to Set min_order to
 
 page block order requested order
 
- 
+
 
 Set current_order to MAX_ORDER - 1
 
@@ -5446,27 +5446,27 @@ Return false
 
 (we loop in decreasing order)
 
- 
+
 
 yes
 
- 
+
 
 Decrement current_order Check if current_order \< min_order Less?
 
 no
 
- 
+
 
 no
 
- 
+
 
 Found? [find_suitable_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2838)
 
 yes
 
- 
+
 
 Check edge case: If we can’t steal,
 
@@ -5474,17 +5474,17 @@ request MIGRATE_MOVABLE and this page Edge case?
 
 has higher order than requested no yes
 
- 
+
 
 Steal page via Find smallest steal-
 
 [steal_suitable_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2756) able page instead
 
- 
+
 
 *Figure 2-21: Visualisation of* [*\_\_rmqueue_fallback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2998)
 
- 
+
 
 A key point to note here is that under ordinary circumstances the largest
 
@@ -5494,7 +5494,7 @@ page block size or more than we simply convert the entire page block with
 
 zero fragmentation.
 
- 
+
 
 ***2.8.2*** \_\_alloc_pages()
 
@@ -5502,17 +5502,17 @@ Examining the actual function (stripping out of scope memcg and trace
 
 point logic) as shown in Listing 2-52.
 
- 
+
 
 5510 */\**
 
 5511 *\* This is the 'heart' of the zoned buddy allocator.*
 
- 
 
 
 
- 
+
+
 
 5512 *\*/*
 
@@ -5566,11 +5566,11 @@ point logic) as shown in Listing 2-52.
 
 5554 ac.spread_dirty_pages = **false**;
 
- 
 
 
 
- 
+
+
 
 5555
 
@@ -5594,15 +5594,15 @@ point logic) as shown in Listing 2-52.
 
 5574 }
 
- 
+
 
 *Listing 2-52:* mm/page_alloc.c: *Simplified [\_\_alloc_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5513)*
 
- 
+
 
 The top level logic is as follows:
 
- 
+
 
 1. Check to ensure the specified order is within the permitted range (0 to
 
@@ -5650,11 +5650,11 @@ rently only used in [\_\_gup_longterm_locked()](https://git.kernel.org/pub/scm/l
 
 mentation between zones if [alloc_flags_nofragment()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4119) deems this neces-sary.
 
- 
 
 
 
- 
+
+
 
 6. Attempt fast path allocation via [get_page_from_freelist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166) parameterised
 
@@ -5666,7 +5666,7 @@ able dirty page spreading, reset the mask of allowable nodes and invoke
 
 [\_\_alloc_pages_slowpath()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) to perform slow path allocation. The bulk of this logic forms part of direct memory reclaim, which will be examined in the reclaim chapter.
 
- 
+
 
 For most allocations we can simplify this to – generate
 
@@ -5674,7 +5674,7 @@ For most allocations we can simplify this to – generate
 
 Let’s examine struct alloc_context as shown in Listing 2-53.
 
- 
+
 
 196 */\**
 
@@ -5706,21 +5706,21 @@ Let’s examine struct alloc_context as shown in Listing 2-53.
 
 225 **enum** zone_type highest_zoneidx; 226 **bool** spread_dirty_pages; 227 };
 
- 
+
 
 *Listing 2-53:* mm/internal.h: [*struct alloc_context*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n209)
 
- 
 
 
 
- 
+
+
 
 This data structure is threaded through all allocation paths. Examining
 
 each field:
 
- 
+
 
 • zonelist – A [struct zonelist](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n878) is a list of zones that will be tried for allo-
 
@@ -5752,13 +5752,13 @@ section 2.6.2. In early boot there is a global variable which may also im-pact m
 
 • spread_dirty_pages – Set true if \_\_GFP_WRITE is set.
 
- 
+
 
 We can see this in action in [prepare_alloc_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5297) (excluding out-of-scope
 
 CMA code) as shown in Listing 2-54.
 
- 
+
 
 5297 **static inline bool prepare_alloc_pages**(**gfp_t** gfp_mask, **unsigned int** order, 5298 **int** preferred_nid, **nodemask_t** \*nodemask, 5299 **struct** alloc_context \*ac, **gfp_t** \*alloc_gfp, 5300 **unsigned int** \*alloc_flags) 5301 {
 
@@ -5766,11 +5766,11 @@ CMA code) as shown in Listing 2-54.
 
 5307 **if** (**cpusets_enabled**()) { 5308 \*alloc_gfp \|= **\_\_GFP_HARDWALL**;
 
- 
 
 
 
- 
+
+
 
 5309 */\**
 
@@ -5806,11 +5806,11 @@ CMA code) as shown in Listing 2-54.
 
 5338 }
 
- 
+
 
 *Listing 2-54:* mm/page_alloc.c: [*prepare_alloc_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5297)
 
- 
+
 
 The logic largely follows the description of [struct alloc_context](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n209) fields
 
@@ -5838,11 +5838,11 @@ locations should be performed – let’s examine them now (all declared in
 
 Firstly, considering the watermark flags:
 
- 
 
 
 
- 
+
+
 
 • ALLOC_WMARK_MIN – Only allocate if the zone watermark is at or above the
 
@@ -5856,7 +5856,7 @@ haviour.
 
 • ALLOC_NO_WATERMARKS – Ignore watermarks on allocation.
 
- 
+
 
 These flags are kept in sync with the equivalent enum entries in
 
@@ -5868,7 +5868,7 @@ fast-path allocation logic).
 
 The remaining flags are set at higher bits and can be combined:
 
- 
+
 
 • ALLOC_OOM – Indicates that the task is being targeted as an Out-Of-
 
@@ -5894,7 +5894,7 @@ other migratetype pageblocks.
 
 form indirect reclaim. These are kernel threads that work to reclaim free pages back to zones, covered further in the reclaim chapter.
 
- 
+
 
 Let’s examine [get_page_from_freelist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166) (simplified to remove some com-
 
@@ -5904,7 +5904,7 @@ up into three parts. Firstly the initial portion and the beginning of the zone
 
 loop as shown in Listing 2-55.
 
- 
+
 
 4165 **static struct** page \*
 
@@ -5918,11 +5918,11 @@ loop as shown in Listing 2-55.
 
 4175 **retry**:
 
- 
 
 
 
- 
+
+
 
 4176 */\**
 
@@ -5932,11 +5932,11 @@ loop as shown in Listing 2-55.
 
 4180 no_fallback = alloc_flags & **ALLOC_NOFRAGMENT**; 4181 z = ac-\>preferred_zoneref; 4182 **for_next_zone_zonelist_nodemask**(zone, z, ac-\>highest_zoneidx, 4183 ac-\>nodemask) {
 
- 
+
 
 *Listing 2-55:* mm/page_alloc.c: *Preface of [get_page_from_freelist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166)*
 
- 
+
 
 We are iterating through each zone specified by the node mask to find a
 
@@ -5944,7 +5944,7 @@ candidate from which we can obtain pages. The loop code firstly examines
 
 edge cases as shown in Listing 2-56.
 
- 
+
 
 4184 **struct** page \*page; 4185 **unsigned long** mark; 4186
 
@@ -5968,19 +5968,19 @@ zone_pgdat);
 
 4227 *\* than fragmentation avoidance.* 4228 *\*/* 4229 local_nid = **zone_to_nid**(ac-\>preferred_zoneref-\>zone); 4230 **if** (**zone_to_nid**(zone) != local_nid) { 4231 alloc_flags &= ~**ALLOC_NOFRAGMENT**; 4232 **goto retry**; 4233 } 4234 }
 
- 
 
 
 
- 
+
+
 
 *Listing 2-56:* mm/page_alloc.c: [*get_page_from_freelist()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166) *edge cases*
 
- 
+
 
 Here we perform a few checks:
 
- 
+
 
 • If ALLOC_CPUSET is set and the CPU is not allowed under the cgroup cpuset
 
@@ -5996,13 +5996,13 @@ exceeded dirty page limits via [node_dirty_ok()](https://git.kernel.org/pub/scm/
 
 node, then we clear this flag and retry the operation.
 
- 
+
 
 Finally we perform the vital step of the zone watermark check and the
 
 actual allocation of the requested page as shown in Listing 2-57.
 
- 
+
 
 4237 **if** (!**zone_watermark_fast**(zone, order, mark, 4238 ac-\>highest_zoneidx, alloc_flags, 4239 gfp_mask)) {
 
@@ -6042,11 +6042,11 @@ actual allocation of the requested page as shown in Listing 2-57.
 
 4305 *\* It's possible on a UMA machine to get through all zones that are*
 
- 
 
 
 
- 
+
+
 
 4306 *\* fragmented. If avoiding fragmentation, reset and try again.* 4307 *\*/*
 
@@ -6058,11 +6058,11 @@ actual allocation of the requested page as shown in Listing 2-57.
 
 4314 }
 
- 
+
 
 *Listing 2-57:* mm/page_alloc.c: [*get_page_from_freelist()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166) *watermark check and page retrieval*
 
- 
+
 
 The key steps here are the fast-path zone watermark check via
 
@@ -6076,7 +6076,7 @@ In order to check whether the zone watermark has been exceeded we use
 
 zone_watermark_fast() as shown in Listing 2-58.
 
- 
+
 
 4039 **static inline bool zone_watermark_fast**(**struct** zone \*z, **unsigned int** order, 4040 **unsigned long** mark, **int** highest_zoneidx, 4041 **unsigned int** alloc_flags, **gfp_t** gfp_mask) 4042 {
 
@@ -6102,11 +6102,11 @@ zone_watermark_fast() as shown in Listing 2-58.
 
 4064 **if** (**\_\_zone_watermark_ok**(z, order, mark, highest_zoneidx, alloc_flags, 4065 free_pages)) 4066 **return true**;
 
- 
 
 
 
- 
+
+
 
 4067 */\**
 
@@ -6120,11 +6120,11 @@ zone_watermark_fast() as shown in Listing 2-58.
 
 4081 }
 
- 
+
 
 *Listing 2-58:* mm/page_alloc.c: [*zone_watermark_fast()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4039)
 
- 
+
 
 The [\_\_zone_watermark_unusable_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3939) function returns how many base
 
@@ -6150,7 +6150,7 @@ invoke the slow path function [\_\_zone_watermark_ok()](https://git.kernel.org/p
 
 CMA code) as shown in Listing 2-59.
 
- 
+
 
 3968 **bool \_\_zone_watermark_ok**(**struct** zone \*z, **unsigned int** order, **unsigned long**
 
@@ -6172,11 +6172,11 @@ mark,
 
 3984 *\* OOM victims can try even harder than normal ALLOC_HARDER*
 
- 
 
 
 
- 
+
+
 
 3985 *\* users on the grounds that it's definitely going to be in*
 
@@ -6226,21 +6226,21 @@ mark,
 
 4030 }
 
- 
+
 
 *Listing 2-59:* mm/page_alloc.c: [*\_\_zone_watermark_ok()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3968)
 
- 
+
 
 As before, [\_\_zone_watermark_unusable_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3939) is used to take into account
 
 reserved pages.
 
- 
 
 
 
- 
+
+
 
 After this, we examine the impact of allocation flags that reduce the min-
 
@@ -6248,7 +6248,7 @@ imum required number of free pages (ALLOC_OOM supersedes ALLOC_HARDER so if
 
 both are set only ALLOC_OOM takes effect.):
 
- 
+
 
 Table 2-7: Alloc flag watermark impact
 
@@ -6262,7 +6262,7 @@ ALLOC_HIGH ALLOC_OOM ALLOC_HARDER ∆ Req’d pages
 
 *•* *•* *−*62*.*5% *•* *•* *−*75%
 
- 
+
 
 The motivation for reducing watermark requirements even further un-
 
@@ -6296,7 +6296,7 @@ with the watermark set to WMARK_MIN, i.e. removing the watermark boost alto-
 
 gether under these specific circumstances.
 
- 
+
 
 ***2.8.3 rmqueue()***
 
@@ -6306,7 +6306,7 @@ form the allocation from a freelist. This is achieved via [rmqueue()](https://gi
 
 out-of-scope CMA code) as shown in Listing 2-60.
 
- 
+
 
 3820 **static inline**
 
@@ -6320,11 +6320,11 @@ out-of-scope CMA code) as shown in Listing 2-60.
 
 3832 **WARN_ON_ONCE**((gfp_flags & **\_\_GFP_NOFAIL**) && (order \> 1));
 
- 
 
 
 
- 
+
+
 
 3833
 
@@ -6354,13 +6354,13 @@ out-of-scope CMA code) as shown in Listing 2-60.
 
 3860 }
 
- 
+
 
 *Listing 2-60:* mm/page_alloc.c: [*rmqueue()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3821)
 
 The logic is as follows:
 
- 
+
 
 1. If the order of the allocation is such that Per-CPU-Pages (PCPs) can be
 
@@ -6378,23 +6378,23 @@ to perform indirect reclaim. We go into detail about this in the reclaim chapter
 
 (see section 2.8.6) in order to reduce the impact of fragmented page blocks.
 
- 
+
 
 ***2.8.4 rmqueue_buddy()***
 
 We examine [rmqueue_buddy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3700) in Listing 2-61 (eliding statistical updates).
 
- 
+
 
 3699 **static \_\_always_inline**
 
 3700 **struct** page \***rmqueue_buddy**(**struct** zone \*preferred_zone, **struct** zone \*zone, 3701 **unsigned int** order, **unsigned int** alloc_flags, 3702 **int** migratetype) 3703 {
 
- 
 
 
 
- 
+
+
 
 3704 **struct** page \*page; 3705 **unsigned long** flags; 3706
 
@@ -6426,11 +6426,11 @@ We examine [rmqueue_buddy()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 3734 }
 
- 
+
 
 *Listing 2-61:* mm/page_alloc.c: [*rmqueue_buddy()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3700)
 
- 
+
 
 Here we enter a loop where we either allocate a page from
 
@@ -6446,21 +6446,21 @@ in the kernel ring buffer. This should nearly never loop (typically this would
 
 occur if a use-after-free bug had arisen in the kernel).
 
- 
+
 
 ***2.8.5 rmqueue_pcplist()***
 
 Examining [rmqueue_pcplist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3778) as shown in Listing 2-62.
 
- 
+
 
 3777 */\* Lock and remove page from the per-cpu list \*/* 3778 **static struct** page \***rmqueue_pcplist**(**struct** zone \*preferred_zone, 3779 **struct** zone \*zone, **unsigned int** order, 3780 **gfp_t** gfp_flags, **int** migratetype, 3781 **unsigned int** alloc_flags)
 
- 
 
 
 
- 
+
+
 
 3782 {
 
@@ -6500,15 +6500,15 @@ list);
 
 3815 }
 
- 
+
 
 *Listing 2-62:* mm/page_alloc.c: [*rmqueue_pcplist()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3778)
 
- 
+
 
 The logic is as follows:
 
- 
+
 
 1. Setup PCP lock via [pcp_trylock_prepare()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n139) (disabling IRQs to avoid reen-
 
@@ -6522,11 +6522,11 @@ lock cannot be acquired fails, restore IRQs via [pcp_trylock_finish()](https://g
 
 PCP pages that are freed back to ordinary free lists. For each page that
 
- 
 
 
 
- 
+
+
 
 is freed to a PCP list the value is doubled, for each page that is allocated from a PCP list it is halved. As we are allocating here, we halve.
 
@@ -6544,11 +6544,11 @@ via [pcp_trylock_finish()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 result.
 
- 
+
 
 Examining [\_\_rmqueue_pcplist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3738) as shown in Listing 2-63.
 
- 
+
 
 3736 */\* Remove page from the per-cpu list, caller must protect the list \*/* 3737 **static inline**
 
@@ -6570,11 +6570,11 @@ Examining [\_\_rmqueue_pcplist()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 3769 page = **list_first_entry**(list, **struct** page, pcp_list);
 
- 
 
 
 
- 
+
+
 
 3770 **list_del**(&page-\>pcp_list); 3771 pcp-\>count -= 1 \<\< order; 3772 } **while** (**check_new_pcp**(page, order)); 3773
 
@@ -6582,15 +6582,15 @@ Examining [\_\_rmqueue_pcplist()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 3775 }
 
- 
+
 
 *Listing 2-63:* mm/page_alloc.c: [*\_\_rmqueue_pcplist()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3738)
 
- 
+
 
 The logic of this is as follows:
 
- 
+
 
 1. If the PCP list is empty, refill it using [rmqueue_bulk()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3117)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3117) We refill based on
 
@@ -6604,13 +6604,13 @@ the stats.
 
 it fails, repeat page retrieval. If success, return page.
 
- 
+
 
 Examining [\_\_rmqueue()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3080) (out-of-scope CMA logic removed for clarity) as
 
 shown in Listing 2-64.
 
- 
+
 
 3079 **static \_\_always_inline struct** page \* 3080 **\_\_rmqueue**(**struct** zone \*zone, **unsigned int** order, **int** migratetype, 3081 **unsigned int** alloc_flags) 3082 {
 
@@ -6632,27 +6632,27 @@ shown in Listing 2-64.
 
 3110 }
 
- 
+
 
 *Listing 2-64:* mm/page_alloc.c: [*\_\_rmqueue()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3080)
 
- 
+
 
 This is simply a wrapper around \_\_rmqueue_smallest() with fallback page
 
 allocation provided via [\_\_rmqueue_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2998). The fallback will try to move pages from a fallback migrate type to the migrate type we require, then re-tries the operation.
 
- 
+
 
 ***2.8.6 Migrate type fallback***
 
 Examining [\_\_rmqueue_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2998) as shown in Listing 2-65.
 
- 
 
 
 
- 
+
+
 
 2987 */\**
 
@@ -6704,11 +6704,11 @@ Examining [\_\_rmqueue_fallback()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 3030 *\* We cannot steal all free pages from the pageblock and the*
 
- 
 
 
 
- 
+
+
 
 3031 *\* requested migratetype is movable. In that case it's better*
 
@@ -6764,15 +6764,15 @@ Examining [\_\_rmqueue_fallback()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 3073 }
 
- 
+
 
 *Listing 2-65:* mm/page_alloc.c: [*\_\_rmqueue_fallback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2998)
 
- 
 
 
 
- 
+
+
 
 If [\_\_rmqueue_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2998) is called we have failed to find a page of the re-
 
@@ -6792,17 +6792,17 @@ migrate type of its page block. If ALLOC_NOFRAGMENT is set then this will not be
 
 permitted.
 
- 
+
 
 **N O T E** Page blocks are aligned sets of physical pages of a specific size. Page block granular-
 
 ity for x86-64 is order 9 or 512 base pages for example.
 
- 
+
 
 The logic is as follows:
 
- 
+
 
 1. If ALLOC_FRAGMENT is set the minimum order (of page to be moved from a
 
@@ -6828,7 +6828,7 @@ actual stealing of pages, updates statistics and returns true to indicate
 
 that the steal was successful and [\_\_rmqueue()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3080) should be retried.
 
- 
+
 
 It’s important to note here that, as discussed in section 2.5, as a result
 
@@ -6850,11 +6850,11 @@ whenever we encounter this situation. This increases watermarks, thereby
 
 causing reclaim to occur sooner.
 
- 
 
 
 
- 
+
+
 
 The watermark boost is applied by [boost_watermark()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2711) which is called only
 
@@ -6862,7 +6862,7 @@ in [steal_suitable_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 Examining [find_suitable_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2838) as shown in Listing 2-66.
 
- 
+
 
 2832 */\**
 
@@ -6896,15 +6896,15 @@ Examining [find_suitable_fallback()](https://git.kernel.org/pub/scm/linux/kernel
 
 2867 }
 
- 
+
 
 *Listing 2-66:* mm/page_alloc.c: [*find_suitable_fallback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2838)
 
- 
+
 
 And [can_steal_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2690) which it invokes as shown in Listing 2-67.
 
- 
+
 
 2678 */\**
 
@@ -6912,11 +6912,11 @@ And [can_steal_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 2680 *\* steal extra free pages from the same pageblocks to satisfy further* 2681 *\* allocations, instead of polluting multiple pageblocks.*
 
- 
 
 
 
- 
+
+
 
 2682 *\**
 
@@ -6948,29 +6948,29 @@ And [can_steal_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 2709 }
 
- 
+
 
 *Listing 2-67:* mm/page_alloc.c: [*can_steal_fallback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2690)
 
- 
+
 
 The logic depends on the [fallbacks\[\]](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2586) array which encodes the primary
 
 and secondary fallbacks for each migrate type, as shown in Table 2-8.
 
- 
+
 
 Table 2-8: Migrate type fallbacks
 
 Migrate type Primary fallback Secondary fallback MIGRATE_UNMOVABLE MIGRATE_RECLAIMABLE MIGRATE_MOVABLE MIGRATE_MOVABLE MIGRATE_RECLAIMABLE MIGRATE_UNMOVABLE MIGRATE_RECLAIMABLE MIGRATE_UNMOVABLE MIGRATE_MOVABLE
 
- 
+
 
 Note that other migrate types do not have fallbacks.
 
 The logic is as follows:
 
- 
+
 
 1. If the free list contains no pages, return -1 indicating that no suitable
 
@@ -6980,11 +6980,11 @@ fallback could be found.
 
 order and migrate type via [free_area_empty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n117)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n117) If not, try the secondary. If both fail, return -1 indicating that no suitable fallback could be found.
 
- 
 
 
 
- 
+
+
 
 3. Set the can_steal output parameter to the result of [can_steal_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2690).
 
@@ -6996,11 +6996,11 @@ This checks whether the order is greater than or equal to half of a page block (
 
 tion) then we return the chosen migrate type, otherwise we only return it if can_steal has been set.
 
- 
+
 
 Examining [steal_suitable_fallback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2756) as shown in Listing 2-68.
 
- 
+
 
 2748 */\**
 
@@ -7036,11 +7036,11 @@ Examining [steal_suitable_fallback()](https://git.kernel.org/pub/scm/linux/kerne
 
 2779 *\* Boost watermarks to increase reclaim pressure to reduce the* 2780 *\* likelihood of future fallbacks. Wake kswapd now as the node* 2781 *\* may be balanced overall and kswapd will not wake naturally.*
 
- 
 
 
 
- 
+
+
 
 2782 *\*/*
 
@@ -7094,11 +7094,11 @@ Examining [steal_suitable_fallback()](https://git.kernel.org/pub/scm/linux/kerne
 
 2822 **if** (free_pages + alike_pages \>= (1 \<\< (pageblock_order-1)) \|\| 2823 page_group_by_mobility_disabled) 2824 **set_pageblock_migratetype**(page, start_type); 2825
 
- 
 
 
 
- 
+
+
 
 2826 **return**;
 
@@ -7108,13 +7108,13 @@ Examining [steal_suitable_fallback()](https://git.kernel.org/pub/scm/linux/kerne
 
 2829 **move_to_free_list**(page, zone, current_order, start_type); 2830 }
 
- 
+
 
 *Listing 2-68:* mm/page_alloc.c: [*steal_suitable_fallback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2756)
 
 Examining the logic:
 
- 
+
 
 1. If the existing page block migrate type is set to MIGRATE_HIGHATOMIC due to
 
@@ -7164,11 +7164,11 @@ single_page branch.
 
 type to the target by summing free_pages and alike_pages and seeing if
 
- 
 
 
 
- 
+
+
 
 this is equal to or exceeds half the page block size (i.e. if the pages which are alike and the free pages that will have been moved between migrate types dominate the page block). If so we set the page block migratetype
 
@@ -7178,11 +7178,11 @@ via [set_pageblock_migratetype()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 the target migrate type.
 
- 
+
 
 Examining [\_\_rmqueue_smallest()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2554) as shown in Listing 2-69.
 
- 
+
 
 2553 **static \_\_always_inline**
 
@@ -7202,17 +7202,17 @@ Examining [\_\_rmqueue_smallest()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 2577 }
 
- 
+
 
 *Listing 2-69:* mm/page_alloc.c: [*\_\_rmqueue_smallest()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2554)
 
- 
+
 
 This functions assumes the zone spinlock is being held and contains the
 
 allocation part of the buddy algorithm:
 
- 
+
 
 1. Iterate through each order from the target page order to maximum.
 
@@ -7224,11 +7224,11 @@ allocation part of the buddy algorithm:
 
 allocated, places the unneeded pages back on the appropriate freelists.
 
- 
 
 
 
- 
+
+
 
 4. Invoke [set_pcppage_migratetype()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n305) to set [struct page-\>index](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) to the migrate
 
@@ -7236,11 +7236,11 @@ type for convenience when this page is freed to a PCP list in= future.
 
 Additionally we register a [trace event](https://kernel.org/doc/html/v6.0/trace/events.html) for this allocation.
 
- 
+
 
 Examining [expand()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2340) as shown in Listing 2-70.
 
- 
+
 
 2340 **static inline void expand**(**struct** zone \*zone, **struct** page \*page, 2341 **int** low, **int** high, **int** migratetype) 2342 {
 
@@ -7260,11 +7260,11 @@ Examining [expand()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 2362 }
 
- 
+
 
 *Listing 2-70:* mm/page_alloc.c: [*expand()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2340)
 
- 
+
 
 As each page order represents a power of 2 splitting up a higher order
 
@@ -7284,11 +7284,11 @@ the split page back to the freelist via [add_to_free_list()](https://git.kernel.
 
 &page\[size\], setting its buddy order correctly using [set_buddy_order()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n951)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n951)
 
- 
 
 
 
- 
+
+
 
 This ultimately leaves a page of the required order at page. Since we are
 
@@ -7304,7 +7304,7 @@ where the kernel cannot sleep, e.g. under interrupt context) as shown in
 
 Listing 2-71.
 
- 
+
 
 2869 */\**
 
@@ -7350,15 +7350,15 @@ Listing 2-71.
 
 2903 **spin_unlock_irqrestore**(&zone-\>lock, flags); 2904 }
 
- 
+
 
 *Listing 2-71:* mm/page_alloc.c: [*reserve_highatomic_pageblock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2873)
 
- 
 
 
 
- 
+
+
 
 This is invoked by [get_page_from_freelist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166) (see listing **??**) if the alloca-
 
@@ -7372,7 +7372,7 @@ chapter. Examining [rmqueue_bulk()](https://git.kernel.org/pub/scm/linux/kernel/
 
 as shown in Listing 2-72.
 
- 
+
 
 3112 */\**
 
@@ -7420,17 +7420,17 @@ as shown in Listing 2-72.
 
 3151 */\**
 
- 
 
 
 
- 
+
+
 
 3152 *\* i pages were removed from the buddy list even if some leak due* 3153 *\* to check_pcp_refill failing so adjust NR_FREE_PAGES based* 3154 *\* on i. Do not confuse with 'allocated' which is the number of* 3155 *\* pages added to the pcp list.* 3156 *\*/*
 
 3157 **\_\_mod_zone_page_state**(zone, NR_FREE_PAGES, -(i \<\< order)); 3158 **spin_unlock**(&zone-\>lock); 3159 **return** allocated; 3160 }
 
- 
+
 
 *Listing 2-72:* mm/page_alloc.c: [*rmqueue_bulk()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3117)
 
@@ -7446,7 +7446,7 @@ with page state being checked by [check_pcp_refill()](https://git.kernel.org/pub
 
 to ensure returned pages are valid typically to avoid use-after-free bugs.
 
- 
+
 
 ***2.8.7 New page preparation***
 
@@ -7458,7 +7458,7 @@ is called from [get_page_from_freelist()](https://git.kernel.org/pub/scm/linux/k
 
 the code as shown in Listing 2-73.
 
- 
+
 
 2529 **static void prep_new_page**(**struct** page \*page, **unsigned int** order, **gfp_t**
 
@@ -7488,21 +7488,21 @@ alloc_flags)
 
 2546 **clear_page_pfmemalloc**(page); 2547 }
 
- 
+
 
 *Listing 2-73:* mm/page_alloc.c: [*prep_new_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2529)
 
- 
 
 
 
- 
+
+
 
 All pages invoke [post_alloc_hook()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2467) which performs basic initialisation
 
 which always includes:
 
- 
+
 
 • Clear [struct page-\>private](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) via [set_page_private()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n335).
 
@@ -7512,17 +7512,17 @@ which always includes:
 
 \_\_GFP_ZERO is set).
 
- 
+
 
 Compound pages also invoke [prep_compound_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n809) which has already been
 
 discussed in section 2.1.1.
 
- 
+
 
 **2.9 Freeing pages**
 
- 
+
 
 Pages allocated by the kernel are reference-counted as they can be use by multiple different processes (for instance memory shared between forked process por multiple references to a file mapping). The refer-
 
@@ -7562,29 +7562,29 @@ are invoked – there are many entry points to the freeing mechanism which take 
 
 counting mechanism. We visualise this in Figure 2-22.
 
- 
+
 
 
 
 [put_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1167)
 
- 
+
 
 [\_\_pagevec_release()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n1026) [folio_put()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1122)
 
 If [folio_put_testzero()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n727)
 
- 
+
 
 [put_pages_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n138) [release_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n934) [\_\_folio_put()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n121)
 
 If [put_page_testzero()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n721) If [put_page_testzero()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n721)
 
- 
+
 
 Pages compound? Page compound?
 
- 
+
 
 no yes yes no
 
@@ -7592,7 +7592,7 @@ no yes yes no
 
 Apply[\_\_page_cache_release()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n80) Apply[\_\_page_cache_release()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n80)
 
- 
+
 
 [free_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp.h?h=v6.0#n326) [destroy_large_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n821) [free_unref_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3467)
 
@@ -7618,7 +7618,7 @@ no
 
 Acquirezone-\>lock
 
- 
+
 
 [\_\_free_one_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1102)
 
@@ -7626,23 +7626,23 @@ Acquirezone-\>lock
 
 Acquire zone-\>lock
 
- 
+
 
 *Figure 2-22: Freeing physical pages*
 
- 
+
 
 Note that:
 
- 
+
 
 • Denotes functions that are exported.
 
- 
+
 
 • Denotes the key functions which all others ultimately arrive at.
 
- 
+
 
 The two key functions for freeing pages are [free_unref_page_commit()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3435)
 
@@ -7652,7 +7652,7 @@ and the latter freeing a page to the underlying free lists. Let’s examine
 
 free_unref_page_commit() first as shown in Listing 2-74.
 
- 
+
 
 3435 **static void free_unref_page_commit**(**struct** zone \*zone, **struct** per_cpu_pages \*
 
@@ -7664,11 +7664,11 @@ pcp,
 
 3440 **int** pindex;
 
- 
 
 
 
- 
+
+
 
 3441 **bool** free_high;
 
@@ -7698,11 +7698,11 @@ free_high), pcp, pindex);
 
 3462 }
 
- 
+
 
 *Listing 2-74:* mm/page_alloc.c: [*free_unref_page_commit()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3435)
 
- 
+
 
 The initial part of the code is straightforward – we determine which PCP
 
@@ -7724,17 +7724,17 @@ pound and the page order is such that it is eligible to be present on PCP lists.
 
 We examine [nr_pcp_high()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3417) in Listing 2-75.
 
- 
+
 
 3417 **static int nr_pcp_high**(**struct** per_cpu_pages \*pcp, **struct** zone \*zone, 3418 **bool** free_high) 3419 {
 
 3420 **int** high = **READ_ONCE**(pcp-\>high); 3421
 
- 
 
 
 
- 
+
+
 
 3422 **if** (**unlikely**(!high \|\| free_high)) 3423 **return** 0; 3424
 
@@ -7746,11 +7746,11 @@ We examine [nr_pcp_high()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 3432 **return min**(**READ_ONCE**(pcp-\>batch) \<\< 2, high); 3433 }
 
- 
+
 
 *Listing 2-75:* mm/page_alloc.c: [*nr_pcp_high()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3417)
 
- 
+
 
 We can see that, if no PCP high watermark is set (which should only be
 
@@ -7788,7 +7788,7 @@ zone locks and thus improve performance of allocating and freeing memory.
 
 Examining [nr_pcp_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3388) as shown in Listing 2-76.
 
- 
+
 
 3388 **static int nr_pcp_free**(**struct** per_cpu_pages \*pcp, **int** high, **int** batch, 3389 **bool** free_high) 3390 {
 
@@ -7800,11 +7800,11 @@ Examining [nr_pcp_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 3401 */\* Leave at least pcp-\>batch pages on the list \*/* 3402 min_nr_free = batch;
 
- 
 
 
 
- 
+
+
 
 3403 max_nr_free = high - batch; 3404
 
@@ -7820,11 +7820,11 @@ Examining [nr_pcp_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 3415 }
 
- 
+
 
 *Listing 2-76:* mm/page_alloc.c: [*nr_pcp_free()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3388)
 
- 
+
 
 In line with its affect on [nr_pcp_high()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3417)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3417) if free_high is set we clear all PCP
 
@@ -7832,7 +7832,7 @@ pages rather than a batch. Also, if the PCP is disabled or we are in the boot ph
 
 In most cases however, we observe the following process:
 
- 
+
 
 • Set bounds: min_nr_free set to the batch size and max_nr_free set to the
 
@@ -7848,13 +7848,13 @@ drain. As discussed in section 2.7.3, this is a heuristic which ensures that pag
 
 min_nr_free to max_nr_free.
 
- 
+
 
 [free_pcppages_bulk(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1535)as the name suggests, frees a number of PCP pages
 
 in bulk as shown in Listing 2-77.
 
- 
+
 
 1535 **static void free_pcppages_bulk**(**struct** zone \*zone, **int** count, 1536 **struct** per_cpu_pages \*pcp, 1537 **int** pindex) 1538 {
 
@@ -7866,11 +7866,11 @@ in bulk as shown in Listing 2-77.
 
 1547 *\* below while (list_empty(list)) loop.*
 
- 
 
 
 
- 
+
+
 
 1548 *\*/*
 
@@ -7890,13 +7890,13 @@ in bulk as shown in Listing 2-77.
 
 1604 **spin_unlock**(&zone-\>lock); 1605 }
 
- 
+
 
 *Listing 2-77:* mm/page_alloc.c: [*free_pcppages_bulk()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1535) *top level*
 
 This initially:
 
- 
+
 
 • Performs a sanity check to ensure that we only attempt to free as many
 
@@ -7912,13 +7912,13 @@ order and migrate type) in order that the inner loop which initially in-crements
 
 via [has_isolate_pageblock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-isolation.h?h=v6.0#n6) which checks the zone’s nr_isolate_pageblock counter to do so.
 
- 
+
 
 Before invoking the inner loop until count has reached zero (this counts
 
 the name of base pages to be drained) as shown in Listing 2-78.
 
- 
+
 
 1559 **struct** list_head \*list; 1560 **int** nr_pages; 1561
 
@@ -7928,11 +7928,11 @@ the name of base pages to be drained) as shown in Listing 2-78.
 
 1570 **if** (pindex == max_pindex) 1571 max_pindex--; 1572 **if** (pindex == min_pindex)
 
- 
 
 
 
- 
+
+
 
 1573 min_pindex++; 1574 } **while** (1); 1575
 
@@ -7958,15 +7958,15 @@ mt, FPI_NONE);
 
 1600 **trace_mm_page_pcpu_drain**(page, order, mt); 1601 } **while** (count \> 0 && !**list_empty**(list));
 
- 
+
 
 *Listing 2-78:* mm/page_alloc.c: [*free_pcppages_bulk()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1535) *inner loop*
 
- 
+
 
 Examining the logic:
 
- 
+
 
 • As the comment suggests, we begin by traversing PCP lists in a round-
 
@@ -7982,11 +7982,11 @@ page’s [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 [bulkfree_pcp_prepare()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1524) is invoked which in turn calls [check_free_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1292) (more if CONFIG_DEBUG_VM is set) to ensure the page is as expected.
 
- 
 
 
 
- 
+
+
 
 • If there are isolated pageblocks within the zone, the PCP page might
 
@@ -7996,7 +7996,7 @@ have been isolated since being freed so to be safe we retrieve the page block de
 
 ally freeing the pages. This function assumes a zone lock is held.
 
- 
+
 
 **2.9.0.1 FPI flags**
 
@@ -8004,21 +8004,21 @@ Free Page Internal (FPI) flags adjust page free behaviour.
 
 Examining the signature of [\_\_free_one_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1102) as shown in Listing 2-79.
 
- 
+
 
 1102 **static inline void \_\_free_one_page**(**struct** page \*page, 1103 **unsigned long** pfn, 1104 **struct** zone \*zone, **unsigned int** order, 1105 **int** migratetype, **fpi_t** fpi_flags)
 
- 
+
 
 *Listing 2-79:* mm/page_alloc.c: [*\_\_free_one_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1102) *signature*
 
- 
+
 
 We can see that there is a fpi_flags parameter of type [fpi_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n87)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n87) This declares
 
 flags which impact page free behaviour:
 
- 
+
 
 • [FPI_NONE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n90) – No impact on freeing behaviour.
 
@@ -8034,29 +8034,29 @@ This is an optimisation used in specific instances where shuffling pages (the us
 
 mechanism that is intended to catch errors in dynamic memory alloca-tion. One part of its operation is to ‘poison’, i.e. uniquely mark unused pages with a recognisable pattern that can be detected and highlighted as a use-after-free. This flag causes this not to be done for pages where this is not appropriate.
 
- 
+
 
 These flags all specify bits in a bit field so they can be combined as
 
 needed.
 
- 
+
 
 ***2.9.1 \_\_free_one_page()***
 
 Examining the top-level logic of [\_\_free_one_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1102) as shown in Listing 2-80.
 
- 
+
 
 1102 **static inline void \_\_free_one_page**(**struct** page \*page, 1103 **unsigned long** pfn, 1104 **struct** zone \*zone, **unsigned int** order, 1105 **int** migratetype, **fpi_t** fpi_flags) 1106 {
 
 1107 **struct** capture_control \*capc = **task_capc**(zone); 1108 **unsigned long** buddy_pfn; 1109 **unsigned long** combined_pfn;
 
- 
 
 
 
- 
+
+
 
 1110 **struct** page \*buddy; 1111 **bool** to_tail;
 
@@ -8078,15 +8078,15 @@ Examining the top-level logic of [\_\_free_one_page()](https://git.kernel.org/pu
 
 1181 }
 
- 
+
 
 *Listing 2-80:* mm/page_alloc.c: [*\_\_free_one_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1102) *top-level logic*
 
- 
+
 
 The code performs the following steps:
 
- 
+
 
 1. Initial setup and sanity checks.
 
@@ -8098,7 +8098,7 @@ part of the buddy allocator, i.e. checking whether the page’s buddy is free, i
 
 free list.
 
- 
+
 
 Note that the code refers to compaction via [struct capture_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n432), how-
 
@@ -8106,7 +8106,7 @@ ever this is out of scope for this chapter, see the chapter on compaction and mi
 
 Examining the [\_\_free_one_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1102) merge loop as shown in Listing 2-81.
 
- 
+
 
 1124 **if** (**compaction_capture**(capc, page, order, migratetype)) { 1125 **\_\_mod_zone_freepage_state**(zone, -(1 \<\< order), 1126 migratetype);
 
@@ -8118,11 +8118,11 @@ Examining the [\_\_free_one_page()](https://git.kernel.org/pub/scm/linux/kernel/
 
 1134 **if** (**unlikely**(order \>= pageblock_order)) {
 
- 
 
 
 
- 
+
+
 
 1135 */\** 1136 *\* We want to prevent merge between freepages on*
 
@@ -8162,11 +8162,11 @@ buddy_mt)))
 
 1156 **del_page_from_free_list**(buddy, zone, order); 1157 combined_pfn = buddy_pfn & pfn; 1158 page = page + (combined_pfn - pfn); 1159 pfn = combined_pfn; 1160 order++;
 
- 
+
 
 *Listing 2-81:* mm/page_alloc.c: [*\_\_free_one_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1102) *merge loop*
 
- 
+
 
 This code is invoked while order \< MAX_ORDER - 1. Examining the logic
 
@@ -8174,7 +8174,7 @@ This code is invoked while order \< MAX_ORDER - 1. Examining the logic
 
 chapter):
 
- 
+
 
 1. Find buddy page – This is the key step in the merging process – we
 
@@ -8188,11 +8188,11 @@ described in section 2.7.1 and the previous chapter). If no such page exists we 
 
 above then we are merging pages across two page blocks. As we heuristi-cally assign migrate type by page block, we need to check to ensure that the buddy’s migrate type is mergeable with the page we are coalescing
 
- 
 
 
 
- 
+
+
 
 it into (ultimately we will place the coalesced page on a free list of the
 
@@ -8202,13 +8202,13 @@ original page’s migrate type). We do this via [migratetype_is_mergeable()](htt
 
 page from its free list, then update the PFN, page and order accordingly before looping to see if we can coalesce again.
 
- 
+
 
 Finally after any coalescing has taken place we add our newly merged
 
 page to the appropriate free list as shown in Listing 2-82.
 
- 
+
 
 1163 **done_merging**:
 
@@ -8226,11 +8226,11 @@ page to the appropriate free list as shown in Listing 2-82.
 
 1178 */\* Notify page reporting subsystem of freed page \*/* 1179 **if** (!(fpi_flags & **FPI_SKIP_REPORT_NOTIFY**)) 1180 **page_reporting_notify_free**(order);
 
- 
+
 
 *Listing 2-82:* mm/page_alloc.c: [*\_\_free_one_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1102) *add page to free list*
 
- 
+
 
 Other than free page reporting (out of scope for this book), the only
 
@@ -8250,11 +8250,11 @@ After choosing where to put the page, [add_to_free_list()](https://git.kernel.or
 
 Examining [buddy_merge_likely()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1062) as shown in Listing 2-83.
 
- 
 
 
 
- 
+
+
 
 1053 */\**
 
@@ -8272,11 +8272,11 @@ Examining [buddy_merge_likely()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 1074 **return find_buddy_page_pfn**(higher_page, higher_page_pfn, order + 1, 1075 **NULL**) != **NULL**; 1076 }
 
- 
+
 
 *Listing 2-83:* mm/page_alloc.c: [*buddy_merge_likely()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n1062)
 
- 
+
 
 The key thing to note here is that we are examining pages at order + 1
 
@@ -8290,5 +8290,5 @@ would that result in a merge to order + 2? We achieve this by simply invoking
 
 [find_buddy_page_pfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n327) for order + 1 to see if its buddy is available.
 
- 
+
 

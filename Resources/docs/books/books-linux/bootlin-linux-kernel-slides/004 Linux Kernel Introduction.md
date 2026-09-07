@@ -1,28 +1,29 @@
+![](media/index-17_1.jpg)
+
 Linux Kernel Introduction
 
- 
+
 
 Linux Kernel
 
- 
+
 
 Introduction
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 17/436
+
 
 Origin
 
 ![](media/index-18_1.jpg)
 
- 
+
 
 ▶ The Linux kernel was created as a hobby in 1991 by a Finnish
 
@@ -42,17 +43,16 @@ release, individuals or companies big and small. Linus Torvalds in 2014 Image cr
 
 <https://bit.ly/2UIa1TD>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 18/436 Linux kernel in the system
 
- 
+Linux kernel in the system
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 19/436
+
+
 
 Linux kernel main roles
 
- 
+
 
 ▶ **Manage all the hardware resources**: CPU, memory, I/O. ▶ Provide a **set of portable, architecture and hardware independent APIs** to
 
@@ -64,11 +64,11 @@ applications.
 
 through various network connections. The kernel is responsible for “multiplexing” the hardware resource.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 20/436 System calls
 
- 
+System calls
+
+
 
 ▶ The main interface between the kernel and user space is
 
@@ -106,9 +106,8 @@ function
 
 ![](media/index-21_7.png)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 21/436
+
 
 ![](media/index-21_8.png)
 
@@ -150,7 +149,7 @@ function
 
 Pseudo filesystems
 
- 
+
 
 ▶ Linux makes system and kernel information available in user space through
 
@@ -166,23 +165,21 @@ Operating system related information (processes, memory management parameters...
 
 Representation of the system as a tree of devices connected by buses. Information gathered by the kernel frameworks managing these devices.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 22/436
+
 
 Linux Kernel Introduction
 
- 
+
 
 Linux kernel sources
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 23/436
+
 
 Location of the official kernel sources
 
- 
+
 
 ▶ The mainline versions of the Linux kernel, as released by Torvalds
 
@@ -190,11 +187,11 @@ Location of the official kernel sources
 
 *•* <https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 24/436 Linux versioning scheme
 
- 
+Linux versioning scheme
+
+
 
 ▶ Until 2003, there was a new “stabilized” release branch of Linux every 2 or 3 years
 
@@ -208,19 +205,19 @@ developers have managed to do so without having to introduce a massively
 
 incompatible development branch.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 25/436 Linux development model
 
- 
+Linux development model
+
+
 
 ▶ Each new release starts with a two-week merge window for new features ▶ Follow about 8 release candidates (one week each) ▶ Until adoption of a new official release.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 26/436 Need to further stabilize the official kernels
 
- 
+Need to further stabilize the official kernels
+
+
 
 ▶ Issue: bug and security fixes only merged into the master branch, need to update
 
@@ -232,13 +229,12 @@ Torvald’s tree and backports the relevant ones into their stable branches for 
 
 least a few months.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 27/436
+
 
 Location of the stable kernel sources
 
- 
+
 
 ▶ The stable versions of the Linux kernel, as maintained by a maintainers group
 
@@ -246,11 +242,11 @@ Location of the stable kernel sources
 
 *•* <https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git> *•* Certain versions will be maintained much longer
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 28/436 Need for long term support
 
- 
+Need for long term support
+
+
 
 ▶ Issue: bug and security fixes only released for most recent kernel versions. ▶ Solution: the last release of each year is made an LTS *(Long Term Support)*
 
@@ -260,25 +256,24 @@ up to 6 years.
 
 ![](media/index-29_1.png)
 
- 
+
 
 Captured on <https://kernel.org> in Nov.
 
 2023, following the [*Releases*](https://www.kernel.org/category/releases.html) link.
 
- 
+
 
 ▶ Example at Google: starting from *Android O (2017)*, all new Android devices have
 
 to run such an LTS kernel.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 29/436
+
 
 Need for even longer term support
 
- 
+
 
 ▶ You could also get long term support from a commercial embedded Linux
 
@@ -298,11 +293,11 @@ to support much longer (at least 10 years) selected LTS versions (currently 4.4,
 
 <https://wiki.linuxfoundation.org/civilinfrastructureplatform/start>.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 30/436 Location of non-official kernel sources
 
- 
+Location of non-official kernel sources
+
+
 
 ▶ Many chip vendors supply their own kernel sources
 
@@ -324,11 +319,10 @@ fewer stable features, only for cutting-edge development
 
 *•* Architecture communities (ARM, MIPS, PowerPC, etc) *•* Device drivers communities (I2C, SPI, USB, PCI, network, etc) *•* Other communities (filesystems, memory-management, scheduling, etc) *•* Not suitable to be used in products
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 31/436
 
 Linux kernel size and structure
 
- 
+
 
 ▶ Linux v5.18 sources: close to 80k files, 35M lines, 1.3GiB ▶ But a compressed Linux kernel just sizes a few megabytes. ▶ So, why are these sources so big?
 
@@ -338,7 +332,7 @@ filesystems... The core is pretty small!
 
 ▶ As of kernel version v5.18 (in percentage of total number of lines):
 
- 
+
 
 ▶ [drivers/](https://elixir.bootlin.com/linux/latest/source/drivers/)[:](https://elixir.bootlin.com/linux/latest/source/drivers/) 61.1% ▶ [include/](https://elixir.bootlin.com/linux/latest/source/include/)[:](https://elixir.bootlin.com/linux/latest/source/include/) 3.5% ▶ [scripts/](https://elixir.bootlin.com/linux/latest/source/scripts/)[,](https://elixir.bootlin.com/linux/latest/source/scripts/) [security/](https://elixir.bootlin.com/linux/latest/source/security/)[,](https://elixir.bootlin.com/linux/latest/source/security/) [crypto/](https://elixir.bootlin.com/linux/latest/source/crypto/),
 
@@ -362,31 +356,30 @@ filesystems... The core is pretty small!
 
 ▶ [mm/](https://elixir.bootlin.com/linux/latest/source/mm/): 0.5%
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 32/436 Practical lab - Downloading kernel source code
+Practical lab - Downloading kernel source code
 
 ![](media/index-33_1.png)
 
- 
+
 
 ▶ Clone the mainline Linux source tree with git
 
 ![](media/index-33_2.png)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 33/436
+
 
 Linux Kernel Introduction
 
- 
+
 
 Linux kernel source code
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 34/436 Programming language
 
- 
+Programming language
+
+
 
 ▶ Implemented in C like all UNIX systems ▶ A little Assembly is used too:
 
@@ -410,13 +403,12 @@ compile the kernel
 
 (Clang) too: <https://clangbuiltlinux.github.io/>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 35/436
+
 
 No C library
 
- 
+
 
 ▶ The kernel has to be standalone and can’t use user space code. ▶ Architectural reason: user space is implemented on top of kernel services, not the
 
@@ -438,11 +430,11 @@ memset(), malloc(),...).
 
 [printk(),](https://elixir.bootlin.com/linux/latest/ident/printk) [memset()](https://elixir.bootlin.com/linux/latest/ident/memset), [kmalloc()](https://elixir.bootlin.com/linux/latest/ident/kmalloc)[,](https://elixir.bootlin.com/linux/latest/ident/kmalloc) ...
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 36/436 Portability
 
- 
+Portability
+
+
 
 ▶ The Linux kernel code is designed to be portable
 
@@ -460,9 +452,8 @@ specific details
 
 low-end processor without a floating point unit.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 37/436
+
 
 Linux kernel to user API/ABI stability
 
@@ -540,7 +531,7 @@ Modified Image from Wikipedia:
 
 ![](media/index-38_17.png)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 38/436 Linux internal API/ABI instability
+Linux internal API/ABI instability
 
 ![](media/index-38_18.png)
 
@@ -574,7 +565,7 @@ the API change: works great for mainline code
 
 *•* An out-of-tree driver compiled for a given version may
 
- 
+
 
 *•* no longer compile or work on a more recent one **Linux internal** **ABI** See [process/stable-api-nonsense](https://www.kernel.org/doc/html/latest/process/stable-api-nonsense.html) for reasons why ☐ ✘ **no** stable ABI over Linux kernel releases, binaries are not portable
 
@@ -608,7 +599,7 @@ Modified Image from Wikipedia:
 
 ![](media/index-39_7.png)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 39/436 Kernel memory constraints
+Kernel memory constraints
 
 ![](media/index-39_8.png)
 
@@ -628,7 +619,7 @@ Modified Image from Wikipedia:
 
 ![](media/index-39_16.png)
 
- 
+
 
 ▶ No memory protection
 
@@ -640,11 +631,11 @@ implemented to make it grow. Don’t use recursion! ▶ Swapping is not implemen
 
 (except *tmpfs* which lives completely in the page cache and on swap)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 40/436 Linux kernel licensing constraints
 
- 
+Linux kernel licensing constraints
+
+
 
 ▶ The Linux kernel is licensed under the GNU General Public License version 2
 
@@ -666,13 +657,12 @@ hardware), it is a derivative work of the kernel, and therefore must be released
 
 *•* At the time the device starts to be distributed *•* To your customers, not to the entire world
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 41/436
+
 
 Proprietary code and the kernel
 
- 
+
 
 ▶ It is illegal to distribute a binary kernel that includes statically compiled
 
@@ -692,15 +682,15 @@ Are they designed to be used with another operating system?
 
 ▶ Is it really useful to keep drivers secret anyway?
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 42/436 Abusing the kernel licensing constraints
 
- 
+Abusing the kernel licensing constraints
+
+
 
 ▶ There are some examples of ▶ The current trend is to hide the logic proprietary drivers in the firmware or in userspace. The *•* Nvidia uses a wrapper between their GPL kernel driver is almost empty and
 
- 
+
 
 *•* They claim the drivers could be used *•* drivers and the kernel either: Blindly writes an incoming flow of
 
@@ -708,19 +698,18 @@ with a different OS with another
 
 bytes in the hardware
 
- 
+
 
 *•* Unclear whether it makes it legal or userspace through wrapper *•* Exposes a huge MMIO region to mmap
 
 not
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 43/436
+
 
 Advantages of GPL drivers
 
- 
+
 
 ▶ You don’t have to write your driver from scratch. You can reuse code from similar
 
@@ -730,11 +719,11 @@ free software drivers.
 
 distributions or embedded Linux build systems). ▶ Legal certainty, you are sure that a GPL driver is fine from a legal point of view.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 44/436 Advantages of mainlining your kernel drivers
 
- 
+Advantages of mainlining your kernel drivers
+
+
 
 ▶ The community, reviewers and maintainers will review your code before accepting
 
@@ -750,13 +739,12 @@ features, and general improvements.
 
 This will for sure reduce your maintenance and support work
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 45/436
+
 
 User space device drivers 1/2
 
- 
+
 
 ▶ The kernel provides some mechanisms to access hardware from userspace:
 
@@ -786,9 +774,9 @@ support, they have always been handled in user space for historical reasons. ▶
 
 should always be preferred!
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 46/436 User space device drivers 2/2
+User space device drivers 2/2
 
- 
+
 
 ▶ Advantages
 
@@ -802,22 +790,17 @@ avoidance of system calls.
 
 *•* The kernel has no longer access to the device. *•* None of the standard applications will be able to use it. *•* Cannot use any hardware abstraction or software helpers from the kernel *•* Need to adapt applications when changing the hardware. *•* Less straightforward to handle interrupts: increased latency.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 47/436
+
 
 Practical lab - Kernel Source Code - Exploring
 
 ![](media/index-48_1.png)
 
- 
+
 
 ▶ Explore kernel sources manually ▶ Use automated tools to explore the source code
 
 ![](media/index-48_2.png)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 48/436
-
-![](media/index-49_1.jpg)

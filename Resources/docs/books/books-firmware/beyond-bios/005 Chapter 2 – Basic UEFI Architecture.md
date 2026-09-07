@@ -1,12 +1,12 @@
 ## **Chapter 2 – Basic UEFI Architecture** 
 
- 
+
 
 I believe in standards. Everyone should have one.
 
 —George Morrow
 
- 
+
 
 The Unified Extensible Firmware Interface (UEFI) describes a programmatic interface
 
@@ -18,7 +18,7 @@ applications. UEFI represents a pure interface specification against which the d
 
 pects of the interface. These architectural aspects include a set of objects and inter-faces described by the UEFI Specification.
 
- 
+
 
 The cornerstones for understanding UEFI applications and drivers are several UEFI
 
@@ -50,11 +50,11 @@ such as the bus, spindle, partition, and file name of an UEFI image on a formatt
 
 disk.
 
- 
+
 
 **Objects Managed by UEFI-based Firmware**
 
- 
+
 
 Several different types of objects can be managed through the services provided by
 
@@ -64,17 +64,16 @@ real-time clock. The UEFI System Table is the most important data structure, bec
 
 structures that describe the configuration of the platform.
 
- 
+
 
 DOI 10.1515/9781501505690-004
 
-**16** \| Chapter 2 – Basic UEFI Architecture
 
- 
+
 
 **UEFI System Table**
 
- 
+
 
 The UEFI System Table is the most important data structure in UEFI. A pointer to the UEFI System Table is passed into each driver and application as part of its entry-point
 
@@ -88,7 +87,7 @@ system configuration information and a rich collection of UEFI services that inc
 
 ■ Protocol services
 
- 
+
 
 The UEFI Boot Services and UEFI Runtime Services are accessed through the UEFI Boot
 
@@ -106,11 +105,11 @@ ware over time. The *UEFI 2.6 Specification* defines over 30 different protocols
 
 protocols to extend the functionality of a platform.
 
- 
+
 
 **Handle Database**
 
- 
+
 
 The *handle database* is composed of objects called handles and protocols. *Handles*
 
@@ -120,9 +119,8 @@ fields, may contain services, or may contain both services and data fields. Duri
 
 handles and attach one or more protocols to the handles. Information in the handle database is global and can be accessed by any executable UEFI image.
 
-Handle Database \| **17**
 
- 
+
 
 The handle database is the central repository for the objects that are maintained by UEFI-based firmware. The handle database is a list of UEFI handles, and each UEFI
 
@@ -134,7 +132,7 @@ handle type. An UEFI handle may represent components such as the following: ■ 
 
 ■ Devices such as network controllers and hard drive partitions ■ UEFI services such as UEFI Decompression and the EBC Virtual Machine
 
- 
+
 
 Figure 2.1 below shows a portion of the handle database. In addition to the handles
 
@@ -142,11 +140,11 @@ and protocols, a list of objects is associated with each protocol. This list is 
 
 operation of UEFI drivers, because this information is what allows UEFI drivers to be safely loaded, started, stopped, and unloaded without any resource conflicts.
 
- 
+
 
 **First Handle**
 
- 
+
 
 **Handle** **. . .**
 
@@ -156,7 +154,7 @@ operation of UEFI drivers, because this information is what allows UEFI drivers 
 
 **Attributes** **Attributes**
 
- 
+
 
 **Agent Handle** **Agent Handle**
 
@@ -164,7 +162,7 @@ operation of UEFI drivers, because this information is what allows UEFI drivers 
 
 **Attributes** **Attributes**
 
- 
+
 
 **Agent Handle**
 
@@ -172,7 +170,7 @@ operation of UEFI drivers, because this information is what allows UEFI drivers 
 
 **Attributes**
 
- 
+
 
 **Handle** **. . .**
 
@@ -182,17 +180,16 @@ operation of UEFI drivers, because this information is what allows UEFI drivers 
 
 **Attributes**
 
- 
+
 
 **. . .**
 
- 
+
 
 **Figure 2.1:** Handle Database
 
-**18** \| Chapter 2 – Basic UEFI Architecture
 
- 
+
 
 Figure 2.2 shows the different types of handles that can be present in the handle da-tabase and the relationships between the various handle types. All handles reside in
 
@@ -202,21 +199,21 @@ handle differentiate the handle type. Like file system handles in an operating s
 
 necessarily serve a useful purpose in a different process or during a subsequent re-start in the same process. The handle is just a transitory value to manage state.
 
- 
+
 
 **Handles**
 
- 
+
 
 **Agent**
 
 **Handles**
 
- 
+
 
 **Handles** **Image** **Driver** **Driver Image** **Handles** **Handles**
 
- 
+
 
 **Service**
 
@@ -230,15 +227,15 @@ necessarily serve a useful purpose in a different process or during a subsequent
 
 **Handles** **Handles**
 
- 
+
 
 **Figure 2.2:** Handle Types Handle
 
- 
+
 
 **Protocols**
 
- 
+
 
 The extensible nature of UEFI is built, to a large degree, around protocols. UEFI driv-
 
@@ -254,15 +251,14 @@ this number to find his protocol in the handle database. The protocol often incl
 
 following code sequence is an example of a protocol definition. Notice how it defines two function definitions and one data field.
 
-Protocols \| **19**
 
- 
+
 
 **Sample GUID**
 
 \#define EFI_COMPONENT_NAME2_PROTOCOL_GUID \\ {0x6a7a5cff, 0xe8d9, 0x4f70, 0xba, 0xda, 0x75, 0xab, 0x30, 0x25, 0xce, 0x14}
 
- 
+
 
 **Protocol Interface Structure**
 
@@ -280,7 +276,7 @@ CHAR8
 
 } EFI_COMPONENT_NAME2_PROTOCOL;
 
- 
+
 
 Figure 2.3 shows a single handle and protocol from the handle database that is pro-duced by an UEFI driver. The protocol is composed of a GUID and a protocol interface
 
@@ -290,11 +286,11 @@ pointers to the protocol function. The protocol functions are actually contained
 
 depending on the driver’s complexity.
 
- 
+
 
 **First Handle**
 
- 
+
 
 **Handle** **. . .**
 
@@ -312,7 +308,7 @@ depending on the driver’s complexity.
 
 **Access**
 
- 
+
 
 **Function 2** **Device or** **Services** **Produced by** **other EFI**
 
@@ -320,25 +316,25 @@ depending on the driver’s complexity.
 
 **. . .**
 
- 
+
 
 **GUID 2**
 
 **. . .**
 
- 
+
 
 **. . .**
 
- 
+
 
 **. . .**
 
- 
 
-**Figure 2.3:** Construction of a Protocol **20** \| Chapter 2 – Basic UEFI Architecture
 
- 
+**Figure 2.3:** Construction of a Protocol
+
+
 
 Not all protocols are defined in the *UEFI 2.6 Specification*. The EFI Developer Kit II (EDKII) includes many protocols that are not part of the *UEFI 2.6 Specification*. This
 
@@ -356,7 +352,7 @@ that are in the *EDK II* but not in the *UEFI 2.6 Specification* are*:* ■ Vars
 
 ■ VgaMiniPort – a service that provides Video Graphics Array output ■ UsbAtapi – a service to abstract block access on USB bus
 
- 
+
 
 The UEFI Application Toolkit also contains a number of UEFI protocols that may be
 
@@ -370,7 +366,7 @@ found on some platforms, such as:
 
 – EFI TCG Protocol – interaction with a Trusted Platform Module (TPM).
 
- 
+
 
 The OS loader and drivers should not depend on these types of protocols because they
 
@@ -390,9 +386,8 @@ an existing GUID creates the opportunity for a duplicate GUID to be introduced. 
 
 think that it is another protocol, crashing the system as a result. For these types of bugs, finding the root cause is also very difficult. The GUID allows for naming APIs
 
-Protocols \| **21**
 
- 
+
 
 without having to worry about namespace collision. In systems such as PC/AT BIOS, services were added as an enumeration. For example, the venerable Int15h inter-
 
@@ -402,21 +397,21 @@ managed the evolution of Int15h services, several vendors defined similar servic
 
 to develop the specification, UEFI balances the need for API evolution with interop-erability.
 
- 
+
 
 **Working with Protocols**
 
- 
+
 
 Any UEFI code can operate with protocols during boot time. However, after Exit-BootServices() is called, the handle database is no longer available. Several
 
 UEFI boot time services work with UEFI protocols.
 
- 
+
 
 **Multiple Protocol Instances**
 
- 
+
 
 A handle may have many protocols attached to it. However, it may have only one
 
@@ -438,15 +433,15 @@ returns the unique name of the driver that owns that image handle. The EFI_COM-
 
 PONENT_NAME2_PROTOCOL.GetDriverName() function on the USB bus driver handle returns “USB bus driver” for the English language, but on the PXE driver handle it returns “PXE base code driver.”
 
- 
+
 
 **Tag GUID**
 
- 
 
-A protocol may be nothing more than a GUID. In such cases, the GUID is called a *tag GUID*. Such protocols can serve useful purposes such as marking a device handle as **22** \| Chapter 2 – Basic UEFI Architecture
 
- 
+A protocol may be nothing more than a GUID. In such cases, the GUID is called a *tag GUID*. Such protocols can serve useful purposes such as marking a device handle as
+
+
 
 special in some way or allowing other UEFI images to easily find the device handle by querying the system for the device handles with that protocol GUID attached. The *ED-*
 
@@ -454,11 +449,11 @@ special in some way or allowing other UEFI images to easily find the device hand
 
 resent devices from a hot-plug bus such as USB.
 
- 
+
 
 **UEFI Images**
 
- 
+
 
 All UEFI images contain a PE/COFF header that defines the format of the executable code as required by the *Microsoft Portable Executable and Common Object File Format*
 
@@ -482,7 +477,7 @@ evolution of the machine. These images coexist with and can be invoked by an
 
 UEFI-aware operating system.
 
- 
+
 
 The value of the UEFI Image format is that various parties can create binary executables
 
@@ -496,7 +491,7 @@ into memory with the Boot Service gBS-\>LoadImage(). Several supported storage l
 
 ■ System ROM or system flash ■ A media device such as a hard disk, floppy, CD-ROM, or DVD ■ A LAN boot server
 
- 
+
 
 In general, UEFI images are not compiled and linked at a specific address. Instead,
 
@@ -508,9 +503,8 @@ in system memory. The Boot Service gBS-\>LoadImage() does the following: ■ All
 
 the EFI_LOADED_IMAGE_PROTOCOL
 
-UEFI Images \| **23**
 
- 
+
 
 This instance of the EFI_LOADED_IMAGE_PROTOCOL contains information about the UEFI image that was loaded. Because this information is published in the handle
 
@@ -524,7 +518,7 @@ receives the following two parameters:
 
 ■ A pointer to the UEFI System Table
 
- 
+
 
 These two items allow the UEFI image to do the following: ■ Access all of the UEFI services that are available in the platform.
 
@@ -532,17 +526,17 @@ These two items allow the UEFI image to do the following: ■ Access all of the 
 
 memory the image was placed.
 
- 
+
 
 The operations that the UEFI image performs in its entry point vary depending on the
 
 type of UEFI image. Figure 2.4 shows the various UEFI image types and the relation-ships between the different levels of images.
 
- 
+
 
 **EFI Images**
 
- 
+
 
 **Drivers**
 
@@ -554,7 +548,7 @@ type of UEFI image. Figure 2.4 shows the various UEFI image types and the relati
 
 **Drivers**
 
- 
+
 
 **Root Bridge** **Bus** **Hybrid** **Device** **Drivers** **Drivers** **Drivers** **Drivers**
 
@@ -562,69 +556,68 @@ type of UEFI image. Figure 2.4 shows the various UEFI image types and the relati
 
 **Drivers**
 
- 
+
 
 **Applications**
 
 **OS Loaders**
 
- 
+
 
 **Figure 2.4:** Image Types and Their Relationship to One Another
 
-**24** \| Chapter 2 – Basic UEFI Architecture
 
- 
+
 
 **Table 2.1:** Description of Image Types
 
- 
+
 
 **Type of Image** **Description**
 
- 
+
 
 Application A UEFI image of type EFI_IMAGE_SUBSYSTEM_EFI_APPLICA-
 
 TION. This image is executed and automatically unloaded when the image exits or returns from its entry point.
 
- 
+
 
 OS loader A special type of application that normally does not return or exit. Instead, it
 
 calls the UEFI Boot Service gBS-\>ExitBootServices() to transfer control of the platform from the firmware to an operating system.
 
- 
+
 
 Driver A UEFI image of type EFI_IMAGE_SUBSYSTEM_BOOT_SER-
 
 VICE_DRIVER or EFI_IMAGE_SUBSYS-TEM_RUNTIME_DRIVER. If this image returns EFI_SUCCESS, then the image is not unloaded. If the image returns an error code other than EFI_SUCCESS, then the image is automatically unloaded from system memory. The ability to stay resident in system memory is what differentiates a driver from an application. Because drivers can stay resident in memory, they can provide services to other drivers, applications, or an operating system. Only the services produced by runtime drivers are allowed to persist past gBS-\>ExitBootServices().
 
- 
+
 
 Service driver A driver that produces one or more protocols on one or more new service han-
 
 dles and returns EFI_SUCESS from its entry point.
 
- 
+
 
 Initializing driver A driver that does not create any handles and does not add any protocols to
 
 the handle database. Instead, this type of driver performs some initialization operations and returns an error code so the driver is unloaded from system memory.
 
- 
+
 
 Root bridge driver A driver that creates one or more physical controller handles that contain a
 
 Device Path Protocol and a protocol that is a software abstraction for the I/O services provided by a root bus produced by a core chipset. The most common root bridge driver is one that creates handles for the PCI root bridges in the platform that support the Device Path Protocol and the PCI Root Bridge I/O Protocol.
 
- 
+
 
 EFI 1.02 driver A driver that follows the *EFI 1.02 Specification*. This type of driver does not use
 
 the UEFI Driver Model. These types of drivers are not discussed in detail in this document. Instead, this document presents recommendations on converting EFI 1.02 drivers to drivers that follow the UEFI Driver Model.
 
- 
+
 
 UEFI Driver Model A driver that follows the UEFI Driver Model that is described in detail in the
 
@@ -632,39 +625,38 @@ driver *UEFI 2.6 Specification*. This type of driver is fundamentally different 
 
 vice drivers, initializing drivers, root bridge drivers, and EFI 1.02 drivers be-cause a driver that follows the UEFI Driver Model is not allowed to touch hard-ware or produce device-related services in the driver entry point. Instead, the driver entry point of a driver that follows the UEFI Driver Model is allowed only
 
-UEFI Images \| **25**
 
- 
+
 
 **Type of Image** **Description**
 
- 
+
 
 to register a set of services that allow the driver to be started and stopped at a later point in the system initialization process.
 
- 
+
 
 Device driver A driver that follows the UEFI Driver Model. This type of driver produces one or
 
 more driver handles or driver image handles by installing one or more in-stances of the Driver Binding Protocol into the handle database. This type of driver does not create any child handles when the Start() service of the Driver Binding Protocol is called. Instead, it only adds additional I/O protocols to existing controller handles.
 
- 
+
 
 Bus driver A driver that follows the UEFI Driver Model. This type of driver produces one or
 
 more driver handles or driver image handles by installing one or more in-stances of the Driver Binding Protocol in the handle database. This type of driver creates new child handles when the Start() service of the Driver Binding Protocol is called. It also adds I/O protocols to these newly created child handles.
 
- 
+
 
 Hybrid driver A driver that follows the UEFI Driver Model and shares characteristics with
 
 both device drivers and bus drivers. This distinction means that the Start() service of the Driver Binding Protocol will add I/O protocols to ex-isting handles and it will create child handles.
 
- 
+
 
 **Applications**
 
- 
+
 
 A UEFI application starts execution at its entry point, then continues execution until
 
@@ -674,11 +666,11 @@ applications include the UEFI shell, UEFI shell commands, flash utilities, and d
 
 UEFI applications.
 
- 
+
 
 **OS Loader**
 
- 
+
 
 A special type of UEFI application, called an *OS boot loader*, calls the Exit-
 
@@ -686,19 +678,18 @@ BootServices() function when the OS loader has set up enough of the OS infra-str
 
 BootServices() , the UEFI core frees all of its boot time services and drivers, leaving only the run-time services and drivers.
 
-**26** \| Chapter 2 – Basic UEFI Architecture
 
- 
+
 
 **Drivers**
 
- 
+
 
 UEFI drivers differ from UEFI applications in that the driver stays resident in memory
 
 unless an error is returned from the driver’s entry point. The UEFI core firmware, the boot manager, or other UEFI applications may load drivers.
 
- 
+
 
 **EFI 1.02 Drivers**
 
@@ -720,7 +711,7 @@ EFI 1.02 driver; other EFI 1.02 drivers can be found in the EFI Application Tool
 
 follow the UEFI Driver Model.
 
- 
+
 
 **Boot Service and Runtime Drivers**
 
@@ -744,9 +735,8 @@ of runtime drivers is much more difficult than boot service drivers because UEFI
 
 ing mode to a virtual addressing mode. With this translation, the operating system can make virtual calls to the runtime code. The OS typically runs in virtual mode, so
 
-Events and Task Priority Levels \| **27**
 
- 
+
 
 it must transition into physical mode to make the call. Transitions into physical mode for modern, multiprocessor operating systems are expensive because they entail
 
@@ -754,11 +744,11 @@ flushing translation look-up blocks (TLB), coordinating all CPUs, and other task
 
 such, UEFI runtime offers an efficient invocation mechanism because no transition is required.
 
- 
+
 
 **Events and Task Priority Levels**
 
- 
+
 
 *Events* are another type of object that is managed through UEFI services. An event can
 
@@ -772,7 +762,7 @@ be created and destroyed, and an event can be either in the waiting state or the
 
 ■ Request that an event be moved from the waiting state to the signaled state.
 
- 
+
 
 Because UEFI does not support interrupts, it can present a challenge to driver writers who are accustomed to an interrupt-driven driver model. Instead, UEFI supports polled
 
@@ -780,51 +770,51 @@ drivers. The most common use of events by an UEFI driver is the use of timer eve
 
 that are supported in UEFI and the relationships between those events.
 
- 
+
 
 **Events**
 
- 
+
 
 **Signal**
 
 **Events**
 
- 
+
 
 **Address Map** **Set Virtual** **Exit Boot** **Timer** **Events** **Services** **Events** **Periodic** **One-Shot** **Timer** **Timer** **Events** **Events** **Events**
 
- 
+
 
 **Wait**
 
 **Events**
 
- 
 
-**Figure 2.5:** Event Types and Relationships **28** \| Chapter 2 – Basic UEFI Architecture
 
- 
+**Figure 2.5:** Event Types and Relationships
+
+
 
 **Table 2.2:** Description of Event Types
 
- 
+
 
 **Type of Events** **Description**
 
- 
+
 
 Wait event An event whose notification function is executed whenever the event is
 
 checked or waited upon.
 
- 
+
 
 Signal event An event whose notification function is scheduled for execution whenever
 
 the event goes from the waiting state to the signaled state.
 
- 
+
 
 Exit Boot Services A special type of signal event that is moved from the waiting state to the
 
@@ -832,7 +822,7 @@ event signaled state when the UEFI Boot Service ExitBootServices()
 
 is called. This call is the point in time when ownership of the platform is transferred from the firmware to an operating system. The event’s notifica-tion function is scheduled for execution when Exit-BootServices() is called.
 
- 
+
 
 Set Virtual Address A special type of signal event that is moved from the waiting state to the
 
@@ -840,25 +830,25 @@ Map event signaled state when the UEFI Runtime Service SetVirtualAd-
 
 dressMap() is called. This call is the point in time when the operating system is making a request for the runtime components of UEFI to be con-verted from a physical addressing mode to a virtual addressing mode. The operating system provides the map of virtual addresses to use. The event’s notification function is scheduled for execution when SetVirtu-alAddressMap() is called.
 
- 
+
 
 Timer event A type of signal event that is moved from the waiting state to the signaled
 
 state when at least a specified amount of time has elapsed. Both periodic and one-shot timers are supported. The event’s notification function is scheduled for execution when a specific amount of time has elapsed.
 
- 
+
 
 Periodic timer event A type of timer event that is moved from the waiting state to the signaled
 
 state at a specified frequency. The event’s notification function is sched-uled for execution when a specific amount of time has elapsed.
 
- 
+
 
 One-shot timer event A type of timer event that is moved from the waiting state to the signaled
 
 state after the specified timer period has elapsed. The event’s notification function is scheduled for execution when a specific amount of time has elapsed.
 
- 
+
 
 The following three elements are associated with every event:
 
@@ -866,15 +856,14 @@ The following three elements are associated with every event:
 
 ■ A notification context
 
- 
+
 
 The notification function for a wait event is executed when the state of the event is checked or when the event is being waited upon. The notification function of a signal
 
 event is executed whenever the event transitions from the waiting state to the signaled
 
-Events and Task Priority Levels \| **29**
 
- 
+
 
 state. The notification context is passed into the notification function each time the no-tification function is executed. The TPL is the priority at which the notification function
 
@@ -882,35 +871,35 @@ is executed. Table 2.3**:** lists the four TPL levels that are defined today. Ad
 
 could be added later. An example of a compatible addition to the TPL list could include a series of “Interrupt TPLs” between TPL_NOTIFY and TPL_HIGH_LEVEL in order to provide interrupt-driven I/O support within UEFI.
 
- 
+
 
 **Table 2.3:** Task Priority Levels Defined in UEFI
 
- 
+
 
 **Task Priority Level** **Description**
 
- 
+
 
 TPL_APPLICATION The priority level at which UEFI images are executed.
 
- 
+
 
 TPL_CALLBACK The priority level for most notification functions.
 
- 
+
 
 TPL_NOTIFY The priority level at which most I/O operations are per-
 
 formed.
 
- 
+
 
 TPL_HIGH_LEVEL The priority level for the one timer interrupt supported in
 
 UEFI.
 
- 
+
 
 TPLs serve the following two purposes:
 
@@ -918,7 +907,7 @@ TPLs serve the following two purposes:
 
 ■ To create locks
 
- 
+
 
 For priority definition, you use this mechanism only when more than one event is in the signaled state at the same time. In these cases, the application executes the noti-
 
@@ -940,13 +929,12 @@ Since all timer-based events are blocked during this time, any driver that requi
 
 IRQL in Microsoft Windows and the SPL in various Unix implementations. A TPL de-scribes a prioritization scheme for access control to resources.
 
-**30** \| Chapter 2 – Basic UEFI Architecture
 
- 
+
 
 **Summary**
 
- 
+
 
 This chapter has introduced some of the basic UEFI concepts and object types. These items have included events, protocols, task priority levels, image types, handles,
 

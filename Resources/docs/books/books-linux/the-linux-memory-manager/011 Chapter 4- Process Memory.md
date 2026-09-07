@@ -1,13 +1,13 @@
 
- 
+
 
 **4**
 
- 
+
 
 **P R O C E S S M E M O R Y**
 
- 
+
 
 We’ve examined how the kernel manages physical and
 
@@ -37,7 +37,7 @@ We examine a simple userland program which allocates and frees system
 
 memory in Listing 4-1.
 
- 
+
 
 **\#include** \<stdio.h\>
 
@@ -45,20 +45,20 @@ memory in Listing 4-1.
 
 **\#include** \<sys/mman.h\>
 
- 
+
 
 **int main**(**void**)
 
 {
 
 
- 
+
 
 **char** \*ptr = **mmap**(**NULL**, 20000, **PROT_READ** \| **PROT_WRITE**,
 
 **MAP_PRIVATE** \| **MAP_ANONYMOUS**, -1, 0);
 
- 
+
 
 **if** (ptr == **MAP_FAILED** \|\| **munmap**(ptr, 20000) != 0) {
 
@@ -66,13 +66,13 @@ memory in Listing 4-1.
 
 }
 
- 
+
 
 **return EXIT_SUCCESS**;
 
 }
 
- 
+
 
 *Listing 4-1:* *Simple use of* *mmap* *and* *munmap*
 
@@ -88,19 +88,19 @@ ory layout. Examining this for Listing 4-1 after the mmap() call which in this
 
 instance has returned a pointer to 0x7ffff7fbf000, as shown in Listing 4-4.
 
- 
+
 
 \$ **cat** /proc/\$PID/smaps
 
- 
+
 
 **7ffff7fbf000-7ffff7fc4000** rw-p 00000000 00:00 0 Size: 20 kB
 
- 
+
 
 **Rss:** **0 kB**
 
- 
+
 
 *Listing 4-2:* */proc/\$PID/smaps* *output after* *mmap()* *of* *0x7ffff7fbf000*
 
@@ -118,13 +118,13 @@ Secondly, and more importantly, how can memory be allocated from
 
 userland’s perspective but neither allocated nor mapped from the kernel’s? The answer arises from the fact that the kernel gets to decide what happens when hardware page faults occurs. Page faults are triggered when either un-mapped memory is accessed or operations prohibited by page flags occur
 
- 
+
 
 \*. ‘Anonymous’ pages are those that are backed by physical memory, not files. †. We will go over memory-specific procfs interfaces in great detail in a later chapter.
 
 
 
- 
+
 
 (e.g. writing into memory marked read-only) and crucially, the kernel can
 
@@ -184,11 +184,11 @@ mapping and the data will be written to disk, ‘swapped in’ again on page
 
 fault. More on this in the chapter on swap memory.
 
- 
+
 
 **4.1 Overcommit**
 
- 
+
 
 The ability to allocate more memory than is actually installed in the system
 
@@ -200,7 +200,7 @@ nel set via the vm.overcommit_memory tuneable and checked by the kernel in
 
 [\_\_vm_enough_memory()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n1022):
 
- 
+
 
 • [OVERCOMMIT_GUESS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/linux/mman.h?h=v6.0#n12) (0) – default – If a process tries to allocate an obviously
 
@@ -214,17 +214,17 @@ cations are permitted. This might be useful for situations where it is known tha
 
 amount of virtual memory permitted to be allocated by the system as a
 
- 
 
 
 
- 
+
+
 
 whole is calculated in [vm_commit_limit()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n967) and is specified by either the
 
 vm.overcommit_kbytes or vm.overcommit_ratio [VM tuneables](https://kernel.org/doc/html/v6.0/admin-guide/sysctl/vm.html)[.](https://kernel.org/doc/html/v6.0/admin-guide/sysctl/vm.html) The maxi-mum allocation permitted at any one time is the total available swap plus either vm.overcommit_kbytes or vm.overcommit_ratio% of all non-hugetlb RAM. This limit can be observed in /proc/meminfo as CommitLimit. Note that additional space is reserved for root operations (via the vm.admin_reserve_kbytes tuneable) and also for userland processes to en-sure system recovery can always occur via vm.user_reserve_kbytes.
 
- 
+
 
 A key difference here is that in OVERCOMMIT_GUESS mode the check is
 
@@ -236,7 +236,7 @@ increase committed memory by 1 GiB while not necessarily increasing phys-ical me
 
 Committed_AS and the value is stored in the per-CPU counter [vm_committed_as](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n985)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n985)
 
- 
+
 
 **N O T E** Per-CPU counters are a mechanism for efficiently accruing counters between CPUs
 
@@ -244,19 +244,19 @@ while permitting some small degree of error equal to the counter batch size, see
 
 [*lib/percpu_counter.c*](https://elixir.bootlin.com/linux/v6.0/source/lib/percpu_counter.c) for more details.
 
- 
+
 
 An important caveat here – any memory that is allocated such that it can-
 
 not trigger demand paging, e.g. PROT_NONE or PROT_READ (without PROT_WRITE), will not contributed towards any commit accounting as the memory, if writ-ten to, would result in a segfault.
 
- 
+
 
 **N O T E** Additionally, [*mmap()*](https://man7.org/linux/man-pages/man2/mmap.2.html)[’d](https://man7.org/linux/man-pages/man2/mmap.2.html) memory with the *MAP_NORESERVE* flag set does not contribute
 
 towards commit accounting, however this is not honoured in *OVERCOMMIT_NEVER* mode, so is only meaningfully useful in *OVERCOMMIT_GUESS* where even the basic total RAM and swap check is not performed (an exception to this rule are hugetlb mappings but these are out of scope for this discussion).
 
- 
+
 
 However memory mapped this way will show up in /proc/\$PID/status
 
@@ -274,21 +274,21 @@ Let’s take listing 4-1 and update it to write to the first page as shown in
 
 Listing 4-3.
 
- 
+
 
 **\#include** \<stdio.h\>
 
- 
 
 
 
- 
+
+
 
 **\#include** \<stdlib.h\>
 
 **\#include** \<sys/mman.h\>
 
- 
+
 
 **int main**(**void**)
 
@@ -298,11 +298,11 @@ Listing 4-3.
 
 **MAP_PRIVATE** \| **MAP_ANONYMOUS**, -1, 0);
 
- 
+
 
 ptr\[0\] = 'x';
 
- 
+
 
 **if** (ptr == **MAP_FAILED** \|\| **munmap**(ptr, 20000) != 0) {
 
@@ -310,17 +310,17 @@ ptr\[0\] = 'x';
 
 }
 
- 
+
 
 **return EXIT_SUCCESS**;
 
 }
 
- 
+
 
 *Listing 4-3:* *mmap* *touch page then* *munmap*
 
- 
+
 
 We can now see that the first page of memory has now been allocated
 
@@ -328,25 +328,25 @@ and observation of the binary /proc/\$PID/pagemap interface indicates that it
 
 has also been mapped as expected as shown in Listing 4-4.
 
- 
+
 
 \$ **cat** /proc/\$PID/smaps
 
- 
+
 
 **7ffff7fbf000-7ffff7fc4000** rw-p 00000000 00:00 0
 
 Size: 20 kB
 
- 
+
 
 **Rss:** **4 kB**
 
- 
+
 
 *Listing 4-4:* */proc/\$PID/smaps* *output after* *mmap()* *and touch 1st page*
 
- 
+
 
 So to recap – each process has a [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) object describing its ad-
 
@@ -366,67 +366,67 @@ step back and looking at userland allocation as a whole, as shown in Figure
 
 4-1.
 
- 
 
 
 
- 
+
+
 
 **4.2 Userland memory from 50,000 feet**
 
- 
+
 
 [mm_struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)
 
- 
+
 
 [vma vma vma vma vma vma vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403)
 
- 
+
 
 [avc avc avc avc](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n82) [file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) [file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) [file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) [avc](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940)
 
- 
+
 
 [anon_vma anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) [address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) [address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) [anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424)
 
- 
+
 
 [folio folio folio folio folio folio folio folio folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256)
 
- 
+
 
 Data Data Data Data Data Data Data Data Data Data
 
- 
+
 
 PTE PTE PTE PTE PTE
 
- 
+
 
 PMD PMD PMD PMD
 
- 
+
 
 PUD PUD PUD
 
- 
+
 
 P4D P4D
 
- 
+
 
 PGD PGD
 
- 
+
 
 VA VA VA VA VA VA
 
- 
+
 
 *Figure 4-1: Overview of userland memory allocation*
 
- 
+
 
 Note that:
 
@@ -442,17 +442,17 @@ A
 
 B
 
- 
+
 
 ***4.2.1 Describing userland memory***
 
 This diagram may seem a little overwhelming at first, so let’s examine each element in turn:
 
- 
 
 
 
- 
+
+
 
 [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) – This is the core data structure describing a process’s en-
 
@@ -496,17 +496,17 @@ The folios which make up entries in the page cache must be able to re-fer back t
 
 address_mapping via the mapping field. Described in section 4.5.
 
- 
+
 
 \*. An interval tree is a red/black tree designed to efficiently locate elements containing a value
 
 within intervals.
 
- 
 
 
 
- 
+
+
 
 [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) – The metadata describing either a single base page of memory
 
@@ -524,17 +524,17 @@ a base page of memory in x86-64, providing a mapping between virtual and physica
 
 land familiar to all programmers and the net result of all the rest of the memory management machinery.
 
- 
+
 
 We will spend the rest of this chapter describing each of the process
 
 memory-specific metadata structures referenced above in considerable de-tail.
 
- 
+
 
 **4.3 The process address space**
 
- 
+
 
 Each process has its memory state stored in [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) objects. These contain all the information the kernel needs to describe a userland process’s virtual memory address space and are referenced by the process state ob-
 
@@ -550,7 +550,7 @@ active_mm field rather than the mm field, which is set to NULL\*. Since the hard
 
 [context_switch()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/sched/core.c?h=v6.0#n5131) as shown in Listing 4-5.
 
- 
+
 
 5130 **static \_\_always_inline struct** rq \* 5131 **context_switch**(**struct** rq \*rq, **struct** task_struct \*prev, 5132 **struct** task_struct \*next, **struct** rq_flags \*rf) 5133 {
 
@@ -560,7 +560,7 @@ active_mm field rather than the mm field, which is set to NULL\*. Since the hard
 
 5144 *\* kernel -\> kernel* *lazy + transfer active* 5145 *\** *user -\> kernel* *lazy + mmgrab() active* 5146 *\**
 
- 
+
 
 \*. This is not always the case, as kernel threads can actually ‘borrow’ a [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) alto-
 
@@ -568,7 +568,7 @@ gether via [kthread_use_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 
 
- 
+
 
 5147 *\* kernel -\>* *user* *switch + mmdrop() active* 5148 *\** *user -\>* *user* *switch* 5149 *\*/*
 
@@ -588,11 +588,11 @@ gether via [kthread_use_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 5185 **return finish_task_switch**(prev); 5186 }
 
- 
+
 
 *Listing 4-5:* kernel/sched/core.c: [*context_switch()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/sched/core.c?h=v6.0#n5131)
 
- 
+
 
 The [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) reference count (maintained in the atomic
 
@@ -616,7 +616,7 @@ Since the data structure encompasses a great many fields and to keep
 
 things focused, we examine only the core fields as shown in Listing 4-6.
 
- 
+
 
 486 **struct** mm_struct {
 
@@ -634,11 +634,11 @@ things focused, we examine only the core fields as shown in Listing 4-6.
 
 496 **unsigned long** mmap_base; */\* base of mmap area \*/*
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -702,11 +702,11 @@ things focused, we examine only the core fields as shown in Listing 4-6.
 
 557 **struct** rw_semaphore mmap_lock;
 
- 
 
 
 
- 
+
+
 
 558
 
@@ -760,13 +760,13 @@ things focused, we examine only the core fields as shown in Listing 4-6.
 
 681 **unsigned long** cpu_bitmap\[\]; 682 };
 
- 
+
 
 *Listing 4-6:* include/linux/mm_types.h: *Simplified [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)*
 
 Examining each field:
 
- 
+
 
 • mmap – Points to the first VMA in the address space, which are connected
 
@@ -776,11 +776,11 @@ together as a linked list via the [vm_area_struct-\>vm_prev,vm_next](https://git
 
 through VMAs during search operations.
 
- 
 
 
 
- 
+
+
 
 • vmacache_seqnum – A ‘sequence number’ used to keep track of whether
 
@@ -854,11 +854,11 @@ and [dup_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.
 
 [detach_vmas_to_be_unmapped()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2633).
 
- 
 
 
 
- 
+
+
 
 • page_table_lock – One of the two most important userspace memory
 
@@ -914,7 +914,7 @@ on exit in [exit_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 indicating to which CPUs this mm_struct is affinitised. Notably used by TLB logic to determine which cores actually need to have TLB cache actions performed in relation to a process.
 
- 
+
 
 ***4.3.1 mm_struct reference counting***
 
@@ -922,7 +922,7 @@ As described above, there are two reference counts present in the
 
 [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) object – mm_users and mm_count. Examining each in turn:
 
- 
+
 
 **4.3.1.1 mm_users**
 
@@ -932,11 +932,11 @@ we have already reached zero users, [mmget_not_zero()](https://git.kernel.org/pu
 
 [mmput()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1203) (or, optionally, asynchronously via [mmput_async()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1221).)
 
- 
 
 
 
- 
+
+
 
 Counts the number of userland references to the process address space.
 
@@ -956,7 +956,7 @@ mmget() in turn), the [move_pages()](https://man7.org/linux/man-pages/man2/move_
 
 [access_process_vm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5524) functions.
 
- 
+
 
 **4.3.1.2 mm_count**
 
@@ -976,7 +976,7 @@ If the reference count drops to zero, this invokes [\_\_mmdrop()](https://git.ke
 
 the mm_struct’s PGD and the mm_struct itself among other housekeeping tasks. By this point all user mappings will already have been freed.
 
- 
+
 
 ***4.3.2 The initial process address space***
 
@@ -992,17 +992,17 @@ signed to [init_mm](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/lin
 
 possessing its own individual mm_struct as shown in Listing 4-7.
 
- 
+
 
 \*. we use ‘task’ and ‘process’ interchangeably – the data structure representing a process is
 
 [struct task_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727) and from a kernel point of view a process is defined by possessing an indi-vidual task object, however in the common vernacular we would describe the same entity as a process. Additional confusion can arise because the kernel treats each individual thread as a separate process whereas a userland programmer might consider each to be part of the same process, however from the kernel point of view, we see these as processes with shared mm_struct objects.
 
- 
 
 
 
- 
+
+
 
 30 **struct** mm_struct init_mm = {
 
@@ -1038,11 +1038,11 @@ possessing its own individual mm_struct as shown in Listing 4-7.
 
 46 };
 
- 
+
 
 *Listing 4-7:* mm/init-mm.c: [*init_mm*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/init-mm.c?h=v6.0#n30)
 
- 
+
 
 Note that the mm_users field is initialised to 2. This ensures that no spuri-
 
@@ -1052,7 +1052,7 @@ The global [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 ent purposes (this is not an exhaustive list):
 
- 
+
 
 • As the active mm_struct for the CPU idle tasks as described above and dur-
 
@@ -1088,17 +1088,17 @@ by the x86-64 specific [use_temporary_mm()](https://git.kernel.org/pub/scm/linux
 
 functionality via [\_\_text_poke()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/alternative.c?h=v6.0#n1082) for live kernel patching (e.g. via KGDB).
 
- 
 
 
 
- 
+
+
 
 • When a ‘spurious fault’ occurs in x86-64 in [spurious_kernel_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1007)
 
 where, for efficiency reasons, a TLB entry may be permitted to remain stale with the fault handled here. The init_mm object is used simply to obtain the kernel-specific PGD to check to see if the mapping is valid.
 
- 
+
 
 The key purpose is to both have an early kernel process address space
 
@@ -1110,7 +1110,7 @@ all kernel mappings. This is assigned to the static object, [swapper_pg_dir](htt
 
 x86-64 this is an alias for [init_top_pgt](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/head_64.S?h=v6.0#n573)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/head_64.S?h=v6.0#n573)
 
- 
+
 
 ***4.3.3 Kernel PGD maintenance***
 
@@ -1128,7 +1128,7 @@ The kernel needs to have userland mappings in place for process-specific
 
 transactions such as system calls in order that it can interact with userland memory, e.g. to copy memory between kernel and userland so these must be maintained between each.
 
- 
+
 
 **4.3.3.1 Page Table Isolation**
 
@@ -1154,11 +1154,11 @@ In userland mode, however (the last 4 KiB of the order-1 GPD), only a
 
 bare minimum set of kernel mappings are present, the minimum required
 
- 
 
 
 
- 
+
+
 
 to permit kernel transition. By using order-1 PGD pages, we need only flip
 
@@ -1228,7 +1228,7 @@ same page tables, only with the kernel mappings explicitly made unavailable
 
 to userland.
 
- 
+
 
 **4.3.3.2 Maintaining kernel mappings between processes**
 
@@ -1248,17 +1248,17 @@ new userland processes are created we need to consider the two classic exe-
 
 cution operations in a Unix system – [fork()](https://man7.org/linux/man-pages/man2/fork.2.html) and [execve()](https://man7.org/linux/man-pages/man2/execve.2.html)[:](https://man7.org/linux/man-pages/man2/execve.2.html)
 
- 
+
 
 \*. There is some additional logic here relating to PCIDs, however this is out of scope for the
 
 book.
 
- 
 
 
 
- 
+
+
 
 On fork, page tables are copied via [copy_page_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1272) which was invoked
 
@@ -1278,7 +1278,7 @@ vokes the architecture-specific [pgd_alloc()](https://git.kernel.org/pub/scm/lin
 
 mentation as shown in Listing 4-8.
 
- 
+
 
 424 **pgd_t** \***pgd_alloc**(**struct** mm_struct \*mm) 425 {
 
@@ -1318,11 +1318,11 @@ mentation as shown in Listing 4-8.
 
 469 }
 
- 
+
 
 *Listing 4-8:* arch/x86/mm/pgtable.c: [*pgd_alloc()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/pgtable.c?h=v6.0#n424)
 
- 
+
 
 We exclude pre-population logic here because it is typically not relevant
 
@@ -1330,15 +1330,15 @@ in a modern system. What is relevant, however, is [pgd_ctor()](https://git.kerne
 
 ing 4-9.
 
- 
+
 
 123 **static void pgd_ctor**(**struct** mm_struct \*mm, **pgd_t** \*pgd) 124 {
 
- 
 
 
 
- 
+
+
 
 125 */\* If the pgd points to a shared pagetable level (either the* 126 *ptes in non-PAE, or shared PMD in PAE), then just copy the* 127 *references from swapper_pg_dir. \*/* 128 **if** (**CONFIG_PGTABLE_LEVELS** == 2 \|\| 129 (**CONFIG_PGTABLE_LEVELS** == 3 && **SHARED_KERNEL_PMD**) \|\| 130 **CONFIG_PGTABLE_LEVELS** \>= 4) { 131 **clone_pgd_range**(pgd + **KERNEL_PGD_BOUNDARY**, 132 swapper_pg_dir + **KERNEL_PGD_BOUNDARY**, 133 **KERNEL_PGD_PTRS**); 134 }
 
@@ -1348,7 +1348,7 @@ ing 4-9.
 
 141 }
 
- 
+
 
 *Listing 4-9:* arch/x86/mm/pgtable.c: [*pgd_ctor()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/pgtable.c?h=v6.0#n123)
 
@@ -1362,7 +1362,7 @@ ing the index of the first PGD entry within the kernel address range) and
 
 done by [clone_pgd_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n1242) as shown in Listing 4-10.
 
- 
+
 
 1232 */\**
 
@@ -1382,15 +1382,15 @@ done by [clone_pgd_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 1252 }
 
- 
+
 
 *Listing 4-10:* arch/x86/include/asm/pgtable.h: [*clone_pgd_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n1242)
 
- 
 
 
 
- 
+
+
 
 The fundamental task here is very simple – copy a single PGD entry from
 
@@ -1420,7 +1420,7 @@ setting this process to execute [kernel_init()](https://git.kernel.org/pub/scm/l
 
 [run_init_process()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/init/main.c?h=v6.0#n1416) which, in turn, invokes [kernel_execve()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/exec.c?h=v6.0#n1951) as described above.
 
- 
+
 
 ***4.3.4 Process address space locking***
 
@@ -1432,7 +1432,7 @@ These locks are absolutely critical as they are very heavily utilised and
 
 thus it is useful to examine their usage in detail:
 
- 
+
 
 **4.3.4.1 Page table lock**
 
@@ -1444,17 +1444,17 @@ However, there are cases where the lock is used for non-page table oper-
 
 ations. This used to be more common in the distant kernel past but has now been narrowed down to only a few instances:
 
- 
+
 
 • Protecting stack expansion – In [expand_downwards()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2441) (typically used with a
 
 stack) and [expand_upwards()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2351) VMA expansion takes place which results in thread unsafe fields being updated, specifically the VMA gap calcula-tion. Since the mmap_lock semaphore permits simultaneous read access,
 
- 
 
 
 
- 
+
+
 
 page_table_lock is used to place the entire update process in a critical sec-tion. This is simply an overloading of an available lock for an entirely different use.
 
@@ -1474,7 +1474,7 @@ was added because, it this function were to race with [vma_gap_update()](https:/
 
 [\_\_anon_vma_prepare()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n187) – Here there may be multiple threads attempting to perform the same action rendering the update a critical section. Again, page_table_lock is a convenient lock to use at this stage. See the section below on reverse mappings for more details on the use of this opera-tion.
 
- 
+
 
 **4.3.4.2 mmap lock**
 
@@ -1510,7 +1510,7 @@ note about the use of page_table_lock on VMA expansion).
 
 There are a number of helper functions which wrap common operations:
 
- 
+
 
 **4.3.4.3 General mmap_lock functions**
 
@@ -1518,7 +1518,7 @@ There are a number of helper functions which wrap common operations:
 
 of an mm_struct.
 
- 
+
 
 \*. Under circumstances where locks are acquired and released without deadlock, livelock or
 
@@ -1530,7 +1530,7 @@ kernel.
 
 
 
- 
+
 
 • [mmap_assert_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmap_lock.h?h=v6.0#n153) – Invokes a [lockdep](https://kernel.org/doc/html/v6.0/locking/lockdep-design.html) assert that a lock is held\* and a
 
@@ -1550,13 +1550,13 @@ is used by [show_smaps_rollup()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 invoked in [task_vma_seq_get_next()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/bpf/task_iter.c?h=v6.0#n308)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/bpf/task_iter.c?h=v6.0#n308)
 
- 
+
 
 **4.3.4.4 mmap_lock write functions**
 
 Note that we describe the use of these in more detail below.
 
- 
+
 
 • [mmap_write_lock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmap_lock.h?h=v6.0#n68) – Acquires a write lock on the mm_struct. Wraps
 
@@ -1594,21 +1594,21 @@ mately invokes the function [\_\_downgrade_write()](https://git.kernel.org/pub/s
 
 [up_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/locking/rwsem.c?h=v6.0#n1602) on mmap_lock. Ultimately invokes the function [\_\_up_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/locking/rwsem.c?h=v6.0#n1343).
 
- 
+
 
 \*. lockdep is a means by which lock dependencies can be checked and locking bugs discovered. It is out of scope for the book.
 
- 
 
 
 
- 
+
+
 
 **4.3.4.5 mmap_lock read functions**
 
 Note that we describe the use of these in more detail below.
 
- 
+
 
 • [mmap_read_lock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmap_lock.h?h=v6.0#n114) – Acquires a read lock on the mm_struct. Wraps
 
@@ -1640,7 +1640,7 @@ Wraps [up_read_non_owner()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 [\_\_up_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/locking/rwsem.c?h=v6.0#n1323).
 
- 
+
 
 **4.3.4.6 Use of mmap locks**
 
@@ -1662,7 +1662,7 @@ This lock is quite so contended that covering every single usage of it
 
 would be impractical. Therefore, the scope has been limited to:
 
- 
+
 
 • Exclude initialisation of [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) objects, as you would expect
 
@@ -1676,23 +1676,23 @@ memory functionality, cgroup and ptrace logic.
 
 • ELF, if examining binary format-specific logic.
 
- 
+
 
 Focusing therefore on the core users of this lock let’s examine where
 
 they are acquired and released, relatively exhaustively. This gives us a sense
 
- 
 
 
 
- 
+
+
 
 of both where these locks are acquired as well as the breadth of functions which contend them.
 
 The subsequent diagrams use this key:
 
- 
+
 
 Denotes that an mmap_lock is acquired (and typically released) in this function. If
 
@@ -1700,29 +1700,29 @@ an R W is present this denotes a read lock is acquired, if a is present this den
 
 that a write lock is acquired. The meaning of the suffix can vary, as specified by accompanying text, e.g. (Releases) indicates a lock is released, not acquired.
 
- 
+
 
 Denotes that an mmap_lock is held on invocation of
 
 this function, but acquired/released elsewhere.
 
- 
+
 
 syscall : Denotes that this function is a sys-tem call rather than a function invocation.
 
- 
+
 
 Denotes that this function is an interrupt handler, CPU exception handler,
 
 or sits at a transition between user/kernel, rather than a function invocation.
 
- 
+
 
 W
 
 syscall: [mremap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mremap.c?h=v6.0#n886)
 
- 
+
 
 (Downgrades to)
 
@@ -1730,17 +1730,17 @@ W R
 
 syscall: [munmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2881) [\_\_vm_munmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2850) [\_\_do_munmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2754)
 
- 
+
 
 W
 
 [vm_munmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2875) syscall: [brk()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n153) [do_brk_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2973)
 
- 
+
 
 syscall: [map_pgoff()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1593) syscall: [mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/sys_x86_64.c?h=v6.0#n86) syscall: [old_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1610)
 
- 
+
 
 (old mm)
 
@@ -1748,21 +1748,21 @@ R
 
 [exec_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/exec.c?h=v6.0#n977) [elf_map()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/binfmt_elf.c?h=v6.0#n365) [ksys_mmap_pgoff()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1548) syscall: [msync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/msync.c?h=v6.0#n32)
 
- 
+
 
 W
 
 [begin_new_exec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/exec.c?h=v6.0#n1243) [vm_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n562) [vm_mmap_pgoff()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n539)
 
- 
+
 
 execve() syscalls [load_elf_binary()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/binfmt_elf.c?h=v6.0#n824) [do_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1369) syscall: [remap_file_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2891)
 
- 
+
 
 *Figure 4-2: mmap* *mmap_lock* *invocations*
 
- 
+
 
 
 
@@ -1776,21 +1776,21 @@ W
 
 [exit_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n3075) [copy_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1547) [copy_process()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1989)
 
- 
+
 
 (Via [mmput_async_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1213)[)](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1213)
 
 [\_\_mmput()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1179) [mmput_async()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1221) [kernel_clone()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n2630) syscall: [clone3()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n2947)
 
- 
+
 
 [mmput()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1203) syscall: [vfork()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n2760) syscall: [fork()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n2744) syscall: [clone()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n2789)
 
- 
+
 
 *Figure 4-3: Fork* *mmap_lock* *invocations*
 
- 
+
 
 (From figure 4-9)
 
@@ -1798,11 +1798,11 @@ R
 
 [do_user_addr_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1220)
 
- 
+
 
 From figure 4-5 [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129)
 
- 
+
 
 [remove_device_exclusive_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3613) [\_\_handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4967) [do_numa_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4681)
 
@@ -1828,7 +1828,7 @@ or *FAULT_FLAG_KILLABLE* and [do_read_fault()](https://git.kernel.org/pub/scm/li
 
 [*\_\_folio_lock_killable()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1669) failed to acquire lock)
 
- 
+
 
 [\_\_do_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4147)
 
@@ -1836,7 +1836,7 @@ Via vma-\>vm_ops-\>fault()
 
 [filemap_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084)
 
- 
+
 
 (Releases)
 
@@ -1844,7 +1844,7 @@ R
 
 [lock_folio_maybe_drop_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2928)
 
- 
+
 
 (Try drop if can’t lock folio and not*FAULT_FLAG_RETRY_NOWAIT*)
 
@@ -1858,35 +1858,35 @@ R
 
 [*fault_flag_allow_retry_first()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree//include/linux/mm.h?h=v6.0#n453), and not *FAULT_FLAG_RETRY_NOWAIT*)
 
- 
+
 
 *Figure 4-4: Page fault* *mmap_lock* *invocations*
 
- 
+
 
 Note: If a fault releases the mmap_lock then the fault handler returns
 
 [VM_FAULT_RETRY](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n751) or [VM_FAULT_COMPLETED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n755).
 
- 
 
 
 
- 
+
+
 
 syscall: [process_vm_readv()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/process_vm_access.c?h=v6.0#n291) syscall: [process_vm_writev()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/process_vm_access.c?h=v6.0#n298)
 
- 
+
 
 R
 
 [process_vm_rw_single_vec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/process_vm_access.c?h=v6.0#n70) [process_vm_rw_core()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/process_vm_access.c?h=v6.0#n150)
 
- 
+
 
 [pin_user_pages_remote()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3186) [pin_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3110) [get_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3077)
 
- 
+
 
 [pin_user_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3221) [get_user_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2245) [internal_get_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2964)
 
@@ -1898,7 +1898,7 @@ R
 
 [get_user_pages_remote()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2198) [\_\_gup_longterm_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2063) [\_\_gup_longterm_unlocked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2892)
 
- 
+
 
 (Reacquires)
 
@@ -1906,7 +1906,7 @@ R R
 
 [\_\_get_user_pages_remote()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2109) [\_\_get_user_pages_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1387) [get_dump_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1911)
 
- 
+
 
 (Reacquires)
 
@@ -1914,31 +1914,31 @@ R R FOLL_LONGTERM If not set
 
 [fixup_user_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1327) [get_user_pages_unlocked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2272)
 
- 
+
 
 To [*handle_mm_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129) in figure 4-4 [pin_user_pages_unlocked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3243)
 
- 
+
 
 R
 
 [\_\_access_remote_vm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5438) From [access_remote_vm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5513) in figure 4-10
 
- 
+
 
 [access_process_vm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5524)
 
- 
+
 
 *Figure 4-5: GUP* *mmap_lock* *invocations*
 
- 
+
 
 R
 
 [\_\_mm_populate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1652)
 
- 
+
 
 After write lock released
 
@@ -1946,25 +1946,25 @@ W
 
 [do_mlock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n568)
 
- 
+
 
 syscall: [mlock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n615) syscall: [mlock2()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n620)
 
- 
+
 
 W W W
 
 syscall: [munlock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n633) syscall: [mlockall()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n696) syscall: [munlockall()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n725)
 
- 
+
 
 *Figure 4-6:* *mlock() mmap_lock* *invocations*
 
- 
 
 
 
- 
+
+
 
 (Reacquires read lock if
 
@@ -1976,11 +1976,11 @@ R R R
 
 [madvise_willneed()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n275) [madvise_populate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n881) [madvise_remove()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n942)
 
- 
+
 
 [madvise_vma_behavior()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n992)
 
- 
+
 
 (Lock taken depends on [madvise_need_mmap_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n50)[)](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n50)
 
@@ -1988,15 +1988,15 @@ R/W
 
 [do_madvise()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n1371)
 
- 
+
 
 syscall: [madvise()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n1424) syscall: [process_madvise()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n1429)
 
- 
+
 
 *Figure 4-7:* *madvise() mmap_lock* *invocations*
 
- 
+
 
 
 
@@ -2004,61 +2004,61 @@ W
 
 [dump_vma_snapshot()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/coredump.c?h=v6.0#n1148)
 
- 
+
 
 [do_coredump()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/coredump.c?h=v6.0#n511)
 
- 
+
 
 If [sig_kernel_coredump()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/signal.h?h=v6.0#n445)
 
- 
+
 
 [get_signal()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/signal.c?h=v6.0#n2626)
 
- 
+
 
 [arch_do_signal_or_restart()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/signal.c?h=v6.0#n865)
 
- 
+
 
 [exit_to_user_mode_loop()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/entry/common.c?h=v6.0#n145)
 
- 
+
 
 If \_TIF_SIGPENDING
 
- 
+
 
 [exit_to_user_mode_prepare()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/entry/common.c?h=v6.0#n191)
 
- 
+
 
 [\_\_syscall_exit_to_user_mode_work()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/entry/common.c?h=v6.0#n279) [irqentry_exit_to_user_mode()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/entry/common.c?h=v6.0#n304)
 
- 
+
 
 To figure 4-9
 
- 
+
 
 [syscall_exit_to_user_mode()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/entry/common.c?h=v6.0#n291) irq: [exc_int3()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n810) irq: [exc_vmm_communication()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/sev.c?h=v6.0#n1981)
 
- 
+
 
 [ret_from_fork()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/entry/entry_64.S?h=v6.0#n287) [exc_debug_user()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n1088) [irqentry_exit()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/entry/common.c?h=v6.0#n402)
 
- 
+
 
 IRQ handlers
 
 irq: [exc_debug()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n1169)
 
- 
+
 
 *Figure 4-8: Core dump (x86-64)* *mmap_lock* *invocation*
 
- 
+
 
 
 
@@ -2068,21 +2068,21 @@ If bad frame
 
 [signal_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/signal.c?h=v6.0#n900) [fixup_iopl_exception()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n609)
 
- 
+
 
 R
 
 [print_vma_addr()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5545)
 
- 
+
 
 [show_signal_msg()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n768) [show_signal()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n143)
 
- 
+
 
 [\_\_bad_area_nosemaphore()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n800) exc: [exc_bounds()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n548) [gp_user_force_sig_segv()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n710)
 
- 
+
 
 (Releases)
 
@@ -2100,23 +2100,23 @@ From figure 4-8
 
 [handle_page_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1476) [bad_area_access_error()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n896) [handle_invalid_op()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n292) exc: [exc_divide_error()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n203)
 
- 
+
 
 exc: [exc_page_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n1500) exc: [exc_overflow()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n209) exc: [exc_invalid_op()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n327) exc: [exc_invalid_tss()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n352)
 
- 
+
 
 exc: [exc_segment_not_present()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n358) exc: [exc_stack_segment()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n364)
 
- 
+
 
 exc: [exc_coproc_segment_overrun()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/traps.c?h=v6.0#n346)
 
- 
+
 
 *Figure 4-9: CPU exception (x86-64)* *mmap_lock* *invocations*
 
- 
+
 
 
 
@@ -2128,7 +2128,7 @@ R R
 
 [proc_map_files_lookup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n2288) [proc_map_files_instantiate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n2265) [proc_map_files_readdir()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n2344)
 
- 
+
 
 Initialised on generated file inode
 
@@ -2154,7 +2154,7 @@ Via [proc_pid_smaps_operations.open()](https://git.kernel.org/pub/scm/linux/kern
 
 [pid_smaps_open()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n999)
 
- 
+
 
 Via [proc_pid_smaps_op()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n992)
 
@@ -2174,7 +2174,7 @@ Via [proc_pid_maps_operations.open()](https://git.kernel.org/pub/scm/linux/kerne
 
 To [*\_\_access_remote_vm()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5438) in figure 4-5 /proc/\$pid/maps /proc/\$pid/mem
 
- 
+
 
 [mem_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n892)
 
@@ -2186,7 +2186,7 @@ Via [proc_mem_operations](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 [mem_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n898)
 
- 
+
 
 [get_mm_proctitle()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n218) [get_mm_cmdline()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n255) [get_task_cmdline()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n342) /proc/\$pid/cmdline
 
@@ -2194,11 +2194,11 @@ Via [proc_environ_operations.read()](https://git.kernel.org/pub/scm/linux/kernel
 
 [environ_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n941) /proc/\$pid/environ [proc_pid_cmdline_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n357) Via [proc_pid_cmdline_ops](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/base.c?h=v6.0#n375) .read()
 
- 
+
 
 *Figure 4-10: procfs* *mmap_lock* *invocations*
 
- 
+
 
 
 
@@ -2206,41 +2206,41 @@ R
 
 [oom_reap_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n567)
 
- 
+
 
 [oom_reap_task()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n608)
 
- 
+
 
 [oom_reaper()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n639)
 
- 
+
 
 Kernel thread for
 
 OOM reaping
 
- 
+
 
 R
 
 syscall: [process_mrelease()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1201)
 
- 
+
 
 *Figure 4-11: Out Of Memory (OOM) killer* *mmap_lock* *invocations*
 
- 
+
 
 R
 
 [replace_mm_exe_file()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n1279)
 
- 
+
 
 [prctl_set_mm_exe_file()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/sys.c?h=v6.0#n1867)
 
- 
+
 
 Before lock taken
 
@@ -2252,7 +2252,7 @@ PR_SET_MM_EXE_FILE
 
 PR_SET_MM_MAP
 
- 
+
 
 (Lock taken only if (Lock taken on not above options) *PR_SET_VMA_ANON_NAME*)
 
@@ -2262,7 +2262,7 @@ R W
 
 PR_SET_MM PR_SET_VMA
 
- 
+
 
 W
 
@@ -2270,15 +2270,15 @@ syscall: [prctl()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linu
 
 (Lock acquired in syscall if *PR_SET_THP_DISABLE*)
 
- 
+
 
 *Figure 4-12:* *prctl() mmap_lock* *invocations*
 
- 
 
 
 
- 
+
+
 
 (If MPOL_F_ADDR)
 
@@ -2286,21 +2286,21 @@ W R R
 
 [do_mbind()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1240) [do_migrate_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1085) [do_get_mempolicy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n914)
 
- 
+
 
 [kernel_mbind()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1450) [kernel_migrate_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1575) [kernel_get_mempolicy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1672)
 
- 
+
 
 syscall: [mbind()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1542) syscall: [migrate_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1663) syscall: [get_mempolicy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1701)
 
- 
+
 
 R R W
 
 [add_page_for_migration()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/migrate.c?h=v6.0#n1654) [task_numa_work()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/sched/fair.c?h=v6.0#n2762) syscall: [set_mempolicy_home_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1471)
 
- 
+
 
 Kernel thread for
 
@@ -2308,47 +2308,47 @@ Kernel thread for
 
 NUMA balancing
 
- 
+
 
 R
 
 [kernel_move_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/migrate.c?h=v6.0#n1987) [do_pages_stat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/migrate.c?h=v6.0#n1903) [do_pages_stat_array()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/migrate.c?h=v6.0#n1842)
 
- 
+
 
 syscall: [move_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/migrate.c?h=v6.0#n2017)
 
- 
+
 
 *Figure 4-13: NUMA* *mmap_lock* *invocations*
 
- 
+
 
 R
 
 [unuse_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swapfile.c?h=v6.0#n1989)
 
- 
+
 
 W
 
 [try_to_unuse()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swapfile.c?h=v6.0#n2038) [do_mprotect_pkey()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mprotect.c?h=v6.0#n662)
 
- 
+
 
 [do_mincore()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mincore.c?h=v6.0#n187) syscall: [swapoff()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swapfile.c?h=v6.0#n2386) syscall: [mprotect()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mprotect.c?h=v6.0#n805)
 
- 
+
 
 R
 
 syscall: [mincore()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mincore.c?h=v6.0#n232)
 
- 
+
 
 *Figure 4-14: Miscellaneous* *mmap_lock* *invocations*
 
- 
+
 
 ***4.3.5 Process address space flags***
 
@@ -2356,17 +2356,17 @@ The [struct mm_struct-\>flags](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 [include/linux/sched/coredump.h, ](https://elixir.bootlin.com/linux/v6.0/source/include/linux/sched/coredump.h)(despite being located here not all relate to core dumps). Examining each flag:
 
- 
+
 
 **4.3.5.1 Core dump user flags**
 
 A core dump is the means by which, typically on a segfault or otherwise ab-normal exit, the memory state of a process is written to disk to a ‘core file’ (specified in /proc/sys/kernel/core_pattern) which can be examined after the
 
- 
 
 
 
- 
+
+
 
 fact for debugging purposes (see the [/proc/sys/kernel documentation](https://kernel.org/doc/html/v6.0/admin-guide/sysctl/kernel.html) for more
 
@@ -2376,7 +2376,7 @@ Note that these indicate values not bit indexes. These occupy the first
 
 [MMF_DUMPABLE_BITS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/coredump.h?h=v6.0#n14) (i.e. 2) bits of the flags field:
 
- 
+
 
 • SUID_DUMP_DISABLE – Core dumping is disabled altogether.
 
@@ -2386,7 +2386,7 @@ this is the default mode, unless the binary being dumped is setuid and /proc/sys
 
 • SUID_DUMP_ROOT – Core dumping will be performed by the root user.
 
- 
+
 
 These are accessed via [\_\_get_dumpable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/coredump.h?h=v6.0#n24) (parameterised by the flags
 
@@ -2410,7 +2410,7 @@ termined in [begin_new_exec()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 [commit_creds()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/cred.c?h=v6.0#n447).
 
- 
+
 
 **4.3.5.2 Core dump filter flags**
 
@@ -2434,7 +2434,7 @@ the vsyscall mapping.
 
 Examining each of these flags, which are processed by [vma_dump_size()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/coredump.c?h=v6.0#n1024)[:](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/coredump.c?h=v6.0#n1024)
 
- 
+
 
 • MMF_DUMP_ANON_PRIVATE – Dump anonymous, non-huge private VMAs.
 
@@ -2454,11 +2454,11 @@ be set and the VMA to not be offset.
 
 mined via [is_vm_hugetlb_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/hugetlb_inline.h?h=v6.0#n9)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/hugetlb_inline.h?h=v6.0#n9) i.e. requiring the VM_HUGETLB VMA flag to be set. Requires VMA_SHARED to not be set.
 
- 
 
 
 
- 
+
+
 
 • MMF_DUMP_HUGETLB_SHARED – Dump hugetlb shared mapping, determined as
 
@@ -2472,19 +2472,19 @@ cussed in [DAX documentation](https://kernel.org/doc/html/v6.0/filesystems/dax.h
 
 the book.
 
- 
+
 
 The default flags are determined by [MMF_DUMP_FILTER_DEFAULT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/coredump.h?h=v6.0#n49)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/coredump.h?h=v6.0#n49) set-
 
 ting MMF_DUMP_ANON_PRIVATE, MMF_DUMP_ANON_SHARED, MMF_DUMP_HUGETLB_PRIVATE and MMF_DUMP_MASK_DEFAULT_ELF which enables MMF_DUMP_ELF_HEADERS if CONFIG_CORE_DUMP_DEFAULT_ELF_HEADERS is configured.
 
- 
+
 
 **4.3.5.3 Other flags**
 
 There are a number of other non-coredump flags which mm_struct objects can possess. Examining them:
 
- 
+
 
 • MMF_VM_MERGEABLE – Used by [Kernel Samepage Merging (KSM)](https://kernel.org/doc/html/v6.0/mm/ksm.html) logic to mark
 
@@ -2540,11 +2540,11 @@ for the address space via [mm_get_huge_zero_page()](https://git.kernel.org/pub/s
 
 by [prctl()](https://man7.org/linux/man-pages/man2/prctl.2.html) (specifying the PR_SET_THP_DISABLE mode), and can be queried
 
- 
 
 
 
- 
+
+
 
 either via prctl() using PR_GET_THP_DISABLE or from observing the status in
 
@@ -2578,11 +2578,11 @@ mm_struct gets pinned (i.e. [mmgrab()](https://git.kernel.org/pub/scm/linux/kern
 
 used by [clear_soft_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n1090) to clear the soft dirty flag, but explicitly not when pinned folios could be present.
 
- 
+
 
 **4.4 Virtual Memory Areas (VMAs)**
 
- 
+
 
 Each contiguous range of virtual memory with similar characteristics (more
 
@@ -2608,13 +2608,13 @@ Examining a simplified [struct vm_area_struct](https://git.kernel.org/pub/scm/li
 
 shown in Listing 4-11.
 
- 
+
 
 397 */\**
 
 398 *\* This struct describes a virtual memory area. There is one of these* 399 *\* per VM-area/task. A VM area is any part of the process virtual memory* 400 *\* space that has a special rule for the page-fault handlers (ie a shared*
 
- 
+
 
 \*. A page fault occurs when memory is either not virtually mapped or is not permitted to be
 
@@ -2622,11 +2622,11 @@ accessed in the fashion the user is attempting to (e.g. writing to memory with p
 
 indicating that it is read-only), we shall describe this in considerably more detail shortly.
 
- 
 
 
 
- 
+
+
 
 401 *\* library, the executable area etc).* 402 *\*/*
 
@@ -2682,11 +2682,11 @@ indicating that it is read-only), we shall describe this in considerably more de
 
 444 **struct** rb_node rb; 445 **unsigned long** rb_subtree_last;
 
- 
 
 
 
- 
+
+
 
 446 } shared; 447 */\**
 
@@ -2730,15 +2730,15 @@ indicating that it is read-only), we shall describe this in considerably more de
 
 483 } **\_\_randomize_layout**;
 
- 
+
 
 *Listing 4-11:* include/linux/mm_types.h: *Simplified [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403)*
 
- 
+
 
 Examining each field:
 
- 
+
 
 • vm_start – The first address mapped by this region. Must be page-
 
@@ -2762,11 +2762,11 @@ black tree of VMAs contained within the process address space and
 
 rooted on [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)-\>mm_rb.
 
- 
 
 
 
- 
+
+
 
 • rb_subtree_gap – The largest free gap in all of the nodes to
 
@@ -2832,11 +2832,11 @@ by [anon_vma_name_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 and released by [anon_vma_name_put()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n165) (which, if the reference count
 
- 
 
 
 
- 
+
+
 
 reaches zero, frees it via [anon_vma_name_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n86)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n86) Anonymous VMA names are only available if CONFIG_ANON_VMA_NAME is specified.
 
@@ -2890,7 +2890,7 @@ applies to this memory range as defined by an [struct mempolicy](https://git.ker
 
 looked up by the [\_\_get_vma_policy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1736) function (via [get_vma_policy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1773)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1773) See chapter 10 for more details on NUMA.
 
- 
+
 
 ***4.4.1 VMA flags***
 
@@ -2900,11 +2900,11 @@ which describe its properties and determine what happens on page fault.
 
 Each unique subset of flags defines a distinct VMA, even if two regions
 
- 
 
 
 
- 
+
+
 
 with different flags are immediately adjacent to one another (ignoring VM_SOFTDIRTY which is considered ephemeral). There are other characteris-tics which determine whether one VMA is equivalent to (or mergeable with)
 
@@ -2914,7 +2914,7 @@ Examining each of the flags, all of which are declared in the
 
 [include/linux/mm.h](https://elixir.bootlin.com/linux/v6.0/source/include/linux/mm.h) header. Note that where architecture-specific behaviour is defined, we describe x86-64 for brevity:
 
- 
+
 
 • VM_NONE – (not a flag but rather the zero value) – Indicates that no flags
 
@@ -2960,15 +2960,15 @@ capable of code being executed within it, even if VM_EXEC is not currently
 
 set, implying that this might be changed by something like [mprotect()](https://man7.org/linux/man-pages/man2/mprotect.2.html)[.](https://man7.org/linux/man-pages/man2/mprotect.2.html)
 
- 
+
 
 \*. The zero page is an area of memory which is kept zeroed. By pointing Copy-on-Write map-pings to this page initially, reads will be zeroed and writes will actually result a dedicated page of memory being allocated for the mapping.
 
- 
 
 
 
- 
+
+
 
 • VM_MAYSHARE – A slightly odd flag, as VMAs cannot transition between
 
@@ -3022,11 +3022,11 @@ enforced in [do_sync_mmap_readahead()](https://git.kernel.org/pub/scm/linux/kern
 
 is set via [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html) using the MADV_RANDOM flag.
 
- 
 
 
 
- 
+
+
 
 • VM_DONTCOPY – Indicates that this VMA should not be copied when a pro-
 
@@ -3082,11 +3082,11 @@ has been marked as MADV_HUGEPAGE by [madvise()](https://man7.org/linux/man-pages
 
 as suitable for coalescing into [Transparent Huge Pages (THP)](https://kernel.org/doc/html/v6.0/admin-guide/mm/transhuge.html)[.](https://kernel.org/doc/html/v6.0/admin-guide/mm/transhuge.html) This is only meaningful if the /sys/kernel/mm/transparent_hugepages/enabled sysfs
 
- 
 
 
 
- 
+
+
 
 tunable is set to madvise. See the huge page chapter for more details on THP.
 
@@ -3116,7 +3116,7 @@ memory ranges. This is out of scope for the book.
 
 chronous page faults should occur. Discussion of DAX is out of scope for the book.
 
- 
+
 
 ***4.4.2 Allocation and freeing***
 
@@ -3126,7 +3126,7 @@ slab cache via [kmem_cache_alloc()](https://git.kernel.org/pub/scm/linux/kernel/
 
 in Listing 4-12.
 
- 
+
 
 455 **struct** vm_area_struct \***vm_area_alloc**(**struct** mm_struct \*mm) 456 {
 
@@ -3140,15 +3140,15 @@ in Listing 4-12.
 
 463 }
 
- 
+
 
 *Listing 4-12:* kernel/fork.c: [*vm_area_alloc()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n455)
 
- 
+
 
 This calls [vma_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n614) to perform initialisation as shown in Listing 4-13.
 
- 
+
 
 614 **static inline void vma_init**(**struct** vm_area_struct \*vma, **struct** mm_struct \*mm) 615 {
 
@@ -3160,19 +3160,19 @@ This calls [vma_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds
 
 620 vma-\>vm_ops = &dummy_vm_ops;
 
- 
 
 
 
- 
+
+
 
 621 **INIT_LIST_HEAD**(&vma-\>anon_vma_chain); 622 }
 
- 
+
 
 *Listing 4-13:* include/linux/mm.h: [*vma_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n614)
 
- 
+
 
 This zeroes the object, assigns the process’s [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) object to
 
@@ -3192,17 +3192,17 @@ dedicated section to discuss it – section 5.1.
 
 VMAs are freed via [vm_area_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n484) as shown in Listing 5-45.
 
- 
+
 
 484 **void vm_area_free**(**struct** vm_area_struct \*vma) 485 {
 
 486 **free_anon_vma_name**(vma); 487 **kmem_cache_free**(vm_area_cachep, vma); 488 }
 
- 
+
 
 *Listing 4-14:* kernel/fork.c: [*vm_area_free()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n484)
 
- 
+
 
 This ultimately frees the VMA memory to the cache via the slab function
 
@@ -3210,7 +3210,7 @@ This ultimately frees the VMA memory to the cache via the slab function
 
 via [free_anon_vma_name()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n192).
 
- 
+
 
 ***4.4.3 VMA layout***
 
@@ -3232,7 +3232,7 @@ Let’s consider an example VMA tree with VMAs between 0x0-0x500, 0x500
 
 4-15.
 
- 
+
 
 
 
@@ -3242,31 +3242,31 @@ mmap
 
 mm_rb
 
- 
+
 
 [vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403)
 
- 
+
 
 [vma vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403)
 
- 
+
 
 [vma vma vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403)
 
- 
+
 
 0 500 1000 1500 2000 2500 3000 3500 4000 4500 5000 5500 6000 6500 7000
 
- 
+
 
 Virtual address
 
- 
+
 
 *Figure 4-15: Example VMA layout*
 
- 
+
 
 Note that here each VMA is shown proportionate to the range they rep-
 
@@ -3278,7 +3278,7 @@ The VMAs are linked in a binary tree, keyed on
 
 linked list via vm_prev and vm_next.
 
- 
+
 
 ***4.4.4 VMA insertion/removal***
 
@@ -3286,7 +3286,7 @@ We examine the red/black binary tree node type in the kernel [struct rb_node](ht
 
 in Listing 4-15.
 
- 
+
 
 5 **struct** rb_node {
 
@@ -3298,11 +3298,11 @@ in Listing 4-15.
 
 9 } **\_\_attribute\_\_**((**aligned**(**sizeof**(**long**))));
 
- 
+
 
 *Listing 4-15:* include/linux/rbtree_types.h: [*struct rb_node*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rbtree_types.h?h=v6.0#n5)
 
- 
+
 
 The \_\_rb_parent_color field is used as part of the red/black tree algorithm
 
@@ -3330,17 +3330,17 @@ the next VMA before we were inserted, update it and point ourselves to the
 
 prior and next VMA.
 
- 
 
 
 
- 
+
+
 
 All of these are provided by the [find_vma_links()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n488) function as shown in
 
 Listing 4-16.
 
- 
+
 
 488 **static int find_vma_links**(**struct** mm_struct \*mm, **unsigned long** addr, 489 **unsigned long** end, **struct** vm_area_struct \*\*pprev, 490 **struct** rb_node \*\*\*rb_link, **struct** rb_node \*\*rb_parent) 491 {
 
@@ -3368,17 +3368,17 @@ Listing 4-16.
 
 521 }
 
- 
+
 
 *Listing 4-16:* mm/mmap.c: [*find_vma_links()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n488)
 
- 
+
 
 This function accepts the owning [mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486), the start address of the VMA
 
 we want to link, addr, the exclusive end bound of the VMA we want to link, end, and we output:
 
- 
+
 
 • pprev – A pointer to the [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA) immediately prior
 
@@ -3388,17 +3388,17 @@ to this one, or NULL if the inserted VMA would have the lowest virtual address i
 
 node in which a pointer to the newly inserted node must be placed.
 
- 
 
 
 
- 
+
+
 
 • rb_parent – A pointer to the parent node, or NULL if this would be the first
 
 VMA in this address space.
 
- 
+
 
 The function works by traversing though each node, determining
 
@@ -3430,7 +3430,7 @@ subtree most be less than itself.
 
 The users of [find_vma_links()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n488) are a little eclectic:
 
- 
+
 
 • [\_\_insert_vm_struct()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n670) – This is used as a helper by [\_\_vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) as part of
 
@@ -3452,7 +3452,7 @@ by which [find_vma_links()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 [mmap_region()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1681) and [do_brk_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2973) to unmap any existing mappings while also obtaining the fields required for inserting the new VMA at the same time.
 
- 
+
 
 Regardless of the method used to obtain the values returned by
 
@@ -3460,7 +3460,7 @@ find_vma_links(), a VMA is ultimately ‘linked’ into a process address space
 
 via [\_\_vma_link()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n637) as shown in Listing 5-51.
 
- 
+
 
 636 **static void**
 
@@ -3468,15 +3468,15 @@ via [\_\_vma_link()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 641 **\_\_vma_link_list**(mm, vma, prev); 642 **\_\_vma_link_rb**(mm, vma, rb_link, rb_parent); 643 }
 
- 
+
 
 *Listing 4-17:* mm/mmap.c: [*\_\_vma_link()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n637)
 
- 
 
 
 
- 
+
+
 
 This links the VMA being inserted into the VMA linked list and
 
@@ -3486,7 +3486,7 @@ We first insert into the linked list via [\_\_vma_link_list()](https://git.kerne
 
 shown in Listing 4-18.
 
- 
+
 
 275 **void \_\_vma_link_list**(**struct** mm_struct \*mm, **struct** vm_area_struct \*vma, 276 **struct** vm_area_struct \*prev) 277 {
 
@@ -3502,11 +3502,11 @@ shown in Listing 4-18.
 
 290 next-\>vm_prev = vma; 291 }
 
- 
+
 
 *Listing 4-18:* mm/util.c: [*\_\_vma_link_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n275)
 
- 
+
 
 This handles the case where this VMA possesses the earliest address in
 
@@ -3522,7 +3522,7 @@ The node is inserted into the red/black tree via [\_\_vma_link_rb()](https://git
 
 in Listing 4-19.
 
- 
+
 
 595 **void \_\_vma_link_rb**(**struct** mm_struct \*mm, **struct** vm_area_struct \*vma, 596 **struct** rb_node \*\*rb_link, **struct** rb_node \*rb_parent) 597 {
 
@@ -3542,21 +3542,21 @@ in Listing 4-19.
 
 608 *\* So, we first insert the vma with a zero rb_subtree_gap value* 609 *\* (to be consistent with what we did on the way down), and then*
 
- 
 
 
 
- 
+
+
 
 610 *\* immediately update the gap to the correct value. Finally we* 611 *\* rebalance the rbtree after all augmented values have been set.* 612 *\*/*
 
 613 **rb_link_node**(&vma-\>vm_rb, rb_parent, rb_link); 614 vma-\>rb_subtree_gap = 0; 615 **vma_gap_update**(vma); 616 **vma_rb_insert**(vma, &mm-\>mm_rb); 617 }
 
- 
+
 
 *Listing 4-19:* mm/mmap.c: [*\_\_vma_link_rb()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n595)
 
- 
+
 
 This performs an update of the VMA’s subtree gap and propa-
 
@@ -3588,7 +3588,7 @@ Coming back to [\_\_vma_link()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 what simplistic as shown in Listing 5-50.
 
- 
+
 
 666 */\**
 
@@ -3614,11 +3614,11 @@ vma)
 
 680 }
 
- 
+
 
 *Listing 4-20:* mm/mmap.c: [*\_\_insert_vm_struct()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n670)
 
- 
+
 
 This simply invokes [find_vma_links()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n488), then links what it finds via
 
@@ -3628,11 +3628,11 @@ that a new mapping exists there.
 
 Now examining [vma_link()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n645) as shown in Listing 4-21.
 
- 
 
 
 
- 
+
+
 
 645 **static void vma_link**(**struct** mm_struct \*mm, **struct** vm_area_struct \*vma, 646 **struct** vm_area_struct \*prev, **struct** rb_node \*\*rb_link, 647 **struct** rb_node \*rb_parent) 648 {
 
@@ -3654,11 +3654,11 @@ Now examining [vma_link()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 664 }
 
- 
+
 
 *Listing 4-21:* mm/mmap.c: [*vma_link()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n645)
 
- 
+
 
 This similarly invokes \_\_vma_link() but additionally includes logic for han-
 
@@ -3676,17 +3676,17 @@ treatment of unmapping memory, however we will examine the function
 
 that is ultimately invoked, [\_\_vma_unlink()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n682) as shown in Listing 5-41.
 
- 
+
 
 682 **static \_\_always_inline void \_\_vma_unlink**(**struct** mm_struct \*mm, 683 **struct** vm_area_struct \*vma, 684 **struct** vm_area_struct \*ignore) 685 {
 
 686 **vma_rb_erase_ignore**(vma, &mm-\>mm_rb, ignore); 687 **\_\_vma_unlink_list**(mm, vma); 688 */\* Kill the cache \*/* 689 **vmacache_invalidate**(mm); 690 }
 
- 
+
 
 *Listing 4-22:* mm/mmap.c: [*\_\_vma_unlink()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n682)
 
- 
+
 
 This starts by erasing the red/black tree node from the VMA tree via
 
@@ -3694,17 +3694,17 @@ This starts by erasing the red/black tree node from the VMA tree via
 
 generic red/black tree erase function [rb_erase_augmented()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rbtree_augmented.h?h=v6.0#n300)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rbtree_augmented.h?h=v6.0#n300)
 
- 
 
 
 
- 
+
+
 
 Next, it releases the VMA from the linked list via [\_\_vma_unlink_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n293) as
 
 shown in Listing 5-42.
 
- 
+
 
 293 **void \_\_vma_unlink_list**(**struct** mm_struct \*mm, **struct** vm_area_struct \*vma) 294 {
 
@@ -3720,11 +3720,11 @@ shown in Listing 5-42.
 
 304 next-\>vm_prev = prev; 305 }
 
- 
+
 
 *Listing 4-23:* mm/util.c: [*\_\_vma_unlink_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n293)
 
- 
+
 
 This performs the inverse of what [\_\_vma_link_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n275) does, taking a copy of
 
@@ -3742,7 +3742,7 @@ ply increments the [mm_struct-\>vmacache_seqnum](https://git.kernel.org/pub/scm/
 
 below for a discussion of the VMA cache as a whole.
 
- 
+
 
 ***4.4.5 VMA traversal***
 
@@ -3758,7 +3758,7 @@ established an entire red/black tree structure in order to do so efficiently.
 
 The principle means of doing so is via [find_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2253) as shown in Listing 4-24.
 
- 
+
 
 2252 */\* Look up the first VMA which satisfies addr \< vm_end,* *NULL if none. \*/*
 
@@ -3770,11 +3770,11 @@ The principle means of doing so is via [find_vma()](https://git.kernel.org/pub/s
 
 2262 **return** vma; 2263
 
- 
 
 
 
- 
+
+
 
 2264 rb_node = mm-\>mm_rb.rb_node; 2265
 
@@ -3794,11 +3794,11 @@ The principle means of doing so is via [find_vma()](https://git.kernel.org/pub/s
 
 2283 }
 
- 
+
 
 *Listing 4-24:* mm/mmap.c: [*find_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2253)
 
- 
+
 
 As discussed above, VMAs are maintained in a tree keyed on their exclu-
 
@@ -3832,11 +3832,11 @@ these could actually contain the target address, so we do the additional check t
 
 When we are done, we update the VMA cache via [vmacache_update()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n35)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n35)
 
- 
 
 
 
- 
+
+
 
 **4.4.5.1 VMA cache**
 
@@ -3858,7 +3858,7 @@ The key data structure used in the VMA cache is [struct vmacache](https://git.ke
 
 in Listing 4-25.
 
- 
+
 
 34 **struct** vmacache {
 
@@ -3868,11 +3868,11 @@ in Listing 4-25.
 
 37 };
 
- 
+
 
 *Listing 4-25:* include/linux/mm_types_task.h: [*struct vmacache*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n34)
 
- 
+
 
 This maintains a very simple hash of VMA objects and the aforemen-
 
@@ -3888,15 +3888,15 @@ The hash used in the lookup is determined by [VMACACHE_HASH()](https://git.kerne
 
 Listing 4-26.
 
- 
+
 
 19 **\#define VMACACHE_HASH**(addr) ((addr \>\> **VMACACHE_SHIFT**) & **VMACACHE_MASK**)
 
- 
+
 
 *Listing 4-26:* mm/vmacache.c: [*VMACACHE_HASH()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n19)
 
- 
+
 
 This simply shifts by the [VMACACHE_SHIFT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n15) value which is set to [PMD_SHIFT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64_types.h?h=v6.0#n90)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64_types.h?h=v6.0#n90)
 
@@ -3910,7 +3910,7 @@ The lookup of VMA cache entries is performed via [vmacache_find()](https://git.k
 
 shown in Listing 4-27.
 
- 
+
 
 61 **struct** vm_area_struct \***vmacache_find**(**struct** mm_struct \*mm, **unsigned long** addr)
 
@@ -3938,11 +3938,11 @@ shown in Listing 4-27.
 
 73
 
- 
 
 
 
- 
+
+
 
 74 **if** (vma) { 75 **\#ifdef CONFIG_DEBUG_VM_VMACACHE** 76 **if** (**WARN_ON_ONCE**(vma-\>vm_mm != mm)) 77 **break**; 78 **\#endif**
 
@@ -3956,11 +3956,11 @@ shown in Listing 4-27.
 
 89 }
 
- 
+
 
 *Listing 4-27:* mm/vmacache.c: [*vmacache_find()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n61)
 
- 
+
 
 We first determine whether the cache is valid via [vmacache_valid()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n41)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n41) after
 
@@ -3968,7 +3968,7 @@ which we iterate through all entries, using the hash value as a starting point o
 
 We examine vmacache_valid() in Listing 4-28.
 
- 
+
 
 41 **static bool vmacache_valid**(**struct** mm_struct \*mm) 42 {
 
@@ -3988,21 +3988,21 @@ We examine vmacache_valid() in Listing 4-28.
 
 59 }
 
- 
+
 
 *Listing 4-28:* mm/vmacache.c: [*vmacache_valid()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n41)
 
- 
+
 
 This first checks if the VMA belongs to the current task’s [mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) and
 
 that it is not a kernel thread via [vmacache_valid_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n30), before checking to en-
 
- 
 
 
 
- 
+
+
 
 sure that the sequence numbers of this cache and the mm_struct are equal to
 
@@ -4014,7 +4014,7 @@ Finally, updates made to the VMA cache are performed via
 
 [vmacache_update()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n35) as shown in Listing 4-29.
 
- 
+
 
 35 **void vmacache_update**(**unsigned long** addr, **struct** vm_area_struct \*newvma)
 
@@ -4026,15 +4026,15 @@ Finally, updates made to the VMA cache are performed via
 
 39 }
 
- 
+
 
 *Listing 4-29:* mm/vmacache.c: [*vmacache_update()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmacache.c?h=v6.0#n35)
 
- 
+
 
 **4.5 An introduction to the page cache**
 
- 
+
 
 Within the kernel, all files, block I/O buffers and other related ‘cacheable’
 
@@ -4060,7 +4060,7 @@ Each of the objects present in the page cache is described by a
 
 field as shown in Listing 4-30.
 
- 
+
 
 402 */\*\**
 
@@ -4070,11 +4070,11 @@ field as shown in Listing 4-30.
 
 418 *\* @flags: Error bits and flags (AS\_\*).* 419 *\* @wb_err: The most recent error which has occurred.* 420 *\* @private_lock: For use by the owner of the address_space.*
 
- 
 
 
 
- 
+
+
 
 421 *\* @private_list: For use by the owner of the address_space.* 422 *\* @private_data: For use by the owner of the address_space.* 423 *\*/*
 
@@ -4086,15 +4086,15 @@ field as shown in Listing 4-30.
 
 434 **struct** rb_root_cached i_mmap; 435 **struct** rw_semaphore i_mmap_rwsem; 436 **unsigned long** nrpages; 437 **pgoff_t** writeback_index; 438 **const struct** address_space_operations \*a_ops; 439 **unsigned long** flags; 440 **errseq_t** wb_err; 441 **spinlock_t** private_lock; 442 **struct** list_head private_list; 443 **void** \*private_data; 444 } **\_\_attribute\_\_**((**aligned**(**sizeof**(**long**)))) **\_\_randomize_layout**;
 
- 
+
 
 *Listing 4-30:* include/linux/fs.h: [*struct address_space*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424)
 
- 
+
 
 Examining each field:
 
- 
+
 
 • host – If this object refers to a file, this field references the file’s
 
@@ -4120,17 +4120,17 @@ tem using [filemap_invalidate_lock()](https://git.kernel.org/pub/scm/linux/kerne
 
 ter for more details on these ) applied to folio allocations within this
 
- 
+
 
 \*. An inode is a data structure which contains a file system object’s metadata such as file size, access times, and other related information. It is independent of a file’s name or location within the filesystem.
 
 †. The [eXtensible array](https://kernel.org/doc/html/v6.0/core-api/xarray.html) is an efficient data structure for storing a large set of possibly-sparse pointers with the ability to efficiently traverse to next and previous elements. The kernel docu-mentation on this is extensive.
 
- 
 
 
 
- 
+
+
 
 page cache entry. Typically accessed via [mapping_gfp_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n272)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n272) Notably ref-
 
@@ -4190,11 +4190,11 @@ writing back of modified data in the page cache to its backing store such as a d
 
 also in [write_cache_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2281) to trace a writeback operation through to completion. See the page cache chapter for more on writeback.
 
- 
 
 
 
- 
+
+
 
 • a_ops – A [struct address_space_operations](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n356) object which specifies functions
 
@@ -4220,7 +4220,7 @@ which this object resides.
 
 within which this object resides.
 
- 
+
 
 This object acts as an intermediary between underlying page cache folios
 
@@ -4256,11 +4256,11 @@ Since a file-backed VMA will have explicitly been established via a file
 
 descriptor (and thus a file at a specific path) it makes sense to use the file object here. The f_mapping field duplicates the f_inode’s i_mapping field, but since the file’s reference to the inode is cached, it is useful to also cache the mapping. Typically this mapping is simply equal to &f_inode-\>i_data but this can’t always be assumed to be the case.
 
- 
 
 
 
- 
+
+
 
 The more interesting operations involving the page cache
 
@@ -4330,11 +4330,11 @@ a topic to deserve its own chapter, so refer to that for a significantly more
 
 detailed analysis.
 
- 
+
 
 **4.6 Per-process memory management statistical counters**
 
- 
+
 
 Memory management statistics are vitally important for users as they are the
 
@@ -4346,7 +4346,7 @@ interfaces like procfs (see section 14.5 for more details).
 
 The key per-process memory management counters are:
 
- 
+
 
 • [MM_FILEPAGES](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n44) – Counts resident pages containing data backed by files, ex-
 
@@ -4354,11 +4354,11 @@ cluding those backed by shmem memory (see below).
 
 • [MM_ANONPAGES](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n45) – Counts resident anonymous memory.
 
- 
 
 
 
- 
+
+
 
 • [MM_SWAPENTS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n46) – Counts the number of anonymous swap entries, i.e. the
 
@@ -4368,7 +4368,7 @@ number of pages which are currently swapped out.
 
 files, e.g. tmpfs and shared ‘anonymous’ mappings.
 
- 
+
 
 There are [NR_MM_COUNTERS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n48) of these values maintained in an anonymous
 
@@ -4386,13 +4386,13 @@ Why are there two different locations? This is to account for the fact that
 
 these counters belong to the virtual address space, but may be updated by multiple threads, each of which may do so concurrently.
 
- 
+
 
 **N O T E** In linux, each individual thread is treated as if it were a different process, each with
 
 independent [*struct task_struct*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727) objects all sharing the same [*mm_struct*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)
 
- 
+
 
 In order to avoid heavy lock contention, the per-thread values
 
@@ -4402,13 +4402,13 @@ are updated and only ‘flushed’ to the per-address space values every
 
 We examine the [struct task_rss_stat](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n54) type in Listing 4-31.
 
- 
+
 
 53 */\* per-thread cached information, \*/* 54 **struct** task_rss_stat {
 
 55 **int** events; */\* for synchronization threshold \*/* 56 **int** count\[**NR_MM_COUNTERS**\]; 57 };
 
- 
+
 
 *Listing 4-31:* include/linux/mm_types_task.h: [*struct task_rss_stat*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n54)
 
@@ -4418,13 +4418,13 @@ number of events which have occurred in order to rate limit into batches of
 
 [TASK_RSS_EVENTS_THRESH](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n207) as shown in Listing 4-32.
 
- 
+
 
 60 **struct** mm_rss_stat {
 
 61 **atomic_long_t** count\[**NR_MM_COUNTERS**\]; 62 };
 
- 
+
 
 *Listing 4-32:* include/linux/mm_types_task.h: [*struct mm_rss_stat*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n60)
 
@@ -4438,27 +4438,27 @@ and [dec_mm_counter_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 erate to [add_mm_counter_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n194) as shown in Listing 4-33.
 
- 
+
 
 194 **static void add_mm_counter_fast**(**struct** mm_struct \*mm, **int** member, **int** val) 195 {
 
 196 **struct** task_struct \*task = current; 197
 
- 
 
 
 
- 
+
+
 
 198 **if** (**likely**(task-\>mm == mm)) 199 task-\>rss_stat.count\[member\] += val; 200 **else**
 
 201 **add_mm_counter**(mm, member, val); 202 }
 
- 
+
 
 *Listing 4-33:* mm/memory.c: [*add_mm_counter_fast()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n194)
 
- 
+
 
 Note that, should the memory access be to a [mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) object which
 
@@ -4472,7 +4472,7 @@ be flushed to the per-address space values is [check_sync_rss_stat()](https://gi
 
 invoked in [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129) i.e. at the start of the page fault process.
 
- 
+
 
 **N O T E** This only occurs if the *SPLIT_RSS_COUNTING* directive is specified, which it is only if
 
@@ -4486,11 +4486,11 @@ uses [*vm_insert_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 tics at all.
 
- 
+
 
 Examining [check_sync_rss_stat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n208) as shown in Listing 4-34.
 
- 
+
 
 208 **static void check_sync_rss_stat**(**struct** task_struct \*task) 209 {
 
@@ -4498,11 +4498,11 @@ Examining [check_sync_rss_stat()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 212 **if** (**unlikely**(task-\>rss_stat.events++ \> **TASK_RSS_EVENTS_THRESH**)) 213 **sync_mm_rss**(task-\>mm); 214 }
 
- 
+
 
 *Listing 4-34:* mm/memory.c: [*check_sync_rss_stat()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n208)
 
- 
+
 
 This simply increments the current task’s [struct task_rss_stat.event](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types_task.h?h=v6.0#n54)
 
@@ -4510,7 +4510,7 @@ value, if it exceeds the threshold value [TASK_RSS_EVENTS_THRESH](https://git.ke
 
 [sync_mm_rss()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n181) as shown in Listing 4-35.
 
- 
+
 
 181 **void sync_mm_rss**(**struct** mm_struct \*mm) 182 {
 
@@ -4524,15 +4524,15 @@ value, if it exceeds the threshold value [TASK_RSS_EVENTS_THRESH](https://git.ke
 
 191 current-\>rss_stat.events = 0; 192 }
 
- 
 
 
 
- 
+
+
 
 *Listing 4-35:* mm/memory.c: [*sync_mm_rss()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n181)
 
- 
+
 
 This simply iterates through the MM counters and sets the values in the
 
@@ -4550,18 +4550,11 @@ rather unreliable, and an alternative such as /proc/\$pid/smaps_rollup should
 
 be used if absolute accuracy is required. See section 14.5 for a detailed de-scription of the procfs interfaces which read these values.
 
- 
+
 
 **N O T E** The inaccuracy of these values has been improved since kernel 6.2, in
 
 [*mm: convert mm's rss stats into percpu_counter*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=f1a7941243c1) (commit *f1a7941243c1*).
 
- 
 
 
-
- 
-
-**5**
-
- 

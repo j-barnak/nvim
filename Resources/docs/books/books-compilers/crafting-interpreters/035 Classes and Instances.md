@@ -8,9 +8,9 @@
 
 The last area left to implement in clox is object-oriented programming. OOP is a bundle of intertwined features: classes, instances, fields, methods, initializers, and inheritance. Using relatively high-level Java, we packed all that into two chapters. Now that we’re coding in C, which feels like building a model of the Eiffel tower out of toothpicks, we’ll devote three chapters to covering the same territory. This makes for a leisurely stroll through the implementation. After strenuous chapters like closures and the garbage collector, you have earned a rest. In fact, the book should be easy from here on out.
 
-People who have strong opinions about object-oriented programming—read “everyone”—tend to assume OOP means some very specific list of language features, but really there’s a whole space to explore, and each language has its own ingredients and recipes.
-
-Self has objects but no classes. CLOS has methods but doesn’t attach them to specific classes. C++ initially had no runtime polymorphism—no virtual methods. Python has multiple inheritance, but Java does not. Ruby attaches methods to classes, but you can also define methods on a single object.
+> People who have strong opinions about object-oriented programming—read “everyone”—tend to assume OOP means some very specific list of language features, but really there’s a whole space to explore, and each language has its own ingredients and recipes.
+>
+> Self has objects but no classes. CLOS has methods but doesn’t attach them to specific classes. C++ initially had no runtime polymorphism—no virtual methods. Python has multiple inheritance, but Java does not. Ruby attaches methods to classes, but you can also define methods on a single object.
 
 In this chapter, we cover the first three features: classes, instances, and fields. This is the stateful side of object orientation. Then in the next two chapters, we will hang behavior and code reuse off of those objects.
 
@@ -117,9 +117,9 @@ ObjClass* newClass(ObjString* name) {
 
 Pretty much all boilerplate. It takes in the class’s name as a string and stores it. Every time the user declares a new class, the VM will create a new one of these ObjClass structs to represent it.
 
-!['Klass' in a zany kidz font.](media/image/classes-and-instances/klass.png)
-
-I named the variable “klass” not just to give the VM a zany preschool “Kidz Korner” feel. It makes it easier to get clox compiling as C++ where “class” is a reserved word.
+> !['Klass' in a zany kidz font.](media/image/classes-and-instances/klass.png)
+>
+> I named the variable “klass” not just to give the VM a zany preschool “Kidz Korner” feel. It makes it easier to get clox compiling as C++ where “class” is a reserved word.
 
 When the VM no longer needs a class, it frees it like so:
 
@@ -140,7 +140,7 @@ When the VM no longer needs a class, it frees it like so:
 
 *memory.c*, in *freeObject*()
 
-The braces here are pointless now, but will be useful in the next chapter when we add some more code to the switch case.
+> The braces here are pointless now, but will be useful in the next chapter when we add some more code to the switch case.
 
 We have a memory manager now, so we also need to support tracing through class objects.
 
@@ -226,13 +226,13 @@ Immediately after the `class` keyword is the class’s name. We take that identi
 
 The class’s name is also used to bind the class object to a variable of the same name. So we declare a variable with that identifier right after consuming its token.
 
-We could have made class declarations be *expressions* instead of statements—they are essentially a literal that produces a value after all. Then users would have to explicitly bind the class to a variable themselves like:
-
-```
-var Pie = class {}
-```
-
-Sort of like lambda functions but for classes. But since we generally want classes to be named anyway, it makes sense to treat them as declarations.
+> We could have made class declarations be *expressions* instead of statements—they are essentially a literal that produces a value after all. Then users would have to explicitly bind the class to a variable themselves like:
+>
+> ```
+> var Pie = class {}
+> ```
+>
+> Sort of like lambda functions but for classes. But since we generally want classes to be named anyway, it makes sense to treat them as declarations.
 
 Next, we emit a new instruction to actually create the class object at runtime. That instruction takes the constant table index of the class’s name as an operand.
 
@@ -295,7 +295,7 @@ For such a large-seeming feature, the interpreter support is minimal.
 
 We load the string for the class’s name from the constant table and pass that to `newClass()`. That creates a new class object with the given name. We push that onto the stack and we’re good. If the class is bound to a global variable, then the compiler’s call to `defineVariable()` will emit code to store that object from the stack into the global variable table. Otherwise, it’s right where it needs to be on the stack for a new local variable.
 
-“Local” classes—classes declared inside the body of a function or block, are an unusual concept. Many languages don’t allow them at all. But since Lox is a dynamically typed scripting language, it treats the top level of a program and the bodies of functions and blocks uniformly. Classes are just another kind of declaration, and since you can declare variables and functions inside blocks, you can declare classes in there too.
+> “Local” classes—classes declared inside the body of a function or block, are an unusual concept. Many languages don’t allow them at all. But since Lox is a dynamically typed scripting language, it treats the top level of a program and the bodies of functions and blocks uniformly. Classes are just another kind of declaration, and since you can declare variables and functions inside blocks, you can declare classes in there too.
 
 There you have it, our VM supports classes now. You can run this:
 
@@ -338,9 +338,9 @@ Instances know their class—each instance has a pointer to the class that it is
 
 More important to this chapter is how instances store their state. Lox lets users freely add fields to an instance at runtime. This means we need a storage mechanism that can grow. We could use a dynamic array, but we also want to look up fields by name as quickly as possible. There’s a data structure that’s just perfect for quickly accessing a set of values by name and—even more conveniently—we’ve already implemented it. Each instance stores its fields using a hash table.
 
-Being able to freely add fields to an object at runtime is a big practical difference between most dynamic and static languages. Statically typed languages usually require fields to be explicitly declared. This way, the compiler knows exactly what fields each instance has. It can use that to determine the precise amount of memory needed for each instance and the offsets in that memory where each field can be found.
-
-In Lox and other dynamic languages, accessing a field is usually a hash table lookup. Constant time, but still pretty heavyweight. In a language like C++, accessing a field is as fast as offsetting a pointer by an integer constant.
+> Being able to freely add fields to an object at runtime is a big practical difference between most dynamic and static languages. Statically typed languages usually require fields to be explicitly declared. This way, the compiler knows exactly what fields each instance has. It can use that to determine the precise amount of memory needed for each instance and the offsets in that memory where each field can be found.
+>
+> In Lox and other dynamic languages, accessing a field is usually a hash table lookup. Constant time, but still pretty heavyweight. In a language like C++, accessing a field is as fast as offsetting a pointer by an integer constant.
 
 We only need to add an include, and we’ve got it.
 
@@ -514,7 +514,7 @@ Less critical but still important is printing.
 
 An instance prints its name followed by “instance”. (The “instance” part is mainly so that classes and instances don’t print the same.)
 
-Most object-oriented languages let a class define some sort of `toString()` method that lets the class specify how its instances are converted to a string and printed. If Lox was less of a toy language, I would want to support that too.
+> Most object-oriented languages let a class define some sort of `toString()` method that lets the class specify how its instances are converted to a string and printed. If Lox was less of a toy language, I would want to support that too.
 
 The real fun happens over in the interpreter. Lox has no special `new` keyword. The way to create an instance of a class is to invoke the class itself as if it were a function. The runtime already supports function calls, and it checks the type of object being called to make sure the user doesn’t try to invoke a number or other invalid type.
 
@@ -540,7 +540,7 @@ We extend that runtime checking with a new case.
 
 If the value being called—the object that results when evaluating the expression to the left of the opening parenthesis—is a class, then we treat it as a constructor call. We create a new instance of the called class and store the result on the stack.
 
-We ignore any arguments passed to the call for now. We’ll revisit this code in the next chapter when we add support for initializers.
+> We ignore any arguments passed to the call for now. We’ll revisit this code in the next chapter when we add support for initializers.
 
 We’re one step farther. Now we can define classes and create instances of them.
 
@@ -562,7 +562,7 @@ print eclair.filling;
 
 The period—full stop for my English friends—works sort of like an infix operator. There is an expression to the left that is evaluated first and produces an instance. After that is the `.` followed by a field name. Since there is a preceding operand, we hook this into the parse table as an infix expression.
 
-I say “sort of” because the right-hand side after the `.` is not an expression, but a single identifier whose semantics are handled by the get or set expression itself. It’s really closer to a postfix expression.
+> I say “sort of” because the right-hand side after the `.` is not an expression, but a single identifier whose semantics are handled by the get or set expression itself. It’s really closer to a postfix expression.
 
 ```
   [TOKEN_COMMA]         = {NULL,     NULL,   PREC_NONE},
@@ -598,7 +598,7 @@ static void dot(bool canAssign) {
 
 The parser expects to find a property name immediately after the dot. We load that token’s lexeme into the constant table as a string so that the name is available at runtime.
 
-The compiler uses “property” instead of “field” here because, remember, Lox also lets you use dot syntax to access a method without calling it. “Property” is the general term we use to refer to any named entity you can access on an instance. Fields are the subset of properties that are backed by the instance’s state.
+> The compiler uses “property” instead of “field” here because, remember, Lox also lets you use dot syntax to access a method without calling it. “Property” is the general term we use to refer to any named entity you can access on an instance. Fields are the subset of properties that are backed by the instance’s state.
 
 We have two new expression forms—getters and setters—that this one function handles. If we see an equals sign after the field name, it must be a set expression that is assigning to a field. But we don’t *always* allow an equals sign after the field to be compiled. Consider:
 
@@ -616,7 +616,7 @@ The problem is that the `=` side of a set expression has much lower precedence t
 
 If we find an `=` in a context where it *is* allowed, then we compile the expression that follows. After that, we emit a new `OP_SET_PROPERTY` instruction. That takes a single operand for the index of the property name in the constant table. If we didn’t compile a set expression, we assume it’s a getter and emit an `OP_GET_PROPERTY` instruction, which also takes an operand for the property name.
 
-You can’t *set* a non-field property, so I suppose that instruction could have been `OP_SET_FIELD`, but I thought it looked nicer to be consistent with the get instruction.
+> You can’t *set* a non-field property, so I suppose that instruction could have been `OP_SET_FIELD`, but I thought it looked nicer to be consistent with the get instruction.
 
 Now is a good time to define these two new instructions.
 
@@ -715,9 +715,9 @@ The user’s program is wrong, but the VM still has to handle it with some grace
 
 In Lox, only instances are allowed to have fields. You can’t stuff a field onto a string or number. So we need to check that the value is an instance before accessing any fields on it.
 
-Lox *could* support adding fields to values of other types. It’s our language and we can do what we want. But it’s likely a bad idea. It significantly complicates the implementation in ways that hurt performance—for example, string interning gets a lot harder.
-
-Also, it raises gnarly semantic questions around the equality and identity of values. If I attach a field to the number `3`, does the result of `1 + 2` have that field as well? If so, how does the implementation track that? If not, are those two resulting “threes” still considered equal?
+> Lox *could* support adding fields to values of other types. It’s our language and we can do what we want. But it’s likely a bad idea. It significantly complicates the implementation in ways that hurt performance—for example, string interning gets a lot harder.
+>
+> Also, it raises gnarly semantic questions around the equality and identity of values. If I attach a field to the number `3`, does the result of `1 + 2` have that field as well? If so, how does the implementation track that? If not, are those two resulting “threes” still considered equal?
 
 ```
       case OP_GET_PROPERTY: {
@@ -766,9 +766,9 @@ This is a little more complex than `OP_GET_PROPERTY`. When this executes, the to
 
 After that is a little stack juggling. We pop the stored value off, then pop the instance, and finally push the value back on. In other words, we remove the *second* element from the stack while leaving the top alone. A setter is itself an expression whose result is the assigned value, so we need to leave that value on the stack. Here’s what I mean:
 
-The stack operations go like this:
-
-![Popping two values and then pushing the first value back on the stack.](media/image/classes-and-instances/stack.png)
+> The stack operations go like this:
+>
+> ![Popping two values and then pushing the first value back on the stack.](media/image/classes-and-instances/stack.png)
 
 ```
 class Toast {}

@@ -44,9 +44,7 @@ Then you can get Crosstool-ng help by running
 
 \$ ./ct-ng help
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 5
 
-Embedded Linux System Development
 
 **Configure the toolchain to produce**
 
@@ -104,9 +102,7 @@ And wait!
 
 6
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 **Testing the toolchain**
 
@@ -142,6 +138,3 @@ Hello world!
 
 To save about 9 GB of storage space, do a ./ct-ng clean in the Crosstool-NG source directory. This will remove the source code of the different toolchain components, as well as all the generated files that are now useless since the toolchain has been installed in \$HOME/x-tools.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 7
-
-Embedded Linux System Development

@@ -4,16 +4,16 @@
 
 In this chapter we increase the level of generality that can be achieved in Haskell, by considering functions that are generic over a range of parameterised types such as lists, trees and input/output actions. In particular, we introduce functors, applicatives and monads, which variously capture generic notions of mapping, function application and effectful programming.
 
-### **12.1Functors**
+### **12.1 Functors**
 
 All three new concepts introduced in this chapter are examples of the idea of abstracting out a common programming pattern as a definition. We begin by reviewing this idea using the following two simple functions:
 
 ``` haskell
 inc :: [Int] -> [Int]
-inc []= []
+inc []     = []
 inc (n:ns) = n+1 : inc ns
 sqr :: [Int] -> [Int]
-sqr []= []
+sqr []     = []
 sqr (n:ns) = n^2 : sqr ns
 ```
 
@@ -36,7 +36,7 @@ More generally, the idea of mapping a function over each element of a data struc
 
 ``` haskell
 class Functor f where
-fmap :: (a -> b) -> f a -> f b
+  fmap :: (a -> b) -> f a -> f b
 ```
 
 That is, for a parameterised type f to be an instance of the class Functor, it must support a function fmap of the specified type. The intuition is that fmap takes a function of type a -\> b and a structure of type f a whose elements have type a, and applies the function to each such element to give a structure of type f b whose elements now have type b. The fact that f must be a parameterised type, that is, a type that takes another type as a parameter, is determined automatically during type inference by virtue of the application of f to the types a and b in the specified type for fmap in the class declaration.
@@ -47,8 +47,8 @@ As we would expect, the type of lists can be made into a functor by simply defin
 
 ``` haskell
 instance Functor [] where
--- fmap :: (a -> b) -> [a] -> [b]
-fmap = map
+  -- fmap :: (a -> b) -> [a] -> [b]
+  fmap = map
 ```
 
 The symbol \[\] in this declaration denotes the list type without a type parameter, and is based upon the fact that the type \[a\] can also be written in more primitive form as the application \[\] a of the list type \[\] to the parameter type a. Note also that the type of fmap above is stated in a comment rather than explicitly, because Haskell does not permit such type information in instance declarations. However, it is useful for guiding the definition of fmap and for documentation purposes, so we include such types in comments.
@@ -63,9 +63,9 @@ It is straightforward to make the Maybe type into a functor by defining a functi
 
 ``` haskell
 instance Functor Maybe where
--- fmap :: (a -> b) -> Maybe a -> Maybe b
-fmap _ Nothing = Nothing
-fmap g (Just x) = Just (g x)
+  -- fmap :: (a -> b) -> Maybe a -> Maybe b
+  fmap _ Nothing = Nothing
+  fmap g (Just x) = Just (g x)
 ```
 
 (We call the argument function g to avoid confusion with the use of f for a functor in this section.) That is, mapping a function over a failed value results in the failure being propagated, while for success we apply the function to the underlying value and retag the result. For example:
@@ -83,16 +83,16 @@ User-defined types can also be made into functors. For example, suppose that we 
 
 ``` haskell
 data Tree a = Leaf a | Node (Tree a) (Tree a)
-deriving Show
+         deriving Show
 ```
 
 The deriving clause ensures that trees can be displayed on the screen. The parameterised type Tree can then be made into a functor by defining a function fmap that applies a given function to each leaf value in a tree:
 
 ``` haskell
 instance Functor Tree where
--- fmap :: (a -> b) -> Tree a -> Tree b
-fmap g (Leaf x) = Leaf (g x)
-fmap g (Node l r) = Node (fmap g l) (fmap g r)
+  -- fmap :: (a -> b) -> Tree a -> Tree b
+  fmap g (Leaf x) = Leaf (g x)
+  fmap g (Node l r) = Node (fmap g l) (fmap g r)
 ```
 
 For example:
@@ -108,8 +108,8 @@ Many functors f that are used in Haskell are similar to the three examples above
 
 ``` haskell
 instance Functor IO where
--- fmap :: (a -> b) -> IO a -> IO b
-fmap g mx = do {x <- mx; return (g x)}
+  -- fmap :: (a -> b) -> IO a -> IO b
+  fmap g mx = do {x <- mx; return (g x)}
 ```
 
 In this case, fmap applies a function to the result value of the argument action, and hence provides a means of processing such values. For example:
@@ -151,9 +151,9 @@ In combination with the polymorphic type for fmap, the functor laws ensure that 
 
 ``` haskell
 instance Functor [] where
--- fmap :: (a -> b) -> f a -> f b
-fmap g []= []
-fmap g (x:xs) = fmap g xs ++ [g x]
+  -- fmap :: (a -> b) -> f a -> f b
+  fmap g []     = []
+  fmap g (x:xs) = fmap g xs ++ [g x]
 ```
 
 (If you wish to try out this example in GHCi, you must first declare your own list type and modify the above declaration accordingly, to avoiding clashing with the built-in list functor.) This declaration is type correct, but fails to satisfy the functor laws, as shown by the following examples:
@@ -171,7 +171,7 @@ fmap g (x:xs) = fmap g xs ++ [g x]
 
 All the functors that we defined in the examples section satisfy the functor laws. We will see how to formally prove such properties when we consider techniques for reasoning about programs in chapter 16. In fact, for any parameterised type in Haskell, there is at most one function fmap that satisfies the required laws. That is, if it is possible to make a given parameterised type into a functor, there is only one way to achieve this. Hence, the instances that we defined for lists, Maybe, Tree and IO were all uniquely determined.
 
-### **12.2Applicatives**
+### **12.2 Applicatives**
 
 Functors abstract the idea of mapping a function over each element of a structure. Suppose now that we wish to generalise this idea to allow functions with any number of arguments to be mapped, rather than being restricted to functions with a single argument. More precisely, suppose that we wish to define a hierarchy of fmap functions with the following types:
 
@@ -239,8 +239,8 @@ It is a useful exercise to check the types of these definitions for yourself. In
 
 ``` haskell
 class Functor f => Applicative f where
-pure :: a -> f a
-(<*>) :: f (a -> b) -> f a -> f b
+  pure :: a -> f a
+  (<*>) :: f (a -> b) -> f a -> f b
 ```
 
 ##### Examples
@@ -249,11 +249,11 @@ Using the fact that Maybe is a functor and hence supports fmap, it is straightfo
 
 ``` haskell
 instance Applicative Maybe where
--- pure :: a -> Maybe a
-pure = Just
--- (<*>) :: Maybe (a -> b) -> Maybe a -> Maybe b
-Nothing <*> _= Nothing
-(Just g) <*> mx = fmap g mx
+  -- pure :: a -> Maybe a
+  pure = Just
+  -- (<*>) :: Maybe (a -> b) -> Maybe a -> Maybe b
+  Nothing <*> _   = Nothing
+  (Just g) <*> mx = fmap g mx
 ```
 
 That is, the function pure transforms a value into a successful result, while the operator \<\*\> applies a function that may fail to an argument that may fail to produce a result that may fail. For example:
@@ -273,10 +273,10 @@ We now turn our attention to the list type, for which the standard prelude conta
 
 ``` haskell
 instance Applicative [] where
--- pure :: a -> [a]
-pure x = [x]
--- (<*>) :: [a -> b] -> [a] -> [b]
-gs <*> xs = [g x | g <- gs, x <- xs]
+  -- pure :: a -> [a]
+  pure x = [x]
+  -- (<*>) :: [a -> b] -> [a] -> [b]
+  gs <*> xs = [g x | g <- gs, x <- xs]
 ```
 
 That is, pure transforms a value into a singleton list, while \<\*\> takes a list of functions and a list of arguments, and applies each function to each argument in turn, returning all the results in a list. For example:
@@ -312,10 +312,10 @@ The final type that we consider in this section is the IO type, which can be mad
 
 ``` haskell
 instance Applicative IO where
--- pure :: a -> IO a
-pure = return
--- (<*>) :: IO (a -> b) -> IO a -> IO b
-mg <*> mx = do {g <- mg; x <- mx; return (g x)}
+  -- pure :: a -> IO a
+  pure = return
+  -- (<*>) :: IO (a -> b) -> IO a -> IO b
+  mg <*> mx = do {g <- mg; x <- mx; return (g x)}
 ```
 
 In this case, pure is given by the return function for the IO type, and \<\*\> applies an impure function to an impure argument to give an impure result. For example, a function that reads a given number of characters from the keyboard can be defined in applicative style as follows:
@@ -340,7 +340,7 @@ In addition to providing a uniform approach to a form of effectful programming, 
 
 ``` haskell
 sequenceA :: Applicative f => [f a] -> f [a]
-sequenceA []= pure []
+sequenceA []   = pure []
 sequenceA (x:xs) = pure (:) <*> x <*> sequenceA xs
 ```
 
@@ -377,7 +377,7 @@ g <$> x1 <*> x2 <*> ... <*> xn
 
 While this is slightly more concise, for expository purposes we prefer the version in which pure is used explicitly, to emphasise the fact that applicative programming is about applying pure functions to effectful arguments. However, the version using \<\$\> is often used in practical applications.
 
-### **12.3Monads**
+### **12.3 Monads**
 
 The final new concept in this chapter captures another pattern of effectful programming. By way of example, consider the following type of expressions that are built up from integer values using a division operator:
 
@@ -389,7 +389,7 @@ Such expressions can be evaluated as follows:
 
 ``` haskell
 eval :: Expr -> Int
-eval (Val n)= n
+eval (Val n)   = n
 eval (Div x y) = eval x ‘div‘ eval y
 ```
 
@@ -412,12 +412,12 @@ and modify our evaluator to explicitly handle the possibility of failure when th
 
 ``` haskell
 eval :: Expr -> Maybe Int
-eval (Val n)= Just n
+eval (Val n)   = Just n
 eval (Div x y) = case eval x of
-Nothing -> Nothing
-Just n -> case eval y of
-Nothing -> Nothing
-Just m-> safediv n m
+        Nothing -> Nothing
+        Just n -> case eval y of
+             Nothing -> Nothing
+             Just m  -> safediv n m
 ```
 
 Now, for example, we have:
@@ -431,7 +431,7 @@ The new definition for eval resolves the division by zero issue, but is rather v
 
 ``` haskell
 eval :: Expr -> Maybe Int
-eval (Val n)= pure n
+eval (Val n)   = pure n
 eval (Div x y) = pure safediv <*> eval x <*> eval y
 ```
 
@@ -444,8 +444,8 @@ How then can we rewrite eval :: Expr -\> Maybe Int in a simpler manner? The key 
 ``` haskell
 (>>=) :: Maybe a -> (a -> Maybe b) -> Maybe b
 mx >>= f = case mx of
-Nothing -> Nothing
-Just x -> f x
+         Nothing -> Nothing
+         Just x -> f x
 ```
 
 That is, \>\>= takes an argument of type a that may fail and a function of type a -\> b whose result may fail, and returns a result of type b that may fail. If the argument fails we propagate the failure, otherwise we apply the function to the resulting value. In this manner, \>\>= integrates the sequencing of values of type Maybe with the processing of their results. The \>\>= operator is often called *bind*, because the second argument binds the result of the first.
@@ -454,10 +454,10 @@ Using the bind operator and the lambda notation, we can now redefine the functio
 
 ``` haskell
 eval :: Expr -> Maybe Int
-eval (Val n)= Just n
+eval (Val n)   = Just n
 eval (Div x y) = eval x >>= \n ->
-eval y >>= \m ->
-safediv n m
+           eval y >>= \m ->
+           safediv n m
 ```
 
 The case for division states that we first evaluate x and call its result value n, then evaluate y and call its result value m, and finally combine the two results by applying safediv. This case can also be written on a single line, but has been broken into separate lines to emphasise its operational reading.
@@ -480,12 +480,12 @@ Haskell provides a special notation for expressions of the above form, allowing 
 
 ``` haskell
 do x1 <- m1
-x2 <- m2
-.
-.
-.
-xn <- mn
-f x1 x2 ... xn
+  x2 <- m2
+  .
+  .
+  .
+  xn <- mn
+  f x1 x2 ... xn
 ```
 
 This is the same notation that is also used for interactive programming. As in this setting, each item in the sequence must begin in the same column, and xi \<- mi can be abbreviated by mi if its result value xi is not required. Using this notation, eval can now be redefined simply as:
@@ -494,17 +494,17 @@ This is the same notation that is also used for interactive programming. As in t
 eval :: Expr -> Maybe Int
 eval (Val n) = Just n
 eval (Div x y) = do n <- eval x
-m <- eval y
-safediv n m
+           m <- eval y
+           safediv n m
 ```
 
 More generally, the do notation is not specific to the types IO and Maybe, but can be used with any applicative type that forms a *monad*. In Haskell, the concept of a monad is captured by the following built-in declaration:
 
 ``` haskell
 class Applicative m => Monad m where
-return :: a -> m a
-(>>=) :: m a -> (a -> m b) -> m b
-return = pure
+  return :: a -> m a
+  (>>=) :: m a -> (a -> m b) -> m b
+  return = pure
 ```
 
 That is, a monad is an applicative type m that supports return and \>\>= functions of the specified types. The default definition return = pure means that return is normally just another name for the applicative function pure, but can be overridden in instances declarations if desired.
@@ -524,17 +524,17 @@ In the standard prelude, the bind operator for the Maybe type is defined using p
 
 ``` haskell
 instance Monad Maybe where
--- (>>=) :: Maybe a -> (a -> Maybe b) -> Maybe b
-Nothing >>= _ = Nothing
-(Just x) >>= f = f x
+  -- (>>=) :: Maybe a -> (a -> Maybe b) -> Maybe b
+  Nothing >>= _ = Nothing
+  (Just x) >>= f = f x
 ```
 
 It is because of this declaration that the do notation can be used to program with Maybe values, as in the function eval from the previous section. In turn, lists can be made into a monadic type as follows:
 
 ``` haskell
 instance Monad [] where
--- (>>=) :: [a] -> (a -> [b]) -> [b]
-xs >>= f = [y | x <- xs, y <- f x]
+  -- (>>=) :: [a] -> (a -> [b]) -> [b]
+  xs >>= f = [y | x <- xs, y <- f x]
 ```
 
 That is, xs \>\>= f applies the function f to each of the results in the list xs, collecting all the resulting values in a list. In this manner, the bind operator for lists provides a means of sequencing expressions that may produce multiple results. For example, a function that returns all possible ways of pairing elements from two lists can now be defined using the do notation:
@@ -542,8 +542,8 @@ That is, xs \>\>= f applies the function f to each of the results in the list xs
 ``` haskell
 pairs :: [a] -> [b] -> [(a,b)]
 pairs xs ys = do x <- xs
-y <- ys
-return (x,y)
+           y <- ys
+           return (x,y)
 ```
 
 For example:
@@ -566,10 +566,10 @@ The prelude also includes an instance for the IO type, which supports the use of
 
 ``` haskell
 instance Monad IO where
--- return :: a -> IO a
-return x = ...
--- (>>=) :: IO a -> (a -> IO b) -> IO b
-mx >>= f = ...
+  -- return :: a -> IO a
+  return x = ...
+  -- (>>=) :: IO a -> (a -> IO b) -> IO b
+  mx >>= f = ...
 ```
 
 ##### The state monad
@@ -617,8 +617,8 @@ As a first step towards making the parameterised type ST into a monad, it is str
 
 ``` haskell
 instance Functor ST where
--- fmap :: (a -> b) -> ST a -> ST b
-fmap g st = S (\s -> let (x,s’) = app st s in (g x, s’))
+  -- fmap :: (a -> b) -> ST a -> ST b
+  fmap g st = S (\s -> let (x,s’) = app st s in (g x, s’))
 ```
 
 That is, fmap allows us to apply a function to the result value of a state transformer, as in the following picture:
@@ -629,12 +629,12 @@ The let mechanism of Haskell used in the above definition is similar to the wher
 
 ``` haskell
 instance Applicative ST where
--- pure :: a -> ST a
-pure x = S (\s -> (x,s))
--- (<*>) :: ST (a -> b) -> ST a -> ST b
-stf <*> stx = S (\s ->
-let (f,s’) = app stf s
-(x,s’’) = app stx s’ in (f x, s’’))
+  -- pure :: a -> ST a
+  pure x = S (\s -> (x,s))
+  -- (<*>) :: ST (a -> b) -> ST a -> ST b
+  stf <*> stx = S (\s ->
+   let (f,s’) = app stf s
+      (x,s’’) = app stx s’ in (f x, s’’))
 ```
 
 In this case, the function pure transforms a value into a state transformer that simply returns this value without modifying the state:
@@ -649,8 +649,8 @@ The symbol \$ denotes normal function application, defined by f \$ x = f x. Fina
 
 ``` haskell
 instance Monad ST where
--- (>>=) :: ST a -> (a -> ST b) -> ST b
-st >>= f = S (\s -> let (x,s’) = app st s in app (f x) s’)
+  -- (>>=) :: ST a -> (a -> ST b) -> ST b
+  st >>= f = S (\s -> let (x,s’) = app st s in app (f x) s’)
 ```
 
 That is, st \>\>= f applies the state transformer st to an initial state s, then applies the function f to the resulting value x to give a new state transformer f x, which is then applied to the new state s’ to give the final result:
@@ -665,7 +665,7 @@ As an example of stateful programming, we develop a relabelling function for tre
 
 ``` haskell
 data Tree a = Leaf a | Node (Tree a) (Tree a)
-deriving Show
+         deriving Show
 ```
 
 For example, we can define:
@@ -681,9 +681,9 @@ Now consider the problem of defining a function that relabels each leaf in such 
 rlabel :: Tree a -> Int -> (Tree Int, Int)
 rlabel (Leaf _) n = (Leaf n, n+1)
 rlabel (Node l r) n = (Node l’ r’, n’’)
-where
-(l’,n’) = rlabel l n
-(r’,n’’) = rlabel r n’
+         where
+           (l’,n’) = rlabel l n
+           (r’,n’’) = rlabel r n’
 ```
 
 Then, for example, we have:
@@ -722,10 +722,10 @@ Using the fact that ST is also a monad, we can define an equivalent monadic vers
 ``` haskell
 mlabel :: Tree a -> ST (Tree Int)
 mlabel (Leaf _) = do n <- fresh
-return (Leaf n)
+        return (Leaf n)
 mlabel (Node l r) = do l’ <- mlabel l
-r’ <- mlabel r
-return (Node l’ r’)
+        r’ <- mlabel r
+        return (Node l’ r’)
 ```
 
 This definition is similar to the applicative version, except that we are now required to give names to the intermediate results. When a non-generic function such as rlabel can be defined in both applicative and monadic style, it is largely a matter of taste which definition is preferred.
@@ -738,8 +738,8 @@ An important benefit of abstracting out the concept of monads is the ability to 
 mapM :: Monad m => (a -> m b) -> [a] -> m [b]
 mapM f [] = return []
 mapM f (x:xs) = do y <- f x
-ys <- mapM f xs
-return (y:ys)
+      ys <- mapM f xs
+      return (y:ys)
 ```
 
 Note that mapM has the same type as map, except that the argument function and the function itself now have monadic return types. To illustrate how it might be used, consider a function that converts a digit character to its numeric value, provided that the character is indeed a digit:
@@ -747,7 +747,7 @@ Note that mapM has the same type as map, except that the argument function and t
 ``` haskell
 conv :: Char -> Maybe Int
 conv c | isDigit c = Just (digitToInt c)
-| otherwise = Nothing
+      | otherwise = Nothing
 ```
 
 (The functions isDigit and digitToInt are provided in Data.Char.) Then applying mapM to the conv function gives a means of converting a string of digits into the corresponding list of numeric values, which succeeds if every character in the string is a digit, and fails otherwise:
@@ -765,8 +765,8 @@ In turn, a monadic version of the filter function on lists is defined by general
 filterM :: Monad m => (a -> m Bool) -> [a] -> m [a]
 filterM p [] = return []
 filterM p (x:xs) = do b <- p x
-ys <- filterM p xs
-return (if b then x:ys else ys)
+        ys <- filterM p xs
+        return (if b then x:ys else ys)
 ```
 
 For example, in the case of the list monad, using filterM provides a particularly concise means of computing the *powerset* of a list, which is given by all possible ways of including or excluding each element of the list:
@@ -781,8 +781,8 @@ As a final example, the prelude function concat :: \[\[a\]\] -\> \[a\] on lists 
 ``` haskell
 join :: Monad m => m (m a) -> m a
 join mmx = do mx <- mmx
-x <- mx
-return x
+         x <- mx
+         return x
 ```
 
 This function flattens a nested monadic value to a normal monadic value. For the list monad it behaves in the same way as concat, while for the Maybe monad it only succeeds if both the outer and inner values succeed:
@@ -808,20 +808,20 @@ The first two equations concern the link between return and \>\>=. The first equ
 
 The third equation concerns the link between \>\>= and itself, and expresses (again modulo binding) that \>\>= is associative. Note that we cannot simply write mx \>\>= (f \>\>= g) on the right-hand side of this equation, as this would not be type correct. All the monads we have seen satisfy the above laws.
 
-### **12.4Chapter remarks**
+### **12.4 Chapter remarks**
 
 Functors and monads come from *category theory* \[17\], a mathematical approach to the study of algebraic structure. Having at most one way to make a parameterised type into a functor in Haskell assumes that we don’t use special language features that force evaluation, such as seq and \$!. The use of monads in functional programming was developed by Wadler \[18\], and applicatives were introduced in \[19\]. An more in-depth exploration of the IO monad is given in \[15\], and the tree relabelling example comes from \[20\].
 
-### **12.5Exercises**
+### **12.5 Exercises**
 
-1.Define an instance of the Functor class for the following type of binary trees that have data in their nodes:
+1\. Define an instance of the Functor class for the following type of binary trees that have data in their nodes:
 
 ``` haskell
 data Tree a = Leaf | Node (Tree a) a (Tree a)
-deriving Show
+         deriving Show
 ```
 
-2.Complete the following instance declaration to make the partially-applied function type (a -\>) into a functor:
+2\. Complete the following instance declaration to make the partially-applied function type (a -\>) into a functor:
 
 ``` haskell
 instance Functor ((->) a) where
@@ -830,29 +830,29 @@ instance Functor ((->) a) where
 
 Hint: first write down the type of fmap, and then think if you already know a library function that has this type.
 
-3.Define an instance of the Applicative class for the type (a -\>). If you are familiar with combinatory logic, you might recognise pure and \<\*\> for this type as being the well-known *K* and *S* combinators.
+3\. Define an instance of the Applicative class for the type (a -\>). If you are familiar with combinatory logic, you might recognise pure and \<\*\> for this type as being the well-known *K* and *S* combinators.
 
-4.There may be more than one way to make a parameterised type into an applicative functor. For example, the library Control.Applicative provides an alternative ‘zippy’ instance for lists, in which the function pure makes an infinite list of copies of its argument, and the operator \<\*\> applies each argument function to the corresponding argument value at the same position. Complete the following declarations that implement this idea:
+4\. There may be more than one way to make a parameterised type into an applicative functor. For example, the library Control.Applicative provides an alternative ‘zippy’ instance for lists, in which the function pure makes an infinite list of copies of its argument, and the operator \<\*\> applies each argument function to the corresponding argument value at the same position. Complete the following declarations that implement this idea:
 
 ``` haskell
 newtype ZipList a = Z [a] deriving Show
 instance Functor ZipList where
--- fmap :: (a -> b) -> ZipList a -> ZipList b
-fmap g (Z xs) = ...
+  -- fmap :: (a -> b) -> ZipList a -> ZipList b
+  fmap g (Z xs) = ...
 instance Applicative ZipList where
--- pure :: a -> ZipList a
-pure x = ...
--- <*> :: ZipList (a -> b) -> ZipList a -> ZipList b
-(Z gs) <$> (Z xs) = ...
+  -- pure :: a -> ZipList a
+  pure x = ...
+  -- <*> :: ZipList (a -> b) -> ZipList a -> ZipList b
+  (Z gs) <$> (Z xs) = ...
 ```
 
 The ZipList wrapper around the list type is required because each type can only have at most one instance declaration for a given class.
 
-5.Work out the types for the variables in the four applicative laws.
+5\. Work out the types for the variables in the four applicative laws.
 
-6.Define an instance of the Monad class for the type (a -\>).
+6\. Define an instance of the Monad class for the type (a -\>).
 
-7.Given the following type of expressions
+7\. Given the following type of expressions
 
 ``` haskell
 data Expr a = Var a | Val Int | Add (Expr a) (Expr a)
@@ -861,21 +861,21 @@ deriving Show
 
 that contain variables of some type a, show how to make this type into instances of the Functor, Applicative and Monad classes. With the aid of an example, explain what the \>\>= operator for this type does.
 
-8.Rather than making a parameterised type into instances of the Functor, Applicative and Monad classes in this order, in practice it is sometimes simpler to define the functor and applicative instances in terms of the monad instance, relying on the fact that the order in which declarations are made is not important in Haskell. Complete the missing parts in the following declarations for the ST type using the do notation.
+8\. Rather than making a parameterised type into instances of the Functor, Applicative and Monad classes in this order, in practice it is sometimes simpler to define the functor and applicative instances in terms of the monad instance, relying on the fact that the order in which declarations are made is not important in Haskell. Complete the missing parts in the following declarations for the ST type using the do notation.
 
 ``` haskell
 instance Functor ST where
--- fmap :: (a -> b) -> ST a -> ST b
-fmap g st = do ...
+  -- fmap :: (a -> b) -> ST a -> ST b
+  fmap g st = do ...
 instance Applicative ST where
--- pure :: a -> ST a
-pure x = S (\s -> (x,s))
--- (<*>) :: ST (a -> b) -> ST a -> ST b
-stf <*> stx = do ...
+  -- pure :: a -> ST a
+  pure x = S (\s -> (x,s))
+  -- (<*>) :: ST (a -> b) -> ST a -> ST b
+  stf <*> stx = do ...
 instance Monad ST where
--- (>>=) :: ST a -> (a -> ST b) -> ST b
-st >>= f = S (\s ->
-let (x,s’) = app st s in app (f x) s’)
+  -- (>>=) :: ST a -> (a -> ST b) -> ST b
+  st >>= f = S (\s ->
+   let (x,s’) = app st s in app (f x) s’)
 ```
 
 Solutions to exercises 1–4 are given in appendix A.

@@ -1,12 +1,12 @@
 **Fetching Linux kernel sources**
 
- 
 
- 
+
+
 
 *Objective: learn how to fetch the Linux kernel sources from git, from both the* *master and stable branches.*
 
- 
+
 
 After this lab, you will be able to:
 
@@ -54,7 +54,7 @@ We will add this separate repository as another *remote* to be able to use the s
 
 git remote add stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux git fetch stable
 
-14 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license As this still represents many git objects to download (2.4 GiB when 6.9 was the latest version), if you are using an already downloaded git tree, your instructor will probably have fetched the *stable* branch ahead of time for you too. You can check by running:
+As this still represents many git objects to download (2.4 GiB when 6.9 was the latest version), if you are using an already downloaded git tree, your instructor will probably have fetched the *stable* branch ahead of time for you too. You can check by running:
 
 git branch -a
 
@@ -62,6 +62,4 @@ We will choose a particular stable version in the next labs.
 
 Now, let’s continue the lectures. This will leave time for the commands that you typed to complete their execution (if needed).
 
- 
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 15

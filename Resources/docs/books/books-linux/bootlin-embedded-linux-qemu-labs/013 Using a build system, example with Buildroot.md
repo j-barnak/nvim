@@ -46,9 +46,7 @@ Several subdirectories or files are visible, the most important ones are:
 
 36
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 • package is a directory that contains all the Makefiles, patches and configuration items to compile the user space applications and libraries of your embedded Linux system. Have a look at various subdirectories and see what they contain;
 
@@ -116,9 +114,7 @@ and Toolchain has C++ support?. Buildroot will check these parameters anyway.
 
 **–** Set Kernel configuration to Using an in-tree defconfig file
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 37
 
-Embedded Linux System Development
 
 **–** Set Defconfig name to vexpress
 
@@ -172,9 +168,7 @@ All the compilation has taken place in the output/ subdirectory. Let’s explore
 
 38
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 **Run the generated system**
 
@@ -208,6 +202,3 @@ We can now study the dependency graph:
 
 In particular, you can see that adding MPD and its client required to compile *Meson* for the host, and in turn, *Python 3* for the host too. This substantially contributed to the build time.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 39
-
-Embedded Linux System Development

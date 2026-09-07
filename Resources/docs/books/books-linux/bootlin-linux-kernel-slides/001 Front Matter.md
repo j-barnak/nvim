@@ -2,13 +2,13 @@
 
 Linux kernel and driver development training
 
- 
+
 
 Linux kernel and driver
 
 development training
 
- 
+
 
 © Copyright 2004-2025, Bootlin.
 
@@ -24,13 +24,12 @@ Corrections, suggestions, contributions and translations are welcome! embedded L
 
 Send them to <feedback@bootlin.com>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 1/436
+
 
 Linux kernel and driver development training
 
- 
+
 
 ▶ These slides are the training materials for Bootlin’s *Linux kernel*
 
@@ -60,8 +59,4 @@ from the same company, we send a Bootlin trainer on-site to deliver the training
 
 ▶ Contact: training@bootlin.com
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 2/436
-
-![](media/index-3_1.jpg)

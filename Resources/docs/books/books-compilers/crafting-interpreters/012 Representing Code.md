@@ -8,7 +8,7 @@ In the last chapter, we took the raw source code as a string and transformed it 
 
 Before we can produce that representation, we need to define it. That’s the subject of this chapter. Along the way, we’ll cover some theory around formal grammars, feel the difference between functional and object-oriented programming, go over a couple of design patterns, and do some metaprogramming.
 
-I was so worried about this being one of the most boring chapters in the book that I kept stuffing more fun ideas into it until I ran out of room.
+> I was so worried about this being one of the most boring chapters in the book that I kept stuffing more fun ideas into it until I ran out of room.
 
 Before we do all that, let’s focus on the main goal—a representation for code. It should be simple for the parser to produce and easy for the interpreter to consume. If you haven’t written a parser or interpreter yet, those requirements aren’t exactly illuminating. Maybe your intuition can help. What is your brain doing when you play the part of a *human* interpreter? How do you mentally evaluate an arithmetic expression like this:
 
@@ -22,17 +22,17 @@ In order to evaluate an arithmetic node, you need to know the numeric values of 
 
 ![Evaluating the tree from the bottom up.](media/image/representing-code/tree-evaluate.png)
 
-A. Starting with the full tree, evaluate the bottom-most operation, `2 * 3`.
-
-B. Now we can evaluate the `+`.
-
-C. Next, the `-`.
-
-D. The final answer.
+> A. Starting with the full tree, evaluate the bottom-most operation, `2 * 3`.
+>
+> B. Now we can evaluate the `+`.
+>
+> C. Next, the `-`.
+>
+> D. The final answer.
 
 If I gave you an arithmetic expression, you could draw one of these trees pretty easily. Given a tree, you can evaluate it without breaking a sweat. So it intuitively seems like a workable representation of our code is a tree that matches the grammatical structure—the operator nesting—of the language.
 
-That’s not to say a tree is the *only* possible representation of our code. In Part III, we’ll generate bytecode, another representation that isn’t as human friendly but is closer to the machine.
+> That’s not to say a tree is the *only* possible representation of our code. In Part III, we’ll generate bytecode, another representation that isn’t as human friendly but is closer to the machine.
 
 We need to get more precise about what that grammar is then. Like lexical grammars in the last chapter, there is a long ton of theory around syntactic grammars. We’re going into that theory a little more than we did when scanning because it turns out to be a useful tool throughout much of the interpreter. We start by moving one level up the [Chomsky hierarchy](https://en.wikipedia.org/wiki/Chomsky_hierarchy) . . . 
 
@@ -46,9 +46,8 @@ I’m using all those quotes because the terms get a little confusing as you mov
 
 Oof. Maybe a table will help:
 
-|                               |     |                 |                   |
-|-------------------------------|-----|-----------------|-------------------|
 | Terminology                   |     | Lexical grammar | Syntactic grammar |
+|-------------------------------|-----|-----------------|-------------------|
 | The “alphabet” is . . .       | →   | Characters      | Tokens            |
 | A “string” is . . .           | →   | Lexeme or token | Expression        |
 | It’s implemented by the . . . | →   | Scanner         | Parser            |
@@ -63,7 +62,7 @@ If you start with the rules, you can use them to *generate* strings that are in 
 
 Each production in a context-free grammar has a **head**—its name—and a **body**, which describes what it generates. In its pure form, the body is simply a list of symbols. Symbols come in two delectable flavors:
 
-Restricting heads to a single symbol is a defining feature of context-free grammars. More powerful formalisms like **[unrestricted grammars](https://en.wikipedia.org/wiki/Unrestricted_grammar)** allow a sequence of symbols in the head as well as in the body.
+> Restricting heads to a single symbol is a defining feature of context-free grammars. More powerful formalisms like **[unrestricted grammars](https://en.wikipedia.org/wiki/Unrestricted_grammar)** allow a sequence of symbols in the head as well as in the body.
 
 - A **terminal** is a letter from the grammar’s alphabet. You can think of it like a literal value. In the syntactic grammar we’re defining, the terminals are individual lexemes—tokens coming from the scanner like `if` or `1234`.
 
@@ -77,11 +76,11 @@ To make this concrete, we need a way to write down these production rules. Peopl
 
 I tried to come up with something clean. Each rule is a name, followed by an arrow (`→`), followed by a sequence of symbols, and finally ending with a semicolon (`;`). Terminals are quoted strings, and nonterminals are lowercase words.
 
-Yes, we need to define a syntax to use for the rules that define our syntax. Should we specify that *metasyntax* too? What notation do we use for *it?* It’s languages all the way down!
+> Yes, we need to define a syntax to use for the rules that define our syntax. Should we specify that *metasyntax* too? What notation do we use for *it?* It’s languages all the way down!
 
 Using that, here’s a grammar for breakfast menus:
 
-Yes, I really am going to be using breakfast examples throughout this entire book. Sorry.
+> Yes, I really am going to be using breakfast examples throughout this entire book. Sorry.
 
 ```
 breakfast  → protein "with" breakfast "on the side" ;
@@ -120,7 +119,7 @@ Next, we need a production for `cooked`, and so we pick `"poached"`. That’s a 
 
 The next non-terminal is `breakfast` again. The first `breakfast` production we chose recursively refers back to the `breakfast` rule. Recursion in the grammar is a good sign that the language being defined is context-free instead of regular. In particular, recursion where the recursive nonterminal has productions on both sides implies that the language is not regular.
 
-Imagine that we’ve recursively expanded the `breakfast` rule here several times, like “bacon with bacon with bacon with . . . ” In order to complete the string correctly, we need to add an *equal* number of “on the side” bits to the end. Tracking the number of required trailing parts is beyond the capabilities of a regular grammar. Regular grammars can express *repetition*, but they can’t *keep count* of how many repetitions there are, which is necessary to ensure that the string has the same number of `with` and `on the side` parts.
+> Imagine that we’ve recursively expanded the `breakfast` rule here several times, like “bacon with bacon with bacon with . . . ” In order to complete the string correctly, we need to add an *equal* number of “on the side” bits to the end. Tracking the number of required trailing parts is beyond the capabilities of a regular grammar. Regular grammars can express *repetition*, but they can’t *keep count* of how many repetitions there are, which is necessary to ensure that the string has the same number of `with` and `on the side` parts.
 
 We could keep picking the first production for `breakfast` over and over again yielding all manner of breakfasts like “bacon with sausage with scrambled eggs with bacon . . . ” We won’t though. This time we’ll pick `bread`. There are three rules for that, each of which contains only a terminal. We’ll pick “English muffin”.
 
@@ -154,7 +153,7 @@ Stuffing an infinite set of strings in a handful of rules is pretty fantastic, b
   crispiness → "really" "really"* ;
   ```
 
-This is how the Scheme programming language works. It has no built-in looping functionality at all. Instead, *all* repetition is expressed in terms of recursion.
+> This is how the Scheme programming language works. It has no built-in looping functionality at all. Instead, *all* repetition is expressed in terms of recursion.
 
 - A postfix `+` is similar, but requires the preceding production to appear at least once.
 
@@ -227,19 +226,19 @@ There’s one bit of extra metasyntax here. In addition to quoted strings for te
 
 This grammar is actually ambiguous, which we’ll see when we get to parsing it. But it’s good enough for now.
 
-If you’re so inclined, try using this grammar to generate a few expressions like we did with the breakfast grammar before. Do the resulting expressions look right to you? Can you make it generate anything wrong like `1 + / 3`?
+> If you’re so inclined, try using this grammar to generate a few expressions like we did with the breakfast grammar before. Do the resulting expressions look right to you? Can you make it generate anything wrong like `1 + / 3`?
 
 ## 5.2 Implementing Syntax Trees
 
 Finally, we get to write some code. That little expression grammar is our skeleton. Since the grammar is recursive—note how `grouping`, `unary`, and `binary` all refer back to `expression`—our data structure will form a tree. Since this structure represents the syntax of our language, it’s called a **syntax tree**.
 
-In particular, we’re defining an **abstract syntax tree** (**AST**). In a **parse tree**, every single grammar production becomes a node in the tree. An AST elides productions that aren’t needed by later phases.
+> In particular, we’re defining an **abstract syntax tree** (**AST**). In a **parse tree**, every single grammar production becomes a node in the tree. An AST elides productions that aren’t needed by later phases.
 
 Our scanner used a single Token class to represent all kinds of lexemes. To distinguish the different kinds—think the number `123` versus the string `"123"`—we included a simple TokenType enum. Syntax trees are not so homogeneous. Unary expressions have a single operand, binary expressions have two, and literals have none.
 
 We *could* mush that all together into a single Expression class with an arbitrary list of children. Some compilers do. But I like getting the most out of Java’s type system. So we’ll define a base class for expressions. Then, for each kind of expression—each production under `expression`—we create a subclass that has fields for the nonterminals specific to that rule. This way, we get a compile error if we, say, try to access the second operand of a unary expression.
 
-Tokens aren’t entirely homogeneous either. Tokens for literals store the value, but other kinds of lexemes don’t need that state. I have seen scanners that use different classes for literals and other kinds of lexemes, but I figured I’d keep things simpler.
+> Tokens aren’t entirely homogeneous either. Tokens for literals store the value, but other kinds of lexemes don’t need that state. I have seen scanners that use different classes for literals and other kinds of lexemes, but I figured I’d keep things simpler.
 
 Something like this:
 
@@ -263,7 +262,7 @@ abstract class Expr {
 }
 ```
 
-I avoid abbreviations in my code because they trip up a reader who doesn’t know what they stand for. But in compilers I’ve looked at, “Expr” and “Stmt” are so ubiquitous that I may as well start getting you used to them now.
+> I avoid abbreviations in my code because they trip up a reader who doesn’t know what they stand for. But in compilers I’ve looked at, “Expr” and “Stmt” are so ubiquitous that I may as well start getting you used to them now.
 
 Expr is the base class that all expression classes inherit from. As you can see from `Binary`, the subclasses are nested inside of it. There’s no technical need for this, but it lets us cram all of the classes into a single Java file.
 
@@ -285,15 +284,15 @@ Java can express behavior-less classes, but I wouldn’t say that it’s particu
 
 I don’t want to waste your time or my ink writing all that down. Really, what is the essence of each subclass? A name, and a list of typed fields. That’s it. We’re smart language hackers, right? Let’s automate.
 
-Picture me doing an awkward robot dance when you read that. “AU-TO-MATE.”
+> Picture me doing an awkward robot dance when you read that. “AU-TO-MATE.”
 
 Instead of tediously handwriting each class definition, field declaration, constructor, and initializer, we’ll hack together a script that does it for us. It has a description of each tree type—its name and fields—and it prints out the Java code needed to define a class with that name and state.
 
 This script is a tiny Java command-line app that generates a file named “Expr.java”:
 
-I got the idea of scripting the syntax tree classes from Jim Hugunin, creator of Jython and IronPython.
-
-An actual scripting language would be a better fit for this than Java, but I’m trying not to throw too many languages at you.
+> I got the idea of scripting the syntax tree classes from Jim Hugunin, creator of Jython and IronPython.
+>
+> An actual scripting language would be a better fit for this than Java, but I’m trying not to throw too many languages at you.
 
 ```
 package com.craftinginterpreters.tool;
@@ -343,21 +342,23 @@ For brevity’s sake, I jammed the descriptions of the expression types into str
 
 The first thing `defineAst()` needs to do is output the base Expr class.
 
-      private static void defineAst(
-          String outputDir, String baseName, List<String> types)
-          throws IOException {
-        String path = outputDir + "/" + baseName + ".java";
-        PrintWriter writer = new PrintWriter(path, "UTF-8");
+```
+  private static void defineAst(
+      String outputDir, String baseName, List<String> types)
+      throws IOException {
+    String path = outputDir + "/" + baseName + ".java";
+    PrintWriter writer = new PrintWriter(path, "UTF-8");
 
-        writer.println("package com.craftinginterpreters.lox;");
-        writer.println();
-        writer.println("import java.util.List;");
-        writer.println();
-        writer.println("abstract class " + baseName + " {");
+    writer.println("package com.craftinginterpreters.lox;");
+    writer.println();
+    writer.println("import java.util.List;");
+    writer.println();
+    writer.println("abstract class " + baseName + " {");
 
-        writer.println("}");
-        writer.close();
-      }
+    writer.println("}");
+    writer.close();
+  }
+```
 
 *tool/GenerateAst.java*, add after *main*()
 
@@ -384,36 +385,38 @@ Inside the base class, we define each subclass.
 
 *tool/GenerateAst.java*, in *defineAst*()
 
-This isn’t the world’s most elegant string manipulation code, but that’s fine. It only runs on the exact set of class definitions we give it. Robustness ain’t a priority.
+> This isn’t the world’s most elegant string manipulation code, but that’s fine. It only runs on the exact set of class definitions we give it. Robustness ain’t a priority.
 
 That code, in turn, calls:
 
-      private static void defineType(
-          PrintWriter writer, String baseName,
-          String className, String fieldList) {
-        writer.println("  static class " + className + " extends " +
-            baseName + " {");
+```
+  private static void defineType(
+      PrintWriter writer, String baseName,
+      String className, String fieldList) {
+    writer.println("  static class " + className + " extends " +
+        baseName + " {");
 
-        // Constructor.
-        writer.println("    " + className + "(" + fieldList + ") {");
+    // Constructor.
+    writer.println("    " + className + "(" + fieldList + ") {");
 
-        // Store parameters in fields.
-        String[] fields = fieldList.split(", ");
-        for (String field : fields) {
-          String name = field.split(" ")[1];
-          writer.println("      this." + name + " = " + name + ";");
-        }
+    // Store parameters in fields.
+    String[] fields = fieldList.split(", ");
+    for (String field : fields) {
+      String name = field.split(" ")[1];
+      writer.println("      this." + name + " = " + name + ";");
+    }
 
-        writer.println("    }");
+    writer.println("    }");
 
-        // Fields.
-        writer.println();
-        for (String field : fields) {
-          writer.println("    final " + field + ";");
-        }
+    // Fields.
+    writer.println();
+    for (String field : fields) {
+      writer.println("    final " + field + ";");
+    }
 
-        writer.println("  }");
-      }
+    writer.println("  }");
+  }
+```
 
 *tool/GenerateAst.java*, add after *defineAst*()
 
@@ -421,7 +424,7 @@ There we go. All of that glorious Java boilerplate is done. It declares each fie
 
 Compile and run this Java program now and it blasts out a new “.java” file containing a few dozen lines of code. That file’s about to get even longer.
 
-Appendix II contains the code generated by this script once we’ve finished implementing jlox and defined all of its syntax tree nodes.
+> Appendix II contains the code generated by this script once we’ve finished implementing jlox and defined all of its syntax tree nodes.
 
 ## 5.3 Working with Trees
 
@@ -441,7 +444,7 @@ But all of those sequential type tests are slow. Expression types whose names ar
 
 We have a family of classes and we need to associate a chunk of behavior with each one. The natural solution in an object-oriented language like Java is to put those behaviors into methods on the classes themselves. We could add an abstract `interpret()` method on Expr which each subclass would then implement to interpret itself.
 
-This exact thing is literally called the [“Interpreter pattern”](https://en.wikipedia.org/wiki/Interpreter_pattern) in *Design Patterns: Elements of Reusable Object-Oriented Software*, by Erich Gamma, et al.
+> This exact thing is literally called the [“Interpreter pattern”](https://en.wikipedia.org/wiki/Interpreter_pattern) in *Design Patterns: Elements of Reusable Object-Oriented Software*, by Erich Gamma, et al.
 
 This works alright for tiny projects, but it scales poorly. Like I noted before, these tree classes span a few domains. At the very least, both the parser and interpreter will mess with them. As you’ll see later, we need to do name resolution on them. If our language was statically typed, we’d have a type checking pass.
 
@@ -463,9 +466,9 @@ This makes it easy to extend the table by adding new rows. Simply define a new c
 
 Functional paradigm languages in the ML family flip that around. There, you don’t have classes with methods. Types and functions are totally distinct. To implement an operation for a number of different types, you define a single function. In the body of that function, you use *pattern matching*—sort of a type-based switch on steroids—to implement the operation for each type all in one place.
 
-ML, short for “metalanguage” was created by Robin Milner and friends and forms one of the main branches in the great programming language family tree. Its children include SML, Caml, OCaml, Haskell, and F#. Even Scala, Rust, and Swift bear a strong resemblance.
-
-Much like Lisp, it is one of those languages that is so full of good ideas that language designers today are still rediscovering them over forty years later.
+> ML, short for “metalanguage” was created by Robin Milner and friends and forms one of the main branches in the great programming language family tree. Its children include SML, Caml, OCaml, Haskell, and F#. Even Scala, Rust, and Swift bear a strong resemblance.
+>
+> Much like Lisp, it is one of those languages that is so full of good ideas that language designers today are still rediscovering them over forty years later.
 
 This makes it trivial to add new operations—simply define another function that pattern matches on all of the types.
 
@@ -477,7 +480,7 @@ Each style has a certain “grain” to it. That’s what the paradigm name lite
 
 A bunch of smart language nerds noticed that neither style made it easy to add *both* rows and columns to the table. They called this difficulty the “expression problem” because—like we are now—they first ran into it when they were trying to figure out the best way to model expression syntax tree nodes in a compiler.
 
-Languages with *multimethods*, like Common Lisp’s CLOS, Dylan, and Julia do support adding both new types and operations easily. What they typically sacrifice is either static type checking, or separate compilation.
+> Languages with *multimethods*, like Common Lisp’s CLOS, Dylan, and Julia do support adding both new types and operations easily. What they typically sacrifice is either static type checking, or separate compilation.
 
 People have thrown all sorts of language features, design patterns, and programming tricks to try to knock that problem down but no perfect language has finished it off yet. In the meantime, the best we can do is try to pick a language whose orientation matches the natural architectural seams in the program we’re writing.
 
@@ -493,29 +496,33 @@ The Visitor pattern is really about approximating the functional style within an
 
 Before we apply it to our auto-generated Expr classes, let’s walk through a simpler example. Say we have two kinds of pastries: beignets and crullers.
 
-A beignet (pronounced “ben-yay”, with equal emphasis on both syllables) is a deep-fried pastry in the same family as doughnuts. When the French colonized North America in the 1700s, they brought beignets with them. Today, in the US, they are most strongly associated with the cuisine of New Orleans.
+> A beignet (pronounced “ben-yay”, with equal emphasis on both syllables) is a deep-fried pastry in the same family as doughnuts. When the French colonized North America in the 1700s, they brought beignets with them. Today, in the US, they are most strongly associated with the cuisine of New Orleans.
+>
+> My preferred way to consume them is fresh out of the fryer at Café du Monde, piled high in powdered sugar, and washed down with a cup of café au lait while I watch tourists staggering around trying to shake off their hangover from the previous night’s revelry.
 
-My preferred way to consume them is fresh out of the fryer at Café du Monde, piled high in powdered sugar, and washed down with a cup of café au lait while I watch tourists staggering around trying to shake off their hangover from the previous night’s revelry.
+```
+  abstract class Pastry {
+  }
 
-      abstract class Pastry {
-      }
+  class Beignet extends Pastry {
+  }
 
-      class Beignet extends Pastry {
-      }
-
-      class Cruller extends Pastry {
-      }
+  class Cruller extends Pastry {
+  }
+```
 
 We want to be able to define new pastry operations—cooking them, eating them, decorating them, etc.—without having to add a new method to each class every time. Here’s how we do it. First, we define a separate interface.
 
-      interface PastryVisitor {
-        void visitBeignet(Beignet beignet);
-        void visitCruller(Cruller cruller);
-      }
+```
+  interface PastryVisitor {
+    void visitBeignet(Beignet beignet);
+    void visitCruller(Cruller cruller);
+  }
+```
 
-In *Design Patterns*, both of these methods are confusingly named `visit()`, and they rely on overloading to distinguish them. This leads some readers to think that the correct visit method is chosen *at runtime* based on its parameter type. That isn’t the case. Unlike over*riding*, over*loading* is statically dispatched at compile time.
-
-Using distinct names for each method makes the dispatch more obvious, and also shows you how to apply this pattern in languages that don’t support overloading.
+> In *Design Patterns*, both of these methods are confusingly named `visit()`, and they rely on overloading to distinguish them. This leads some readers to think that the correct visit method is chosen *at runtime* based on its parameter type. That isn’t the case. Unlike over*riding*, over*loading* is statically dispatched at compile time.
+>
+> Using distinct names for each method makes the dispatch more obvious, and also shows you how to apply this pattern in languages that don’t support overloading.
 
 Each operation that can be performed on pastries is a new class that implements that interface. It has a concrete method for each type of pastry. That keeps the code for the operation on both types all nestled snugly together in one class.
 
@@ -579,7 +586,7 @@ We added one `accept()` method to each class, and we can use it for as many visi
 
 OK, let’s weave it into our expression classes. We’ll also refine the pattern a little. In the pastry example, the visit and `accept()` methods don’t return anything. In practice, visitors often want to define operations that produce values. But what return type should `accept()` have? We can’t assume every visitor class wants to produce the same type, so we’ll use generics to let each implementation fill in a return type.
 
-Another common refinement is an additional “context” parameter that is passed to the visit methods and then sent back through as a parameter to `accept()`. That lets operations take an additional parameter. The visitors we’ll define in the book don’t need that, so I omitted it.
+> Another common refinement is an additional “context” parameter that is passed to the visit methods and then sent back through as a parameter to `accept()`. That lets operations take an additional parameter. The visitors we’ll define in the book don’t need that, so I omitted it.
 
 First, we define the visitor interface. Again, we nest it inside the base class so that we can keep everything in one file.
 
@@ -599,18 +606,20 @@ First, we define the visitor interface. Again, we nest it inside the base class 
 
 That function generates the visitor interface.
 
-      private static void defineVisitor(
-          PrintWriter writer, String baseName, List<String> types) {
-        writer.println("  interface Visitor<R> {");
+```
+  private static void defineVisitor(
+      PrintWriter writer, String baseName, List<String> types) {
+    writer.println("  interface Visitor<R> {");
 
-        for (String type : types) {
-          String typeName = type.split(":")[0].trim();
-          writer.println("    R visit" + typeName + baseName + "(" +
-              typeName + " " + baseName.toLowerCase() + ");");
-        }
+    for (String type : types) {
+      String typeName = type.split(":")[0].trim();
+      writer.println("    R visit" + typeName + baseName + "(" +
+          typeName + " " + baseName.toLowerCase() + ");");
+    }
 
-        writer.println("  }");
-      }
+    writer.println("  }");
+  }
+```
 
 *tool/GenerateAst.java*, add after *defineAst*()
 
@@ -732,18 +741,20 @@ As you can see, it implements the visitor interface. That means we need visit me
 
 Literal expressions are easy—they convert the value to a string with a little check to handle Java’s `null` standing in for Lox’s `nil`. The other expressions have subexpressions, so they use this `parenthesize()` helper method:
 
-      private String parenthesize(String name, Expr... exprs) {
-        StringBuilder builder = new StringBuilder();
+```
+  private String parenthesize(String name, Expr... exprs) {
+    StringBuilder builder = new StringBuilder();
 
-        builder.append("(").append(name);
-        for (Expr expr : exprs) {
-          builder.append(" ");
-          builder.append(expr.accept(this));
-        }
-        builder.append(")");
+    builder.append("(").append(name);
+    for (Expr expr : exprs) {
+      builder.append(" ");
+      builder.append(expr.accept(this));
+    }
+    builder.append(")");
 
-        return builder.toString();
-      }
+    return builder.toString();
+  }
+```
 
 *lox/AstPrinter.java*, add after *visitUnaryExpr*()
 
@@ -753,21 +764,23 @@ It takes a name and a list of subexpressions and wraps them all up in parenthese
 
 Note that it calls `accept()` on each subexpression and passes in itself. This is the recursive step that lets us print an entire tree.
 
-This recursion is also why people think the Visitor pattern itself has to do with trees.
+> This recursion is also why people think the Visitor pattern itself has to do with trees.
 
 We don’t have a parser yet, so it’s hard to see this in action. For now, we’ll hack together a little `main()` method that manually instantiates a tree and prints it.
 
-      public static void main(String[] args) {
-        Expr expression = new Expr.Binary(
-            new Expr.Unary(
-                new Token(TokenType.MINUS, "-", null, 1),
-                new Expr.Literal(123)),
-            new Token(TokenType.STAR, "*", null, 1),
-            new Expr.Grouping(
-                new Expr.Literal(45.67)));
+```
+  public static void main(String[] args) {
+    Expr expression = new Expr.Binary(
+        new Expr.Unary(
+            new Token(TokenType.MINUS, "-", null, 1),
+            new Expr.Literal(123)),
+        new Token(TokenType.STAR, "*", null, 1),
+        new Expr.Grouping(
+            new Expr.Literal(45.67)));
 
-        System.out.println(new AstPrinter().print(expression));
-      }
+    System.out.println(new AstPrinter().print(expression));
+  }
+```
 
 *lox/AstPrinter.java*, add after *parenthesize*()
 
@@ -797,7 +810,9 @@ You can go ahead and delete this method. We won’t need it. Also, as we add new
 
 3.  In [reverse Polish notation](https://en.wikipedia.org/wiki/Reverse_Polish_notation) (RPN), the operands to an arithmetic operator are both placed before the operator, so `1 + 2` becomes `1 2 +`. Evaluation proceeds from left to right. Numbers are pushed onto an implicit stack. An arithmetic operator pops the top two numbers, performs the operation, and pushes the result. Thus, this:
 
-        (1 + 2) * (4 - 3)
+    ```
+    (1 + 2) * (4 - 3)
+    ```
 
     in RPN becomes:
 

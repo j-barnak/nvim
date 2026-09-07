@@ -1,12 +1,12 @@
 **Accessing Hardware Devices**
 
- 
 
- 
+
+
 
 *Objective: learn how to access hardware devices and declare new ones.*
 
- 
+
 
 **Goals**
 
@@ -58,35 +58,35 @@ Find which subdirectory corresponds to the network connection to your host syste
 
 Don’t hesitate to look for further interesting properties by yourself!
 
-24 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license You can also check whether /sys/class/thermal exists and is not empty on your system. That’s the thermal framework, and it allows to access temperature measures from the thermal sensors on your system.
+You can also check whether /sys/class/thermal exists and is not empty on your system. That’s the thermal framework, and it allows to access temperature measures from the thermal sensors on your system.
 
- 
+
 
 Next, you can now explore all the buses (virtual or physical) available on your system, by checking the contents of /sys/bus.
 
- 
+
 
 In particular, go to /sys/bus/mmc/devices to see all the MMC devices on your system. Go inside the directory for the first device and check several files (for example):
 
- 
+
 
 • serial: the serial number for your device.
 
- 
+
 
 • preferred_erase_size: the preferred erase block for your device. It’s recommended that partitions
 
 start at multiples of this size.
 
- 
+
 
 • name: the product name for your device. You could display it in a user interface or log file, for example.
 
- 
+
 
 • date: apparently the manufacturing date for the device.
 
- 
+
 
 Don’t hesitate to spend more time exploring /sys on your system and asking questions to your instructor.
 
@@ -94,47 +94,46 @@ Don’t hesitate to spend more time exploring /sys on your system and asking que
 
 At this stage, we can only explore GPIOs through the legacy interface in /sys/class/gpio, because the *libgpiod* interface commands are provided through a dedicated project which we have to build separately, and *Busybox* does not provide a re-implementation for the *libgpiod* tools. In a later lab, we will build *libgpiod* tools which use the modern /dev/gpiochipX interface.
 
- 
+
 
 The first thing to do is to enable this legacy interface by enabling [CONFIG_GPIO_SYSFS](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_GPIO_SYSFS) in the kernel configu-
 
 ration. Also make sure *Debugfs* is enabled ([CONFIG_DEBUG_FS](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_DEBUG_FS) and [CONFIG_DEBUG_FS_ALLOW_ALL](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_DEBUG_FS_ALLOW_ALL)[).](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_DEBUG_FS_ALLOW_ALL)
 
- 
+
 
 After rebooting the new kernel, the first thing to do is to mount the *Debugfs* filesystem:
 
 \# mount -t debugfs debugfs /sys/kernel/debug/
 
- 
+
 
 Then, you can check information about available GPIOs banks and which GPIOs are already in use:
 
 \# cat /sys/kernel/debug/gpio
 
- 
+
 
 We are going to use one of the free GPIOs on the expansion headers of the board, which is not already used by another device.
 
- 
+
 
 Take one of the M-M breadboard wires provided by your instructor and:
 
- 
+
 
 • Connect one end to pin 12 of connector P9
 
- 
+
 
 • Connect the other end to pin 1 (DGND) of connector P9
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 25
 
 ![](media/index-26_1.png)
 
 Source: <https://elinux.org/File:BBB_I-O_pins_.png>
 
- 
+
 
 If you check the description of the P9 connector on the board [System Reference Manual,](https://github.com/beagleboard/beaglebone-black/wiki/System-Reference-Manual#712-connector-p9) you can see that pin 12 is now called GPIO1_28 instead of GPIO_60 in the above diagram. This pin is already configured as a GPIO by default (no need to change pin muxing to use this pin as a GPIO).
 
@@ -158,9 +157,9 @@ And check its value:
 
 0
 
- 
 
-26 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license The value should be 0 as the pin is connected to a ground level.
+
+The value should be 0 as the pin is connected to a ground level.
 
 Now, let’s connect our GPIO pin to pin 3 (VDD 3.3V) of connector P9. Check the above diagram if needed.
 
@@ -222,13 +221,12 @@ The next thing we want to do is connect an Nunchuk joystick to an I2C bus on our
 
 As shown on the below picture found on <https://elinux.org/Beagleboard:Cape_Expansion_Headers>, the BeagleBone Black has two I2C busses available on its expansion headers: I2C1 and I2C2. Another one exists (I2C0), but it’s not available on the external headers.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 27
 
 ![](media/index-28_1.png)
 
 In this lab, we will try to use I2C1 on P9 pins 17 and 18, because it’s more interesting to use than I2C2 which is already enabled by default.
 
- 
+
 
 So, let’s see which I2C buses are already enabled:
 
@@ -268,7 +266,7 @@ Now let’s double check the addressings by looking at the [TI AM335x SoC datash
 
 So, we are lucky that i2c-0 in Linux corresponds to I2C0 in the datasheet, and that i2c-2 corresponds to I2C2. We’re just missing i2c-1.
 
-28 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license **Customizing the Device Tree**
+**Customizing the Device Tree**
 
 Fortunately, I2C1 is already defined in the one of the DTS includes used by the Device Tree for our board.
 
@@ -340,7 +338,7 @@ device.
 
 kernel driver.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 29 Now try to probe I2C1 through i2cdetect -r 1.
+Now try to probe I2C1 through i2cdetect -r 1.
 
 You will see that the command will fail to connect to the bus. That’s because the corresponding signals are not exposed yet to the outside connectors through pin muxing.
 
@@ -382,13 +380,12 @@ You can understand the above values thanks to the pin muxing diagram for connect
 
 ![](media/index-30_1.jpg)
 
- 
+
 
 • AM335X_PIN_SPI0_CS0 and AM335X_PIN_SPI0_D1 are the offsets of the registers controlling pin muxing
 
 for the corresponding pins of the SoC package.
 
-30 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 • [MUX_MODE2](https://elixir.bootlin.com/linux/latest/ident/MUX_MODE2) corresponds to MODE2, to get I2C1 SCL and SDA signals on such pins.
 
@@ -420,7 +417,7 @@ i2cdetect: WARNING! This program can confuse your I2C bus Continue? \[y/N\] y
 
 No device is detected yet, because this bus is just used for external devices. It’s time to add one though.
 
- 
+
 
 **Adding and enabling an I2C device**
 
@@ -428,7 +425,7 @@ Let’s connect the Nunchuk provided by your instructor to the I2C1 bus on the b
 
 ![](media/index-31_1.jpg)
 
- 
+
 
 Serial
 
@@ -436,7 +433,7 @@ SCL
 
 PWR Wii Nunchuk
 
- 
+
 
 GND
 
@@ -446,11 +443,11 @@ SDA
 
 SCL
 
- 
+
 
 GND SDA
 
- 
+
 
 Nunchuk i2c pinout
 
@@ -468,7 +465,7 @@ If you didn’t do any mistake, your new device should be detected at address 0x
 
 \# i2cdetect -r 1
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 31 i2cdetect: WARNING! This program can confuse your I2C bus Continue? \[y/N\] y
+i2cdetect: WARNING! This program can confuse your I2C bus Continue? \[y/N\] y
 
 0 1 2 3 4 5 6 7 8 9 a b c d e f
 
@@ -540,7 +537,6 @@ Go back to the kernel source directory.
 
 The Linux kernel has a generic driver supporting all USB audio devices supporting the standard USB audio
 
-32 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 class. This driver can be enabled using the [CONFIG_SND_USB_AUDIO](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_SND_USB_AUDIO) configuration option. Look for this parameter in the kernel configuration, and you should find that it is already enabled as a module.
 
@@ -596,7 +592,7 @@ Here are a few explanations:
 
 Now, you can install the compiled module in the NFS root filesystem by passing the modules_install target and specifying the target directory through the INSTALL_MOD_PATH variable:
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 33 make -C \$HOME/embedded-linux-bbb-labs/kernel/linux \\
+make -C \$HOME/embedded-linux-bbb-labs/kernel/linux \\
 
 M=\$PWD \\
 
@@ -662,9 +658,9 @@ You can now load your module again, and this time, you should see that the Nunch
 
 \# modprobe nunchuk
 
- 
 
-34 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license \[ 66.680455\] nunchuk: loading out-of-tree module taints kernel. \[ 66.687645\] input: Wii Nunchuk as /devices/platform/ocp/48000000.interconnect/\\
+
+\[ 66.680455\] nunchuk: loading out-of-tree module taints kernel. \[ 66.687645\] input: Wii Nunchuk as /devices/platform/ocp/48000000.interconnect/\\
 
 48000000.interconnect:segment@0/4802a000.target-module/4802a000.i2c/i2c-1/1-0052/input/\\ input0
 
@@ -720,7 +716,7 @@ git format-patch stable/linux-6.6.y
 
 This should generate a 0001-Custom-DTS-for-Bootlin-lab.patch file.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 35 Creating the branch will impact the versions of the kernel and the modules. Compile your kernel and install your modules again (not necessary for the Nunchuk one for the moment) and see the version changes through the new base directory for modules.
+Creating the branch will impact the versions of the kernel and the modules. Compile your kernel and install your modules again (not necessary for the Nunchuk one for the moment) and see the version changes through the new base directory for modules.
 
 To save space for the next lab, remove the old directory under \<code\>lib/modules\</code\> containing the ”dirty” modules.
 
@@ -728,6 +724,4 @@ Don’t forget to update the kernel your board boots.
 
 That’s all for now!
 
- 
 
-36 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license

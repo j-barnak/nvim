@@ -1,6 +1,12 @@
+
+
+**9**
+
+
+
 **T H E P A G E C A C H E**
 
- 
+
 
 By default all file accesses in Linux are mediated by a
 
@@ -43,7 +49,7 @@ read data from or write data to disk needs to use a buffer in which to main-
 tain this data—the page cache provides this buffer.
 
 
- 
+
 
 Reading from a file therefore becomes a matter of looking it up in the
 
@@ -75,13 +81,13 @@ and is therefore termed clean as this point. This is performed by utilising the
 
 reverse mapping (see Chapter 7) to look up what maps the memory pages and then updating all of the mappings.
 
- 
+
 
 **N O T E** RAM-backed file systems such as *tmpfs* or abstract file systems like *hugetlbfs*, whose
 
 entries in the page cache constitute the entirety of their state, of course do not require dirty tracking. Theoretically, due to the flexibility of the VFS a file system which ac-tually writes to a permanent medium could eschew dirty tracking as a mechanism for writeback tracking, however it wouldn’t be very sensible to do so.
 
- 
+
 
 We have briefly touched upon writeback here, however as it is such a
 
@@ -95,11 +101,11 @@ We will find answers for each of these, however to provide meaningful
 
 answers, we must first step back and examine the Virtual File System (VFS) which provides the generalised kernel file abstraction.
 
- 
+
 
 **9.1 The Virtual File System (VFS)**
 
- 
+
 
 The kernel supports a huge variety of different file systems by abstracting them through an interface termed the Virtual File System (VFS). Understand-ing how this operates is key to understanding how the page cache operates.
 
@@ -111,23 +117,23 @@ The key entity associated with any file in a Linux file system is an inode.
 
 This is an object containing the metadata associated with a file (noting that
 
- 
 
 
 
- 
+
+
 
 directories are considered special kinds of files in Linux) and is described by
 
 the [struct inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593) kernel data type.
 
- 
+
 
 **N O T E** There is debate as to the meaning of the ‘i’, but it is generally accepted to be an abbre-
 
 viation of ‘index’.
 
- 
+
 
 Every file and directory is described by an inode, each indexed by an in-
 
@@ -147,13 +153,13 @@ file via f_pos, the mode in which the file is opened via f_mode, file path and
 
 other metadata.
 
- 
+
 
 **N O T E** Of course the [*open()*](https://man7.org/linux/man-pages/man2/open.2.html) process might be abstracted by something like [*fopen()*](https://man7.org/linux/man-pages/man2/fopen.2.html) or another
 
 library function, underlying it however is the same *open* system call.
 
- 
+
 
 As a result, multiple [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) objects may existing referencing the
 
@@ -167,7 +173,7 @@ equally [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/l
 
 via their i_mapping field and [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) objects via their f_mapping fields.
 
- 
+
 
 **N O T E** From the perspective of the memory management subsystem, the
 
@@ -175,7 +181,7 @@ via their i_mapping field and [struct file](https://git.kernel.org/pub/scm/linux
 
 cachable entity – it represents an entry in the page cache itself.
 
- 
+
 
 Each instance of a mounted filesystem has its core metadata described
 
@@ -187,7 +193,7 @@ Each of these objects have customised functions associated with them
 
 which permits a file system to provide its own custom functionality:
 
- 
+
 
 • [struct inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593)-\>i_op specifies the functions the file system provides for
 
@@ -205,11 +211,11 @@ vides for address space operations in a [struct address_space_operations](https:
 
 object. This, like [struct inode-\>i_op](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593), is typically set on inode initialisa-tion.
 
- 
 
 
 
- 
+
+
 
 • [struct super_block-\>s_op](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n1451) specifies the functions the file system provides
 
@@ -223,13 +229,13 @@ tem provides for VMA operations when the region described by the VMA is memory-m
 
 This is set when the [struct file_operations-\>mmap](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2093) callback is invoked when the VMA is first mapped.
 
- 
+
 
 We will examine the operations relevant to the page cache in detail. We
 
 examining the relationships between VFS objects as a whole in Figure 9-1.
 
- 
+
 
 [struct task_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727) [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)
 
@@ -237,19 +243,19 @@ mm [super_blocks](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux
 
 files mmap
 
- 
+
 
 [struct files_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fdtable.h?h=v6.0#n49) [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) [struct super_block](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n1451)
 
- 
+
 
 fdt vm_file s_inodes
 
- 
+
 
 If mapped
 
- 
+
 
 [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) [struct inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593)
 
@@ -259,7 +265,7 @@ f_inode i_sb
 
 fd f_mapping i_mapping
 
- 
+
 
 [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424)
 
@@ -267,7 +273,7 @@ host
 
 i_pages
 
- 
+
 
 [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree//include/linux/mm_types.h?h=v6.0#n72)
 
@@ -275,27 +281,27 @@ mapping
 
 index = 0
 
- 
+
 
 *..* *.*
 
 [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree//include/linux/mm_types.h?h=v6.0#n72)
 
- 
+
 
 mapping
 
 index = last page
 
- 
+
 
 *Figure 9-1: Core Virtual File System (VFS) Objects*
 
- 
 
 
 
- 
+
+
 
 Underlying it all is the core [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) object, which defines
 
@@ -311,7 +317,7 @@ of the inode and mapping object are complete, invoked via [alloc_inode()](https:
 
 which is called by file systems when establishing inodes.
 
- 
+
 
 **9.2 A Brief Digression: eXtensible Arrays (xarrays)**
 
@@ -323,7 +329,7 @@ xarray is to implement a data structure which possesses the following prop-
 
 erties:
 
- 
+
 
 • Maps system word size indices to pointer or numerical values while re-
 
@@ -343,7 +349,7 @@ moved.
 
 and efficiently iterated over to enable fast categorisation of elements.
 
- 
+
 
 **N O T E** Read-Create-Update [(RCU)](https://kernel.org/doc/html/v6.0/RCU/rcu.html) is a locking mechanism which permits users to read data
 
@@ -355,7 +361,7 @@ Using the [RCU](https://kernel.org/doc/html/v6.0/RCU/rcu.html) can significantly
 
 tures.
 
- 
+
 
 Considering alternatives – A dynamic array is not at all space efficient for
 
@@ -381,11 +387,11 @@ mental user of this type in the page cache is [struct address_space-\>i_pages](h
 
 shown in Listing 9-1.
 
- 
 
 
 
- 
+
+
 
 280 */\*\**
 
@@ -415,11 +421,11 @@ shown in Listing 9-1.
 
 297 **spinlock_t** xa_lock; 298 */\* private: The rest of the data structure is not to be used directly. \*/* 299 **gfp_t** xa_flags; 300 **void** \_\_rcu \* xa_head; 301 };
 
- 
+
 
 *Listing 9-1:* include/linux/xarray.h: [*struct xarray*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296)
 
- 
+
 
 This consists of a spin lock (xa_lock) for operations which cannot be per-
 
@@ -429,15 +435,15 @@ We can see what a newly allocated xarray object looks like by examining
 
 [XARRAY_INIT(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n303)shown in Listing 9-2.
 
- 
+
 
 303 **\#define XARRAY_INIT**(name, flags) { \\ 304 .xa_lock = **\_\_SPIN_LOCK_UNLOCKED**(name.xa_lock), \\ 305 .xa_flags = flags, \\ 306 .xa_head = **NULL**, \\ 307 }
 
- 
+
 
 *Listing 9-2:* include/linux/xarray.h: [*XARRAY_INIT()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n303)
 
- 
+
 
 As per the comment in listing 9-1, a NULL entry indicates that the array is
 
@@ -447,17 +453,17 @@ What values can be elements in an xarray? This is described in the com-
 
 ment for [BITS_PER_XA_VALUE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n45)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n45) shown in Listing 9-3.
 
- 
+
 
 23 */\**
 
 24 *\* The bottom two bits of the entry determine how the XArray interprets* 25 *\* the contents:*
 
- 
 
 
 
- 
+
+
 
 26 *\**
 
@@ -499,11 +505,11 @@ ment for [BITS_PER_XA_VALUE](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 45 **\#define BITS_PER_XA_VALUE** (**BITS_PER_LONG**- 1)
 
- 
+
 
 *Listing 9-3:* include/linux/xarray.h: [*BITS_PER_XA_VALUE()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n45)
 
- 
+
 
 This explains why pointers referenced by an xarray must be 4-byte
 
@@ -523,7 +529,7 @@ a bug arises, so need only concern themselves with whether the entry is a
 
 value or not via [xa_is_value()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n79)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n79) shown in Listing 9-4.
 
- 
+
 
 72 */\*\**
 
@@ -547,23 +553,23 @@ value or not via [xa_is_value()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 82 }
 
- 
+
 
 *Listing 9-4:* include/linux/xarray.h: [*xa_is_value()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n79)
 
- 
+
 
 We can then extract a value entry via [xa_to_value()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n67)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n67) shown in Listing 9-5.
 
- 
+
 
 60 */\*\**
 
- 
 
 
 
- 
+
+
 
 61 *\* xa_to_value() - Get value stored in an XArray entry.* 62 *\* @entry: XArray entry.*
 
@@ -577,15 +583,15 @@ We can then extract a value entry via [xa_to_value()](https://git.kernel.org/pub
 
 69 **return** (**unsigned long**)entry \>\> 1; 70 }
 
- 
+
 
 *Listing 9-5:* include/linux/xarray.h: [*xa_to_value()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n67)
 
- 
+
 
 And generate it in the first place with [xa_mk_value()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n54)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n54) shown in Listing 9-6.
 
- 
+
 
 47 */\*\**
 
@@ -599,11 +605,11 @@ And generate it in the first place with [xa_mk_value()](https://git.kernel.org/p
 
 56 WARN_ON((**long**)v \< 0); 57 **return** (**void** \*)((v \<\< 1) \| 1); 58 }
 
- 
+
 
 *Listing 9-6:* include/linux/xarray.h: [*xa_mk_value()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n54)
 
- 
+
 
 However, of course the internal xarray implementation must refer-
 
@@ -611,7 +617,7 @@ ence internal elements. We can determine whether an entry is internal via
 
 [xa_is_internal(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n169)shown in Listing 9-7.
 
- 
+
 
 162 */\**
 
@@ -627,23 +633,23 @@ ence internal elements. We can determine whether an entry is internal via
 
 171 **return** ((**unsigned long**)entry & 3) == 2; 172 }
 
- 
+
 
 *Listing 9-7:* include/linux/xarray.h: [*xa_is_internal()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n169)
 
- 
+
 
 And extract it via [xa_to_internal()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n157)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n157) shown in Listing 9-8.
 
- 
+
 
 150 */\**
 
- 
 
 
 
- 
+
+
 
 151 *\* xa_to_internal() - Extract the value from an internal entry.* 152 *\* @entry: XArray entry.*
 
@@ -657,17 +663,17 @@ And extract it via [xa_to_internal()](https://git.kernel.org/pub/scm/linux/kerne
 
 159 **return** (**unsigned long**)entry \>\> 2; 160 }
 
- 
+
 
 *Listing 9-8:* include/linux/xarray.h: [*xa_to_internal()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n157)
 
- 
+
 
 Finally, these values can be created via [xa_mk_internal()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n145)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n145) shown in Listing
 
 9-9.
 
- 
+
 
 132 */\**
 
@@ -687,11 +693,11 @@ Finally, these values can be created via [xa_mk_internal()](https://git.kernel.o
 
 147 **return** (**void** \*)((v \<\< 2) \| 2); 148 }
 
- 
+
 
 *Listing 9-9:* include/linux/xarray.h: [*xa_mk_internal()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n145)
 
- 
+
 
 As kernel pointers won’t sensibly be placed in the first or last 4 KiB of
 
@@ -709,7 +715,7 @@ ror value is an internal entry. Users can check this via [xa_is_err()](https://g
 
 Listing 9-10.
 
- 
+
 
 190 */\*\**
 
@@ -717,11 +723,11 @@ Listing 9-10.
 
 194 *\* If an XArray operation cannot complete an operation, it will return*
 
- 
 
 
 
- 
+
+
 
 195 *\* a special value indicating an error. This function tells you* 196 *\* whether an error occurred; xa_err() tells you which error occurred.* 197 *\**
 
@@ -733,15 +739,15 @@ Listing 9-10.
 
 203 **return unlikely**(**xa_is_internal**(entry) && 204 entry \>= **xa_mk_internal**(-**MAX_ERRNO**)); 205 }
 
- 
+
 
 *Listing 9-10:* include/linux/xarray.h: [*xa_is_err()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n201)
 
- 
+
 
 These error values can be extracted via [xa_err()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n219), shown in Listing 9-11.
 
- 
+
 
 207 */\*\**
 
@@ -763,11 +769,11 @@ These error values can be extracted via [xa_err()](https://git.kernel.org/pub/sc
 
 225 }
 
- 
+
 
 *Listing 9-11:* include/linux/xarray.h: [*xa_err()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n219)
 
- 
+
 
 Internal entries typically provide a pointer to a [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140) object which
 
@@ -775,7 +781,7 @@ forms part of a tree. An xarray node is described by the [struct xa_node](https:
 
 and check for by [xa_is_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1240), shown in Listing 9-12.
 
- 
+
 
 1239 */\* Private \*/*
 
@@ -783,19 +789,19 @@ and check for by [xa_is_node()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 1242 **return** xa_is_internal(entry) && (**unsigned long**)entry \> 4096; 1243 }
 
- 
+
 
 *Listing 9-12:* include/linux/xarray.h: [*xa_is_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1240)
 
- 
+
 
 Converted to a [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140) via [xa_to_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1234)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1234) shown in Listing 9-13.
 
- 
 
 
 
- 
+
+
 
 1233 */\* Private \*/*
 
@@ -803,13 +809,13 @@ Converted to a [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 1236 **return** (**struct** xa_node \*)((**unsigned long**)entry - 2); 1237 }
 
- 
+
 
 *Listing 9-13:* include/linux/xarray.h: [*xa_to_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1234)
 
 And constructed via [xa_mk_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1228)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1228) shown in Listing 9-14.
 
- 
+
 
 1227 */\* Private \*/*
 
@@ -817,7 +823,7 @@ And constructed via [xa_mk_node()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 1230 **return** (**void** \*)((**unsigned long**)node \| 2); 1231 }
 
- 
+
 
 *Listing 9-14:* include/linux/xarray.h: [*xa_mk_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1228)
 
@@ -827,7 +833,7 @@ the lower part of the virtual address space range up to be one of the follow-
 
 ing special cases (as described in the comment in listing 9-3):
 
- 
+
 
 **Sibling entry** 0 - 62 – Used only in the advanced xarray API. This indicates
 
@@ -841,7 +847,7 @@ dicates that another thread holds the xa_lock and is midway through up-dating th
 
 represents the NULL value. In the normal API (see Section 9.2.1 below for a discussion on xarray APIs) these are simply expressed as NULL values, however the advanced API can encounter these values directly.
 
- 
+
 
 That this is a node gives a hint to the internal structure of an xarray – it
 
@@ -853,7 +859,7 @@ tion.
 
 We examine the [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140) data structure in Listing 9-15.
 
- 
+
 
 1133 */\**
 
@@ -863,11 +869,11 @@ We examine the [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 1141 **unsigned char** shift; */\* Bits remaining in each slot \*/* 1142 **unsigned char** offset; */\* Slot offset in parent \*/*
 
- 
 
 
 
- 
+
+
 
 1143 **unsigned char** count; */\* Total entry count \*/* 1144 **unsigned char** nr_values; */\* Value entry count \*/* 1145 **struct xa_node \_\_rcu** \*parent; */\* NULL at top of tree \*/* 1146 **struct xarray** \*array; */\* The array we belong to \*/* 1147 **union** {
 
@@ -879,11 +885,11 @@ We examine the [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 1156 };
 
- 
+
 
 *Listing 9-15:* include/linux/xarray.h: [*struct xa_node*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
- 
+
 
 Each individual node contains [XA_CHUNK_SIZE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1128) ‘slots’, containing point-
 
@@ -911,25 +917,25 @@ more value (all diagrams below use \* to indicate value and N to indicate a
 
 pointer to a node), shown in Figure 9-2.
 
- 
 
 
 
- 
+
+
 
 [struct xarray](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296)
 
- 
+
 
 xa_head: \*
 
- 
+
 
 [struct xarray](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296)
 
 xa_head
 
- 
+
 
 [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
@@ -937,11 +943,11 @@ shift: 0
 
 \* \*
 
- 
+
 
 *Figure 9-2: Expanding an xarray From One Element to Two*
 
- 
+
 
 In the case of an xarray containing one or no elements, no additional
 
@@ -955,17 +961,17 @@ Now let’s examine how things look once we populate an entire node’s
 
 ure 9-3.
 
- 
 
 
 
- 
+
+
 
 [struct xarray](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296)
 
 xa_head
 
- 
+
 
 [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
@@ -975,13 +981,13 @@ shift: 0
 
 \* \* \*
 
- 
+
 
 [struct xarray](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296)
 
 xa_head
 
- 
+
 
 [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
@@ -989,7 +995,7 @@ shift: 6
 
 N N
 
- 
+
 
 [struct xa_node struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
@@ -997,11 +1003,11 @@ shift: 0 shift: 0 offset: 0 offset: 1
 
 \* \* ... \* \*
 
- 
+
 
 *Figure 9-3: Expanding an xarray of* [*XA_CHUNK_SIZE*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1128) *Elements By 1*
 
- 
+
 
 We perform the minimum amount of work required to expand the xar-
 
@@ -1031,17 +1037,17 @@ with [XA_CHUNK_SIZE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 reach this point as shown in Figure 9-4.
 
- 
 
 
 
- 
+
+
 
 [struct xarray](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296)
 
 xa_head
 
- 
+
 
 [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
@@ -1049,11 +1055,11 @@ shift: 6
 
 N N ... N
 
- 
+
 
 [struct xa_node struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
- 
+
 
 offset: 0 ... offset: 63 shift: 0 shift: 0
 
@@ -1061,13 +1067,13 @@ offset: 0 ... offset: 63 shift: 0 shift: 0
 
 \* \* \* \* \* \*
 
- 
+
 
 [struct xarray](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296)
 
 xa_head
 
- 
+
 
 [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
@@ -1075,7 +1081,7 @@ shift: 12
 
 N N
 
- 
+
 
 [struct xa_node struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
@@ -1083,7 +1089,7 @@ shift: 6 shift: 6 offset: 0 offset: 1
 
 N N ... N N
 
- 
+
 
 [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140)
 
@@ -1093,15 +1099,15 @@ shift: 0
 
 \*
 
- 
+
 
 *Figure 9-4: Expanding an xarray of* *2* [*XA_CHUNK_SIZE*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1128)*+1 Elements By 1*
 
- 
 
 
 
- 
+
+
 
 Once again the procedure at a top-level here is quite simple—we allocate
 
@@ -1111,13 +1117,13 @@ The expansion is slightly more involved, as we allocate two nodes rather
 
 than one in order to add a new value entry at the correct shift level.
 
- 
+
 
 **N O T E** If entries are added that skip indices (e.g. xarray of size 1, insert an entry at index
 
 4097), then empty entries are added to pad out the xarray to incorporate the newly inserted entry.
 
- 
+
 
 So far we’ve examined value entries that exist only in leaf nodes, i.e. at
 
@@ -1135,7 +1141,7 @@ We have mentioned [XA_CHUNK_SIZE](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 in Listing 9-16.
 
- 
+
 
 1115 */\**
 
@@ -1161,21 +1167,21 @@ in Listing 9-16.
 
 1128 **\#define XA_CHUNK_SIZE** (1UL \<\< **XA_CHUNK_SHIFT**) 1129 **\#define XA_CHUNK_MASK** (**XA_CHUNK_SIZE**- 1) 1130 **\#define XA_MAX_MARKS** 3 1131 **\#define XA_MARK_LONGS** **DIV_ROUND_UP**(**XA_CHUNK_SIZE**, **BITS_PER_LONG**)
 
- 
+
 
 *Listing 9-16:* include/linux/xarray.h: [*XA_CHUNK_SIZE*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1128)
 
- 
+
 
 It’s very useful to associate metadata with xarray entries, so we do so by
 
 using tags and marks associated with each node up to [XA_MAX_MARKS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1130) (3), with
 
- 
 
 
 
- 
+
+
 
 each bit of the tags and marks fields used to tag entries in the chunk of en-
 
@@ -1199,7 +1205,7 @@ This is used extensively by the page cache mechanism to mark
 
 dirty/writeback folios as you will observe later in the chapter.
 
- 
+
 
 ***9.2.1 API***
 
@@ -1217,7 +1223,7 @@ We won’t examine the code deeply at all, but as a taster let’s examine a
 
 basic function in the normal API, [xa_store()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/xarray.c?h=v6.0#n1577)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/xarray.c?h=v6.0#n1577) shown in Listing 9-17.
 
- 
+
 
 1560 */\*\**
 
@@ -1253,21 +1259,21 @@ basic function in the normal API, [xa_store()](https://git.kernel.org/pub/scm/li
 
 1584
 
- 
 
 
 
- 
+
+
 
 1585 **return** curr;
 
 1586 }
 
- 
+
 
 *Listing 9-17:* lib/xarray.c: [*xa_store()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/xarray.c?h=v6.0#n1577)
 
- 
+
 
 This stores the entry entry into the [struct xarray](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296) xa at index index. As you
 
@@ -1277,7 +1283,7 @@ The heavy lifting is performed by [\_\_xa_store()](https://git.kernel.org/pub/sc
 
 free tracking logic), shown in Listing 9-18.
 
- 
+
 
 1525 */\*\**
 
@@ -1319,11 +1325,11 @@ gfp)
 
 1556 **return xas_result**(&xas, curr); 1557 }
 
- 
+
 
 *Listing 9-18:* lib/xarray.c: [*\_\_xa_store()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/xarray.c?h=v6.0#n1540)
 
- 
+
 
 The function asserts that the entry does not comprise any advanced API
 
@@ -1333,17 +1339,17 @@ The rest of the logic relies on an advanced API feature, which is used in-
 
 ternally here. The advanced API features tend to use a state iterator variable
 
- 
 
 
 
- 
+
+
 
 of type [struct xa_state](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1326), which is threaded through function calls. We exam-
 
 ine this object in Listing 9-19.
 
- 
+
 
 1309 */\**
 
@@ -1369,11 +1375,11 @@ ine this object in Listing 9-19.
 
 1327 **struct** xarray \*xa; 1328 **unsigned long** xa_index; 1329 **unsigned char** xa_shift; 1330 **unsigned char** xa_sibs; 1331 **unsigned char** xa_offset; 1332 **unsigned char** xa_pad; */\* Helps gcc generate better code \*/* 1333 **struct** xa_node \*xa_node; 1334 **struct** xa_node \*xa_alloc; 1335 xa_update_node_t xa_update; 1336 **struct** list_lru \*xa_lru; 1337 };
 
- 
+
 
 *Listing 9-19:* include/linux/xarray.h: [*struct xa_state*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1326)
 
- 
+
 
 This object is used for traversal as well as updating of xarray elements. It
 
@@ -1383,7 +1389,7 @@ ing for or newly inserting.
 
 Examining each field, eliding the padding and out of scope LRU fields:
 
- 
+
 
 • xa – The [struct xarray](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296) object we are interacting with.
 
@@ -1395,11 +1401,11 @@ the xarray start at zero and an entry’s index is determined by it being the it
 
 only relevant to entries which span multiple indices, ordinary single-index entries will have xa_shift of zero.
 
- 
 
 
 
- 
+
+
 
 • xa_sibs – The number of sibling entries this entry requires.
 
@@ -1417,13 +1423,13 @@ the user through the advanced API which is invoked every time either
 
 count or nr_values is updated in the [struct xa_node](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1140) node containing this entry.
 
- 
+
 
 The [struct xa_state](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1326) object is often initialised via the [XA_STATE()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1368) macro,
 
 shown in Listing 9-20.
 
- 
+
 
 1360 */\*\**
 
@@ -1433,25 +1439,25 @@ shown in Listing 9-20.
 
 1368 **\#define XA_STATE**(name, array, index) \\ 1369 **struct** xa_state name = **\_\_XA_STATE**(array, index, 0, 0)
 
- 
+
 
 *Listing 9-20:* include/linux/xarray.h: [*XA_STATE()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1368)
 
- 
+
 
 Which, in turn, invokes the [\_\_XA_STATE()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1347) macro to actually assign field
 
 values, shown in Listing 9-21.
 
- 
+
 
 1347 **\#define \_\_XA_STATE**(array, index, shift, sibs) { \\ 1348 .xa = array, \\ 1349 .xa_index = index, \\ 1350 .xa_shift = shift, \\ 1351 .xa_sibs = sibs, \\ 1352 .xa_offset = 0, \\ 1353 .xa_pad = 0, \\ 1354 .xa_node = **XAS_RESTART**, \\ 1355 .xa_alloc = **NULL**, \\ 1356 .xa_update = **NULL**, \\ 1357 .xa_lru = **NULL**, \\ 1358 }
 
- 
+
 
 *Listing 9-21:* include/linux/xarray.h: [*\_\_XA_STATE()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1347)
 
- 
+
 
 The [\_\_XA_STATE()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1347) macro can be used directly for cases of entries which
 
@@ -1463,11 +1469,11 @@ tiple indices, a convenient macro to configure a [struct xa_state](https://git.k
 
 [XA_STATE_ORDER(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1382)shown in Listing 9-22.
 
- 
 
 
 
- 
+
+
 
 1371 */\*\**
 
@@ -1479,7 +1485,7 @@ tiple indices, a convenient macro to configure a [struct xa_state](https://git.k
 
 1382 **\#define XA_STATE_ORDER**(name, array, index, order) \\ 1383 **struct** xa_state name = **\_\_XA_STATE**(array, \\ 1384 (index \>\> order) \<\< order, \\ 1385 order - (order % **XA_CHUNK_SHIFT**), \\ 1386 (1U \<\< (order % **XA_CHUNK_SHIFT**)) - 1)
 
- 
+
 
 *Listing 9-22:* include/linux/xarray.h: [*XA_STATE_ORDER()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1382)
 
@@ -1503,7 +1509,7 @@ Note that there are certain xa_node values which have particular mean-
 
 ings:
 
- 
+
 
 • [XA_ERROR()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1343) – Indicates that an error has occurred identically to an error
 
@@ -1519,7 +1525,7 @@ the currently available indices in any node.
 
 sal and must be restarted. This is the initial default value.
 
- 
+
 
 ***9.2.2 The Rest***
 
@@ -1539,11 +1545,11 @@ from this we can gain insights into how the API is used, especially the ad-
 
 vanced API.
 
- 
 
 
 
- 
+
+
 
 The [xarray documentation](https://kernel.org/doc/html/v6.0/core-api/xarray.html) is, additionally, extensive.
 
@@ -1553,17 +1559,17 @@ which loads an entry from the xarray, [xa_store()](https://git.kernel.org/pub/sc
 
 the xarray, [xa_erase()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/xarray.c?h=v6.0#n1513) which erases an entry from the xarray and [xa_find()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/xarray.c?h=v6.0#n2013) which finds an entry in the xarray.
 
- 
+
 
 **9.3 Reading From a File**
 
- 
+
 
 We examine an example of an unbuffered read from a file into a buffer in C
 
 in Listing 9-23.
 
- 
+
 
 **\#include** \<fcntl.h\>
 
@@ -1575,7 +1581,7 @@ in Listing 9-23.
 
 **\#include** \<unistd.h\>
 
- 
+
 
 **int** main(**void**)
 
@@ -1585,7 +1591,7 @@ in Listing 9-23.
 
 **size_t** size;
 
- 
+
 
 **if** (fd == -1) {
 
@@ -1593,7 +1599,7 @@ in Listing 9-23.
 
 }
 
- 
+
 
 **if** (**fstat**(fd, &statbuf)) {
 
@@ -1601,7 +1607,7 @@ in Listing 9-23.
 
 }
 
- 
+
 
 size = statbuf.st_size;
 
@@ -1611,7 +1617,7 @@ err = **EXIT_SUCCESS**; **goto exit_close**;
 
 }
 
- 
+
 
 buf = **malloc**(size + 1); **if** (!buf) {
 
@@ -1619,17 +1625,17 @@ buf = **malloc**(size + 1); **if** (!buf) {
 
 }
 
- 
 
 
 
- 
+
+
 
 **do** {
 
 **ssize_t** ret = **read**(fd, &buf\[num_bytes\], size - num_bytes);
 
- 
+
 
 **if** (ret == -1) {
 
@@ -1637,23 +1643,23 @@ buf = **malloc**(size + 1); **if** (!buf) {
 
 }
 
- 
+
 
 num_bytes += ret;
 
 } **while** (num_bytes \< size);
 
- 
+
 
 buf\[size\] = '\0';
 
 **printf**("%s", buf);
 
- 
+
 
 err = **EXIT_SUCCESS**;
 
- 
+
 
 **exit_free**:
 
@@ -1669,11 +1675,11 @@ err = **EXIT_SUCCESS**;
 
 }
 
- 
+
 
 *Listing 9-23: Example file read operation*
 
- 
+
 
 This uses [read()](https://man7.org/linux/man-pages/man2/read.2.html) to read data into a buffer from a file descriptor (the com-
 
@@ -1693,7 +1699,7 @@ file), incrementing the reference count if necessary via [fdget_pos()](https://g
 
 necessary via [fdput_pos()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/file.h?h=v6.0#n76).
 
- 
+
 
 **N O T E** The [*struct file*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) object keeps track of the current position within the file. Given mul-
 
@@ -1717,11 +1723,11 @@ with Regular File Operations”), see the ‘bugs’ section of the [*read()*](h
 
 entry for details.
 
- 
 
 
 
- 
+
+
 
 This is where the flexible implementation of the VFS comes into play –
 
@@ -1739,7 +1745,7 @@ a [struct iov_iter](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/lin
 
 We examine [new_sync_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n379) in Listing 9-24.
 
- 
+
 
 379 **static ssize_t new_sync_read**(**struct** file \*filp, **char \_\_user** \*buf, **size_t** len,
 
@@ -1759,11 +1765,11 @@ loff_t \*ppos)
 
 394 }
 
- 
+
 
 *Listing 9-24:* fs/read_write.c: [*new_sync_read()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n379)
 
- 
+
 
 This starts by initialising the [struct kiocb](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n341) kernel I/O control block object
 
@@ -1781,7 +1787,7 @@ the [iocb_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linu
 
 Listing 9-25.
 
- 
+
 
 3384 **static inline int iocb_flags**(**struct** file \*file) 3385 {
 
@@ -1789,21 +1795,21 @@ Listing 9-25.
 
 3387 **if** (file-\>f_flags & **O_APPEND**) 3388 res \|= **IOCB_APPEND**; 3389 **if** (file-\>f_flags & **O_DIRECT**) 3390 res \|= **IOCB_DIRECT**;
 
- 
 
 
 
- 
+
+
 
 3391 **if** (file-\>f_flags & **O_DSYNC**) 3392 res \|= **IOCB_DSYNC**; 3393 **if** (file-\>f_flags & **\_\_O_SYNC**) 3394 res \|= **IOCB_SYNC**; 3395 **return** res;
 
 3396 }
 
- 
+
 
 *Listing 9-25:* include/linux/fs.h: [*iocb_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n3384)
 
- 
+
 
 See the manual page for [open](https://man7.org/linux/man-pages/man2/open.2.html) for more details on each of these flags, not-
 
@@ -1821,17 +1827,17 @@ if relevant.
 
 We examine [call_read_iter()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2178) in Listing 9-26.
 
- 
+
 
 2178 **static inline ssize_t call_read_iter**(**struct** file \*file, **struct** kiocb \*kio, 2179 **struct** iov_iter \*iter) 2180 {
 
 2181 **return** file-\>f_op-\>**read_iter**(kio, iter); 2182 }
 
- 
+
 
 *Listing 9-26:* include/linux/fs.h: [*call_read_iter()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2178)
 
- 
+
 
 This simply invokes the [struct file-\>f_op-\>read_iter()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) function (a file
 
@@ -1847,7 +1853,7 @@ Let’s look at a concrete example, the ext4 file system’s implementation
 
 direct I/O and DAX logic), shown in Listing 9-27.
 
- 
+
 
 115 **static ssize_t ext4_file_read_iter**(**struct** kiocb \*iocb, **struct** iov_iter \*to) 116 {
 
@@ -1865,15 +1871,15 @@ direct I/O and DAX logic), shown in Listing 9-27.
 
 132 **return generic_file_read_iter**(iocb, to); 133 }
 
- 
+
 
 *Listing 9-27:* fs/ext4/file.c: [*ext4_file_read_iter()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/ext4/file.c?h=v6.0#n115)
 
- 
 
 
 
- 
+
+
 
 Other than some ext4-specific handling and the no-op case, this sim-
 
@@ -1889,7 +1895,7 @@ We examine [generic_file_read_iter()](https://git.kernel.org/pub/scm/linux/kerne
 
 logic) in Listing 9-28.
 
- 
+
 
 2734 */\*\**
 
@@ -1921,11 +1927,11 @@ logic) in Listing 9-28.
 
 2806 **return filemap_read**(iocb, iter, retval); 2807 }
 
- 
+
 
 *Listing 9-28:* mm/filemap.c: [*generic_file_read_iter()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2756)
 
- 
+
 
 This performs the empty iterator no-op check once again, before simply
 
@@ -1935,49 +1941,49 @@ from a [read()](https://man7.org/linux/man-pages/man2/read.2.html) call to the k
 
 shown in Listing 9-29.
 
- 
 
 
 
- 
+
+
 
 [read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n621) syscall
 
- 
+
 
 [ksys_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n602)
 
- 
+
 
 [vfs_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n450)
 
- 
+
 
 [new_sync_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n379)
 
- 
+
 
 [call_read_iter()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2178)
 
- 
+
 
 [generic_file_read_iter()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2756)
 
- 
+
 
 [filemap_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2626)
 
- 
+
 
 *Figure 9-5:* [*filemap_read()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2626) *Page Cache Retrieval*
 
- 
+
 
 We examine [filemap_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2626) (eliding out of scope io_uring-specific and
 
 dcache flush logic) in Listing 9-29.
 
- 
+
 
 2613 */\*\**
 
@@ -2001,21 +2007,21 @@ dcache flush logic) in Listing 9-29.
 
 2638 **if** (**unlikely**(iocb-\>ki_pos \>= inode-\>i_sb-\>s_maxbytes)) 2639 **return** 0; 2640 **if** (**unlikely**(!**iov_iter_count**(iter)))
 
- 
 
 
 
- 
+
+
 
 2641 **return** 0; 2642
 
 2643 **iov_iter_truncate**(iter, inode-\>i_sb-\>s_maxbytes); 2644 **folio_batch_init**(&fbatch);
 
- 
+
 
 *Listing 9-29:* mm/filemap.c: [*filemap_read()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2626) *Initialisation*
 
- 
+
 
 We start by performing a couple of sanity checks—the
 
@@ -2039,7 +2045,7 @@ folios of [PAGEVEC_SIZE](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 for more on folio batches in general), shown in Listing 9-30.
 
- 
+
 
 2646 **do** {
 
@@ -2051,11 +2057,11 @@ for more on folio batches in general), shown in Listing 9-30.
 
 2660 error = **filemap_get_pages**(iocb, iter, &fbatch); 2661 **if** (error \< 0) 2662 **break**;
 
- 
+
 
 *Listing 9-30:* mm/filemap.c: [*filemap_read()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2626) *page retrieval (Start of Loop)*
 
- 
+
 
 We start by conditionally permitting rescheduling of the process on each
 
@@ -2083,11 +2089,11 @@ Importantly, the reference count of each folio thus returned will be in-
 
 cremented, pinning them in memory for the duration of the operation.
 
- 
 
 
 
- 
+
+
 
 After folios have been retrieved, we perform some post-processing before
 
@@ -2095,7 +2101,7 @@ we copy the data to the target buffer before looping around again to retrieve
 
 the next batch of data, shown in Listing 9-31.
 
- 
+
 
 2664 */\**
 
@@ -2129,11 +2135,11 @@ the next batch of data, shown in Listing 9-31.
 
 2689 **folio_mark_accessed**(fbatch.folios\[0\]);
 
- 
+
 
 *Listing 9-31:* mm/filemap.c: [*filemap_read()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2626) *Post-Processing*
 
- 
+
 
 We check to see whether the newly updated file position stored in
 
@@ -2173,11 +2179,11 @@ ber that the offset into the file is specified at byte granularity, however foli
 
 exist at minimum at base page granularity.
 
- 
 
 
 
- 
+
+
 
 As a result, we might in theory read from bytes 0 to 100, then bytes 101
 
@@ -2197,7 +2203,7 @@ We determine whether the current offset into the file
 
 lio via [pos_same_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2606), shown in Listing 9-32.
 
- 
+
 
 2606 **static inline bool pos_same_folio**(loff_t pos1, loff_t pos2, **struct** folio \*
 
@@ -2209,11 +2215,11 @@ folio)
 
 2610 **return** (pos1 \>\> shift == pos2 \>\> shift); 2611 }
 
- 
+
 
 *Listing 9-32:* mm/filemap.c: [*pos_same_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2606)
 
- 
+
 
 This simply determines the shift (i.e. the number of bits) comprising the
 
@@ -2223,7 +2229,7 @@ Once this check has been completed, we can go ahead and start copying
 
 page cache folios into the iterator, shown in Listing 9-33.
 
- 
+
 
 2691 **for** (i = 0; i \< **folio_batch_count**(&fbatch); i++) { 2692 **struct** folio \*folio = fbatch.folios\[i\]; 2693 **size_t** fsize = **folio_size**(folio); 2694 **size_t** offset = iocb-\>ki_pos & (fsize - 1); 2695 **size_t** bytes = **min_t**(loff_t, end_offset - iocb-\>ki_pos
 
@@ -2243,21 +2249,21 @@ page cache folios into the iterator, shown in Listing 9-33.
 
 2713 already_read += copied; 2714 iocb-\>ki_pos += copied;
 
- 
 
 
 
- 
+
+
 
 2715 ra-\>prev_pos = iocb-\>ki_pos; 2716
 
 2717 **if** (copied \< bytes) { 2718 error = -**EFAULT**; 2719 **break**; 2720 } 2721 }
 
- 
+
 
 *Listing 9-33:* mm/filemap.c: [*filemap_read()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2626) *Folio Copying*
 
- 
+
 
 We iterate through each of the page cache folios obtained via
 
@@ -2317,7 +2323,7 @@ field to update the position, and importantly update the
 
 successfully read.
 
- 
+
 
 2722 **put_folios**:
 
@@ -2327,19 +2333,19 @@ successfully read.
 
 2730 **return** already_read ? already_read : error;
 
- 
 
 
 
- 
+
+
 
 2731 }
 
- 
+
 
 *Listing 9-34:* mm/filemap.c: [*filemap_read()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2626) *folio cleanup (End of Loop)*
 
- 
+
 
 Finally within the loop, we decrement the reference count for each re-
 
@@ -2355,7 +2361,7 @@ Prior to returning, the function invokes [file_accessed()](https://git.kernel.or
 
 the file’s access time (i.e. atime), via the [touch_atime()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/inode.c?h=v6.0#n1921) function.
 
- 
+
 
 **N O T E** Typically modern file systems are mounted with the *relatime* option, to prevent the
 
@@ -2367,17 +2373,17 @@ dated since last update, or if the last access was over a day ago ([*touch_atime
 
 [*atime_needs_update()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/inode.c?h=v6.0#n1886) which calls [*relatime_need_update()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/inode.c?h=v6.0#n1810) in turn to perform this check).
 
- 
+
 
 The key bit of code we are missing here is the implementation of
 
 [filemap_get_pages(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2546)however we will defer discussion of this to section 9.5 below, and instead look at the other most common means of accessing page cache entries, namely file-backed page faults.
 
- 
+
 
 **9.4 File-Backed Read Faults**
 
- 
+
 
 If a file is mapped into memory using [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html)[,](https://man7.org/linux/man-pages/man2/mmap.2.html) then looking up its contents from the page cache occurs at the point of page fault. This is another means by which user space applications are able to access file data (in this instance, on demand at page fault time), so we examine it in detail here.
 
@@ -2405,11 +2411,11 @@ A key difference between this operation and the one performed on read
 
 discussed in section 9.3 above is that the fault occurs on a single folio basis rather than a batch. In some respects this simplifies things, however we also
 
- 
 
 
 
- 
+
+
 
 need to take into account the properties of the VMA into which the folio is
 
@@ -2439,7 +2445,7 @@ function diagrammatically in Figure 9-6, before diving into the function in
 
 detail.
 
- 
+
 
 
 
@@ -2449,23 +2455,23 @@ Valid index? SIGBUS
 
 yes
 
- 
+
 
 Read folio from page cache
 
 via [filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n526)
 
- 
+
 
 In page cache?
 
 no yes
 
- 
+
 
 [do_sync_mmap_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2968) [do_async_mmap_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3037)
 
- 
+
 
 Acquire invalidate lock via retry_find To post-processing
 
@@ -2473,13 +2479,13 @@ Acquire invalidate lock via retry_find To post-processing
 
 9-7, 9-8
 
- 
+
 
 Create/get folio from
 
 [\_\_filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1914)
 
- 
+
 
 yes
 
@@ -2487,31 +2493,31 @@ Success?
 
 no
 
- 
+
 
 yes
 
 Dropped mmap_lock? [VM_FAULT_RETRY](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n751)
 
- 
+
 
 no
 
- 
+
 
 [VM_FAULT_OOM](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n742)
 
- 
+
 
 *Figure 9-6:* [*filemap_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) *Page Cache Retrieval*
 
- 
+
 
 We start by checking to ensure that the index into the file is valid, if not
 
 we simply send the process a SIGBUS signal.
 
- 
+
 
 **N O T E** The difference between a *SIGBUS* and a *SIGSEGV* signal isn’t always entirely clear. The
 
@@ -2525,11 +2531,11 @@ unmapped memory, or memory to which you do not have permission to access, (e.g. 
 
 or not), e.g. accessing unaligned addresses on an architecture which doesn’t sup-port unaligned access, or, pertinently, access to portions of a file mapping that are not backed by the file.
 
- 
 
 
 
- 
+
+
 
 This can be trivially triggered by [*mmap()*](https://man7.org/linux/man-pages/man2/mmap.2.html)[’ing](https://man7.org/linux/man-pages/man2/mmap.2.html) a file at a size greater than the file size and accessing a page past the end of the file (a page containing a part of the file will return zeroes for the portion which are not mapped).
 
@@ -2539,7 +2545,7 @@ the [*struct folio-\>index*](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 cause a *SIGBUS* to arise, as shown in Figure 9-8.
 
- 
+
 
 If the index is valid, we invoke [filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n526) to see whether the
 
@@ -2579,21 +2585,21 @@ If we succeed in this portion of the function, we move on to the post-
 
 processing phase, as shown in Figure 9-7.
 
- 
 
 
 
- 
+
+
 
 From Figure 9-6
 
- 
+
 
 Lock folio via
 
 [lock_folio_maybe_drop_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2928)
 
- 
+
 
 yes
 
@@ -2609,7 +2615,7 @@ Invalidate locked? Up to date?
 
 yes yes
 
- 
+
 
 Go to page_not_uptodate no
 
@@ -2619,17 +2625,17 @@ in Figure 9-8
 
 yes
 
- 
+
 
 Fault complete, set
 
 [VM_FAULT_LOCKED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n750) flag
 
- 
+
 
 *Figure 9-7:* [*filemap_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) *Post-Processing*
 
- 
+
 
 Here we must lock the folio to ensure it is stable and not undergoing up-
 
@@ -2661,21 +2667,21 @@ We examine the case in which the folio is not up to date, from label
 
 page_not_uptodate within [filemap_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) in Figure 9-8.
 
- 
 
 
 
- 
+
+
 
 From Figure 9-7
 
- 
+
 
 Read folio from disk
 
 via [filemap_read_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2382)
 
- 
+
 
 yes
 
@@ -2683,7 +2689,7 @@ yes
 
 no
 
- 
+
 
 yes
 
@@ -2691,15 +2697,15 @@ Error? SIGBUS
 
 no
 
- 
+
 
 Go to retry_find in Figure 9-6
 
- 
+
 
 *Figure 9-8:* [*filemap_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) *Page Not Up To Date Handling*
 
- 
+
 
 This is relatively straightforward – we try to explicitly read the folio via
 
@@ -2723,7 +2729,7 @@ Now we have examining the function in brief, let’s examine
 
 ing 9-35.
 
- 
+
 
 3061 */\*\**
 
@@ -2739,11 +2745,11 @@ ing 9-35.
 
 3074 *\* If our return value has VM_FAULT_RETRY set, it's because the mmap_lock* 3075 *\* may be dropped before doing I/O or by lock_folio_maybe_drop_mmap().*
 
- 
 
 
 
- 
+
+
 
 3076 *\**
 
@@ -2761,11 +2767,11 @@ ing 9-35.
 
 3096 max_idx = **DIV_ROUND_UP**(**i_size_read**(inode), **PAGE_SIZE**); 3097 **if** (**unlikely**(index \>= max_idx)) 3098 **return VM_FAULT_SIGBUS**;
 
- 
+
 
 *Listing 9-35:* mm/filemap.c: [*filemap_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) *Initialisation*
 
- 
+
 
 We begin by initialising variables, recalling from section 6.2 that an
 
@@ -2789,7 +2795,7 @@ Next, we attempt to retrieve the folio from the page cache, as shown in
 
 Listing 9-36.
 
- 
+
 
 3100 */\**
 
@@ -2805,11 +2811,11 @@ Listing 9-36.
 
 3109 **if** (!(vmf-\>flags & **FAULT_FLAG_TRIED**))
 
- 
 
 
 
- 
+
+
 
 3110 fpin = **do_async_mmap_readahead**(vmf, folio); 3111 **if** (**unlikely**(!**folio_test_uptodate**(folio))) { 3112 **filemap_invalidate_lock_shared**(mapping); 3113 mapping_locked = **true**; 3114 }
 
@@ -2827,11 +2833,11 @@ Listing 9-36.
 
 3139 }
 
- 
+
 
 *Listing 9-36:* mm/filemap.c: [*filemap_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) *Page Cache Retrieval*
 
- 
+
 
 We try to retrieve the folio from the page cache using [filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n526)
 
@@ -2863,11 +2869,11 @@ type (minor faults can be determined by taking the count of [PGFAULT](https://gi
 
 and subtracting it by the count of [PGMAJFAULT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/vm_event_item.h?h=v6.0#n37) events).
 
- 
 
 
 
- 
+
+
 
 **N O T E** Total page faults across the system can be determined via */proc/vmstat* in the *pgfault*
 
@@ -2889,7 +2895,7 @@ indicated by the [*FAULT_FLAG_TRIED*](https://git.kernel.org/pub/scm/linux/kerne
 
 See Section 6.2 for more details on page fault handling as a whole.
 
- 
+
 
 The simpler case is when the folio is present in the page cache – we do
 
@@ -2927,7 +2933,7 @@ we update statistics to account for this fact (and set the return value to
 
 [do_sync_mmap_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2968) (see Section 9.7 for details on what happens here).
 
- 
+
 
 **N O T E** Note that this readahead still may not actually retrieve the folio from the disk. For
 
@@ -2935,11 +2941,11 @@ instance, if a user specifies that a region of memory is random-access memory vi
 
 [*madvise()*](https://man7.org/linux/man-pages/man2/madvise.2.html) with the *MADV_RANDOM* flag set, this will cause readahead to abort. We will see below how we retrieve data in this instance.
 
- 
 
 
 
- 
+
+
 
 This function, as well as the asynchronous readahead discussed above
 
@@ -2985,7 +2991,7 @@ from the disk, and must ensure that no race exists between the creation and
 
 invalidation of the folio.
 
- 
+
 
 **N O T E** We will get into this logic in more detail in section 9.5 below, but note that if
 
@@ -3001,7 +3007,7 @@ if file truncation raced with the fault), it will invoke [*folio_put()*](https:/
 
 which result in the folio being freed.
 
- 
+
 
 We will have, most likely, retrieved the folio from disk in the synchronous
 
@@ -3035,11 +3041,11 @@ If we have taken an fpin, indicating the lock is dropped, we can have the
 
 fault be retried, by which point more memory might be available by includ-
 
- 
 
 
 
- 
+
+
 
 ing the [VM_FAULT_RETRY](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n751) flag in the return value (this is handled at the out_retry label, described below).
 
@@ -3051,7 +3057,7 @@ After each of these cases are considered, we have post-processing to per-
 
 form, shown in Listing 9-37.
 
- 
+
 
 3141 **if** (!**lock_folio_maybe_drop_mmap**(vmf, folio, &fpin)) 3142 **goto out_retry**; 3143
 
@@ -3093,11 +3099,11 @@ form, shown in Listing 9-37.
 
 3180 **if** (mapping_locked) 3181 **filemap_invalidate_unlock_shared**(mapping);
 
- 
 
 
 
- 
+
+
 
 3182
 
@@ -3111,11 +3117,11 @@ form, shown in Listing 9-37.
 
 3194 vmf-\>page = **folio_file_page**(folio, index); 3195 **return** ret \| **VM_FAULT_LOCKED**;
 
- 
+
 
 *Listing 9-37:* mm/filemap.c: [*filemap_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) *Post-Processing*
 
- 
+
 
 Firstly, we must lock the folio before we can return it to the generic
 
@@ -3179,11 +3185,11 @@ having specified the region as being random access using [madvise()](https://man
 
 MADV_RANDOM flag, or repeated cache misses.
 
- 
 
 
 
- 
+
+
 
 If the folio is indeed not up to date, we first check to see whether we held
 
@@ -3229,7 +3235,7 @@ Next we examine the edge case handling within the code, shown in List-
 
 ing 9-38.
 
- 
+
 
 3197 **page_not_uptodate**:
 
@@ -3245,15 +3251,15 @@ ing 9-38.
 
 3214 **return VM_FAULT_SIGBUS**;
 
- 
 
 
 
- 
+
+
 
 *Listing 9-38:* mm/filemap.c: [*filemap_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) *Page Not Up to Date Case*
 
- 
+
 
 This case is only reached if, in listing 9-37 described above, the folio is
 
@@ -3323,7 +3329,7 @@ invalid access.
 
 The final edge case is shown in Listing 9-39.
 
- 
+
 
 3216 **out_retry**:
 
@@ -3343,21 +3349,21 @@ The final edge case is shown in Listing 9-39.
 
 3223 **folio_put**(folio); 3224 **if** (mapping_locked)
 
- 
 
 
 
- 
+
+
 
 3225 **filemap_invalidate_unlock_shared**(mapping); 3226 **if** (fpin)
 
 3227 **fput**(fpin); 3228 **return** ret \| **VM_FAULT_RETRY**; 3229 }
 
- 
+
 
 *Listing 9-39:* mm/filemap.c: [*filemap_fault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) *Retry Case*
 
- 
+
 
 To reach this point, we will have dropped the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)-\>mmap_lock.
 
@@ -3375,11 +3381,11 @@ We then return with the [VM_FAULT_RETRY](https://git.kernel.org/pub/scm/linux/ke
 
 must be retried.
 
- 
+
 
 **9.5 Reading Page Cache Entries**
 
- 
+
 
 There are a number of routes by which we read folios from the page cache. Each differs in whether we attempt only to read from the page cache, i.e. in-dicating that an entry was not found if it was not already present there, or into the page cache where, if not already present, we read a folio from disk into the page cache and return this.
 
@@ -3387,7 +3393,7 @@ In addition we may also choose to read from the page cache, creating
 
 a page cache entry which we mark as not ’uptodate’ (i.e. not yet read from disk) but not proceeding with the read just yet. Examining each case:
 
- 
+
 
 **Reading a batch of folios from the page cache** In instances where we
 
@@ -3415,11 +3421,11 @@ it if so, returning an error if not. This wraps [\_\_filemap_get_folio()](https:
 
 stances where the FGP_CREAT flag is passed to [\_\_filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1914)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1914) a folio is allocated in the instance none exist in the page cache and this newly
 
- 
 
 
 
- 
+
+
 
 allocated folio is added to the page cache. It will not be marked up to date, so still needs to be read from disk to be usable. This is examined in
 
@@ -3433,7 +3439,7 @@ page cache, ultimately invoking [do_read_cache_folio()](https://git.kernel.org/p
 
 examine in Section 9.5.4.
 
- 
+
 
 Finally, we examine the actual mechanism of adding a folio to the page
 
@@ -3443,7 +3449,7 @@ The functions which actually perform the read from disk are examined
 
 in Section 9.6, and readahead is described in Section 9.7.
 
- 
+
 
 ***9.5.1 Reading a Batch of Folios From the Page Cache***
 
@@ -3455,7 +3461,7 @@ read from disk. This is what [find_get_entries()](https://git.kernel.org/pub/scm
 
 ing 9-40.
 
- 
+
 
 2036 */\*\**
 
@@ -3479,11 +3485,11 @@ ing 9-40.
 
 2063 **while** ((folio = **find_get_entry**(&xas, end, **XA_PRESENT**)) != **NULL**) {
 
- 
 
 
 
- 
+
+
 
 2064 indices\[fbatch-\>nr\] = xas.xa_index; 2065 **if** (!**folio_batch_add**(fbatch, folio)) 2066 **break**; 2067 }
 
@@ -3491,11 +3497,11 @@ ing 9-40.
 
 2070 **return folio_batch_count**(fbatch); 2071 }
 
- 
+
 
 *Listing 9-40:* mm/filemap.c: [*find_get_entries()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2056)
 
- 
+
 
 This function walks through the page cache entry’s xarray (as located
 
@@ -3529,7 +3535,7 @@ being returned.
 
 We examine [find_get_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2001) in Listing 9-41.
 
- 
+
 
 2001 **static inline struct** folio \***find_get_entry**(**struct** xa_state \*xas, **pgoff_t** max, 2002 xa_mark_t mark) 2003 {
 
@@ -3545,11 +3551,11 @@ We examine [find_get_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 2015 *\* A shadow entry of a recently evicted page, a swap* 2016 *\* entry from shmem/tmpfs or a DAX entry. Return it*
 
- 
 
 
 
- 
+
+
 
 2017 *\* without attempting to raise page count.* 2018 *\*/*
 
@@ -3571,11 +3577,11 @@ We examine [find_get_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 2034 }
 
- 
+
 
 *Listing 9-41:* mm/filemap.c: [*find_get_entry()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2001)
 
- 
+
 
 Though this function can be used to look up entries with specific xarray
 
@@ -3605,7 +3611,7 @@ the cache dropping logic discussed in Section 9.9.4, in the function
 
 [invalidate_mapping_pagevec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n502) shown in Listing 9-116.
 
- 
+
 
 2073 */\*\**
 
@@ -3613,11 +3619,11 @@ the cache dropping logic discussed in Section 9.9.4, in the function
 
 2081 *\* find_lock_entries() will return a batch of entries from @mapping.* 2082 *\* Swap, shadow and DAX entries are included. Folios are returned* 2083 *\* locked and with an incremented refcount. Folios which are locked* 2084 *\* by somebody else or under writeback are skipped. Folios which are* 2085 *\* partially outside the range are not returned.*
 
- 
 
 
 
- 
+
+
 
 2086 *\**
 
@@ -3645,21 +3651,21 @@ the cache dropping logic discussed in Section 9.9.4, in the function
 
 2125 **return folio_batch_count**(fbatch); 2126 }
 
- 
+
 
 *Listing 9-42:* mm/filemap.c: [*find_lock_entries()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2093)
 
- 
+
 
 This function behaves similarly to [find_get_entries()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2056)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2056) only additionally
 
 locking folios it finds (but not waiting on the lock, merely optimistically at-tempting to acquire the lock for each folio). As with that function, we must return page offset indices as we may skip over non-present folios, or en-
 
- 
 
 
 
- 
+
+
 
 counter compound folios which span multiple pages. We of course incre-
 
@@ -3707,7 +3713,7 @@ ginning of the input range. This function is shown in Listing 9-43 (eliding
 
 out of scope hugetlb logic).
 
- 
+
 
 2128 */\*\**
 
@@ -3723,11 +3729,11 @@ out of scope hugetlb logic).
 
 2149 **unsigned filemap_get_folios**(**struct** address_space \*mapping, **pgoff_t** \*start, 2150 **pgoff_t** end, **struct** folio_batch \*fbatch) 2151 {
 
- 
 
 
 
- 
+
+
 
 2152 **XA_STATE**(xas, &mapping-\>i_pages, \*start); 2153 **struct** folio \*folio; 2154
 
@@ -3761,7 +3767,7 @@ out of scope hugetlb logic).
 
 2183 **return folio_batch_count**(fbatch); 2184 }
 
- 
+
 
 *Listing 9-43:* mm/filemap.c: [*filemap_get_folios()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2149)
 
@@ -3773,7 +3779,7 @@ There are other variants on the theme of these lookup functions like
 
 [find_get_pages_contig()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2210) and [find_get_pages_range_tag()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2272)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2272) however they broadly resemble what we have already examined so what we have discussed so far should suffice to underline the general mechanisms by which folios are found in the page cache.
 
- 
+
 
 ***9.5.2 Reading a Batch of Folios Into the Page Cache***
 
@@ -3783,11 +3789,11 @@ scope iouring-specific [IOCB_WAITQ](https://git.kernel.org/pub/scm/linux/kernel/
 
 (see Section 9.3 and Listing 9-30) to retrieve a batch of folios from the page cache.
 
- 
 
 
 
- 
+
+
 
 2546 **static int filemap_get_pages**(**struct** kiocb \*iocb, **struct** iov_iter \*iter, 2547 **struct** folio_batch \*fbatch) 2548 {
 
@@ -3821,11 +3827,11 @@ scope iouring-specific [IOCB_WAITQ](https://git.kernel.org/pub/scm/linux/kernel/
 
 2592 **goto err**; 2593 }
 
- 
 
 
 
- 
+
+
 
 2594
 
@@ -3839,11 +3845,11 @@ scope iouring-specific [IOCB_WAITQ](https://git.kernel.org/pub/scm/linux/kernel/
 
 2604 }
 
- 
+
 
 *Listing 9-44:* mm/filemap.c: [*filemap_get_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2546)
 
- 
+
 
 We determine the range of pages we need to read based on the
 
@@ -3863,13 +3869,13 @@ We use this to calculate the inclusive upper bound of the page index via
 
 [DIV_ROUND_UP()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/math.h?h=v6.0#n37) (noting that if the index is offset into a folio, we will obtain the full folio).
 
- 
+
 
 **N O T E** A consequence of this is that if the iterator range is page-aligned, we also read the
 
 folio after the last requested. So for instance, if we try to read a single page, we will actually read two pages, not one.
 
- 
+
 
 At this point we have a starting point within the [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) ob-
 
@@ -3893,11 +3899,11 @@ if not then we try to perform synchronous readahead via
 
 [page_cache_sync_readahead() , ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1210)unless the [IOCB_NOIO](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n337) flag has been specified for the iterator, indicating that I/O is not permitted (used by some spe-cific file systems for scenarios where this is appropriate)—in this case we simply return the EAGAIN error to indicate I/O was requested so repeat the operation.
 
- 
 
 
 
- 
+
+
 
 This function unconditionally reads ahead at least a single
 
@@ -3913,7 +3919,7 @@ Afterwards we encounter a slightly tricky edge case, where we fail to re-
 
 trieve folios even after synchronous readahead:
 
- 
+
 
 **Check whether we did in fact retrieve any folios after readahead**
 
@@ -3943,11 +3949,11 @@ indicates that the folio might have been truncated. In this case we jump back to
 
 error occurred. We have done our best—attempting to retrieve a single folio.
 
- 
+
 
 We examine [filemap_create_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2489) in Listing 9-45 below.
 
- 
+
 
 2489 **static int filemap_create_folio**(**struct** file \*file, 2490 **struct** address_space \*mapping, **pgoff_t** index, 2491 **struct** folio_batch \*fbatch) 2492 {
 
@@ -3961,11 +3967,11 @@ We examine [filemap_create_folio()](https://git.kernel.org/pub/scm/linux/kernel/
 
 2500 */\**
 
- 
 
 
 
- 
+
+
 
 2501 *\* Protect against truncate / hole punch. Grabbing invalidate_lock*
 
@@ -3987,11 +3993,11 @@ We examine [filemap_create_folio()](https://git.kernel.org/pub/scm/linux/kernel/
 
 2532 }
 
- 
+
 
 *Listing 9-45:* mm/filemap.c: [*filemap_create_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2489)
 
- 
+
 
 We start by allocating a folio via [filemap_alloc_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n955)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n955) return-
 
@@ -4017,11 +4023,11 @@ Returning to [filemap_get_pages()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 proceed with the usual case—the batch returned by [filemap_get_read_batch()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2346)
 
- 
 
 
 
- 
+
+
 
 contains specific additional information in the final folio in the batch, as this
 
@@ -4041,7 +4047,7 @@ ine in Listing 9-46 below (eliding out of scope io_uring-specific logic and
 
 distracting no wait handling):
 
- 
+
 
 2434 **static int filemap_update_page**(**struct** kiocb \*iocb, 2435 **struct** address_space \*mapping, **struct** iov_iter \*iter, 2436 **struct** folio \*folio) 2437 {
 
@@ -4079,19 +4085,19 @@ distracting no wait handling):
 
 2483 **filemap_invalidate_unlock_shared**(mapping); 2484 **if** (error == **AOP_TRUNCATED_PAGE**) 2485 **folio_put**(folio); 2486 **return** error;
 
- 
 
 
 
- 
+
+
 
 2487 }
 
- 
+
 
 *Listing 9-46:* mm/filemap.c: [*filemap_update_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2434)
 
- 
+
 
 We carefully lock around the invalidation using
 
@@ -4129,7 +4135,7 @@ The heavy lifting of this operation is performed in
 
 [filemap_get_read_batch() , ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2346)which we explore in Listing 9-47.
 
- 
+
 
 2337 */\**
 
@@ -4147,11 +4153,11 @@ The heavy lifting of this operation is performed in
 
 2353 **for** (folio = **xas_load**(&xas); folio; folio = **xas_next**(&xas)) { 2354 **if** (**xas_retry**(&xas, folio))
 
- 
 
 
 
- 
+
+
 
 2355 **continue**; 2356 **if** (xas.xa_index \> max \|\| **xa_is_value**(folio)) 2357 **break**; 2358 **if** (**xa_is_sibling**(folio)) 2359 **break**; 2360 **if** (!**folio_try_get_rcu**(folio)) 2361 **goto retry**; 2362
 
@@ -4165,7 +4171,7 @@ The heavy lifting of this operation is performed in
 
 2379 **rcu_read_unlock**(); 2380 }
 
- 
+
 
 *Listing 9-47:* mm/filemap.c: [*filemap_get_read_batch()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2346)
 
@@ -4199,7 +4205,7 @@ tem, and the degree to which things are permitted to remain in flight for
 
 efficiency:
 
- 
+
 
 **Has the iteration terminated?** If [struct xa_state-\>xa_index](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1326) exceeds the maxi-
 
@@ -4209,11 +4215,11 @@ mum inclusive index max, we’re done and exit.
 
 ‘exceptional’ entries to be present in the xarray, i.e. ones that contain
 
- 
 
 
 
- 
+
+
 
 values rather than pointers. If this is the case (checked via [xa_is_value()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n79)), then this indicates the folio has been evicted and thus we must abort the operation (we strictly return contiguous entries).
 
@@ -4235,7 +4241,7 @@ erence count to the folio, however it still might have moved (or been removed) i
 
 [xas_reload()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1567)—if the folio is not the same then we must drop the refer-ence and try this dance again.
 
- 
+
 
 See also Listing 9-51 below for a discussion around a highly relevant com-
 
@@ -4259,7 +4265,7 @@ Finally, we advance the [struct xa_state](https://git.kernel.org/pub/scm/linux/k
 
 higher order) using [xas_advance()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1612).
 
- 
+
 
 ***9.5.3 Reading a Single Folio From the Page Cache***
 
@@ -4267,7 +4273,7 @@ When we perform a page fault, as discussed in Section 9.4, we first need to dete
 
 so. We do this via [filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n526) as shown in Listing 9-48.
 
- 
+
 
 516 */\*\**
 
@@ -4277,11 +4283,11 @@ so. We do this via [filemap_get_folio()](https://git.kernel.org/pub/scm/linux/ke
 
 524 *\* Otherwise, %NULL is returned.*
 
- 
 
 
 
- 
+
+
 
 525 *\*/*
 
@@ -4289,11 +4295,11 @@ so. We do this via [filemap_get_folio()](https://git.kernel.org/pub/scm/linux/ke
 
 529 **return \_\_filemap_get_folio**(mapping, index, 0, 0); 530 }
 
- 
+
 
 *Listing 9-48:* include/linux/pagemap.h: [*filemap_get_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n526)
 
- 
+
 
 The folio is not locked, nor is it read from disk if it is not uptodate nor is
 
@@ -4319,7 +4325,7 @@ above).
 
 behaviour:
 
- 
+
 
 **FGP_ACCESSED** The folio will be marked accessed.
 
@@ -4347,11 +4353,11 @@ termined by [mapping_can_writeback()](https://git.kernel.org/pub/scm/linux/kerne
 
 tem should not be invoked on allocation by clearing the [\_\_GFP_FS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n215) flag on
 
- 
 
 
 
- 
+
+
 
 physical page allocation. This is typically used when a filesystem must re-trieve a folio but recursive access to the filesystem cannot be permitted (for instance to avoid deadlocks).
 
@@ -4371,7 +4377,7 @@ ing about a failure to allocate to the kernel log. See Section 2.6 for more deta
 
 as implemented by the [folio_wait_stable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n3078) function. See the writeback chapter for details on how writeback functions as a whole.
 
- 
+
 
 We start by examining the beginning of [\_\_filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1914) which per-
 
@@ -4379,7 +4385,7 @@ forms the initial read from the page cache and handles associated FGP flags
 
 in Listing 9-49.
 
- 
+
 
 1881 */\*\**
 
@@ -4411,11 +4417,11 @@ in Listing 9-49.
 
 1919 **repeat**:
 
- 
 
 
 
- 
+
+
 
 1920 folio = **mapping_get_entry**(mapping, index); 1921 **if** (**xa_is_value**(folio)) { 1922 **if** (fgp_flags & **FGP_ENTRY**) 1923 **return** folio; 1924 folio = **NULL**; 1925 }
 
@@ -4441,11 +4447,11 @@ in Listing 9-49.
 
 1956 **if** (fgp_flags & **FGP_STABLE**) 1957 **folio_wait_stable**(folio);
 
- 
+
 
 *Listing 9-49:* mm/filemap.c: [*\_\_filemap_get_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1914) *Reading From Page Cache*
 
- 
+
 
 The actual read from the page cache is performed by [mapping_get_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1850),
 
@@ -4455,7 +4461,7 @@ reference count of the retrieved folio to pin it in memory, which must be
 
 decremented if something goes wrong.
 
- 
+
 
 **N O T E** It’s important to note here that all folios that are read into the page cache whether
 
@@ -4471,15 +4477,15 @@ The reference count is incremented on introduction to the page cache, but also w
 
 added to private filesystem metadata, added to an LRU list, mapped into memory
 
- 
 
 
 
- 
+
+
 
 and thus referenced by a page table, as well as any other mean by which the kernel references it.
 
- 
+
 
 We start by examining whether this value is ‘exceptional’, i.e. not NULL
 
@@ -4531,7 +4537,7 @@ At this point, if the folio was found, we return it (on line 1998), otherwise
 
 we invoke the missing page logic shown in Listing 9-50.
 
- 
+
 
 1958 **no_page**:
 
@@ -4539,11 +4545,11 @@ we invoke the missing page logic shown in Listing 9-50.
 
 1961 **if** ((fgp_flags & **FGP_WRITE**) && **mapping_can_writeback**(mapping)) 1962 gfp \|= **\_\_GFP_WRITE**; 1963 **if** (fgp_flags & **FGP_NOFS**) 1964 gfp &= ~**\_\_GFP_FS**; 1965 **if** (fgp_flags & **FGP_NOWAIT**) { 1966 gfp &= ~**GFP_KERNEL**; 1967 gfp \|= **GFP_NOWAIT** \| **\_\_GFP_NOWARN**;
 
- 
 
 
 
- 
+
+
 
 1968 }
 
@@ -4573,11 +4579,11 @@ we invoke the missing page logic shown in Listing 9-50.
 
 1998 }
 
- 
+
 
 *Listing 9-50:* mm/filemap.c: [*\_\_filemap_get_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1914) *Missing Page Handling*
 
- 
+
 
 We only actually do something in the instance of a missing folio if
 
@@ -4607,11 +4613,11 @@ If this allocation fails, then we simply return NULL. Otherwise we perform
 
 a sanity check to ensure that either we don’t require a lock as indicated by
 
- 
 
 
 
- 
+
+
 
 FGP_FOR_MMAP or we do with FGP_LOCK specified. If this edge case occurs then we warn about it and override by setting this flag anyway (this is meaningful because we may repeat the operation).
 
@@ -4635,7 +4641,7 @@ We examine this function in Listing 9-52. However, prior to this there is
 
 a very useful comment contained in the source, shown in Listing 9-51.
 
- 
+
 
 1818 */\**
 
@@ -4655,11 +4661,11 @@ a very useful comment contained in the source, shown in Listing 9-51.
 
 1836 *\*/*
 
- 
+
 
 *Listing 9-51:* mm/filemap.c: *Lockless Page Cache Protocol*
 
- 
+
 
 This protocol details how page cache operations can be performed un-
 
@@ -4671,11 +4677,11 @@ below. However broadly the ordering described here, with folios being re-
 
 trieved/removed from the [struct address_space-\>i_pages](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) xarray results in the possibility that the reference count of a folio that has in fact been removed from the xarray has gets temporarily boosted prior to being freed thus pre-venting its freeing.
 
- 
 
 
 
- 
+
+
 
 To handle this, we make sure to always use [xas_reload()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1567) in all instances
 
@@ -4685,7 +4691,7 @@ Listing 9-52 below and in [filemap_get_read_batch()](https://git.kernel.org/pub/
 
 described previously.
 
- 
+
 
 1838 */\**
 
@@ -4727,11 +4733,11 @@ described previously.
 
 1879 }
 
- 
 
 
 
- 
+
+
 
 *Listing 9-52:* mm/filemap.c: [*mapping_get_entry()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1850)
 
@@ -4763,7 +4769,7 @@ Finally, now we have incremented the reference count we, as discussed,
 
 may race with the folio being moved (or removed) so we reload the entry and check to ensure that the folio matches. If not we drop the reference count and repeat.
 
- 
+
 
 ***9.5.4 Reading a Single Folio Into the Page Cache***
 
@@ -4771,41 +4777,41 @@ There are a number of file system, driver and internal kernel callers which ulti
 
 9-9.
 
- 
+
 
 file systems, drivers, swapon syscall, uprobe
 
- 
+
 
 file systems, block, SCSI [read_mapping_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n753) file systems, drivers, shmem
 
- 
+
 
 [read_mapping_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n759) [read_cache_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3567) [read_cache_page_gfp()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3590) file systems
 
- 
+
 
 [read_cache_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3548) [do_read_cache_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3556)
 
- 
+
 
 [do_read_cache_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3472)
 
- 
+
 
 *Figure 9-9: Callers Reading a Single Folio Into the Page Cache*
 
- 
+
 
 Regardless of what invokes the original read, we ultimately end up in
 
 [do_read_cache_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3472) which we examine in Listing 9-53.
 
- 
 
 
 
- 
+
+
 
 3472 **static struct** folio \***do_read_cache_folio**(**struct** address_space \*mapping, 3473 **pgoff_t** index, **filler_t** filler, **struct** file \*file, **gfp_t** gfp) 3474 {
 
@@ -4843,11 +4849,11 @@ Regardless of what invokes the original read, we ultimately end up in
 
 3518 filler:
 
- 
 
 
 
- 
+
+
 
 3519 err = **filemap_read_folio**(file, filler, folio); 3520 **if** (err) {
 
@@ -4861,11 +4867,11 @@ Regardless of what invokes the original read, we ultimately end up in
 
 3530 }
 
- 
+
 
 *Listing 9-53:* mm/filemap.c: [*do_read_cache_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3472)
 
- 
+
 
 The function is passed an optional [filler_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n493) callback (see Listing
 
@@ -4913,11 +4919,11 @@ Before we read from disk, we must perform the typical dance to protect
 
 ourselves against truncation. If we find that the [struct folio-\>mapping](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) refer-ence to page cache object does not match the page cache object under exam-ination then we unlock the folio, decrement its reference count and repeat
 
- 
 
 
 
- 
+
+
 
 the procedure (perhaps allocating a new folio had the prior one been trun-
 
@@ -4951,7 +4957,7 @@ this page cache access indicates that the file has actively been accessed. After
 
 doing so we return the folio, now present and uptodate in the page cache.
 
- 
+
 
 ***9.5.5 Adding Folios to the Page Cache***
 
@@ -4963,7 +4969,7 @@ relevant xarray. This is performed by [filemap_add_folio()](https://git.kernel.o
 
 in Listing 9-54 (eliding out of scope working set logic).
 
- 
+
 
 926 **int filemap_add_folio**(**struct** address_space \*mapping, **struct** folio \*folio, 927 **pgoff_t** index, **gfp_t** gfp) 928 {
 
@@ -4981,11 +4987,11 @@ in Listing 9-54 (eliding out of scope working set logic).
 
 951 }
 
- 
+
 
 *Listing 9-54:* mm/filemap.c: [*filemap_add_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n926)
 
- 
+
 
 Note that we track folios which were recently evicted for the working set
 
@@ -4999,11 +5005,11 @@ lifting, which also clears the lock if no error arose, we clear it manually if o
 
 did. This therefore returns locked folios on success.
 
- 
 
 
 
- 
+
+
 
 Finally if this succeeded, we add the folio to an LRU via [folio_add_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n479)
 
@@ -5013,7 +5019,7 @@ We examine [\_\_filemap_add_folio()](https://git.kernel.org/pub/scm/linux/kernel
 
 working set logic, debug assertions, huge page, tracing, statistics and cgroup logic).
 
- 
+
 
 838 **noinline int \_\_filemap_add_folio**(**struct** address_space \*mapping, 839 **struct** folio \*folio, **pgoff_t** index, **gfp_t** gfp, **void** \*\*shadowp) 840 {
 
@@ -5053,11 +5059,11 @@ working set logic, debug assertions, huge page, tracing, statistics and cgroup l
 
 889 **xas_split**(&xas, old, order); 890 **xas_reset**(&xas); 891 } 892 }
 
- 
 
 
 
- 
+
+
 
 893
 
@@ -5087,11 +5093,11 @@ working set logic, debug assertions, huge page, tracing, statistics and cgroup l
 
 919 folio-\>mapping = **NULL**; 920 */\* Leave page-\>index set: truncation relies upon it \*/* 921 **folio_put_refs**(folio, nr); 922 **return xas_error**(&xas); 923 }
 
- 
+
 
 *Listing 9-55:* mm/filemap.c: [*\_\_filemap_add_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n838)
 
- 
+
 
 **N O T E** The majority of the discussion of this function centres around logic relating to work-
 
@@ -5105,7 +5111,7 @@ which is the actual function call which stores the entry as well as the edge cas
 
 memory handling.
 
- 
+
 
 This establishes a [struct xa_state](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1326) object to retain xarray state at the speci-
 
@@ -5137,11 +5143,11 @@ If this is so, [xas_nomem()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 succeeds, otherwise if out of memory we exit indicating this error.
 
- 
 
 
 
- 
+
+
 
 In ordinary circumstances this loop will be executed in only one itera-
 
@@ -5183,11 +5189,11 @@ This is very important as this counter is used explicitly in the kernel to
 
 determine how many pages are actually present in the page cache for a given page cache entry.
 
- 
+
 
 **9.6 Reading Folios From Disk**
 
- 
+
 
 There are two principle means by which data is actually read from disk into
 
@@ -5207,11 +5213,11 @@ lios in a batch via [filemap_get_pages()](https://git.kernel.org/pub/scm/linux/k
 
 described in Section 9.4 and Listing 9-35.
 
- 
 
 
 
- 
+
+
 
 In addition to this there are a number of filesystem, driver and other sub-
 
@@ -5223,7 +5229,7 @@ Regardless of where the operation originates from, the folio is ultimately
 
 read from disk via [filemap_read_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2382) which we examine in Listing 9-56.
 
- 
+
 
 2382 **static int filemap_read_folio**(**struct** file \*file, **filler_t filler**, 2383 **struct** folio \*folio) 2384 {
 
@@ -5251,11 +5257,11 @@ read from disk via [filemap_read_folio()](https://git.kernel.org/pub/scm/linux/k
 
 2406 }
 
- 
+
 
 *Listing 9-56:* mm/filemap.c: [*filemap_read_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2382)
 
- 
+
 
 We require the folio passed into this function to already be locked, ready
 
@@ -5267,15 +5273,15 @@ This function is essentially a wrapper around filler which is of type
 
 fined as shown in Listing 9-57.
 
- 
+
 
 493 **typedef int filler_t**(**struct** file \*, **struct** folio \*);
 
- 
+
 
 *Listing 9-57:* include/linux/pagemap.h: [*filler_t*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n493)
 
- 
+
 
 This function accepts the folio to read from, the [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) object which
 
@@ -5287,11 +5293,11 @@ Before we invoke this function, we clear the [PG_error](https://git.kernel.org/p
 
 the assumption that any such prior error was temporary.
 
- 
 
 
 
- 
+
+
 
 If the filler callback returns an error we simply forward this to the caller.
 
@@ -5315,7 +5321,7 @@ Typically, when disk I/O is complete, [page_endio()](https://git.kernel.org/pub/
 
 examine in Listing 9-58.
 
- 
+
 
 1630 */\**
 
@@ -5341,21 +5347,21 @@ examine in Listing 9-58.
 
 1655 }
 
- 
+
 
 *Listing 9-58:* mm/filemap.c: [*page_endio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1634)
 
- 
+
 
 This is divided into two parts—read and write. In both cases we set
 
 the [PG_error](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n109) folio flag should an error have arisen, on write we addition-
 
- 
 
 
 
- 
+
+
 
 ally set an error in the related [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) mapping object via
 
@@ -5377,11 +5383,11 @@ it if one did (and setting [PG_error](https://git.kernel.org/pub/scm/linux/kerne
 
 on folio locking as a whole.
 
- 
+
 
 **9.7 Readahead**
 
- 
+
 
 Readahead is the process by which pages are read into the page cache be-
 
@@ -5449,11 +5455,11 @@ You can also use the [blockdev](https://man7.org/linux/man-pages/man8/blockdev.8
 
 to get the readahead expressed in logical sectors (hardcoded 512 byte units)
 
- 
 
 
 
- 
+
+
 
 for e.g. /dev/sda1 and blockdev --setra 512 /dev/sda1 to set the readahead to e.g. 512 sectors (256 KiB).
 
@@ -5475,7 +5481,7 @@ pings (using VMA flags) or [struct file](https://git.kernel.org/pub/scm/linux/ke
 
 ble 9-1.
 
- 
+
 
 Table 9-1: Readahead Modes
 
@@ -5487,7 +5493,7 @@ Normal [MADV_NORMAL](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 Sequential [MADV_SEQUENTIAL](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/asm-generic/mman-common.h?h=v6.0#n45) [POSIX_FADV_SEQ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/linux/fadvise.h?h=v6.0#n6) [VM_SEQ_READ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n286) -
 
- 
+
 
 The readahead itself is instigated either by the usual [read()](https://man7.org/linux/man-pages/man2/read.2.html) or
 
@@ -5499,7 +5505,7 @@ as shown in [filemap_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 There are two kinds of readahead:
 
- 
+
 
 **Synchronous Readahead** Performed when a major page fault occurs, i.e. a
 
@@ -5517,13 +5523,13 @@ whether it has the [PG_readahead](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 chronous readahead in Section 9.7.2.
 
- 
+
 
 We examine the code paths readahead takes through the kernel in Fig-
 
 ure 9-10.
 
- 
+
 
 
 
@@ -5535,7 +5541,7 @@ if not present in page cache if [PG_readahead](https://git.kernel.org/pub/scm/li
 
 filesystem, huge page fault filesystem
 
- 
+
 
 [page_cache_sync_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1210) [filemap_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) [page_cache_async_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1233)
 
@@ -5551,11 +5557,11 @@ if [FMODE_RANDOM](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux
 
 [force_page_cache_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n300) [ondemand_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/?h=v6.0#n)
 
- 
+
 
 [do_page_cache_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n275) fallback [page_cache_ra_order()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n490)
 
- 
+
 
 filesystem
 
@@ -5563,17 +5569,17 @@ if no a_ops-\>readahead
 
 [page_cache_ra_unbounded()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n200) [read_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n146) a_ops-\>read_folio()
 
- 
+
 
 invokes
 
 a_ops-\>readahead() [readahead_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1285)
 
- 
+
 
 *Figure 9-10: Readahead Call Paths*
 
- 
+
 
 **N O T E** There is additionally a [*readahead()*](https://man7.org/linux/man-pages/man2/readahead.2.html) system call which invokes [*ksys_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n725), this
 
@@ -5585,7 +5591,7 @@ vokes [*force_page_cache_ra()*](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 [*generic_fadvise()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/fadvise.c?h=v6.0#n32).
 
- 
+
 
 Before we examine how readahead is performed, let’s examine the
 
@@ -5593,7 +5599,7 @@ means by which readahead state is perpetuated— the [struct readahead_control](
 
 object is threaded through readahead calls, as shown in Listing 9-59.
 
- 
+
 
 1152 */\*\**
 
@@ -5607,25 +5613,25 @@ object is threaded through readahead calls, as shown in Listing 9-59.
 
 1164 *\** *May be NULL if invoked internally by the filesystem.* 1165 *\* @mapping: Readahead this filesystem object.* 1166 *\* @ra: File readahead state. May be NULL.* 1167 *\*/*
 
- 
 
 
 
- 
+
+
 
 1168 **struct** readahead_control { 1169 **struct** file \*file; 1170 **struct** address_space \*mapping; 1171 **struct** file_ra_state \*ra; 1172 */\* private: use the readahead\_\* accessors instead \*/* 1173 **pgoff_t** \_index;
 
 1174 **unsigned int** \_nr_pages; 1175 **unsigned int** \_batch_count; 1176 };
 
- 
+
 
 *Listing 9-59:* include/linux/pagemap.h: [*struct readahead_control*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1168)
 
- 
+
 
 Examining each field:
 
- 
+
 
 **file** The [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) associated with the readahead operation (if one is
 
@@ -5659,13 +5665,13 @@ cessible via [readahead_count()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 Accessible via [reaahead_batch_count()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1377).
 
- 
+
 
 Typically a [struct readahead_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1168) object is initialised by the
 
 [DEFINE_READAHEAD()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1178) macro, as shown in Listing 9-60.
 
- 
+
 
 **\#define DEFINE_READAHEAD**(ractl, f, r, m, i) \\
 
@@ -5681,15 +5687,15 @@ Typically a [struct readahead_control](https://git.kernel.org/pub/scm/linux/kern
 
 }
 
- 
+
 
 *Listing 9-60:* include/linux/pagemap.h: [*DEFINE_READAHEAD()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1178)
 
- 
 
 
 
- 
+
+
 
 This initialises the file, mapping, ra and \_index fields as specified and ze-
 
@@ -5699,7 +5705,7 @@ We examine file readahead state described by [struct file_ra_state](https://git.
 
 ing 9-61.
 
- 
+
 
 908 */\*\**
 
@@ -5715,15 +5721,15 @@ ing 9-61.
 
 929 };
 
- 
+
 
 *Listing 9-61:* include/linux/fs.h: [*struct file_ra_state*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n922)
 
- 
+
 
 Examining each field:
 
- 
+
 
 **start** The index within the [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) page cache object in which
 
@@ -5751,21 +5757,21 @@ a major fault, indicating a cache miss from readahead. We use this in
 
 altogether (if the miss count exceeds [MMAP_LOTSAMISS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2915)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2915) hardcoded to 100 cache misses for a file, then we give up).
 
- 
 
 
 
- 
+
+
 
 **prev_pos** The last byte from the latest read request.
 
- 
+
 
 This type is initialised in [file_ra_state_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n139), performed on file open, as
 
 shown in Listing 9-62.
 
- 
+
 
 134 */\**
 
@@ -5781,7 +5787,7 @@ shown in Listing 9-62.
 
 141 ra-\>ra_pages = **inode_to_bdi**(mapping-\>host)-\>ra_pages; 142 ra-\>prev_pos = -1; 143 }
 
- 
+
 
 *Listing 9-62:* mm/readahead.c: [*file_ra_state_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n139)
 
@@ -5789,7 +5795,7 @@ This function simply sets prev_pos to an invalid value and retrieves the
 
 ra_pages field from the BDI field [struct backing_dev_info-\>ra_pages](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n165) as previ-ously discussed.
 
- 
+
 
 ***9.7.1 Synchronous Readahead***
 
@@ -5807,7 +5813,7 @@ form synchronous readahead via [do_sync_mmap_readahead()](https://git.kernel.org
 
 in Listing 9-63 (eliding out of scope transparent huge page handling).
 
- 
+
 
 2691 */\**
 
@@ -5827,11 +5833,11 @@ in Listing 9-63 (eliding out of scope transparent huge page handling).
 
 2700 **struct** file \*file = vmf-\>vma-\>vm_file; 2701 **struct** file_ra_state \*ra = &file-\>f_ra; 2702 **struct** address_space \*mapping = file-\>f_mapping; 2703 **DEFINE_READAHEAD**(ractl, file, ra, mapping, vmf-\>pgoff); 2704 **struct** file \*fpin = **NULL**; 2705 **unsigned long** vm_flags = vmf-\>vma-\>vm_flags;
 
- 
 
 
 
- 
+
+
 
 2706 **unsigned int** mmap_miss;
 
@@ -5859,11 +5865,11 @@ in Listing 9-63 (eliding out of scope transparent huge page handling).
 
 2760 }
 
- 
+
 
 *Listing 9-63:* mm/filemap.c: [*do_sync_mmap_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2968)
 
- 
+
 
 The function forms part of the faulting mechanism, so will be performed
 
@@ -5877,11 +5883,11 @@ must be pinned, i.e. have its reference count increased so the object is not
 
 released.
 
- 
 
 
 
- 
+
+
 
 As a result, this function returns a pointer to a [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) object if the
 
@@ -5911,7 +5917,7 @@ Equally, if the BDI or user indicates that the maximum number of reada-
 
 head pages is zero, then readahead cannot proceed and we also abort the operation in this instance.
 
- 
+
 
 **9.7.1.1 Sequential Page Fault Read**
 
@@ -5941,7 +5947,7 @@ readahead ultimately invoking [ondemand_readahead()](https://git.kernel.org/pub/
 
 mines how to size the readahead. We explore this in Listing 9-70 below.
 
- 
+
 
 **9.7.1.2 mmap Readaround**
 
@@ -5955,11 +5961,11 @@ otherwise we’d not have encountered a major fault), so we increment the
 
 [struct file_ra_state](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n922)-\>mmap_miss count, unless it exceeds the [MMAP_LOTSAMISS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2915) limit multiplied by 10 at which it is capped.
 
- 
 
 
 
- 
+
+
 
 Each time a cache hit occurs (i.e. a minor fault within the file) this count
 
@@ -5997,11 +6003,11 @@ readahead, with the async size equal to one quarter of this range (rounded
 
 down as performed with integers).
 
- 
+
 
 ra-\>ra_pages
 
- 
+
 
 ... ...
 
@@ -6009,11 +6015,11 @@ vmf-\>pgoff
 
 ra-\>async_size
 
- 
+
 
 *Figure 9-11: mmap Readaround Readahead Range*
 
- 
+
 
 **9.7.1.3 read() Synchronous Readahead**
 
@@ -6029,7 +6035,7 @@ of req_count equal to the number of folios yet to be read. We examine
 
 [page_cache_sync_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1210) in Listing 9-64.
 
- 
+
 
 1196 */\*\**
 
@@ -6043,11 +6049,11 @@ of req_count equal to the number of folios yet to be read. We examine
 
 1208 *\*/*
 
- 
 
 
 
- 
+
+
 
 1209 **static inline**
 
@@ -6055,7 +6061,7 @@ of req_count equal to the number of folios yet to be read. We examine
 
 1214 **DEFINE_READAHEAD**(ractl, file, ra, mapping, index); 1215 **page_cache_sync_ra**(&ractl, req_count); 1216 }
 
- 
+
 
 *Listing 9-64:* include/linux/pagemap.h: [*page_cache_sync_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1210)
 
@@ -6071,7 +6077,7 @@ This object is then passed to [page_cache_sync_ra()](https://git.kernel.org/pub/
 
 Listing 9-65 below.
 
- 
+
 
 **9.7.1.4 Shared Synchronous Readahead**
 
@@ -6083,7 +6089,7 @@ formed in general, ultimately invoke [page_cache_sync_ra()](https://git.kernel.o
 
 in Listing 9-65.
 
- 
+
 
 675 **void page_cache_sync_ra**(**struct** readahead_control \*ractl, 676 **unsigned long** req_count) 677 {
 
@@ -6111,15 +6117,15 @@ in Listing 9-65.
 
 698
 
- 
 
 
 
- 
+
+
 
 699 **ondemand_readahead**(ractl, **NULL**, req_count); 700 }
 
- 
+
 
 *Listing 9-65:* mm/readahead.c: [*page_cache_sync_ra()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n675)
 
@@ -6187,7 +6193,7 @@ mand’ readahead via [ondemand_readahead()](https://git.kernel.org/pub/scm/linu
 
 below.
 
- 
+
 
 **9.7.1.5 Forced Readahead**
 
@@ -6197,7 +6203,7 @@ When readahead should no proceed normally due to a file having
 
 of readahead via [force_page_cache_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n300) as shown in Listing 9-66 below.
 
- 
+
 
 296 */\**
 
@@ -6209,11 +6215,11 @@ of readahead via [force_page_cache_ra()](https://git.kernel.org/pub/scm/linux/ke
 
 300 **void force_page_cache_ra**(**struct** readahead_control \*ractl, 301 **unsigned long** nr_to_read)
 
- 
 
 
 
- 
+
+
 
 302 {
 
@@ -6241,11 +6247,11 @@ of readahead via [force_page_cache_ra()](https://git.kernel.org/pub/scm/linux/ke
 
 329 }
 
- 
+
 
 *Listing 9-66:* mm/readahead.c: [*force_page_cache_ra()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n300)
 
- 
+
 
 This aborts if the [struct address_space-\>a_ops](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) address space operations
 
@@ -6269,11 +6275,11 @@ pages should be force-readahead. We then loop, reading up to a maximum
 
 of 2 MiB chunks of data at a time, using [do_page_cahe_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n275) to do the heavy lifting.
 
- 
 
 
 
- 
+
+
 
 ***9.7.2 Asynchronous Readahead***
 
@@ -6301,7 +6307,7 @@ handle the asynchronous readahead, which we examine in Listing 9-67. This
 
 function is only called if the [PG_readahead](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n143) flag was set on the folio.
 
- 
+
 
 2534 **static int filemap_readahead**(**struct** kiocb \*iocb, **struct** file \*file, 2535 **struct** address_space \*mapping, **struct** folio \*folio, 2536 **pgoff_t** last_index) 2537 {
 
@@ -6311,11 +6317,11 @@ function is only called if the [PG_readahead](https://git.kernel.org/pub/scm/lin
 
 2544 }
 
- 
+
 
 *Listing 9-67:* mm/filemap.c: [*filemap_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2534)
 
- 
+
 
 This defines the [struct readahead_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1168) object as you would expect
 
@@ -6339,7 +6345,7 @@ entire range of data starting from this folio is to be read. We examine this
 
 function below in Listing 9-69.
 
- 
+
 
 **N O T E** As discussed above around [*filemap_get_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2546) (see Listing 9-44), if the range of
 
@@ -6353,17 +6359,17 @@ lio with [*PG_readahead*](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 a *req_count* of 0 to [*page_cache_async_ra()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n703).
 
- 
+
 
 In the case of a page fault, [filemap_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) unconditionally calls
 
 [do_async_mmap_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3037) as long as this is the first time the fault has
 
- 
 
 
 
- 
+
+
 
 been tried. It does this without checking for [PG_readahead](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n143)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n143) leaving this to
 
@@ -6371,7 +6377,7 @@ been tried. It does this without checking for [PG_readahead](https://git.kernel.
 
 9-68.
 
- 
+
 
 3032 */\**
 
@@ -6397,11 +6403,11 @@ been tried. It does this without checking for [PG_readahead](https://git.kernel.
 
 3059 }
 
- 
+
 
 *Listing 9-68:* mm/filemap.c: [*do_async_mmap_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3037)
 
- 
+
 
 This defines the readahead object as you would expect via
 
@@ -6425,11 +6431,11 @@ dance via [maybe_unlock_mmap_for_io()](https://git.kernel.org/pub/scm/linux/kern
 
 [page_cache_async_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n703) which we examine in Listing 9-69 below.
 
- 
 
 
 
- 
+
+
 
 **9.7.2.1 Shared Asynchronous Readahead**
 
@@ -6439,7 +6445,7 @@ head is ultimately deferred to [page_cache_async_ra()](https://git.kernel.org/pu
 
 ing 9-69 below (eliding out of scope cgroup logic).
 
- 
+
 
 703 **void page_cache_async_ra**(**struct** readahead_control \*ractl, 704 **struct** folio \*folio, **unsigned long** req_count) 705 {
 
@@ -6461,11 +6467,11 @@ ing 9-69 below (eliding out of scope cgroup logic).
 
 721 **ondemand_readahead**(ractl, folio, req_count); 722 }
 
- 
+
 
 *Listing 9-69:* mm/readahead.c: [*page_cache_async_ra()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n703)
 
- 
+
 
 If readahead is disabled (indicated by the [struct file_ra_state-\>ra_pages](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n922)
 
@@ -6489,7 +6495,7 @@ Finally, we defer the actual readahead to on-demand readahead via
 
 [ondemand_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n556), which we explore in Listing 9-70 below.
 
- 
+
 
 ***9.7.3 On-Demand Readahead***
 
@@ -6513,21 +6519,21 @@ As this function is rather complicated and relies upon heuristics, we will
 
 briefly examine an example of how readahead behaves for a series of se-
 
- 
 
 
 
- 
+
+
 
 quential [read()](https://man7.org/linux/man-pages/man2/read.2.html) operations of 1 page each of a very large file not yet in the page cache, with a maximum readahead count of 32 pages, as shown in Fig-
 
 ure 9-12.
 
- 
+
 
 ...
 
- 
+
 
 Sync RA R ...
 
@@ -6551,11 +6557,11 @@ Async RA ... ... R ... R ... ...
 
 etc.
 
- 
+
 
 *Figure 9-12: Example On-Demand* [*read()*](https://man7.org/linux/man-pages/man2/read.2.html) *Readahead for Sequential Single-Page Reads*
 
- 
+
 
 Note that dashed boxes denote folios not yet in the page cache, the
 
@@ -6597,11 +6603,11 @@ In fact, even in the case of synchronous readahead that is not the
 
 first that has occurred in the file, we attempt to ascertain any evidence of
 
- 
 
 
 
- 
+
+
 
 context-based sequential reads via [try_context_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n427) (see Listing 9-73
 
@@ -6627,7 +6633,7 @@ readahead, [ondemand_readahead()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 below.
 
- 
+
 
 553 */\**
 
@@ -6645,11 +6651,11 @@ below.
 
 571 **if** (req_size \> max_pages && bdi-\>io_pages \> max_pages) 572 max_pages = **min**(req_size, bdi-\>io_pages);
 
- 
+
 
 *Listing 9-70:* mm/readahead.c: [*ondemand_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n556) *prelude*
 
- 
+
 
 We start by obtaining the index from which we should proceed from
 
@@ -6677,11 +6683,11 @@ cally determine where we are with the readahead and how to proceed, which
 
 we explore in Listing 9-71.
 
- 
 
 
 
- 
+
+
 
 574 */\**
 
@@ -6729,11 +6735,11 @@ we explore in Listing 9-71.
 
 620 *\*/*
 
- 
 
 
 
- 
+
+
 
 621 **if** (req_size \> max_pages) 622 **goto initial_readahead**;
 
@@ -6755,11 +6761,11 @@ we explore in Listing 9-71.
 
 637 **if** (**try_context_readahead**(ractl-\>mapping, ra, index, req_size, 638 max_pages)) 639 **goto readit**;
 
- 
+
 
 *Listing 9-71:* mm/readahead.c: [*ondemand_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n556) *heuristics*
 
- 
+
 
 We have special handling for the case where we are at the beginning of
 
@@ -6787,7 +6793,7 @@ it at the start of the next readahead batch) and obtaining the new readahead
 
 size via [get_next_ra_size()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n355)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n355) which we examine in Listing 9-72.
 
- 
+
 
 351 */\**
 
@@ -6801,21 +6807,21 @@ size via [get_next_ra_size()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 360 **if** (cur \< max / 16) 361 **return** 4 \* cur; 362 **if** (cur \<= max / 2) 363 **return** 2 \* cur;
 
- 
 
 
 
- 
+
+
 
 364 **return** max;
 
 365 }
 
- 
+
 
 *Listing 9-72:* mm/readahead.c: [*get_next_ra_size()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n355)
 
- 
+
 
 This is entirely heuristic and scales the readahead by a factor of 4 if the
 
@@ -6869,15 +6875,15 @@ mine whether traces exist that imply a sequential read is proceeding, via
 
 [try_context_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n427) which we examine in Listing 9-73 below.
 
- 
+
 
 424 **static int try_context_readahead**(**struct** address_space \*mapping, 425 **struct** file_ra_state \*ra, 426 **pgoff_t** index, 427 **unsigned long** req_size, 428 **unsigned long** max) 429 {
 
- 
 
 
 
- 
+
+
 
 430 **pgoff_t** size;
 
@@ -6913,11 +6919,11 @@ mine whether traces exist that imply a sequential read is proceeding, via
 
 453 }
 
- 
+
 
 *Listing 9-73:* mm/readahead.c: [*try_context_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n427)
 
- 
+
 
 This utilises [count_history_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n412) (which we examine in Listing 9-74
 
@@ -6953,17 +6959,17 @@ the next asynchronous readahead at the end of this block.
 
 Examining [count_history_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n412) in Listing 9-74:
 
- 
+
 
 406 */\**
 
 407 *\* Count contiguously cached pages from @index-1 to @index-@max,* 408 *\* this count is a conservative estimation of* 409 *\** *- length of the sequential read sequence, or*
 
- 
 
 
 
- 
+
+
 
 410 *\** *- thrashing threshold in memory tight systems* 411 *\*/*
 
@@ -6979,11 +6985,11 @@ Examining [count_history_pages()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 421 **return** index - 1 - head; 422 }
 
- 
+
 
 *Listing 9-74:* mm/readahead.c: [*count_history_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n412)
 
- 
+
 
 This uses [page_cache_prev_miss()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1801) to scan backwards through the xarray
 
@@ -6993,7 +6999,7 @@ Subtracting this from index - 1 provides the contiguous range. Finally, once all
 
 actually executing readahead, as explored in Listing 9-75 below.
 
- 
+
 
 641 */\**
 
@@ -7019,11 +7025,11 @@ actually executing readahead, as explored in Listing 9-75 below.
 
 666 ra-\>size = max_pages;
 
- 
 
 
 
- 
+
+
 
 667 ra-\>async_size = max_pages \>\> 1; 668 }
 
@@ -7033,11 +7039,11 @@ actually executing readahead, as explored in Listing 9-75 below.
 
 671 ractl-\>\_index = ra-\>start; 672 **page_cache_ra_order**(ractl, ra, order); 673 }
 
- 
+
 
 *Listing 9-75:* mm/readahead.c: [*ondemand_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n556) *readahead invocations*
 
- 
+
 
 In the instance that no sequential readahead could be detected, then we
 
@@ -7063,7 +7069,7 @@ end, should this size exceed that requested, or if not, offset by the requested
 
 size.
 
- 
+
 
 331 */\**
 
@@ -7085,11 +7091,11 @@ size.
 
 349 }
 
- 
+
 
 *Listing 9-76:* mm/readahead.c: [*get_init_ra_size()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n337)
 
- 
+
 
 This heuristically determines the size to be equal to the requested size
 
@@ -7101,11 +7107,11 @@ tiplied by 2 should be less than or equal to 1/4 of the maximum readahead
 
 size or otherwise simply set to the maximum readahead size.
 
- 
 
 
 
- 
+
+
 
 This then falls through to the readit label where sequential readahead is
 
@@ -7123,7 +7129,7 @@ the actual readahead itself to the [page_cache_ra_order()](https://git.kernel.or
 
 explore in Listing 9-77 below.
 
- 
+
 
 ***9.7.4 Common Readahead Code***
 
@@ -7133,7 +7139,7 @@ head into the page cache, [page_cache_ra_order()](https://git.kernel.org/pub/scm
 
 9-77 below and [do_page_cache_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n275) which we examine in Listing 9-78.
 
- 
+
 
 490 **void page_cache_ra_order**(**struct** readahead_control \*ractl, 491 **struct** file_ra_state \*ra, **unsigned int** new_order) 492 {
 
@@ -7153,11 +7159,11 @@ head into the page cache, [page_cache_ra_order()](https://git.kernel.org/pub/scm
 
 517 */\* Align with smaller pages if needed \*/* 518 **if** (index & ((1**UL** \<\< order) - 1)) { 519 order = **\_\_ffs**(index); 520 **if** (order == 1) 521 order = 0;
 
- 
 
 
 
- 
+
+
 
 522 }
 
@@ -7195,11 +7201,11 @@ head into the page cache, [page_cache_ra_order()](https://git.kernel.org/pub/scm
 
 550 **do_page_cache_ra**(ractl, ra-\>size, ra-\>async_size); 551 }
 
- 
+
 
 *Listing 9-77:* mm/readahead.c: [*page_cache_ra_order()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n490)
 
- 
+
 
 This function uses [mapping_large_folio_support()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n313) to determine whether to
 
@@ -7217,7 +7223,7 @@ We instead note that the fallback case as well as forced readahead utilise
 
 [do_page_cache_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n275) to perform readahead, which we examine in Listing 9-78.
 
- 
+
 
 269 */\**
 
@@ -7227,11 +7233,11 @@ We instead note that the fallback case as well as forced readahead utilise
 
 275 **static void do_page_cache_ra**(**struct** readahead_control \*ractl,
 
- 
 
 
 
- 
+
+
 
 276 **unsigned long** nr_to_read, **unsigned long** lookahead_size) 277 {
 
@@ -7251,11 +7257,11 @@ We instead note that the fallback case as well as forced readahead utilise
 
 293 **page_cache_ra_unbounded**(ractl, nr_to_read, lookahead_size); 294 }
 
- 
+
 
 *Listing 9-78:* mm/readahead.c: [*do_page_cache_ra()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n275)
 
- 
+
 
 The lookahead_size parameter will be set to
 
@@ -7277,7 +7283,7 @@ ferring the actual readahead operation to [page_cache_ra_unbounded()](https://gi
 
 examine in Listing 9-79 below.
 
- 
+
 
 186 */\*\**
 
@@ -7287,11 +7293,11 @@ examine in Listing 9-79 below.
 
 197 *\* Context: File is referenced by caller. Mutexes may be held by caller.* 198 *\* May sleep, but will not reenter filesystem to reclaim memory.* 199 *\*/*
 
- 
 
 
 
- 
+
+
 
 200 **void page_cache_ra_unbounded**(**struct** readahead_control \*ractl, 201 **unsigned long** nr_to_read, **unsigned long** lookahead_size) 202 {
 
@@ -7329,11 +7335,11 @@ examine in Listing 9-79 below.
 
 242 folio = **filemap_alloc_folio**(gfp_mask, 0); 243 **if** (!folio) 244 **break**; 245 **if** (**filemap_add_folio**(mapping, folio, index + i, 246 gfp_mask) \< 0) {
 
- 
 
 
 
- 
+
+
 
 247 **folio_put**(folio); 248 **read_pages**(ractl); 249 ractl-\>\_index++; 250 i = ractl-\>\_index + ractl-\>\_nr_pages - index - 1;
 
@@ -7349,11 +7355,11 @@ examine in Listing 9-79 below.
 
 263 **read_pages**(ractl); 264 **filemap_invalidate_unlock_shared**(mapping); 265 **memalloc_nofs_restore**(nofs); 266 }
 
- 
+
 
 *Listing 9-79:* mm/readahead.c: [*page_cache_ra_unbounded()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n200)
 
- 
+
 
 This function performs the meat and potatoes of allocating and placing
 
@@ -7393,11 +7399,11 @@ handled by [do_page_cache_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 book) via [filemap_alloc_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n955), before adding it to the page cache via
 
- 
 
 
 
- 
+
+
 
 [filemap_add_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n926) (see Listing 9-54 in Section for more details). Note that
 
@@ -7415,7 +7421,7 @@ Next, we see the code which sets the [PG_readahead](https://git.kernel.org/pub/s
 
 equal to the size of the readhead to perform less the lookahead size.
 
- 
+
 
 **N O T E** For completeness we note that this flag is also set for the higher order case in
 
@@ -7423,13 +7429,13 @@ equal to the size of the readhead to perform less the lookahead size.
 
 for the book so we explore this no further.
 
- 
+
 
 After this is complete, we kick off the physical readahead using
 
 [read_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n146) as shown in Listing 9-80 below.
 
- 
+
 
 ***9.7.5 Physical Readahead***
 
@@ -7439,7 +7445,7 @@ head is performed by [read_pages()](https://git.kernel.org/pub/scm/linux/kernel/
 
 out of scope block device plug logic and an extraneous bug check).
 
- 
+
 
 146 **static void read_pages**(**struct** readahead_control \*rac) 147 {
 
@@ -7461,11 +7467,11 @@ out of scope block device plug logic and an extraneous bug check).
 
 167 **folio_get**(folio); 168 rac-\>ra-\>size -= nr; 169 **if** (rac-\>ra-\>async_size \>= nr) { 170 rac-\>ra-\>async_size -= nr; 171 **filemap_remove_folio**(folio); 172 } 173 **folio_unlock**(folio); 174 **folio_put**(folio);
 
- 
 
 
 
- 
+
+
 
 175 }
 
@@ -7477,11 +7483,11 @@ out of scope block device plug logic and an extraneous bug check).
 
 184 }
 
- 
+
 
 *Listing 9-80:* mm/readahead.c: [*read_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n146)
 
- 
+
 
 We start by checking [struct readahead_control-\>\_nr_pages](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1168) via
 
@@ -7515,7 +7521,7 @@ dler typically uses [readahead_folio()](https://git.kernel.org/pub/scm/linux/ker
 
 as does our fallback handler, so we examine this in Listing 9-81.
 
- 
+
 
 1277 */\*\**
 
@@ -7535,15 +7541,15 @@ as does our fallback handler, so we examine this in Listing 9-81.
 
 1292 }
 
- 
 
 
 
- 
+
+
 
 *Listing 9-81:* include/linux/pagemap.h: [*readahead_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1285)
 
- 
+
 
 This simply defers the heavy lifting to [\_\_readahead_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1241)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1241) drop-
 
@@ -7551,7 +7557,7 @@ ping the folio’s reference count to unpin it once done. We examine
 
 [\_\_readahead_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1241) in Listing 9-82 (eliding some distracting bug checks).
 
- 
+
 
 1241 **static inline struct** folio \***\_\_readahead_folio**(**struct** readahead_control \*ractl) 1242 {
 
@@ -7575,11 +7581,11 @@ ping the folio’s reference count to unpin it once done. We examine
 
 1259 }
 
- 
+
 
 *Listing 9-82:* include/linux/pagemap.h: [*\_\_readahead_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1241)
 
- 
+
 
 Everything is performed at a granularity determined by the
 
@@ -7603,11 +7609,11 @@ This therefore allows this function to be used in the loops we have seen
 
 thus far to iterate through each folio in a readahead range.
 
- 
+
 
 **9.8 Fault-Around**
 
- 
+
 
 In order to minimise the amount of time spent faulting memory in, the
 
@@ -7621,11 +7627,11 @@ is already present in the page cache, in a batch, skipping anything that re-
 
 quires a major fault.
 
- 
 
 
 
- 
+
+
 
 We discuss this faulting mechanism in section 6.5 in the page fault chap-
 
@@ -7633,7 +7639,7 @@ ter, however let’s review [do_fault_around()](https://git.kernel.org/pub/scm/l
 
 repeated here for convenience in Listing 9-83.
 
- 
+
 
 4443 */\**
 
@@ -7685,11 +7691,11 @@ repeated here for convenience in Listing 9-83.
 
 1,
 
- 
 
 
 
- 
+
+
 
 4485 start_pgoff + nr_pages - 1); 4486
 
@@ -7699,11 +7705,11 @@ repeated here for convenience in Listing 9-83.
 
 4493 **return** vmf-\>vma-\>vm_ops-\>**map_pages**(vmf, start_pgoff, end_pgoff); 4494 }
 
- 
+
 
 *Listing 9-83:* mm/memory.c: [*do_fault_around()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4463)
 
- 
+
 
 Broadly speaking this reads up to [fault_around_bytes](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4407) (configurable by the
 
@@ -7741,7 +7747,7 @@ this case [filemap_map_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 ing out of scope huge page and hardware poisoning handling).
 
- 
+
 
 3322 **vm_fault_t filemap_map_pages**(**struct** vm_fault \*vmf, 3323 **pgoff_t** start_pgoff, **pgoff_t** end_pgoff) 3324 {
 
@@ -7751,11 +7757,11 @@ ing out of scope huge page and hardware poisoning handling).
 
 3337 folio = **first_map_page**(mapping, &xas, end_pgoff);
 
- 
 
 
 
- 
+
+
 
 3338 **if** (!folio)
 
@@ -7803,15 +7809,15 @@ ing out of scope huge page and hardware poisoning handling).
 
 3396 }
 
- 
+
 
 *Listing 9-84:* mm/filemap.c: [*filemap_map_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3322)
 
- 
 
 
 
- 
+
+
 
 After some initialisation and establishment of an xarray [struct xa_state](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1326)
 
@@ -7823,17 +7829,17 @@ We retrieve the first folio in the range using [first_map_page()](https://git.ke
 
 examine in Listing **??**.
 
- 
+
 
 3306 **static inline struct** folio \***first_map_page**(**struct** address_space \*mapping, 3307 **struct** xa_state \*xas, 3308 **pgoff_t** end_pgoff) 3309 {
 
 3310 **return next_uptodate_page**(**xas_find**(xas, end_pgoff), 3311 mapping, xas, end_pgoff); 3312 }
 
- 
+
 
 *Listing 9-85:* mm/filemap.c: [*first_map_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3306)
 
- 
+
 
 This calls the [next_uptodate_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3265) helper function which we examine
 
@@ -7847,17 +7853,17 @@ Later in the loop we utilise [next_map_page()](https://git.kernel.org/pub/scm/li
 
 **??**.
 
- 
+
 
 3314 **static inline struct** folio \***next_map_page**(**struct** address_space \*mapping, 3315 **struct** xa_state \*xas, 3316 **pgoff_t** end_pgoff) 3317 {
 
 3318 **return next_uptodate_page**(**xas_next_entry**(xas, end_pgoff), 3319 mapping, xas, end_pgoff); 3320 }
 
- 
+
 
 *Listing 9-86:* mm/filemap.c: [*next_map_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3314)
 
- 
+
 
 This is roughly equivalent to [first_map_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3306), only it uses [xas_next_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n1669)
 
@@ -7893,11 +7899,11 @@ to avoid having to update reverse mapping data structures unnecessarily (see
 
 Section 8.2.3 for more details).
 
- 
 
 
 
- 
+
+
 
 This mimics the logic found in [linear_page_index()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n845)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n845) see the discussion
 
@@ -7963,7 +7969,7 @@ Now we have examined the core logic of this function, let’s return to
 
 [next_uptodate_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3265) in Listing 9-87.
 
- 
+
 
 3265 **static struct** folio \***next_uptodate_page**(**struct** folio \*folio, 3266 **struct** address_space \*mapping, 3267 **struct** xa_state \*xas, **pgoff_t** end_pgoff
 
@@ -7973,11 +7979,11 @@ Now we have examined the core logic of this function, let’s return to
 
 3269 **unsigned long** max_idx;
 
- 
 
 
 
- 
+
+
 
 3270
 
@@ -7997,11 +8003,11 @@ Now we have examined the core logic of this function, let’s return to
 
 3304 }
 
- 
+
 
 *Listing 9-87:* mm/filemap.c: [*next_uptodate_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3265)
 
- 
+
 
 This is a useful helper function that does all of the housekeeping re-
 
@@ -8017,11 +8023,11 @@ tention on it the folio is skipped. The fault around logic is intended to be a
 
 best-effort optimisation, so we will not wait for a lock to become available.
 
- 
 
 
 
- 
+
+
 
 The function is handed a present folio from the page cache, and we per-
 
@@ -8073,11 +8079,11 @@ through the entire range and finds nothing, then we return NULL and ulti-
 
 mately [filemap_map_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3322) handles this scenario by exiting its own loop.
 
- 
+
 
 **9.9 Removing Page Cache Entries and Truncation**
 
- 
+
 
 The removal of folios from the page cache involves a lot of moving parts, as what the folios are being used for must be taken into account—importantly, this involves unmapping the folios using the reverse mapping as any number of users might have the page cache folios currently mapped. We explore this
 
@@ -8089,11 +8095,11 @@ a folio from the page cache once this has been taken into account in Section
 
 9.9.1, as this is relatively straight forward in comparison to the machinery that sits above it.
 
- 
 
 
 
- 
+
+
 
 We therefore examine the provided mechanisms for removing folios
 
@@ -8109,7 +8115,7 @@ vm.drop_caches tunable is implemented in Section 9.9.4, before exploring how
 
 this evicts folios altogether from the page cache in Section 9.9.5.
 
- 
+
 
 ***9.9.1 Removing Folios from the Page Cache***
 
@@ -8119,7 +8125,7 @@ once we know that it ought to be removed is via [filemap_remove_folio()](https:/
 
 we examine in Listing **??** (eliding some irrelevant inode reclaim logic).
 
- 
+
 
 240 */\*\**
 
@@ -8145,11 +8151,11 @@ we examine in Listing **??** (eliding some irrelevant inode reclaim logic).
 
 261 **filemap_free_folio**(mapping, folio); 262 }
 
- 
+
 
 *Listing 9-88:* mm/filemap.c: [*filemap_remove_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n248)
 
- 
+
 
 Note that this function is also wrapped by the legacy
 
@@ -8171,11 +8177,11 @@ file system folio freeing logic in [struct address_space](https://git.kernel.org
 
 We examine [\_\_filemap_remove_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n217) in Listing 9-89 (eliding trace hook).
 
- 
 
 
 
- 
+
+
 
 212 */\**
 
@@ -8189,11 +8195,11 @@ We examine [\_\_filemap_remove_folio()](https://git.kernel.org/pub/scm/linux/ker
 
 222 **filemap_unaccount_folio**(mapping, folio); 223 **page_cache_delete**(mapping, folio, shadow); 224 }
 
- 
+
 
 *Listing 9-89:* mm/filemap.c: [*\_\_filemap_remove_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n217)
 
- 
+
 
 This updates statistics accordingly via [filemap_unaccount_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n148), be-
 
@@ -8201,7 +8207,7 @@ fore removing the folio from the associated xarray and updating folio via
 
 [page_cache_delete(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n124)which we examine in Listing 9-90 (eliding out of scope huge page and DAX logic and a debug check).
 
- 
+
 
 124 **static void page_cache_delete**(**struct** address_space \*mapping, 125 **struct** folio \*folio, **void** \*shadow) 126 {
 
@@ -8213,11 +8219,11 @@ fore removing the folio from the associated xarray and updating folio via
 
 143 folio-\>mapping = **NULL**; 144 */\* Leave page-\>index set: truncation lookup relies upon it \*/* 145 mapping-\>nrpages -= nr; 146 }
 
- 
+
 
 *Listing 9-90:* mm/filemap.c: [*page_cache_delete()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n124)
 
- 
+
 
 This replaces the page cache entry with shadow, which can be used by the
 
@@ -8237,11 +8243,11 @@ We also update the [struct address_space-\>nrpages](https://git.kernel.org/pub/s
 
 this folio has been removed from the xarray describing the page cache entry.
 
- 
 
 
 
- 
+
+
 
 In addition to removing a single folio, folios can be removed from the
 
@@ -8249,7 +8255,7 @@ page cache in batches via [delete_from_page_cache_batch()](https://git.kernel.or
 
 Listing 9-91 (eliding trace hook and out of scope inode reclaim logic).
 
- 
+
 
 318 **void delete_from_page_cache_batch**(**struct** address_space \*mapping, 319 **struct** folio_batch \*fbatch) 320 {
 
@@ -8277,11 +8283,11 @@ Listing 9-91 (eliding trace hook and out of scope inode reclaim logic).
 
 340 **for** (i = 0; i \< **folio_batch_count**(fbatch); i++) 341 **filemap_free_folio**(mapping, fbatch-\>folios\[i\]); 342 }
 
- 
+
 
 *Listing 9-91:* mm/filemap.c: [*delete_from_page_cache_batch()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n318)
 
- 
+
 
 This mirrors the [\_\_filemap_remove_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n217) logic, only performed in batches
 
@@ -8297,7 +8303,7 @@ role played by [page_cache_delete()](https://git.kernel.org/pub/scm/linux/kernel
 
 scope DAX handling and debug check).
 
- 
+
 
 264 */\**
 
@@ -8309,11 +8315,11 @@ scope DAX handling and debug check).
 
 274 *\**
 
- 
 
 
 
- 
+
+
 
 275 *\* The function expects the i_pages lock to be held.* 276 *\*/*
 
@@ -8351,21 +8357,21 @@ scope DAX handling and debug check).
 
 304 mapping-\>nrpages -= total_pages; 305 }
 
- 
+
 
 *Listing 9-92:* mm/filemap.c: [*page_cache_delete_batch()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n277)
 
- 
+
 
 This iterates over all of the folios in the range starting from the first folio
 
 in the batch until a number of folios equal to the number in the batch have been examined. As folio looks will have been taken, we are protected from racing truncation, but new folios may have been inserted in the range, which
 
- 
 
 
 
- 
+
+
 
 we skip, asserting in each instance that folio under examination is equal to
 
@@ -8377,7 +8383,7 @@ count of folio pages to decrement in [struct address_space](https://git.kernel.o
 
 do at the end of the operation.
 
- 
+
 
 ***9.9.2 Folio Truncation***
 
@@ -8387,51 +8393,51 @@ folio truncation in the page cache. We examine the different possible routes
 
 in Figure 9-13.
 
- 
+
 
 filesystem
 
- 
+
 
 [truncate_setsize()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n771)
 
 filesystem filesystem
 
- 
+
 
 [truncate_pagecache()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n738) [truncate_inode_pages_final()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n465)
 
 filesystem, block
 
- 
+
 
 [truncate_pagecache_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n846) [truncate_inode_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n450)
 
 filesystem, block
 
- 
+
 
 [truncate_inode_pages_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n330)
 
- 
+
 
 shmem shmem
 
 [truncate_inode_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n190) [truncate_inode_partial_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n211)
 
- 
+
 
 [truncate_cleanup_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n173)
 
- 
+
 
 *Figure 9-13: Folio Truncation Code Paths*
 
- 
+
 
 First we examine [truncate_setsize()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n771) in Listing 9-93.
 
- 
+
 
 758 */\*\**
 
@@ -8447,11 +8453,11 @@ First we examine [truncate_setsize()](https://git.kernel.org/pub/scm/linux/kerne
 
 767 *\* Must be called with a lock serializing truncates and writes (generally* 768 *\* i_rwsem but e.g. xfs uses a different lock) and before all filesystem* 769 *\* specific block truncation has been performed.* 770 *\*/*
 
- 
 
 
 
- 
+
+
 
 771 **void truncate_setsize**(**struct** inode \*inode, **loff_t** newsize) 772 {
 
@@ -8459,11 +8465,11 @@ First we examine [truncate_setsize()](https://git.kernel.org/pub/scm/linux/kerne
 
 775 **i_size_write**(inode, newsize); 776 **if** (newsize \> oldsize) 777 **pagecache_isize_extended**(inode, oldsize, newsize); 778 **truncate_pagecache**(inode, newsize); 779 }
 
- 
+
 
 *Listing 9-93:* mm/truncate.c: [*truncate_setsize()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n771)
 
- 
+
 
 This updates the file size via [i_size_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n873) and, if extended, handles this
 
@@ -8473,7 +8479,7 @@ The truncation is then deferring to [truncate_pagecache()](https://git.kernel.or
 
 ine in Listing 9-94.
 
- 
+
 
 723 */\*\**
 
@@ -8499,19 +8505,19 @@ ine in Listing 9-94.
 
 752 **unmap_mapping_range**(mapping, holebegin, 0, 1); 753 **truncate_inode_pages**(mapping, newsize);
 
- 
 
 
 
- 
+
+
 
 754 **unmap_mapping_range**(mapping, holebegin, 0, 1); 755 }
 
- 
+
 
 *Listing 9-94:* mm/truncate.c: [*truncate_pagecache()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n738)
 
- 
+
 
 This unmaps mappings to the portion of the folio that has shrunk (if in-
 
@@ -8535,7 +8541,7 @@ Before we examine this, we examine [truncate_inode_pages_final()](https://git.ke
 
 ing 9-95.
 
- 
+
 
 456 */\*\**
 
@@ -8565,19 +8571,19 @@ ing 9-95.
 
 487 **truncate_inode_pages**(mapping, 0);
 
- 
 
 
 
- 
+
+
 
 488 }
 
- 
+
 
 *Listing 9-95:* mm/truncate.c: [*truncate_inode_pages_final()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n465)
 
- 
+
 
 This function is invoked just before an inode is destroyed completely,
 
@@ -8587,7 +8593,7 @@ file is being removed) to [truncate_inode_pages()](https://git.kernel.org/pub/sc
 
 9-96.
 
- 
+
 
 437 */\*\**
 
@@ -8609,11 +8615,11 @@ file is being removed) to [truncate_inode_pages()](https://git.kernel.org/pub/sc
 
 454 EXPORT_SYMBOL(**truncate_inode_pages**);
 
- 
+
 
 *Listing 9-96:* mm/truncate.c: [*truncate_inode_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n450)
 
- 
+
 
 This invokes [truncate_inode_pages_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n330) specifying the end offset to be
 
@@ -8623,7 +8629,7 @@ The kernel also provides [truncate_pagecache_range()](https://git.kernel.org/pub
 
 Listing 9-97.
 
- 
+
 
 833 */\*\**
 
@@ -8637,11 +8643,11 @@ Listing 9-97.
 
 846 **void truncate_pagecache_range**(**struct** inode \*inode, **loff_t** lstart, **loff_t** lend) 847 {
 
- 
 
 
 
- 
+
+
 
 848 **struct** address_space \*mapping = inode-\>i_mapping; 849 **loff_t** unmap_start = **round_up**(lstart, **PAGE_SIZE**); 850 **loff_t** unmap_end = **round_down**(1 + lend, **PAGE_SIZE**) - 1; 851 */\**
 
@@ -8671,11 +8677,11 @@ Listing 9-97.
 
 864 **if** ((**u64**)unmap_end \> (**u64**)unmap_start) 865 **unmap_mapping_range**(mapping, unmap_start, 866 1 + unmap_end - unmap_start, 0); 867 **truncate_inode_pages_range**(mapping, lstart, lend); 868 }
 
- 
+
 
 *Listing 9-97:* mm/truncate.c: [*truncate_pagecache_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n846)
 
- 
+
 
 This provides the means for file system to ‘hole punch’ files, that is
 
@@ -8693,7 +8699,7 @@ in [truncate_inode_pages_range()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 (eliding out of scope realtime scheduler hints and debug check).
 
- 
+
 
 306 */\*\**
 
@@ -8713,11 +8719,11 @@ in [truncate_inode_pages_range()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 *region.*
 
- 
 
 
 
- 
+
+
 
 319 *\* The first pass will remove most pages, so the search cost of the second*
 
@@ -8767,15 +8773,15 @@ in [truncate_inode_pages_range()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 362 **folio_batch_init**(&fbatch);
 
- 
+
 
 *Listing 9-98:* mm/truncate.c: [*truncate_inode_pages_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n330) *Preface*
 
- 
 
 
 
- 
+
+
 
 As the comment suggests, this function performs two passes, each of
 
@@ -8795,7 +8801,7 @@ We initialise the folio batch to begin the batched operation via
 
 ing **??**.
 
- 
+
 
 363 index = start;
 
@@ -8805,11 +8811,11 @@ ing **??**.
 
 375 }
 
- 
+
 
 *Listing 9-99:* mm/truncate.c: [*truncate_inode_pages_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n330) *First Pass*
 
- 
+
 
 We use [find_lock_entries()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2093) (see Listing 9-40 in Section 9.5.1) to find page
 
@@ -8851,15 +8857,15 @@ i.e. partial truncation. Within this range we simply zero values, which we
 
 examine in Listing 9-100.
 
- 
+
 
 363 same_folio = (lstart \>\> **PAGE_SHIFT**) == (lend \>\> **PAGE_SHIFT**);
 
- 
 
 
 
- 
+
+
 
 364 folio = **\_\_filemap_get_folio**(mapping, lstart \>\> **PAGE_SHIFT**, **FGP_LOCK**,
 
@@ -8879,11 +8885,11 @@ examine in Listing 9-100.
 
 381 **if** (!**truncate_inode_partial_folio**(folio, lstart, lend)) 382 end = folio-\>index; 383 **folio_unlock**(folio); 384 **folio_put**(folio); 385 }
 
- 
+
 
 *Listing 9-100:* mm/truncate.c: [*truncate_inode_pages_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n330) *Partial Truncation*
 
- 
+
 
 We start by setting same_folio to indicate whether the start and end of
 
@@ -8909,7 +8915,7 @@ After this is complete, we continue with the second pass of the opera-
 
 tion, which we explore in Listing 9-101.
 
- 
+
 
 401 index = start;
 
@@ -8919,11 +8925,11 @@ tion, which we explore in Listing 9-101.
 
 404 **if** (!**find_get_entries**(mapping, index, end - 1, &fbatch, 405 indices)) { 406 */\* If all gone from start onwards, we're done \*/*
 
- 
 
 
 
- 
+
+
 
 407 **if** (index == start) 408 **break**; 409 */\* Otherwise restart to make sure all gone \*/* 410 index = start; 411 **continue**; 412 }
 
@@ -8959,11 +8965,11 @@ tion, which we explore in Listing 9-101.
 
 434 }
 
- 
+
 
 *Listing 9-101:* mm/truncate.c: [*truncate_inode_pages_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n330) *Second Pass*
 
- 
+
 
 In this pass we retrieve the raw entries via [find_get_entries()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2056) (see Listing
 
@@ -8997,15 +9003,15 @@ fore relying on [truncate_inode_folio()](https://git.kernel.org/pub/scm/linux/ke
 
 deletion of the folio.
 
- 
 
 
 
- 
+
+
 
 Next we examine [truncate_inode_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n190) in Listing 9-102.
 
- 
+
 
 190 **int truncate_inode_folio**(**struct** address_space \*mapping, **struct** folio \*folio) 191 {
 
@@ -9015,11 +9021,11 @@ Next we examine [truncate_inode_folio()](https://git.kernel.org/pub/scm/linux/ke
 
 198 }
 
- 
+
 
 *Listing 9-102:* mm/truncate.c: [*truncate_inode_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n190)
 
- 
+
 
 This assumes the passed folio is locked, then performs the usual trunca-
 
@@ -9031,7 +9037,7 @@ which we examine in Listing 9-103, removing the folio altogether via
 
 [filemap_remove_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n248) (see Listing **??**).
 
- 
+
 
 163 */\**
 
@@ -9061,15 +9067,15 @@ which we examine in Listing 9-103, removing the folio altogether via
 
 186 **folio_cancel_dirty**(folio); 187 **folio_clear_mappedtodisk**(folio); 188 }
 
- 
 
 
 
- 
+
+
 
 *Listing 9-103:* mm/truncate.c: [*truncate_cleanup_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n173)
 
- 
+
 
 We perform unmapping of the folio if it is currently mapped (as inferred
 
@@ -9093,7 +9099,7 @@ Finally we examine [truncate_inode_partial_folio()](https://git.kernel.org/pub/s
 
 out of scope huge page handling).
 
- 
+
 
 200 */\**
 
@@ -9131,11 +9137,11 @@ end)
 
 231
 
- 
 
 
 
- 
+
+
 
 232 */\**
 
@@ -9149,11 +9155,11 @@ end)
 
 249 }
 
- 
+
 
 *Listing 9-104:* mm/truncate.c: [*truncate_inode_partial_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n211)
 
- 
+
 
 This function handles the portion of truncated folios which are not page-
 
@@ -9179,7 +9185,7 @@ Finally, there is logic pertaining to huge page handling, however this is
 
 out of scope for the book so we don’t examine this part of the function.
 
- 
+
 
 ***9.9.3 Unmapping Folios***
 
@@ -9193,7 +9199,7 @@ If we want to unmap folios over the span of a byte range, we utilise
 
 [unmap_mapping_range() , ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3592)which we examine in Listing **??**.
 
- 
+
 
 3575 */\*\**
 
@@ -9205,11 +9211,11 @@ If we want to unmap folios over the span of a byte range, we utilise
 
 3580 *\* @mapping: the address space containing mmaps to be unmapped.* 3581 *\* @holebegin: byte in first page to unmap, relative to the start of* 3582 *\* the underlying file. This will be rounded down to a PAGE_SIZE* 3583 *\* boundary. Note that this is different from truncate_pagecache(), which*
 
- 
 
 
 
- 
+
+
 
 3584 *\* must keep the partial page. In contrast, we must get rid of* 3585 *\* partial pages.*
 
@@ -9227,11 +9233,11 @@ If we want to unmap folios over the span of a byte range, we utilise
 
 3606 **unmap_mapping_pages**(mapping, hba, hlen, even_cows); 3607 }
 
- 
+
 
 *Listing 9-105:* mm/memory.c: [*unmap_mapping_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3592)
 
- 
+
 
 After performing some housekeeping to ensure overflow doesn’t occur,
 
@@ -9247,7 +9253,7 @@ If we wish to unmap a single folio, we can do so via [unmap_mapping_folio()](htt
 
 which we examine in Listing 9-106 (eliding a debug check).
 
- 
+
 
 3510 */\*\**
 
@@ -9261,11 +9267,11 @@ which we examine in Listing 9-106 (eliding a debug check).
 
 3523 **struct** address_space \*mapping = folio-\>mapping;
 
- 
 
 
 
- 
+
+
 
 3524 **struct** zap_details details = { }; 3525 **pgoff_t** first_index; 3526 **pgoff_t** last_index;
 
@@ -9277,11 +9283,11 @@ which we examine in Listing 9-106 (eliding a debug check).
 
 3537 **i_mmap_lock_read**(mapping); 3538 **if** (**unlikely**(!**RB_EMPTY_ROOT**(&mapping-\>i_mmap.rb_root))) 3539 **unmap_mapping_range_tree**(&mapping-\>i_mmap, first_index, 3540 last_index, &details); 3541 **i_mmap_unlock_read**(mapping); 3542 }
 
- 
+
 
 *Listing 9-106:* mm/memory.c: [*unmap_mapping_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3521)
 
- 
+
 
 We prepare ourselves for the mapping removal (termed ‘zapping’), spec-
 
@@ -9305,7 +9311,7 @@ Next we examine [unmap_mapping_pages()](https://git.kernel.org/pub/scm/linux/ker
 
 of a page range. We examine this in Listing 9-107.
 
- 
+
 
 3544 */\*\**
 
@@ -9323,11 +9329,11 @@ of a page range. We examine this in Listing 9-107.
 
 3556 **void unmap_mapping_pages**(**struct** address_space \*mapping, **pgoff_t** start, 3557 **pgoff_t** nr, **bool** even_cows) 3558 {
 
- 
 
 
 
- 
+
+
 
 3559 **struct** zap_details details = { }; 3560 **pgoff_t** first_index = start; 3561 **pgoff_t** last_index = start + nr - 1; 3562
 
@@ -9335,11 +9341,11 @@ of a page range. We examine this in Listing 9-107.
 
 3567 **i_mmap_lock_read**(mapping); 3568 **if** (**unlikely**(!**RB_EMPTY_ROOT**(&mapping-\>i_mmap.rb_root))) 3569 **unmap_mapping_range_tree**(&mapping-\>i_mmap, first_index, 3570 last_index, &details); 3571 **i_mmap_unlock_read**(mapping); 3572 }
 
- 
+
 
 *Listing 9-107:* mm/memory.c: [*unmap_mapping_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3556)
 
- 
+
 
 This defers the operation to [unmap_mapping_range_tree()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3489)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3489) being careful to
 
@@ -9349,7 +9355,7 @@ detected).
 
 We examine [unmap_mapping_range_tree()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3489) in Listing 9-108.
 
- 
+
 
 3489 **static inline void unmap_mapping_range_tree**(**struct** rb_root_cached \*root, 3490 **pgoff_t** first_index, 3491 **pgoff_t** last_index, 3492 **struct** zap_details \*details) 3493 {
 
@@ -9361,11 +9367,11 @@ We examine [unmap_mapping_range_tree()](https://git.kernel.org/pub/scm/linux/ker
 
 3508 }
 
- 
+
 
 *Listing 9-108:* mm/memory.c: [*unmap_mapping_range_tree()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3489)
 
- 
+
 
 This iterates through each of the [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA) objects
 
@@ -9377,11 +9383,11 @@ For each of these, we attempt to perform the actual unmapping via
 
 [unmap_mapping_range_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3482) which we examine in Listing 9-109.
 
- 
 
 
 
- 
+
+
 
 3482 **static void unmap_mapping_range_vma**(**struct** vm_area_struct \*vma, 3483 **unsigned long** start_addr, **unsigned long** end_addr, 3484 **struct** zap_details \*details) 3485 {
 
@@ -9391,17 +9397,17 @@ For each of these, we attempt to perform the actual unmapping via
 
 3487 }
 
- 
+
 
 *Listing 9-109:* mm/memory.c: [*unmap_mapping_range_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3482)
 
- 
+
 
 This simply wraps [zap_page_range_single()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1770) which we examine in Listing
 
 9-110 (eliding out of scope MMU notifier logic).
 
- 
+
 
 1761 */\*\**
 
@@ -9433,11 +9439,11 @@ address,
 
 1784 **tlb_finish_mmu**(&tlb); 1785 }
 
- 
+
 
 *Listing 9-110:* mm/memory.c: [*zap_page_range_single()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1770)
 
- 
+
 
 This invokes [unmap_single_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1652) (see Listing 7-59 in Section 7.1.3), per-
 
@@ -9451,11 +9457,11 @@ At this point, all processes which map the truncated mapping will now
 
 have it unmapped and will thus page fault if accessing a file within the trun-cated range.
 
- 
 
 
 
- 
+
+
 
 ***9.9.4 Dropping Caches***
 
@@ -9471,17 +9477,17 @@ interacts with I/O with a desire to eliminate measurement noise, shown in
 
 Listing 9-111.
 
- 
+
 
 \$ echo 1 \| sudo tee /proc/sys/vm/drop_caches
 
 \$ sudo sysctl vm.drop_caches=1 \# alternative
 
- 
+
 
 *Listing 9-111: Example use of* *drop_caches* *interface*
 
- 
+
 
 This is not something that a user should ordinarily do in a production
 
@@ -9497,7 +9503,7 @@ ured in the [vm_table](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 [drop_caches_sysctl_handler()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/drop_caches.c?h=v6.0#n50), shown in Listing 9-112.
 
- 
+
 
 50 **int drop_caches_sysctl_handler**(**struct** ctl_table \*table, **int** write,
 
@@ -9555,15 +9561,15 @@ ured in the [vm_table](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 77 }
 
- 
 
 
 
- 
+
+
 
 *Listing 9-112:* fs/drop_caches.c: [*drop_caches_sysctl_handler()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/drop_caches.c?h=v6.0#n50)
 
- 
+
 
 The [proc_dointvec_minmax()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/sysctl.c?h=v6.0#n882) function simply retrieves parameters from the
 
@@ -9577,7 +9583,7 @@ The function [iterate_supers()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 blocks, shown in Listing 9-113.
 
- 
+
 
 702 */\*\**
 
@@ -9603,15 +9609,15 @@ blocks, shown in Listing 9-113.
 
 732 **\_\_put_super**(p); 733 **spin_unlock**(&sb_lock); 734 }
 
- 
+
 
 *Listing 9-113:* fs/super.c: [*iterate_supers()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/super.c?h=v6.0#n710)
 
- 
 
 
 
- 
+
+
 
 The [super_blocks](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/super.c?h=v6.0#n44) list is a global variable protected by [sb_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/super.c?h=v6.0#n45) containing
 
@@ -9649,7 +9655,7 @@ The function we iterate over is [drop_pagecache_sb()](https://git.kernel.org/pub
 
 114.
 
- 
+
 
 18 **static void drop_pagecache_sb**(**struct** super_block \*sb, **void** \*unused)
 
@@ -9709,19 +9715,19 @@ The function we iterate over is [drop_pagecache_sb()](https://git.kernel.org/pub
 
 46 **spin_unlock**(&sb-\>s_inode_list_lock);
 
- 
 
 
 
- 
+
+
 
 47 **iput**(toput_inode); 48 }
 
- 
+
 
 *Listing 9-114:* fs/drop_caches.c: [*drop_pagecache_sb()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/drop_caches.c?h=v6.0#n18)
 
- 
+
 
 The [struct super_block-\>s_inode_list_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n1451) lock is held in order to access
 
@@ -9731,7 +9737,7 @@ If the inode is in an ‘unusual’ state, e.g. one of the below cases apply,
 
 then it is skipped:
 
- 
+
 
 • Its i_state has the [I_FREEING](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2439) flag set – This indicates that the inode is
 
@@ -9749,7 +9755,7 @@ created and may be incorrectly duplicated. The inode is only stable once this fl
 
 ode does not map any pages (as determined by [mapping_empty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n135)[)](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n135) and rescheduling is not required – freeing inodes would be redundant here.
 
- 
+
 
 Special care is taken to avoid contention on s_inode_list_lock,
 
@@ -9769,19 +9775,19 @@ The actual freeing of the cache is accomplished via
 
 [cond_resched()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n2082) (relevant only to kernels without full preemption).
 
- 
+
 
 **N O T E** A lock (ordering) inversion occurs when the ordering of two or more acquired locks is
 
 unintentionally reversed between locking and unlocking, causing a deadlock.
 
- 
+
 
 We examine the [invalidate_mapping_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n564) function in detail in Listing
 
 9-115.
 
- 
+
 
 550 */\*\**
 
@@ -9791,11 +9797,11 @@ We examine the [invalidate_mapping_pages()](https://git.kernel.org/pub/scm/linux
 
 552 *\* @mapping: the address_space which holds the cache to invalidate* 553 *\* @start: the offset 'from' which to invalidate* 554 *\* @end: the offset 'to' which to invalidate (inclusive)*
 
- 
 
 
 
- 
+
+
 
 555 *\**
 
@@ -9809,17 +9815,17 @@ We examine the [invalidate_mapping_pages()](https://git.kernel.org/pub/scm/linux
 
 567 **return invalidate_mapping_pagevec**(mapping, start, end, **NULL**); 568 }
 
- 
+
 
 *Listing 9-115:* mm/truncate.c: [*invalidate_mapping_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n564)
 
- 
+
 
 This defers the operation to [invalidate_mapping_pagevec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n502), shown in List-
 
 ing 9-116.
 
- 
+
 
 491 */\*\**
 
@@ -9849,11 +9855,11 @@ ing 9-116.
 
 517 */\* We rely upon deletion not changing folio-\>index \*/*
 
- 
 
 
 
- 
+
+
 
 518 index = indices\[i\]; 519
 
@@ -9879,11 +9885,11 @@ ing 9-116.
 
 548 }
 
- 
+
 
 *Listing 9-116:* mm/truncate.c: [*invalidate_mapping_pagevec()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n502)
 
- 
+
 
 This function retrieves folios a [struct folio_batch](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagevec.h?h=v6.0#n83) at a time (see Section
 
@@ -9905,17 +9911,17 @@ We process each of the now locked file folios one at a time in order to
 
 evict them from memory. For each folio we:
 
- 
+
 
 • Handle exceptional entries that might be present in the returned folio
 
 batch which contain a shadow entry for an already evicted folio. This is
 
- 
 
 
 
- 
+
+
 
 determined by [xa_is_value()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n79) (see Section 9.2), which checks whether the
 
@@ -9927,7 +9933,7 @@ determined by [xa_is_value()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 we do via [deactivate_file_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n664) (see chapter 11 for more on reclaim and active/inactive folios).
 
- 
+
 
 Finally, after we have processed all folios, we eliminate any ‘exceptional’
 
@@ -9937,7 +9943,7 @@ batch to [folio_batch_release()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 physical pages via [release_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n934).
 
- 
+
 
 **N O T E** It may seem confusing to reference ‘shadow’ and ‘exceptional’ entries, however for the
 
@@ -9949,7 +9955,7 @@ that we must address here. Exceptional entries are a product of ‘eXtensible Ar
 
 book).
 
- 
+
 
 ***9.9.5 Folio Eviction***
 
@@ -9959,7 +9965,7 @@ folios which have had their caches dropped. We examine this in Listing 9-
 
 117.
 
- 
+
 
 270 **static long mapping_evict_folio**(**struct** address_space \*mapping, 271 **struct** folio \*folio) 272 {
 
@@ -9971,11 +9977,11 @@ folios which have had their caches dropped. We examine this in Listing 9-
 
 282 **return remove_mapping**(mapping, folio); 283 }
 
- 
+
 
 *Listing 9-117:* mm/truncate.c: [*mapping_evict_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/truncate.c?h=v6.0#n270)
 
- 
+
 
 This function assumes the folio passed in is already locked. If the folio is dirty or is undergoing writeback, then there is nothing to
 
@@ -9983,11 +9989,11 @@ do and we duly abort the operation. In either case, we would experience
 
 data loss if the folio were to be evicted at this stage.
 
- 
 
 
 
- 
+
+
 
 We also check see if the folio is pinned by the kernel, i.e. has an elevated
 
@@ -10007,11 +10013,11 @@ Finally, the folio is removed from the page cache altogether via
 
 [remove_mapping(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1397)which is part of the reclaim logic used for removing folios under memory pressure, and whose logic we share. We examine this in List-ing **??** in the reclaim chapter.
 
- 
+
 
 **9.10 Buffers and Block I/O**
 
- 
+
 
 While the Page Cache abstracts file operations from the underlying disk, rubber must ultimately meet road and (if not a RAM-backed mapping) I/O must be performed in order to actually retrieve data from or write data to disk. Typically this will be via the use of a block device. That is a storage de-vice that operates at a granularity of blocks.
 
@@ -10037,7 +10043,7 @@ ping purposes, with block device I/O operations encoded in [struct bio](https://
 
 jects which we will come on to in Section 9.10.5.
 
- 
+
 
 ***9.10.1 An Introduction to Buffer Heads***
 
@@ -10051,11 +10057,11 @@ The primary modern purpose of buffer heads is to map blocks (which
 
 can be, for instance, of size 512 bytes, less than page size) to positions within pages. There are alternative mechanisms for this such as the iomap function-
 
- 
 
 
 
- 
+
+
 
 ality implemented in the [include/linux/iomap.h](https://elixir.bootlin.com/linux/v6.0/source/include/linux/iomap.h) header but discussion of this
 
@@ -10063,7 +10069,7 @@ is out of scope for the book.
 
 We examine [struct buffer_head](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n61) in Listing 9-118.
 
- 
+
 
 52 */\**
 
@@ -10125,17 +10131,17 @@ We examine [struct buffer_head](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 80 };
 
- 
+
 
 *Listing 9-118:* include/linux/buffer_head.h: [*struct buffer_head*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n61)
 
- 
+
 
 The key field b_state contains a bit set of [enum bh_state_bits](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n21) fields describ-
 
 ing the buffer state as shown in Listing 9-119.
 
- 
+
 
 21 **enum** bh_state_bits {
 
@@ -10155,25 +10161,25 @@ ing the buffer state as shown in Listing 9-119.
 
 29 BH_Async_Read, */\* Is under end_buffer_async_read I/O \*/*
 
- 
 
 
 
- 
+
+
 
 30 BH_Async_Write, */\* Is under end_buffer_async_write I/O \*/* 31 BH_Delay, */\* Buffer is not yet allocated on disk \*/* 32 BH_Boundary, */\* Block is followed by a discontiguity \*/* 33 BH_Write_EIO, */\* I/O error on write \*/* 34 BH_Unwritten, */\* Buffer is allocated on disk but not written \*/* 35 BH_Quiet, */\* Buffer Error Prinks to be quiet \*/* 36 BH_Meta, */\* Buffer contains metadata \*/* 37 BH_Prio, */\* Buffer should be submitted with REQ_PRIO \*/* 38 BH_Defer_Completion, */\* Defer AIO completion to workqueue \*/* 39
 
 40 BH_PrivateStart,*/\* not a state bit, but the first bit available* 41 *\* for private allocation by other entities* 42 *\*/* 43 };
 
- 
+
 
 *Listing 9-119:* include/linux/buffer_head.h: [*enum bh_state_bits*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n21)
 
- 
+
 
 Considering each field in [struct buffer_head](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n61):
 
- 
+
 
 **b_state** Describes the current state of the buffer, i.e. the region of memory
 
@@ -10217,11 +10223,11 @@ kept in another linked list.
 
 which this buffer and page reside.
 
- 
 
 
 
- 
+
+
 
 **b_count** An atomic reference count of the number of users of this buffer
 
@@ -10235,7 +10241,7 @@ page is only marked [PG_updtodate](https://git.kernel.org/pub/scm/linux/kernel/g
 
 instance in [end_buffer_async_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n244) and [end_buffer_async_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n342), both of which are used as b_end_io callbacks. Some file systems use this for the same purpose.
 
- 
+
 
 Buffer heads are allocated from a slab cache in [alloc_buffer_head()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2972)
 
@@ -10273,7 +10279,7 @@ we do attach buffer heads to folios when writing data if the file system uses
 
 buffer heads.
 
- 
+
 
 ***9.10.2 blockdev***
 
@@ -10311,11 +10317,11 @@ cial [blockdev_superblock](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 and is placed in [struct block_device-\>bd_inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/blk_types.h?h=v6.0#n40).
 
- 
 
 
 
- 
+
+
 
 Unlike a typical file system where the inode number is assigned on cre-
 
@@ -10325,23 +10331,23 @@ memory entity, assigns the inode number [struct inode-\>i_ino](https://git.kerne
 
 the device number of the block device in [bdev_add()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n507), as shown in Listing 9-120.
 
- 
+
 
 **N O T E** A device number, consisting of a major and a minor number pair, describes a device
 
 in the system and are represented in the devtmpfs file system typically mounted at */dev* as special files whose major and minor can be viewed via *ls -l*.
 
- 
+
 
 507 **void bdev_add**(**struct** block_device \*bdev, dev_t dev) 508 {
 
 509 bdev-\>bd_dev = dev; 510 bdev-\>bd_inode-\>i_rdev = dev; 511 bdev-\>bd_inode-\>i_ino = dev; 512 **insert_inode_hash**(bdev-\>bd_inode); 513 }
 
- 
+
 
 *Listing 9-120:* block/bdev.c: [*bdev_add()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n507)
 
- 
+
 
 When the inode for a block device file such as /dev/sda1 is cre-
 
@@ -10363,7 +10369,7 @@ tion, [blkdev_open()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/l
 
 shown in Listing 9-121 (eliding irrelevant code).
 
- 
+
 
 465 **static int blkdev_open**(**struct** inode \*inode, **struct** file \*filp) 466 {
 
@@ -10377,11 +10383,11 @@ shown in Listing 9-121 (eliding irrelevant code).
 
 493 }
 
- 
+
 
 *Listing 9-121:* block/fops.c: [*blkdev_open()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/fops.c?h=v6.0#n465)
 
- 
+
 
 This invokes [blkdev_get_by_dev()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n785) which in turn calls [blkdev_get_no_open()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n735)
 
@@ -10389,11 +10395,11 @@ which uses [ilookup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 vice number in [bdev_add()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n507) (see Listing 9-120).
 
- 
 
 
 
- 
+
+
 
 We assign the block device’s [struct block_device-\>bd_inode-\>i_mapping](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/blk_types.h?h=v6.0#n40)
 
@@ -10407,7 +10413,7 @@ device, and thus each device file is meaningless in itself, only the contents of
 
 the block device itself matter.
 
- 
+
 
 **9.10.2.1 blockdev Buffers**
 
@@ -10423,7 +10429,7 @@ the file system, we now have the means to directly access the block device at
 
 any arbitrary block number.
 
- 
+
 
 **N O T E** Rather irritatingly, the kernel often denominates filesystem related indexes in terms
 
@@ -10439,7 +10445,7 @@ Therefore, when examining file system code, take care to ensure any values you o
 
 serve are expressed in the units you expect.
 
- 
+
 
 The page cache entries containing these block device pages exist entirely
 
@@ -10453,7 +10459,7 @@ is mounted, especially if writing to the block device directly, a write which
 
 might race against those from dirty file pages.
 
- 
+
 
 **N O T E** However, from a user’s perspective, directly accessing block devices when unmounted
 
@@ -10461,7 +10467,7 @@ is very useful. This enables operations such as writing a disk image to a USB st
 
 be performed very easily.
 
- 
+
 
 However, the most useful aspect of having this interface from a file sys-
 
@@ -10477,7 +10483,7 @@ mined by [meminfo_proc_show()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 lated via [nr_blockdev_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n515) shown in Listing 9-122.
 
- 
+
 
 515 **long nr_blockdev_pages**(**void**) 516 {
 
@@ -10487,11 +10493,11 @@ lated via [nr_blockdev_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 520 **spin_lock**(&blockdev_superblock-\>s_inode_list_lock);
 
- 
 
 
 
- 
+
+
 
 521 **list_for_each_entry**(inode, &blockdev_superblock-\>s_inodes, i_sb_list) 522 ret += inode-\>i_mapping-\>nrpages; 523 **spin_unlock**(&blockdev_superblock-\>s_inode_list_lock); 524
 
@@ -10499,17 +10505,17 @@ lated via [nr_blockdev_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 526 }
 
- 
+
 
 *Listing 9-122:* block/bdev.c: [*nr_blockdev_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n515)
 
- 
+
 
 You can observe that this walks all blockdev inodes (which are mapped
 
 by device), accumulating [struct address_space-\>nrpages](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) allocated page counts.
 
- 
+
 
 ***9.10.3 Accessing Blocks***
 
@@ -10519,45 +10525,45 @@ There are a number of functions which leverage blockdev in order to di-rectly lo
 
 and are shown in Figure 9-14.
 
- 
+
 
 [sb_bread()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n337) [sb_bread_unmovable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n343) [sb_getblk()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n361) [sb_getblk_gfp()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n368)
 
- 
+
 
 [\_\_bread_gfp()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1375)
 
- 
+
 
 If not uptodate
 
- 
+
 
 [\_\_bread_slow()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1168) [\_\_getblk_gfp()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1326)
 
- 
+
 
 If [\_\_find_get_block()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1301) fails
 
 [\_\_getblk_slow()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1015) [\_\_find_get_block()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1301)
 
- 
+
 
 If not in cache
 
- 
+
 
 [grow_buffers()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n990) [\_\_find_get_block_slow()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n189)
 
- 
+
 
 [grow_dev_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n926)
 
- 
+
 
 *Figure 9-14: Accessing Disk Blocks*
 
- 
+
 
 **N O T E** As with much in the filesystem code, filesystems can implement their own versions of
 
@@ -10565,17 +10571,17 @@ these functions. For instance, ext4 implements their own [*ext4_sb_bread()*](htt
 
 which performs the work of [*sb_bread()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n337) with changes made specific to ext4. These functions should be interpreted therefore as utility functions for performing block reads rather than a canonical implementation.
 
- 
+
 
 Broadly speaking, Figure 9-14 can be divided into those functions which
 
 wish to retrieve a [struct buffer_head](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n61) describing a block within a buffer, and
 
- 
 
 
 
- 
+
+
 
 expect the buffer to be read into the page cache if the page cache entry is
 
@@ -10603,17 +10609,17 @@ the ability to specify GFP physical allocation flags is required (see Section 2.
 
 for details on these).
 
- 
+
 
 336 **static inline struct** buffer_head \* 337 **sb_bread**(**struct** super_block \*sb, **sector_t** block) 338 {
 
 339 **return \_\_bread_gfp**(sb-\>s_bdev, block, sb-\>s_blocksize, **\_\_GFP_MOVABLE**); 340 }
 
- 
+
 
 *Listing 9-123:* include/linux/buffer_head.h: [*sb_bread()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n337)
 
- 
+
 
 This function defers the heavy lifting to [\_\_bread_gfp()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1375) (see Listing 9-127),
 
@@ -10625,17 +10631,17 @@ sought block, and the [\_\_GFP_MOVABLE](https://git.kernel.org/pub/scm/linux/ker
 
 buffer head allocation can be movable.
 
- 
+
 
 342 **static inline struct** buffer_head \* 343 **sb_bread_unmovable**(**struct** super_block \*sb, **sector_t** block) 344 {
 
 345 **return \_\_bread_gfp**(sb-\>s_bdev, block, sb-\>s_blocksize, 0); 346 }
 
- 
+
 
 *Listing 9-124:* include/linux/buffer_head.h: [*sb_bread_unmovable()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n343)
 
- 
+
 
 [sb_bread_unmovable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n343) does the same thing as [sb_bread()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n337)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n337) only does not spec-
 
@@ -10643,7 +10649,7 @@ ify [\_\_GFP_MOVABLE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/l
 
 tion.
 
- 
+
 
 360 **static inline struct** buffer_head \* 361 **sb_getblk**(**struct** super_block \*sb, sector_t block) 362 {
 
@@ -10653,31 +10659,31 @@ tion.
 
 364 }
 
- 
+
 
 *Listing 9-125:* include/linux/buffer_head.h: [*sb_getblk()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n361)
 
- 
 
 
 
- 
+
+
 
 This function defers its heavy lifting to [\_\_getblk_gfp()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1326) (see Listing 9-131),
 
 specifying [\_\_GFP_MOVABLE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n75) to indicate that the buffer head physical allocation should be movable.
 
- 
+
 
 367 **static inline struct** buffer_head \* 368 **sb_getblk_gfp**(**struct** super_block \*sb, sector_t block, **gfp_t** gfp) 369 {
 
 370 **return \_\_getblk_gfp**(sb-\>s_bdev, block, sb-\>s_blocksize, gfp); 371 }
 
- 
+
 
 *Listing 9-126:* include/linux/buffer_head.h: [*sb_getblk_gfp()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n368)
 
- 
+
 
 [sb_getblk_gfp()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n368) does the same thing as [sb_getblk()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n361)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n361) only permits the speci-
 
@@ -10687,7 +10693,7 @@ Ultimately each of [sb_bread()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 [\_\_bread_gfp(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1375)shown in Listing 9-127.
 
- 
+
 
 1362 */\*\**
 
@@ -10705,11 +10711,11 @@ Ultimately each of [sb_bread()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 1383 }
 
- 
+
 
 *Listing 9-127:* fs/buffer.c: [*\_\_bread_gfp()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1375)
 
- 
+
 
 This retrieves the [struct buffer_head](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n61) describing the block using
 
@@ -10717,7 +10723,7 @@ This retrieves the [struct buffer_head](https://git.kernel.org/pub/scm/linux/ker
 
 from disk via [\_\_bread_slow()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1168), shown in Listing 9-128.
 
- 
+
 
 1168 **static struct** buffer_head \***\_\_bread_slow**(**struct** buffer_head \*bh) 1169 {
 
@@ -10725,11 +10731,11 @@ from disk via [\_\_bread_slow()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 1171 **if** (**buffer_uptodate**(bh)) {
 
- 
 
 
 
- 
+
+
 
 1172 **unlock_buffer**(bh); 1173 **return** bh; 1174 } **else** {
 
@@ -10741,11 +10747,11 @@ from disk via [\_\_bread_slow()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 1184 }
 
- 
+
 
 *Listing 9-128:* fs/buffer.c: [*\_\_bread_slow()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1168)
 
- 
+
 
 Reading a block using [\_\_bread_slow()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1168) is performed using the legacy
 
@@ -10759,7 +10765,7 @@ to invoke once the read operation is complete. We explore this in Listing
 
 9-129.
 
- 
+
 
 153 */\**
 
@@ -10771,11 +10777,11 @@ to invoke once the read operation is complete. We explore this in Listing
 
 161 }
 
- 
+
 
 *Listing 9-129:* fs/buffer.c: [*end_buffer_read_sync()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n157)
 
- 
+
 
 This function defers the operation to [\_\_end_buffer_read_notouch()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n142) shown
 
@@ -10783,7 +10789,7 @@ in Listing 9-130 before dropping the buffer head reference count via
 
 [put_bh()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/buffer_head.h?h=v6.0#n318).
 
- 
+
 
 134 */\**
 
@@ -10801,11 +10807,11 @@ in Listing 9-130 before dropping the buffer head reference count via
 
 144 **if** (uptodate) {
 
- 
 
 
 
- 
+
+
 
 145 **set_buffer_uptodate**(bh); 146 } **else** {
 
@@ -10813,11 +10819,11 @@ in Listing 9-130 before dropping the buffer head reference count via
 
 150 **unlock_buffer**(bh); 151 }
 
- 
+
 
 *Listing 9-130:* fs/buffer.c: [*\_\_end_buffer_read_notouch()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n142)
 
- 
+
 
 This simply marks the buffer uptodate if the read succeeded, before un-
 
@@ -10839,7 +10845,7 @@ Regardless of the function invoked, all ultimately call [\_\_getblk_gfp()](https
 
 shown in Listing 9-131.
 
- 
+
 
 1317 */\**
 
@@ -10861,21 +10867,21 @@ shown in Listing 9-131.
 
 1335 }
 
- 
+
 
 *Listing 9-131:* fs/buffer.c: [*\_\_getblk_gfp()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1326)
 
- 
+
 
 At this point we will not examine the logic any further as we are straying
 
 from memory management code into that of the file system.
 
- 
 
 
 
- 
+
+
 
 ***9.10.4 Block Writes***
 
@@ -10887,7 +10893,7 @@ ment, but we will briefly examine some relevant functions, starting with
 
 [\_\_block_commit_write(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2061)as shown in Listing 9-132.
 
- 
+
 
 2061 **static int \_\_block_commit_write**(**struct** inode \*inode, **struct** page \*page, 2062 **unsigned** from, **unsigned** to) 2063 {
 
@@ -10919,15 +10925,15 @@ ment, but we will briefly examine some relevant functions, starting with
 
 2098 }
 
- 
+
 
 *Listing 9-132:* fs/buffer.c: [*\_\_block_commit_write()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2061)
 
- 
 
 
 
- 
+
+
 
 This is invoked when writeback is complete, marking each buffer in the
 
@@ -10947,7 +10953,7 @@ tracking, see Section 10.12 in the writeback chapter for more details. We
 
 explore this function in Listing 9-133 (eliding irrelevant trace and cgroup logic).
 
- 
+
 
 1044 */\**
 
@@ -10993,11 +10999,11 @@ explore this function in Listing 9-133 (eliding irrelevant trace and cgroup logi
 
 1079 **void mark_buffer_dirty**(**struct** buffer_head \*bh)
 
- 
 
 
 
- 
+
+
 
 1080 {
 
@@ -11027,7 +11033,7 @@ explore this function in Listing 9-133 (eliding irrelevant trace and cgroup logi
 
 1111 }
 
- 
+
 
 *Listing 9-133:* fs/buffer.c: [*mark_buffer_dirty()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1079)
 
@@ -11045,7 +11051,7 @@ See the discussion around dirty tracking in the writeback chapter in Sec-
 
 tions 10.12 and 10.12 for more details on this as a whole.
 
- 
+
 
 ***9.10.5 Block I/O (BIO) Operations***
 
@@ -11063,11 +11069,11 @@ These operations are typically submitted via [submit_bio()](https://git.kernel.o
 
 by the relevant block device asynchronously.
 
- 
 
 
 
- 
+
+
 
 Let’s additionally examine the case When files are synchronised, per-
 
@@ -11077,7 +11083,7 @@ function [blkdev_issue_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 the block subsystem. We examine it in 9-134.
 
- 
+
 
 452 */\*\**
 
@@ -11095,11 +11101,11 @@ the block subsystem. We examine it in 9-134.
 
 463 **bio_init**(&bio, bdev, **NULL**, 0, **REQ_OP_WRITE** \| **REQ_PREFLUSH**); 464 **return submit_bio_wait**(&bio); 465 }
 
- 
+
 
 *Listing 9-134:* block/blk-flush.c: [*blkdev_issue_flush()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/blk-flush.c?h=v6.0#n459)
 
- 
+
 
 Here we initialise this object with [bio_init](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bio.c?h=v6.0#n241), specifying a zero size and re-
 
@@ -11107,7 +11113,7 @@ questing a flush, before submitting the operation and waiting for it to com-
 
 plete via [submit_bio_wait()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bio.c?h=v6.0#n1319).
 
- 
+
 
 ***9.10.6 Buffer Head I/O Operations***
 
@@ -11115,23 +11121,23 @@ The legacy wrapper function used for submitting buffer heads for read I/O
 
 is [submit_bh()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2723) shown in Listing 9-135.
 
- 
+
 
 2723 **int submit_bh**(blk_opf_t opf, **struct** buffer_head \*bh) 2724 {
 
 2725 **return submit_bh_wbc**(opf, bh, **NULL**); 2726 }
 
- 
+
 
 *Listing 9-135:* fs/buffer.c: [*submit_bh()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2723)
 
- 
+
 
 This function defers the heavy lifting to [submit_bh_wbc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2676) which also han-
 
 dles writes, shown in Listing 9-136 (eliding out of scope fscrypt and cgroup logic).
 
- 
+
 
 2676 tatic **int submit_bh_wbc**(blk_opf_t opf, **struct** buffer_head \*bh, 2677 **struct** writeback_control \*wbc) 2678 {
 
@@ -11141,11 +11147,11 @@ dles writes, shown in Listing 9-136 (eliding out of scope fscrypt and cgroup log
 
 2682 **BUG_ON**(!**buffer_locked**(bh)); 2683 **BUG_ON**(!**buffer_mapped**(bh));
 
- 
 
 
 
- 
+
+
 
 2684 **BUG_ON**(!bh-\>b_end_io); 2685 **BUG_ON**(**buffer_delay**(bh)); 2686 **BUG_ON**(**buffer_unwritten**(bh)); 2687
 
@@ -11185,11 +11191,11 @@ dles writes, shown in Listing 9-136 (eliding out of scope fscrypt and cgroup log
 
 2720 }
 
- 
+
 
 *Listing 9-136:* fs/buffer.c: [*submit_bh_wbc()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2676)
 
- 
+
 
 Again, we do not dwell too long on this function, which we present here
 
@@ -11199,7 +11205,7 @@ eration into a block I/O one, using [submit_bio()](https://git.kernel.org/pub/sc
 
 system, asynchronously.
 
- 
+
 
 **9.11 Folio Locking and Waiting**
 
@@ -11207,11 +11213,11 @@ When performing certain operations, we need to indicate that the folio
 
 should not be accessed until that operation is complete, functioning like a
 
- 
 
 
 
- 
+
+
 
 mutual exclusion lock. This is implemented via the [PG_locked](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n101) folio flag, and
 
@@ -11219,7 +11225,7 @@ if a lock is required unconditionally, applied via [folio_lock()](https://git.ke
 
 ine in Listing 9-137.
 
- 
+
 
 913 */\*\**
 
@@ -11245,11 +11251,11 @@ ine in Listing 9-137.
 
 938 **if** (!**folio_trylock**(folio)) 939 **\_\_folio_lock**(folio); 940 }
 
- 
+
 
 *Listing 9-137:* include/linux/pagemap.h: [*folio_lock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n935)
 
- 
+
 
 Note that the legacy [lock_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n953) function does the equivalent operation
 
@@ -11271,11 +11277,11 @@ in the page cache and that folio having data read back from disk (at which
 
 point it is termed ‘uptodate’ as indicated by the [PG_uptodate](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n103) folio flag.
 
- 
 
 
 
- 
+
+
 
 A folio can sit in this state awaiting an asynchronous I/O operation for
 
@@ -11313,7 +11319,7 @@ whatsoever. Even [folio_lock()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 We examine [folio_trylock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n900) in Listing 9-138.
 
- 
+
 
 888 */\*\**
 
@@ -11333,11 +11339,11 @@ We examine [folio_trylock()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 903 }
 
- 
+
 
 *Listing 9-138:* include/linux/pagemap.h: [*folio_trylock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n900)
 
- 
+
 
 Which simply performs a bitwise operation which tests to see whether
 
@@ -11353,17 +11359,17 @@ plement the ability to specify that a fatal signal could interrupt this process
 
 examine in Listing 9-139.
 
- 
+
 
 963 */\*\**
 
 964 *\* folio_lock_killable() - Lock this folio, interruptible by a fatal signal.*
 
- 
 
 
 
- 
+
+
 
 965 *\* @folio: The folio to lock.* 966 *\**
 
@@ -11381,11 +11387,11 @@ examine in Listing 9-139.
 
 979 }
 
- 
+
 
 *Listing 9-139:* include/linux/pagemap.h: [*folio_lock_killable()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n973)
 
- 
+
 
 This differs from the unconditional [folio_lock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n935) in that it returns an
 
@@ -11397,7 +11403,7 @@ Listing 9-140) which specifies that the operation is killable.
 
 Note that this is wrapped by the legacy [lock_page_killable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n986) function.
 
- 
+
 
 1658 */\*\**
 
@@ -11411,11 +11417,11 @@ Note that this is wrapped by the legacy [lock_page_killable()](https://git.kerne
 
 1664 **folio_wait_bit_common**(folio, PG_locked, **TASK_UNINTERRUPTIBLE**, 1665 **EXCLUSIVE**); 1666 }
 
- 
+
 
 *Listing 9-140:* mm/filemap.c: [*\_\_folio_lock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1662)
 
- 
+
 
 This function defers the heavy lifting of causing the process to sleep to
 
@@ -11429,7 +11435,7 @@ waiting thread is woken. This is an enumeration value from [enum behavior](https
 
 which we examine in Listing 9-141.
 
- 
+
 
 1181 */\**
 
@@ -11439,11 +11445,11 @@ which we examine in Listing 9-141.
 
 1185 **EXCLUSIVE**, */\* Hold ref to page and take the bit when woken, like*
 
- 
 
 
 
- 
+
+
 
 1186 *\* \_\_folio_lock() waiting on then setting PG_locked.*
 
@@ -11451,25 +11457,25 @@ which we examine in Listing 9-141.
 
 1190 *\*/* 1191 **DROP**, */\* Drop ref to page before wait, no check when woken,* 1192 *\* like folio_put_wait_locked() on PG_locked.* 1193 *\*/* 1194 };
 
- 
+
 
 *Listing 9-141:* mm/filemap.c: [*enum behavior*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1184)
 
- 
+
 
 We examine [\_\_folio_lock_killable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1669) in Listing **??**.
 
- 
+
 
 1669 **int \_\_folio_lock_killable**(**struct** folio \*folio) 1670 {
 
 1671 **return folio_wait_bit_common**(folio, PG_locked, **TASK_KILLABLE**, 1672 **EXCLUSIVE**); 1673 }
 
- 
+
 
 *Listing 9-142:* mm/filemap.c: [*\_\_folio_lock_killable()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1669)
 
- 
+
 
 Here the [TASK_KILLABLE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n105) flag is used to indicate that the thread can be
 
@@ -11483,7 +11489,7 @@ implement careful handling on unlock in [folio_unlock()](https://git.kernel.org/
 
 Listing 9-143 (eliding distracting bug checks).
 
- 
+
 
 1517 */\*\**
 
@@ -11505,21 +11511,21 @@ Listing 9-143 (eliding distracting bug checks).
 
 1533 **folio_wake_bit**(folio, **PG_locked**); 1534 }
 
- 
+
 
 *Listing 9-143:* mm/filemap.c: [*folio_unlock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1526)
 
- 
+
 
 This invokes [folio_wake_bit()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1127) to wake any thread waiting on the lock to be
 
 cleared. We examine this in Listing 9-144.
 
- 
 
 
 
- 
+
+
 
 1127 **static void folio_wake_bit**(**struct** folio \*folio, **int** bit_nr) 1128 {
 
@@ -11563,19 +11569,19 @@ cleared. We examine this in Listing 9-144.
 
 1171 **spin_unlock_irqrestore**(&q-\>lock, flags);
 
- 
 
 
 
- 
+
+
 
 1172 }
 
- 
+
 
 *Listing 9-144:* mm/filemap.c: [*folio_wake_bit()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1127)
 
- 
+
 
 We won’t get into the gritty details of this function, but we shall note a
 
@@ -11595,7 +11601,7 @@ specified. This is made more explicit in [folio_wake()](https://git.kernel.org/p
 
 invokes [folio_wake_bit()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1127) if this is set, as shown in Listing 9-145.
 
- 
+
 
 1174 **static void folio_wake**(**struct** folio \*folio, **int** bit) 1175 {
 
@@ -11603,11 +11609,11 @@ invokes [folio_wake_bit()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 1178 **folio_wake_bit**(folio, bit); 1179 }
 
- 
+
 
 *Listing 9-145:* mm/filemap.c: [*folio_wake()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1174)
 
- 
+
 
 This is utilised by [folio_end_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1624) to wake waiters on the
 
@@ -11623,7 +11629,7 @@ the writeback chapter for details on how this is utilised).
 
 We examine this in Listing 9-146 (eliding an out of scope trace hook).
 
- 
+
 
 3019 */\*\**
 
@@ -11647,11 +11653,11 @@ We examine this in Listing 9-146 (eliding an out of scope trace hook).
 
 3037 }
 
- 
 
 
 
- 
+
+
 
 *Listing 9-146:* mm/page-writeback.c: [*folio_wait_writeback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n3031)
 
@@ -11667,13 +11673,13 @@ setting it at this point (unlike [EXCLUSIVE](https://git.kernel.org/pub/scm/linu
 
 above. We examine this in Listing 9-147.
 
- 
+
 
 1445 **void folio_wait_bit**(**struct** folio \*folio, **int** bit_nr) 1446 {
 
 1447 **folio_wait_bit_common**(folio, bit_nr, **TASK_UNINTERRUPTIBLE**, **SHARED**); 1448 }
 
- 
+
 
 *Listing 9-147:* mm/filemap.c: [*folio_wait_bit()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1445)
 
@@ -11683,7 +11689,7 @@ The [folio_put_wait_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 wait for unlock, as shown in Listing 9-148.
 
- 
+
 
 1457 */\*\**
 
@@ -11705,7 +11711,7 @@ wait for unlock, as shown in Listing 9-148.
 
 1472 **return folio_wait_bit_common**(folio, **PG_locked**, state, **DROP**); 1473 }
 
- 
+
 
 *Listing 9-148:* mm/filemap.c: [*folio_put_wait_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1470)
 
@@ -11719,7 +11725,7 @@ utilise [SHARED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.
 
 in [folio_wait_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1022) as shown in Listing 9-149.
 
- 
+
 
 1015 */\**
 
@@ -11727,11 +11733,11 @@ in [folio_wait_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 1018 *\* This must be called with the caller "holding" the folio,*
 
- 
 
 
 
- 
+
+
 
 1019 *\* ie with increased folio reference count so that the folio won't* 1020 *\* go away during the wait.* 1021 *\*/*
 
@@ -11739,11 +11745,11 @@ in [folio_wait_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 1024 **if** (**folio_test_locked**(folio)) 1025 **folio_wait_bit**(folio, **PG_locked**); 1026 }
 
- 
+
 
 *Listing 9-149:* include/linux/pagemap.h: [*folio_wait_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1022)
 
- 
+
 
 Equally [folio_wait_locked_killable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1028) does the same thing, only permitting
 
@@ -11753,7 +11759,7 @@ Finally, let’s examine [folio_wait_bit_common()](https://git.kernel.org/pub/sc
 
 (eliding out of scope PSI and delayed accounting thrashing logic).
 
- 
+
 
 1216 **static inline int folio_wait_bit_common**(**struct** folio \*folio, **int** bit_nr, 1217 **int** state, **enum** behavior behavior) 1218 {
 
@@ -11781,11 +11787,11 @@ Finally, let’s examine [folio_wait_bit_common()](https://git.kernel.org/pub/sc
 
 1261 *\* This part needs to be done under the queue*
 
- 
 
 
 
- 
+
+
 
 1262 *\* lock to avoid races.* 1263 *\*/*
 
@@ -11799,11 +11805,11 @@ Finally, let’s examine [folio_wait_bit_common()](https://git.kernel.org/pub/sc
 
 1278 **if** (behavior == **DROP**) 1279 **folio_put**(folio);
 
- 
+
 
 *Listing 9-150:* mm/filemap.c: [*folio_wait_bit_common()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1216) *preamble*
 
- 
+
 
 We won’t examine this function in absolute microscopic detail, but we
 
@@ -11815,7 +11821,7 @@ The function which is invoked when a bit is changed is
 
 lish here are utilised in Listing 9-151.
 
- 
+
 
 1042 */\**
 
@@ -11841,11 +11847,11 @@ lish here are utilised in Listing 9-151.
 
 1059 *\** *The waiter is waiting to get the lock, and only one waiter should*
 
- 
 
 
 
- 
+
+
 
 1060 *\** *be woken up to avoid any thundering herd behavior. We'll set the* 1061 *\** *WQ_FLAG_WOKEN bit, wake it up, and remove it from the wait queue.* 1062 *\**
 
@@ -11869,11 +11875,11 @@ sync, **void** \*arg)
 
 1125 }
 
- 
+
 
 *Listing 9-151:* mm/filemap.c: [*wake_page_function()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1076)
 
- 
+
 
 Returning to Listing 9-150, we see that we reference the
 
@@ -11907,7 +11913,7 @@ mantics imply.
 
 We examine the core waiting loop in Listing 9-152 below.
 
- 
+
 
 1281 */\**
 
@@ -11917,11 +11923,11 @@ We examine the core waiting loop in Listing 9-152 below.
 
 1288 **unsigned int** flags;
 
- 
 
 
 
- 
+
+
 
 1289
 
@@ -11949,7 +11955,7 @@ We examine the core waiting loop in Listing 9-152 below.
 
 1321 }
 
- 
+
 
 *Listing 9-152:* mm/filemap.c: [*folio_wait_bit_common()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1216) *main loop*
 
@@ -11973,11 +11979,11 @@ Finally, if we have the lock we mark it and exit the loop.
 
 Next, we wrap things up in Listing 9-153.
 
- 
 
 
 
- 
+
+
 
 1216 */\**
 
@@ -12003,11 +12009,11 @@ Next, we wrap things up in Listing 9-153.
 
 1353 **return** wait-\>flags & **WQ_FLAG_WOKEN** ? 0 : -**EINTR**; 1354 }
 
- 
+
 
 *Listing 9-153:* mm/filemap.c: [*folio_wait_bit_common()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1216) *suffix*
 
- 
+
 
 We wrap up the wait queue operation via [finish_wait()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/sched/wait.c?h=v6.0#n387), before perform-
 
@@ -12019,5 +12025,5 @@ At this point the waiting is complete and the desired behaviour has been
 
 achieved.
 
- 
+
 

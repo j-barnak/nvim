@@ -1,22 +1,23 @@
-About Bootlin
-
- 
+![](media/index-3_1.jpg)
 
 About Bootlin
 
- 
+
+
+About Bootlin
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 3/436
+
 
 Bootlin introduction
 
- 
+
 
 ▶ Engineering company
 
@@ -46,19 +47,18 @@ Bootlin introduction
 
 ▶ <https://bootlin.com>
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 4/436 Bootlin engineering services
+Bootlin engineering services
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 5/436
+
 
 Bootlin training courses
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 6/436 Bootlin, an open-source contributor
 
- 
+Bootlin, an open-source contributor
+
+
 
 ▶ Strong contributor to the **Linux** kernel
 
@@ -78,13 +78,12 @@ Bootlin training courses
 
 ▶ Significant contributions to U-Boot, OP-TEE, Barebox, etc. ▶ Fully **open-source training materials**
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 7/436
+
 
 Bootlin on-line resources
 
- 
+
 
 ▶ Website with a technical blog:
 
@@ -108,8 +107,4 @@ Bootlin on-line resources
 
 <https://elixir.bootlin.com>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 8/436
-
-![](media/index-9_1.jpg)

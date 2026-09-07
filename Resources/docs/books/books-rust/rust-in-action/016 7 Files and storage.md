@@ -30,7 +30,6 @@ The chapter introduces some new concepts such as how to structure projects into 
 
 ***What is a file format?***
 
-**213**
 
 bit checking and explore what it means to hash a value. To start with, however, let’s see if we can create patterns from the raw byte sequence within files.
 
@@ -100,7 +99,6 @@ keys that enforce anti-copying restrictions within the file.
 
 ![](media/index-240_1.png)
 
-**214**
 
 CHAPTER 7
 
@@ -172,7 +170,6 @@ longitude: 8.33,
 
 ***Creating your own file formats for data storage***
 
-**215**
 
 Now to convert that calabar variable to JSON-encoded String. Performing the conversion is one line of code:
 
@@ -220,10 +217,8 @@ ch7-serde-eg
 
 ├── src
 
-**216**
 
 
-***Files and storage***
 
 │
 
@@ -355,7 +350,6 @@ Serialize a Rust struct to multiple formats
 
 ***Implementing a hexdump clone***
 
-**217**
 
 34 );
 
@@ -443,10 +437,8 @@ A hexdump clone with hard-coded input that mocks file I/O
 
 **bytes (&\[u8\]) not as UTF-8 text (&str).**
 
-**218**
 
 
-***Files and storage***
 
 10 let mut buffer: Vec\<u8\> = vec!();
 
@@ -568,7 +560,6 @@ Opening a file in Rust and iterating through its contents
 
 ***File operations in Rust***
 
-**219**
 
 Listing 7.4 introduces some new Rust. Let’s look at some of those constructs now:
 
@@ -606,10 +597,8 @@ enforces. This (in principle, at least) is what prevents a web server running un
 
 std::fs::File is the primary type for interacting with the filesystem. There are two methods available for creating a file: open() and create(). Use open() when you know the file already exists. Table 7.3 explains more of their differences.
 
-**220**
 
 
-***Files and storage***
 
 Table 7.3
 
@@ -707,9 +696,7 @@ From there, interacting with these variants reveals methods that are specific to
 
 **Returns Some("txt")**
 
-***File operations in Rust***
 
-**221**
 
 The full API is straightforward for anyone who has used code to manipulate paths before, so it won’t be fleshed out here. Still, it may be worth discussing why it’s included within the language because many languages omit this.
 
@@ -791,10 +778,8 @@ println!("{:?}", hello.display());
 
 **the resulting Vec\<String\>**
 
-**222**
 
 
-***Files and storage***
 
 Table 7.4
 
@@ -874,7 +859,6 @@ The first version of our key-value store, actionkv, exposes us to the API that w
 
 ***Implementing a key-value store with a log-structured, append-only storage architecture***
 
-**223**
 
 Unlike other projects in this book, this one uses the library template to start with (cargo new --lib actionkv). It has the following structure:
 
@@ -952,10 +936,8 @@ Defining dependencies and other metadata
 
 Our actionkv project will end up with several files. Figure 7.1 illustrates the relationships and how these work together to build the akv_mem executable, referred to within the \[\[bin\]\] section of the project’s Cargo.toml file.
 
-**224**
 
 
-***Files and storage***
 
 Cargo.toml
 
@@ -1029,9 +1011,7 @@ To access stored key-value pairs, should the API provide a get, retrieve, or, pe
 
 The following listing, an excerpt from listing 7.8, shows the naming considerations mentioned in the preceding sidebar. For our project, we use Rust’s matching facilities to efficiently work with the command-line arguments and to dispatch to the correct internal function.
 
-***Actionkv v1: The front-end code***
 
-**225**
 
 Listing 7.7
 
@@ -1171,10 +1151,8 @@ In-memory key-value store command-line application
 
 23 let fname = args.get(1).expect(&USAGE);
 
-**226**
 
 
-***Files and storage***
 
 24 let action = args.get(2).expect(&USAGE).as_ref();
 
@@ -1258,9 +1236,7 @@ Demonstrating the use of conditional compilation
 
 6 akv_mem.exe FILE get KEY
 
-***Actionkv v1: The front-end code***
 
-**227**
 
 7 akv_mem.exe FILE delete KEY
 
@@ -1372,10 +1348,8 @@ expense of performance. The word
 
 visible.
 
-**228**
 
 
-***Files and storage***
 
 Table 7.7
 
@@ -1497,7 +1471,6 @@ Both steps return Result, which is why the calls to .expect() are also present. 
 
 ***Understanding the core of actionkv: The libactionkv crate***
 
-**229**
 
 We’ll use the ByteStr type alias for data that tends to be used as a string but happens to be in a binary (raw bytes) form. Its text-based peer is the built-in str. Unlike str, ByteStr is not guaranteed to contain valid UTF-8 text.
 
@@ -1637,10 +1610,8 @@ Using **ActionKV::open()**
 
 **in the file at its current position.**
 
-**230**
 
 
-***Files and storage***
 
 89 Ok(kv) =\> kv,
 
@@ -1706,9 +1677,7 @@ Riak, a NoSQL database, was developed during the height of the NoSQL movement an
 
 Although it was slower than its peers, it guaranteed that it never lost data. That guarantee was enabled in part because of its smart choice of a data format.
 
-***Understanding the core of actionkv: The libactionkv crate***
 
-**231**
 
 Bitcask lays every record in a prescribed manner. Figure 7.3 illustrates a single record in the Bitcask file format.
 
@@ -1826,10 +1795,8 @@ Focusing on the **ActionKV::process_record()** method
 
 **block sidesteps ownership issues.**
 
-**232**
 
 
-***Files and storage***
 
 61 debug_assert_eq!(data.len(), data_len as usize);
 
@@ -1901,9 +1868,7 @@ byteorder::LittleEndian and its peers BigEndian and NativeEndian (not used in li
 
 These extend methods to primitive types such as f32 and i16 without further ceremony. Bringing those into scope with a use statement immediately adds powers to the types that are implemented within the source of byteorder (in practice, that means primitive types). Rust, as a statically-typed language, makes this transformation at
 
-***Understanding the core of actionkv: The libactionkv crate***
 
-**233**
 
 compile time. From the running program’s point of view, integers always have the ability to write themselves to disk in a predefined order.
 
@@ -2023,10 +1988,8 @@ Writing integers to disk
 
 21 (one, two, three)
 
-**234**
 
 
-***Files and storage***
 
 22 }
 
@@ -2090,9 +2053,7 @@ Which checking function should you use? Like many things in computer science, it
 
  Be easy to implement
 
-***Understanding the core of actionkv: The libactionkv crate***
 
-**235**
 
 Table 7.8 compares the different checksum approaches. To summarize
 
@@ -2192,10 +2153,8 @@ NOTE
 
 The code for the following listing is in ch7/ch7-paritybit/src/main.rs.
 
-**236**
 
 
-***Files and storage***
 
 Listing 7.15
 
@@ -2327,9 +2286,7 @@ You may have noticed that during load(), the inner loop continues until the end 
 
 181
 
-***Understanding the core of actionkv: The libactionkv crate***
 
-**237**
 
 182 let key_len = key.len();
 
@@ -2435,10 +2392,8 @@ The actionkv project (full code)
 
 20
 
-**238**
 
 
-***Files and storage***
 
 21 \#\[derive(Debug)\]
 
@@ -2560,9 +2515,7 @@ The actionkv project (full code)
 
 75 pub fn seek_to_end(&mut self) -\> io::Result\<u64\> {
 
-***Understanding the core of actionkv: The libactionkv crate***
 
-**239**
 
 76 self.f.seek(SeekFrom::End(0))
 
@@ -2692,10 +2645,8 @@ The actionkv project (full code)
 
 130 &mut self,
 
-**240**
 
 
-***Files and storage***
 
 131 target: &ByteStr
 
@@ -2809,9 +2760,7 @@ The actionkv project (full code)
 
 184 let mut tmp = ByteString::with_capacity(key_len + val_len); 185
 
-***Understanding the core of actionkv: The libactionkv crate***
 
-**241**
 
 186 for byte in key {
 
@@ -2903,10 +2852,8 @@ Working with key-value pairs happens in almost every programming language. For t
 
  Lua does the opposite and uses the term *table*.
 
-**242**
 
 
-***Files and storage***
 
  Many communities name the structure after a metaphor such as a *dictionary* or a *map*.
 
@@ -2972,9 +2919,7 @@ std::mem::transmute::\<char, u32\>(first)
 
 **rather than panicking when it encounters None.**
 
-***Understanding the core of actionkv: The libactionkv crate***
 
-**243**
 
 basic_hash can take any string as input—an infinite set of possible inputs—and return a fixed-width result for all of those in a deterministic manner. That’s great! But, although basic_hash is fast, it has some significant faults.
 
@@ -3032,10 +2977,8 @@ An example of the basic operations of **HashMap**
 
 3 fn main() {
 
-**244**
 
 
-***Files and storage***
 
 4 let mut capitals = HashMap::new();
 
@@ -3143,9 +3086,7 @@ capitals\["Tonga"\]
 
 **Returns "Nuku’alofa"**
 
-***Understanding the core of actionkv: The libactionkv crate***
 
-**245**
 
 This approach returns a read-only reference to the value, which is deceptive when dealing with examples containing string literals because their status as references is somewhat disguised. In the syntax used by Rust’s documentation, this is described as
 
@@ -3199,10 +3140,8 @@ Amsterdam invested 3697915
 
 smaller chambers: Rotterdam Hoorn Delft
 
-**246**
 
 
-***Files and storage***
 
 Listing 7.20
 
@@ -3298,9 +3237,7 @@ Databases and filesystems are much larger pieces of software than single files. 
 
 Built in section 7.5.2, actionkv v1 contains a major issue that prevents it from having a decent startup time. Every time it’s run, it needs to rebuild its index of where keys are stored. Let’s add the ability for actionkv to store its own data that indexes *within* the same file that’s used to store its application data. It will be easier than it sounds. No changes to libactionkv are necessary. And the front-end code only requires minor additions. The project folder now has a new structure with an extra file (shown in the following listing).
 
-***Understanding the core of actionkv: The libactionkv crate***
 
-**247**
 
 Listing 7.21
 
@@ -3422,10 +3359,8 @@ Highlighting the main change from listing 7.8
 
 **future deletes.**
 
-**248**
 
 
-***Files and storage***
 
 53
 
@@ -3537,7 +3472,6 @@ Persisting index data between runs
 
 ***Summary***
 
-**249**
 
 36 let fname = args.get(1).expect(&USAGE);
 
@@ -3643,10 +3577,8 @@ Persisting index data between runs
 
 . Result is used for errors that are not part of normal control flow.
 
-**250**
 
 
-***Files and storage***
 
  Filesystem paths have their own types: std::path::Path and std::path:: PathBuf. While it adds to the learning burden, implementing these allows you to avoid common mistakes that can occur by treating paths directly as strings.
 

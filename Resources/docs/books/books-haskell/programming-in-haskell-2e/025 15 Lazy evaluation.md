@@ -4,7 +4,7 @@
 
 In this chapter we introduce lazy evaluation, the mechanism used to evaluate expressions in Haskell. We start by reviewing the notion of evaluation, then consider evaluation strategies and their properties, discuss infinite structures and modular programming, and conclude with a special form of function application that can improve the space performance of programs.
 
-### **15.1Introduction**
+### **15.1 Introduction**
 
 As we have seen throughout this book, the basic method of computation in Haskell is the application of functions to arguments. For example, suppose that we define a function that increments an integer:
 
@@ -16,25 +16,25 @@ inc n = n + 1
 Then the expression inc (2\*3) can be evaluated as follows:
 
 ``` haskell
-inc (2*3)
-={ applying * }
-inc 6
-={ applying inc }
-6 + 1
-={ applying + }
-7
+  inc (2*3)
+=   { applying * }
+  inc 6
+=   { applying inc }
+  6 + 1
+=   { applying + }
+  7
 ```
 
 Alternatively, the same final result can also be obtained by performing the first two function applications in the opposite order:
 
 ``` haskell
-inc (2*3)
-={ applying inc }
-(2*3) + 1
-={ applying * }
-6 + 1
-={ applying + }
-7
+  inc (2*3)
+=   { applying inc }
+  (2*3) + 1
+=   { applying * }
+  6 + 1
+=   { applying + }
+  7
 ```
 
 The fact that changing the order in which functions are applied does not affect the final result is not specific to simple examples such as the above, but is an important general property of function application in Haskell. More formally, in Haskell any two different ways of evaluating the same expression will always produce the same final value, provided that they both terminate. We will return to the issue of termination later on in this chapter.
@@ -42,30 +42,30 @@ The fact that changing the order in which functions are applied does not affect 
 We also note that the above property does not hold for most imperative programming languages, in which the basic method of computation is changing stored values. For example, consider the imperative expression n + (n = 1) that adds the current value of the variable n to the result of changing its value to one. Assuming that n initially has the value zero, this expression can be evaluated by first performing the left-hand side of the addition
 
 ``` haskell
-n + (n = 1)
-={ applying n }
-0 + (n = 1)
-={ applying = }
-0 + 1
-={ applying + }
-1
+  n + (n = 1)
+=   { applying n }
+  0 + (n = 1)
+=   { applying = }
+  0 + 1
+=   { applying + }
+  1
 ```
 
 or alternatively, by first performing the right-hand side:
 
 ``` haskell
-n + (n = 1)
-={ applying = }
-n + 1
-={ applying n }
-1 + 1
-={ applying + }
-2
+  n + (n = 1)
+=   { applying = }
+  n + 1
+=   { applying n }
+  1 + 1
+=   { applying + }
+  2
 ```
 
 The final value is different in each case. The general problem illustrated by this example is that the precise time at which an assignment is performed in an imperative language may affect the value that results from a computation. In contrast, the time at which a function is applied to an argument in Haskell never affects the value that results from a computation. Nonetheless, as we shall see in the remainder of this chapter, there are important practical issues concerning the order and nature of the evaluation process.
 
-### **15.2Evaluation strategies**
+### **15.2 Evaluation strategies**
 
 An expression that has the form of a function applied to one or more arguments that can be ‘reduced’ by performing the application is called a *reducible expression*, or *redex* for short. As indicated by the use of quotations marks in the preceding sentence, such reductions do not necessarily decrease the size of an expression, although in practice this is often the case.
 
@@ -83,15 +83,15 @@ When evaluating an expression, in what order should the reductions be performed?
 For example, both of the sub-expressions 1+2 and 2+3 contain no other redexes and are hence innermost within the expression mult (1+2,2+3), with the redex 1+2 beginning at the leftmost position. More generally, our example expression is evaluated using innermost evaluation as follows:
 
 ``` haskell
-mult (1+2, 2+3)
-={ applying the first + }
-mult (3, 2+3)
-={ applying + }
-mult (3, 5)
-={ applying mult }
-3 * 5
-={ applying * }
-15
+  mult (1+2, 2+3)
+=   { applying the first + }
+  mult (3, 2+3)
+=   { applying + }
+  mult (3, 5)
+=   { applying mult }
+  3 * 5
+=   { applying * }
+  15
 ```
 
 Innermost evaluation can also be characterised in terms of how arguments are passed to functions. In particular, using this strategy ensures that arguments are always fully evaluated before functions are applied. That is, arguments are passed *by value*. For example, as shown above, evaluating mult (1+2,2+3) using innermost evaluation proceeds by first evaluating the arguments 1+2 and 2+3, and then applying mult. The fact that we always choose the leftmost innermost redex ensures that the first argument is evaluated before the second.
@@ -101,15 +101,15 @@ Another common strategy for evaluating an expression, dual to innermost evaluati
 For example, the expression mult (1+2,2+3) is contained in no other redex and is hence outermost within itself. More generally, evaluating this expression using outermost evaluation proceeds as follows:
 
 ``` haskell
-mult (1+2, 2+3)
-={ applying mult }
-(1+2) * (2+3)
-={ applying the first + }
-3 * (2+3)
-={ applying + }
-3 * 5
-={ applying * }
-15
+  mult (1+2, 2+3)
+=   { applying mult }
+  (1+2) * (2+3)
+=   { applying the first + }
+  3 * (2+3)
+=   { applying + }
+  3 * 5
+=   { applying * }
+  15
 ```
 
 In terms of how arguments are passed to functions, using outermost evaluation allows functions to be applied before their arguments are evaluated. For this reason, we say that arguments are passed *by name*. For example, as shown above, evaluating mult (1+2,2+3) using outermost evaluation proceeds by first applying the function mult to the two unevaluated arguments 1+2 and 2+3, and then evaluating these two expressions in turn.
@@ -128,17 +128,17 @@ mult x = \y -> x * y
 Then using innermost evaluation, for example, we have:
 
 ``` haskell
-mult (1+2) (2+3)
-={ applying the first + }
-mult 3 (2+3)
-={ applying mult }
-(\y -> 3 * y) (2+3)
-={ applying + }
-(\y -> 3 * y) 5
-={ applying the lambda }
-3 * 5
-={ applying * }
-15
+  mult (1+2) (2+3)
+=   { applying the first + }
+  mult 3 (2+3)
+=   { applying mult }
+  (\y -> 3 * y) (2+3)
+=   { applying + }
+  (\y -> 3 * y) 5
+=   { applying the lambda }
+  3 * 5
+=   { applying * }
+  15
 ```
 
 That is, the two arguments are now substituted into the body of the function mult one at a time, as we would expect using currying, rather than at the same time as in the previous section. This behaviour arises because mult 3 is the leftmost innermost redex in the expression mult 3 (2+3), as opposed to 2+3 in the expression mult (3,2+3). Performing a reduction on mult 3 in the second step of the calculation above gives the lambda expression \y -\> 3 \* y, which awaits the result of evaluating the second argument.
@@ -148,16 +148,16 @@ Note that in Haskell, the selection of redexes within the bodies lambda expressi
 For example, the function \x -\> 1 + 2 is deemed to already be fully evaluated, even though its body contains the redex 1 + 2, but once this function has been applied to an argument, evaluation of this redex can then proceed:
 
 ``` haskell
-(\x -> 1 + 2) 0
-={ applying the lambda }
-1 + 2
-={ applying + }
-3
+  (\x -> 1 + 2) 0
+=   { applying the lambda }
+  1 + 2
+=   { applying + }
+  3
 ```
 
 Using innermost and outermost evaluation, but not within lambda expressions, is normally referred to as *call-by-value* and *call-by-name* evaluation, respectively. In the next two sections we explore how these two evaluation strategies compare in terms of two important properties, namely their termination behaviour and the number of reduction steps that they require.
 
-### **15.3Termination**
+### **15.3 Termination**
 
 Consider the following recursive definition:
 
@@ -169,44 +169,44 @@ inf = 1 + inf
 That is, the integer inf (abbreviating *infinity*) is defined as the successor of itself. Evaluating inf produces a larger and larger expression, regardless of the evaluation strategy, and hence does not terminate:
 
 ``` haskell
-inf
-={ applying inf }
-1 + inf
-={ applying inf }
-1 + (1 + inf)
-={ applying inf }
-1 + (1 + (1 + inf))
-={ applying inf }
-.
+  inf
+=   { applying inf }
+  1 + inf
+=   { applying inf }
+  1 + (1 + inf)
+=   { applying inf }
+  1 + (1 + (1 + inf))
+=   { applying inf }
+  .
 ```
 
 Now consider the expression fst (0,inf) that contains the value inf, where fst is the library function that selects the first component of a pair, defined by fst (x,y) = x. Using call-by-value evaluation with this expression results in non-termination in a similar manner to inf itself:
 
 ``` haskell
-fst (0, inf)
-={ applying inf }
-fst (0, 1 + inf)
-={ applying inf }
-fst (0, 1 + (1 + inf))
-={ applying inf }
-fst (0, 1 + (1 + (1 + inf)))
-={ applying inf }
-⋮
+  fst (0, inf)
+=   { applying inf }
+  fst (0, 1 + inf)
+=   { applying inf }
+  fst (0, 1 + (1 + inf))
+=   { applying inf }
+  fst (0, 1 + (1 + (1 + inf)))
+=   { applying inf }
+  ⋮
 ```
 
 In contrast, using call-by-name evaluation results in termination with the result zero in just one step, by immediately applying the definition of fst and hence avoiding the evaluation of the non-terminating expression inf:
 
 ``` haskell
-fst (0, inf)
-={ applying fst }
-0
+  fst (0, inf)
+=   { applying fst }
+  0
 ```
 
 This simple example shows that call-by-name evaluation may produce a result when call-by-value evaluation fails to terminate. More generally, we have the following important property: if there exists any evaluation sequence that terminates for a given expression, then call-by-name evaluation will also terminate for this expression, and produce the same final result.
 
 In summary, call-by-name evaluation is preferable to call-by-value for the purpose of ensuring that evaluation terminates as often as possible.
 
-### **15.4Number of reductions**
+### **15.4 Number of reductions**
 
 Now consider the following definition:
 
@@ -218,27 +218,27 @@ square n = n * n
 For example, using call-by-value evaluation, we have:
 
 ``` haskell
-square (1+2)
-={ applying + }
-square 3
-={ applying square }
-3 * 3
-={ applying * }
-9
+  square (1+2)
+=   { applying + }
+  square 3
+=   { applying square }
+  3 * 3
+=   { applying * }
+  9
 ```
 
 In contrast, using call-by-name evaluation requires one extra reduction step, due to the fact that the argument expression 1+2 is duplicated when the function square is applied, and hence must be evaluated twice:
 
 ``` haskell
-square (1+2)
-={ applying square }
-(1+2) * (1+2)
-={ applying the first + }
-3 * (1+2)
-={ applying + }
-3 * 3
-={ applying * }
-9
+  square (1+2)
+=   { applying square }
+  (1+2) * (1+2)
+=   { applying the first + }
+  3 * (1+2)
+=   { applying + }
+  3 * 3
+=   { applying * }
+  9
 ```
 
 This example shows that call-by-name evaluation may require more reduction steps than call-by-value evaluation, in particular when an argument is used more than once in the body of a function. More generally, we have the following property: arguments are evaluated precisely once using call-by-value evaluation, but may be evaluated many times using call-by-name.
@@ -249,14 +249,14 @@ Fortunately, the above efficiency problem with call-by-name evaluation can easil
 
 ``` haskell
 = { applying * }
-9
+  9
 ```
 
 That is, when applying the definition square n = n \* n in the first step, we keep a single copy of the argument expression 1+2, and make two pointers to it. In this manner, when the expression 1+2 is reduced in the second step, both pointers in the expression share the result.
 
 The use of call-by-name evaluation in conjunction with sharing is known as *lazy evaluation*. This is the evaluation strategy that is used in Haskell, as a result of which Haskell is known as a lazy programming language. Being based upon call-by-name evaluation, lazy evaluation has the property that it ensures that evaluation terminates as often as possible. Moreover, using sharing ensures that lazy evaluation never requires more steps than call-by-value evaluation. The use of the term ‘lazy’ will be explained in the next section.
 
-### **15.5Infinite structures**
+### **15.5 Infinite structures**
 
 An additional property of call-by-name evaluation, and hence lazy evaluation, is that it allows what at first may seem impossible: programming with infinite structures. We have already seen a simple example of this idea earlier in this chapter, in the form of the evaluation of fst (0,inf) avoiding the production of the infinite structure 1 + (1 + (1 + ...)) defined by inf.
 
@@ -270,15 +270,15 @@ ones = 1 : ones
 That is, the list ones is defined as a single one followed by itself. As with inf, evaluating ones does not terminate, regardless of the strategy used:
 
 ``` haskell
-ones
-={ applying ones }
-1 : ones
-={ applying ones }
-1 : (1 : ones)
-={ applying ones }
-1 : (1 : (1 : ones))
-={ applying ones }
-..
+  ones
+=   { applying ones }
+  1 : ones
+=   { applying ones }
+  1 : (1 : ones)
+=   { applying ones }
+  1 : (1 : (1 : ones))
+=   { applying ones }
+  ..
 ```
 
 In practice, evaluating ones using GHCi will produce a never-ending list of ones, until the user eventually decides to terminate this process:
@@ -291,32 +291,32 @@ In practice, evaluating ones using GHCi will produce a never-ending list of ones
 Now consider the expression head ones, where head is the library function that selects the first element of a list, defined by head (x:\_) = x. Using call-by-value evaluation in this case also results in non-termination:
 
 ``` haskell
-head ones
-={ applying ones }
-head (1 : ones)
-={ applying ones }
-head (1 : (1 : ones))
-={ applying ones }
-head (1 : (1 : (1 : ones)))
-={ applying ones }
-.
+  head ones
+=   { applying ones }
+  head (1 : ones)
+=   { applying ones }
+  head (1 : (1 : ones))
+=   { applying ones }
+  head (1 : (1 : (1 : ones)))
+=   { applying ones }
+  .
 ```
 
 In contrast, using lazy evaluation (or call-by-name evaluation, as sharing is not required in this example) results in termination in two steps:
 
 ``` haskell
-head ones
-={ applying ones }
-head (1 : ones)
-={ applying head }
-1
+  head ones
+=   { applying ones }
+  head (1 : ones)
+=   { applying head }
+  1
 ```
 
 This behaviour arises because lazy evaluation proceeds in a lazy manner as its name suggests, only evaluating arguments as and when this is strictly necessary in order to produce results. For example, when selecting the first element of a list, the remainder of the list is not required, and hence in head (1 : ones) the further evaluation of the infinite list ones is avoided. More generally, we have the following property: using lazy evaluation, expressions are only evaluated as much as required by the context in which they are used.
 
 Using this idea, we now see that under lazy evaluation ones is not an infinite list as such, but rather a *potentially infinite* list, which is only evaluated as much as required by the context. This idea is not restricted to lists, but applies equally to any form of data structure in Haskell. For example, infinite trees are considered in the exercises for this chapter.
 
-### **15.6Modular programming**
+### **15.6 Modular programming**
 
 Lazy evaluation also allows us to separate *control* from *data* in our computations. For example, a list of three ones can be produced by selecting the first three elements (control) of the infinite list of ones (data):
 
@@ -332,23 +332,23 @@ Using the definition of take from the standard prelude
 this behaviour arises using lazy evaluation as follows:
 
 ``` haskell
-take 3 ones
-={ applying ones }
-take 3 (1 : ones)
-={ applying take }
-1 : take 2 ones
-={ applying ones }
-1 : take 2 (1 : ones)
-={ applying take }
-1 : 1 : take 1 ones
-={ applying ones }
-1 : 1 : take 1 (1 : ones)
-={ applying take }
-1 : 1 : 1 : take 0 ones
-={ applying take }
-1 : 1 : 1 : []
-={ list notation }
-[1,1,1]
+  take 3 ones
+=   { applying ones }
+  take 3 (1 : ones)
+=   { applying take }
+  1 : take 2 ones
+=   { applying ones }
+  1 : take 2 (1 : ones)
+=   { applying take }
+  1 : 1 : take 1 ones
+=   { applying ones }
+  1 : 1 : take 1 (1 : ones)
+=   { applying take }
+  1 : 1 : 1 : take 0 ones
+=   { applying take }
+  1 : 1 : 1 : []
+=   { list notation }
+  [1,1,1]
 ```
 
 That is, the data is only evaluated as much as required by the control, and these two parts take it in turn to perform reductions. Without lazy evaluation, the control and data parts would need to be combined in the form of a single function that produces a list of n identical elements, such as:
@@ -415,7 +415,7 @@ By freeing the generation of prime numbers from the constraint of finiteness, we
 [2,3,5,7]
 ```
 
-### **15.7Strict application**
+### **15.7 Strict application**
 
 Haskell uses lazy evaluation by default, but also provides a special *strict* version of function application, written as \$!, which can sometimes be useful. Informally, an expression of the form f \$! x behaves in the same way as the normal functional application f x, except that the top-level of evaluation of the argument expression x is forced before the function f is applied.
 
@@ -424,15 +424,15 @@ For example, if the argument has a basic type, such as Int or Bool, then top-lev
 More formally, an expression of the form f \$! x is only a redex once evaluation of the argument x, using lazy evaluation as normal, has reached the point where it is known that the result is not an undefined value, at which point the expression can be reduced to the normal application f x. For example, using the definition square n = n \* n, evaluation of the application square \$! (1+2) proceeds in a call-by-value manner, by first evaluating the argument expression 1+2 to give the value 3, and then applying the function square:
 
 ``` haskell
-square $! (1+2)
+  square $! (1+2)
 = { applying + }
-square $! 3
-={ applying $! }
-square 3
-={ applying square }
-3 * 3
-={ applying * }
-9
+  square $! 3
+=   { applying $! }
+  square 3
+=   { applying square }
+  3 * 3
+=   { applying * }
+  9
 ```
 
 When used with a curried function with multiple arguments, strict application can be used to force top-level evaluation of any combination of arguments. For example, if f is a curried function with two arguments, an application of the form f x y can be modified to have three different behaviours:
@@ -454,20 +454,20 @@ sumwith v (x:xs) = sumwith (v+x) xs
 Then, using lazy evaluation, we have:
 
 ``` haskell
-sumwith 0 [1,2,3]
-={ applying sumwith }
-sumwith (0+1) [2,3]
-={ applying sumwith }
-sumwith ((0+1)+2) [3]
-={ applying sumwith }
-sumwith (((0+1)+2)+3) [] = { applying sumwith }
-((0+1)+2)+3
-={ applying the first + }
-(1+2)+3
-={ applying the first + }
-3+3
-={ applying + }
-6
+  sumwith 0 [1,2,3]
+=   { applying sumwith }
+  sumwith (0+1) [2,3]
+=   { applying sumwith }
+  sumwith ((0+1)+2) [3]
+=   { applying sumwith }
+  sumwith (((0+1)+2)+3) [] = { applying sumwith }
+  ((0+1)+2)+3
+=   { applying the first + }
+  (1+2)+3
+=   { applying the first + }
+  3+3
+=   { applying + }
+  6
 ```
 
 Note that the entire summation ((0+1)+2)+3 is constructed before any of the component additions are actually performed. More generally, sumwith will construct a summation whose size is proportional to the number of integers in the original list, which for a long list may require a significant amount of space. In practice, it would be preferable to perform each addition as soon as it is introduced, to improve the space performance of the function.
@@ -482,27 +482,27 @@ sumwith v (x:xs) = (sumwith $! (v+x)) xs
 For example, we now have:
 
 ``` haskell
-sumwith 0 [1,2,3]
-={ applying sumwith }
-(sumwith $! (0+1)) [2,3]
-={ applying + }
-(sumwith $! 1) [2,3]
-={ applying $! }
-sumwith 1 [2,3]
-={ applying sumwith }
-(sumwith $! (1+2)) [3]
-={ applying + }
-(sumwith $! 3) [3]
-={ applying $! }
-sumwith 3 [3]
-={ applying sumwith }
-(sumwith $! (3+3)) []
-={ applying + }
-(sumwith $! 6) []
-={ applying $! }
-sumwith 6 []
-={ applying sumwith }
-6
+  sumwith 0 [1,2,3]
+=   { applying sumwith }
+  (sumwith $! (0+1)) [2,3]
+=   { applying + }
+  (sumwith $! 1) [2,3]
+=   { applying $! }
+  sumwith 1 [2,3]
+=   { applying sumwith }
+  (sumwith $! (1+2)) [3]
+=   { applying + }
+  (sumwith $! 3) [3]
+=   { applying $! }
+  sumwith 3 [3]
+=   { applying sumwith }
+  (sumwith $! (3+3)) []
+=   { applying + }
+  (sumwith $! 6) []
+=   { applying $! }
+  sumwith 6 []
+=   { applying sumwith }
+  6
 ```
 
 This evaluation requires more steps than previously, due to the additional overhead of using strict application, but now performs each addition as soon as it is introduced, rather than constructing a large summation.
@@ -517,13 +517,13 @@ foldl’ f v (x:xs) = ((foldl’ f) $! (f v x)) xs
 
 For example, using this function we can define sumwith = foldl’ (+). It is important to note, however, that strict application is not a silver bullet that automatically improves the space behaviour of Haskell programs. Even for relatively simple examples, the use of strict application is a specialist topic that requires careful consideration of the behaviour of lazy evaluation.
 
-### **15.8Chapter remarks**
+### **15.8 Chapter remarks**
 
 Further details about evaluation orders and their properties can be found in \[29\], and further examples of the use of lazy evaluation for modular programming in the classic article *Why Functional Programming Matters* \[30\]. A formal meaning for lazy evaluation is given in \[31\], and a comprehensive tutorial on the efficient implementation of lazy evaluation in \[32\].
 
-### **15.9Exercises**
+### **15.9 Exercises**
 
-1.Identify the redexes in the following expressions, and determine whether each redex is innermost, outermost, neither, or both:
+1\. Identify the redexes in the following expressions, and determine whether each redex is innermost, outermost, neither, or both:
 
 ``` haskell
 1 + (2*3)
@@ -532,11 +532,11 @@ fst (1+2, 2+3)
 (\x -> 1 + x) (2*3)
 ```
 
-2.Show why outermost evaluation is preferable to innermost for the purposes of evaluating the expression fst (1+2,2+3).
+2\. Show why outermost evaluation is preferable to innermost for the purposes of evaluating the expression fst (1+2,2+3).
 
-3.Given the definition mult = \x -\> (\y -\> x \* y), show how the evaluation of mult 3 4 can be broken down into four separate steps.
+3\. Given the definition mult = \x -\> (\y -\> x \* y), show how the evaluation of mult 3 4 can be broken down into four separate steps.
 
-4.Using a list comprehension, define an expression fibs :: \[Integer\] that generates the infinite sequence of Fibonacci numbers
+4\. Using a list comprehension, define an expression fibs :: \[Integer\] that generates the infinite sequence of Fibonacci numbers
 
 0*,* 1*,* 1*,* 2*,* 3*,* 5*,* 8*,* 13*,* 21*,* 34*,* ...
 
@@ -548,7 +548,7 @@ using the following simple procedure:
 
 Hint: make use of the library functions zip and tail. Note that numbers in the Fibonacci sequence quickly become large, hence the use of the type Integer of arbitrary-precision integers above.
 
-5.Define appropriate versions of the library functions
+5\. Define appropriate versions of the library functions
 
 ``` haskell
 repeat :: a -> [a]
@@ -565,10 +565,10 @@ for the following type of binary trees:
 
 ``` haskell
 data Tree a = Leaf | Node (Tree a) a (Tree a)
-deriving Show
+         deriving Show
 ```
 
-6.*Newton’s method* for computing the square root of a (non-negative) floating-point number n can be expressed as follows:
+6\. *Newton’s method* for computing the square root of a (non-negative) floating-point number n can be expressed as follows:
 
 - start with an initial approximation to the result;
 - given the current approximation a, the next approximation is defined by the function next a = (a + n/a) / 2;

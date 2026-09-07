@@ -1,3 +1,5 @@
+![](media/index-239_1.jpg)
+
 4 BASIC CONCEPTS OF FILE I/O
 
 One of the most fundamental operations that system programs perform
@@ -2241,5 +2243,3 @@ cat f1 f2 f3 concatenates files *f1*, *f2*, and *f3* and displays their concaten
 Assume that the total number of files allowed on the command line
 
 is 10. Remember that the program does not need to open or close standard output.
-
-![](media/index-295_1.jpg)

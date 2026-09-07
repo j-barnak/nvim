@@ -14,11 +14,11 @@ Right now, our interpreter is little more than a calculator. A Lox program can o
 
 In the early part of last century, mathematicians stumbled into a series of confusing paradoxes that led them to doubt the stability of the foundation they had built their work upon. To address that [crisis](https://en.wikipedia.org/wiki/Foundations_of_mathematics#Foundational_crisis), they went back to square one. Starting from a handful of axioms, logic, and set theory, they hoped to rebuild mathematics on top of an impervious foundation.
 
-The most famous is [**Russell’s paradox**](https://en.wikipedia.org/wiki/Russell%27s_paradox). Initially, set theory allowed you to define any sort of set. If you could describe it in English, it was valid. Naturally, given mathematicians’ predilection for self-reference, sets can contain other sets. So Russell, rascal that he was, came up with:
-
-*R is the set of all sets that do not contain themselves.*
-
-Does R contain itself? If it doesn’t, then according to the second half of the definition it should. But if it does, then it no longer meets the definition. Cue mind exploding.
+> The most famous is [**Russell’s paradox**](https://en.wikipedia.org/wiki/Russell%27s_paradox). Initially, set theory allowed you to define any sort of set. If you could describe it in English, it was valid. Naturally, given mathematicians’ predilection for self-reference, sets can contain other sets. So Russell, rascal that he was, came up with:
+>
+> *R is the set of all sets that do not contain themselves.*
+>
+> Does R contain itself? If it doesn’t, then according to the second half of the definition it should. But if it does, then it no longer meets the definition. Cue mind exploding.
 
 They wanted to rigorously answer questions like, “Can all true statements be proven?”, “Can we [compute](https://en.wikipedia.org/wiki/Computable_function) all functions that we can define?”, or even the more general question, “What do we mean when we claim a function is ‘computable’?”
 
@@ -26,11 +26,11 @@ They presumed the answer to the first two questions would be “yes”. All that
 
 What I do want to note is that in the process of proving that the answer to the first two questions is “no”, Alan Turing and Alonzo Church devised a precise answer to the last question—a definition of what kinds of functions are computable. They each crafted a tiny system with a minimum set of machinery that is still powerful enough to compute any of a (very) large class of functions.
 
-They proved the answer to the first question is “no” by showing that the function that returns the truth value of a given statement is *not* a computable one.
+> They proved the answer to the first question is “no” by showing that the function that returns the truth value of a given statement is *not* a computable one.
 
 These are now considered the “computable functions”. Turing’s system is called a **Turing machine**. Church’s is the **lambda calculus**. Both are still widely used as the basis for models of computation and, in fact, many modern functional programming languages use the lambda calculus at their core.
 
-Turing called his inventions “a-machines” for “automatic”. He wasn’t so self-aggrandizing as to put his *own* name on them. Later mathematicians did that for him. That’s how you get famous while still retaining some modesty.
+> Turing called his inventions “a-machines” for “automatic”. He wasn’t so self-aggrandizing as to put his *own* name on them. Later mathematicians did that for him. That’s how you get famous while still retaining some modesty.
 
 ![A Turing machine.](media/image/control-flow/turing-machine.png)
 
@@ -40,7 +40,7 @@ You can prove that by writing a simulator for a Turing machine in your language.
 
 If your language is expressive enough to do that, it’s considered **Turing-complete**. Turing machines are pretty dang simple, so it doesn’t take much power to do this. You basically need arithmetic, a little control flow, and the ability to allocate and use (theoretically) arbitrary amounts of memory. We’ve got the first. By the end of this chapter, we’ll have the second.
 
-We *almost* have the third too. You can create and concatenate strings of arbitrary size, so you can *store* unbounded memory. But we don’t have any way to access parts of a string.
+> We *almost* have the third too. You can create and concatenate strings of arbitrary size, so you can *store* unbounded memory. But we don’t have any way to access parts of a string.
 
 ## 9.2 Conditional Execution
 
@@ -52,7 +52,7 @@ Enough history, let’s jazz up our language. We can divide control flow roughly
 
 Branching is simpler, so we’ll start there. C-derived languages have two main conditional execution features, the `if` statement and the perspicaciously named “conditional” operator (`?:`). An `if` statement lets you conditionally execute statements and the conditional operator lets you conditionally execute expressions.
 
-The conditional operator is also called the “ternary” operator because it’s the only operator in C that takes three operands.
+> The conditional operator is also called the “ternary” operator because it’s the only operator in C that takes three operands.
 
 For simplicity’s sake, Lox doesn’t have a conditional operator, so let’s get our `if` statement on. Our statement grammar gets a new production.
 
@@ -66,7 +66,7 @@ ifStmt         → "if" "(" expression ")" statement
                ( "else" statement )? ;
 ```
 
-The semicolons in the rules aren’t quoted, which means they are part of the grammar metasyntax, not Lox’s syntax. A block does not have a `;` at the end and an `if` statement doesn’t either, unless the then or else statement happens to be one that ends in a semicolon.
+> The semicolons in the rules aren’t quoted, which means they are part of the grammar metasyntax, not Lox’s syntax. A block does not have a `;` at the end and an `if` statement doesn’t either, unless the then or else statement happens to be one that ends in a semicolon.
 
 An `if` statement has an expression for the condition, then a statement to execute if the condition is truthy. Optionally, it may also have an `else` keyword and a statement to execute if the condition is falsey. The syntax tree node has fields for each of those three pieces.
 
@@ -85,7 +85,7 @@ An `if` statement has an expression for the condition, then a statement to execu
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 Like other statements, the parser recognizes an `if` statement by the leading `if` keyword.
 
@@ -105,25 +105,27 @@ Like other statements, the parser recognizes an `if` statement by the leading `i
 
 When it finds one, it calls this new method to parse the rest:
 
-      private Stmt ifStatement() {
-        consume(LEFT_PAREN, "Expect '(' after 'if'.");
-        Expr condition = expression();
-        consume(RIGHT_PAREN, "Expect ')' after if condition.");
+```
+  private Stmt ifStatement() {
+    consume(LEFT_PAREN, "Expect '(' after 'if'.");
+    Expr condition = expression();
+    consume(RIGHT_PAREN, "Expect ')' after if condition.");
 
-        Stmt thenBranch = statement();
-        Stmt elseBranch = null;
-        if (match(ELSE)) {
-          elseBranch = statement();
-        }
+    Stmt thenBranch = statement();
+    Stmt elseBranch = null;
+    if (match(ELSE)) {
+      elseBranch = statement();
+    }
 
-        return new Stmt.If(condition, thenBranch, elseBranch);
-      }
+    return new Stmt.If(condition, thenBranch, elseBranch);
+  }
+```
 
 *lox/Parser.java*, add after *statement*()
 
-The parentheses around the condition are only half useful. You need some kind of delimiter *between* the condition and the then statement, otherwise the parser can’t tell when it has reached the end of the condition expression. But the *opening* parenthesis after `if` doesn’t do anything useful. Dennis Ritchie put it there so he could use `)` as the ending delimiter without having unbalanced parentheses.
-
-Other languages like Lua and some BASICs use a keyword like `then` as the ending delimiter and don’t have anything before the condition. Go and Swift instead require the statement to be a braced block. That lets them use the `{` at the beginning of the statement to tell when the condition is done.
+> The parentheses around the condition are only half useful. You need some kind of delimiter *between* the condition and the then statement, otherwise the parser can’t tell when it has reached the end of the condition expression. But the *opening* parenthesis after `if` doesn’t do anything useful. Dennis Ritchie put it there so he could use `)` as the ending delimiter without having unbalanced parentheses.
+>
+> Other languages like Lua and some BASICs use a keyword like `then` as the ending delimiter and don’t have anything before the condition. Go and Swift instead require the statement to be a braced block. That lets them use the `{` at the beginning of the statement to tell when the condition is done.
 
 As usual, the parsing code hews closely to the grammar. It detects an else clause by looking for the preceding `else` keyword. If there isn’t one, the `elseBranch` field in the syntax tree is `null`.
 
@@ -143,7 +145,7 @@ Since else clauses are optional, and there is no explicit delimiter marking the 
 
 ![Two ways the else can be interpreted.](media/image/control-flow/dangling-else.png)
 
-Here, formatting highlights the two ways the else could be parsed. But note that since whitespace characters are ignored by the parser, this is only a guide to the human reader.
+> Here, formatting highlights the two ways the else could be parsed. But note that since whitespace characters are ignored by the parser, this is only a guide to the human reader.
 
 It *is* possible to define a context-free grammar that avoids the ambiguity directly, but it requires splitting most of the statement rules into pairs, one that allows an `if` with an `else` and one that doesn’t. It’s annoying.
 
@@ -153,15 +155,17 @@ Our parser conveniently does that already. Since `ifStatement()` eagerly looks f
 
 Syntax in hand, we are ready to interpret.
 
-      @Override
-      public Void visitIfStmt(Stmt.If stmt) {
-        if (isTruthy(evaluate(stmt.condition))) {
-          execute(stmt.thenBranch);
-        } else if (stmt.elseBranch != null) {
-          execute(stmt.elseBranch);
-        }
-        return null;
-      }
+```
+  @Override
+  public Void visitIfStmt(Stmt.If stmt) {
+    if (isTruthy(evaluate(stmt.condition))) {
+      execute(stmt.thenBranch);
+    } else if (stmt.elseBranch != null) {
+      execute(stmt.elseBranch);
+    }
+    return null;
+  }
+```
 
 *lox/Interpreter.java*, add after *visitExpressionStmt*()
 
@@ -183,7 +187,7 @@ For an `and` expression to evaluate to something truthy, both operands must be t
 
 This is why we didn’t implement the logical operators with the other binary operators. Now we’re ready. The two new operators are low in the precedence table. Similar to `||` and `&&` in C, they each have their own precedence with `or` lower than `and`. We slot them right between `assignment` and `equality`.
 
-I’ve always wondered why they don’t have the same precedence, like the various comparison or equality operators do.
+> I’ve always wondered why they don’t have the same precedence, like the various comparison or equality operators do.
 
 ```
 expression     → assignment ;
@@ -195,7 +199,7 @@ logic_and      → equality ( "and" equality )* ;
 
 Instead of falling back to `equality`, `assignment` now cascades to `logic_or`. The two new rules, `logic_or` and `logic_and`, are similar to other binary operators. Then `logic_and` calls out to `equality` for its operands, and we chain back to the rest of the expression rules.
 
-The *syntax* doesn’t care that they short-circuit. That’s a semantic concern.
+> The *syntax* doesn’t care that they short-circuit. That’s a semantic concern.
 
 We could reuse the existing Expr.Binary class for these two new expressions since they have the same fields. But then `visitBinaryExpr()` would have to check to see if the operator is one of the logical operators and use a different code path to handle the short circuiting. I think it’s cleaner to define a new class for these operators so that they get their own visit method.
 
@@ -213,7 +217,7 @@ We could reuse the existing Expr.Binary class for these two new expressions sinc
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 To weave the new expressions into the parser, we first change the parsing code for assignment to call `or()`.
 
@@ -233,50 +237,56 @@ To weave the new expressions into the parser, we first change the parsing code f
 
 The code to parse a series of `or` expressions mirrors other binary operators.
 
-      private Expr or() {
-        Expr expr = and();
+```
+  private Expr or() {
+    Expr expr = and();
 
-        while (match(OR)) {
-          Token operator = previous();
-          Expr right = and();
-          expr = new Expr.Logical(expr, operator, right);
-        }
+    while (match(OR)) {
+      Token operator = previous();
+      Expr right = and();
+      expr = new Expr.Logical(expr, operator, right);
+    }
 
-        return expr;
-      }
+    return expr;
+  }
+```
 
 *lox/Parser.java*, add after *assignment*()
 
 Its operands are the next higher level of precedence, the new `and` expression.
 
-      private Expr and() {
-        Expr expr = equality();
+```
+  private Expr and() {
+    Expr expr = equality();
 
-        while (match(AND)) {
-          Token operator = previous();
-          Expr right = equality();
-          expr = new Expr.Logical(expr, operator, right);
-        }
+    while (match(AND)) {
+      Token operator = previous();
+      Expr right = equality();
+      expr = new Expr.Logical(expr, operator, right);
+    }
 
-        return expr;
-      }
+    return expr;
+  }
+```
 
 *lox/Parser.java*, add after *or*()
 
 That calls `equality()` for its operands, and with that, the expression parser is all tied back together again. We’re ready to interpret.
 
-      @Override
-      public Object visitLogicalExpr(Expr.Logical expr) {
-        Object left = evaluate(expr.left);
+```
+  @Override
+  public Object visitLogicalExpr(Expr.Logical expr) {
+    Object left = evaluate(expr.left);
 
-        if (expr.operator.type == TokenType.OR) {
-          if (isTruthy(left)) return left;
-        } else {
-          if (!isTruthy(left)) return left;
-        }
+    if (expr.operator.type == TokenType.OR) {
+      if (isTruthy(left)) return left;
+    } else {
+      if (!isTruthy(left)) return left;
+    }
 
-        return evaluate(expr.right);
-      }
+    return evaluate(expr.right);
+  }
+```
 
 *lox/Interpreter.java*, add after *visitLiteralExpr*()
 
@@ -329,7 +339,7 @@ We add another clause to the statement rule that points to the new rule for whil
 
 *tool/GenerateAst.java*, in *main*(), add *“,”* to previous line
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 The node stores the condition and body. Here you can see why it’s nice to have separate base classes for expressions and statements. The field declarations make it clear that the condition is an expression and the body is a statement.
 
@@ -351,26 +361,30 @@ Over in the parser, we follow the same process we used for `if` statements. Firs
 
 That delegates the real work to this method:
 
-      private Stmt whileStatement() {
-        consume(LEFT_PAREN, "Expect '(' after 'while'.");
-        Expr condition = expression();
-        consume(RIGHT_PAREN, "Expect ')' after condition.");
-        Stmt body = statement();
+```
+  private Stmt whileStatement() {
+    consume(LEFT_PAREN, "Expect '(' after 'while'.");
+    Expr condition = expression();
+    consume(RIGHT_PAREN, "Expect ')' after condition.");
+    Stmt body = statement();
 
-        return new Stmt.While(condition, body);
-      }
+    return new Stmt.While(condition, body);
+  }
+```
 
 *lox/Parser.java*, add after *varDeclaration*()
 
 The grammar is dead simple and this is a straight translation of it to Java. Speaking of translating straight to Java, here’s how we execute the new syntax:
 
-      @Override
-      public Void visitWhileStmt(Stmt.While stmt) {
-        while (isTruthy(evaluate(stmt.condition))) {
-          execute(stmt.body);
-        }
-        return null;
-      }
+```
+  @Override
+  public Void visitWhileStmt(Stmt.While stmt) {
+    while (isTruthy(evaluate(stmt.condition))) {
+      execute(stmt.body);
+    }
+    return null;
+  }
+```
 
 *lox/Interpreter.java*, add after *visitVarStmt*()
 
@@ -399,9 +413,9 @@ forStmt        → "for" "(" ( varDecl | exprStmt | ";" )
                  expression? ")" statement ;
 ```
 
-Most modern languages have a higher-level looping statement for iterating over arbitrary user-defined sequences. C# has `foreach`, Java has “enhanced for”, even C++ has range-based `for` statements now. Those offer cleaner syntax than C’s `for` statement by implicitly calling into an iteration protocol that the object being looped over supports.
-
-I love those. For Lox, though, we’re limited by building up the interpreter a chapter at a time. We don’t have objects and methods yet, so we have no way of defining an iteration protocol that the `for` loop could use. So we’ll stick with the old school C `for` loop. Think of it as “vintage”. The fixie of control flow statements.
+> Most modern languages have a higher-level looping statement for iterating over arbitrary user-defined sequences. C# has `foreach`, Java has “enhanced for”, even C++ has range-based `for` statements now. Those offer cleaner syntax than C’s `for` statement by implicitly calling into an iteration protocol that the object being looped over supports.
+>
+> I love those. For Lox, though, we’re limited by building up the interpreter a chapter at a time. We don’t have objects and methods yet, so we have no way of defining an iteration protocol that the `for` loop could use. So we’ll stick with the old school C `for` loop. Think of it as “vintage”. The fixie of control flow statements.
 
 Inside the parentheses, you have three clauses separated by semicolons:
 
@@ -419,23 +433,25 @@ That’s a lot of machinery, but note that none of it does anything you couldn�
 
 In other words, Lox doesn’t *need* `for` loops, they just make some common code patterns more pleasant to write. These kinds of features are called **syntactic sugar**. For example, the previous `for` loop could be rewritten like so:
 
-This delightful turn of phrase was coined by Peter J. Landin in 1964 to describe how some of the nice expression forms supported by languages like ALGOL were a sweetener sprinkled over the more fundamental—but presumably less palatable—lambda calculus underneath.
+> This delightful turn of phrase was coined by Peter J. Landin in 1964 to describe how some of the nice expression forms supported by languages like ALGOL were a sweetener sprinkled over the more fundamental—but presumably less palatable—lambda calculus underneath.
+>
+> ![Slightly more than a spoonful of sugar.](media/image/control-flow/sugar.png)
 
-![Slightly more than a spoonful of sugar.](media/image/control-flow/sugar.png)
-
-    {
-      var i = 0;
-      while (i < 10) {
-        print i;
-        i = i + 1;
-      }
-    }
+```
+{
+  var i = 0;
+  while (i < 10) {
+    print i;
+    i = i + 1;
+  }
+}
+```
 
 This script has the exact same semantics as the previous one, though it’s not as easy on the eyes. Syntactic sugar features like Lox’s `for` loop make a language more pleasant and productive to work in. But, especially in sophisticated language implementations, every language feature that requires back-end support and optimization is expensive.
 
 We can have our cake and eat it too by **desugaring**. That funny word describes a process where the front end takes code using syntax sugar and translates it to a more primitive form that the back end already knows how to execute.
 
-Oh, how I wish the accepted term for this was “caramelization”. Why introduce a metaphor if you aren’t going to stick with it?
+> Oh, how I wish the accepted term for this was “caramelization”. Why introduce a metaphor if you aren’t going to stick with it?
 
 We’re going to desugar `for` loops to the `while` loops and other statements the interpreter already handles. In our simple interpreter, desugaring really doesn’t save us much work, but it does give me an excuse to introduce you to the technique. So, unlike the previous statements, we *won’t* add a new syntax tree node. Instead, we go straight to parsing. First, add an import we’ll need soon.
 
@@ -471,11 +487,13 @@ Like every statement, we start parsing a `for` loop by matching its keyword.
 
 Here is where it gets interesting. The desugaring is going to happen here, so we’ll build this method a piece at a time, starting with the opening parenthesis before the clauses.
 
-      private Stmt forStatement() {
-        consume(LEFT_PAREN, "Expect '(' after 'for'.");
+```
+  private Stmt forStatement() {
+    consume(LEFT_PAREN, "Expect '(' after 'for'.");
 
-        // More here...
-      }
+    // More here...
+  }
+```
 
 *lox/Parser.java*, add after *statement*()
 
@@ -504,7 +522,7 @@ The first clause following that is the initializer.
 
 If the token following the `(` is a semicolon then the initializer has been omitted. Otherwise, we check for a `var` keyword to see if it’s a variable declaration. If neither of those matched, it must be an expression. We parse that and wrap it in an expression statement so that the initializer is always of type Stmt.
 
-In a previous chapter, I said we can split expression and statement syntax trees into two separate class hierarchies because there’s no single place in the grammar that allows both an expression and a statement. That wasn’t *entirely* true, I guess.
+> In a previous chapter, I said we can split expression and statement syntax trees into two separate class hierarchies because there’s no single place in the grammar that allows both an expression and a statement. That wasn’t *entirely* true, I guess.
 
 Next up is the condition.
 
@@ -549,7 +567,7 @@ Again, we look for a semicolon to see if the clause has been omitted. The last c
 
 It’s similar to the condition clause except this one is terminated by the closing parenthesis. All that remains is the body.
 
-Is it just me or does that sound morbid? “All that remained . . . was the *body*”.
+> Is it just me or does that sound morbid? “All that remained . . . was the *body*”.
 
 ```
     consume(RIGHT_PAREN, "Expect ')' after for clauses.");

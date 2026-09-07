@@ -1,12 +1,12 @@
 **Kernel - Cross-compiling**
 
- 
 
- 
+
+
 
 *Objective: Learn how to cross-compile a kernel for an ARM target platform.*
 
- 
+
 
 After this lab, you will be able to:
 
@@ -62,7 +62,7 @@ Also, don’t forget to either:
 
 ... \<target\>
 
-16 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license **Linux kernel configuration**
+**Linux kernel configuration**
 
 By running make help, look for the proper Makefile target to configure the kernel for your processor.
 
@@ -130,9 +130,8 @@ the TFTP server.
 
 • On the target (in the U-Boot prompt), load zImage from TFTP into RAM:
 
- 
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 17
+
 
 =\> tftp 0x81000000 zImage
 
@@ -158,6 +157,4 @@ You can now automate all this every time the board is booted or reset. Reset the
 
 Restart the board to make sure that booting the kernel is now automated.
 
- 
 
-18 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license

@@ -8,7 +8,7 @@
 
 We already have ourselves a complete implementation of Lox with jlox, so why isn’t the book over yet? Part of this is because jlox relies on the JVM to do lots of things for us. If we want to understand how an interpreter works all the way down to the metal, we need to build those bits and pieces ourselves.
 
-Of course, our second interpreter relies on the C standard library for basics like memory allocation, and the C compiler frees us from details of the underlying machine code we’re running it on. Heck, that machine code is probably implemented in terms of microcode on the chip. And the C runtime relies on the operating system to hand out pages of memory. But we have to stop *somewhere* if this book is going to fit on your bookshelf.
+> Of course, our second interpreter relies on the C standard library for basics like memory allocation, and the C compiler frees us from details of the underlying machine code we’re running it on. Heck, that machine code is probably implemented in terms of microcode on the chip. And the C runtime relies on the operating system to hand out pages of memory. But we have to stop *somewhere* if this book is going to fit on your bookshelf.
 
 An even more fundamental reason that jlox isn’t sufficient is that it’s too damn slow. A tree-walk interpreter is fine for some kinds of high-level, declarative languages. But for a general-purpose, imperative language—even a “scripting” language like Lox—it won’t fly. Take this little script:
 
@@ -24,7 +24,7 @@ var after = clock();
 print after - before;
 ```
 
-This is a comically inefficient way to actually calculate Fibonacci numbers. Our goal is to see how fast the *interpreter* runs, not to see how fast of a program we can write. A slow program that does a lot of work—pointless or not—is a good test case for that.
+> This is a comically inefficient way to actually calculate Fibonacci numbers. Our goal is to see how fast the *interpreter* runs, not to see how fast of a program we can write. A slow program that does a lot of work—pointless or not—is a good test case for that.
 
 On my laptop, that takes jlox about 72 seconds to execute. An equivalent C program finishes in half a second. Our dynamically typed scripting language is never going to be as fast as a statically typed language with manual memory management, but we don’t need to settle for more than *two orders of magnitude* slower.
 
@@ -46,13 +46,13 @@ Our existing interpreter has a couple of things going for it:
 
 Those are real advantages. But, on the other hand, it’s *not memory-efficient*. Each piece of syntax becomes an AST node. A tiny Lox expression like `1 + 2` turns into a slew of objects with lots of pointers between them, something like:
 
-The “(header)” parts are the bookkeeping information the Java virtual machine uses to support memory management and store the object’s type. Those take up space too!
+> The “(header)” parts are the bookkeeping information the Java virtual machine uses to support memory management and store the object’s type. Those take up space too!
 
 ![The tree of Java objects created to represent '1 + 2'.](media/image/chunks-of-bytecode/ast.png)
 
 Each of those pointers adds an extra 32 or 64 bits of overhead to the object. Worse, sprinkling our data across the heap in a loosely connected web of objects does bad things for *spatial locality*.
 
-I wrote [an entire chapter](http://gameprogrammingpatterns.com/data-locality.html) about this exact problem in my first book, *Game Programming Patterns*, if you want to really dig in.
+> I wrote [an entire chapter](http://gameprogrammingpatterns.com/data-locality.html) about this exact problem in my first book, *Game Programming Patterns*, if you want to really dig in.
 
 Modern CPUs process data way faster than they can pull it from RAM. To compensate for that, chips have multiple layers of caching. If a piece of memory it needs is already in the cache, it can be loaded more quickly. We’re talking upwards of 100 *times* faster.
 
@@ -62,7 +62,7 @@ If our program next requests some data close enough to be inside that cache line
 
 Now look up at that tree. Those sub-objects could be *anywhere*. Every step the tree-walker takes where it follows a reference to a child node may step outside the bounds of the cache and force the CPU to stall until a new lump of data can be slurped in from RAM. Just the *overhead* of those tree nodes with all of their pointer fields and object headers tends to push objects away from each other and out of the cache.
 
-Even if the objects happened to be allocated in sequential memory when the parser first produced them, after a couple of rounds of garbage collection—which may move objects around in memory—there’s no telling where they’ll be.
+> Even if the objects happened to be allocated in sequential memory when the parser first produced them, after a couple of rounds of garbage collection—which may move objects around in memory—there’s no telling where they’ll be.
 
 Our AST walker has other overhead too around interface dispatch and the Visitor pattern, but the locality issues alone are enough to justify a better code representation.
 
@@ -72,7 +72,7 @@ If you want to go *real* fast, you want to get all of those layers of indirectio
 
 Compiling directly to the native instruction set the chip supports is what the fastest languages do. Targeting native code has been the most efficient option since way back in the early days when engineers actually handwrote programs in machine code.
 
-Yes, they actually wrote machine code by hand. On punched cards. Which, presumably, they punched *with their fists*.
+> Yes, they actually wrote machine code by hand. On punched cards. Which, presumably, they punched *with their fists*.
 
 If you’ve never written any machine code, or its slightly more human-palatable cousin assembly code before, I’ll give you the gentlest of introductions. Native code is a dense series of operations, encoded directly in binary. Each instruction is between one and a few bytes long, and is almost mind-numbingly low level. “Move a value from this address to this register.” “Add the integers in these two registers.” Stuff like that.
 
@@ -82,9 +82,9 @@ Lightning fast, but that performance comes at a cost. First of all, compiling to
 
 And, of course, you’ve thrown portability out. Spend a few years mastering some architecture and that still only gets you onto *one* of the several popular instruction sets out there. To get your language on all of them, you need to learn all of their instruction sets and write a separate back end for each one.
 
-The situation isn’t entirely dire. A well-architected compiler lets you share the front end and most of the middle layer optimization passes across the different architectures you support. It’s mainly the code generation and some of the details around instruction selection that you’ll need to write afresh each time.
-
-The [LLVM](https://llvm.org/) project gives you some of this out of the box. If your compiler outputs LLVM’s own special intermediate language, LLVM in turn compiles that to native code for a plethora of architectures.
+> The situation isn’t entirely dire. A well-architected compiler lets you share the front end and most of the middle layer optimization passes across the different architectures you support. It’s mainly the code generation and some of the details around instruction selection that you’ll need to write afresh each time.
+>
+> The [LLVM](https://llvm.org/) project gives you some of this out of the box. If your compiler outputs LLVM’s own special intermediate language, LLVM in turn compiles that to native code for a plethora of architectures.
 
 ### 14.1.3 What is bytecode?
 
@@ -98,7 +98,7 @@ The problem with a fantasy architecture, of course, is that it doesn’t exist. 
 
 That emulation layer adds overhead, which is a key reason bytecode is slower than native code. But in return, it gives us portability. Write our VM in a language like C that is already supported on all the machines we care about, and we can run our emulator on top of any hardware we like.
 
-One of the first bytecode formats was [p-code](https://en.wikipedia.org/wiki/P-code_machine), developed for Niklaus Wirth’s Pascal language. You might think a PDP-11 running at 15MHz couldn’t afford the overhead of emulating a virtual machine. But back then, computers were in their Cambrian explosion and new architectures appeared every day. Keeping up with the latest chips was worth more than squeezing the maximum performance from each one. That’s why the “p” in p-code doesn’t stand for “Pascal”, but “portable”.
+> One of the first bytecode formats was [p-code](https://en.wikipedia.org/wiki/P-code_machine), developed for Niklaus Wirth’s Pascal language. You might think a PDP-11 running at 15MHz couldn’t afford the overhead of emulating a virtual machine. But back then, computers were in their Cambrian explosion and new architectures appeared every day. Keeping up with the latest chips was worth more than squeezing the maximum performance from each one. That’s why the “p” in p-code doesn’t stand for “Pascal”, but “portable”.
 
 This is the path we’ll take with our new interpreter, clox. We’ll follow in the footsteps of the main implementations of Python, Ruby, Lua, OCaml, Erlang, and others. In many ways, our VM’s design will parallel the structure of our previous interpreter:
 
@@ -110,7 +110,7 @@ Of course, we won’t implement the phases strictly in order. Like our previous 
 
 Where else to begin, but at `main()`? Fire up your trusty text editor and start typing.
 
-Now is a good time to stretch, maybe crack your knuckles. A little montage music wouldn’t hurt either.
+> Now is a good time to stretch, maybe crack your knuckles. A little montage music wouldn’t hurt either.
 
 ```
 #include "common.h"
@@ -196,7 +196,7 @@ typedef struct {
 
 At the moment, this is simply a wrapper around an array of bytes. Since we don’t know how big the array needs to be before we start compiling a chunk, it must be dynamic. Dynamic arrays are one of my favorite data structures. That sounds like claiming vanilla is my favorite ice cream flavor, but hear me out. Dynamic arrays provide:
 
-Butter pecan is actually my favorite.
+> Butter pecan is actually my favorite.
 
 - Cache-friendly, dense storage
 
@@ -238,9 +238,9 @@ If we have no spare capacity, then the process is a little more involved.
 6.  Store the element in the new array now that there is room.
 7.  Update the `count`.
 
-Copying the existing elements when you grow the array makes it seem like appending an element is *O(n)*, not *O(1)* like I said above. However, you need to do this copy step only on *some* of the appends. Most of the time, there is already extra capacity, so you don’t need to copy.
-
-To understand how this works, we need [**amortized analysis**](https://en.wikipedia.org/wiki/Amortized_analysis). That shows us that as long as we grow the array by a multiple of its current size, when we average out the cost of a *sequence* of appends, each append is *O(1)*.
+> Copying the existing elements when you grow the array makes it seem like appending an element is *O(n)*, not *O(1)* like I said above. However, you need to do this copy step only on *some* of the appends. Most of the time, there is already extra capacity, so you don’t need to copy.
+>
+> To understand how this works, we need [**amortized analysis**](https://en.wikipedia.org/wiki/Amortized_analysis). That shows us that as long as we grow the array by a multiple of its current size, when we average out the cost of a *sequence* of appends, each append is *O(1)*.
 
 We have our struct ready, so let’s implement the functions to work with it. C doesn’t have constructors, so we declare a function to initialize a new chunk.
 
@@ -346,7 +346,7 @@ This macro calculates a new capacity based on a given current capacity. In order
 
 We also handle when the current capacity is zero. In that case, we jump straight to eight elements instead of starting at one. That avoids a little extra memory churn when the array is very small, at the expense of wasting a few bytes on very small chunks.
 
-I picked the number eight somewhat arbitrarily for the book. Most dynamic array implementations have a minimum threshold like this. The right way to pick a value for this is to profile against real-world usage and see which constant makes the best performance trade-off between extra grows versus wasted space.
+> I picked the number eight somewhat arbitrarily for the book. Most dynamic array implementations have a minimum threshold like this. The right way to pick a value for this is to profile against real-world usage and see which constant makes the best performance trade-off between extra grows versus wasted space.
 
 Once we know the desired capacity, we create or grow the array to that size using `GROW_ARRAY()`.
 
@@ -375,9 +375,8 @@ This `reallocate()` function is the single function we’ll use for all dynamic 
 
 The two size arguments passed to `reallocate()` control which operation to perform:
 
-|          |                      |                             |
-|----------|----------------------|-----------------------------|
 | oldSize  | newSize              | Operation                   |
+|----------|----------------------|-----------------------------|
 | 0        | Non‑zero             | Allocate new block.         |
 | Non‑zero | 0                    | Free allocation.            |
 | Non‑zero | Smaller than oldSize | Shrink existing allocation. |
@@ -427,11 +426,11 @@ Because computers are finite lumps of matter and not the perfect mathematical ab
 
 There’s not really anything *useful* that our VM can do if it can’t get the memory it needs, but we at least detect that and abort the process immediately instead of returning a `NULL` pointer and letting it go off the rails later.
 
-Since all we passed in was a bare pointer to the first byte of memory, what does it mean to “update” the block’s size? Under the hood, the memory allocator maintains additional bookkeeping information for each block of heap-allocated memory, including its size.
-
-Given a pointer to some previously allocated memory, it can find this bookkeeping information, which is necessary to be able to cleanly free it. It’s this size metadata that `realloc()` updates.
-
-Many implementations of `malloc()` store the allocated size in memory right *before* the returned address.
+> Since all we passed in was a bare pointer to the first byte of memory, what does it mean to “update” the block’s size? Under the hood, the memory allocator maintains additional bookkeeping information for each block of heap-allocated memory, including its size.
+>
+> Given a pointer to some previously allocated memory, it can find this bookkeeping information, which is necessary to be able to cleanly free it. It’s this size metadata that `realloc()` updates.
+>
+> Many implementations of `malloc()` store the allocated size in memory right *before* the returned address.
 
 OK, we can create new chunks and write instructions to them. Are we done? Nope! We’re in C now, remember, we have to manage memory ourselves, like in Ye Olden Times, and that means *freeing* it too.
 
@@ -524,7 +523,7 @@ To fix this, we’re going to create a **disassembler**. An **assembler** is an 
 
 We’ll implement something similar. Given a chunk, it will print out all of the instructions in it. A Lox *user* won’t use this, but we Lox *maintainers* will certainly benefit since it gives us a window into the interpreter’s internal representation of code.
 
-In jlox, our analogous tool was the AstPrinter class.
+> In jlox, our analogous tool was the AstPrinter class.
 
 In `main()`, after we create the chunk, we pass it to the disassembler.
 
@@ -545,7 +544,7 @@ In `main()`, after we create the chunk, we pass it to the disassembler.
 
 Again, we whip up yet another module.
 
-I promise you we won’t be creating this many new files in later chapters.
+> I promise you we won’t be creating this many new files in later chapters.
 
 ```
 #include "chunk.h"
@@ -622,7 +621,7 @@ First, it prints the byte offset of the given instruction—that tells us where 
 
 Next, it reads a single byte from the bytecode at the given offset. That’s our opcode. We switch on that. For each kind of instruction, we dispatch to a little utility function for displaying it. On the off chance that the given byte doesn’t look like an instruction at all—a bug in our compiler—we print that too. For the one instruction we do have, `OP_RETURN`, the display function is:
 
-We have only one instruction right now, but this switch will grow throughout the rest of the book.
+> We have only one instruction right now, but this switch will grow throughout the rest of the book.
 
 ```
 static int simpleInstruction(const char* name, int offset) {
@@ -679,13 +678,13 @@ That doesn’t work well for large or variable-sized constants like strings. In 
 
 Most virtual machines do something similar. For example, the Java Virtual Machine [associates a **constant pool**](https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html#jvms-4.4) with each compiled class. That sounds good enough for clox to me. Each chunk will carry with it a list of the values that appear as literals in the program. To keep things simpler, we’ll put *all* constants in there, even simple integers.
 
-In addition to needing two kinds of constant instructions—one for immediate values and one for constants in the constant table—immediates also force us to worry about alignment, padding, and endianness. Some architectures aren’t happy if you try to say, stuff a 4-byte integer at an odd address.
+> In addition to needing two kinds of constant instructions—one for immediate values and one for constants in the constant table—immediates also force us to worry about alignment, padding, and endianness. Some architectures aren’t happy if you try to say, stuff a 4-byte integer at an odd address.
 
 ### 14.5.2 Value arrays
 
 The constant pool is an array of values. The instruction to load a constant looks up the value by index in that array. As with our bytecode array, the compiler doesn’t know how big the array needs to be ahead of time. So, again, we need a dynamic one. Since C doesn’t have generic data structures, we’ll write another dynamic array data structure, this time for Value.
 
-Defining a new struct and manipulation functions each time we need a dynamic array of a different type is a chore. We could cobble together some preprocessor macros to fake generics, but that’s overkill for clox. We won’t need many more of these.
+> Defining a new struct and manipulation functions each time we need a dynamic array of a different type is a chore. We could cobble together some preprocessor macros to fake generics, but that’s overkill for clox. We won’t need many more of these.
 
 ```
 typedef double Value;
@@ -742,7 +741,7 @@ void initValueArray(ValueArray* array) {
 
 Once we have an initialized array, we can start adding values to it.
 
-Fortunately, we don’t need other operations like insertion and removal.
+> Fortunately, we don’t need other operations like insertion and removal.
 
 ```
 void writeValueArray(ValueArray* array, Value value) {
@@ -891,7 +890,7 @@ typedef enum {
 
 When the VM executes a constant instruction, it “loads” the constant for use. This new instruction is a little more complex than `OP_RETURN`. In the above example, we load two different constants. A single bare opcode isn’t enough to know *which* constant to load.
 
-I’m being vague about what it means to “load” or “produce” a constant because we haven’t learned how the virtual machine actually executes code at runtime yet. For that, you’ll have to wait until you get to (or skip ahead to, I suppose) the next chapter.
+> I’m being vague about what it means to “load” or “produce” a constant because we haven’t learned how the virtual machine actually executes code at runtime yet. For that, you’ll have to wait until you get to (or skip ahead to, I suppose) the next chapter.
 
 To handle cases like this, our bytecode—like most others—allows instructions to have **operands**. These are stored as binary data immediately after the opcode in the instruction stream and let us parameterize what the instruction does.
 
@@ -899,7 +898,7 @@ To handle cases like this, our bytecode—like most others—allows instructions
 
 Each opcode determines how many operand bytes it has and what they mean. For example, a simple operation like “return” may have no operands, where an instruction for “load local variable” needs an operand to identify which variable to load. Each time we add a new opcode to clox, we specify what its operands look like—its **instruction format**.
 
-Bytecode instruction operands are *not* the same as the operands passed to an arithmetic operator. You’ll see when we get to expressions that arithmetic operand values are tracked separately. Instruction operands are a lower-level notion that modify how the bytecode instruction itself behaves.
+> Bytecode instruction operands are *not* the same as the operands passed to an arithmetic operator. You’ll see when we get to expressions that arithmetic operand values are tracked separately. Instruction operands are a lower-level notion that modify how the bytecode instruction itself behaves.
 
 In this case, `OP_CONSTANT` takes a single byte operand that specifies which constant to load from the chunk’s constant array. Since we don’t have a compiler yet, we “hand-compile” an instruction in our test chunk.
 
@@ -1024,7 +1023,7 @@ When a runtime error occurs, we show the user the line number of the offending s
 
 There are a lot of clever ways we could encode this. I took the absolute simplest approach I could come up with, even though it’s embarrassingly inefficient with memory. In the chunk, we store a separate array of integers that parallels the bytecode. Each number in the array is the line number for the corresponding byte in the bytecode. When a runtime error occurs, we look up the line number at the same index as the current instruction’s offset in the code array.
 
-This braindead encoding does do one thing right: it keeps the line information in a *separate* array instead of interleaving it in the bytecode itself. Since line information is only used when a runtime error occurs, we don’t want it between the instructions, taking up precious space in the CPU cache and causing more cache misses as the interpreter skips past it to get to the opcodes and operands it cares about.
+> This braindead encoding does do one thing right: it keeps the line information in a *separate* array instead of interleaving it in the bytecode itself. Since line information is only used when a runtime error occurs, we don’t want it between the instructions, taking up precious space in the CPU cache and causing more cache misses as the interpreter skips past it to get to the opcodes and operands it cares about.
 
 To implement this, we add another array to Chunk.
 

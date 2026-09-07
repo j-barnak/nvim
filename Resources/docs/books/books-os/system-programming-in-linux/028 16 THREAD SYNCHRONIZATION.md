@@ -1,3 +1,5 @@
+![](media/index-961_1.jpg)
+
 16 THREAD SYNCHRONIZATION
 
 Multithreaded programs can take advantage of the fact that the threads share global memory in the heap and data segments. It’s easy to be
@@ -3261,5 +3263,3 @@ Write a small program with a number of reader threads and a
 single writer that uses this method to allow the readers to read an
 
 integer variable that gets updated by the writer at random times.
-
-![](media/index-1032_1.jpg)

@@ -1,6 +1,12 @@
+
+
+**1**
+
+
+
 **I N T R O D U C T I O N**
 
- 
+
 
 The memory management subsystem is arguably the
 
@@ -18,11 +24,11 @@ agement subsystem in detail. In this chapter we will explore the approach
 
 taken, who the book is aimed it,
 
- 
+
 
 **1.1 Approach**
 
- 
+
 
 Many kernel books take the approach of providing an overview and then
 
@@ -46,9 +52,8 @@ In effect, this book tries to combine a source commentary with in depth
 
 analysis of concepts explored in both extensive discussions of the concepts
 
-The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes
 
- 
+
 
 at hand along side a large number of diagrams which aim to put each con-cept into perspective.
 
@@ -56,11 +61,11 @@ As the kernel is constantly evolving and this book necessarily must target
 
 a static kernel version, the intent is that by taking this approach, not only will the reader acquire understanding of fundamentals which are unlikely to change, but more importantly develop their skills at exploring kernel source so that they can adapt and update their knowledge to the latest version of the code.
 
- 
+
 
 **1.2 Who Is This Book For?**
 
- 
+
 
 This book is aimed at developers who already have some fundamental un-derstanding of the C programming language and operating system basics, and have an interest in exploring under the hood to see how Linux manages memory in as much detail as they may want to do so.
 
@@ -72,7 +77,7 @@ The intent is to bring out the hidden tribal knowledge within this code-
 
 base as much as possible and in the spirit of open source software make it more widely available to curious hackers all over the world!
 
- 
+
 
 **1.3 Book Overview**
 
@@ -106,13 +111,12 @@ raw physical pages of userland memory back to the abstract VMA repre-sentation, 
 
 the kernel accesses userland memory. Also a brief look at how memory ranges can be manipulated by madvise().
 
- 
+
 
 **2** Chapter 1
 
-The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes
 
- 
+
 
 ## **Chapter 9: The Page Cache** A detailed look into the page cache, how it in-
 
@@ -138,8 +142,6 @@ works, how to tune it, the what, why and how.
 
 memory management techniques - procfs interfaces, tuneables, decod-ing out of memory reports and more. Generally a practical ’how to’ for sysadmins/developers.
 
- 
+
 
 Introduction **3**
-
-The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes

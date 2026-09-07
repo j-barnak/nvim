@@ -4,13 +4,13 @@
 
 In this chapter we take our first proper steps with Haskell. We start by introducing the GHC system and the standard prelude, then explain the notation for function application, develop our first Haskell script, and conclude by discussing a number of syntactic conventions concerning scripts.
 
-### **2.1Glasgow Haskell Compiler**
+### **2.1 Glasgow Haskell Compiler**
 
 As we saw in the previous chapter, small Haskell programs can be executed by hand. In practice, however, we usually require a system that can execute programs automatically. In this book we use the *Glasgow Haskell Compiler*, a state-of-the-art, open source implementation of Haskell.
 
 The system has two main components: a batch compiler called GHC, and an interactive interpreter called GHCi. We will primarily use the interpreter in this book, as its interactive nature makes it well suited for teaching and prototyping purposes, and its performance is sufficient for most of our applications. However, if greater performance or a stand-alone executable version of a Haskell program is required, the compiler itself can be used. For example, we will use the compiler in extended programming examples in chapters 9 and 11.
 
-### **2.2Installing and starting**
+### **2.2 Installing and starting**
 
 The Glasgow Haskell Compiler is freely available for a range of operating systems from the Haskell home page, <http://www.haskell.org>. For first time users we recommend downloading the *Haskell Platform*, which provides a convenient means to install the system and a collection of commonly used libraries. More advanced users may prefer to install the system and libraries manually.
 
@@ -43,7 +43,7 @@ The GHCi prompt \> indicates that the system is now waiting for the user to ente
 
 Following normal mathematical convention, in Haskell exponentiation is assumed to have higher priority than multiplication and division, which in turn have higher priority than addition and subtraction. For example, 2\*3^4 means 2\*(3^4), while 2+3\*4 means 2+(3\*4). Moreover, exponentiation associates (or brackets) to the right, while the other four main arithmetic operators associate to the left. For example, 2^3^4 means 2^(3^4), while 2-3+4 means (2-3)+4. In practice, however, it is often clearer to use explicit parentheses in such expressions, rather than relying on the above rules.
 
-### **2.3Standard prelude**
+### **2.3 Standard prelude**
 
 Haskell comes with a large number of built-in functions, which are defined in a library file called the *standard prelude*. In addition to familiar numeric functions such as + and \*, the prelude also provides a range of useful functions that operate on lists. In Haskell, the elements of a list are enclosed in square parentheses and are separated by commas, as in \[1,2,3,4,5\]. Some of the most commonly used library functions on lists are illustrated below.
 
@@ -99,7 +99,7 @@ Haskell comes with a large number of built-in functions, which are defined in a 
 
 As a useful reference guide, appendix B presents some of the most commonly used definitions from the standard prelude.
 
-### **2.4Function application**
+### **2.4 Function application**
 
 In mathematics, the application of a function to its arguments is usually denoted by enclosing the arguments in parentheses, while the multiplication of two values is often denoted silently, by writing the two values next to one another. For example, in mathematics the expression
 
@@ -117,7 +117,7 @@ Moreover, function application has higher priority than all other operators in t
 
 Note that parentheses are still required in the Haskell expression f (g x) above, because f g x on its own would be interpreted as the application of the function f to two arguments g and x, whereas the intention is that f is applied to one argument, namely the result of applying the function g to an argument x. A similar remark holds for the expression f x (g y).
 
-### **2.5Haskell scripts**
+### **2.5 Haskell scripts**
 
 As well as the functions provided in the standard prelude, it is also possible to define new functions. New functions are defined in a *script*, a text file comprising a sequence of definitions. By convention, Haskell scripts usually have a .hs suffix on their filename to differentiate them from other kinds of files. This is not mandatory, but is useful for identification purposes.
 
@@ -184,7 +184,7 @@ For reference, the table in figure 2.1 summarises the meaning of some of the mos
 
 When defining a new function, the names of the function and its arguments must begin with a lower-case letter, but can then be followed by zero or more letters (both lower- and upper-case), digits, underscores, and forward single quotes. For example, the following are all valid names:
 
-myFunfun1arg_2x’
+myFun fun1 arg_2 x’
 
 The following list of *keywords* have a special meaning in the language, and cannot be used as the names of functions or their arguments:
 
@@ -198,9 +198,9 @@ Within a script, each definition at the same level must begin in precisely the s
 
 ``` haskell
 a = b + c
-where
-b = 1
-c = 2
+    where
+      b = 1
+      c = 2
 d = a * 2
 ```
 
@@ -208,9 +208,9 @@ it is clear from the indentation that b and c are local definitions for use with
 
 ``` haskell
 a = b + c
-where
-{b = 1;
-c = 2};
+    where
+      {b = 1;
+       c = 2};
 d = a * 2
 ```
 
@@ -250,15 +250,15 @@ quadruple x = double (double x)
 –}
 ```
 
-### **2.6Chapter remarks**
+### **2.6 Chapter remarks**
 
 In addition to the GHC system, <http://www.haskell.org> contains a wide range of other useful resources concerning Haskell, including community activities, language documentation, and news items.
 
-### **2.7Exercises**
+### **2.7 Exercises**
 
-1.Work through the examples from this chapter using GHCi.
+1\. Work through the examples from this chapter using GHCi.
 
-2.Parenthesise the following numeric expressions:
+2\. Parenthesise the following numeric expressions:
 
 ``` haskell
 2^3*4
@@ -270,17 +270,17 @@ In addition to the GHC system, <http://www.haskell.org> contains a wide range of
 2+3*4^5
 ```
 
-3.The script below contains three syntactic errors. Correct these errors and then check that your script works properly using GHCi.
+3\. The script below contains three syntactic errors. Correct these errors and then check that your script works properly using GHCi.
 
 ``` haskell
 N = a ’div’ length xs
-where
-a = 10
-xs = [1,2,3,4,5]
+    where
+       a = 10
+      xs = [1,2,3,4,5]
 ```
 
-4.The library function last selects the last element of a non-empty list; for example, last \[1,2,3,4,5\] = 5. Show how the function last could be defined in terms of the other library functions introduced in this chapter. Can you think of another possible definition?
+4\. The library function last selects the last element of a non-empty list; for example, last \[1,2,3,4,5\] = 5. Show how the function last could be defined in terms of the other library functions introduced in this chapter. Can you think of another possible definition?
 
-5.The library function init removes the last element from a non-empty list; for example, init \[1,2,3,4,5\] = \[1,2,3,4\]. Show how init could similarly be defined in two different ways.
+5\. The library function init removes the last element from a non-empty list; for example, init \[1,2,3,4,5\] = \[1,2,3,4\]. Show how init could similarly be defined in two different ways.
 
 Solutions to exercises 2–4 are given in appendix A.

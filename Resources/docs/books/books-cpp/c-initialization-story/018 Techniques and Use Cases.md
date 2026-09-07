@@ -20,7 +20,7 @@ You’ll learn about the following aspects:
 
 Let’s start.
 
- 
+
 
 **Using** **explicit** **for strong types**
 
@@ -30,13 +30,13 @@ The answer is positive, and the main idea is to wrap the data member double powe
 
 Have a look at two similar wrapper types:
 
- 
+
 
 208
 
 Techniques and Use Cases 209
 
- 
+
 
 **Ex 13.1. Strong types and area units classes. Run** [**@Compiler Explorer**](https://godbolt.org/z/PWvzWr1Eb)
 
@@ -82,7 +82,7 @@ And here is the implementation of the converting constructors as well as stream 
 
 Techniques and Use Cases 210
 
- 
+
 
 **Ex 13.2. Strong Types and area units, implementation. Run** [**@Compiler Explorer**](https://godbolt.org/z/PWvzWr1Eb)
 
@@ -170,7 +170,7 @@ instance rather than SqMeters{50.2}. See more at [C++Reference - User-defined](h
 
 ![](media/index-226_2.png)
 
- 
+
 
 For more information about Strong Types, I highly recommend reading many
 
@@ -178,7 +178,7 @@ articles on the Fluent C++ blog. For example, start with this one: [Strong types
 
 [strong interfaces - Fluent C++](https://www.fluentcpp.com/2016/12/08/strong-types-for-strong-interfaces/)².
 
- 
+
 
 ¹<https://en.cppreference.com/w/cpp/language/user_literal>
 
@@ -186,7 +186,7 @@ articles on the Fluent C++ blog. For example, start with this one: [Strong types
 
 Techniques and Use Cases 212
 
- 
+
 
 **Best way to initialize** **string** **data members**
 
@@ -230,7 +230,7 @@ parameter, and then there’s a copy into name\_.
 
 Techniques and Use Cases 213
 
- 
+
 
 • u2- one allocation: we have a no-cost binding to the reference, and then there’s a copy
 
@@ -278,7 +278,7 @@ However, is std::string cheap to move?
 
 Although the C++ Standard doesn’t specify that, usually, strings are implemented with **Small** **String Optimisation** (**SSO**) - the string object contains extra space to fit characters without Techniques and Use Cases 214
 
- 
+
 
 additional memory allocation³. That means that moving a string is the same as copying it. And since the string is short, the copy is also fast.
 
@@ -328,7 +328,7 @@ the empty string has a size of 32 bytes. It means a space for 15 characters of t
 
 Techniques and Use Cases 215
 
- 
+
 
 might optimize the code better when it sees an object and not a reference. Moreover, short strings are cheap to copy, so the potential “slowdown” might not even be visible.
 
@@ -346,7 +346,7 @@ potential improvements. Clang Tidy has a separate rule for that use case; see [c
 
 [tidy - modernize-pass-by-value](https://clang.llvm.org/extra/clang-tidy/checks/modernize-pass-by-value.html)⁴.
 
- 
+
 
 Here’s the summary of string passing and initialization of a string member:
 
@@ -368,7 +368,7 @@ This part covered only the basic approach with string references and string copi
 
 a complete comparison, see this blog post [How to Initialize a String Member - C++ Stories](https://www.cppstories.com/2018/08/init-string-member/)⁵.
 
- 
+
 
 **Reducing extra copies through** **emplace** **and** **in_place**
 
@@ -380,7 +380,7 @@ Since C++11, programmers got a new technique to initialize objects “in place�
 
 Techniques and Use Cases 216
 
- 
+
 
 As an example, let’s look at std::optional and std::variant from C++17 and ways to construct those types efficiently.
 
@@ -426,7 +426,7 @@ We have at least two points: default constructor and efficient construction.
 
 Techniques and Use Cases 217
 
- 
+
 
 **Default Construction**
 
@@ -496,7 +496,7 @@ std::optional\<std::complex\<**double**\>\> opt2{std::complex\<**double**\>{0, 1
 
 Or use in_place and the version of the constructor that handles the variable argument list:
 
- 
+
 
 ⁶<https://godbolt.org/z/Kb9dP941h> Techniques and Use Cases 219
 
@@ -538,7 +538,7 @@ Techniques and Use Cases 220
 
 **return** std::optional\<T\>(std::in_place, std::forward\<Args\>(args)...);
 
- 
+
 
 **In** **std::variant**
 
@@ -580,7 +580,7 @@ std::variant\<**int**, **float**\> intFloat { std::in_place_index\<0\>, 10.5 }; 
 
 std::variant\<**int**, **float**\> intFloat { std::in_place_type\<**int**\>, 10.5 };
 
- 
+
 
 **Complex Types**
 
@@ -592,7 +592,7 @@ std::variant\<std::vector\<**int**\>, std::string\> vecStr {
 
 std::in_place_index\<0\>, { 0, 1, 2, 3 } };
 
- 
+
 
 **The copy and swap idiom**
 
@@ -682,19 +682,19 @@ The idea for the idiom is intensely discussed in this Stack Overflow Question: [
 
 [the copy-and-swap idiom?](https://stackoverflow.com/questions/3279543/what-is-the-copy-and-swap-idiom)⁹.
 
- 
+
 
 **CRTP class counter**
 
 In the chapter about inline variables, there was an example called “Instance Counter”. It looks like a handy type that could be used to count instances of other types separately. For example, we could inherit from it to share the code. Unfortunately, there’s an issue with such a simple approach:
 
- 
+
 
 ⁸<https://godbolt.org/z/Me5189Wr8>
 
 ⁹<https://stackoverflow.com/questions/3279543/what-is-the-copy-and-swap-idiom> Techniques and Use Cases 224
 
- 
+
 
 **Ex 13.3. The** **InstanceCounter** **type. Run** [**@Compiler Explorer**](https://godbolt.org/z/vTYsGrPe8)
 
@@ -734,7 +734,7 @@ std::cout \<\< "Values: " \<\< Value::GetInstanceCounter() \<\< '\n';
 
 std::cout \<\< "Wrappers: " \<\< Wrapper::GetInstanceCounter() \<\< '\n'; }
 
- 
+
 
 If you run this code, you’ll see the following output:
 
@@ -806,7 +806,7 @@ std::cout \<\< "Wrappers: " \<\< Wrapper::GetInstanceCounter() \<\< '\n'; }
 
 Techniques and Use Cases 226
 
- 
+
 
 Now the output is:
 
@@ -824,7 +824,7 @@ Read more about this handy technique in [Curiously Recurring Template Pattern](h
 
 [Curiously Recurring Template Pattern (CRTP), part 1¹¹](https://www.fluentcpp.com/2017/05/12/curiously-recurring-template-pattern/).
 
- 
+
 
 **Several initialization types in one class**
 
@@ -850,7 +850,7 @@ objects. We can use this helper to verify the correctness of the demo.
 
 Here’s the first part that defines the Flags object:
 
- 
+
 
 ¹⁰<https://en.cppreference.com/w/cpp/language/crtp>
 
@@ -858,7 +858,7 @@ Here’s the first part that defines the Flags object:
 
 Techniques and Use Cases 227
 
- 
+
 
 **Ex 13.5. The Flags type. Run** [**@Compiler Explorer**](https://godbolt.org/z/a5b335q5M)
 
@@ -918,7 +918,7 @@ The Window class uses several features discussed in the book:
 
 member, Techniques and Use Cases 228
 
- 
+
 
 • Custom constructors that offer several options to initialize the data members,
 
@@ -1026,11 +1026,11 @@ save some typing. See more [@C++Reference - deduction guides for array¹²](http
 
 ¹²<https://en.cppreference.com/w/cpp/container/array/deduction_guides> Techniques and Use Cases 230
 
- 
+
 
 The code uses InstanceCounter as a bonus debugging facility to ensure we have the correct number of active objects. When WindowDemo() finishes, all instances should be removed, and we can double-check it inside main().
 
- 
+
 
 **Meyer’s Singleton and C++11**
 
@@ -1068,11 +1068,11 @@ Singleton& **operator**=(**const** Singleton&) = **delete**;
 
 Singleton::getInstance().foo();
 
- 
+
 
 Meyer’s Singleton is often used as a way to ensure that a class has only one instance and provide a global access point to that instance. In C++11 and later, it is possible to use the Techniques and Use Cases 231
 
- 
+
 
 static keyword to declare a local static variable within a function. This allows you to define a local variable that is initialized only once, in a threadsafe way.
 
@@ -1080,7 +1080,7 @@ static keyword to declare a local static variable within a function. This allows
 
 While Meyer’s Singleton is a very efficient way to implement this design pattern, singletons doesn’t have a good opinion in modern programming style. Singleton in fact is a global object, and it leads to few problems like testing, scalability, lack of explicit dependencies and few others. Please be careful when adding this pattern to your code.
 
- 
+
 
 **Factory with selfregistering types and static**
 
@@ -1120,7 +1120,7 @@ visible in that single method. What if you’d like to use it somewhere else? St
 
 Techniques and Use Cases 232
 
- 
+
 
 All in all, we get strong dependency between the factory and the classes.
 
@@ -1176,7 +1176,7 @@ void GTEST_TEST_CLASS_NAME\_(test_case_name, test_name)::TestBody()
 
 Techniques and Use Cases 233
 
- 
+
 
 I cut some parts of the code to make it shorter, but basically GTEST_TEST\_ is used in TEST macro and this will expand to a new class. In the lower section, you might see a name MakeAndRegisterTestInfo. So here’s the place where the class registers!
 
@@ -1318,17 +1318,17 @@ That’s why I impmeneted a special version of Map which have a constexpr constr
 
 My current implementation uses std::array which can be used in constant expressions. We could potentially use std::map but it would be at the edge of Undefined Baheviour so it’s not guarateed to work. In final code you can also experiment with std::vector which got constexpr support in C++20. Techniques and Use Cases 236
 
- 
+
 
 There’s also one qesiotn we should ask: Can s_registered be eliminated by the compiler?
 
 Fortunately, we’re also on the safe side. From the latest draft of C++: [\[basic.stc.static#2\]¹⁴](https://timsong-cpp.github.io/cppwp/basic.stc.static#2):
 
- 
+
 
 If a variable with static storage duration has initialization or a destructor with side effects, it shall not be eliminated even if it appears to be unused, except that a class object or its copy/move may be eliminated as specified in class.copy.elision.
 
- 
+
 
 So the compiler won’t optimize those variables.
 
@@ -1384,7 +1384,7 @@ two articles at C++ Stories: [Factory With SelfRegistering Types - C++ Stories](
 
 and [Static Variables Initialization in a Static Library, Example - C++ Stories](https://www.cppstories.com/2018/02/static-vars-static-lib/)¹⁶.
 
- 
+
 
 **Summary**
 

@@ -1,16 +1,16 @@
 ## Chapter 10
 
- 
+
 
 The Heap Data Structure
 
- 
+
 
 The remaining three chapters of this book are about three of the most important and ubiquitous data structures out there—heaps, search trees, and hash tables. The goals are to learn the operations that these data structures support (along with their running times), to develop through example applications your intuition about which data structures are useful for which sorts of problems, and optionally, to
 
 learn a bit about how they are implemented under the hood. 1 We begin with heaps, a data structure that facilitates fast minimum or maximum computations.
 
- 
+
 
 10.1 Data Structures: An Overview
 
@@ -30,13 +30,13 @@ we’ll see heaps, binary search trees, hash tables, bloom filters, and (in
 
 mentation, and refer to the list of supported operations as an abstract data type.
 
- 
+
 
 95
 
 96 The Heap Data Structure
 
- 
+
 
 Part 3) union-find. Why such a bewildering laundry list? Because different data structures support different sets of operations, making them well-suited for different types of programming tasks. For example, breadth- and depth-first search have different needs, necessitating two different data structures. Our fast implementation of Dijkstra’s
 
@@ -52,7 +52,7 @@ Principle of Parsimony
 
 Choose the simplest data structure that supports all the operations required by your application.
 
- 
+
 
 10.1.2 Taking It to the Next Level
 
@@ -64,7 +64,7 @@ Level 0 is total ignorance—someone who has never heard of a data structure and
 
 10.2 Supported Operations 97
 
- 
+
 
 Level 1: “I hear good things about hash tables.”
 
@@ -98,7 +98,7 @@ of Chapters 10–12 includes at least one advanced section on typical implementa
 
 2 Speaking, as always, about sufficiently nerdy cocktail parties! 98 The Heap Data Structure
 
- 
+
 
 10.2 Supported Operations
 
@@ -120,7 +120,7 @@ Insert : given a heap H and a new object x, add x to H.
 
 ExtractMin: given a heap H, remove and return from H an object with the smallest key (or a pointer to it).
 
- 
+
 
 For example, if you invoke Insert four times to add objects with keys 12, 7, 29, and 15 to an empty heap, the ExtractMin operation will return the object with key 7. Keys need not be distinct; if there is more than one object in a heap with the smallest key, the ExtractMin operation returns an arbitrary such object.
 
@@ -132,7 +132,7 @@ reserved for dynamic allocation. 4 Keys are often numerical but can belong to an
 
 matters is that for every pair of non-equal keys, one is less than the other. 5 Data structures supporting these operations are also called priority queues. 10.2 Supported Operations 99
 
- 
+
 
 and then successive calls to ExtractMin peel off objects from the beginning of the sorted list one by one (each in constant time). Here the catch is that any straightforward implementation of Insert re-quires linear time (as you should check). The trick is to design a data structure that enables both operations to run super-quickly. This is exactly the raison d’être of heaps.
 
@@ -162,7 +162,7 @@ FindMin: given a heap H, return an object with the small-est key (or a pointer t
 
 Heapify : given objects x1, . . . , xn, create a heap containing them.
 
- 
+
 
 6 If you want both, you can use one heap of each type (see also Section 10.3.3),
 
@@ -170,7 +170,7 @@ or upgrade to a balanced binary search tree (see Chapter 11).
 
 100 The Heap Data Structure
 
- 
+
 
 Delete: given a heap H and a pointer to an object x in H, delete x from H.
 
@@ -182,13 +182,13 @@ into an empty heap (in O(n log n) total time, by Theorem 10.1), but there’s a 
 
 (see also Programming Project 10.8).
 
- 
+
 
 Theorem 10.2 (Running Time of Extra Heap Operations) In a heap with n objects, the FindMin, Heapify, and Delete operations run in O(1), O(n), and O(log n) time, respectively.
 
 Summarizing, here’s the final scorecard for heaps:
 
- 
+
 
 Operation Running time
 
@@ -202,7 +202,7 @@ Delete O(log n)
 
 Table 10.1: Heaps: supported operations and their running times, where n denotes the current number of objects stored in the heap.
 
- 
+
 
 When to Use a Heap
 
@@ -210,7 +210,7 @@ If your application requires fast minimum (or maximum) computations on a dynamic
 
 10.3 Applications 101
 
- 
+
 
 10.3 Applications
 
@@ -226,33 +226,33 @@ Input: An array of n numbers, in arbitrary order.
 
 Output: An array of the same numbers, sorted from small-est to largest.
 
- 
+
 
 For example, given the input array
 
- 
+
 
 5 4 1 8 7 2 6 3
 
- 
+
 
 the desired output array is
 
- 
+
 
 1 2 3 4 5 6 7 8
 
- 
+
 
 Perhaps the simplest sorting algorithm is SelectionSort. This
 
 algorithm performs a linear scan through the input array to identify the minimum element, swaps it with the first element in the array, does a second scan over the remaining n 1 elements to identify and swap into the second position the second-smallest element, and so on. Each scan takes time proportional to the number of remaining 102 The Heap Data Structure
 
- 
+
 
 elements, so the overall running time is P n 7 2 ⇥ ( i ) = ⇥ ( n ) i =1 . Because each iteration of SelectionSort computes a minimum element using exhaustive search, it calls out for a heap! The idea is simple: Insert all the elements in the input array into a heap, and populate the output array from left to right with successively extracted minimum elements. The first extraction produces the smallest element; the second the smallest remaining element (the second-smallest overall); and so on.
 
- 
+
 
 HeapSort
 
@@ -270,7 +270,7 @@ for i = 1 to n do
 
 B \[i\] := ExtractMin from H
 
- 
+
 
 Quiz 10.1
 
@@ -286,13 +286,13 @@ d\) 2 O ( n log n)
 
 (See below for the solution and discussion.)
 
- 
+
 
 7 n 2 P The sum i i n n =1 is at most (it has n terms, each at most ) and at least
 
 n2/4 (it has n/2 terms that are all at least n/2). 10.3 Applications 103
 
- 
+
 
 Correct answer: (b). The work done by HeapSort boils down
 
@@ -324,13 +324,13 @@ but it can be implemented in place, with almost no additional memory. This in-pl
 
 10 Recall from Section 5.6 of Part 1 that a comparison-based sorting algo-rithm accesses the input array only via comparisons between pairs of elements, and never directly accesses the value of an element. “General-purpose” sorting algorithms, which make no assumptions about the elements to be sorted, are necessarily comparison-based. Examples include SelectionSort, InsertionSort, HeapSort, and QuickSort. Non-examples include BucketSort, CountingSort, and RadixSort. Theorem 5.5 from Part 1 shows that no comparison-based sorting algorithm has a worst-case asymptotic running time better than ⇥(n log n). 104 The Heap Data Structure
 
- 
+
 
 you must keep track of different events and when they should occur— the event that a player shoots the ball at a particular angle and velocity, that the ball consequently hits the back of the rim, that two players vie for the rebound at the same time, that one of these players commits an over-the-back foul on the other, and so on.
 
 A simulation must repeatedly identify what happens next. This boils down to repeated minimum computations on the set of scheduled event times, so a light bulb should go off in your head: The problem calls out for a heap! If events are stored in a heap, with keys equal to their scheduled times, the ExtractMin operation hands you the next event on a silver platter, in logarithmic time. New events can be inserted into the heap as they arise (again, in logarithmic time).
 
- 
+
 
 10.3.3 Application: Median Maintenance
 
@@ -346,7 +346,7 @@ Using heaps, we can solve the median maintenance problem in just logarithmic tim
 
 an array with odd length 2k 1, the median is the kth order statistic (that is, the kth-smallest element). In an array with even length 2k, both the kth and (k + 1)th order statistics are considered median elements. 10.4 Speeding Up Dijkstra’s Algorithm 105
 
- 
+
 
 The key idea is to maintain two heaps H1 and H2 while satisfying
 
@@ -364,7 +364,7 @@ while the other contains only k 1 elements (Figure 10.1(a)). But this imbalance 
 
 re-insert this element into the other heap (Figure 10.1(b)). The two heaps stay ordered (as you should check) and are now balanced as well. This solution uses a constant number of heap operations each round, for a running time of O(log i) in round i.
 
- 
+
 
 12 An invariant of an algorithm is a property that is always true at prescribed
 
@@ -374,7 +374,7 @@ which run in constant time (see Section 10.2.2).
 
 106 The Heap Data Structure
 
- 
+
 
 heap *H**1* 6 heap *H**2* heap *H**1* rebalance heap *H**2* insert
 
@@ -396,7 +396,7 @@ Figure 10.1: When inserting a new element causes the heap H2 to have two more el
 
 ![](media/index-119_4.jpg)
 
- 
+
 
 10.4 Speeding Up Dijkstra’s Algorithm
 
@@ -436,11 +436,11 @@ Let’s remember how Dijkstra’s algorithm works (Section 9.2). The algorithm m
 
 ![](media/index-119_15.jpg)
 
- 
+
 
 has already computed shortest-path distances. In every iteration, it identifies the edge crossing the frontier (with tail in X and head in V X) with the minimum Dijkstra score, where the Dijkstra score of such an edge (v, w) is the (already computed) shortest-path distance len(v) from the starting vertex to v plus the length \`vw of the edge. In other words, every iteration of the main loop does a minimum computation, on the Dijkstra scores of the edges that cross the frontier. The straightforward implementation uses exhaustive search to perform these minimum computations. As speeding up minimum computations from linear time to logarithmic time is the raison d’être of heaps, at this point a light bulb should go off in your head: Dijkstra’s algorithm calls out for a heap!
 
- 
+
 
 10.4.2 The Plan
 
@@ -454,15 +454,15 @@ Invariant
 
 The key of a vertex w 2 V X is the minimum Dijkstra score of an edge with tail v 2 X and head w, or +1 if no such edge exists.
 
- 
+
 
 That is, we want the equation
 
- 
+
 
 key(w) = min len(v) + \`vw (10.1) ( v,w ) 2 E : v 2 X \| {z } Dijkstra score 108 The Heap Data Structure
 
- 
+
 
 to hold at all times for every w 2 V X, where len(v) denotes the shortest-path distance of v computed in an earlier iteration of the
 
@@ -470,7 +470,7 @@ algorithm (Figure 10.2).
 
 processed not-yet-processed
 
- 
+
 
 key(*v*) = 3
 
@@ -498,13 +498,13 @@ key(*z*) = +∞
 
 ![](media/index-121_5.jpg)
 
- 
+
 
 Figure 10.2: The key of a vertex w 2 V X is defined as the minimum Dijkstra score of an edge with head w and tail in X.
 
 ![](media/index-121_6.jpg)
 
- 
+
 
 What’s going on? Imagine that we use a two-round knockout tournament to identify the edge (v, w) with v 2 X and w / 2 X with the minimum Dijkstra score. The first round comprises a local tournament for each vertex w 2 V X, where the participants are the edges (v, w) with v 2 X and head w, and the first-round winner is the participant with the smallest Dijkstra score (if any). The first-round winners (at most one per vertex w 2 V X) proceed to the second round, and the final champion is the first-round winner with the lowest Dijkstra score. This champion is the same edge that would be identified by exhaustive search.
 
@@ -524,7 +524,7 @@ The value of the key (10.1) of a vertex w 2 V X is exactly the winning Dijkstra 
 
 10.4 Speeding Up Dijkstra’s Algorithm 109
 
- 
+
 
 The pseudocode looks like this:14
 
@@ -560,7 +560,7 @@ equals the true shortest-path distance dist(s, v).
 
 11 (to be announced)
 
- 
+
 
 But how much work is it to maintain the invariant?
 
@@ -576,7 +576,7 @@ to X, which changes the frontier (Figure 10.3). Edges from vertices
 
 starting vertex leads to cleaner pseudocode (cf., Section 9.2.1). The first iteration of the main loop is guaranteed to extract the starting vertex (do you see why?), which is then the first vertex added to X. 110 The Heap Data Structure
 
- 
+
 
 in X to v get sucked into X and no longer cross the frontier. More problematically, edges from v to other vertices of V X no longer reside entirely in V X and instead cross from X to V X. Why is
 
@@ -586,7 +586,7 @@ for the smallest Dijkstra score, so the right-hand side of (10.1) might decrease
 
 processed not-yet-processed processed not-yet-processed
 
- 
+
 
 *s* X *v* X *v* V-X V-X
 
@@ -612,7 +612,7 @@ Figure 10.3: When a new vertex v is moved from V X to X, edges going out of v ca
 
 ![](media/index-123_6.jpg)
 
- 
+
 
 Every time we extract a vertex ⇤ w from the heap, moving it from V X to X, we might need to decrease the key of some of the vertices remaining in V X to reflect the new crossing edges. Because all the new crossing edges emanate from ⇤ w, we need only iterate through ⇤ w’s list of outgoing edges and check the vertices y 2 V X with an edge ⇤ ( w, y). For each such vertex y, there are two candidates for the first-round winner in y’s local tournament: either it is the same as before, or it is the new entrant ⇤ ( w, y). Thus, the new value of y’s key should be either its old value or the Dijkstra score ⇤ len ( w) + \` ⇤ wy of the new crossing edge, whichever is smaller.
 
@@ -660,11 +660,11 @@ update its key, and use Insert 15 to add it back into the heap. This
 
 ![](media/index-123_24.jpg)
 
- 
+
 
 completes the heap-based implementation of the Dijkstra algorithm.
 
- 
+
 
 Dijkstra (Heap-Based, Part 2)
 
@@ -672,7 +672,7 @@ Dijkstra (Heap-Based, Part 2)
 
 12 for every edge ⇤ ( w, y) do 13 Delete y from H 14 ⇤ key ( y ) := min { key ( y ) , len ( w) + \` ⇤ wy } 15 Insert y into H
 
- 
+
 
 10.4.4 Running Time
 
@@ -696,11 +696,11 @@ d\) O(mn)
 
 (See below for the solution and discussion.)
 
- 
+
 
 O(log n) time for an n-object heap. In this case, only one heap operation is needed. 112 The Heap Data Structure
 
- 
+
 
 Correct answer: (b). Lines 13 and 15 may look a little scary. In one iteration of the main loop, these two lines might be performed as many as n 1 times—once per outgoing edge of ⇤ w. There are n 1 iterations, which seems to lead to a quadratic number of heap operations. This bound is accurate for dense graphs, but in general, we can do better. The reason? Let’s assign responsibility for these heap operations to edges rather than vertices. Each edge (v, w) of the graph makes at most one appearance in line 12—when v is first extracted from
 
@@ -710,13 +710,13 @@ Quiz 10.2 shows that the heap-based implementation of Dijkstra uses O(m+ n) heap
 
 running time is O((m+ n) log n), as promised by Theorem 10.4. QE D
 
- 
+
 
 \*10.5 Implementation Details
 
 Let’s take your understanding of heaps to the next level by describing how you would implement one from scratch. We’ll focus on the two basic operations—Insert and ExtractMin—and how to ensure that both run in logarithmic time.
 
- 
+
 
 10.5.1 Heaps as Trees
 
@@ -736,7 +736,7 @@ A heap manages objects associated with keys so that the following heap property 
 
 ![](media/index-126_1.jpg)
 
- 
+
 
 (a) (b) (c)
 
@@ -746,7 +746,7 @@ Figure 10.4: Full binary trees with 7, 15, and 9 nodes.
 
 ![](media/index-126_3.jpg)
 
- 
+
 
 The Heap Property
 
@@ -756,7 +756,7 @@ For every object x, the key of x is less than or equal to the keys of its childr
 
 ![](media/index-126_5.jpg)
 
- 
+
 
 Duplicate keys are allowed. For example, here’s a valid heap containing
 
@@ -770,25 +770,25 @@ nine objects:18
 
 ![](media/index-126_8.jpg)
 
- 
+
 
 4 8
 
 ![](media/index-126_9.jpg)
 
- 
+
 
 9 4 12 9
 
 ![](media/index-126_10.jpg)
 
- 
+
 
 11 13
 
 ![](media/index-126_11.jpg)
 
- 
+
 
 For every parent-child pair, the parent’s key is at most that of the
 
@@ -934,31 +934,31 @@ property holds. Here’s another heap, with the same set of keys:
 
 114 The Heap Data Structure
 
- 
+
 
 4
 
 ![](media/index-127_1.jpg)
 
- 
+
 
 4 4
 
 ![](media/index-127_2.jpg)
 
- 
+
 
 9 11 13 8
 
 ![](media/index-127_3.jpg)
 
- 
+
 
 12 9
 
 ![](media/index-127_4.jpg)
 
- 
+
 
 Both heaps have a “4” at the root, which is also (tied for) the smallest of all the keys. This is not an accident: because keys only decrease as you traverse a heap upward, the root’s key is as small as it gets. This should sound encouraging, given that the raison d’être of a heap is fast minimum computations.
 
@@ -1008,7 +1008,7 @@ Figure 10.5: Mapping the tree representation of a heap to its array representati
 
 ![](media/index-127_16.jpg)
 
- 
+
 
 Parent-child relationships in the tree translate nicely to the array
 
@@ -1066,7 +1066,7 @@ Parent-child relationships in the tree translate nicely to the array
 
 ![](media/index-127_42.jpg)
 
- 
+
 
 correspond to the objects in positions 2i and 2i + 1 (if any). For
 
@@ -1078,7 +1078,7 @@ Position of parent bi/2c (provided i 2) Position of left child 2i (provided 2i �
 
 Table 10.2: Relationships between the position i 2 {1, 2, 3, . . . , n} of an object in a heap and the positions of its parent, left child, and right child, where n denotes the number of objects in the heap.
 
- 
+
 
 There are such simple formulas to go from a child to its parent
 
@@ -1110,7 +1110,7 @@ by applying the simple index formulas in Table 10.2.
 
 116 The Heap Data Structure
 
- 
+
 
 Specifically, recall the Insert operation:
 
@@ -1124,25 +1124,25 @@ Let’s start with our running example:
 
 ![](media/index-129_1.jpg)
 
- 
+
 
 4 8
 
 ![](media/index-129_2.jpg)
 
- 
+
 
 9 4 12 9
 
 ![](media/index-129_3.jpg)
 
- 
+
 
 11 13
 
 ![](media/index-129_4.jpg)
 
- 
+
 
 When a new object is inserted, the most obvious way to keep the tree full is to tack the new object onto the end of the array, or equivalently to the last level of the tree. (If the last level is already full, the object becomes the first at a new level.) As long as the implementation keeps track of the number n of objects (which is easy to do), this step takes constant time. For example, if we insert an object with key 7 into our running example, we obtain:
 
@@ -1152,25 +1152,25 @@ When a new object is inserted, the most obvious way to keep the tree full is to 
 
 ![](media/index-129_6.jpg)
 
- 
+
 
 4 8
 
 ![](media/index-129_7.jpg)
 
- 
+
 
 9 4 12 9
 
 ![](media/index-129_8.jpg)
 
- 
+
 
 11 13 7
 
 ![](media/index-129_9.jpg)
 
- 
+
 
 We have a full binary tree, but does the heap property hold? There’s only one place it might fail—the one new parent-child pair (the 4 and \*10.5 Implementation Details 117
 
@@ -1228,7 +1228,7 @@ We have a full binary tree, but does the heap property hold? There’s only one 
 
 ![](media/index-129_36.jpg)
 
- 
+
 
 the 7). In this case we got lucky, and the new pair doesn’t violate the heap property. If our next insertion is an object with key 10, then again we get lucky and immediately obtain a valid heap:
 
@@ -1236,19 +1236,19 @@ the 7). In this case we got lucky, and the new pair doesn’t violate the heap p
 
 ![](media/index-130_1.jpg)
 
- 
+
 
 4 8
 
 ![](media/index-130_2.jpg)
 
- 
+
 
 9 4 12 9
 
 ![](media/index-130_3.jpg)
 
- 
+
 
 11 13 7 10
 
@@ -1262,13 +1262,13 @@ But suppose we now insert an object with key 5. After tacking it on at the end, 
 
 ![](media/index-130_6.jpg)
 
- 
+
 
 4 8
 
 ![](media/index-130_7.jpg)
 
- 
+
 
 9 4 12 9
 
@@ -1294,7 +1294,7 @@ Now we have a problem: The new parent-child pair (the 12 and the 5) violates the
 
 ![](media/index-130_13.jpg)
 
- 
+
 
 4 8
 
@@ -1312,7 +1312,7 @@ violation!
 
 ![](media/index-130_17.jpg)
 
- 
+
 
 11 13 7 10 12 118 The Heap Data Structure
 
@@ -1420,35 +1420,35 @@ violation!
 
 ![](media/index-130_69.jpg)
 
- 
+
 
 This fixes the violating parent-child pair. We’re not out of the woods yet, however, as the heap violation has migrated upward to the 8 and the 5. So we do it again, and swap the nodes in the violating pair to obtain:
 
- 
+
 
 4
 
 ![](media/index-131_1.jpg)
 
- 
+
 
 4 5
 
 ![](media/index-131_2.jpg)
 
- 
+
 
 9 4 8 9
 
 ![](media/index-131_3.jpg)
 
- 
+
 
 11 13 7 10 12
 
 ![](media/index-131_4.jpg)
 
- 
+
 
 This explicitly fixes the violating pair. We’ve seen that such a swap has the potential to push the violation of the heap property upward, but here it doesn’t happen—the 4 and 5 are already in the correct order. You might worry that a swap could also push the violation downward. But this also doesn’t happen—the 8 and 12 are already in the correct order. With the heap property restored, the insertion is complete.
 
@@ -1502,7 +1502,7 @@ Sift-Up, Heapify-Up, and more. 25 At no point are there any heap violations betw
 
 \*10.5 Implementation Details 119
 
- 
+
 
 Insert
 
@@ -1514,11 +1514,11 @@ ment the heap size.
 
 the heap property is restored.
 
- 
+
 
 Because a heap is a full binary tree, it has ⇡ log n 2 levels, where n is the number of objects in the heap. The number of swaps is at most the number of levels, and only a constant amount of work is required per swap. We conclude that the worst-case running time of the Insert operation is O(log n), as desired.
 
- 
+
 
 10.5.4 Implementing ExtractMin in O(log n) Time
 
@@ -1536,19 +1536,19 @@ Insert in reverse, we know that the last node of the tree must go elsewhere. But
 
 ![](media/index-132_1.jpg)
 
- 
+
 
 4 8
 
 ![](media/index-132_2.jpg)
 
- 
+
 
 9 4 12 9
 
 ![](media/index-132_3.jpg)
 
- 
+
 
 11 13
 
@@ -1582,7 +1582,7 @@ Insert in reverse, we know that the last node of the tree must go elsewhere. But
 
 120 The Heap Data Structure
 
- 
+
 
 the resulting tree looks like
 
@@ -1598,19 +1598,19 @@ heap
 
 ![](media/index-133_3.jpg)
 
- 
+
 
 9 4 12 9
 
 ![](media/index-133_4.jpg)
 
- 
+
 
 11
 
 ![](media/index-133_5.jpg)
 
- 
+
 
 The good news is that we’ve restored the full binary tree property. The bad news is that the massive promotion granted to the object with key 13 has created two violating parent-child pairs (the 13 and 4 and the 13 and 8). Do we need two swaps to correct them?
 
@@ -1624,7 +1624,7 @@ The key idea is to swap the root node with the smaller of its two children:
 
 ![](media/index-133_8.jpg)
 
- 
+
 
 13 8
 
@@ -1638,13 +1638,13 @@ heap
 
 ![](media/index-133_11.jpg)
 
- 
+
 
 11
 
 ![](media/index-133_12.jpg)
 
- 
+
 
 There are no longer any heap violations involving the root—the new root node is smaller than both the node it replaced (that’s why we
 
@@ -1700,31 +1700,31 @@ violations (with violating pair 8 and 4) while allowing the disease to spread to
 
 \*10.5 Implementation Details 121
 
- 
+
 
 4
 
 ![](media/index-134_1.jpg)
 
- 
+
 
 4 8
 
 ![](media/index-134_2.jpg)
 
- 
+
 
 9 13 12 9
 
 ![](media/index-134_3.jpg)
 
- 
+
 
 11
 
 ![](media/index-134_4.jpg)
 
- 
+
 
 The heap property is restored at last, and now the extraction is complete.
 
@@ -1766,7 +1766,7 @@ heap property is restored.
 
 ![](media/index-134_14.jpg)
 
- 
+
 
 The number of swaps is at most the number of levels, and only a constant amount of work is required per swap. Because there are ⇡ log n 2 levels, we conclude that the worst-case running time of the ExtractMin operation is O(log n), where n is the number of objects in the heap.
 
@@ -1778,7 +1778,7 @@ The number of swaps is at most the number of levels, and only a constant amount 
 
 122 The Heap Data Structure
 
- 
+
 
 The Upshot
 
@@ -1830,13 +1830,13 @@ P The Insert and ExtractMin operations are
 
 implemented by keeping the tree full in the Problems 123
 
- 
+
 
 most obvious way possible and systematically
 
 squashing any violations of the heap property.
 
- 
+
 
 Test Your Understanding
 
@@ -1870,15 +1870,15 @@ c\) ⇥(1) and ⇥(log n)
 
 124 The Heap Data Structure
 
- 
+
 
 d\) ⇥(n) and ⇥(n)
 
- 
+
 
 Problem 10.4 (S) You are given a heap with n objects. Which of the following tasks can you solve using O(1) Insert and ExtractMin operations and O(1) additional work? (Choose all that apply.)
 
- 
+
 
 a\) Find the object stored in the heap with the fifth-smallest key.
 
@@ -1888,25 +1888,25 @@ c\) Find the object stored in the heap with the median key.
 
 d\) None of the above.
 
- 
+
 
 Challenge Problems
 
 Problem 10.5 (S) Continuing Problem 9.7, show how to modify the heap-based implementation of Dijkstra’s algorithm to compute, for each vertex v 2 V , the smallest bottleneck of an s-v path. Your algorithm should run in O((m + n) log n) time, where m and n denote the number of edges and vertices, respectively.
 
- 
+
 
 Problem 10.6 (Difficult.) We can do better. Suppose now the graph is undirected. Give a linear-time (that is, O(m + n)-time) algorithm to compute a minimum-bottleneck path between two given vertices.
 
 \[Hint: A linear-time algorithm from Part 1 will come in handy. In the recursion, aim to cut the input size in half in linear time.\]
 
- 
+
 
 Problem 10.7 (Difficult.) What if the graph is directed? Can you compute a minimum-bottleneck path between two given vertices in
 
 less than 29 O (( m + n ) log n ) time?
 
- 
+
 
 29 For a deep dive on this problem, see the paper “Algorithms for Two Bottleneck
 
@@ -1914,7 +1914,7 @@ Optimization Problems,” by Harold N. Gabow and Robert E. Tarjan (Journal of Al
 
 Problems 125
 
- 
+
 
 Programming Problems
 

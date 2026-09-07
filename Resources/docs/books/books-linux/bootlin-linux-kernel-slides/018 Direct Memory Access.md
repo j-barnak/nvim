@@ -1,54 +1,54 @@
-Direct Memory Access
-
- 
+![](media/index-378_1.jpg)
 
 Direct Memory Access
 
- 
+
+
+Direct Memory Access
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 364/436
+
 
 Direct Memory Access
 
- 
+
 
 DMA main principles
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 365/436 DMA integration
+
+DMA integration
 
 DMA (*Direct Memory Access*) is used to copy data directly between devices and RAM, without going through the CPU.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 366/436 Peripheral DMA
+
+Peripheral DMA
 
 Some device controllers embedded their own DMA controller and therefore can do DMA on their own.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 367/436 DMA controllers
+
+DMA controllers
 
 Other device controllers rely on an external DMA controller (on the SoC). Their drivers need to submit DMA descriptors to this controller.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 368/436 DMA descriptors
 
- 
+DMA descriptors
+
+
 
 DMA descriptors describe the various attributes of a DMA transfer, and are chained.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 369/436
+
 
 Cache constraints
 
@@ -68,11 +68,11 @@ be invalidated to force reading from memory again
 
 must be flushed/cleaned in order to force the data to reach the memory
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 370/436 DMA addressing constraints
 
- 
+DMA addressing constraints
+
+
 
 ▶ Memory and devices have physical addresses: [phys_addr_t](https://elixir.bootlin.com/linux/latest/ident/phys_addr_t)
 
@@ -84,11 +84,11 @@ manipulate virtual addresses, instead they access a [dma_addr_t](https://elixir.
 
 *•* an IOMMU, in which case a specific mapping must be created
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 371/436 DMA memory allocation constraints
 
- 
+DMA memory allocation constraints
+
+
 
 The APIs must remain generic and handle all cases transparently, hence:
 
@@ -106,19 +106,18 @@ means one can use:
 
 Almost all the time userspace relies on the kernel to allocate the buffers and [mmap()](https://elixir.bootlin.com/linux/latest/ident/mmap) them to be usable from userspace (requires a dedicated user API)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 372/436
+
 
 Direct Memory Access
 
- 
+
 
 Kernel APIs for DMA
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 373/436 dma-mapping vs. dmaengine vs. dma-buf
+
+dma-mapping vs. dmaengine vs. dma-buf
 
 The dma-mapping API:
 
@@ -138,9 +137,9 @@ The dma-buf API:
 
 ▶ Enables sharing DMA buffers between devices within the kernel ▶ Not covered in this training
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 374/436 dma-mapping: Coherent or streaming DMA mappings
+dma-mapping: Coherent or streaming DMA mappings
 
- 
+
 
 ▶ Coherent mappings
 
@@ -154,11 +153,11 @@ Can be expensive to setup and use on some platforms Typically implemented by dis
 
 *•* The driver provides a buffer, the kernel just sets the mapping *•* Mapping set up for each transfer (keeps DMA registers free on the hardware)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 375/436 dma-mapping: memory addressing constraints
 
- 
+dma-mapping: memory addressing constraints
+
+
 
 ▶ The default addressing capability of the DMA controllers is assumed to be 32-bit. ▶ If the platform supports it, the DMA addressing capability can be:
 
@@ -182,15 +181,15 @@ allocations/buffer handling
 
 size_t dma_max_mapping_size(struct device \*dev); size_t dma_opt_mapping_size(struct device \*dev);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 376/436 dma-mapping: Allocating coherent memory mappings
 
- 
+dma-mapping: Allocating coherent memory mappings
+
+
 
 The kernel takes care of both buffer allocation and mapping:
 
- 
+
 
 \#include \<linux/dma-mapping.h\>
 
@@ -206,21 +205,21 @@ void dma_free_coherent(struct device \*dev,
 
 size_t size, void \*cpu_addr, dma_addr_t handle);
 
- 
+
 
 Note: called *consistent mappings* on PCI
 
 ([pci_alloc_consistent()](https://elixir.bootlin.com/linux/latest/ident/pci_alloc_consistent) and [pci_free_consistent()](https://elixir.bootlin.com/linux/latest/ident/pci_free_consistent)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 377/436 dma-mapping: Setting up streaming memory mappings (single)
 
- 
+dma-mapping: Setting up streaming memory mappings (single)
+
+
 
 Works on already allocated buffers:
 
- 
+
 
 \#include \<linux/dma-mapping.h\>
 
@@ -238,11 +237,11 @@ void dma_unmap_single(struct device \*dev, dma_addr_t handle,
 
 size_t size, enum dma_data_direction dir);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 378/436 dma-mapping: Setting up streaming memory mappings (multiples)
 
- 
+dma-mapping: Setting up streaming memory mappings (multiples)
+
+
 
 A scatterlist using the scatter-gather library can be used to map several buffers and link them together
 
@@ -272,15 +271,15 @@ dma_len\[i\] = sg_dma_len(sg);
 
 dma_unmap_sg(dev sglist, count, DMA_TO_DEVICE);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 379/436 dma-mapping: Setting up streaming I/O mappings
 
- 
+dma-mapping: Setting up streaming I/O mappings
+
+
 
 Physical addresses with MMIO registers might need to be remapped in order to be accessed through an IO-MMU:
 
- 
+
 
 \#include \<linux/dma-mapping.h\>
 
@@ -300,11 +299,11 @@ void dma_unmap_resource(struct device \*dev, dma_addr_t handle,
 
 size_t size, enum dma_data_direction dir, unsigned long attrs);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 380/436 dma-mapping: Verifying DMA memory mappings
 
- 
+dma-mapping: Verifying DMA memory mappings
+
+
 
 ▶ All mapping helpers can fail and return errors
 
@@ -314,11 +313,11 @@ int dma_mapping_error(struct device \*dev, dma_addr_t dma_addr)
 
 *•* May give additional clues if [CONFIG_DMA_API_DEBUG](https://elixir.bootlin.com/linux/latest/ident/CONFIG_DMA_API_DEBUG) is enabled.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 381/436 dma-mapping: Syncing streaming DMA mappings
 
- 
+dma-mapping: Syncing streaming DMA mappings
+
+
 
 ▶ In general streaming mappings are:
 
@@ -344,9 +343,9 @@ dma_sync_single_for_cpu(dev, dma_handle, size, direction); dma_sync_sg_for_cpu(d
 
 dma_sync_single_for_device(dev, dma_handle, size, direction); dma_sync_sg_for_device(dev, sglist, nents, direction);
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 382/436 Starting DMA transfers
+Starting DMA transfers
 
- 
+
 
 ▶ If the device you’re writing a driver for is doing peripheral DMA, no external API
 
@@ -356,15 +355,15 @@ is involved.
 
 1. Ask the hardware to use DMA, so that it will drive its request line 2. Use Linux dmaengine framework, especially its slave API
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 383/436 The dmaengine framework
 
- 
+The dmaengine framework
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 384/436 dmaengine: Slave API: Initial configuration
 
- 
+
+dmaengine: Slave API: Initial configuration
+
+
 
 Steps to start a DMA transfer with dmaengine:
 
@@ -394,11 +393,10 @@ txconf.dst_addr = fifo_dma_addr;
 
 ret = dmaengine_slave_config(dma-\>txchan, &txconf);
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 385/436
 
 dmaengine: Slave API: Per-transfer configuration (1/2)
 
- 
+
 
 1\. Create a descriptor with all the required configuration for the next transfer with:
 
@@ -432,15 +430,15 @@ desc-\>callback = foo_dma_complete;
 
 desc-\>callback_param = foo_dev;
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 386/436 dmaengine: Slave API: Per-transfer configuration (2/2)
+dmaengine: Slave API: Per-transfer configuration (2/2)
 
- 
+
 
 2\. Queue the next operation:
 
 dma_cookie_t cookie;
 
- 
+
 
 cookie = dmaengine_submit(desc);
 
@@ -460,11 +458,11 @@ terminate all ongoing transactions with:
 
 dmaengine_terminate_sync(chan);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 387/436 Examples
 
- 
+Examples
+
+
 
 ▶ Commented network driver, whith both streaming and coherent mappings:
 
@@ -472,11 +470,11 @@ dmaengine_terminate_sync(chan);
 
 ▶ Example of usage of the slave API: look at the code for [stm32_i2c_prep_dma_xfer()](https://elixir.bootlin.com/linux/latest/ident/stm32_i2c_prep_dma_xfer).
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 388/436 Practical lab - DMA
 
- 
+Practical lab - DMA
+
+
 
 ▶ Setup streaming mappings with the
 
@@ -496,8 +494,4 @@ transfers
 
 ▶ Wait for DMA completion
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 389/436
-
-![](media/index-404_1.jpg)

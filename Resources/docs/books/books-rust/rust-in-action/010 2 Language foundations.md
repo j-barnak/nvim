@@ -24,7 +24,6 @@ Beginners are welcomed. Rust’s community strives to be responsive to newcomers
 
 At times, you may strike a mental pothole when you encounter terms such as *lifetime* *elision*, *hygienic macros*, *move semantics*, and *algebraic data types* without context. Don’t **31**
 
-**32**
 
 CHAPTER 2
 
@@ -90,7 +89,6 @@ It’s highly recommended that you follow along with the examples in this book. 
 
 ***Creating a running program***
 
-**33**
 
 ***2.1***
 
@@ -156,10 +154,8 @@ To prepare ourselves for that, we’ll use a higher-level tool than rustc, calle
 
 cargo understands how to drive rustc (and much more).
 
-**34**
 
 
-***Language foundations***
 
 Migrating from a single file workflow managed by rustc to one managed by cargo is a two-stage process. The first is to move that original file into an empty directory.
 
@@ -251,7 +247,6 @@ Rust is boring and predictable where possible. It has variables, numbers, functi
 
 ***A glance at Rust’s syntax***
 
-**35**
 
 ***2.2.1***
 
@@ -343,10 +338,8 @@ In line 3 (let b: i32 = 20;), you can designate a specific data type for the com
 
 In line 4 (let c = 30i32;), you’ll note that Rust’s numeric literals can include types annotations. This can be helpful when navigating complex numerical expressions. And 1 This isn’t technically correct, but is accurate enough for now. If you’re an experienced Rust programmer skimming through this chapter, you’ll know that main() returns () (unit) by default and can also return a Result.
 
-**36**
 
 
-***Language foundations***
 
 in line 5 (let c = 30_i32;), you’ll see that Rust permits the use of underscores within numeric literals. These increase readability but are insignificant to the compiler. In line 6 (let e = add(add(a, b), add(c, d));), it should be easy to see that calling functions looks like what you’ve experienced in most other programming languages.
 
@@ -388,9 +381,7 @@ To start, let’s consider a small example. You’ll find the code in ch2/ch2-in
 
 42
 
-***Numbers***
 
-**37**
 
 Listing 2.3
 
@@ -532,10 +523,8 @@ Using base 2, base 8, and base 16 numeric literals
 
 **hexadecimal (base 16) numerals.**
 
-**38**
 
 
-***Language foundations***
 
 In binary (base 2) numerals, 0b11 equals 3 because 3 = 2 × 1 + 1 × 1. With octal (base 8) numerals, 0o36 equals 30 because 30 = 8 × 3 + 1 × 6. And with hexadecimal (base 16) numerals, 0x12C equals 300 because 300 = 256 × 1 + 16 × 2 + 1 × 12. Table 2.1 shows the types that represent scalar numbers.
 
@@ -607,9 +596,7 @@ Rust’s numeric types support a large suite of comparisons that you’re probab
 
 2 For the curious and eager, the traits involved here are std::cmp::PartialOrd and std::cmp::PartialEq.
 
-***Numbers***
 
-**39**
 
 Table 2.3
 
@@ -699,10 +686,8 @@ Using type casts carelessly will cause your program to behave unexpectedly. For 
 
 In some cases, using the as keyword is too restrictive. It’s possible to regain fuller control over the type conversion process at the cost of introducing some bureaucracy. The
 
-**40**
 
 
-***Language foundations***
 
 following listing shows a Rust method to use instead of the as keyword when the conversion might fail.
 
@@ -766,9 +751,7 @@ Floating-point types (f32 and f64, for example) can cause serious errors for the
 
  *These often approximate the numbers that they’re representing.* Floating-point types are implemented in base 2, but we often want to calculate numbers in
 
-***Numbers***
 
-**41**
 
 base 10. This mismatch creates ambiguity. Moreover, although often described as representing the real numbers, floating point values have a limited precision. Representing all of the reals would require infinite precision.
 
@@ -828,10 +811,8 @@ But not all. It turns out that the data type can affect whether the program succ
 
 17 }
 
-**42**
 
 
-***Language foundations***
 
 ***(continued)***
 
@@ -891,9 +872,7 @@ assert_eq!(x, x);
 
 }
 
-***Numbers***
 
-**43**
 
 To program defensively, make use of the is_nan() and is_finite() methods. Inducing a crash, rather than silently proceeding with a mathematical error, allows you to debug close to what has caused the problem. The following illustrates using the is_finite() method to bring about this condition:
 
@@ -951,10 +930,8 @@ cd ch2-complex
 
 3 Mechanical engineers use *j* rather than *i*.
 
-**44**
 
 
-***Language foundations***
 
 b
 
@@ -1032,7 +1009,6 @@ One is a *literal* syntax available as part of the Rust language (line 4). The o
 
 ***Flow control***
 
-**45**
 
 The second form is often preferred in real-world code because library authors use a type’s new() method to set defaults. It also involves less clutter.
 
@@ -1084,10 +1060,8 @@ However, it does have some pitfalls.
 
 Counterintuitively, once the block ends, accessing the container another time becomes invalid. Even though the container variable remains within local scope, its *lifetime* has ended. For reasons that are explained in chapter 4, Rust assumes that container is no longer needed once the block finishes.
 
-**46**
 
 
-***Language foundations***
 
 When you want to reuse container later in your program, use a reference. Again, for reasons that are explained in chapter 4, when a reference is omitted, Rust assumes that container is no longer needed. To add a reference to the container, prefix it with an ampersand (&) as this example shows:
 
@@ -1155,9 +1129,7 @@ let item = collection\[i\];
 
 }
 
-***Flow control***
 
-**47**
 
 This is legal Rust. It’s also essential in cases when iterating directly over collection via for item in collection is impossible. However, it is generally discouraged. The manual approach introduces two problems with this:
 
@@ -1207,10 +1179,8 @@ USING WHILE TO STOP ITERATING ONCE A DURATION IS REACHED
 
 Listing 2.7 (source code available at ch2/ch2-while-true-incr-count.rs) provides a working example of while. It isn’t an ideal method for implementing benchmarks, but can be a useful tool to have in your toolbox. In the listing, while continues to execute a block when a time limit is not reached.
 
-**48**
 
 
-***Language foundations***
 
 Listing 2.7
 
@@ -1306,9 +1276,7 @@ break;
 
 }
 
-***Flow control***
 
-**49**
 
 // ...
 
@@ -1370,10 +1338,8 @@ if item == 42 {
 
 5 This functionality is also available with continue, but it’s less common.
 
-**50**
 
 
-***Language foundations***
 
 Rust has no concept of “truthy” or “falsey” types. Other languages allow special values such as 0 or an empty string to stand in for false and for other values to represent true, but Rust doesn’t allow this. The only value that can be used for true is true, and for false, use false.
 
@@ -1447,9 +1413,7 @@ println!("{}", n);
 
 }
 
-***Flow control***
 
-**51**
 
 You may wonder what parts of Rust are *not* expressions and, thus, do not return values. Statements are not expressions. These appear in Rust in three places:
 
@@ -1515,10 +1479,8 @@ Listing 2.8 demonstrates a larger example of match. The source code for this lis
 
 132: hit!
 
-**52**
 
 
-***Language foundations***
 
 Listing 2.8
 
@@ -1602,7 +1564,6 @@ Rust’s functions require that you specify your parameter’s types and the fun
 
 ***Using references***
 
-**53**
 
 **Identifier**
 
@@ -1688,10 +1649,8 @@ Searching for an integer in an array of integers
 
 **elements within haystack**
 
-**54**
 
 
-***Language foundations***
 
 6 if \*item == needle {
 
@@ -1795,7 +1754,6 @@ Execute cargo run. You should see the Mandelbrot set rendered in the terminal:
 
 ***Project: Rendering the Mandelbrot set***
 
-**55**
 
 Listing 2.12
 
@@ -1971,10 +1929,8 @@ Rendering the Mandelbrot set
 
 49
 
-**56**
 
 
-***Language foundations***
 
 50 fn render_mandelbrot(escape_vals: Vec\<Vec\<usize\>\>) {
 
@@ -2058,9 +2014,7 @@ A function signature with explicit lifetime annotations
 
 Like all unfamiliar syntax, it can be difficult to know what’s happening at first. This improves with time. Let’s start by explaining *what* is happening, and then go on to
 
-***Advanced function definitions***
 
-**57**
 
 discuss *why* it is happening. The following bullet points break line 1 of the previous snippet into its parts:
 
@@ -2130,10 +2084,8 @@ Type signature of a function with lifetime explicit annotations
 
 On line 2, \*i + \*j adds together the referent values held by the i and j variables. It’s common to see lifetime parameters when using references. While Rust can infer lifetimes 6 Omitting lifetime annotations is formally referred to as *lifetime elision*.
 
-**58**
 
 
-***Language foundations***
 
 in other cases, references require the programmer to specify the intent. Using two lifetime parameters (a and b) indicates that the lifetimes of i and j are decoupled.
 
@@ -2197,9 +2149,7 @@ This issue arises because T really means any type at all, even types where addit
 
 attempts to refer to the outer ring, whereas addition is only supported by types within the inner ring.
 
-***Advanced function definitions***
 
-**59**
 
 **All types**
 
@@ -2251,10 +2201,8 @@ Listing 2.17 is a full example that demonstrates that generic functions can be c
 
 15s
 
-**60**
 
 
-***Language foundations***
 
 Listing 2.17
 
@@ -2366,7 +2314,6 @@ Searching for a simple pattern within lines of a string
 
 ***Creating grep-lite***
 
-**61**
 
 3 let quote = "\\
 
@@ -2428,10 +2375,8 @@ characters.
 
 str is usually seen in this form: &str. A &str (pronounced *string slice*) is a small type that contains a reference to str data and a length. Attempting to assign a variable to type str will fail. The Rust compiler wants to create fixed-sized variables within a function’s stack frame. As str values can be of arbitrary length, these can only be stored as local variables by reference.
 
-**62**
 
 
-***Language foundations***
 
 ***(continued)***
 
@@ -2469,7 +2414,6 @@ Adding a few lines to our previous example, we now see the following line printe
 
 ***Making lists of things with arrays, slices, and vectors***
 
-**63**
 
 Listing 2.19
 
@@ -2577,10 +2521,8 @@ To add support for that feature in grep-lite, we need to be able to create lists
 
 Lists of things are incredibly common. The two types that you will work with most often are *arrays* and *vectors*. Arrays are fixed-width and extremely lightweight. Vectors are growable but incur a small runtime penalty because of the extra bookkeeping that
 
-**64**
 
 
-***Language foundations***
 
 these do. To understand the underlying mechanisms with text data in Rust, it helps to have a cursory understanding of what is happening.
 
@@ -2646,9 +2588,7 @@ Defining arrays and iterating over their elements
 
 21 }
 
-***Making lists of things with arrays, slices, and vectors***
 
-**65**
 
 Arrays are a simple data structure from the machine’s point of view. These are a contiguous block of memory with elements of a uniform type. The simplicity is still somewhat deceptive. Arrays can cause a few learning difficulties for newcomers:
 
@@ -2686,10 +2626,8 @@ NOTE
 
 Don’t worry too much about the distinctions between arrays and slices yet. In practice, it’s not material. Each term is an artifact of implementation details. Those implementation details are important when dealing with performance-critical code but not when learning the basics of the language.
 
-**66**
 
 
-***Language foundations***
 
 ***2.10.3***
 
@@ -2785,7 +2723,6 @@ Enabling context lines to be printed out with a **Vec\<Vec\<T\>\>** 1 fn main() 
 
 ***Including third-party code***
 
-**67**
 
 18 if line.contains(needle) {
 
@@ -2931,10 +2868,8 @@ When considering this approach in real text files, encodings can cause issues. S
 
 Incorporating third-party code is essential to productive Rust programming. Rust’s standard library tends to lack many things that other languages provide, like random number generators and regular expression support. That means it’s common to incorporate third-party crates into your project. To get your feet wet, let’s start with the regex crate.
 
-**68**
 
 
-***Language foundations***
 
 Crates are the name the Rust community uses where others use terms such as package, distribution, or library. The regex crate provides the ability to match regular expressions rather than simply looking for exact matches.
 
@@ -3016,9 +2951,7 @@ println!("{}", line);
 
 **a substring**
 
-***Including third-party code***
 
-**69**
 
 }
 
@@ -3116,10 +3049,8 @@ Move to the root of the project directory in a terminal: /tmp/grep-lite or
 
 %TMP%\grep-lite
 
-**70**
 
 
-***Language foundations***
 
 2
 
@@ -3191,7 +3122,6 @@ Our program is rapidly increasing its feature count. Yet, there is no way for an
 
 ***Supporting command-line arguments***
 
-**71**
 
 Sadly, though, Rust has a fairly tight standard library. As with regular expressions, another area with relatively minimalist support is handling command-line arguments.
 
@@ -3289,10 +3219,8 @@ Editing grep-lite/src/main.rs
 
 22 match re.find(line) {
 
-**72**
 
 
-***Language foundations***
 
 23 Some(\_) =\> println!("{}", line),
 
@@ -3360,7 +3288,6 @@ Before adding this functionality to grep-lite, let’s take a look at a standalo
 
 ***Reading from files***
 
-**73**
 
 is to open a File object, then wrap that in a BufReader. BufReader takes care of providing *buffered I/O*, which can reduce system calls to the OS if the hard disk is congested.
 
@@ -3488,10 +3415,8 @@ Reading a file line by line via **BufReader::lines()**
 
 We’re now in a position to add reading from a file into grep-lite’s feature list. The following listing creates a complete program that takes a regular expression pattern and an input file as arguments.
 
-**74**
 
 
-***Language foundations***
 
 Listing 2.29
 
@@ -3597,7 +3522,6 @@ Searching through a file or stdin
 
 ***Summary***
 
-**75**
 
 6 use clap::{App,Arg};
 
@@ -3695,10 +3619,8 @@ Searching through a file or stdin
 
  List-like types are tailored to specific use cases. You will typically reach for Vec\<T\> first.
 
-**76**
 
 
-***Language foundations***
 
  All Rust programs have a single entry function: main().
 

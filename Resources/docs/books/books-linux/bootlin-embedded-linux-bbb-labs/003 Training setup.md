@@ -1,12 +1,12 @@
 **Training setup**
 
- 
 
- 
+
+
 
 *Download files and directories used in practical labs*
 
- 
+
 
 **Install lab data**
 
@@ -58,7 +58,6 @@ a file system, loading a kernel module, changing file ownership, configuring the
 
 1 This tool from Microsoft is Open Source! To try it on Ubuntu: sudo snap install code --classic
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 3
 
 • If you ran commands from a root shell by mistake, your regular user may no longer be able to handle
 
@@ -66,6 +65,4 @@ the corresponding generated files. In this case, use the chown -R command to giv
 
 Example: \$ sudo chown -R myuser.myuser linux/
 
- 
 
-4 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license

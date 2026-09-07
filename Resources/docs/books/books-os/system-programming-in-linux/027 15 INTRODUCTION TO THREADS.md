@@ -1,3 +1,5 @@
+![](media/index-921_1.jpg)
+
 15 INTRODUCTION TO THREADS
 
 The first chapter of the book introduced the concept of threads and
@@ -1677,5 +1679,3 @@ the processor count.
 6\. Write a multithreaded version of *spl_du1.c* (from Chapter 7) that creates a separate thread for each directory command line
 
 argument. (The nftw() function is thread-safe provided that the FTW_CHDIR is not passed to it.)
-
-![](media/index-961_1.jpg)

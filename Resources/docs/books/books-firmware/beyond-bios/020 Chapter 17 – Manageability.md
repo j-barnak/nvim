@@ -1,12 +1,12 @@
 ## **Chapter 17 – Manageability** 
 
- 
+
 
 I came, I saw, I conquered
 
 —Julius Caesar
 
- 
+
 
 RAS is a critical requirement for enterprise class servers, which includes high availa-
 
@@ -26,11 +26,11 @@ integral part of most industry standard server class operating systems. In addit
 
 comparing and contrasting various aspects and their interoperability at a platform level in achieving the five nines goal.
 
- 
+
 
 **Overall Management Framework**
 
- 
+
 
 A robust reporting of platform errors to the OS and a remote management of the plat-form are considered fundamental building blocks that enable OS-level decision mak-
 
@@ -48,41 +48,40 @@ The two categories of error/event types that need active management in a platfor
 
 *anisms*.
 
- 
+
 
 DOI 10.1515/9781501505690-019
 
-**270** \| Chapter 17 – Manageability
 
- 
+
 
 **Local Manageability Application** **Local Manageability Application** **Remote Manageability Application Remote Manageability Application**
 
- 
+
 
 **WS** **WS****-****-****MAN** **MAN**
 
- 
+
 
 **WHEA** **WHEA** **Operating System Operating System**
 
- 
+
 
 **EFI** **IPMI** **EFI** **AMT** **AMT** **IPMI**
 
- 
+
 
 **In** **In****-****Band Errors** **Band Errors** **Out** **Out****-****of** **of****-****Band Errors** **Band Errors**
 
- 
+
 
 **Standard IA Platform HW** **Standard IA Platform HW** **Manageability HW** **Manageability HW**
 
- 
+
 
 **Figure 17.1:** Manageability Domains
 
- 
+
 
 The various classes of manageability implementations handing these two classes of errors/events are as follows:
 
@@ -100,7 +99,7 @@ mentations
 
 ■ OS based dynamic error management
 
- 
+
 
 Dynamic in-band errors like 1xECC, 2xECC on memory or PCIe† corrected/uncorrected
 
@@ -110,19 +109,18 @@ in-band errors need immediate system attention and error handling to maintain th
 
 uptime, most out-of-band errors would need the attention of manageability software for deferred handling. However, over a period of time both categories of errors/ events, if not handled properly, will impact the system uptime.
 
- 
+
 
 \|\|
 
 **1** SMI: System Management Interrupt of x86 processor; PMI: Platform Management Interrupt of Ita-nium® processor
 
-Overall Management Framework \| **271**
 
- 
+
 
 **Dynamic In-Band**
 
- 
+
 
 In-Band error management is typically handled by software that is part of the stand-
 
@@ -136,11 +134,11 @@ follows:
 
 UEFI standards.
 
- 
+
 
 **Out-of-Band**
 
- 
+
 
 Out-of-band error management is handled by out-of-band firmware such as, for ex-
 
@@ -152,7 +150,7 @@ ample, firmware running on BMCs conforming to IPMI standards. The key technolo-g
 
 ■ DMTF and DASH as they relate to IPMI and Intel AMT
 
- 
+
 
 IPMI is prevalent on server class platforms through the use of an industry standard management framework or protocol like WS-MAN. The following section focuses
 
@@ -168,23 +166,22 @@ third-party management and security applications. Intel AMT today is primarily b
 
 information on a central repository stored in the platform nonvolatile memory (NVM).
 
- 
+
 
 **Distributed Management Task Force (DMTF)**
 
- 
+
 
 The DMTF is an industry organization that is leading the development, adoption, and
 
 promotion of interoperable management initiatives and standards. Further details on this will be covered later in this chapter.
 
-**272** \| Chapter 17 – Manageability
 
- 
+
 
 **UEFI Error Format Standardization**
 
- 
+
 
 In this section, we delve into the first level details of the in-band errors and their han-dling based on the UEFI standard.
 
@@ -214,39 +211,38 @@ for its private usage, with no way to communicate this back to the OS and vice v
 
 other.
 
-UEFI Error Format Standardization \| **273**
 
- 
+
 
 **OS Error Handling Components**
 
- 
+
 
 **Machine Check**
 
 **Exception**
 
- 
+
 
 **OS Legacy**
 
 **Interface (MCE)**
 
- 
+
 
 **Native OS** **SMI** **MSR**
 
 **Access** **Firmware**
 
- 
+
 
 **Processor** **Platform**
 
- 
+
 
 **Figure 17.2:** Traditional OS Error Reporting Stack
 
- 
+
 
 To make the system error reporting solution complete, the manageability software will have to be provided with the following:
 
@@ -260,7 +256,7 @@ Reporting registers (AER)
 
 ■ System event logs (SELs) as logged by BMC-IPMI implementations
 
- 
+
 
 As can be seen in Figure 17.3, there is a coordination challenge between different sys-tem software components managing errors for different platform hardware functions.
 
@@ -274,9 +270,8 @@ nents when accessing the error resources, especially when they are shared betwee
 
 the OS does receive a platform-specific error event/interrupt like NMI, it would have no clue about what caused it and how to deal with it.
 
-**274** \| Chapter 17 – Manageability
 
- 
+
 
 **F/W Controlled Logging-Settings**
 
@@ -294,7 +289,7 @@ Writes
 
  - Uncorrected errors
 
- 
+
 
 S/W CSR Reads
 
@@ -302,7 +297,7 @@ Err Detection Mux
 
 0
 
- 
+
 
 **Platform Errors** **F/W Controlled Signaling-Settings**
 
@@ -314,7 +309,7 @@ MCERR En **Operating System**
 
 **S/W**
 
- 
+
 
 MCERR
 
@@ -324,15 +319,15 @@ Err Signal Mux
 
 0
 
- 
+
 
 **Configurable Platform Hardware**
 
- 
+
 
 **Figure 17.3:** Traditional OS Error Reporting Stack
 
- 
+
 
 Based on this state of OS error handling and the identified needs for future enhance-
 
@@ -356,9 +351,8 @@ error management capabilities and a way to configure it for the chosen usage mod
 
 system error handling policy management decisions through appropriate system con-figuration and settings.
 
-UEFI Error Format Standardization \| **275**
 
- 
+
 
 To facilitate abstracted error signaling and reporting for most common platform in-band errors, namely those emanating from the processor and chipset, a new
 
@@ -382,41 +376,41 @@ through firmware assist
 
 ■ Standardized error log formats for key hardware
 
- 
+
 
 Figure 17.4 illustrates various components with UEFI extensions to satisfy the above
 
 goals.
 
- 
+
 
 **Manageability** **OS Error Handling Components**
 
 **Software**
 
- 
+
 
 **Machine Check**
 
 **Exception**
 
- 
+
 
 **Industry Standard Technology Interface (API)**
 
- 
+
 
 **Interface** **UEFI** **IPMI** **SMI** **Error** **AMT** **Handler** **Firmware**
 
- 
+
 
 **Processor** **Platform**
 
- 
+
 
 **Figure 17.4:** OS Error Reporting Stack with UEFI Standardization
 
- 
+
 
 Non-Goals: The UEFI specification did not cover the following: ■ Details of the platform hardware design or signal routing ■ OS or other system software error handling implementations or error handling
 
@@ -424,13 +418,13 @@ policies
 
 ■ Usage model of this interface
 
-■ Standardized error log formats for all hardware **276** \| Chapter 17 – Manageability
+■ Standardized error log formats for all hardware
 
- 
+
 
 **UEFI Error Format Overview**
 
- 
+
 
 The error interface consists of a set of OS runtime APIs implemented by system firm-
 
@@ -450,7 +444,7 @@ tion-specific usage model
 
 through *standardized* platform specific capability record representation
 
- 
+
 
 This specification only covers the runtime API details. It is based on coordination be-
 
@@ -458,11 +452,11 @@ tween different system stack components through architected interfaces and flows
 
 The platform nonvolatile storage services are the minimum required features for this error model.
 
- 
+
 
 **Error Record Types**
 
- 
+
 
 The API provides services to support different predefined record types. Each record type being acessed is identified by an architected unique Record ID, which is man-
 
@@ -480,7 +474,7 @@ common error record format or other additional vendor defined GUID. 3. *Error Ca
 
 implemented error feature capability discovery and configuration record types.
 
- 
+
 
 **Error Notification Type**
 
@@ -490,9 +484,8 @@ standard event signaling/interrupts, each of which is identified by an architect
 
 ■ Corrected Machine Check (CMC)
 
-Windows Hardware Error Architecture and the Role of UEFI \| **277**
 
- 
+
 
 ■ Corrected Platform Error (CPE)
 
@@ -508,7 +501,7 @@ Windows Hardware Error Architecture and the Role of UEFI \| **277**
 
 ■ DMAr
 
- 
+
 
 Recently enhancements to the UEFI includes ARM64 processor and platform specific error notification types with the associated error records & section as follows:
 
@@ -518,7 +511,7 @@ Recently enhancements to the UEFI includes ARM64 processor and platform specific
 
 ■ Platform Error Interrupt (PEI)
 
- 
+
 
 **Creator Identifier**
 
@@ -532,13 +525,13 @@ written in the error record by subsequent owners of the record than the actual c
 
 ■ OEM
 
- 
+
 
 An OS saved record to the platform nonvolatile storage will have an ID created by the OS, while platform-generated records will have a firmware creator ID. The creator ID
 
 has to be specified during retrival of the error record from platform storage. Other system software vendors (OS or OEM) must define a valid GUID.
 
- 
+
 
 **Error Capability**
 
@@ -548,15 +541,15 @@ and configuration. Error capability is reserved for discovering platform capabil
 
 For further details on the APIs to get/set/clear error records from the non-volatile storage on the platform through UEFI, refer to the UEFI 2.3 or above specification.
 
- 
+
 
 **Windows Hardware Error Architecture and the Role of UEFI**
 
- 
 
-Prior to the UEFI common error format standardization, most of the operating systems supported several unrelated mechanisms for reporting hardware errors. The ability to **278** \| Chapter 17 – Manageability
 
- 
+Prior to the UEFI common error format standardization, most of the operating systems supported several unrelated mechanisms for reporting hardware errors. The ability to
+
+
 
 determine the root cause of hardware errors was hindered by the limited amount of error information logged in the OS system event log. These mechanisms provided lit-
 
@@ -582,7 +575,7 @@ vantage of the additional hardware error information available in today’s hard
 
 standardized error formats.
 
- 
+
 
 WHEA can be summarized in a nutshell as:
 
@@ -604,7 +597,7 @@ WHEA can be summarized in a nutshell as:
 
 errata management and error containment
 
- 
+
 
 As a result, WHEA provides the following benefits:
 
@@ -616,9 +609,8 @@ ord format for determining the root cause of hardware errors.
 
 the system when a hardware error is nonfatal.
 
-Windows Hardware Error Architecture and the Role of UEFI \| **279**
 
- 
+
 
 ■ Supports user-mode error management applications and enables advanced com-
 
@@ -632,7 +624,7 @@ reporting mechanisms to their devices, WHEA allows the operating system to
 
 gracefully accommodate the new mechanisms.
 
- 
+
 
 The UEFI standard has now defined error log formats for the most common platform
 
@@ -648,79 +640,78 @@ event section.
 
 ![](media/index-298_1.png)
 
- 
+
 
 **Provided by:** **Provided by:** **Provided by:** **Provided by:**
 
 ![](media/index-298_2.png)
 
- 
+
 
 Management/Reporting Applications **Microsoft** **Microsoft** **Microsoft** **Microsoft**
 
- 
+
 
 **ISV/IHV** **ISV/IHV** **ISV/IHV** **ISV/IHV**
 
- 
+
 
 **WMI Management Interface** **WMI Management Interface** **ETW Error Notifications** **ETW Error Notifications** **Code Gen** **Code Gen** **Code Gen** **Code Gen**
 
- 
+
 
 Kernel
 
- 
+
 
 HAL PCI.SYS LLHEH LLHEH
 
- 
+
 
 Platform-Specific Hardware Error Driver
 
 Plug-in
 
- 
+
 
 Hardware/Firmware (UEFI/ACPI)
 
- 
+
 
 **Figure 17.5:** WHEA Overview
 
- 
+
 
 The layout of the UEFI standardized error record format used by WHEA is illustrated
 
 in Figure 17.6.
 
-**280** \| Chapter 17 – Manageability
 
 ![](media/index-299_1.png)
 
- 
+
 
 **Figure 17.6:** UEFI Standard Error Record Format
 
- 
+
 
 Some of the standard error sources and global controls covered by WHEA/UEFI are as described in Table 17.1.
 
- 
+
 
 **Table 17.1:** Standard Error Sources and Global Controls Covered by WHEA/UEFI
 
- 
+
 
 Error Sources System Interrupts and Exceptions: NMI, MCE, MCA, CMCI, PCIe, CPEI, SCI,
 
 INTx, BOOT
 
- 
+
 
 Standard Error For- Processor, Platform Memory, PCIe, PCI/PCI-X Bus, PCI Component mats
 
- 
+
 
 It is beyond the scope of this chapter to go into the details of the dynamic error han-
 
@@ -728,13 +719,13 @@ dling flow. However, Figure 17.7 provides an overview of the error handling invo
 
 Technology Intercepts: UEFI, IPMI, Intel® AMT, WS-MAN \| **281**
 
- 
+
 
 Uncorrected/Corrected
 
 Hardware Error Event
 
- 
+
 
 OS Logs Errors &
 
@@ -768,7 +759,7 @@ Console
 
 5. Other OEM actions Errors Found Handler OS Error
 
- 
+
 
 Hardware Access
 
@@ -778,7 +769,7 @@ Policy Enabled
 
 Interface Enabled
 
- 
+
 
 Through Direct
 
@@ -798,37 +789,37 @@ Handling
 
 Successful
 
- 
+
 
 No
 
- 
+
 
 Reboot
 
- 
+
 
 **Figure 17. 7:** Generic Error Handling Flow
 
- 
+
 
 **Technology Intercepts: UEFI, IPMI, Intel® AMT, WS-MAN**
 
- 
+
 
 The following sections delve into various other management technologies that relate to UEFI and how these all can interoperate.
 
- 
+
 
 **Intelligent Platform Management Interface (IPMI)**
 
- 
+
 
 IPMI is a hardware level interface specification that is “management software neu-tral” providing monitoring and control functions for server platforms, that can be exposed through standard management software interfaces such as DMI, WMI,
 
-CIM, SNMP, and HPI. IPMI defines common, abstracted, message-based interfaces **282** \| Chapter 17 – Manageability
+CIM, SNMP, and HPI. IPMI defines common, abstracted, message-based interfaces
 
- 
+
 
 between diverse hardware devices and the CPU. IPMI also defines common sensors for describing the characteristics of such devices, which are used to monitor out-of-
 
@@ -840,11 +831,11 @@ ure 17.8.
 
 ![](media/index-301_1.png)
 
- 
+
 
 **Figure 17.8:** Typical IPMI Platform Implementation
 
- 
+
 
 IPMI has defined a set of standard sensors, which would monitor different platform
 
@@ -860,25 +851,25 @@ sensor and global controls are captured below in Table 17.2.
 
 Technology Intercepts: UEFI, IPMI, Intel® AMT, WS-MAN \| **283**
 
- 
+
 
 **Table 17.2:** IPMI Standard Sensor and Global Controls
 
- 
+
 
 Sensors Temp, Voltage, Current, Processor, Physical Security, Platform Security, Proces-
 
 sor, Power Supply, Power Unit, Cooling, Memory, Drive Slot, BIOS POST, Watch Dog, System Event, Critical Interrupt, Button/Switch, Add in Card, Chassis, Chip-set, FRU, Cable, System Reboot, Boot Error, OS Boot, OS Crash, ACPI Power State, LAN, Platform Alert, Battery, Session Audit
 
- 
+
 
 Global Control Cold Reset, Warm Reset, Set ACPI State
 
- 
+
 
 **Intel® Active Management Technology (Intel AMT)**
 
- 
+
 
 Intel AMT can be viewed as an orthogonal solution to IPMI and was originally devel-oped with capabilities for client system manageability by IT personnel in mind, as
 
@@ -906,19 +897,18 @@ channel.
 
 detection of critical software agents, protects against malware attacks, and so on.
 
- 
+
 
 The most recent versions of the Intel AMT are DASH-compliant and facilitate interop-erability with remote management consoles that are DASH-compliant.
 
-**284** \| Chapter 17 – Manageability
 
 ![](media/index-303_1.png)
 
- 
+
 
 **Figure 17.9:** Intel® AMT Architecture Stack
 
- 
+
 
 Intel AMT offering includes Manageability Engine hardware with the associated firm-
 
@@ -928,23 +918,23 @@ sion to access a system's BIOS and enable IDE-Redirect to boot a system from a f
 
 vices provided through Intel AMT are as shown in Table 17.3.
 
- 
+
 
 **Table 17.3:** Key Services Provided through Intel® AMT
 
- 
+
 
 Services Security Administration Interface, Network Administration Interface, Hardware
 
 Asset Interface, Remote Control Interface, Storage Interface, Event Manage-ment Interface, Storage Administration Interface, Redirection Interface, Local Agent Presence Interface, Circuit Breaker Interface, Network Time Interface, General Info. Interface, Firmware Update Interface
 
- 
+
 
 Global Control Cold Reset, Warm Reset, Power Up and Down, Set Power/ACPI State, Change
 
 ACL, Retrieve Hardware/Software Inventory, Firmware Update, Set Clock, Set Firewall Configuration, Configure Platform Events for Alert and Logging
 
- 
+
 
 Like IPMI, one of the key interfaces of Intel AMT is event management, which allows configuring hardware and software events to generate alerts and to send them to a
 
@@ -952,11 +942,11 @@ remote console and/or log them locally.
 
 Technology Intercepts: UEFI, IPMI, Intel® AMT, WS-MAN \| **285**
 
- 
+
 
 **Web Services Management Protocol (WS-MAN)**
 
- 
+
 
 The growth and success of enterprise businesses hinges heavily on the ability to con-
 
@@ -970,29 +960,28 @@ agement of remote systems, as illustrated in Figure 17.10.
 
 ![](media/index-304_1.png)
 
- 
+
 
 **Figure 17.10:** WS-MAN Management Build Blocks Overview
 
- 
+
 
 All desktop, mobile, and server implementations that are compliant with DASH and support WS-MAN can be remotely managed over the same infrastructure like the
 
 management console applications.
 
- 
+
 
 **Other Industry Initiatives**
 
- 
+
 
 The Distributed Management Task Force, Inc. (DMTF) is the industry organization
 
 leading the development, adoption, and promotion of interoperable management in-
 
-**286** \| Chapter 17 – Manageability
 
- 
+
 
 itiatives and standards. DMTF management technologies include the Common Diag-nostic Model (CDM) initiative, the Desktop Management Interface (DMI), the System
 
@@ -1002,11 +991,11 @@ ware (SMASH) initiative, Web-Based Enterprise Management (WBEM)—including prot
 
 DMTF technologies and activities can be found at www.dmtf.org.
 
- 
+
 
 **The UEFI/IPMI/Intel® AMT/WS-MAN Bridge**
 
- 
+
 
 This part of the analysis brings out the way these different management technologies
 
@@ -1022,17 +1011,17 @@ ered by UEFI, but is left to the individual platform vendors to implement throug
 
 ![](media/index-305_1.png)
 
- 
+
 
 **Figure 17.11:** Management Build Blocks Linking IPMI, HPI, UEFI, and WHEA
 
 The UEFI/IPMI/Intel® AMT/WS-MAN Bridge \| **287**
 
- 
+
 
 **IPMI Error Records to UEFI**
 
- 
+
 
 UEFI can act as a conduit for all the SEL event log information for out-of-band errors
 
@@ -1046,11 +1035,11 @@ sor events through the firmware first model as defined by Microsoft WHEA and pro
 
 Processor Machine Check Architecture specification for IPMI error logging and is an area of opportunity of future standardization effort.
 
- 
+
 
 **UEFI Error Records to IPMI**
 
- 
+
 
 The IPMI has already defined standard event sensors like Processor, Memory, System Event, Chipset and Platform Alert. It is also possible to define a new UEFI or WHEA
 
@@ -1060,11 +1049,11 @@ log size is currently defined to be 16-bytes and hence would require a change in
 
 ageability application would be able to get complete in-band and out-of-band error information through one single IPMI.
 
- 
+
 
 **Intel® AMT and IPMI**
 
- 
+
 
 These two interfaces, which were defined with different usage models in mind, do have an overlap in functionality. Intel AMT defines an entire hardware and firmware
 
@@ -1072,13 +1061,12 @@ framework for client system management, while IPMI only defined the firmware in-
 
 implemented on the hardware needed for Intel AMT if the ME hardware becomes a standard feature on all Intel solutions or chipsets.
 
-**288** \| Chapter 17 – Manageability
 
- 
+
 
 **Future Work**
 
- 
+
 
 Table 17.4 shows the four areas of potential work for standardization that offers inter-
 
@@ -1094,23 +1082,23 @@ interfaces with a unified error reporting and management for the entire platform
 
 either obtained through the OS or Intel AMT/IPMI
 
- 
+
 
 **Table 17.4:** Manageability and error management standards and possible future work.
 
- 
+
 
 Error Management Feature UEFI/WHEA IPMI AMT WS-MAN
 
- 
+
 
 Bridging Over Possibilities IPMI/AMT AMT IPMI UEFI/WHEA
 
- 
+
 
 **Configuration Namespace**
 
- 
+
 
 The UEFI platform configuration infrastructure has been designed to facilitate the ex-traction of meaningful configuration data whether manually or via a programmatic
 
@@ -1118,7 +1106,7 @@ The UEFI platform configuration infrastructure has been designed to facilitate t
 
 to manage the configuration of both motherboard-specific as well as add-in device configuration settings.
 
- 
+
 
 **Associating meaning with a question**
 
@@ -1132,15 +1120,14 @@ figuration-related IFR op-code is preceded with such a header, and the 3rd byte 
 
 associated to the op-code.
 
-Configuration Namespace \| **289**
 
 ![](media/index-308_1.png)
 
- 
+
 
 **Figure 17.12:** Sample IFR Op-code encoding
 
- 
+
 
 **Prompt Token and a new language**
 
@@ -1178,15 +1165,14 @@ spoken in Mexico) string, and a UEFI platform configuration string. The latter s
 
 metadata in the platform.
 
-**290** \| Chapter 17 – Manageability
 
 ![](media/index-309_1.png)
 
- 
+
 
 **Figure 17.13**
 
- 
+
 
 For example, a utility (or administrator) may query the platform to determine if a plat-form has exposed “iSCSIInitiatorName” within the configuration data. Normally,
 
@@ -1220,21 +1206,20 @@ a\. This allows a program to optionally extract the current settings as well as 
 
 tionally set the current settings.
 
- 
+
 
 Even though the above steps are an illustration of what one might have to do to ex-
 
 tract the information necessary to match a Keyword to its associated value, there are
 
-Configuration Namespace \| **291**
 
- 
+
 
 facilities defined in the EFI_HII_CONFIG_ROUTING_PROTOCOL, and more specifi-cally the ExtractConfig() and RouteConfig() functions to facilitate the getting and set-
 
 ting of keyword values.
 
- 
+
 
 **Software Layering**
 
@@ -1268,23 +1253,22 @@ PROTOCOL interface that allows the setting or retrieving of configuration data. 
 
 tions.
 
-**292** \| Chapter 17 – Manageability
 
 ![](media/index-311_1.png)
 
- 
+
 
 **Figure 17.14**
 
- 
+
 
 **Namespace Entries**
 
- 
+
 
 This document establishes the UEFI Platform Configuration language as:
 
- 
+
 
 **x-UEFI-ns**
 
@@ -1292,7 +1276,7 @@ The keywords defined in this UEFI Configuration Namespace registry should all be
 
 discoverable within the platform configuration language of “x-UEFI-ns”.
 
- 
+
 
 **Alternate Storage and Namespaces**
 
@@ -1300,7 +1284,7 @@ Although this namespace registry deals solely with the keywords associated with 
 
 structure supports abstractions that encompass alternate x-UEFI-\* namespace us-ages.
 
- 
+
 
 **x-UEFI-CompanyName**
 
@@ -1308,9 +1292,8 @@ If a company wanted to expose some additional keywords for their own private use
 
 For example, if Intel wanted to expose some additional settings, they would use: x-UEFI-INTC.
 
-Summary \| **293**
 
- 
+
 
 **Handling Multi-instance values**
 
@@ -1342,21 +1325,21 @@ troller in the keyword string.
 
 ![](media/index-312_1.png)
 
- 
+
 
 **Figure 17.15**
 
- 
+
 
 **Summary**
 
- 
+
 
 In the case of manageability, the UEFI framework will help make platforms more ro-
 
-bust and reliable through remote management interfaces like Intel AMT, and WS-MAN, to meet the RAS goal of five nines. This unified approach would be a win-win **294** \| Chapter 17 – Manageability
+bust and reliable through remote management interfaces like Intel AMT, and WS-MAN, to meet the RAS goal of five nines. This unified approach would be a win-win
 
- 
+
 
 to all (OEM, IBV, OSV), to deliver a great end user value and experience with a com-plete solution for in-band and out-of-band error and event management.
 

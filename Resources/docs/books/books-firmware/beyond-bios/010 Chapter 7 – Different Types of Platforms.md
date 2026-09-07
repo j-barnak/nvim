@@ -1,12 +1,12 @@
 ## **Chapter 7 – Different Types of Platforms** 
 
- 
+
 
 Variety's the very spice of life, that gives it all its flavor.
 
 —William Cowper
 
- 
+
 
 This chapter describes different platform types and instantiations of the Platform In-
 
@@ -36,27 +36,26 @@ the SEC, a collection of additional modules is executed. The Intel Core i7 proce
 
 *uncore*. The latter elements include the integrated memory controller (IMC) and the system bridge, such as to PCI.
 
- 
+
 
 DOI 10.1515/9781501505690-009
 
-**98** \| Chapter 7 – Different Types of Platforms
 
 ![](media/index-117_1.png)
 
- 
+
 
 **Figure 7.1:** Typical PC System
 
 ![](media/index-117_2.png)
 
- 
+
 
 **Figure 7.2:** System Address Map
 
 ![](media/index-117_3.png)
 
- 
+
 
 Before going through the various components of the PC firmware load, a few other
 
@@ -64,21 +63,20 @@ platforms will be reviewed. These include the wireless personal digital assistan
 
 chip (SoC). The platforms then scale up to a server. This is shown in Figure 7.3.
 
-Summary \| **99**
 
- 
+
 
 System Flash
 
- 
+
 
 **Desktop/Server PC**
 
- 
+
 
 **Figure 7. 3:** Span of Systems
 
- 
+
 
 Figure 7.4 shows a series of non-PCs, such as tablets and smart phones. The former includes a touch screen and integrated peripherals, such as 3G, Wi-Fi† and LTE/Wi-
 
@@ -94,13 +92,13 @@ I/O board.
 
 ![](media/index-118_1.png)
 
- 
 
-**Figure 7.4:** An Intel Atom®-based System **100** \| Chapter 7 – Different Types of Platforms
+
+**Figure 7.4:** An Intel Atom®-based System
 
 ![](media/index-118_2.png)
 
- 
+
 
 Now let’s examine the components for the PC in Figure 7.1 in greater detail. The PEI phase of execution runs immediately after a restart event, such as a power-on reset,
 
@@ -118,11 +116,11 @@ status code PEIM would describe a platform-specific means by which to emit debug
 
 ![](media/index-119_1.png)
 
- 
+
 
 **Figure 7.5:** Components of PEI on PC
 
- 
+
 
 The SMBUS PEIM for the PCH listed in Figure 7.5 provides a standard interface, or PEIM-to-PEIM interface (PPI), as shown in Figure 7.6. This allows the memory con-
 
@@ -136,9 +134,8 @@ ponents also provide an SMBUS controller, so this platform could have replaced t
 
 controller PEIM.
 
-Summary \| **101**
 
- 
+
 
 **typedef**
 
@@ -172,11 +169,11 @@ Summary \| **101**
 
 **} EFI_PEI_SMBUS_PPI;**
 
- 
+
 
 **Figure 7.6:** Code Fragment for a PEIM PPI
 
- 
+
 
 Many implementations are possible beyond the EFI_PEI_SMBUS_PPI shown earlier.
 
@@ -186,7 +183,7 @@ the I/O operations against the PCH component. The fact that the logic is written
 
 same source code through a simple compilation for the target microarchitecture.
 
- 
+
 
 **\#define SMBUS_R_HD0 0xEFA5**
 
@@ -220,19 +217,18 @@ same source code through a simple compilation for the target microarchitecture.
 
 **}**
 
- 
+
 
 **Figure 7.7:** Code Fragment of PEIM Implementation
 
- 
+
 
 Beyond the PEI phase, the DXE core requires a series of platform-, CPU-, and chipset-specific drivers in order to provide a fully-instantiated set of DXE/EFI services. Figure
 
 7.8 lists the collection of architectural protocols that are necessary for the PC platform under study.
 
-**102** \| Chapter 7 – Different Types of Platforms
 
- 
+
 
 Watchdog Generic Uses Timer-based Events
 
@@ -246,11 +242,11 @@ Real Time Clock PCAT I/O 0x70-0x71
 
 Security Platform **Platform Specific Authentication** Status Code Platform Debug Messages Variable Platform Depends on FLASH Map
 
- 
+
 
 **Figure 7.8:** Architectural Protocols
 
- 
+
 
 The fact that the DXE Foundation does not presume anything about the timekeeping logic, interrupt controller, instruction set, and so on, means that the DXE Foundation
 
@@ -276,9 +272,8 @@ are abstracted through Win32 services. As such, the implementation of this AP se
 
 invokes a series of Win32 services to provide mutual exclusion and an operating sys-tem thread to emulate the timer action.
 
-Summary \| **103**
 
- 
+
 
 **EFI_STATUS**
 
@@ -322,11 +317,11 @@ Summary \| **103**
 
 **}**
 
- 
+
 
 **Figure 7.9:** NT32 Architectural Protocol
 
- 
+
 
 The NT32 implementation is radically different from a bare-metal PI implementation. An instance of a hardware implementation can be found in Figure 7.10. Herein the memory-
 
@@ -334,7 +329,7 @@ mapped registers of an Intel Atom system on a chip are accessed by the same AP s
 
 platform service and the actual hardware instance for an Intel Atom processor.
 
- 
+
 
 **EFI_STATUS**
 
@@ -378,23 +373,23 @@ platform service and the actual hardware instance for an Intel Atom processor.
 
 **}**
 
- 
+
 
 **Figure 7.10:** AP from Intel® Atom™
 
- 
+
 
 Finally, for the PC/AT and the circa mid-1980s ISA I/O hardware, there is an addi-
 
 tional implementation of the AP service. Figure 7.11 shows the same set timer service when accessing the 8254 timer-counter and then registering an interrupt with the
 
-8259 Programmable Interrupt Controller (PIC). This is often referred to as a PC/AT ver-sion of the AP since all PCs since the PC-XT have supported these hardware interfaces. **104** \| Chapter 7 – Different Types of Platforms
+8259 Programmable Interrupt Controller (PIC). This is often referred to as a PC/AT ver-sion of the AP since all PCs since the PC-XT have supported these hardware interfaces.
 
- 
+
 
 For the PC example in this chapter, these ISA I/O resources are supported by the PCH component, versus discrete components in the original PC.
 
- 
+
 
 **EFI_STATUS**
 
@@ -430,11 +425,11 @@ For the PC example in this chapter, these ISA I/O resources are supported by the
 
 **}**
 
- 
+
 
 **Fig7.11:** AP for PC/AT
 
- 
+
 
 Beyond the many implementation options for an AP to provide the breadth of plat-
 
@@ -446,11 +441,11 @@ tional “head” or display. These deeply embedded platforms may only have a si
 
 out a traditional display and interact with the user via a simple serial interface. Figure 7.12 displays a console stack for an UEFI system built upon a serial interface.
 
- 
+
 
 **BDS / EFI Shell**
 
- 
+
 
 **Simple Input** **Simple Text** **Virtual**
 
@@ -462,27 +457,26 @@ out a traditional display and interact with the user via a simple serial interfa
 
 **Serial I/O Protocol**
 
- 
+
 
 **ISA I/O Protocol**
 
- 
+
 
 **PCI I/O Protocol**
 
- 
+
 
 **PCI Root Bridge** **PCI Host Bridge Resource** **ISA ACPI Protocol**
 
 **I/O Protocol** **Allocation Protocol**
 
- 
+
 
 **Figure 7.12:** Console Stack on a PC
 
-Summary \| **105**
 
- 
+
 
 In order to build out this stack, the boot-device selection (BDS) or the UEFI shell pro-vides an application or command line interface (CLI) to the user. The Simple Input
 
@@ -502,25 +496,24 @@ reusable components based upon the PC/AT ISA hardware.
 
 ![](media/index-124_1.png)
 
- 
+
 
 **Figure 7.13:** Components for Console Stack
 
- 
+
 
 Beyond the console components, several other PEI modules and DXE components need to be included into the firmware volume. These other components, listed in Fig-
 
 ure 7.14, provide for other capabilities. These include the platform-specific means by which to store UEFI variables, platform policy for security, and configuration.
 
-**106** \| Chapter 7 – Different Types of Platforms
 
 ![](media/index-125_1.png)
 
- 
+
 
 **Figure 7.14:** DXE Drivers on a PC
 
- 
+
 
 The UEFI variables can be stored in various regions of the flash part (or a service pro-cessor on a server), so a driver needs to abstract this store. For security, the vendor
 
@@ -534,47 +527,46 @@ the disk subsystem, namely the Integrated Device Electronics (IDE) and a UEFI fi
 
 are shown in Figure 7.15.
 
- 
+
 
 **BDS / EFI Shell**
 
- 
+
 
 **File Sys Protocol File Sys Protocol**
 
- 
+
 
 **Disk I/O Protocol** **Disk I/O Protocol**
 
- 
+
 
 **Block I/O Protocol Block I/O Protocol** **Partition**
 
- 
+
 
 **Disk I/O Protocol** **Disk I/O Protocol**
 
- 
+
 
 **Block I/O Protocol** **Block I/O Protocol** **Physical Disk**
 
- 
+
 
 **PCI I/O Protocol**
 
- 
+
 
 **PCI Root Bridge** **PCI Host Bridge Resource** **IDE Controller Init**
 
 **I/O Protocol** **Allocation Protocol**
 
- 
+
 
 **Figure 7.15:** IDE Stack
 
-Summary \| **107**
 
- 
+
 
 The same UEFI shell or BDS resides at the top of the protocol layering. Instances of the simple file system (FS) protocol provide the read/write/open/close capability to
 
@@ -598,11 +590,11 @@ program or diagnostic can change the PCH settings of this feature.
 
 ![](media/index-126_1.png)
 
- 
+
 
 **Figure 7.16:** Components for IDE Init
 
- 
+
 
 This same console stack for the serial port and file system stack for the SATA con-
 
@@ -616,9 +608,8 @@ component or the aforementioned logical integration, on the Itanium Processor, c
 
 as the target for the binary.
 
-**108** \| Chapter 7 – Different Types of Platforms
 
- 
+
 
 OS Pre-boot
 
@@ -626,13 +617,13 @@ Tools
 
 UEFI Specificaon
 
- 
+
 
 Platform
 
 Drivers
 
- 
+
 
 **Intel** Silicon **FSP**
 
@@ -642,11 +633,11 @@ Modules
 
 Hardware
 
- 
+
 
 **Figure 7.17:** Intel ® FSP
 
- 
+
 
 Beyond the platforms listed above, there is an increasing focus on open source. This open source of a UEFI conformant core, such as one based upon the EFI Developer Kit
 
@@ -676,9 +667,8 @@ tation that was retrospectively locked down into what was called Intel FSP 1.0. 
 
 chip (SOC) specific details. From 1.0 the architecture was evolved slightly to 1.1 to ease integration.
 
-Summary \| **109**
 
- 
+
 
 **Boot Flow 1.0** **Boot Flow 1.1**
 
@@ -686,23 +676,23 @@ Summary \| **109**
 
 **Find FSP_INFO_HEADER** - Load microcode **Find FSP_INFO_HEADER** **Call to TempRamInit API** - Enable CAR **Call to TempRamInit API**
 
- 
+
 
 **(Pass Continuation Func)** **Pre Memory Init** **Pre MemoryInit** **FspMemoryInit**- Memory Init **Call FspMemoryInit API** **Call FspInit API** RAM **Switch Stack &** emp **TempRamExit** **Temp RAM migration**- Tear down CAR **FspInit** , Chipset & CPU Init down T **Call TempRamExit API** **Continuation Func**- Migrate data
 
 **(Parse FSP Return Data)** ear - T **FspSiliconInit** **Call to FspSiliconInit API**- Memory- CPU /Chipset Init
 
- 
+
 
 **Bus and Device Init** **Bus and Device Init** **Call NotifyPhase** **NotifyPhase** **Call NotifyPhase**- Complete Init **(PostPciEnumeration)** **(PostPciEnumeration)**- Lock settings
 
 **Boot Device Init** **Boot Device Init**
 
- 
+
 
 **Figure 7.18:** Intel ® FSP1.0 versus 1.1
 
- 
+
 
 Y Reset System x X
 
@@ -714,7 +704,7 @@ Switch to 32 bit Mode Find FSP Header in FSP-S
 
 FSP-T FSP-S call *FspSiliconInit()*
 
- 
+
 
 Find FSP Header in FSP-T API *TempRamInit()*
 
@@ -764,11 +754,11 @@ FW handoff to OS
 
 ### X
 
- 
+
 
 **Figure 7.19:** Intel ® FSP 2.0
 
- 
+
 
 Finally, the need for memory-mapped tables in 1.0 and 1.1, and dependency upon memory-mapped SPI-attached SPI NOR, led to decoupling the header. This led to the
 
@@ -776,23 +766,22 @@ definition of the Intel FSP 2.0 now seem in the market.
 
 From a code re-use, the Intel FSP re-uses the PI Firmware Volume (FV) and inter-nal PEI Modules. So even though the aggregate Intel FSP is a large binary, the internal contents are PI-based art, as shown below.
 
-**110** \| Chapter 7 – Different Types of Platforms
 
- 
+
 
 **FSP Firmware Volume**
 
 FspInfo
 
- 
+
 
 PeiMain
 
- 
+
 
 MemoryInit
 
- 
+
 
 PlatformEarlyInit
 
@@ -800,43 +789,43 @@ SocInit
 
 …...
 
- 
+
 
 CpuInit
 
- 
+
 
 PlatformLateInit
 
 DxeIpl
 
- 
+
 
 FspVpd
 
- 
+
 
 PadFile
 
- 
+
 
 SecCore
 
- 
+
 
 **Figure 7.20:** Intel ® FSP binary
 
- 
+
 
 Intel FSP2.0 comprehends a world of source plus binary. This is not the only path to
 
 implementation, of course. The Intel Galileo Quark-based EDKII firmware is fully open source, for example.
 
- 
+
 
 **Summary**
 
- 
+
 
 This chapter has provided an overview of some platforms that are based upon UEFI and PI firmware technology. The power of the abstractions of the interfaces comes into play as the firmware can be implemented on a PC/AT system, Itanium, and non-
 

@@ -10,21 +10,21 @@ Can you believe it? We’ve reached the last chapter of Part II. We’re almost 
 
 Inheritance appears in object-oriented languages all the way back to the first one, [Simula](https://en.wikipedia.org/wiki/Simula). Early on, Kristen Nygaard and Ole-Johan Dahl noticed commonalities across classes in the simulation programs they wrote. Inheritance gave them a way to reuse the code for those similar parts.
 
-You could say all those other languages *inherited* it from Simula. Hey-ooo! I’ll, uh, see myself out.
+> You could say all those other languages *inherited* it from Simula. Hey-ooo! I’ll, uh, see myself out.
 
 ## 13.1 Superclasses and Subclasses
 
 Given that the concept is “inheritance”, you would hope they would pick a consistent metaphor and call them “parent” and “child” classes, but that would be too easy. Way back when, C. A. R. Hoare coined the term “subclass” to refer to a record type that refines another type. Simula borrowed that term to refer to a *class* that inherits from another. I don’t think it was until Smalltalk came along that someone flipped the Latin prefix to get “superclass” to refer to the other side of the relationship. From C++, you also hear “base” and “derived” classes. I’ll mostly stick with “superclass” and “subclass”.
 
-“Super-” and “sub-” mean “above” and “below” in Latin, respectively. Picture an inheritance tree like a family tree with the root at the top—subclasses are below their superclasses on the diagram. More generally, “sub-” refers to things that refine or are contained by some more general concept. In zoology, a subclass is a finer categorization of a larger class of living things.
-
-In set theory, a subset is contained by a larger superset which has all of the elements of the subset and possibly more. Set theory and programming languages meet each other in type theory. There, you have “supertypes” and “subtypes”.
-
-In statically typed object-oriented languages, a subclass is also often a subtype of its superclass. Say we have a Doughnut superclass and a BostonCream subclass. Every BostonCream is also an instance of Doughnut, but there may be doughnut objects that are not BostonCreams (like Crullers).
-
-Think of a type as the set of all values of that type. The set of all Doughnut instances contains the set of all BostonCream instances since every BostonCream is also a Doughnut. So BostonCream is a subclass, and a subtype, and its instances are a subset. It all lines up.
-
-![Boston cream \<: doughnut.](media/image/inheritance/doughnuts.png)
+> “Super-” and “sub-” mean “above” and “below” in Latin, respectively. Picture an inheritance tree like a family tree with the root at the top—subclasses are below their superclasses on the diagram. More generally, “sub-” refers to things that refine or are contained by some more general concept. In zoology, a subclass is a finer categorization of a larger class of living things.
+>
+> In set theory, a subset is contained by a larger superset which has all of the elements of the subset and possibly more. Set theory and programming languages meet each other in type theory. There, you have “supertypes” and “subtypes”.
+>
+> In statically typed object-oriented languages, a subclass is also often a subtype of its superclass. Say we have a Doughnut superclass and a BostonCream subclass. Every BostonCream is also an instance of Doughnut, but there may be doughnut objects that are not BostonCreams (like Crullers).
+>
+> Think of a type as the set of all values of that type. The set of all Doughnut instances contains the set of all BostonCream instances since every BostonCream is also a Doughnut. So BostonCream is a subclass, and a subtype, and its instances are a subset. It all lines up.
+>
+> ![Boston cream \<: doughnut.](media/image/inheritance/doughnuts.png)
 
 Our first step towards supporting inheritance in Lox is a way to specify a superclass when declaring a class. There’s a lot of variety in syntax for this. C++ and C# place a `:` after the subclass’s name, followed by the superclass name. Java uses `extends` instead of the colon. Python puts the superclass(es) in parentheses after the class name. Simula puts the superclass’s name *before* the `class` keyword.
 
@@ -235,7 +235,7 @@ With that, we can define classes that are subclasses of other classes. Now, what
 
 Inheriting from another class means that everything that’s true of the superclass should be true, more or less, of the subclass. In statically typed languages, that carries a lot of implications. The sub*class* must also be a sub*type*, and the memory layout is controlled so that you can pass an instance of a subclass to a function expecting a superclass and it can still access the inherited fields correctly.
 
-A fancier name for this hand-wavey guideline is the [*Liskov substitution principle*](https://en.wikipedia.org/wiki/Liskov_substitution_principle). Barbara Liskov introduced it in a keynote during the formative period of object-oriented programming.
+> A fancier name for this hand-wavey guideline is the [*Liskov substitution principle*](https://en.wikipedia.org/wiki/Liskov_substitution_principle). Barbara Liskov introduced it in a keynote during the formative period of object-oriented programming.
 
 Lox is a dynamically typed language, so our requirements are much simpler. Basically, it means that if you can call some method on an instance of the superclass, you should be able to call that method when given an instance of the subclass. In other words, methods are inherited from the superclass.
 
@@ -345,7 +345,7 @@ So the `super` expression itself contains only the token for the `super` keyword
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 Following the grammar, the new parsing code goes inside our existing `primary()` method.
 
@@ -404,13 +404,13 @@ Instead, lookup should start on the superclass of *the class containing the `sup
 
 ![The call chain flowing through the classes.](media/image/inheritance/classes.png)
 
-The execution flow looks something like this:
-
-1.  We call `test()` on an instance of C.
-
-2.  That enters the `test()` method inherited from B. That calls `super.method()`.
-
-3.  The superclass of B is A, so that chains to `method()` on A, and the program prints “A method”.
+> The execution flow looks something like this:
+>
+> 1.  We call `test()` on an instance of C.
+>
+> 2.  That enters the `test()` method inherited from B. That calls `super.method()`.
+>
+> 3.  The superclass of B is A, so that chains to `method()` on A, and the program prints “A method”.
 
 Thus, in order to evaluate a `super` expression, we need access to the superclass of the class definition surrounding the call. Alack and alas, at the point in the interpreter where we are executing a `super` expression, we don’t have that easily available.
 
@@ -418,7 +418,7 @@ We *could* add a field to LoxFunction to store a reference to the LoxClass that 
 
 That’s a lot of plumbing. In the last chapter, we had a similar problem when we needed to add support for `this`. In that case, we used our existing environment and closure mechanism to store a reference to the current object. Could we do something similar for storing the superclass? Well, I probably wouldn’t be talking about it if the answer was no, so . . . yes.
 
-Does anyone even like rhetorical questions?
+> Does anyone even like rhetorical questions?
 
 One important difference is that we bound `this` when the method was *accessed*. The same method can be called on different instances and each needs its own `this`. With `super` expressions, the superclass is a fixed property of the *class declaration itself*. Every time you evaluate some `super` expression, the superclass is always the same.
 
@@ -470,11 +470,13 @@ It’s a minor optimization, but we only create the superclass environment if th
 
 With “super” defined in a scope chain, we are able to resolve the `super` expression itself.
 
-      @Override
-      public Void visitSuperExpr(Expr.Super expr) {
-        resolveLocal(expr, expr.keyword);
-        return null;
-      }
+```
+  @Override
+  public Void visitSuperExpr(Expr.Super expr) {
+    resolveLocal(expr, expr.keyword);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitSetExpr*()
 
@@ -525,12 +527,14 @@ Inside that environment, we store a reference to the superclass—the actual Lox
 
 We’re ready to interpret `super` expressions themselves. There are a few moving parts, so we’ll build this method up in pieces.
 
-      @Override
-      public Object visitSuperExpr(Expr.Super expr) {
-        int distance = locals.get(expr);
-        LoxClass superclass = (LoxClass)environment.getAt(
-            distance, "super");
-      }
+```
+  @Override
+  public Object visitSuperExpr(Expr.Super expr) {
+    int distance = locals.get(expr);
+    LoxClass superclass = (LoxClass)environment.getAt(
+        distance, "super");
+  }
+```
 
 *lox/Interpreter.java*, add after *visitSetExpr*()
 
@@ -558,7 +562,7 @@ Unfortunately, inside the `super` expression, we don’t have a convenient node 
 
 Offsetting the distance by one looks up “this” in that inner environment. I admit this isn’t the most elegant code, but it works.
 
-Writing a book that includes every single line of code for a program means I can’t hide the hacks by leaving them as an “exercise for the reader”.
+> Writing a book that includes every single line of code for a program means I can’t hide the hacks by leaving them as an “exercise for the reader”.
 
 Now we’re ready to look up and bind the method, starting at the superclass.
 
@@ -709,7 +713,7 @@ We made it! That final bit of error handling is the last chunk of code needed to
 - methods, and finally,
 - inheritance.
 
-![You, being your bad self.](media/image/inheritance/superhero.png)
+> ![You, being your bad self.](media/image/inheritance/superhero.png)
 
 We did all of that from scratch, with no external dependencies or magic tools. Just you and I, our respective text editors, a couple of collection classes in the Java standard library, and the JVM runtime.
 

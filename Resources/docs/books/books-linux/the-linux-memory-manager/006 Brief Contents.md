@@ -1,10 +1,9 @@
-The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes
 
- 
+
 
 **B R I E F C O N T E N T S**
 
- 
+
 
 ## Chapter 1: Introduction . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 1
 
@@ -35,5 +34,3 @@ The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes
 ## Chapter 14: Practical Memory Management . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .1217
 
 Index . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .1287
-
-The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes

@@ -12,7 +12,7 @@ Actually, it will support only *global* variables. Locals are coming in the next
 
 But it’s also *slow*. Allocating a new hash table each time you enter a block or call a function is not the road to a fast VM. Given how much code is concerned with using variables, if variables go slow, everything goes slow. For clox, we’ll improve that by using a much more efficient strategy for local variables, but globals aren’t as easily optimized.
 
-This is a common meta-strategy in sophisticated language implementations. Often, the same language feature will have multiple implementation techniques, each tuned for different use patterns. For example, JavaScript VMs often have a faster representation for objects that are used more like instances of classes compared to other objects whose set of properties is more freely modified. C and C++ compilers usually have a variety of ways to compile `switch` statements based on the number of cases and how densely packed the case values are.
+> This is a common meta-strategy in sophisticated language implementations. Often, the same language feature will have multiple implementation techniques, each tuned for different use patterns. For example, JavaScript VMs often have a faster representation for objects that are used more like instances of classes compared to other objects whose set of properties is more freely modified. C and C++ compilers usually have a variety of ways to compile `switch` statements based on the number of cases and how densely packed the case values are.
 
 A quick refresher on Lox semantics: Global variables in Lox are “late bound”, or resolved dynamically. This means you can compile a chunk of code that refers to a global variable before it’s defined. As long as the code doesn’t *execute* before the definition happens, everything is fine. In practice, that means you can refer to later variables inside the body of functions.
 
@@ -60,7 +60,7 @@ declaration    → classDecl
 
 The `declaration` rule contains the statements that declare names, and also includes `statement` so that all statement types are allowed. Since `block` itself is in `statement`, you can put declarations inside a control flow construct by nesting them inside a block.
 
-Blocks work sort of like parentheses do for expressions. A block lets you put the “lower-precedence” declaration statements in places where only a “higher-precedence” non-declaring statement is allowed.
+> Blocks work sort of like parentheses do for expressions. A block lets you put the “lower-precedence” declaration statements in places where only a “higher-precedence” non-declaring statement is allowed.
 
 In this chapter, we’ll cover only a couple of statements and one declaration.
 
@@ -145,7 +145,7 @@ static bool match(TokenType type) {
 
 You may recognize it from jlox. If the current token has the given type, we consume the token and return `true`. Otherwise we leave the token alone and return `false`. This helper function is implemented in terms of this other helper:
 
-It’s helpers all the way down!
+> It’s helpers all the way down!
 
 ```
 static bool check(TokenType type) {
@@ -157,7 +157,7 @@ static bool check(TokenType type) {
 
 The `check()` function returns `true` if the current token has the given type. It seems a little silly to wrap this in a function, but we’ll use it more later, and I think short verb-named functions like this make the parser easier to read.
 
-This sounds trivial, but handwritten parsers for non-toy languages get pretty big. When you have thousands of lines of code, a utility function that turns two lines into one and makes the result a little more readable easily earns its keep.
+> This sounds trivial, but handwritten parsers for non-toy languages get pretty big. When you have thousands of lines of code, a utility function that turns two lines into one and makes the result a little more readable easily earns its keep.
 
 If we did match the `print` token, then we compile the rest of the statement here:
 
@@ -211,9 +211,9 @@ When the interpreter reaches this instruction, it has already executed the code 
 
 Note that we don’t push anything else after that. This is a key difference between expressions and statements in the VM. Every bytecode instruction has a **stack effect** that describes how the instruction modifies the stack. For example, `OP_ADD` pops two values and pushes one, leaving the stack one element smaller than before.
 
-The stack is one element shorter after an `OP_ADD`, so its effect is -1:
-
-![The stack effect of an OP_ADD instruction.](media/image/global-variables/stack-effect.png)
+> The stack is one element shorter after an `OP_ADD`, so its effect is -1:
+>
+> ![The stack effect of an OP_ADD instruction.](media/image/global-variables/stack-effect.png)
 
 You can sum the stack effects of a series of instructions to get their total effect. When you add the stack effects of the series of instructions compiled from any complete expression, it will total one. Each expression leaves one result value on the stack.
 
@@ -237,7 +237,7 @@ While we’re in the interpreter loop, we should delete a bit of code.
 
 When the VM only compiled and evaluated a single expression, we had some temporary code in `OP_RETURN` to output the value. Now that we have statements and `print`, we don’t need that anymore. We’re one step closer to the complete implementation of clox.
 
-We’re only one step closer, though. We will revisit `OP_RETURN` again when we add functions. Right now, it exits the entire interpreter loop.
+> We’re only one step closer, though. We will revisit `OP_RETURN` again when we add functions. Right now, it exits the entire interpreter loop.
 
 As usual, a new instruction needs support in the disassembler.
 
@@ -354,7 +354,7 @@ We can disassemble it too.
 
 Expression statements aren’t very useful yet since we can’t create any expressions that have side effects, but they’ll be essential when we add functions later. The majority of statements in real-world code in languages like C are expression statements.
 
-By my count, 80 of the 149 statements, in the version of “compiler.c” that we have at the end of this chapter are expression statements.
+> By my count, 80 of the 149 statements, in the version of “compiler.c” that we have at the end of this chapter are expression statements.
 
 ### 21.1.3 Error synchronization
 
@@ -410,7 +410,7 @@ We skip tokens indiscriminately until we reach something that looks like a state
 
 Merely being able to *print* doesn’t win your language any prizes at the programming language fair, so let’s move on to something a little more ambitious and get variables going. There are three operations we need to support:
 
-I can’t help but imagine a “language fair” like some country 4H thing. Rows of straw-lined stalls full of baby languages *moo*ing and *baa*ing at each other.
+> I can’t help but imagine a “language fair” like some country 4H thing. Rows of straw-lined stalls full of baby languages *moo*ing and *baa*ing at each other.
 
 - Declaring a new variable using a `var` statement.
 - Accessing the value of a variable using an identifier expression.
@@ -458,19 +458,19 @@ static void varDeclaration() {
 
 The keyword is followed by the variable name. That’s compiled by `parseVariable()`, which we’ll get to in a second. Then we look for an `=` followed by an initializer expression. If the user doesn’t initialize the variable, the compiler implicitly initializes it to `nil` by emitting an `OP_NIL` instruction. Either way, we expect the statement to be terminated with a semicolon.
 
-Essentially, the compiler desugars a variable declaration like:
-
-```
-var a;
-```
-
-into:
-
-```
-var a = nil;
-```
-
-The code it generates for the former is identical to what it produces for the latter.
+> Essentially, the compiler desugars a variable declaration like:
+>
+> ```
+> var a;
+> ```
+>
+> into:
+>
+> ```
+> var a = nil;
+> ```
+>
+> The code it generates for the former is identical to what it produces for the latter.
 
 There are two new functions here for working with variables and identifiers. Here is the first:
 
@@ -518,7 +518,7 @@ static void defineVariable(uint8_t global) {
 
 This outputs the bytecode instruction that defines the new variable and stores its initial value. The index of the variable’s name in the constant table is the instruction’s operand. As usual in a stack-based VM, we emit this instruction last. At runtime, we execute the code for the variable’s initializer first. That leaves the value on the stack. Then this instruction takes that value and stores it away for later.
 
-I know some of these functions seem pretty pointless right now. But we’ll get more mileage out of them as we add more language features for working with names. Function and class declarations both declare new variables, and variable and assignment expressions access them.
+> I know some of these functions seem pretty pointless right now. But we’ll get more mileage out of them as we add more language features for working with names. Function and class declarations both declare new variables, and variable and assignment expressions access them.
 
 Over in the runtime, we begin with this new instruction:
 
@@ -559,7 +559,7 @@ Thanks to our handy-dandy hash table, the implementation isn’t too hard.
 
 We get the name of the variable from the constant table. Then we take the value from the top of the stack and store it in a hash table with that name as the key.
 
-Note that we don’t *pop* the value until *after* we add it to the hash table. That ensures the VM can still find the value if a garbage collection is triggered right in the middle of adding it to the hash table. That’s a distinct possibility since the hash table requires dynamic allocation when it resizes.
+> Note that we don’t *pop* the value until *after* we add it to the hash table. That ensures the VM can still find the value if a garbage collection is triggered right in the middle of adding it to the hash table. That’s a distinct possibility since the hash table requires dynamic allocation when it resizes.
 
 This code doesn’t check to see if the key is already in the table. Lox is pretty lax with global variables and lets you redefine them without error. That’s useful in a REPL session, so the VM supports that by simply overwriting the value if the key happens to already be in the hash table.
 
@@ -631,7 +631,7 @@ As we did with the string table, we need to initialize the hash table to a valid
 
 And we tear it down when we exit.
 
-The process will free everything on exit, but it feels undignified to require the operating system to clean up our mess.
+> The process will free everything on exit, but it feels undignified to require the operating system to clean up our mess.
 
 ```
 void freeVM() {
@@ -780,7 +780,7 @@ There’s only one operation left.
 
 Throughout this book, I’ve tried to keep you on a fairly safe and easy path. I don’t avoid hard *problems*, but I try to not make the *solutions* more complex than they need to be. Alas, other design choices in our bytecode compiler make assignment annoying to implement.
 
-If you recall, assignment was pretty easy in jlox.
+> If you recall, assignment was pretty easy in jlox.
 
 Our bytecode VM uses a single-pass compiler. It parses and generates bytecode on the fly without any intermediate AST. As soon as it recognizes a piece of syntax, it emits code for it. Assignment doesn’t naturally fit that. Consider:
 
@@ -865,7 +865,7 @@ As you’d expect, its runtime behavior is similar to defining a new variable.
 
 The main difference is what happens when the key doesn’t already exist in the globals hash table. If the variable hasn’t been defined yet, it’s a runtime error to try to assign to it. Lox doesn’t do implicit variable declaration.
 
-The call to `tableSet()` stores the value in the global variable table even if the variable wasn’t previously defined. That fact is visible in a REPL session, since it keeps running even after the runtime error is reported. So we also take care to delete that zombie value from the table.
+> The call to `tableSet()` stores the value in the global variable table even if the variable wasn’t previously defined. That fact is visible in a REPL session, since it keeps running even after the runtime error is reported. So we also take care to delete that zombie value from the table.
 
 The other difference is that setting a variable doesn’t pop the value off the stack. Remember, assignment is an expression, so it needs to leave that value there in case the assignment is nested inside some larger expression.
 
@@ -899,7 +899,7 @@ According to Lox’s grammar, `=` has the lowest precedence, so this should be p
 
 Obviously, `a * b` isn’t a valid assignment target, so this should be a syntax error. But here’s what our parser does:
 
-Wouldn’t it be wild if `a * b` *was* a valid assignment target, though? You could imagine some algebra-like language that tried to divide the assigned value up in some reasonable way and distribute it to `a` and `b` . . . that’s probably a terrible idea.
+> Wouldn’t it be wild if `a * b` *was* a valid assignment target, though? You could imagine some algebra-like language that tried to divide the assigned value up in some reasonable way and distribute it to `a` and `b` . . . that’s probably a terrible idea.
 
 1.  First, `parsePrecedence()` parses `a` using the `variable()` prefix parser.
 2.  After that, it enters the infix parsing loop.
@@ -996,7 +996,7 @@ Then `parsePrecedence()` silently returns back to the caller. That also isn’t 
 
 With that, the previous bad program correctly gets an error at compile time. OK, *now* are we done? Still not quite. See, we’re passing an argument to one of the parse functions. But those functions are stored in a table of function pointers, so all of the parse functions need to have the same type. Even though most parse functions don’t support being used as an assignment target—setters are the only other one—our friendly C compiler requires them *all* to accept the parameter.
 
-If Lox had arrays and subscript operators like `array[index]` then an infix `[` would also allow assignment to support `array[index] = value`.
+> If Lox had arrays and subscript operators like `array[index]` then an infix `[` would also allow assignment to support `array[index] = value`.
 
 So we’re going to finish off this chapter with some grunt work. First, let’s go ahead and pass the flag to the infix parse functions.
 

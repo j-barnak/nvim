@@ -20,9 +20,7 @@ By the end of the chapter, you will have emulated a fully functional computer wi
 
 A small but important lesson is that a single bit pattern can mean different things. The type system of a higher-level language, such as Rust, is just an artificial abstraction over reality. Understanding this becomes important as you begin to unravel some of that abstraction and to gain a deeper understanding of how computers work.
 
-**137**
 
-**138**
 
 CHAPTER 5
 
@@ -126,7 +124,6 @@ When compiled and run, the code from listing 5.2 produces the following output: 
 
 ***Life of an integer***
 
-**139**
 
 Some further remarks about some of the unfamiliar Rust that listing 5.2 introduces includes the following:
 
@@ -154,10 +151,8 @@ Needlessly using unsafe blocks is heavily frowned upon within the Rust community
 
 During earlier chapters, we spent some time discussing what it means for an integer to be an i32, an u8, or an usize. Integers are like small, delicate fish. They do what they do remarkably well, but take them outside of their natural range and they die a quick, painful death.
 
-**140**
 
 
-***Data in depth***
 
 Integers live within a fixed range. When represented inside the computer, these occupy a fixed number of bits per type. Unlike floating-point numbers, integers cannot sacrifice their precision to extend their bounds. Once those bits have been filled with 1s, the only way forward is back to all 0s.
 
@@ -225,9 +220,7 @@ To understand why this is such a critical class of bugs, let’s take a look at 
 
 0, 1, 2, ..., 65533, 65534, 65535
 
-***Life of an integer***
 
-**141**
 
 Try compiling the code with optimizations enabled via rustc -O ch5-to-oblivion.rs and running the resulting executable. The behavior is quite different. The problem we’re interested in is what happens when there’s no more bits left. 65,536 cannot be represented by u16.
 
@@ -307,10 +300,8 @@ This behavior can be invoked by executing rustc with the -O flag: rustc -O
 
 ch5-impossible-add.rs && ch5-impossible-add.
 
-**142**
 
 
-***Data in depth***
 
 There are two small lessons here:
 
@@ -358,7 +349,6 @@ let little_endian: \[u8; 4\] = \[0xDD, 0xCC, 0xBB, 0xAA\];
 
 ***Representing decimal numbers***
 
-**143**
 
 let a: i32 = unsafe { transmute(big_endian) };
 
@@ -414,10 +404,8 @@ One of the claims made at the start of this chapter was that understanding more 
 
 Here is some context for the problem at hand. Machine learning practitioners often need to store and distribute large models. A model for our purposes here is just
 
-**144**
 
 
-***Data in depth***
 
 a large array of numbers. The numbers within those models often fall within the ranges 0..=1 or -1..=1 (using Rust’s range syntax), depending on the application. Given that we don’t need the whole range that f32 or f64 supports, why use all of these bytes? Let’s see how far we can get with 1. Because there is a known limited range, it’s possible to create a decimal number format that can model that range compactly.
 
@@ -497,9 +485,7 @@ pattern
 
 ![](media/index-171_9.png)
 
-***Floating-point numbers***
 
-**145**
 
 Byte 0
 
@@ -625,10 +611,8 @@ and –0) and have identical bit patterns (NAN values) that compare as unequal.
 
 ![](media/index-172_9.png)
 
-**146**
 
 
-***Data in depth***
 
 ***5.4.2***
 
@@ -732,9 +716,7 @@ The exponent’s bits also need to go through a decoding step. To decode the exp
 
 ![](media/index-173_27.png)
 
-***Floating-point numbers***
 
-**147**
 
 Listing 5.8
 
@@ -782,10 +764,8 @@ Interpret the remaining bits as a signed integer and subtract the bias as define
 
 5 let exponent = (exponent\_ as i32) - 127;
 
-**148**
 
 
-***Data in depth***
 
 ***5.4.4***
 
@@ -843,9 +823,7 @@ Start with an f32 value:
 
 1 let n: f32 = 42.42;
 
-***Floating-point numbers***
 
-**149**
 
 2
 
@@ -919,10 +897,8 @@ Add the weight to mantissa in place:
 
 11 mantissa += weight;
 
-**150**
 
 
-***Data in depth***
 
 Parsing Rust’s floating-point literals is harder than it looks
 
@@ -972,9 +948,7 @@ mantissa \| 01010011010111000010100 \| 1.325625
 
 In listing 5.10, deconstruct_f32() extracts each field of a floating-point value with bit manipulation techniques. decode_f32_parts() demonstrates how to convert those fields to the relevant number. The f32_from_parts() method combines these to create a single decimal number. The source for this file is located in ch5/ch5-visualizing-f32.rs.
 
-***Floating-point numbers***
 
-**151**
 
 Listing 5.10
 
@@ -1160,10 +1134,8 @@ Deconstructing a floating-point value
 
 53 exponent: f32,
 
-**152**
 
 
-***Data in depth***
 
 54 mantissa: f32,
 
@@ -1207,9 +1179,7 @@ While not shown in listing 5.11, tuple structs can include multiple fields by ad
 
 3 *Q*, often written as ℚ (this style is called *blackboard bold*), is the mathematical symbol for the so-called rational numbers. Rational numbers are numbers that can be represented as a fraction of two integers, such as 1/3.
 
-***Fixed-point number formats***
 
-**153**
 
  Debug—Used by the println!() macro (and others); allows Q7 to be converted to a string by the {:?} syntax.
 
@@ -1283,10 +1253,8 @@ The two impl From\<T\> for U blocks in listing 5.12 explain to Rust how to conve
 
 ::From trait is included in local scope as From, which is part of the standard prelude. It requires type U to implement from() that takes a T value as its sole argument.
 
-**154**
 
 
-***Data in depth***
 
  Lines 6–7 present an option for handling unexpected input data: crashes. It is not used here, but is available to you in your own projects.
 
@@ -1362,9 +1330,7 @@ test tests::out_of_bounds ... ok
 
 test tests::q7_to_f32 ... ok
 
-***Fixed-point number formats***
 
-**155**
 
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out Doc-tests ch5-q
 
@@ -1444,10 +1410,8 @@ Full code implementation of the **Q7** format
 
 33
 
-**156**
 
 
-***Data in depth***
 
 34 \#\[cfg(test)\]
 
@@ -1543,7 +1507,6 @@ Rust includes a powerful and ergonomic module system. To keep the examples simpl
 
 ***Generating random probabilities from random bytes***
 
-**157**
 
  Prefix things that you want to make public with the pub keyword. The pub keyword has some specialized cases:
 
@@ -1633,10 +1596,8 @@ Generating **f32** values in interval \[0,1\] from a **u8**
 
 **output range**
 
-**158**
 
 
-***Data in depth***
 
 As a complete program, you can incorporate mock_rand() from listing 5.16 into a test program fairly easily. Listing 5.17 (ch5/ch5-u8-to-mock-rand.rs) generates an f32
 
@@ -1690,7 +1651,6 @@ One device that used the CHIP-8 CPU was the COSMAC VIP. It had a single-color di
 
 ***Implementing a CPU to establish that functions are also data***
 
-**159**
 
 ***5.7.1***
 
@@ -1762,10 +1722,8 @@ The process for booting up the CPU consists of writing to the fields of the CPU 
 
 The following listing, an extract from listing 5.22, shows the CPU initialization process.
 
-**160**
 
 
-***Data in depth***
 
 Listing 5.19
 
@@ -1889,9 +1847,7 @@ Reading the opcode
 
 **for performing it**
 
-***Implementing a CPU to establish that functions are also data***
 
-**161**
 
 22 \_ =\> todo!("opcode {:04x}", opcode), **A full emulator**
 
@@ -2027,10 +1983,8 @@ low byte, both nibbles
 
 Integer
 
-**162**
 
 
-***Data in depth***
 
 Table 5.2
 
@@ -2162,9 +2116,7 @@ let d = (opcode & 0x000F) \>\> 0;
 
 **4 bits. A 0xF value selects all bits from a nibble.**
 
-***Implementing a CPU to establish that functions are also data***
 
-**163**
 
 assert_eq!(c, 0x7);
 
@@ -2276,10 +2228,8 @@ Implementing the beginnings of CHIP-8 emulator
 
 33 let mut cpu = CPU {
 
-**164**
 
 
-***Data in depth***
 
 34 current_operation: 0,
 
@@ -2343,9 +2293,7 @@ Defining a CPU struct
 
 2 registers: \[u8; 16\],
 
-***Implementing a CPU to establish that functions are also data***
 
-**165**
 
 3 position_in_memory: usize,
 
@@ -2437,10 +2385,8 @@ Handling overflow in CHIP-8 operations
 
 40
 
-**166**
 
 
-***Data in depth***
 
 41 if overflow {
 
@@ -2562,9 +2508,7 @@ Enabling the emulator to process multiple instructions
 
 41 if overflow {
 
-***Implementing a CPU to establish that functions are also data***
 
-**167**
 
 42 self.registers\[0xF\] = 1;
 
@@ -2660,10 +2604,8 @@ in_memory to *nnn*, the address of the function.
 
 To enable these to opcodes to work together, the CPU needs to have some specialized memory available for storing addresses. This is known as *the stack*. Each CALL opcode
 
-**168**
 
 
-***Data in depth***
 
 adds an address to the stack by incrementing the stack pointer and writing *nnn* to that position in the stack. Each RETURN opcode removes the top address by decrement-ing the stack pointer. The following listing, an extract from listing 5.29, provides the details to emulate the CPU.
 
@@ -2737,9 +2679,7 @@ let add_twice: \[u8;6\] = \[
 
 4 The sequence of bytes must also be tagged as executable. The tagging process is explained in section 6.1.4.
 
-***Implementing a CPU to establish that functions are also data***
 
-**169**
 
 3
 
@@ -2823,10 +2763,8 @@ Retrieve the calling memory address from the stack.
 
 Set the current memory location to the intended memory address.
 
-**170**
 
 
-***Data in depth***
 
 The following listing, an extract from listing 5.29, focuses on the call() and ret() methods.
 
@@ -2924,9 +2862,7 @@ This calculation is made without the source code that you may be used to. You wi
 
 Listing 5.29 shows our completed emulator for CPU RIA/3, the Caller. You’ll find the source code for this listing in ch5/ch5-cpu3/src/main.rs.
 
-***Implementing a CPU to establish that functions are also data***
 
-**171**
 
 **1**
 
@@ -3052,10 +2988,8 @@ Emulating a CPU that incorporates user-defined functions
 
 31 match (c, x, y, d) {
 
-**172**
 
 
-***Data in depth***
 
 32 ( 0, 0, 0, 0) =\> { return; },
 
@@ -3165,7 +3099,6 @@ Emulating a CPU that incorporates user-defined functions
 
 ***Summary***
 
-**173**
 
 87
 
@@ -3253,10 +3186,8 @@ The last step in learning about CPUs and data is to understand how control flow 
 
 --release) can expose your programs to integer overflow and underflow as run-time checks are disabled.
 
-**174**
 
 
-***Data in depth***
 
  Endianness refers to the layout of bytes in multibyte types. Each CPU manufacturer decides the endianness of its chips. A program compiled for a little-endian CPU malfunctions if one attempts to run it on a system with a big-endian CPU.
 

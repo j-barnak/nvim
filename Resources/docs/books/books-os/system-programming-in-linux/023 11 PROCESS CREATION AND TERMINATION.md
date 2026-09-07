@@ -1,3 +1,5 @@
+![](media/index-715_1.jpg)
+
 11 PROCESS CREATION AND
 
 TERMINATION
@@ -2993,5 +2995,3 @@ the signals in sigmask, after which it calls sigwait(&sigmask,
 zombie, what must the program do in the case that the
 
 value returned in sig is SIGCHLD?
-
-![](media/index-784_1.jpg)

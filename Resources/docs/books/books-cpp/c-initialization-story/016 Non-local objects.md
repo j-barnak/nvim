@@ -2,7 +2,7 @@
 
 Thus far, we considered variables that appeared in some local function scope or as subobjects of a class type. However, this is not the only option, and C++ allows us to declare various forms of non-local objects: they usually live throughout the execution of the whole program. In this chapter, we’ll look at global variables, static data members, and thread-local objects. We’ll also consider new features for safe initialization from C++17 and C++20.
 
- 
+
 
 **Storage duration and linkage**
 
@@ -10,11 +10,11 @@ To start, we need to understand two key properties of an object in C++: *storage
 
 Let’s begin with the definition of *storage*, from \[[basic.stc#general¹](https://timsong-cpp.github.io/cppwp/n4868/basic.stc#general)\]:
 
- 
+
 
 The storage duration is the property of an object that defines the minimum potential lifetime of the storage containing the object. The storage duration is determined by the construct used to create the object.
 
- 
+
 
 An object in C++ has one of the following storage duration options:
 
@@ -42,15 +42,15 @@ memory allocation functions. For example, by the call to new/delete.
 
 Non-local objects 171
 
- 
+
 
 And the definition for the second property: *linkage*, extracted from [\[](https://timsong-cpp.github.io/cppwp/n4868/basic.link#2)[basic.link²](https://timsong-cpp.github.io/cppwp/n4868/basic.link#2)\]:
 
- 
+
 
 A name is said to have linkage when it can denote the same object, reference, function, type, template, namespace, or value as a name introduced by a declaration in another scope.
 
- 
+
 
 We have several linkage types:
 
@@ -76,19 +76,19 @@ with C. For example, by declaring extern "C"
 
 If we work with regular variables declared in a function’s scope, the storage is automatic, and there’s no linkage, but those properties matter for objects in a global or thread scope. In the following sections, we’ll try experiments with global objects to understand the meaning of those definitions.
 
- 
+
 
 **Static duration and external linkage**
 
 Consider the following code:
 
- 
+
 
 ²<https://timsong-cpp.github.io/cppwp/n4868/basic.link#2>
 
 Non-local objects 172
 
- 
+
 
 **Ex 11.1. Static and automatic objects. Run** [**@Compiler Explorer**](https://godbolt.org/z/hc3rsn8d1)
 
@@ -138,7 +138,7 @@ If we have two translation units: main.cpp and other.cpp, we can point to the sa
 
 Non-local objects 173
 
- 
+
 
 **Ex 11.2. Static and** **extern****. Run** [**@Wandbox**](https://wandbox.org/permlink/OyPh98Ip0gy7q7xO)
 
@@ -170,7 +170,7 @@ std::cout \<\< "main ends...**\n**"; }
 
 std::cout \<\< "in foo(): " \<\< &v \<\< '\n'; }
 
- 
+
 
 If we run the code, you’ll see that the address of v is the same in both lines. For instance:
 
@@ -184,13 +184,13 @@ main ends...
 
 ~Value(42)
 
- 
+
 
 **Internal linkage**
 
 If you want two global variables visible as separate objects in each translation unit, you need to define them as static. This will change their linkage from external to internal. Non-local objects 174
 
- 
+
 
 **Ex 11.3. Static and internal linkage. Run** [**@Wandbox**](https://wandbox.org/permlink/THZQhYxtKqpoLxRy)
 
@@ -222,7 +222,7 @@ std::cout \<\< "main ends...**\n**"; }
 
 std::cout \<\< "in foo(): " \<\< &v \<\< '\n'; }
 
- 
+
 
 Now, you have two different objects which live in the static storage (outside main()):
 
@@ -262,13 +262,13 @@ Additionally, if you declare const Value v{42}; in one translation unit, then co
 
 ![](media/index-190_1.png)
 
- 
+
 
 While constant global variables might be useful, try to avoid mutable global objects. They complicate the program’s state and may introduce subtle bugs or data races, especially in multithreaded programs. In this chapter, we cover all global variables so that you can understand how they work, but use them carefully.
 
 See this C++ Core Guideline: [I.2: Avoid non-const global variables³](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#i2-avoid-non-const-global-variables).
 
- 
+
 
 **Thread local storage duration**
 
@@ -276,13 +276,13 @@ Since C++11, you can use a new keyword, thread_local, to indicate the special st
 
 Storage space ⁴. Each thread that uses this object creates a copy of it.
 
- 
+
 
 ³<https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#i2-avoid-non-const-global-variables>
 
 ⁴See more at https://en.wikipedia.org/wiki/Thread-local_storage Non-local objects 176
 
- 
+
 
 **Ex 11.4. Example of thread_local variables. Run** [**@Compiler Explorer**](https://godbolt.org/z/o6TMv3zn7)
 
@@ -328,7 +328,7 @@ main 4154632640 &x 0xf7a2a9b8 in thread 4154632640 &x 0xf7a2a9b8, &y 0xf7a2a9bc 
 
 The example uses a mutex mutPrint to synchronize printing to the output. First, inside main(), you can see the ID of the main thread and the address of the x variable. Later in the output, you can see that foo() was called, and it’s done in the main thread (compare the Non-local objects 177
 
- 
+
 
 IDs). As you can see, the addresses of x are the same because it’s the same thread. On the other hand, later in the output, we can see an invocation from two different threads; in both cases, the addresses of x and y are different. In summary, we have three distinct copies of x and three of y.
 
@@ -342,11 +342,11 @@ From the example, we can also spot that across a single thread, thread_local in 
 
 ![](media/index-192_1.png)
 
- 
+
 
 The code uses std::jthread from C++20, which automatically joins to the caller thread when the jthread object goes out of scope. When you use std::thread you need to call join() manually.
 
- 
+
 
 Thread local variables might be used when you want a shared global state, but keep it only for a given thread and thus avoid synchronization issues. To simulate such behavior and understand those types of variables, we can create a map of variables:
 
@@ -362,7 +362,7 @@ In another example, we can observe when each copy is created, have a look:
 
 Non-local objects 178
 
- 
+
 
 **Ex 11.5. Begin and end of a thread-local variable. Run** [**@Compiler Explorer**](https://godbolt.org/z/7aEToMbT1)
 
@@ -418,7 +418,7 @@ This time the variable x prints a message from its constructor and destructor, a
 
 Non-local objects 179
 
- 
+
 
 As an experiment, you can try commenting out the line with x.v = 100. After the compilation, you won’t see any Value constructor or destructor calls. It’s because the object is not used by any thread, and thus no object is created.
 
@@ -430,7 +430,7 @@ Possible use cases:
 
 • Keeping some statistics per thread, for example, to measure load in a thread pool.
 
- 
+
 
 **Dynamic storage duration**
 
@@ -472,11 +472,11 @@ those resources: [6 Ways to Refactor new/delete into unique ptr - C++ Stories⁵
 
 [5 ways how unique_ptr enhances resource safety in your code - C++ Stories](https://www.cppstories.com/2017/12/why-uniqueptr/)⁶.
 
- 
+
 
 We spoke about memory deallocation and resource handling in the Destructor chapter; you can find more information there.
 
- 
+
 
 **Initialization of non-local static objects**
 
@@ -516,7 +516,7 @@ The static initialization occurs in two forms:
 
 Non-local objects 181
 
- 
+
 
 • **constant initialization**- this happens for the zvariable, which is value initialized from
 
@@ -530,7 +530,7 @@ a constant expression.
 
 Don’t rely on zero initialization for static objects. Always try to assign some value to be sure of the outcome. In the book, I only showed it so you could see the whole picture.
 
- 
+
 
 Now, v global objects are initialized during so-called **dynamic initialization** of non-local variables”. It happens for objects that cannot be constant initialized or zero-initialized during static initialization at the program startup.
 
@@ -540,7 +540,7 @@ In a single translation unit, the order of dynamic initialization of global vari
 
 “static initialization order fiasco”; read more [C++ Super FAQ](https://isocpp.org/wiki/faq/ctors#static-init-order)⁷.
 
- 
+
 
 In short, each static non-local object has to be initialized at the program startup. However, the compiler tries to optimize this process and, if possible, do as much work at compile time. For example, for built-in types initialized from constant expressions, the value of the variable might be stored as a part of the binary and then only loaded during the program startup. If it’s not possible, then a dynamic initialization must happen, meaning that the value is computed once before the main() starts. Additionally, the compiler might even defer the dynamic initialization until the first use of the variable but must guarantee the program’s correctness. Since C++11, we can try to move dynamic initialization to the compile-time stage thanks to constexpr (allowing us to write custom types). Since C++20, we can use constinit to guarantee constant initialization.
 
@@ -560,7 +560,7 @@ Matt Godbolt: [CppCon 2018 “The Bits Between the Bits: How We Get to main()”
 
 Non-local objects 182
 
- 
+
 
 **constinit** **in C++20**
 
@@ -592,7 +592,7 @@ Point offset = { center.x + 100, center.y + 200};
 
 std::cout \<\< offset.x \<\< ", " \<\< offset.y \<\< '\n'; }
 
- 
+
 
 **Ex 11.5. Static initialization order fiasco, b.cpp. Run** [**@Wandbox**](https://wandbox.org/permlink/h19Hkk8qdlU2PwLS)
 
@@ -608,13 +608,13 @@ Point createPoint(**double** x, **double** y) {
 
 Point center = createPoint(100, 200); //dynamic
 
- 
+
 
 And the main:
 
 Non-local objects 183
 
- 
+
 
 **Ex 11.5. Static initialization order fiasco, main.cpp. Run** [**@Wandbox**](https://wandbox.org/permlink/h19Hkk8qdlU2PwLS) **void** foo();
 
@@ -646,13 +646,13 @@ There’s a dependency of global variables: offset depends on center. If the com
 
 This is only a toy example, but imagine a production code! In that case, you might have a hard-to-find bug that comes not from some incorrect computation logic but from the compilation order in the project!
 
- 
+
 
 To mitigate the issue, you can apply constinit on the center global variable. This new keyword for C++20 forces constant initialization. In our case, it will ensure that no matter the order of compilation, the value will already be present. What’s more, as opposed to constexpr we only force initialization, and the variable itself is not constant. So you can change it later.
 
 Non-local objects 184
 
- 
+
 
 **Ex 11.6. Constinit approach, b.cpp Run** [**@Wandbox**](https://wandbox.org/permlink/atGGtcoOAJd5eRyx) // b.cpp:
 
@@ -666,7 +666,7 @@ Non-local objects 184
 
 **constinit** Point center = createPoint(100, 200); // constant
 
- 
+
 
 Please notice that createPoint has to be constexpr now. The main requirement for constinit is that it requires the initializer expression to be evaluated at compile-time, so not all code can be converted that way.
 
@@ -690,7 +690,7 @@ std::cout \<\< global.first \<\< ", " \<\< global.second \<\< '\n';
 
 // constG = { 10, 10.1 }; // not allowed, const }
 
- 
+
 
 In the above example, I create a global std::pair object and force it to use constant initialization. I can do that on all types with constexpr constructors or trivial types. Notice that inside main(), I can change the value of my object, so it’s not const. For comparison, I also included the constG object, which is a constexpr variable. In that case, we’ll also force the compiler to use constant initialization, but this time the object cannot be changed later.
 
@@ -700,7 +700,7 @@ While a constinit variable will be constant initialized, it cannot be later used
 
 Non-local objects 185
 
- 
+
 
 **Static variables in a function scope**
 
@@ -748,7 +748,7 @@ Static local variables, since C++11, are guaranteed to be initialized in a threa
 
 Non-local objects 186
 
- 
+
 
 **Ex 11.9. Thread safe static variable initialization. Run** [**@Compiler Explorer**](https://godbolt.org/z/8qzvMsMf8) \#include \<iostream\>
 
@@ -806,7 +806,7 @@ Techniques chapter: the Mayers Singleton section.
 
 Non-local objects 187
 
- 
+
 
 **About static data members**
 
@@ -842,7 +842,7 @@ Value::y = 10;
 
 std::cout \<\< "Value::y: " \<\< Value::y \<\< '\n'; }
 
- 
+
 
 When you run this program, you’ll see the following output:
 
@@ -864,7 +864,7 @@ To be precise, Value::y has a static storage duration and external linkage.
 
 Local classes or unnamed classes cannot have static data members.
 
- 
+
 
 Here’s an example that illustrates the lifetime of a static data member:
 
@@ -946,7 +946,7 @@ Test::~Test()
 
 As you can see, two Value objects are created before the main starts, in the order of definitions in a file (not declarations!). After the main() function ends, the two objects are destroyed in reverse order.
 
- 
+
 
 **Motivation for inline variables**
 
@@ -956,7 +956,7 @@ For example:
 
 Non-local objects 190
 
- 
+
 
 **Ex 11.7. Static data member, multiple files. Run** [**@Wandbox**](https://wandbox.org/permlink/1GbB85uze2hyfKqB)
 
@@ -974,13 +974,13 @@ Non-local objects 190
 
 **int** OtherType::classCounter = 0;
 
- 
+
 
 This time I used Wandbox online compiler - as it’s easy to create and compile multiple files:
 
 ![](media/index-205_1.png)
 
- 
+
 
 As you can see above, classCounter is an int, and you have to write it twice: in a header file and then in the CPP file.
 
@@ -988,7 +988,7 @@ Non-local objects 191
 
 ![](media/index-206_1.png)
 
- 
+
 
 The only exception to this rule (even before C++11) is a static constant integral variable that you can declare and initialize in one place:
 
@@ -1022,11 +1022,11 @@ If we read [Dynamic Initialization @C++Reference](https://en.cppreference.com/w/
 
 Non-local objects 192
 
- 
+
 
 Partially-ordered dynamic initialization, which applies to all inline variables that are not an implicitly or explicitly instantiated specialization. If a partially-ordered V is defined before ordered or partially-ordered W in every translation unit, the initialization of V is sequenced before the initialization of W.
 
- 
+
 
 Based on the previous code, here’s the example with the Value class and multiple compilation units:
 
@@ -1058,7 +1058,7 @@ Test() { puts("Test::Test()"); }
 
 Non-local objects 193
 
- 
+
 
 **Ex 11.9. Inline Variables and multiple compilation units, main. Run** [**@Wandbox**](https://wandbox.org/permlink/jrMsDRbnTqb1eR5o)
 
@@ -1104,7 +1104,7 @@ Test t;
 
 **static** Value local{300};
 
- 
+
 
 The build command line:
 
@@ -1168,7 +1168,7 @@ And the main() function:
 
 Non-local objects 195
 
- 
+
 
 **Ex 11.10. Static inline member. Run** [**@Wandbox**](https://wandbox.org/permlink/RTnylPp77Vls1tjS)
 
@@ -1190,13 +1190,13 @@ std::cout \<\< CountedType::classCounter \<\< '\n';
 
 std::cout \<\< CountedType::classCounter \<\< '\n'; }
 
- 
+
 
 The code above declares classCounter inside CountedType, which is a static data member. The class is defined in a separate header file. Thanks to C++17, we can declare the variable as inline. Then, there’s no need to write a corresponding definition later. Without inline, the code wouldn’t compile.
 
 ![](media/index-210_1.png)
 
- 
+
 
 In the main() function, the example creates two objects of CountedType. The static variable is incremented when there’s a call to the constructor. When an object is destroyed, the variable is decremented. We can output this value and see the current count of objects. Non-local objects 196
 
@@ -1206,7 +1206,7 @@ The CountedType illustrates an interesting pattern, and we’ll extend it to be 
 
 usable in the Techniques chapter: the CRTP section.
 
- 
+
 
 **Global inline variables**
 
@@ -1250,7 +1250,7 @@ std::cout \<\< appConstants::scalingFactor \<\< ", "
 
 Non-local objects 197
 
- 
+
 
 Before C++17, you’d had to declare such variables in a header file as extern, and provide their definition in one compilation unit. Thanks to C++17, such a use case is now greatly simplified.
 
@@ -1258,7 +1258,7 @@ Read more about details in this great post from Fluent C++: [What Every C++ Deve
 
 [Should Know to (Correctly) Define Global Constants¹²](https://www.fluentcpp.com/2019/07/23/how-to-define-a-global-constant-in-cpp/).
 
- 
+
 
 **constexpr** **and** **inline** **variables**
 
@@ -1282,7 +1282,7 @@ When we run this code through C++Insights (run [@this link¹³](https://cppinsig
 
 Please remember that implicit inline applies only to static class data members. The compiler won’t do anything when you declare a global static constexpr variable.
 
- 
+
 
 **Summary**
 
@@ -1294,7 +1294,7 @@ Here are the essential items to remember from this chapter:
 
 Non-local objects 198
 
- 
+
 
 • Non-local objects have two fundamental properties: storage duration (where they are
 

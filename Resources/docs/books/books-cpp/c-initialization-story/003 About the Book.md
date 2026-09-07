@@ -8,13 +8,13 @@ Throughout this text, you will learn practical options to initialize various cat
 
 The plan is to explain most (if not all) parts of initialization, learn lots of excellent C++ techniques, and see what happens under the hood.
 
- 
+
 
 **Why should you read this book?**
 
 With Modern C++ (since C++11), we have many new features to streamline work and simplify our code. One area of improvement is the initialization. Modern C++ added new initialization rules, trying to make it easy while keeping old behavior and compatibility (mainly from the C language). Sometimes the rules might seem confusing and complex, though, and even the ISO committee might need to correct some things along the way. The book will help you navigate through those principles and understand this topic better. What’s more, initialization is just one aspect of this text. You’ll learn all related topics around classes, constructors, destructors, object lifetime, or even how the compiler processes data at startup.
 
- 
+
 
 **Learning objectives**
 
@@ -44,7 +44,7 @@ data members) or moveable only data members, or even lambdas.
 
 C++20.
 
- 
+
 
 **The structure of the book**
 
@@ -86,7 +86,7 @@ typing, CRTP class counter, Copy and swap idiom, and more.
 
 About the Book iii
 
- 
+
 
 And there are two appendices:
 
@@ -96,7 +96,7 @@ functions.
 
 • Appendix B - answers to quizzes and exercises.
 
- 
+
 
 **Who is this book for?**
 
@@ -106,7 +106,7 @@ You should know at least some of the basics of creating and using custom classes
 
 This text is also helpful for experienced programmers who know older C++ standards and want to move into C++17/C++20.
 
- 
+
 
 **Prerequisites**
 
@@ -116,7 +116,7 @@ This text is also helpful for experienced programmers who know older C++ standar
 
 how to create and manipulate objects of such a class in a basic way.
 
- 
+
 
 **Reader feedback & errata**
 
@@ -134,7 +134,7 @@ What’s more, the book has a dedicated page at GoodReads. Please share your fee
 
 ¹<https://www.goodreads.com/book/show/62606823-c-initialization-story> About the Book iv
 
- 
+
 
 **Example code**
 
@@ -146,13 +146,13 @@ You can browse individual files or download the whole branch:
 
 *the link will appear later*
 
- 
+
 
 **Code license**
 
 The code for the book is available under the Creative Commons License.
 
- 
+
 
 **Formatting**
 
@@ -182,7 +182,7 @@ When available, you’ll also see a link to online compilers where you can play 
 
 About the Book v
 
- 
+
 
 **Example title. Run** [**@Compiler Explorer**](https://godbolt.org/z/zMEnd5z6b)
 
@@ -198,13 +198,13 @@ You can click on the link in the title, and then it should open the website of a
 
 ![](media/index-11_1.png)
 
- 
+
 
 **A Compiler Explorer layout used in the book**
 
 Snippets of longer programs were usually shortened to present only the core mechanics.
 
- 
+
 
 **Syntax highlighting limitations**
 
@@ -226,7 +226,7 @@ For example:
 
 About the Book vi
 
- 
+
 
 • Template method is not highlighted [C++ lexer doesn’t recognize function if return type](https://github.com/pygments/pygments/issues/1138)
 
@@ -236,7 +236,7 @@ About the Book vi
 
 Other issues for C++ and Pygments: [C++ Issues · github/pygments/pygments⁵](https://github.com/pygments/pygments/issues?q=is:issue+is:open+C%2B%2B).
 
- 
+
 
 **Special sections**
 
@@ -248,15 +248,15 @@ This is an Information Box with extra notes related to the current section.
 
 ![](media/index-12_2.png)
 
- 
+
 
 This is a Warning Box with potential risks and threats related to a given topic.
 
- 
+
 
 This is a Quote Box. In the book, it’s often used to quote the C++ Standard.
 
- 
+
 
 ⁴<https://github.com/pygments/pygments/issues/1138>
 

@@ -29,28 +29,28 @@ Now we can write the whole thing out:
 
 Here are the 24 permutations of the list `[1; 3; 5; 7]`:
 
-`# perms [1; 3; 5; 7];;`  
-`- : int list list =`  
-`[[1; 3; 5; 7]; [3; 1; 5; 7]; [3; 5; 1; 7]; [3; 5; 7; 1]; [1; 5; 3; 7];`  
-` [5; 1; 3; 7]; [5; 3; 1; 7]; [5; 3; 7; 1]; [1; 5; 7; 3]; [5; 1; 7; 3];`  
-` [5; 7; 1; 3]; [5; 7; 3; 1]; [1; 3; 7; 5]; [3; 1; 7; 5]; [3; 7; 1; 5];`  
-` [3; 7; 5; 1]; [1; 7; 3; 5]; [7; 1; 3; 5]; [7; 3; 1; 5]; [7; 3; 5; 1];`  
-` [1; 7; 5; 3]; [7; 1; 5; 3]; [7; 5; 1; 3]; [7; 5; 3; 1]]`
+`# perms [1; 3; 5; 7];;`  
+`- : int list list =`  
+`[[1; 3; 5; 7]; [3; 1; 5; 7]; [3; 5; 1; 7]; [3; 5; 7; 1]; [1; 5; 3; 7];`  
+` [5; 1; 3; 7]; [5; 3; 1; 7]; [5; 3; 7; 1]; [1; 5; 7; 3]; [5; 1; 7; 3];`  
+` [5; 7; 1; 3]; [5; 7; 3; 1]; [1; 3; 7; 5]; [3; 1; 7; 5]; [3; 7; 1; 5];`  
+` [3; 7; 5; 1]; [1; 7; 3; 5]; [7; 1; 3; 5]; [7; 3; 1; 5]; [7; 3; 5; 1];`  
+` [1; 7; 5; 3]; [7; 1; 5; 3]; [7; 5; 1; 3]; [7; 5; 3; 1]]`
 
 Note that our function does not work properly when there are duplicates in the list – it will treat each item as if it were different:
 
-`# perms [1; 1; 2];;`  
-`- : int list list =`  
-`[[1; 1; 2]; [1; 1; 2]; [1; 2; 1]; [1; 2; 1]; [2; 1; 1]; [2; 1; 1]]`
+`# perms [1; 1; 2];;`  
+`- : int list list =`  
+`[[1; 1; 2]; [1; 1; 2]; [1; 2; 1]; [1; 2; 1]; [2; 1; 1]; [2; 1; 1]]`
 
 In this implementation, we run into problems with the lack of tail recursion well before we run out of memory to store the permutations:
 
-`# List.length (perms [1; 2; 3; 4; 5; 6; 7; 8]);;`  
-`- : int = 40320`  
-`# List.length (perms [1; 2; 3; 4; 5; 6; 7; 8; 9]);;`  
-`- : int = 362880`  
-`# List.length (perms [1; 2; 3; 4; 5; 6; 7; 8; 9; 10]);;`  
-`Stack overflow during evaluation (looping recursion?).`
+`# List.length (perms [1; 2; 3; 4; 5; 6; 7; 8]);;`  
+`- : int = 40320`  
+`# List.length (perms [1; 2; 3; 4; 5; 6; 7; 8; 9]);;`  
+`- : int = 362880`  
+`# List.length (perms [1; 2; 3; 4; 5; 6; 7; 8; 9; 10]);;`  
+`Stack overflow during evaluation (looping recursion?).`
 
 To fix this up, we must rewrite `interleave `to be tail recursive by adding an accumulating argument:
 
@@ -68,7 +68,7 @@ It need not be tail-recursive, since this list will always be small. Now, we can
 
 This function has the advantage of producing the items in proper lexicographic (dictionary) order:
 
-`[[1; 2; 3]; [1; 3; 2]; [2; 1; 3]; [2; 3; 1]; [3; 1; 2]; [3; 2; 1]]`
+`[[1; 2; 3]; [1; 3; 2]; [2; 1; 3]; [2; 3; 1]; [3; 1; 2]; [3; 2; 1]]`
 
 Permutations one at a time
 
@@ -76,7 +76,7 @@ There is a well-known imperative algorithm for generating the lexicographically-
 
 We begin with a sorted array, such as `[|1; 2; 3|]`. This is the first permutation. We generate new permutations until the array is in reverse-sorted order – `[|3; 2; 1|] `– this is the final permutation. In order to find the lexicographically-next permutation there are four steps:
 
- 
+
 
 1.  Find the right-most item which is smaller than its next item. Call this the “first” item. This is the item which must be altered to find the permutation which is the smallest distance from the current one in the lexicographic order.
 2.  Find the smallest item to the right of the “first” item which is greater than it. Call this the “last” item. This is the item which will go in the position of the “first” item.
@@ -115,7 +115,7 @@ This very imperative algorithm has now been dressed in functional clothes.
 
 Questions
 
- 
+
 
 1.  Write a function to generate all the unordered combinations of items from a list. For example, for the list `[1; 2; 3]`, the result, whose order is not important, might be `[[]; [1]; [2]; [3];` `[1; 2]; [1, 3]; [2; 3]; [1; 2; 3]]`.
 2.  Generate all the “permicombinations” – that is all the permutations of all the combinations of a list. For the list `[1; 2; 3] `this might be `[[]; [1]; [2]; [3]; [1; 2]; [2; 1]; [1; 3]; [3;` `1]; [2; 3]; [3; 2]; [1; 2; 3]]`.

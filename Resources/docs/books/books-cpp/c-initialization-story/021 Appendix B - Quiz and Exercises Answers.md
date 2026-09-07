@@ -4,7 +4,7 @@
 
 See the correct answers.
 
- 
+
 
 **The quiz from chapters 1…6**
 
@@ -34,7 +34,7 @@ if we change it, the value in the vector won’t be affected.
 
 10. 2, 3 - rvalue reference (42) can bind to a const reference or to a regular value.
 
- 
+
 
 **The final quiz**
 
@@ -52,7 +52,7 @@ if we change it, the value in the vector won’t be affected.
 
 Appendix B - Quiz and Exercises Answers 255
 
- 
+
 
 6. 2
 
@@ -76,7 +76,7 @@ we’ll have a copy in the loop iteration; see chapter on deduction.
 
 15. 1, initializer_list requires a copyable type; see section “Some inconvenience - non-copyable types” in the non-regular data members chapter.
 
- 
+
 
 **Solution to the first coding problem, NSDMI**
 
@@ -92,17 +92,17 @@ we’ll have a copy in the loop iteration; see chapter on deduction.
 
 As you can see, the solution uses NSDMI to initialize x and y to the required values.
 
- 
+
 
 **Solution to the second coding problem, NSDMI**
 
- 
+
 
 ¹⁰<https://cppinsights.io/s/9a1daa06>
 
 Appendix B - Quiz and Exercises Answers 256
 
- 
+
 
 **Solution to the second coding problem. Run** [**@Compiler Explorer**](https://godbolt.org/z/1hq4K3Wf5)
 
@@ -118,13 +118,13 @@ std::string name\_ {"empty"};
 
 **unsigned int** flags\_ : 4 { DEFAULT_FLAGS}; };
 
- 
+
 
 The solution initializes data members to required values, including bit fields supported since C++20.
 
 Appendix B - Quiz and Exercises Answers 257
 
- 
+
 
 **Solution to the third coding problem,** **inline**
 
@@ -144,11 +144,11 @@ CountedType() { ++instanceCounter; ++maxInstanceCounter; }
 
 CountedType(**const** CountedType&) { ++instanceCounter; ++maxInstanceCounter; } };
 
- 
+
 
 This solution implements a default constructor, a copy constructor, and a destructor. Since we want to know the maximum number of instances, this variable is not decremented in the destructor.
 
- 
+
 
 **Solution to the fourth coding problem, fix code**
 

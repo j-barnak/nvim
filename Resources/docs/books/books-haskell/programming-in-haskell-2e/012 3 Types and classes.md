@@ -4,7 +4,7 @@
 
 In this chapter we introduce types and classes, two of the most fundamental concepts in Haskell. We start by explaining what types are and how they are used in Haskell, then present a number of basic types and ways to build larger types by combining smaller types, discuss function types in more detail, and conclude with the concepts of polymorphic types and type classes.
 
-### **3.1Basic concepts**
+### **3.1 Basic concepts**
 
 A *type* is a collection of related values. For example, the type Bool contains the two logical values False and True, while the type Bool -\> Bool contains all functions that map arguments from Bool to results from Bool, such as the logical negation function not. We use the notation v :: T to mean that v is a value in the type T, and say that v *has type* T. For example:
 
@@ -43,7 +43,7 @@ False :: Bool
 not False :: Bool
 ```
 
-### **3.2Basic types**
+### **3.2 Basic types**
 
 Haskell provides a number of basic types that are built-in to the language, of which the most commonly used are described below.
 
@@ -79,7 +79,7 @@ This type is similar to Float, except that twice as much memory is used for stor
 
 We conclude this section by noting that a single number may have more than one numeric type. For example, the number 3 could have type Int, Integer, Float or Double. This raises the interesting question of what type such numbers should be assigned during the process of type inference, which will be answered later in this chapter when we consider type classes.
 
-### **3.3List types**
+### **3.3 List types**
 
 A *list* is a sequence of *elements* of the same type, with the elements being enclosed in square parentheses and separated by commas. We write \[T\] for the type of all lists whose elements have type T. For example:
 
@@ -99,7 +99,7 @@ There are three further points to note about list types. First of all, the type 
 
 Finally, there is no restriction that a list must have a finite length. In particular, due to the use of lazy evaluation in Haskell, lists with an infinite length are both natural and practical, as we shall see in chapter 15.
 
-### **3.4Tuple types**
+### **3.4 Tuple types**
 
 A *tuple* is a finite sequence of *components* of possibly different types, with the components being enclosed in round parentheses and separated by commas. We write (T1,T2,...,Tn) for the type of all tuples whose ith components have type Ti for any i in the range 1 to n. For example:
 
@@ -121,7 +121,7 @@ In a similar manner to list types, there are three further points to note about 
 
 Finally, note that tuples must have a finite arity, in order to ensure that tuple types can always be inferred prior to evaluation.
 
-### **3.5Function types**
+### **3.5 Function types**
 
 A *function* is a mapping from arguments of one type to results of another type. We write T1 -\> T2 for the type of all functions that map arguments of type T1 to results of type T2. For example, we have:
 
@@ -148,7 +148,7 @@ Note that there is no restriction that functions must be *total* on their argume
 *** Exception: Prelude.head: empty list
 ```
 
-### **3.6Curried functions**
+### **3.6 Curried functions**
 
 Functions with multiple arguments can also be handled in another, perhaps less obvious way, by exploiting the fact that functions are free to return functions as results. For example, consider the following definition:
 
@@ -203,7 +203,7 @@ means
 
 Unless tupling is explicitly required, all functions in Haskell with multiple arguments are normally defined as curried functions, and the two conventions above are used to reduce the number of parentheses that are required. In chapter 4 we will see how the meaning of curried function definitions can be formalised in a simple manner using the notion of lambda expressions.
 
-### **3.7Polymorphic types**
+### **3.7 Polymorphic types**
 
 The library function length calculates the length of any list, irrespective of the type of the elements of the list. For example, it can be used to calculate the length of a list of integers, a list of strings, or even a list of functions:
 
@@ -234,7 +234,7 @@ id :: a -> a
 
 The type of a polymorphic function often gives a strong indication about the function’s behaviour. For example, from the type \[a\] -\> \[b\] -\> \[(a,b)\] we can conclude that zip pairs up elements from two lists, although the type on its own doesn’t capture the precise manner in which this is done.
 
-### **3.8Overloaded types**
+### **3.8 Overloaded types**
 
 The arithmetic operator + calculates the sum of any two numbers of the same numeric type. For example, it can be used to calculate the sum of two integers, or the sum of two floating-point numbers:
 
@@ -263,7 +263,7 @@ abs :: Num a => a -> a
 
 Numbers themselves are also overloaded. For example, 3 :: Num a =\> a means that for any numeric type a, the value 3 has type a. In this manner, the value 3 could be an integer, a floating-point number, or more generally a value of any numeric type, depending on the context in which it is used.
 
-### **3.9Basic classes**
+### **3.9 Basic classes**
 
 Recall that a type is a collection of related values. Building upon this notion, a *class* is a collection of types that support certain overloaded operations called *methods*. Haskell provides a number of basic classes that are built-in to the language, of which the most commonly used are described below. (More advanced built-in classes are considered in part II of the book.)
 
@@ -449,13 +449,13 @@ The basic types Float and Double are instances. For example:
 0.5
 ```
 
-### **3.10Chapter remarks**
+### **3.10 Chapter remarks**
 
 The term Bool for the type of logical values celebrates the pioneering work of George Boole on symbolic logic, while the term *curried* for functions that take their arguments one at a time celebrates the work of Haskell Curry (after whom the language Haskell itself is named) on such functions. The relationship between the type of a polymorphic function and its behaviour is formalised in \[3\]. A more detailed account of the type system is given in the Haskell Report \[4\], and a formal description of the type system can be found in \[5\].
 
-### **3.11Exercises**
+### **3.11 Exercises**
 
-1.What are the types of the following values?
+1\. What are the types of the following values?
 
 ``` haskell
 [’a’,’b’,’c’]
@@ -465,7 +465,7 @@ The term Bool for the type of logical values celebrates the pioneering work of G
 [tail, init, reverse]
 ```
 
-2.Write down definitions that have the following types; it does not matter what the definitions actually do as long as they are type correct.
+2\. Write down definitions that have the following types; it does not matter what the definitions actually do as long as they are type correct.
 
 ``` haskell
 bools :: [Bool]
@@ -475,7 +475,7 @@ copy :: a -> (a,a)
 apply :: (a -> b) -> a -> b
 ```
 
-3.What are the types of the following functions?
+3\. What are the types of the following functions?
 
 ``` haskell
 second xs = head (tail xs)
@@ -488,8 +488,8 @@ twice f x = f (f x)
 
 Hint: take care to include the necessary class constraints in the types if the functions are defined using overloaded operators.
 
-4.Check your answers to the preceding three questions using GHCi.
+4\. Check your answers to the preceding three questions using GHCi.
 
-5.Why is it not feasible in general for function types to be instances of the Eq class? When is it feasible? Hint: two functions of the same type are equal if they always return equal results for equal arguments.
+5\. Why is it not feasible in general for function types to be instances of the Eq class? When is it feasible? Hint: two functions of the same type are equal if they always return equal results for equal arguments.
 
 Solutions to exercises 1 and 2 are given in appendix A.

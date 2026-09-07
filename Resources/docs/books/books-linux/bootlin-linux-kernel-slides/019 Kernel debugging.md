@@ -1,20 +1,22 @@
-Kernel debugging
-
- 
+![](media/index-404_1.jpg)
 
 Kernel debugging
 
- 
+
+
+Kernel debugging
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 390/436 Debugging using messages (1/3)
 
- 
+Debugging using messages (1/3)
+
+
 
 Three APIs are available
 
@@ -34,15 +36,15 @@ pr_info("Booting CPU %d\n", cpu);
 
 \[ 202.350064\] Booting CPU 1
 
- 
+
 
 ▶ [print_hex_dump_debug()](https://elixir.bootlin.com/linux/latest/ident/print_hex_dump_debug): useful to dump a buffer with hexdump like display
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 391/436 Debugging using messages (2/3)
 
- 
+Debugging using messages (2/3)
+
+
 
 ▶ The dev\_\*() family of functions: [dev_emerg()](https://elixir.bootlin.com/linux/latest/ident/dev_emerg), [dev_alert()](https://elixir.bootlin.com/linux/latest/ident/dev_alert), [dev_crit()](https://elixir.bootlin.com/linux/latest/ident/dev_crit),
 
@@ -62,15 +64,15 @@ dev_info(&pdev-\>dev, "in probe\n");
 
 \[ 25.878382\] serial 48024000.serial: in probe \[ 25.884873\] serial 481a8000.serial: in probe
 
- 
+
 
 ▶ \*\_ratelimited() version exists which limits the amount of print if called too
 
 much based on /proc/sys/kernel/printk_ratelimit{\_burst} values
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 392/436 Debugging using messages (3/3)
+Debugging using messages (3/3)
 
- 
+
 
 ▶ The kernel defines many more format specifiers than the standard printf()
 
@@ -94,11 +96,11 @@ using %pK
 
 specifiers
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 393/436 pr_debug() and dev_dbg()
 
- 
+pr_debug() and dev_dbg()
+
+
 
 ▶ When the driver is compiled with DEBUG defined, all these messages are compiled
 
@@ -122,11 +124,11 @@ not enabled by default.
 
 compiled in.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 394/436 Configuring the priority
 
- 
+Configuring the priority
+
+
 
 ▶ Each message is associated to a priority, ranging from 0 for emergency to 7 for
 
@@ -148,11 +150,11 @@ priority above which messages are displayed on the console. Details in
 
 [admin-guide/sysctl/kernel](https://www.kernel.org/doc/html/latest/admin-guide/sysctl/kernel.html)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 395/436 DebugFS
 
- 
+DebugFS
+
+
 
 A virtual filesystem to export debugging information to user space.
 
@@ -170,11 +172,11 @@ A virtual filesystem to export debugging information to user space.
 
 debugfs filesystem
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 396/436 DebugFS API
 
- 
+DebugFS API
+
+
 
 ▶ Create a sub-directory for your driver:
 
@@ -200,7 +202,7 @@ mode_t mode, struct dentry \*parent, struct debugfs_blob_wrapper \*blob);
 
 more generic [debugfs_create_file()](https://elixir.bootlin.com/linux/latest/ident/debugfs_create_file) function.- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 397/436 Deprecated debugging mechanisms
 
- 
+
 
 Some additional debugging mechanisms, whose usage is now considered deprecated
 
@@ -208,11 +210,11 @@ Some additional debugging mechanisms, whose usage is now considered deprecated
 
 ▶ Using [printk()](https://elixir.bootlin.com/linux/latest/ident/printk). The pr\_\*() and dev\_\*() functions are preferred.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 398/436 Using Magic SysRq
 
- 
+Using Magic SysRq
+
+
 
 Functionnality provided by serial drivers
 
@@ -240,11 +242,10 @@ be in deep trouble
 
 ▶ Detailed in [admin-guide/sysrq](https://www.kernel.org/doc/html/latest/admin-guide/sysrq.html)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 399/436
 
 kgdb - A kernel debugger
 
- 
+
 
 ▶ [CONFIG_KGDB](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_KGDB) in *Kernel hacking*.
 
@@ -260,11 +261,11 @@ kernel.
 
 *•* See [dev-tools/gdb-kernel-debugging](https://www.kernel.org/doc/html/next/dev-tools/kgdb.html) for more information
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 400/436 Using kgdb (1/2)
 
- 
+Using kgdb (1/2)
+
+
 
 ▶ Details available in the kernel documentation: [dev-tools/kgdb](https://www.kernel.org/doc/html/latest/dev-tools/kgdb.html) ▶ You must include a kgdb I/O driver. One of them is kgdb over serial console
 
@@ -276,11 +277,11 @@ kernel.
 
 *•* echo ttyS0 \> /sys/module/kgdboc/parameters/kgdboc *•* If the console does not have polling support, this command will yield an error.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 401/436 Using kgdb (2/2)
 
- 
+Using kgdb (2/2)
+
+
 
 ▶ Then also pass kgdbwait to the kernel: it makes kgdb wait for a debugger
 
@@ -306,9 +307,9 @@ program.
 
 then all the other threads represents a task.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 402/436 Debugging with a JTAG interface
+
+Debugging with a JTAG interface
 
 Two types of JTAG dongles
 
@@ -328,13 +329,12 @@ interface of the target CPU.
 
 *•* For each board, you’ll need an OpenOCD configuration file (ask your supplier)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 403/436
+
 
 Early traces
 
- 
+
 
 ▶ If something breaks before the tty layer, serial driver and serial console are
 
@@ -356,11 +356,11 @@ kernel does not uncompress correctly!
 
 stdout-path of the device-tree.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 404/436 More kernel debugging tips
 
- 
+More kernel debugging tips
+
+
 
 ▶ Make sure [CONFIG_KALLSYMS_ALL](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_KALLSYMS_ALL) is enabled
 
@@ -378,13 +378,12 @@ source code inside the binaries.
 
 *•* Will enable all the debug logs in the device-driver core section
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 405/436
+
 
 Getting help and reporting bugs
 
- 
+
 
 ▶ If you are using a custom kernel from a hardware vendor, contact that company.
 
@@ -410,11 +409,11 @@ the official maintainer (see the [MAINTAINERS](https://elixir.bootlin.com/linux/
 
 details as possible.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 406/436 Practical lab - Kernel debugging
 
- 
+Practical lab - Kernel debugging
+
+
 
 ▶ Use the dynamic debug feature. ▶ Add debugfs entries ▶ Load a broken driver and see it crash ▶ Analyze the error information dumped by the
 
@@ -428,8 +427,4 @@ kernel.
 
 instruction which caused the failure.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 407/436
-
-![](media/index-422_1.jpg)

@@ -133,5 +133,3 @@ Item 42: Consider emplacement instead of insertion. 292
 **Index. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 303**
 
 **Table of Contents \| ix**
-
-![](media/index-13_1.png)

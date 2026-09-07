@@ -1,17 +1,17 @@
 
- 
+
 
 **13**
 
- 
+
 
 **T H E O U T O F M E M O R Y ( O O M )**
 
- 
+
 
 **K I L L E R**
 
- 
+
 
 When we are unable to allocate memory due to zones
 
@@ -52,7 +52,7 @@ it, describing the mapped range (see chapters 3 and 4 for an in-depth discus-
 sion).
 
 
- 
+
 
 The actual allocation of memory is therefore only performed when a pro-
 
@@ -72,13 +72,13 @@ In this situation the kernel must do something in order to maintain system
 
 stability, as the mapping of the memory is a long-distant memory and there is no mechanism by which to indicate to the process which mapped it that the allocation could not be performed.
 
- 
+
 
 **N O T E** It’s also important to note that, even if the mapping process could somehow be in-
 
 formed, it would most likely result in that process simply terminating, as it is rarely the case that an arbitrary allocation can simply be allowed to fail. Given that the process(es) which are causing the memory pressure might well be distinct from the one happening to fault, this wouldn’t even necessarily help relieve the underlying mem-ory pressure anyway.
 
- 
+
 
 That something is the Out of Memory (OOM) killer, which resolves the
 
@@ -102,21 +102,21 @@ A manual invocation of the OOM killer can also be performed via the
 
 sysrq-f operation, see Section 13.1.2 for details.
 
- 
+
 
 **13.1 Causes of Out of Memory Conditions**
 
- 
+
 
 ***13.1.1 Memory Allocation***
 
 As described in Chapter 2, in order to ensure that the system never reaches a point where memory is so critically low that the kernel might not be able to function, we must maintain minimum reserves and establish watermarks below which we start to attempt to free up memory.
 
- 
 
 
 
- 
+
+
 
 These watermarks are maintained per-zone, per-NUMA node (if NUMA
 
@@ -138,7 +138,7 @@ cal memory range, associating CPUs with the memory they are electronically
 
 local to. Nodes can span multiple zones.
 
- 
+
 
 **N O T E** NUMA is an abbreviation for Non-Uniform Memory Access, and describes the mech-
 
@@ -148,7 +148,7 @@ equally fast to access from all CPUs. Beyond the fundamentals around nodes and
 
 zones, this is out of scope for the book.
 
- 
+
 
 For file-backed memory, reclaim can be as simple as dropping memory
 
@@ -202,18 +202,17 @@ ping and backing of memory in linux means that a faulting process may have
 
 absolutely no relation to one which is using excessive memory.
 
- 
+
 
 **N O T E** It’s actually possible to cause the kernel to kill the allocating process via the
 
 *vm.oom_kill_allocating_task* tunable. See Section 13.3 for details.
 
- 
-
-The Out Of Memory (OOM) Killer **1179**
 
 
- 
+
+
+
 
 Instead, we invoke the Out Of Memory killer to elect the most appropri-
 
@@ -225,7 +224,7 @@ place – how can a process allocate more memory than the system has avail-able?
 
 memory (see Chapter 4 for more details on this).
 
- 
+
 
 ***13.1.2 sysrq-f***
 
@@ -247,11 +246,11 @@ See Section 13.4 for a detailed analysis as to how this actually imple-
 
 mented within the kernel.
 
- 
+
 
 **13.2 OOM Killer Score Adjustment**
 
- 
+
 
 It is possible to adjust the likelihood of a process being selected for termina-tion via the OOM killer score adjustment interface as exposed per-process via procfs in /proc/\$pid/oom_score_adj (there is also an /proc/\$pid/oom_adj inter-face, however this is deprecated and simply used to calculate a value to set oom_score_adj to so we disregard it).
 
@@ -263,11 +262,11 @@ When the OOM killer considers a process for termination, it does so by
 
 determining how much resident memory it is utilising and compares it to all the other processes in the system, selecting the one that is using the most resident memory.
 
- 
 
 
 
- 
+
+
 
 **N O T E** It’s possible to “constrain” the OOM killer to specific cgroups, cpusets or NUMA
 
@@ -277,7 +276,7 @@ arrangements, however this is out of the scope of the book so we consider only t
 
 their total resident memory usage as a proportion of all available memory.
 
- 
+
 
 This calculation is performed in terms of the number of base pages
 
@@ -313,19 +312,19 @@ oom_score_adj of 20 will be treated as if it is already using 2% more of mem-
 
 ory and swap than it actually is.
 
- 
+
 
 **N O T E** A value of*-1000*, i.e. the minimum possible OOM score adjustment, is given special
 
 treatment and explicitly excludes a process from being considered by the OOM killer.
 
- 
+
 
 See Section 13.4 for a detailed analysis of how the kernel actually per-
 
 forms the selection of the “bad” process to be terminated.
 
- 
+
 
 ***13.2.1 OOM Score***
 
@@ -363,20 +362,19 @@ range in the past, and userland processes might be reliant on this remaining
 
 the case.
 
- 
-
-The Out Of Memory (OOM) Killer **1181**
 
 
- 
+
+
+
 
 **13.3 OOM Killer Alternative Behaviours**
 
- 
+
 
 It’s possible to adjust the standard behaviour of the OOM killer further via two specific tunables—vm.panic_on_oom and vm.oom_kill_allocating_task.
 
- 
+
 
 ***13.3.1 vm.panic_on_oom***
 
@@ -392,71 +390,71 @@ This might be useful in situations where it is simply unacceptable for the
 
 OOM killer to be invoked and it being so is indicative of the system failing to perform as required.
 
- 
+
 
 ***13.3.2 vm.oom_kill_allocating_task***
 
 The vm.oom_kill_allocating_task tunable, if set, causes the allocating process to be the one which is terminated regardless of whether that process utilises a large amount of memory or not.
 
- 
+
 
 **N O T E** If the process’s *oom_score_adj* is set to the minimum value, i.e.*-1000*, then even if this
 
 tunable is set it will not be terminated and instead the default OOM killer behaviour will proceed.
 
- 
+
 
 This is unlikely to be the kind of behaviour that a user would actually de-
 
 sire in practice, especially as the faulting process might itself be utilising very little memory, and the process which is actually causing the problem might cause a great deal of collateral damage of other faulting processes before it is finally reaped.
 
- 
+
 
 **13.4 Kernel Interface**
 
- 
+
 
 We examine an overview of the kernel interface in Figure 13-1.
 
- 
 
 
 
- 
+
+
 
 Core allocation path sysrq-f invocation
 
- 
+
 
 [\_\_alloc_pages_may_oom()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4381) [moom_callback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/tty/sysrq.c?h=v6.0#n385)
 
- 
+
 
 [out_of_memory()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1107)
 
- 
+
 
 [select_bad_process()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n364) [oom_kill_process()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1014)
 
- 
+
 
 [oom_evaluate_task()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n308) [\_\_oom_kill_process()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n197)
 
- 
+
 
 [oom_badness()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n201) [mark_oom_victim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n757) Send SIGKILL [queue_oom_reaper()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n691)
 
- 
+
 
 1. Evaluate & 2. Kill & queue for
 
 Choose Process reaping if kill fails
 
- 
+
 
 *Figure 13-1: OOM Killer Kernel Interface*
 
- 
+
 
 The OOM killer implementation is conveniently entirely implemented
 
@@ -464,7 +462,7 @@ in the [mm/oom_kill.c](https://elixir.bootlin.com/linux/v6.0/source/mm/oom_kill.
 
 parameterised by a [struct oom_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/oom.h?h=v6.0#n29) object, as shown in Listing 13-1.
 
- 
+
 
 25 */\**
 
@@ -504,12 +502,11 @@ parameterised by a [struct oom_control](https://git.kernel.org/pub/scm/linux/ker
 
 42 */\**
 
- 
-
-The Out Of Memory (OOM) Killer **1183**
 
 
- 
+
+
+
 
 43 *\* order == -1 means the oom kill is required by sysrq, otherwise only*
 
@@ -523,17 +520,17 @@ The Out Of Memory (OOM) Killer **1183**
 
 53 */\* Used to print the constraint info. \*/* 54 **enum** oom_constraint constraint; 55 };
 
- 
+
 
 *Listing 13-1:* include/linux/oom.h: [*struct oom_control*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/oom.h?h=v6.0#n29)
 
- 
+
 
 Before we investigate the OOM killer’s code, let’s examine the fields of
 
 this object which controls the process.
 
- 
+
 
 **zonelist** A [struct zonelist](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n878) (See Chapter 2 for more details, but broadly
 
@@ -569,11 +566,11 @@ Out of memory conditions for memcgs are handled somewhat differ-ently than the g
 
 tion which caused the out of memory failure. These parameterise kernel allocation functions, modifying how these allocations are performed. This is useful information in a few respects – for the NUMA case, if
 
- 
 
 
 
- 
+
+
 
 [\_\_GFP_THISNODE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n108) is specified, then we know not to further consider node constraints.
 
@@ -597,7 +594,7 @@ process.
 
 plied to the out of memory killer invocation. The discussion of these are out of scope for the book.
 
- 
+
 
 ***13.4.1 Allocating Memory at Risk of OOM***
 
@@ -629,7 +626,7 @@ sary to do so.
 
 We explore this function in Listing 13-2.
 
- 
+
 
 4380 **static inline struct** page \* 4381 **\_\_alloc_pages_may_oom**(**gfp_t** gfp_mask, **unsigned int** order, 4382 **const struct** alloc_context \*ac, **unsigned long** \*did_some_progress) 4383 {
 
@@ -637,12 +634,11 @@ We explore this function in Listing 13-2.
 
 4391 **struct** page \*page; 4392
 
- 
-
-The Out Of Memory (OOM) Killer **1185**
 
 
- 
+
+
+
 
 4393 \*did_some_progress = 0; 4394
 
@@ -686,11 +682,11 @@ The Out Of Memory (OOM) Killer **1185**
 
 4432 **if** (gfp_mask & (**\_\_GFP_RETRY_MAYFAIL** \| **\_\_GFP_THISNODE**)) 4433 **goto out**; 4434 */\* The OOM killer does not needlessly kill tasks for lowmem \*/* 4435 **if** (ac-\>highest_zoneidx \< **ZONE_NORMAL**) 4436 **goto out**; 4437 **if** (**pm_suspended_storage**()) 4438 **goto out**; 4439 */\**
 
- 
 
 
 
- 
+
+
 
 4440 *\* XXX: GFP_NOFS allocations should rather fail than rely on* 4441 *\* other request to make a forward progress.* 4442 *\* We are in an unfortunate situation where out_of_memory cannot* 4443 *\* do much for this context but let's try it to at least get* 4444 *\* access to memory reserved if the current task is killed (see* 4445 *\* out_of_memory). Once filesystems are ready to handle allocation*
 
@@ -716,11 +712,11 @@ The Out Of Memory (OOM) Killer **1185**
 
 4465 }
 
- 
+
 
 *Listing 13-2:* mm/page_alloc.c: [*\_\_alloc_pages_may_oom()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4381)
 
- 
+
 
 The function starts by attempting to acquire the global out of memory
 
@@ -730,7 +726,7 @@ process is performing out of memory handling, and treats this as indicating
 
 that progress is being made.
 
- 
+
 
 **N O T E** The [*\_\_alloc_pages_may_oom()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4381) function operates in a best effort fashion—if progress
 
@@ -738,7 +734,7 @@ of any kind has been made, the calling [*\_\_alloc_pages_slowpath()*](https://gi
 
 around and try the allocation again.
 
- 
+
 
 We attempt to allocate memory again via [get_page_from_freelist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4166), only
 
@@ -760,12 +756,11 @@ Equally higher order folios which reclaim struggles to provide (as deter-
 
 mined by the order exceeding [PAGE_ALLOC_COSTLY_ORDER](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n40), hardcoded to order-3)
 
- 
-
-The Out Of Memory (OOM) Killer **1187**
 
 
- 
+
+
+
 
 are unlikely to be helped by the freeing of folios from a memory hog, so in this case we also fail the allocation.
 
@@ -793,7 +788,7 @@ See Chapter 2 for more details on GFP flags and physical allocation, and
 
 We examine [out_of_memory()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1107) in Listing 13-5 and Section 13.4.3.
 
- 
+
 
 ***13.4.2 Manual OOM Killer Invocation Via sysrq-f***
 
@@ -803,7 +798,7 @@ ual run of the OOM killer via [sysrq_handle_moom()](https://git.kernel.org/pub/s
 
 [moom_callback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/tty/sysrq.c?h=v6.0#n385) which we examine in Listing 13-3.
 
- 
+
 
 385 **static void moom_callback**(**struct** work_struct \*ignored) 386 {
 
@@ -813,15 +808,15 @@ ual run of the OOM killer via [sysrq_handle_moom()](https://git.kernel.org/pub/s
 
 396 **mutex_lock**(&oom_lock); 397 **if** (!**out_of_memory**(&oc)) 398 **pr_info**("OOM request ignored. No task eligible\n"); 399 **mutex_unlock**(&oom_lock); 400 }
 
- 
+
 
 *Listing 13-3:* drivers/tty/sysrq.c: [*moom_callback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/tty/sysrq.c?h=v6.0#n385)
 
- 
 
 
 
- 
+
+
 
 We configure an [struct oom_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/oom.h?h=v6.0#n29) object and pass it to [out_of_memory()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1107) in
 
@@ -845,7 +840,7 @@ terminate. This check is performed by [is_sysrq_oom()](https://git.kernel.org/pu
 
 Listing 13-4.
 
- 
+
 
 152 */\**
 
@@ -857,11 +852,11 @@ Listing 13-4.
 
 158 **return** oc-\>order == -1; 159 }
 
- 
+
 
 *Listing 13-4:* mm/oom_kill.c: [*is_sysrq_oom()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n156)
 
- 
+
 
 ***13.4.3 The Out of Memory Killer***
 
@@ -871,7 +866,7 @@ The key function which performs the out of memory handling is
 
 fier and cgroup/NUMA constraint logic).
 
- 
+
 
 1098 */\*\**
 
@@ -893,12 +888,11 @@ fier and cgroup/NUMA constraint logic).
 
 1123 *\* select it. The goal is to allow it to allocate so that it may*
 
- 
-
-The Out Of Memory (OOM) Killer **1189**
 
 
- 
+
+
+
 
 1124 *\* quickly exit and free its memory.* 1125 *\*/*
 
@@ -940,19 +934,19 @@ The Out Of Memory (OOM) Killer **1189**
 
 1174 **if** (oc-\>chosen && oc-\>chosen != (**void** \*)-1UL) 1175 **oom_kill_process**(oc, !**is_memcg_oom**(oc) ? "Out of memory" : 1176 "Memory cgroup out of memory");
 
- 
 
 
 
- 
+
+
 
 1177 **return** !!oc-\>chosen; 1178 }
 
- 
+
 
 *Listing 13-5:* mm/oom_kill.c: [*out_of_memory()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1107)
 
- 
+
 
 We start by checking whether the OOM killer is completely disabled
 
@@ -1002,7 +996,7 @@ Listing 13-6 (eliding out of scope constrained NUMA/cgroup allocation
 
 checks).
 
- 
+
 
 1063
 
@@ -1016,11 +1010,11 @@ checks).
 
 1080 **dump_header**(oc, **NULL**); 1081 **panic**("Out of memory: %s panic_on_oom is enabled\n", 1082 **sysctl_panic_on_oom** == 2 ? "compulsory" : "system-wide"); 1083 }
 
- 
+
 
 *Listing 13-6:* mm/oom_kill.c: [*check_panic_on_oom()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1063)
 
- 
+
 
 If the [sysctl_panic_on_oom](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n55) global variable has been set as a result of the
 
@@ -1028,12 +1022,11 @@ vm.panic_on_oom tunable having been set, then we only fail to panic if the
 
 OOM killer was invoked via sysrq-f.
 
- 
-
-The Out Of Memory (OOM) Killer **1191**
 
 
- 
+
+
+
 
 Returning to [out_of_memory()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1107) in Listing 13-5, we then check for the
 
@@ -1077,7 +1070,7 @@ Otherwise, if a process was chosen we again rely on [oom_kill_process()](https:/
 
 We return to [task_will_free_mem()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n870) examining it in Listing 13-7.
 
- 
+
 
 863 */\**
 
@@ -1095,11 +1088,11 @@ We return to [task_will_free_mem()](https://git.kernel.org/pub/scm/linux/kernel/
 
 878 *\* exit_oom_victim. oom_reaper could have rescued that but do not rely*
 
- 
 
 
 
- 
+
+
 
 879 *\* on that for now. We can consider find_lock_task_mm in future.* 880 *\*/*
 
@@ -1145,11 +1138,11 @@ We return to [task_will_free_mem()](https://git.kernel.org/pub/scm/linux/kernel/
 
 915 }
 
- 
+
 
 *Listing 13-7:* mm/oom_kill.c: [*task_will_free_mem()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n870)
 
- 
+
 
 **N O T E** Processes in Linux can be confusing—each [*struct task_struct*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727) object repre-
 
@@ -1157,7 +1150,7 @@ sents a task, which is referred to in the kernel as a process but maps to a thre
 
 [*for_each_process()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/signal.h?h=v6.0#n645) iterates over each task, i.e. each thread.
 
- 
+
 
 This function is parameterised by [struct task_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727) for the task we want
 
@@ -1165,12 +1158,11 @@ to determine whether killing its owning process (or more strictly, thread
 
 group leader) and thus itself alongside it is about to free up memory (and
 
- 
-
-The Out Of Memory (OOM) Killer **1193**
 
 
- 
+
+
+
 
 thus selection of the process as the ostensible victim avoids unnecessarily killing still-running processes).
 
@@ -1222,7 +1214,7 @@ found an outlier as described above. We then check this task manually
 
 against [\_\_task_will_free_mem()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n842) (in Listing 13-9). If this fails, then we exit the loop and return false, otherwise if all checks pass, we return true.
 
- 
+
 
 484 */\**
 
@@ -1238,11 +1230,11 @@ against [\_\_task_will_free_mem()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 492 **struct** task_struct \*t; 493
 
- 
 
 
 
- 
+
+
 
 494 **for_each_thread**(p, t) { 495 **struct** mm_struct \*t_mm = **READ_ONCE**(t-\>mm); 496 **if** (t_mm) 497 **return** t_mm == mm; 498 }
 
@@ -1250,11 +1242,11 @@ against [\_\_task_will_free_mem()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 500 }
 
- 
+
 
 *Listing 13-8:* mm/oom_kill.c: [*process_shares_mm()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n490)
 
- 
+
 
 The [process_shares_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n490) function iterates through each of the tasks associ-
 
@@ -1270,7 +1262,7 @@ erencing a [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 address space, even if it is partially exited.
 
- 
+
 
 842 **static inline bool \_\_task_will_free_mem**(**struct** task_struct \*task) 843 {
 
@@ -1298,11 +1290,11 @@ address space, even if it is partially exited.
 
 861 }
 
- 
+
 
 *Listing 13-9:* mm/oom_kill.c: [*\_\_task_will_free_mem()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n842)
 
- 
+
 
 The [\_\_task_will_free_mem()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n842) function starts by handling the edge case sce-
 
@@ -1322,18 +1314,17 @@ process exit has been issued, or the [struct task_struct](https://git.kernel.org
 
 [PF_EXITING](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n1704) flag set indicating that the task is in process of being shut down
 
- 
-
-The Out Of Memory (OOM) Killer **1195**
 
 
- 
+
+
+
 
 (since there is no signal, we must also check the thread group is empty, i.e.
 
 this is the only task, done via [thread_group_empty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/signal.h?h=v6.0#n726)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/signal.h?h=v6.0#n726)
 
- 
+
 
 ***13.4.4 Victim Selection***
 
@@ -1341,7 +1332,7 @@ We examine the function which selects the process [select_bad_process()](https:/
 
 Listing 13-10.
 
- 
+
 
 360 */\**
 
@@ -1363,11 +1354,11 @@ Listing 13-10.
 
 379 }
 
- 
+
 
 *Listing 13-10:* mm/oom_kill.c: [*select_bad_process()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n364)
 
- 
+
 
 The [select_bad_process()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n364) function accumulates “points” assigned to each
 
@@ -1391,7 +1382,7 @@ If at any stage the [oom_evaluate_task()](https://git.kernel.org/pub/scm/linux/k
 
 cates that the [struct oom_control-\>chosen](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/oom.h?h=v6.0#n29) has been set to an invalid value in-dicating that the operation failed, and thus the loop should be exited early (note that this nonetheless indicates success, as the abort implies that the OOM killer need not select a new victim).
 
- 
+
 
 308 **static int oom_evaluate_task**(**struct** task_struct \*task, **void** \*arg) 309 {
 
@@ -1399,11 +1390,11 @@ cates that the [struct oom_control-\>chosen](https://git.kernel.org/pub/scm/linu
 
 312
 
- 
 
 
 
- 
+
+
 
 313 **if** (**oom_unkillable_task**(task)) 314 **goto** next;
 
@@ -1455,7 +1446,7 @@ cates that the [struct oom_control-\>chosen](https://git.kernel.org/pub/scm/linu
 
 358 }
 
- 
+
 
 *Listing 13-11:* mm/oom_kill.c: [*oom_evaluate_task()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n308)
 
@@ -1463,12 +1454,11 @@ We start by evaluating whether the task under examination is unkillable,
 
 which we do via [oom_unkillable_task()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n162) which we examine in Listing **??**.
 
- 
-
-The Out Of Memory (OOM) Killer **1197**
 
 
- 
+
+
+
 
 161 */\* return true if the task is not adequate as candidate victim task. \*/* 162 **static bool oom_unkillable_task**(**struct** task_struct \*p) 163 {
 
@@ -1476,11 +1466,11 @@ The Out Of Memory (OOM) Killer **1197**
 
 169 }
 
- 
+
 
 *Listing 13-12:* mm/oom_kill.c: [*oom_unkillable_task()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n162)
 
- 
+
 
 In [oom_unkillable_task()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n162) we assess whether a task simply cannot be killed.
 
@@ -1532,15 +1522,15 @@ applicable to most processes wherein we evaluate the “badness” of the task
 
 via [oom_badness()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n201) which we examine in Listing 13-13.
 
- 
+
 
 192 */\*\**
 
- 
 
 
 
- 
+
+
 
 193 *\* oom_badness - heuristic function to determine which candidate task to kill*
 
@@ -1596,22 +1586,21 @@ via [oom_badness()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/lin
 
 237
 
- 
-
-The Out Of Memory (OOM) Killer **1199**
 
 
- 
+
+
+
 
 238 **return** points;
 
 239 }
 
- 
+
 
 *Listing 13-13:* mm/oom_kill.c: [*oom_badness()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n201)
 
- 
+
 
 Here we again assert that the task is not unkillable via
 
@@ -1621,7 +1610,7 @@ Next, we acquire a lock around the task to prevent it disappearing below
 
 us via [find_lock_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n133)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n133) which we examine in Listing 13-14.
 
- 
+
 
 127 */\**
 
@@ -1651,11 +1640,11 @@ us via [find_lock_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 150 }
 
- 
+
 
 *Listing 13-14:* mm/oom_kill.c: [*find_lock_task_mm()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n133)
 
- 
+
 
 In [find_lock_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n133) we iterate through each task representing a thread
 
@@ -1671,11 +1660,11 @@ Once we have established a lock on the task we can be certain it can’t be
 
 removed, so it is therefore safe to return. Should we not find such a thread, we return NULL.
 
- 
 
 
 
- 
+
+
 
 Returning to [oom_badness()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n201) in Listing 13-13, we note that again should
 
@@ -1737,7 +1726,7 @@ After retrieving the pertinent data from the task, we relinquish its lock
 
 before adding the adjustment value and returning the same.
 
- 
+
 
 ***13.4.5 Victim Killing***
 
@@ -1749,7 +1738,7 @@ is deferred to [oom_kill_process()](https://git.kernel.org/pub/scm/linux/kernel/
 
 out of scope cgroup handling).
 
- 
+
 
 1014 **static void oom_kill_process**(**struct** oom_control \*oc, **const char** \*message) 1015 {
 
@@ -1765,12 +1754,11 @@ out of scope cgroup handling).
 
 1023 *\* its children or threads, just give it access to memory reserves*
 
- 
-
-The Out Of Memory (OOM) Killer **1201**
 
 
- 
+
+
+
 
 1024 *\* so it can die quickly* 1025 *\*/*
 
@@ -1790,11 +1778,11 @@ The Out Of Memory (OOM) Killer **1201**
 
 1058 }
 
- 
+
 
 *Listing 13-15:* mm/oom_kill.c: [*oom_kill_process()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1014)
 
- 
+
 
 We establish a ratelimit variable oom_rs in order to limit the repetition of
 
@@ -1814,13 +1802,13 @@ via [mark_oom_victim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds
 
 [queue_oom_reaper()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n691) (see Listing 13-21), before unlocking it and reducing its reference count.
 
- 
+
 
 **N O T E** In [*oom_evaluate_task()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n308) (as shown in Listing 13-11) we increment the chosen task’s
 
 reference count via [*get_task_struct()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/task.h?h=v6.0#n108)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/task.h?h=v6.0#n108) so we can be confident that the task will not have disappeared beneath us at this point.
 
- 
+
 
 We then output details about the chosen process (in a rate-limited fash-
 
@@ -1828,7 +1816,7 @@ ion to avoid spamming the kernel ring buffer) via [dump_header()](https://git.ke
 
 examine in Listing 13-16 (eliding out of scope cgroup logic).
 
- 
+
 
 452 **static void dump_header**(**struct** oom_control \*oc, **struct** task_struct \*p) 453 {
 
@@ -1838,11 +1826,11 @@ oom_score_adj=%hd\n",
 
 455 current-\>comm, oc-\>gfp_mask, &oc-\>gfp_mask, oc-\>order, 456 current-\>signal-\>oom_score_adj); 457 **if** (!**IS_ENABLED**(**CONFIG_COMPACTION**) && oc-\>order) 458 **pr_warn**("COMPACTION is disabled!!!\n");
 
- 
 
 
 
- 
+
+
 
 459
 
@@ -1858,11 +1846,11 @@ oom_score_adj=%hd\n",
 
 471 **dump_oom_summary**(oc, p); 472 }
 
- 
+
 
 *Listing 13-16:* mm/oom_kill.c: [*dump_header()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n452)
 
- 
+
 
 The [dump_header()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n452) function outputs the familiar OOM killer header, in-
 
@@ -1884,7 +1872,7 @@ which we examine starting in Listing 13-17 (eliding out of scope cgroup and
 
 event logic).
 
- 
+
 
 917 **static void \_\_oom_kill_process**(**struct** task_struct \*victim, **const char** \*message
 
@@ -1914,12 +1902,11 @@ killing the task\n",
 
 937 **mmgrab**(mm);
 
- 
-
-The Out Of Memory (OOM) Killer **1203**
 
 
- 
+
+
+
 
 . . .
 
@@ -1935,11 +1922,11 @@ file-rss:%lukB, shmem-rss:%lukB, UID:%u pgtables:%lukB oom_score_adj:%hd\\ n",
 
 951 message, **task_pid_nr**(victim), victim-\>comm, **K**(mm-\>total_vm), 952 **K**(**get_mm_counter**(mm, **MM_ANONPAGES**)), 953 **K**(**get_mm_counter**(mm, **MM_FILEPAGES**)), 954 **K**(**get_mm_counter**(mm, **MM_SHMEMPAGES**)), 955 **from_kuid**(&**init_user_ns**, **task_uid**(victim)), 956 **mm_pgtables_bytes**(mm) \>\> 10, victim-\>signal-\>oom_score_adj); 957 **task_unlock**(victim);
 
- 
+
 
 *Listing 13-17:* mm/oom_kill.c: [*\_\_oom_kill_process()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n197) *Header*
 
- 
+
 
 In [\_\_oom_kill_process()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n197) we start by invoking [find_lock_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n133) (as shown
 
@@ -1967,7 +1954,7 @@ The actual killing of the process is performed by the OOM reaper, which
 
 we discuss in Section 13.4.6 (eliding out of scope task freezing and tracing logic).
 
- 
+
 
 747 */\*\**
 
@@ -1977,11 +1964,11 @@ we discuss in Section 13.4.6 (eliding out of scope task freezing and tracing log
 
 751 *\* Has to be called with oom_lock held and never after*
 
- 
 
 
 
- 
+
+
 
 752 *\* oom has been disabled already.* 753 *\**
 
@@ -2009,11 +1996,11 @@ we discuss in Section 13.4.6 (eliding out of scope task freezing and tracing log
 
 781 }
 
- 
+
 
 *Listing 13-18:* mm/oom_kill.c: [*mark_oom_victim()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n757)
 
- 
+
 
 The [mark_oom_victim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n757) function references the [struct task_struct-\>signal](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727)’s
 
@@ -2039,7 +2026,7 @@ which share the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/g
 
 before performing final cleanup tasks in Listing 13-19.
 
- 
+
 
 917 */\**
 
@@ -2065,12 +2052,11 @@ before performing final cleanup tasks in Listing 13-19.
 
 927 **for_each_process**(p) {
 
- 
-
-The Out Of Memory (OOM) Killer **1205**
 
 
- 
+
+
+
 
 928 **if** (!**process_shares_mm**(p, mm)) 929 **continue**; 930 **if** (**same_thread_group**(p, victim)) 931 **continue**; 932 **if** (**is_global_init**(p)) { 933 can_oom_reap = **false**; 934 **set_bit**(**MMF_OOM_SKIP**, &mm-\>flags); 935 **pr_info**("oom killer %d (%s) has mm pinned by %d (%s)\n
 
@@ -2098,11 +2084,11 @@ The Out Of Memory (OOM) Killer **1205**
 
 956 **\#undef K**
 
- 
+
 
 *Listing 13-19:* mm/oom_kill.c: [*\_\_oom_kill_process()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n197) *Footer*
 
- 
+
 
 In the latter part of [\_\_oom_kill_process()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n197) shown in Listing 13-19 we both
 
@@ -2128,11 +2114,11 @@ pinning the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 as one to be skipped in further evaluation via the [MMF_OOM_SKIP](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/coredump.h?h=v6.0#n70) flag.
 
- 
 
 
 
- 
+
+
 
 If the task is a kernel thread, we skip forwards, as we are safe to reap the
 
@@ -2160,7 +2146,7 @@ counts we had elevated in order to pin these objects in memory throughout
 
 the operation.
 
- 
+
 
 ***13.4.6 OOM Reaper***
 
@@ -2182,7 +2168,7 @@ and operating on these fields (and reaping in general) is protected by the
 
 [oom_reaper_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n510) spinlock.
 
- 
+
 
 **N O T E** A wait queue is a list of tasks waiting for an event to occur and is a key synchroni-
 
@@ -2192,13 +2178,13 @@ the specified condition resolves to true. A deeper discussion of this primitive 
 
 scope for the book.
 
- 
+
 
 The OOM reaper is initialised in [oom_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n732)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n732) which we examine in Listing
 
 13-20.
 
- 
+
 
 732 **static int \_\_init oom_init**(**void**) 733 {
 
@@ -2210,11 +2196,11 @@ The OOM reaper is initialised in [oom_init()](https://git.kernel.org/pub/scm/lin
 
 739 }
 
- 
+
 
 *Listing 13-20:* mm/oom_kill.c: [*oom_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n732)
 
- 
+
 
 This starts the oom_reaper kernel thread which runs [oom_reaper()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n639) (see List-
 
@@ -2222,12 +2208,11 @@ ing 13-24) whose [struct task_struct](https://git.kernel.org/pub/scm/linux/kerne
 
 tering sysctl handlers.
 
- 
-
-The Out Of Memory (OOM) Killer **1207**
 
 
- 
+
+
+
 
 The kernel thread runs the [oom_reaper()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n639) function, which we examine in
 
@@ -2235,7 +2220,7 @@ Listing 13-24. Before examining this, we examine [queue_oom_reaper()](https://gi
 
 ing 13-21, the function which queues a task for reaping.
 
- 
+
 
 682 */\**
 
@@ -2261,11 +2246,11 @@ ing 13-21, the function which queues a task for reaping.
 
 697 **get_task_struct**(tsk); 698 **timer_setup**(&tsk-\>oom_reaper_timer, **wake_oom_reaper**, 0); 699 tsk-\>oom_reaper_timer.expires = **jiffies** + **OOM_REAPER_DELAY**; 700 **add_timer**(&tsk-\>oom_reaper_timer); 701 }
 
- 
+
 
 *Listing 13-21:* mm/oom_kill.c: [*queue_oom_reaper()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n691)
 
- 
+
 
 Importantly, before being queued for reaping, the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)
 
@@ -2295,17 +2280,17 @@ sponsive processes freeing as much memory as possible. The delay before
 
 waking the reaper is specified in [OOM_REAPER_DELAY](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n690) and is hardcoded to 2 sec-onds (as the comment indicates this is a heuristically determined value).
 
- 
+
 
 **N O T E** The reference count of both the [*struct task_struct*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727) and the [*struct mm_struct*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) objects
 
 are carefully maintained—the task’s being incremented by [*oom_evaluate_task()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n308) (List-
 
- 
 
 
 
- 
+
+
 
 ing 13-11) upon selection and [*queue_oom_reaper()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n691) (Listing 13-21) upon queuing
 
@@ -2315,7 +2300,7 @@ is incremented in [*\_\_oom_kill_process()*](https://git.kernel.org/pub/scm/linu
 
 used.
 
- 
+
 
 When the timer expires, the [wake_oom_reaper()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n661) function is invoked to
 
@@ -2323,7 +2308,7 @@ cause the reaper thread to wake up. We examine this in Listing 13-22 (elid-
 
 ing out of scope tracing hooks).
 
- 
+
 
 661 **static void wake_oom_reaper**(**struct** timer_list \*timer) 662 {
 
@@ -2343,11 +2328,11 @@ ing out of scope tracing hooks).
 
 679 **wake_up**(&**oom_reaper_wait**); 680 }
 
- 
+
 
 *Listing 13-22:* mm/oom_kill.c: [*wake_oom_reaper()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n661)
 
- 
+
 
 The [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) describing the victim process’s virtual address space
 
@@ -2363,7 +2348,7 @@ ting this flag is in [exit_mmap()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 in the process. We examine the pertinent part in Listing 13-23.
 
- 
+
 
 3074 */\* Release all mmaps. \*/*
 
@@ -2377,12 +2362,11 @@ in the process. We examine the pertinent part in Listing 13-23.
 
 3087 *\* Then, as the oom reaper does, set MMF_OOM_SKIP to disregard*
 
- 
-
-The Out Of Memory (OOM) Killer **1209**
 
 
- 
+
+
+
 
 3088 *\* this mm from further consideration. Taking mm-\>mmap_lock*
 
@@ -2412,11 +2396,11 @@ The Out Of Memory (OOM) Killer **1209**
 
 3130 }
 
- 
+
 
 *Listing 13-23:* mm/mmap.c: [*exit_mmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n3075) *OOM killer logic*
 
- 
+
 
 This means that we definitely know that the [MMF_OOM_SKIP](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/coredump.h?h=v6.0#n70) flag will be
 
@@ -2436,7 +2420,7 @@ This causes [oom_reaper()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 (listed as \[oom_reaper\] to userland), which we examine in Listing 13-24.
 
- 
+
 
 639 **static int oom_reaper**(**void** \*unused) 640 {
 
@@ -2456,11 +2440,11 @@ This causes [oom_reaper()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 652 **spin_unlock_irq**(&**oom_reaper_lock**);
 
- 
 
 
 
- 
+
+
 
 653
 
@@ -2474,11 +2458,11 @@ This causes [oom_reaper()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 659 }
 
- 
+
 
 *Listing 13-24:* mm/oom_kill.c: [*oom_reaper()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n639)
 
- 
+
 
 This starts by marking the process as “freezable” via [set_freezable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/freezer.c?h=v6.0#n161) , indi-
 
@@ -2500,7 +2484,7 @@ We then defer the actual reaping to [oom_reap_task()](https://git.kernel.org/pub
 
 Listing 13-25. After this is done we loop around and check the list again.
 
- 
+
 
 608 **static void oom_reap_task**(**struct** task_struct \*tsk) 609 {
 
@@ -2540,20 +2524,19 @@ Listing 13-25. After this is done we loop around and check the list again.
 
 634
 
- 
-
-The Out Of Memory (OOM) Killer **1211**
 
 
- 
+
+
+
 
 635 */\* Drop a reference taken by queue_oom_reaper \*/* 636 **put_task_struct**(tsk); 637 }
 
- 
+
 
 *Listing 13-25:* mm/oom_kill.c: [*oom_reap_task()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n608)
 
- 
+
 
 We attempt to reap up to [MAX_OOM_REAP_RETRIES](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n607) times before giving up, in-
 
@@ -2587,7 +2570,7 @@ head of [oom_reaper_list](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 We examine [oom_reap_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n567) in Listing 13-26, eliding tracing hooks.
 
- 
+
 
 561 */\**
 
@@ -2615,11 +2598,11 @@ We examine [oom_reap_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 577 *\* MMF_OOM_SKIP is set by exit_mmap when the OOM reaper can't* 578 *\* work on the mm anymore. The check for MMF_OOM_SKIP must run* 579 *\* under mmap_lock for reading because it serializes against the* 580 *\* mmap_write_lock();mmap_write_unlock() cycle in exit_mmap().* 581 *\*/*
 
- 
 
 
 
- 
+
+
 
 582 **if** (**test_bit**(**MMF_OOM_SKIP**, &mm-\>flags)) {
 
@@ -2653,11 +2636,11 @@ rss:%lukB, shmem-rss:%lukB\n",
 
 605 }
 
- 
+
 
 *Listing 13-26:* mm/oom_kill.c: [*oom_reap_task_mm()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n567)
 
- 
+
 
 The [oom_reap_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n567) function is a wrapper around [\_\_oom_reap_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n512)
 
@@ -2693,7 +2676,7 @@ We examine [\_\_oom_reap_task_mm()](https://git.kernel.org/pub/scm/linux/kernel/
 
 MMU notifier logic.
 
- 
+
 
 512 **bool \_\_oom_reap_task_mm**(**struct** mm_struct \*mm) 513 {
 
@@ -2701,12 +2684,11 @@ MMU notifier logic.
 
 516
 
- 
-
-The Out Of Memory (OOM) Killer **1213**
 
 
- 
+
+
+
 
 517 */\**
 
@@ -2756,11 +2738,11 @@ The Out Of Memory (OOM) Killer **1213**
 
 559 }
 
- 
+
 
 *Listing 13-27:* mm/oom_kill.c: [*\_\_oom_reap_task_mm()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n512)
 
- 
+
 
 The function starts by setting the [MMF_UNSTABLE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/coredump.h?h=v6.0#n71) flag in the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)
 
@@ -2776,11 +2758,11 @@ This is used in [do_anonymous_page()](https://git.kernel.org/pub/scm/linux/kerne
 
 process, which will then indicate the SIGBUS rather than resolve the fault.
 
- 
 
 
 
- 
+
+
 
 With this flag set, we iterate through each of the process address space’s
 
@@ -2842,6 +2824,5 @@ this point this is the state it will remain in should it be entirely unresponsiv
 
 otherwise it will eventually be killed.
 
- 
 
-The Out Of Memory (OOM) Killer **1215**
+

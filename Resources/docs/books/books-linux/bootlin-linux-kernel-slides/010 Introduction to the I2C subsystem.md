@@ -1,24 +1,26 @@
+![](media/index-205_1.jpg)
+
 Introduction to the I2C subsystem
 
- 
+
 
 Introduction to the I2C
 
- 
+
 
 subsystem
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 191/436 What is I2C?
 
- 
+What is I2C?
+
+
 
 ▶ A very commonly used low-speed bus to connect on-board and external devices to
 
@@ -38,17 +40,16 @@ contains this address, which allows the relevant slave to recognize that it shou
 
 reply to this particular transaction.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 192/436 An I2C bus example
 
- 
+An I2C bus example
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 193/436
+
+
 
 The I2C bus driver
 
- 
+
 
 ▶ Like all bus subsystems, the I2C bus driver is responsible for:
 
@@ -62,11 +63,11 @@ The I2C bus driver
 
 framework used to expose the devices (e.g. [drivers/input/](https://elixir.bootlin.com/linux/latest/source/drivers/input/) for input devices).
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 194/436 Registering an I2C device driver
 
- 
+Registering an I2C device driver
+
+
 
 ▶ Like all bus subsystems, the I2C subsystem defines a [struct i2c_driver](https://elixir.bootlin.com/linux/latest/ident/i2c_driver) that
 
@@ -84,13 +85,12 @@ register/unregister the driver.
 
 to use the [module_i2c_driver()](https://elixir.bootlin.com/linux/latest/ident/module_i2c_driver) macro instead.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 195/436
+
 
 Registering an I2C device driver: example
 
- 
+
 
 static const struct i2c_device_id adxl345_i2c_id\[\] = {
 
@@ -138,9 +138,9 @@ module_i2c_driver(adxl345_i2c_driver);
 
 From [drivers/iio/accel/adxl345_i2c.c](https://elixir.bootlin.com/linux/latest/source/drivers/iio/accel/adxl345_i2c.c)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 196/436 Registering an I2C device: non-DT
+Registering an I2C device: non-DT
 
- 
+
 
 ▶ On non-DT platforms, the [struct i2c_board_info](https://elixir.bootlin.com/linux/latest/ident/i2c_board_info) structure allows to describe
 
@@ -154,13 +154,12 @@ how an I2C device is connected to a board.
 
 [i2c_register_board_info(),](https://elixir.bootlin.com/linux/latest/ident/i2c_register_board_info) when the platform is initialized.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 197/436
+
 
 Registering an I2C device, non-DT example
 
- 
+
 
 static struct i2c_board_info \_\_initdata em7210_i2c_devices\[\] = {
 
@@ -200,11 +199,11 @@ ARRAY_SIZE(em7210_i2c_devices));
 
 From [arch/arm/mach-iop32x/em7210.c](https://elixir.bootlin.com/linux/latest/source/arch/arm/mach-iop32x/em7210.c)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 198/436 Registering an I2C device, in the DT
 
- 
+Registering an I2C device, in the DT
+
+
 
 ▶ In the Device Tree, the I2C controller device is typically defined in the .dtsi file
 
@@ -224,13 +223,12 @@ properties. Example:
 
 [Documentation/devicetree/bindings/i2c/ti,omap4-i2c.yaml](https://elixir.bootlin.com/linux/latest/source/Documentation/devicetree/bindings/i2c/ti,omap4-i2c.yaml)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 199/436
+
 
 Registering an I2C device, DT example (1/2)
 
- 
+
 
 Definition of the I2C controller
 
@@ -254,15 +252,15 @@ status = "disabled";
 
 From [arch/arm/boot/dts/allwinner/sun7i-a20.dtsi](https://elixir.bootlin.com/linux/latest/source/arch/arm/boot/dts/allwinner/sun7i-a20.dtsi)
 
- 
+
 
 \#address-cells: number of 32-bit values needed to encode the address fields \#size-cells: number of 32-bit values needed to encode the size fields
 
 See details in <https://elinux.org/Device_Tree_Usage>
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 200/436 Registering an I2C device, DT example (2/2)
+Registering an I2C device, DT example (2/2)
 
- 
+
 
 Definition of the I2C device
 
@@ -274,7 +272,7 @@ pinctrl-0 = \<&i2c0_pins_a\>;
 
 status = "okay";
 
- 
+
 
 axp209: pmic@34 {
 
@@ -282,7 +280,7 @@ compatible = "x-powers,axp209"; reg = \<0x34\>;
 
 interrupt-parent = \<&nmi_intc\>; interrupts = \<0 IRQ_TYPE_LEVEL_LOW\>;
 
- 
+
 
 interrupt-controller;
 
@@ -294,9 +292,9 @@ interrupt-controller;
 
 From [arch/arm/boot/dts/allwinner/sun7i-a20-olinuxino-micro.dts](https://elixir.bootlin.com/linux/latest/source/arch/arm/boot/dts/allwinner/sun7i-a20-olinuxino-micro.dts)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 201/436 probe() and remove()
+probe() and remove()
 
- 
+
 
 ▶ The-\>probe() function is responsible for initializing the device and registering it
 
@@ -314,11 +312,11 @@ removal of this other argument implied the use of another probe function for som
 
 kernel framework and shut it down. It receives as argument:
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 202/436 Probe example
 
- 
+Probe example
+
+
 
 static int da311_probe(struct i2c_client \*client) {
 
@@ -346,11 +344,11 @@ return ret;
 
 From [drivers/iio/accel/da311.c](https://elixir.bootlin.com/linux/latest/source/drivers/iio/accel/da311.c)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 203/436 Remove example
 
- 
+Remove example
+
+
 
 static int da311_remove(struct i2c_client \*client) {
 
@@ -364,11 +362,11 @@ return da311_enable(client, false);
 
 From [drivers/iio/accel/da311.c](https://elixir.bootlin.com/linux/latest/source/drivers/iio/accel/da311.c)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 204/436 Communicating with the I2C device: raw API
 
- 
+Communicating with the I2C device: raw API
+
+
 
 The most **basic API** to communicate with the I2C device provides functions to either send or receive data:
 
@@ -382,19 +380,18 @@ int i2c_master_recv(const struct i2c_client \*client, char \*buf, int count);
 
 Both functions return a negative error number in case of failure, otherwise the number of transmitted bytes.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 205/436
+
 
 Communicating with the I2C device: message transfer
 
- 
+
 
 The message transfer API allows to describe **transfers** that consists of several **messages**, with each message being a transaction in one direction:
 
 int i2c_transfer(struct i2c_adapter \*adap, struct i2c_msg \*msgs, int num);
 
- 
+
 
 ▶ The [struct i2c_adapter](https://elixir.bootlin.com/linux/latest/ident/i2c_adapter) pointer can be found by using client-\>adapter
 
@@ -402,11 +399,11 @@ int i2c_transfer(struct i2c_adapter \*adap, struct i2c_msg \*msgs, int num);
 
 message.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 206/436 I2C: message transfer example
 
- 
+I2C: message transfer example
+
+
 
 static int st1232_ts_read_data(struct st1232_ts_data \*ts)
 
@@ -452,9 +449,9 @@ error = i2c_transfer(client-\>adapter, msg, 2);
 
 From [drivers/input/touchscreen/st1232.c](https://elixir.bootlin.com/linux/latest/source/drivers/input/touchscreen/st1232.c)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 207/436 SMBus calls
+SMBus calls
 
- 
+
 
 ▶ SMBus is a subset of the I2C protocol. ▶ It defines a standard set of transactions, such as reading/writing from a
 
@@ -482,9 +479,9 @@ S Addr Wr \[A\] Comm \[A\] Sr Addr Rd \[A\] \[Data\] NA P
 
 ▶ See [i2c/smbus-protocol](https://www.kernel.org/doc/html/latest/i2c/smbus-protocol.html) for details.
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 208/436 List of SMBus functions
+List of SMBus functions
 
- 
+
 
 ▶ Read/write one byte
 
@@ -506,13 +503,12 @@ S Addr Wr \[A\] Comm \[A\] Sr Addr Rd \[A\] \[Data\] NA P
 
 *•* s32 i2c_smbus_read_i2c_block_data(const struct i2c_client \*client, u8 command, u8 length, u8 \*values); *•* s32 i2c_smbus_write_i2c_block_data(const struct i2c_client \*client, u8 command, u8 length, const u8 \*values);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 209/436
+
 
 I2C functionality
 
- 
+
 
 ▶ Not all I2C controllers support all functionalities. ▶ The I2C controller drivers therefore tell the I2C core which functionalities they
 
@@ -532,11 +528,11 @@ write a command and read/write one byte of data.
 
 ▶ See [include/uapi/linux/i2c.h](https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/i2c.h) for the full list of existing functionalities.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 210/436 References
 
- 
+References
+
+
 
 ▶ <https://en.wikipedia.org/wiki/I2C>, general presentation of the I2C protocol
 
@@ -564,11 +560,11 @@ How the functionality mechanism works
 
 ▶ See also Luca Ceresoli’s introduction to I2C [(slides](https://bootlin.com/pub/conferences/2022/elce/ceresoli-basics-of-i2c-on-linux/ceresoli-basics-of-i2c-on-linux.pdf), [video](https://www.youtube.com/watch?v=g9-wgdesvwA)[).](https://www.youtube.com/watch?v=g9-wgdesvwA)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 211/436 Practical lab - Communicate with the Nunchuk
 
- 
+Practical lab - Communicate with the Nunchuk
+
+
 
 ▶ Explore the content of /dev and /sys and the
 
@@ -588,8 +584,4 @@ driver.
 
 data from it.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 212/436
-
-![](media/index-227_1.jpg)

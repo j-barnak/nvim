@@ -1,16 +1,16 @@
 **Using a build system, example with Buil-**
 
- 
 
- 
+
+
 
 **droot**
 
- 
+
 
 *Objectives: discover how a build system is used and how it works, with the* *example of the Buildroot build system. Build a full Linux system, including* *the Linux kernel.*
 
- 
+
 
 **Goals**
 
@@ -60,7 +60,6 @@ the user space applications and libraries of your embedded Linux system. Have a 
 
 • system contains the root filesystem skeleton and the *device tables* used when a static /dev is used;
 
-52 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 • toolchain contains the Makefiles, patches and configuration items to generate the cross-compiling
 
@@ -130,7 +129,6 @@ musleabihf (replace \<user\> by your actual user name)
 
 and Toolchain has C++ support?. Buildroot will check these parameters anyway.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 53
 
 • Kernel
 
@@ -198,7 +196,6 @@ actually takes place
 
 want to depend on too many things installed in the developer machines, it installs some tools needed to compile the packages for the target. In our case it installed *pkg-config* (since the version of the host may be ancient) and tools to generate the root filesystem image (*genext2fs*, *makedevs*, *fakeroot*).
 
-54 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 • images, which contains the final images produced by Buildroot. In our case it contains a tarball of the
 
@@ -256,7 +253,7 @@ Then, go back to Buildroot’s configuration interface:
 
 Build your image again. This should be quick as Buildroot doesn’t need to recompile anything. It will just apply the root filesystem overlay.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 55 Update your nfsroot directory, reboot the board and check that the snd_usb_audio module is loaded as expected.
+Update your nfsroot directory, reboot the board and check that the snd_usb_audio module is loaded as expected.
 
 You can run speaker-test to check that audio indeed works.
 
@@ -328,7 +325,6 @@ Here are a few further commands for controlling playback:
 
 containing the files.
 
-56 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 • mpc prev: switch to the previous song in the playlist.
 
@@ -392,7 +388,7 @@ NUNCHUK_DRIVER_VERSION = 1.0
 
 NUNCHUK_DRIVER_SITE = \$(HOME)/embedded-linux-bbb-labs/hardware/data/nunchuk
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 57 NUNCHUK_DRIVER_SITE_METHOD = local
+NUNCHUK_DRIVER_SITE_METHOD = local
 
 NUNCHUK_DRIVER_LICENSE = GPL-2.0
 
@@ -440,6 +436,4 @@ git add board/bootlin/ package/nunchuk-driver/ package/Config.in git commit -as 
 
 ( sudo apt install ario, sudo apt install cantata), configure it to connect to the IP address of your target system with the default port, and you will also be able to control playback from your host machine.
 
- 
 
-58 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license

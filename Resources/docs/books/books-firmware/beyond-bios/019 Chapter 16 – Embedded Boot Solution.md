@@ -1,12 +1,12 @@
 ## **Chapter 16 – Embedded Boot Solution** 
 
- 
+
 
 Unless you try to do something beyond what you have already mastered, you will never grow
 
 —Ralph Waldo Emerson
 
- 
+
 
 The expected market segment opportunity beyond 2012 for embedded systems will be
 
@@ -18,11 +18,11 @@ physical security/digital security and surveillance (video analytics systems and
 
 ![](media/index-272_1.png)
 
- 
+
 
 **Figure 16.1:** Embedded Usage Examples
 
- 
+
 
 This chapter describes the boot firmware challenges and solutions for these market segments. The primary focus is to cover the platform boot solution, which includes
 
@@ -30,23 +30,22 @@ standard PC BIOS, bootloaders (also known as steploaders), initial program loade
 
 running a shrinkwrap and/or industry standard embedded OS.
 
- 
+
 
 **CE Device Landscape**
 
- 
+
 
 The Intel® Atom™ processor family of low power embedded processors are making
 
 their way into many lower power platforms, the key being MIDs (mobile Internet de-vices), netbooks and a variety of embedded markets as enumerated above. Some of
 
- 
+
 
 DOI 10.1515/9781501505690-018
 
-**254** \| Chapter 16 – Embedded Boot Solution
 
- 
+
 
 these segments are targeted towards consumers, following the Consumer Electronics (CE) device model paradigm. One of the key attributes of a CE device is the positive
 
@@ -64,11 +63,11 @@ on such factors as:
 
 as boot latency to user interface/human machine interface (UI/HMI)
 
- 
+
 
 **CE Device Boot Challenges**
 
- 
+
 
 Traditional CE devices from OEMs were fully customized solutions with OEM specific
 
@@ -92,7 +91,7 @@ goals, with the boot firmware being a key component of it. Figure 16.2 identifie
 
 as needed for the CE devices.
 
- 
+
 
 The following is a short list of some key components that contribute to the overall boot latency to UI active time.
 
@@ -104,9 +103,8 @@ age regulators, and power rails
 
 and Low Pin Count (LPC)
 
-CE Device Boot Challenges \| **255**
 
- 
+
 
 ■ Access latency of storage device for firmware, such as NOR/NAND Flash ■ Access latency of mass storage device, such as HDD, SSD, MMC/SD
 
@@ -122,7 +120,7 @@ such as NOR, SDD, HD, and MMC
 
 ■ Use of file system type for storing the boot image, such as ROM, FAT, and EXT3 ■ Latency of graphics and audio device startup if required
 
- 
+
 
 Figure 16.2 shows various boot components across the system stack that need to be
 
@@ -134,23 +132,22 @@ in firmware before a handoff to IPL.
 
 ![](media/index-274_1.png)
 
- 
+
 
 **Figure 16.2:** End-to-End Boot Latency Dependency Components
 
- 
+
 
 A case study of one of the CE device usages for IVI with typical boot requirements follows. The fast boot requirements for most other CE segments are considered to be
 
 a subset of IVI, which has the most stringent requirements of all.
 
-**256** \| Chapter 16 – Embedded Boot Solution
 
- 
+
 
 **In-Vehicle Infotainment**
 
- 
+
 
 An IVI user expects an instant power-on experience, similar to that of most consumer appliances like TVs. To meet this same expectation, one of the key requirements of
 
@@ -160,11 +157,11 @@ perience when the ignition key/button is turned on. The typical boot latency req
 
 ![](media/index-275_1.png)
 
- 
+
 
 **Figure 16.3:** Typical CE Device Boot Latency Requirements
 
- 
+
 
 Within the requirements highlighted above, there are multiple key latency check-points where the boot firmware plays a key role. These include: ■ *Power-on to splash screen active.* The time between hardware power-on and
 
@@ -192,9 +189,8 @@ firmware can hand-off to the OS in less than 50–100 ms, it is possible to leav
 
 function for the OS to enable, thereby making it a post-OS boot feature.
 
-Other Embedded Platforms \| **257**
 
- 
+
 
 ■ *Power-on to rear view camera active.* This is another operation that may have to
 
@@ -238,17 +234,17 @@ cally the events from CAN and data over MOST can be used as trigger events for
 
 operation of functions such as rear view camera activation.
 
- 
+
 
 All other boot latency checkpoints illustrated are outside the scope of the boot firm-ware and have a dependency on the kernel components and device drivers that are
 
 associated with the key boot devices: storage (such as NAND), audio, graphics, video, and so on.
 
- 
+
 
 **Other Embedded Platforms**
 
- 
+
 
 As noted above, IVI is just one of the many embedded segments with rapid boot time requirements. The interesting thing to note is that when all the segments are taken
 
@@ -258,9 +254,8 @@ Fedora Linux†, QNX†, Microsoft XP Embedded†, Microsoft WinCE†, WindRiver
 
 VxWorks†, Microsoft Windows XP†, Microsoft Vista Embedded†, 4690/DOS†, MeeGo†, SuSe†, Microsoft Windows for Point-of-Sales (WEPOS) †, Win7e†, and Win8.
 
-**258** \| Chapter 16 – Embedded Boot Solution
 
- 
+
 
 For a typical CE platform, the boot firmware must support interoperability with mul-tiple types of OS IPLs as follows:
 
@@ -284,17 +279,17 @@ ogy and the nonstandard secondary storage device such as managed NAND (also
 
 known as an eMMC device).
 
- 
+
 
 **Note** Reducing the bill of material cost of a CE platform is quite critical, hence consolidating
 
 the SPI Flash (NOR) and NAND storage to one device like eMMC is beneficial. However, this comes with some challenges for Intel boot architecture and the firmware flow that depends on various aspects such as execute in place ROM (XIP), secure and write-protected regions offered by SPI flash controllers, and so on.
 
- 
+
 
 **Generic Requirements**
 
- 
+
 
 Traditional platforms typically have boot latencies to UI active times that average 10– 40 seconds. Getting this UI active latency down to below 5–6 seconds, with an active
 
@@ -306,7 +301,7 @@ done to both the BIOS and bootloader solutions to fit into the IVI platform and 
 
 initialization of user-visible I/O like display activation, initial program load (IPL) boot menus, enabling processor cache usage at boot as high speed RAM (CAR), and so on.
 
- 
+
 
 The basic or generic bootloader for any CE device model requires the following attrib-
 
@@ -324,9 +319,8 @@ all platforms using the same SoC without modifications, such as a size of less t
 
 384 KB.
 
-Boot Strategies \| **259**
 
- 
+
 
 ■ *Reliability.* The bootloader must provide interoperability across a variety of oper-
 
@@ -342,21 +336,21 @@ ital Input Output (SDIO) managed NAND.
 
 ■ *Lifecycle*. The bootloader should have a typical lifecycle of 5 years.
 
- 
+
 
 Figure 16.4 illustrates the common initialization flows encountered in a typical plat-form initialization.
 
 ![](media/index-278_1.png)
 
- 
+
 
 **Figure 16.4:** Typical Intel® Architecture CE Device Firmware Boot Flow
 
- 
+
 
 **Boot Strategies**
 
- 
+
 
 To fit most of the usage models described above, different CE device boot strategies
 
@@ -374,9 +368,8 @@ as Standard Embedded Linux or Window XPe). The BIOS is required to provide
 
 PC compatibility and is readily available from independent BIOS vendors (IBV)
 
-**260** \| Chapter 16 – Embedded Boot Solution
 
- 
+
 
 or Original Device Manufacturers (ODM). This solution provides the most flexibil-
 
@@ -428,7 +421,7 @@ HD initialization.
 
 – Pre-boot graphics (splash screen) support where available
 
- 
+
 
 This solution is primarily meant to work with an OS, which does not rely on the PC
 
@@ -438,7 +431,7 @@ around the same SoC. The goal of this approach is to allow the OS to enable othe
 
 device drivers in the OS. Refer to the white paper on one such approach and the opti-mizations done for it:
 
- 
+
 
 http://download.intel.com/design/intarch/papers/323246.pdf
 
@@ -452,9 +445,8 @@ the CPU, flash, and the DRAM subsystem. The subsequent portion of chipset
 
 hardware and I/O device initialization is left for the OS hardware abstraction
 
-Boot Storage Devices \| **261**
 
- 
+
 
 layer (HAL) to deal with, essentially moving much of the firmware platform ini-
 
@@ -470,11 +462,11 @@ platform topology, the HAL component for each OS needs to be rewritten and this
 
 is a major undertaking.
 
- 
+
 
 **Power Management**
 
- 
+
 
 Traditional Intel architecture platforms support various power management capabil-
 
@@ -494,11 +486,11 @@ need to avoid inadvertently restoring one user context for another for a rental 
 
 a key requirement for the CE device architecture.
 
- 
+
 
 **Boot Storage Devices**
 
- 
+
 
 Another factor that plays a significant role in helping reduce the overall boot latency
 
@@ -510,9 +502,9 @@ ferent system interfaces like LPC/SPI, Open NAND Flash Interface (ONFI), or SDIO
 
 throughputs can vary anywhere from 1.5 MB/s to 52 MB/s at the time of writing of this book. It is to be noted that to satisfy the Intel architecture platform boot sequence and
 
-legacy compatibility, XIP flash (NOR) is best. NAND is a block storage device and does not lend itself very well as the XIP memory. The mitigation to overcome this NAND **262** \| Chapter 16 – Embedded Boot Solution
+legacy compatibility, XIP flash (NOR) is best. NAND is a block storage device and does not lend itself very well as the XIP memory. The mitigation to overcome this NAND
 
- 
+
 
 limitation is to use SRAM caches in the path to the processor or the NAND accesses redirected in hardware to DRAM, where the firmware is shadowed ahead of time. The
 
@@ -536,7 +528,7 @@ age use case, such as boot block for firmware storage, user Storage, and securit
 
 some changes in the Intel architecture platform hardware and firmware flows. This is illustrated in Figure 16.5.
 
- 
+
 
 SPI SPI SPI SPI
 
@@ -584,7 +576,7 @@ Address Range Address Range Address Range Address Range 1 1 1 1----32GB 32GB 32G
 
 (XIP) (XIP) (XIP) (XIP)
 
- 
+
 
 Descriptor Descriptor Descriptor Descriptor
 
@@ -594,17 +586,16 @@ Block Storage Block Storage Block Storage Block Storage
 
 Device Device Device Device
 
- 
+
 
 **Figure 16.5:** Typical Intel® Architecture Storage Device Consolidation Model
 
-Security \| **263**
 
- 
+
 
 **Security**
 
- 
+
 
 Different embedded segments have varying security requirements collectively cate-gorized as Security. These security requirements apply to two different usage models,
 
@@ -618,7 +609,7 @@ ware.
 
 Sec/SSL, Voice SRTP)
 
- 
+
 
 SoC-based embedded platforms are targeted to support “open and closed device” us-age models. This means that the user will be able to download and install any native
 
@@ -632,55 +623,55 @@ must have a tamper-resistant software environment to protect against malicious a
 
 as Blu-ray† without being compromised. Table 16.1 shows the usage and threat model of a typical CE device.
 
- 
+
 
 **Table 16.1:** Usage Model and Security Threats
 
- 
+
 
 **CE Usage Model** **Threats**
 
- 
+
 
 Internet Connectivity Malware attack, DoS Attacks, packet replay/reuse, etc.
 
- 
+
 
 Secure Internet Transaction Steal privacy sensitive data
 
- 
+
 
 DRM Content Usage Steal DRM protected content
 
- 
+
 
 Browser Usage Malware attack, phishing
 
- 
+
 
 Software Downloads/Updates Change OS/software stack
 
- 
+
 
 Device Management DoS attack, Illegal device connections
 
- 
+
 
 ID Management Dictionary attacks, stolen privacy data
 
- 
+
 
 One Time Provisioning Steal OEM data, unauthorized activation
 
- 
+
 
 Full Featured OS All of the above
 
- 
 
-Biometrics (Finger print sensor) Steal user data, authentication credentials **264** \| Chapter 16 – Embedded Boot Solution
 
- 
+Biometrics (Finger print sensor) Steal user data, authentication credentials
+
+
 
 Based on the usage model described in Table 16.1, the assets on the platform that need to be protected from a hacker are as follows:
 
@@ -694,7 +685,7 @@ tected copyrighted content such as music and video
 
 trusted kernel components
 
- 
+
 
 Based on the techniques needed for threat mitigation, one of the fundamental mech-anisms to achieve security is to make the software tamper-resistant (TRS). TRS goal is
 
@@ -718,11 +709,11 @@ application accesses to limited resources and contains the malware attack impact
 
 to the restricted domain.
 
- 
+
 
 In addition, any runtime software updates or patching will be limited to trusted soft-ware from trusted entities, which may be digitally signed for authenticity.
 
- 
+
 
 The mitigation against the security threats requires the embedded platform security
 
@@ -746,13 +737,12 @@ architecture
 
 ■ Device management/provisioning through industry standard mechanisms
 
- 
+
 
 BootROM RoT: To provide Measured Boot functionality, an embedded platform can support BootROM as hardware RoT and a trusted platform module (TPM) can be used
 
-Security \| **265**
 
- 
+
 
 to securely store measurements. Some SPI-Flash controllers support write-protection of the flash device at reset through hardware based auto configuration. Additionally,
 
@@ -778,23 +768,23 @@ CE device.
 
 ![](media/index-284_1.png)
 
- 
+
 
 **Trust Boundary**
 
- 
+
 
 **p****-****-****Unit** **Unit**
 
- 
+
 
 **BootROM** **CRTM in** **CRTM in** **Bootloader** **Bootloader** **BootROM** **OS Loader** **OS Loader** **/BIOS** **/BIOS** **OS** **OS** **App** **App** **(HW RoT)** **(HW RoT)**
 
- 
+
 
 **Figure 16.6:** Typical Intel® Architecture CE Device Trust Boundary
 
- 
+
 
 The BootBlock can be burned into ROM so that it cannot be modified and hence can act as a hardware RoT. Core Root of Trust for Measurement (CRTM) is the root of trust
 
@@ -802,9 +792,8 @@ from which integrity measurements begin within a trusted CE device platform. The
 
 logic can be changed, but only under controlled conditions by the OEM.
 
-**266** \| Chapter 16 – Embedded Boot Solution
 
- 
+
 
 The OS loader, kernel, and drivers will be measured as part of the CE device measured boot flow. The details of a typical chain of trust for measurement with a TPM device
 
@@ -832,7 +821,7 @@ stored in PCR-1
 
 — If the measurements are changed, the OS may fail to boot or alert the user.
 
- 
+
 
 Coming out of
 
@@ -842,19 +831,19 @@ p-Unit fetches 2K boot block code from BIOS Flash
 
 through SPI interface in Legacy unit
 
- 
+
 
 p-Unit initializes non-CPU part of North Complex
 
 (i.e. H/A/B/D) and DDR RCOMP
 
- 
+
 
 p-Unit de-asserts IA CPU reset and Security
 
 Processor reset & Awaits for IA Wakeup
 
- 
+
 
 IA CPU comes out of reset and executes Security Processor coming out of reset,
 
@@ -902,13 +891,12 @@ Security Processor asserts Input ready
 
 and wait for host commands
 
- 
+
 
 **Figure 16. 7:** Typical Intel® Architecture CE Device Measured Boot Flow
 
-Manageability \| **267**
 
- 
+
 
 Measured Boot Latency: Measured boot introduces latencies in the boot path of a CE device due to the following:
 
@@ -916,7 +904,7 @@ Measured Boot Latency: Measured boot introduces latencies in the boot path of a 
 
 ■ Calculation of SHA1 checksum of various binaries ■ Appending the checksum in TPM PCR
 
- 
+
 
 The measure boot components of the TPM are distributed across the standard firm-ware boot flow The CRTM algorithm would play a key role in optimizing for the CE
 
@@ -928,11 +916,11 @@ might use a combination of the following:
 
 ■ Measure only portions of firmware after it is shadowed into memory or before
 
- 
+
 
 **Manageability**
 
- 
+
 
 The manageability framework, also known as the Device Management (DM) frame-
 
@@ -962,13 +950,12 @@ In the manageability space, making DASH-compliant manageability on CE plat-
 
 form is opportunity that allows OEM differentiation and provides a much richer man-ageability features.
 
-**268** \| Chapter 16 – Embedded Boot Solution
 
- 
+
 
 **Summary**
 
- 
+
 
 The need for a boot solution that is low cost, has a small footprint, offers low boot latencies, and is platform-agnostic provides an exciting opportunity to ISVs and
 

@@ -1,12 +1,12 @@
 **Bootloader - U-Boot**
 
- 
 
- 
+
+
 
 *Objectives: Set up serial communication, compile and install the U-Boot boot-**loader, use basic U-Boot commands, set up TFTP communication with the* *development workstation.*
 
- 
+
 
 As the bootloader is the first piece of software executed by a hardware platform, the installation procedure of the bootloader is very specific to the hardware platform. There are usually two cases:
 
@@ -32,7 +32,7 @@ You always should make sure that you connect the TX pin of the cable to the RX p
 
 ![](media/index-8_1.jpg)
 
- 
+
 
 Once the USB to Serial connector is plugged in, a new serial port should appear: /dev/ttyUSB0.
 
@@ -44,7 +44,7 @@ To communicate with the board through the serial port, install a serial communic
 
 to Serial adapter that we are using.
 
-8 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license \$ sudo apt install picocom
+\$ sudo apt install picocom
 
 If you run ls -l /dev/ttyUSB0, you can also see that only root and users belonging to the dialout group have read and write access to the serial console. Therefore, you need to add your user to the dialout group:
 
@@ -102,7 +102,6 @@ make DEVICE_TREE=am335x-boneblack
 
 or
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 9
 
 make DEVICE_TREE=am335x-boneblack-wireless
 
@@ -160,7 +159,7 @@ Twice the number of CPU cores is a good value.
 
 TI AM335x romcode expects. Passing the-a option is a workaround as described on a [Bootlin blog post](https://bootlin.com/blog/workaround-for-creating-bootable-fat-partition-for-beagle-bone-am335x-on-recent-distros/)[.](https://bootlin.com/blog/workaround-for-creating-bootable-fat-partition-for-beagle-bone-am335x-on-recent-distros/)
 
-10 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license sudo mkfs.vfat -a -F 32 -n boot /dev/mmcblk0p1
+sudo mkfs.vfat -a -F 32 -n boot /dev/mmcblk0p1
 
 You can now make your workstation automatically mount this partition by removing the SD card and plugging it back. It should now be mounted on /media/\$USER/boot.
 
@@ -184,7 +183,7 @@ U-Boot SPL 2024.04 (May 22 2024 - 14:21:15 +0200)
 
 Trying to boot from MMC1
 
- 
+
 
 U-Boot 2024.04 (May 22 2024 - 14:21:15 +0200)
 
@@ -216,7 +215,7 @@ Make sure that the version and compile date are right. Otherwise, try again, bec
 
 In U-Boot, type the help command, and explore the few commands available.
 
- 
+
 
 **Adding a new command to the U-Boot shell**
 
@@ -224,9 +223,9 @@ Check whether the config command is available. This command allows to dump the c
 
 If it’s not, go back to U-Boot’s configuration and enable it.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 11 Re-run the build of U-Boot, and update the bootloader on the SD card and test that the command is now available and works as expected.
+Re-run the build of U-Boot, and update the bootloader on the SD card and test that the command is now available and works as expected.
 
- 
+
 
 **Playing with the U-Boot environment**
 
@@ -246,7 +245,7 @@ As this course supports both the BeagleBone Black and BeagleBone Black Wireless 
 
 **Caution**: For the following to work, make sure that your board is powered by a USB port on your PC. Otherwise, networking over USB cannot work.
 
- 
+
 
 **Network configuration on the target**
 
@@ -280,13 +279,13 @@ To make these settings permanent, save the environment:
 
 =\> saveenv
 
- 
+
 
 **Network configuration on the PC host**
 
 To configure your network interface on the workstation side, we need to know the name of the network interface connected to your board.
 
-12 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license Note that when the board is waiting at the U-Boot prompt, no network interface will show up on the workstation side. It is only when U-Boot is actively executing a network-related command (such as ping or tftp) that it brings up the USB network connection.
+Note that when the board is waiting at the U-Boot prompt, no network interface will show up on the workstation side. It is only when U-Boot is actively executing a network-related command (such as ping or tftp) that it brings up the USB network connection.
 
 From the board, run ping 192.168.0.1, and while the ping command is running, you should see on your workstation a new network interface named enx\<macaddr\>. Given the value we gave to usbnet_hostaddr, it will therefore be enxf8dc7a000001. Note that pinging the board from your PC will not work: when U-Boot is waiting at its prompt, it is not able to reply to ping requests.
 
@@ -318,10 +317,8 @@ We will see in the next labs how to use U-Boot to download, flash and boot a ker
 
 If you have trouble generating binaries that work properly, or later make a mistake that causes you to lose your bootloader binaries, you will find working versions under data/ in the current lab directory.
 
- 
+
 
 5 This location is part of the board DRAM. If you want to check where this value comes from, you can check the SoC datasheet
 
 at <https://www.ti.com/lit/ug/spruh73q/spruh73q.pdf>[.](https://www.ti.com/lit/ug/spruh73q/spruh73q.pdf) It’s a big document (more than 5,000 pages). In this document, look for ARM Cortex-A8 Memory Map and you will find the SoC memory map. You will see that the address range for the memory controller (*EMIF0 SDRAM*) starts at the address we are looking for. You can also try with other values in the RAM address range.
-
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 13

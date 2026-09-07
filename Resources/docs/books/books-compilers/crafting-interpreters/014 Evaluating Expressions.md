@@ -10,7 +10,7 @@ If you want to properly set the mood for this chapter, try to conjure up a thund
 
 ![A bolt of lightning strikes a Victorian mansion. Spooky!](media/image/evaluating-expressions/lightning.png)
 
-A decrepit Victorian mansion is optional, but adds to the ambiance.
+> A decrepit Victorian mansion is optional, but adds to the ambiance.
 
 There are all manner of ways that language implementations make a computer do what the user’s source code commands. They can compile it to machine code, translate it to another high-level language, or reduce it to some bytecode format for a virtual machine to run. For our first interpreter, though, we are going to take the simplest, shortest path and execute the syntax tree itself.
 
@@ -26,17 +26,16 @@ Taking them on one at a time . . . 
 
 In Lox, values are created by literals, computed by expressions, and stored in variables. The user sees these as *Lox* objects, but they are implemented in the underlying language our interpreter is written in. That means bridging the lands of Lox’s dynamic typing and Java’s static types. A variable in Lox can store a value of any (Lox) type, and can even store values of different types at different points in time. What Java type might we use to represent that?
 
-Here, I’m using “value” and “object” pretty much interchangeably.
-
-Later in the C interpreter we’ll make a slight distinction between them, but that’s mostly to have unique terms for two different corners of the implementation—in-place versus heap-allocated data. From the user’s perspective, the terms are synonymous.
+> Here, I’m using “value” and “object” pretty much interchangeably.
+>
+> Later in the C interpreter we’ll make a slight distinction between them, but that’s mostly to have unique terms for two different corners of the implementation—in-place versus heap-allocated data. From the user’s perspective, the terms are synonymous.
 
 Given a Java variable with that static type, we must also be able to determine which kind of value it holds at runtime. When the interpreter executes a `+` operator, it needs to tell if it is adding two numbers or concatenating two strings. Is there a Java type that can hold numbers, strings, Booleans, and more? Is there one that can tell us what its runtime type is? There is! Good old java.lang.Object.
 
 In places in the interpreter where we need to store a Lox value, we can use Object as the type. Java has boxed versions of its primitive types that all subclass Object, so we can use those for Lox’s built-in types:
 
-|               |                     |
-|---------------|---------------------|
 | Lox type      | Java representation |
+|---------------|---------------------|
 | Any Lox value | Object              |
 | `nil`         | `null`              |
 | Boolean       | Boolean             |
@@ -45,7 +44,7 @@ In places in the interpreter where we need to store a Lox value, we can use Obje
 
 Given a value of static type Object, we can determine if the runtime value is a number or a string or whatever using Java’s built-in `instanceof` operator. In other words, the JVM’s own object representation conveniently gives us everything we need to implement Lox’s built-in types. We’ll have to do a little more work later when we add Lox’s notions of functions, classes, and instances, but Object and the boxed primitive classes are sufficient for the types we need right now.
 
-Another thing we need to do with values is manage their memory, and Java does that too. A handy object representation and a really nice garbage collector are the main reasons we’re writing our first interpreter in Java.
+> Another thing we need to do with values is manage their memory, and Java does that too. A handy object representation and a really nice garbage collector are the main reasons we’re writing our first interpreter in Java.
 
 ## 7.2 Evaluating Expressions
 
@@ -70,14 +69,16 @@ The class declares that it’s a visitor. The return type of the visit methods w
 
 The leaves of an expression tree—the atomic bits of syntax that all other expressions are composed of—are literals. Literals are almost values already, but the distinction is important. A literal is a *bit of syntax* that produces a value. A literal always appears somewhere in the user’s source code. Lots of values are produced by computation and don’t exist anywhere in the code itself. Those aren’t literals. A literal comes from the parser’s domain. Values are an interpreter concept, part of the runtime’s world.
 
-In the next chapter, when we implement variables, we’ll add identifier expressions, which are also leaf nodes.
+> In the next chapter, when we implement variables, we’ll add identifier expressions, which are also leaf nodes.
 
 So, much like we converted a literal *token* into a literal *syntax tree node* in the parser, now we convert the literal tree node into a runtime value. That turns out to be trivial.
 
-      @Override
-      public Object visitLiteralExpr(Expr.Literal expr) {
-        return expr.value;
-      }
+```
+  @Override
+  public Object visitLiteralExpr(Expr.Literal expr) {
+    return expr.value;
+  }
+```
 
 *lox/Interpreter.java*, in class *Interpreter*
 
@@ -87,10 +88,12 @@ We eagerly produced the runtime value way back during scanning and stuffed it in
 
 The next simplest node to evaluate is grouping—the node you get as a result of using explicit parentheses in an expression.
 
-      @Override
-      public Object visitGroupingExpr(Expr.Grouping expr) {
-        return evaluate(expr.expression);
-      }
+```
+  @Override
+  public Object visitGroupingExpr(Expr.Grouping expr) {
+    return evaluate(expr.expression);
+  }
+```
 
 *lox/Interpreter.java*, in class *Interpreter*
 
@@ -98,11 +101,13 @@ A grouping node has a reference to an inner node for the expression contained in
 
 We rely on this helper method which simply sends the expression back into the interpreter’s visitor implementation:
 
-Some parsers don’t define tree nodes for parentheses. Instead, when parsing a parenthesized expression, they simply return the node for the inner expression. We do create a node for parentheses in Lox because we’ll need it later to correctly handle the left-hand sides of assignment expressions.
+> Some parsers don’t define tree nodes for parentheses. Instead, when parsing a parenthesized expression, they simply return the node for the inner expression. We do create a node for parentheses in Lox because we’ll need it later to correctly handle the left-hand sides of assignment expressions.
 
-      private Object evaluate(Expr expr) {
-        return expr.accept(this);
-      }
+```
+  private Object evaluate(Expr expr) {
+    return expr.accept(this);
+  }
+```
 
 *lox/Interpreter.java*, in class *Interpreter*
 
@@ -110,18 +115,20 @@ Some parsers don’t define tree nodes for parentheses. Instead, when parsing a 
 
 Like grouping, unary expressions have a single subexpression that we must evaluate first. The difference is that the unary expression itself does a little work afterwards.
 
-      @Override
-      public Object visitUnaryExpr(Expr.Unary expr) {
-        Object right = evaluate(expr.right);
+```
+  @Override
+  public Object visitUnaryExpr(Expr.Unary expr) {
+    Object right = evaluate(expr.right);
 
-        switch (expr.operator.type) {
-          case MINUS:
-            return -(double)right;
-        }
+    switch (expr.operator.type) {
+      case MINUS:
+        return -(double)right;
+    }
 
-        // Unreachable.
-        return null;
-      }
+    // Unreachable.
+    return null;
+  }
+```
 
 *lox/Interpreter.java*, add after *visitLiteralExpr*()
 
@@ -129,7 +136,7 @@ First, we evaluate the operand expression. Then we apply the unary operator itse
 
 Shown here is `-`, which negates the result of the subexpression. The subexpression must be a number. Since we don’t *statically* know that in Java, we cast it before performing the operation. This type cast happens at runtime when the `-` is evaluated. That’s the core of what makes a language dynamically typed right there.
 
-You’re probably wondering what happens if the cast fails. Fear not, we’ll get into that soon.
+> You’re probably wondering what happens if the cast fails. Fear not, we’ll get into that soon.
 
 You can start to see how evaluation recursively traverses the tree. We can’t evaluate the unary operator itself until after we evaluate its operand subexpression. That means our interpreter is doing a **post-order traversal**—each node evaluates its children before doing its own work.
 
@@ -158,21 +165,23 @@ OK, maybe we’re not going to really get into the universal question, but at le
 
 We *could* just say it’s an error because we don’t roll with implicit conversions, but most dynamically typed languages aren’t that ascetic. Instead, they take the universe of values of all types and partition them into two sets, one of which they define to be “true”, or “truthful”, or (my favorite) “truthy”, and the rest which are “false” or “falsey”. This partitioning is somewhat arbitrary and gets weird in a few languages.
 
-In JavaScript, strings are truthy, but empty strings are not. Arrays are truthy but empty arrays are . . . also truthy. The number `0` is falsey, but the *string* `"0"` is truthy.
-
-In Python, empty strings are falsey like in JS, but other empty sequences are falsey too.
-
-In PHP, both the number `0` and the string `"0"` are falsey. Most other non-empty strings are truthy.
-
-Get all that?
+> In JavaScript, strings are truthy, but empty strings are not. Arrays are truthy but empty arrays are . . . also truthy. The number `0` is falsey, but the *string* `"0"` is truthy.
+>
+> In Python, empty strings are falsey like in JS, but other empty sequences are falsey too.
+>
+> In PHP, both the number `0` and the string `"0"` are falsey. Most other non-empty strings are truthy.
+>
+> Get all that?
 
 Lox follows Ruby’s simple rule: `false` and `nil` are falsey, and everything else is truthy. We implement that like so:
 
-      private boolean isTruthy(Object object) {
-        if (object == null) return false;
-        if (object instanceof Boolean) return (boolean)object;
-        return true;
-      }
+```
+  private boolean isTruthy(Object object) {
+    if (object == null) return false;
+    if (object instanceof Boolean) return (boolean)object;
+    return true;
+  }
+```
 
 *lox/Interpreter.java*, add after *visitUnaryExpr*()
 
@@ -180,29 +189,31 @@ Lox follows Ruby’s simple rule: `false` and `nil` are falsey, and everything e
 
 On to the last expression tree class, binary operators. There’s a handful of them, and we’ll start with the arithmetic ones.
 
-      @Override
-      public Object visitBinaryExpr(Expr.Binary expr) {
-        Object left = evaluate(expr.left);
-        Object right = evaluate(expr.right);
+```
+  @Override
+  public Object visitBinaryExpr(Expr.Binary expr) {
+    Object left = evaluate(expr.left);
+    Object right = evaluate(expr.right);
 
-        switch (expr.operator.type) {
-          case MINUS:
-            return (double)left - (double)right;
-          case SLASH:
-            return (double)left / (double)right;
-          case STAR:
-            return (double)left * (double)right;
-        }
+    switch (expr.operator.type) {
+      case MINUS:
+        return (double)left - (double)right;
+      case SLASH:
+        return (double)left / (double)right;
+      case STAR:
+        return (double)left * (double)right;
+    }
 
-        // Unreachable.
-        return null;
-      }
+    // Unreachable.
+    return null;
+  }
+```
 
 *lox/Interpreter.java*, add after *evaluate*()
 
-Did you notice we pinned down a subtle corner of the language semantics here? In a binary expression, we evaluate the operands in left-to-right order. If those operands have side effects, that choice is user visible, so this isn’t simply an implementation detail.
-
-If we want our two interpreters to be consistent (hint: we do), we’ll need to make sure clox does the same thing.
+> Did you notice we pinned down a subtle corner of the language semantics here? In a binary expression, we evaluate the operands in left-to-right order. If those operands have side effects, that choice is user visible, so this isn’t simply an implementation detail.
+>
+> If we want our two interpreters to be consistent (hint: we do), we’ll need to make sure clox does the same thing.
 
 I think you can figure out what’s going on here. The main difference from the unary negation operator is that we have two operands to evaluate.
 
@@ -235,9 +246,9 @@ I left out one arithmetic operator because it’s a little special.
 
 The `+` operator can also be used to concatenate two strings. To handle that, we don’t just assume the operands are a certain type and *cast* them, we dynamically *check* the type and choose the appropriate operation. This is why we need our object representation to support `instanceof`.
 
-We could have defined an operator specifically for string concatenation. That’s what Perl (`.`), Lua (`..`), Smalltalk (`,`), Haskell (`++`), and others do.
-
-I thought it would make Lox a little more approachable to use the same syntax as Java, JavaScript, Python, and others. This means that the `+` operator is **overloaded** to support both adding numbers and concatenating strings. Even in languages that don’t use `+` for strings, they still often overload it for adding both integers and floating-point numbers.
+> We could have defined an operator specifically for string concatenation. That’s what Perl (`.`), Lua (`..`), Smalltalk (`,`), Haskell (`++`), and others do.
+>
+> I thought it would make Lox a little more approachable to use the same syntax as Java, JavaScript, Python, and others. This means that the `+` operator is **overloaded** to support both adding numbers and concatenating strings. Even in languages that don’t use `+` for strings, they still often overload it for adding both integers and floating-point numbers.
 
 Next up are the comparison operators.
 
@@ -266,23 +277,27 @@ They are basically the same as arithmetic. The only difference is that where the
 
 The last pair of operators are equality.
 
-          case BANG_EQUAL: return !isEqual(left, right);
-          case EQUAL_EQUAL: return isEqual(left, right);
+```
+      case BANG_EQUAL: return !isEqual(left, right);
+      case EQUAL_EQUAL: return isEqual(left, right);
+```
 
 *lox/Interpreter.java*, in *visitBinaryExpr*()
 
 Unlike the comparison operators which require numbers, the equality operators support operands of any type, even mixed ones. You can’t ask Lox if 3 is *less* than `"three"`, but you can ask if it’s *equal* to it.
 
-Spoiler alert: it’s not.
+> Spoiler alert: it’s not.
 
 Like truthiness, the equality logic is hoisted out into a separate method.
 
-      private boolean isEqual(Object a, Object b) {
-        if (a == null && b == null) return true;
-        if (a == null) return false;
+```
+  private boolean isEqual(Object a, Object b) {
+    if (a == null && b == null) return true;
+    if (a == null) return false;
 
-        return a.equals(b);
-      }
+    return a.equals(b);
+  }
+```
 
 *lox/Interpreter.java*, add after *isTruthy*()
 
@@ -290,13 +305,15 @@ This is one of those corners where the details of how we represent Lox objects i
 
 Fortunately, the two are pretty similar. Lox doesn’t do implicit conversions in equality and Java does not either. We do have to handle `nil`/`null` specially so that we don’t throw a NullPointerException if we try to call `equals()` on `null`. Otherwise, we’re fine. Java’s `equals()` method on Boolean, Double, and String have the behavior we want for Lox.
 
-What do you expect this to evaluate to:
-
-    (0 / 0) == (0 / 0)
-
-According to [IEEE 754](https://en.wikipedia.org/wiki/IEEE_754), which specifies the behavior of double-precision numbers, dividing a zero by zero gives you the special **NaN** (“not a number”) value. Strangely enough, NaN is *not* equal to itself.
-
-In Java, the `==` operator on primitive doubles preserves that behavior, but the `equals()` method on the Double class does not. Lox uses the latter, so doesn’t follow IEEE. These kinds of subtle incompatibilities occupy a dismaying fraction of language implementers’ lives.
+> What do you expect this to evaluate to:
+>
+> ```
+> (0 / 0) == (0 / 0)
+> ```
+>
+> According to [IEEE 754](https://en.wikipedia.org/wiki/IEEE_754), which specifies the behavior of double-precision numbers, dividing a zero by zero gives you the special **NaN** (“not a number”) value. Strangely enough, NaN is *not* equal to itself.
+>
+> In Java, the `==` operator on primitive doubles preserves that behavior, but the `equals()` method on the Double class does not. Lox uses the latter, so doesn’t follow IEEE. These kinds of subtle incompatibilities occupy a dismaying fraction of language implementers’ lives.
 
 And that’s it! That’s all the code we need to correctly interpret a valid Lox expression. But what about an *invalid* one? In particular, what happens when a subexpression evaluates to an object of the wrong type for the operation being performed?
 
@@ -304,9 +321,9 @@ And that’s it! That’s all the code we need to correctly interpret a valid Lo
 
 I was cavalier about jamming casts in whenever a subexpression produces an Object and the operator requires it to be a number or a string. Those casts can fail. Even though the user’s code is erroneous, if we want to make a usable language, we are responsible for handling that error gracefully.
 
-We could simply not detect or report a type error at all. This is what C does if you cast a pointer to some type that doesn’t match the data that is actually being pointed to. C gains flexibility and speed by allowing that, but is also famously dangerous. Once you misinterpret bits in memory, all bets are off.
-
-Few modern languages accept unsafe operations like that. Instead, most are **memory safe** and ensure—through a combination of static and runtime checks—that a program can never incorrectly interpret the value stored in a piece of memory.
+> We could simply not detect or report a type error at all. This is what C does if you cast a pointer to some type that doesn’t match the data that is actually being pointed to. C gains flexibility and speed by allowing that, but is also famously dangerous. Once you misinterpret bits in memory, all bets are off.
+>
+> Few modern languages accept unsafe operations like that. Instead, most are **memory safe** and ensure—through a combination of static and runtime checks—that a program can never incorrectly interpret the value stored in a piece of memory.
 
 It’s time for us to talk about **runtime errors**. I spilled a lot of ink in the previous chapters talking about error handling, but those were all *syntax* or *static* errors. Those are detected and reported before *any* code is executed. Runtime errors are failures that the language semantics demand we detect and report while the program is running (hence the name).
 
@@ -320,9 +337,9 @@ The Java behavior does have one thing going for it, though. It correctly stops e
 
 You can’t negate a muffin, so we need to report a runtime error at that inner `-` expression. That in turn means we can’t evaluate the `/` expression since it has no meaningful right operand. Likewise for the `*`. So when a runtime error occurs deep in some expression, we need to escape all the way out.
 
-I don’t know, man, *can* you negate a muffin?
-
-![A muffin, negated.](media/image/evaluating-expressions/muffin.png)
+> I don’t know, man, *can* you negate a muffin?
+>
+> ![A muffin, negated.](media/image/evaluating-expressions/muffin.png)
 
 We could print a runtime error and then abort the process and exit the application entirely. That has a certain melodramatic flair. Sort of the programming language interpreter equivalent of a mic drop.
 
@@ -350,10 +367,12 @@ Before we do the cast, we check the object’s type ourselves. So, for unary `-`
 
 The code to check the operand is:
 
-      private void checkNumberOperand(Token operator, Object operand) {
-        if (operand instanceof Double) return;
-        throw new RuntimeError(operator, "Operand must be a number.");
-      }
+```
+  private void checkNumberOperand(Token operator, Object operand) {
+    if (operand instanceof Double) return;
+    throw new RuntimeError(operator, "Operand must be a number.");
+  }
+```
 
 *lox/Interpreter.java*, add after *visitUnaryExpr*()
 
@@ -376,7 +395,7 @@ class RuntimeError extends RuntimeException {
 
 Unlike the Java cast exception, our class tracks the token that identifies where in the user’s code the runtime error came from. As with static errors, this helps the user know where to fix their code.
 
-I admit the name “RuntimeError” is confusing since Java defines a RuntimeException class. An annoying thing about building interpreters is your names often collide with ones already taken by the implementation language. Just wait until we support Lox classes.
+> I admit the name “RuntimeError” is confusing since Java defines a RuntimeException class. An annoying thing about building interpreters is your names often collide with ones already taken by the implementation language. Just wait until we support Lox classes.
 
 We need similar checking for the binary operators. Since I promised you every single line of code needed to implement the interpreters, I’ll run through them all.
 
@@ -494,22 +513,24 @@ Multiplication:
 
 All of those rely on this validator, which is virtually the same as the unary one:
 
-      private void checkNumberOperands(Token operator,
-                                       Object left, Object right) {
-        if (left instanceof Double && right instanceof Double) return;
-       
-        throw new RuntimeError(operator, "Operands must be numbers.");
-      }
+```
+  private void checkNumberOperands(Token operator,
+                                   Object left, Object right) {
+    if (left instanceof Double && right instanceof Double) return;
+   
+    throw new RuntimeError(operator, "Operands must be numbers.");
+  }
+```
 
 *lox/Interpreter.java*, add after *checkNumberOperand*()
 
-Another subtle semantic choice: We evaluate *both* operands before checking the type of *either*. Imagine we have a function `say()` that prints its argument then returns it. Using that, we write:
-
-```
-say("left") - say("right");
-```
-
-Our interpreter prints “left” and “right” before reporting the runtime error. We could have instead specified that the left operand is checked before even evaluating the right.
+> Another subtle semantic choice: We evaluate *both* operands before checking the type of *either*. Imagine we have a function `say()` that prints its argument then returns it. Using that, we write:
+>
+> ```
+> say("left") - say("right");
+> ```
+>
+> Our interpreter prints “left” and “right” before reporting the runtime error. We could have instead specified that the left operand is checked before even evaluating the right.
 
 The last remaining operator, again the odd one out, is addition. Since `+` is overloaded for numbers and strings, it already has code to check the types. All we need to do is fail if neither of the two success cases match.
 
@@ -535,32 +556,36 @@ That gets us detecting runtime errors deep in the innards of the evaluator. The 
 
 The visit methods are sort of the guts of the Interpreter class, where the real work happens. We need to wrap a skin around them to interface with the rest of the program. The Interpreter’s public API is simply one method.
 
-      void interpret(Expr expression) {
-        try {
-          Object value = evaluate(expression);
-          System.out.println(stringify(value));
-        } catch (RuntimeError error) {
-          Lox.runtimeError(error);
-        }
-      }
+```
+  void interpret(Expr expression) {
+    try {
+      Object value = evaluate(expression);
+      System.out.println(stringify(value));
+    } catch (RuntimeError error) {
+      Lox.runtimeError(error);
+    }
+  }
+```
 
 *lox/Interpreter.java*, in class *Interpreter*
 
 This takes in a syntax tree for an expression and evaluates it. If that succeeds, `evaluate()` returns an object for the result value. `interpret()` converts that to a string and shows it to the user. To convert a Lox value to a string, we rely on:
 
-      private String stringify(Object object) {
-        if (object == null) return "nil";
+```
+  private String stringify(Object object) {
+    if (object == null) return "nil";
 
-        if (object instanceof Double) {
-          String text = object.toString();
-          if (text.endsWith(".0")) {
-            text = text.substring(0, text.length() - 2);
-          }
-          return text;
-        }
-
-        return object.toString();
+    if (object instanceof Double) {
+      String text = object.toString();
+      if (text.endsWith(".0")) {
+        text = text.substring(0, text.length() - 2);
       }
+      return text;
+    }
+
+    return object.toString();
+  }
+```
 
 *lox/Interpreter.java*, add after *isEqual*()
 
@@ -570,19 +595,21 @@ It’s pretty straightforward. Since Lox was designed to be familiar to someone 
 
 Lox uses double-precision numbers even for integer values. In that case, they should print without a decimal point. Since Java has both floating point and integer types, it wants you to know which one you’re using. It tells you by adding an explicit `.0` to integer-valued doubles. We don’t care about that, so we hack it off the end.
 
-Yet again, we take care of this edge case with numbers to ensure that jlox and clox work the same. Handling weird corners of the language like this will drive you crazy but is an important part of the job.
-
-Users rely on these details—either deliberately or inadvertently—and if the implementations aren’t consistent, their program will break when they run it on different interpreters.
+> Yet again, we take care of this edge case with numbers to ensure that jlox and clox work the same. Handling weird corners of the language like this will drive you crazy but is an important part of the job.
+>
+> Users rely on these details—either deliberately or inadvertently—and if the implementations aren’t consistent, their program will break when they run it on different interpreters.
 
 ### 7.4.1 Reporting runtime errors
 
 If a runtime error is thrown while evaluating the expression, `interpret()` catches it. This lets us report the error to the user and then gracefully continue. All of our existing error reporting code lives in the Lox class, so we put this method there too:
 
-      static void runtimeError(RuntimeError error) {
-        System.err.println(error.getMessage() +
-            "\n[line " + error.token.line + "]");
-        hadRuntimeError = true;
-      }
+```
+  static void runtimeError(RuntimeError error) {
+    System.err.println(error.getMessage() +
+        "\n[line " + error.token.line + "]");
+    hadRuntimeError = true;
+  }
+```
 
 *lox/Lox.java*, add after *error*()
 
@@ -625,7 +652,7 @@ That field plays a small but important role.
 
 If the user is running a Lox script from a file and a runtime error occurs, we set an exit code when the process quits to let the calling process know. Not everyone cares about shell etiquette, but we do.
 
-If the user is running the REPL, we don’t care about tracking runtime errors. After they are reported, we simply loop around and let them input new code and keep going.
+> If the user is running the REPL, we don’t care about tracking runtime errors. After they are reported, we simply loop around and let them input new code and keep going.
 
 ### 7.4.2 Running the interpreter
 

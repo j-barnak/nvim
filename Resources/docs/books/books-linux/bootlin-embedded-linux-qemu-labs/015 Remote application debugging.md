@@ -50,9 +50,7 @@ Now, go to the \$HOME/embedded-linux-qemu-labs/debugging directory.
 
 strace allows to trace all the system calls made by a process: opening, reading and writing files, starting other processes, accessing time, etc. When something goes wrong in your application, strace is an invaluable tool to see what it actually does, even when you don’t have the source code.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 41
 
-Embedded Linux System Development
 
 Update the PATH:
 
@@ -108,9 +106,7 @@ Graphical versions of gdb, such as ddd can also be used in the same way. In our 
 
 42
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 (gdb) continue
 
@@ -140,7 +136,6 @@ During this lab, we learned that...
 
 • Thanks to core dumps, you can know where a program crashed, without having to reproduce the issue by running the program through the debugger.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 43
 
 # Document Outline
 

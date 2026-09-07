@@ -1,6 +1,6 @@
 ## **Chapter 1 – Introduction** 
 
- 
+
 
 The suddenness of the leap from hardware to software cannot but produce a period of anarchy
 
@@ -8,7 +8,7 @@ and collapse, especially in the developed countries.
 
 —Marshall McLuhan
 
- 
+
 
 This chapter provides an overview of the evolution of the Extensible Firmware Inter-face (EFI) to the Unified Extensible Firmware Interface (UEFI) and from the Intel
 
@@ -34,19 +34,18 @@ can exist as a limited runtime for some application set, in lieu of loading a fu
 
 X†, HP-UX†, or Linux, but that is not the primary design goal.
 
- 
+
 
 DOI 10.1515/9781501505690-003
 
-**2** \| Chapter 1 – Introduction
 
 ![](media/index-21_1.png)
 
- 
+
 
 **Figure 1.1:** Where EFI and UEFI Fit into the Platform Boot Flow
 
- 
+
 
 PI, on the other hand, should be largely opaque to the pre-OS boot devices, operating systems, and their loaders since it covers many software aspects of platform construc-
 
@@ -56,13 +55,12 @@ ronment compatible with UEFI, as shown in Figure 1.2. In fact, the PI DXE compon
 
 ![](media/index-21_2.png)
 
- 
+
 
 **Figure 1.2:** Where PI and Framework Fit into the Platform Boot Flow
 
-Terminology \| **3**
 
- 
+
 
 Within the evolution of Framework to PI, some things were omitted from inclusion in the PI specifications. As a result of these omissions, some subjects that were dis-
 
@@ -106,9 +104,9 @@ ple, Dell, HP, IBM, Lenovo, and many others. The producers of PI components incl
 
 AMI, Insyde, Phoenix, and others. And finally, the vendors producing chipsets, CPUs, and other hardware devices like AMD, ARM, and Intel would produce drivers for their
 
-respective hardware. The IBVs and the OEMs would use the silicon drivers, for exam-ple. If it were not for this business-to-business transaction, the discoverable binary **4** \| Chapter 1 – Introduction
+respective hardware. The IBVs and the OEMs would use the silicon drivers, for exam-ple. If it were not for this business-to-business transaction, the discoverable binary
 
- 
+
 
 interfaces and separate executable modules (such as PEIMs and DXE drivers) would not be of interest. This is especially true since publishing GUID-based APIs, marshal-
 
@@ -130,11 +128,11 @@ Compatibility Package (ECP). For new development, though, the recommendation is 
 
 tions against which long-term silicon enabling and operating system support will oc-cur, respectively.
 
- 
+
 
 **Terminology**
 
- 
+
 
 The following list provides a quick overview of some of the terms that may be encoun-
 
@@ -168,13 +166,12 @@ is now effectively replaced by the PI specifications.
 
 work specifications.
 
-Short History of EFI \| **5**
 
- 
+
 
 **Short History of EFI**
 
- 
+
 
 The Extensible Firmware interface (EFI) project was developed by Intel, with the ini-tial specification released in 1999. At the time, it was designed as the means by which
 
@@ -202,17 +199,17 @@ In Figure 1.3 we illustrate the evolution of the BIOS from its legacy days throu
 
 ![](media/index-24_1.png)
 
- 
 
-**Figure 1.3:** BIOS Evolution Timeline **6** \| Chapter 1 – Introduction
+
+**Figure 1.3:** BIOS Evolution Timeline
 
 ![](media/index-24_2.png)
 
- 
+
 
 **EFI Becomes UEFI—The UEFI Forum**
 
- 
+
 
 Regarding the UEFI Forum, there are various aspects to how it manages both the UEFI and PI specifications. Specifically, the UEFI forum is responsible for creating the UEFI
 
@@ -226,7 +223,7 @@ When the UEFI Forum first formed, a variety of factors and steps were part of th
 
 ■ EFI 1.10 components provide starting drafts ■ Intel agrees to contribute EFI test suite
 
- 
+
 
 As this had established the framework of the specification material that was pro-
 
@@ -238,13 +235,13 @@ duced, which the industry used, the forum itself was formed with several thought
 
 – Continue to drive low barrier for adoption
 
- 
+
 
 ■ The Promoter members for the UEFI forum are:
 
 – AMD, AMI, Apple, Dell, HP, IBM, Insyde, Intel, Lenovo, Microsoft, Phoenix
 
- 
+
 
 ■ The UEFI Forum has a form of tiered Membership:
 
@@ -252,7 +249,7 @@ duced, which the industry used, the forum itself was formed with several thought
 
 – More information on the membership tiers can be found at: www.uefi.org
 
- 
+
 
 ■ The UEFI Forum has several work groups:
 
@@ -260,17 +257,16 @@ duced, which the industry used, the forum itself was formed with several thought
 
 roles.
 
-EFI Becomes UEFI—The UEFI Forum \| **7**
 
 ![](media/index-26_1.png)
 
- 
+
 
 **Figure 1.4:** Forum group hierarchy
 
 ![](media/index-26_2.png)
 
- 
+
 
 ■ Sub-teams are created in the main owning workgroup when a topic of sufficient
 
@@ -294,7 +290,7 @@ has been responsible for the creation of the UEFI configuration infrastructure c
 
 Specification.
 
- 
+
 
 – UNST – UEFI Networking Sub-team
 
@@ -306,9 +302,8 @@ responsible for the update/inclusion of the network related ma-
 
 terial in the UEFI specification, most notably the IPv6 network infrastructure.
 
-**8** \| Chapter 1 – Introduction
 
- 
+
 
 – USHT – UEFI Shell Sub-team
 
@@ -318,7 +313,7 @@ terial in the UEFI specification, most notably the IPv6 network infrastructure.
 
 has been responsible for the creation of the UEFI Shell specifi-cation and continue to maintain the contents as technology evolves.
 
- 
+
 
 – USST – UEFI Security Sub-team
 
@@ -328,11 +323,11 @@ has been responsible for the creation of the UEFI Shell specifi-cation and conti
 
 responsible for the added security infrastructure in the UEFI specification.
 
- 
+
 
 **PIWG and USWG**
 
- 
+
 
 The Platform Initialization Working Group (PIWG) is the portion of the UEFI forum that defines the various specifications in the PI corpus. The UEFI Specification Working
 
@@ -342,11 +337,11 @@ trates the layers of the platform and what the scope that the USWG and PIWG cove
 
 ![](media/index-27_1.png)
 
- 
+
 
 **Figure 1.5:** PI/UEFI layering
 
- 
+
 
 Over time, these specifications have evolved. Below we enumerate the recent history
 
@@ -358,9 +353,8 @@ of specifications and the work associated with each:
 
 □ Builds on UEFI 2.0
 
-PIWG and USWG \| **9**
 
- 
+
 
 – New content area highlights:
 
@@ -370,7 +364,7 @@ PIWG and USWG \| **9**
 
 □ Authenticated Variable Support □ Simple Text Input Extensions □ Absolute Pointer Support
 
- 
+
 
 ■ UEFI 2.2
 
@@ -378,7 +372,7 @@ PIWG and USWG \| **9**
 
 □ Backlog that needed more gestation time
 
- 
+
 
 – Security/Integrity related enhancements
 
@@ -386,7 +380,7 @@ PIWG and USWG \| **9**
 
 with high integrity implementations of UEFI
 
- 
+
 
 – Human Interface Infrastructure enhancements
 
@@ -394,13 +388,13 @@ with high integrity implementations of UEFI
 
 tion of platforms with standards-based methodologies.
 
- 
+
 
 – Networking
 
 □ IPv6, PXE+, IPsec
 
- 
+
 
 – Various other subject areas possible
 
@@ -438,9 +432,9 @@ etc.
 
 – Inline Cryptographic Interface Protocol
 
-– Persistent Memory Types **10** \| Chapter 1 – Introduction
+– Persistent Memory Types
 
- 
+
 
 – PKCS7 Signature Verification Services
 
@@ -470,7 +464,7 @@ etc.
 
 – RAM Disk Protocol
 
- 
+
 
 To complement the layering picture in Figure 1.5, Figure 1.6 shows how the PI ele-ments evolve into the UEFI. The left half of the diagram with SEC, PEI, and DXE are
 
@@ -480,29 +474,28 @@ province of the UEFI specification.
 
 ![](media/index-29_1.png)
 
- 
+
 
 **Figure 1.6:** Where PI and Framework Fit into the Platform Boot Flow
 
- 
+
 
 In addition, as time has elapsed, the specifications have evolved. Figure 1.7 is a time-line for the specifications and the implementations associated with them.
 
-Platform Trust/Security \| **11**
 
 ![](media/index-30_1.png)
 
- 
+
 
 **Figure 1.7:** Specification and Codebase Timeline
 
 ![](media/index-30_2.png)
 
- 
+
 
 **Platform Trust/Security**
 
- 
+
 
 Recall that PI allowed for business-to-business engagements between component
 
@@ -524,9 +517,8 @@ tive domains include the following: PI must ensure that the PI elements are only
 
 of UEFI features, including security; UEFI provides infrastructure to authenticate the user, validate the source and integrity of UEFI executables, network authentication
 
-**12** \| Chapter 1 – Introduction
 
- 
+
 
 and transport security, audit (including hardware-based measured boot), and admin-istrative controls across UEFI policy objects, including write-protected UEFI varia-
 
@@ -536,17 +528,17 @@ A fusion of these security elements in a PI implementation is shown in Figure 1.
 
 ![](media/index-31_1.png)
 
- 
+
 
 **Figure 1.8:** Trusted UEFI/PI stack
 
 ![](media/index-31_2.png)
 
- 
+
 
 **Embedded Systems: The New Challenge**
 
- 
+
 
 As the UEFI took off and became pervasive, a new challenge has been taking shape in the form of the PC platform evolution to take on the embedded devices, more spe-
 
@@ -556,9 +548,8 @@ ments driven by user experience factors like instant power-on for various embedd
 
 system model.
 
-Embedded Systems: The New Challenge \| **13**
 
- 
+
 
 The challenge now is to make the embedded platform firmware have similar ca-pabilities to the traditional model such as the being OS-agnostic, being scalable
 
@@ -566,11 +557,11 @@ across different platform hardware, and being able to lessen the development tim
 
 port and to leverage the UEFI standards.
 
- 
+
 
 **How the Boot Process Differs between a Normal Boot and an Optimized/Embedded Boot**
 
- 
+
 
 Figure 1.9 indicates that between the normal boot and an optimized boot, there are no design differences from a UEFI architecture point of view. Optimizing a platform’s performance does *not* mean that one has to violate any of the design specifications. It
 
@@ -580,7 +571,7 @@ nents that are necessary for the initialization of the platform itself. Chapter 
 
 comprise UEFI compliance.
 
- 
+
 
 SEC Phase SEC Phase
 
@@ -588,7 +579,7 @@ Pre-memory early initialization, microcode Pre-memory early initialization, micr
 
 patching, and MTRR programming. patching, and MTRR programming.
 
- 
+
 
 PEI Phase
 
@@ -604,19 +595,19 @@ initialization, microcode patching, and MTRR programming.
 
 patching, and MTRR programming.
 
- 
+
 
 Yes Are we in an Are we in an
 
 S3 Boot mode? Yes S3 Boot mode?
 
- 
+
 
 O/S Resume Vector O/S Resume Vector
 
 No No
 
- 
+
 
 DXE + BDS Phase DXE + BDS Phase
 
@@ -626,21 +617,20 @@ Dispatch all drivers encountered. Dispatch only the **minimal** drivers required
 
 boot the target
 
- 
+
 
 **Normal Boot** **Optimized Boot**
 
- 
+
 
 **Figure 1.9:** Architectural Boot Flow Comparison
 
-**14** \| Chapter 1 – Introduction
 
- 
+
 
 **Summary**
 
- 
+
 
 We have provided some rationale in this chapter for the changes from Beyond BIOS: Implementing the Unified Extensible Firmware Interface with Intel’s Framework to
 

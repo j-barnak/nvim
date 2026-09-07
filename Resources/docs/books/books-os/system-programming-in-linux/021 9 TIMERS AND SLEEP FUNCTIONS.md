@@ -1,3 +1,5 @@
+![](media/index-592_1.jpg)
+
 9 TIMERS AND SLEEP FUNCTIONS
 
 In Chapter 8, in learning how to design programs that respond to signals, we took another step toward being able to write interactive and event-driven programs, but we still have a few more concepts to
@@ -2785,5 +2787,3 @@ screen. (The macro TIOCGWINSZ will be its second argument.) Use
 your function to prevent watchfiles from crashing if the user enters
 
 more file arguments than can fit in the window.
-
-![](media/index-658_1.jpg)

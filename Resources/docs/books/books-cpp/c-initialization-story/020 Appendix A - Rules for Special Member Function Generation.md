@@ -1,6 +1,28 @@
+**Appendix A - Rules for Special**
+
+
+
+**Member Function Generation**
+
+In the chapters about constructors and the destructor, we discussed when a compiler implicitly generates a given special member for a class type. In this appendix, you’ll see a handy summary of the rules and guidelines for most common use cases.
+
+
+
+**The diagram**
+
+A C++ expert Howard Hinnant, a few years ago created a diagram⁵ with the rules:
+
+![](media/index-263_1.png)
+
+
+
+⁵diagram redrawn, with permission of Howard Hinnant.
+
+248
+
 Appendix A - Rules for Special Member Function Generation 249
 
- 
+
 
 Howard is a lead designer and author of the C++11 proposal for move semantics, the std::chrono library, and a few other vital parts of Modern C++. The diagram, along with
 
@@ -54,7 +76,7 @@ functions
 
 ⁷<https://www.youtube.com/watch?v=vLinb2fgkHk> Appendix A - Rules for Special Member Function Generation 250
 
- 
+
 
 • If a user declares a copy assignment, the compiler default constructor, destructor, and
 
@@ -68,13 +90,13 @@ constructor, and the destructor is defaulted. The move assignment is not declare
 
 destructor. The move constructor is not declared. The copy constructor and the copy assignment operator are deleted.
 
- 
+
 
 **More functions provided**
 
 In a row, there’s only one “user-declared” function, but if your class type has more than one special member function declared, then you have to look at the intersection of the matching rows. For example, suppose you declare a default constructor and a move assignment. In that case, the compiler will provide a default implementation for the destructor but will delete copy operations and not declare the move constructor.
 
- 
+
 
 **Inheritance**
 
@@ -112,11 +134,11 @@ Derived d; // won't compile!
 
 The above code doesn’t compile. We delete the move constructor from the Base class. This means that the move constructor in the Derived type is also deleted. In both types, the default constructor is not declared and not accessible.
 
- 
+
 
 **Rules**
 
- 
+
 
 **Rule of zero**
 
@@ -142,7 +164,7 @@ See the following rule from the C++ Coding Guideline: [C.20: If you can avoid de
 
 ⁸<https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c20-if-you-can-avoid-defining-default-operations-do> Appendix A - Rules for Special Member Function Generation 252
 
- 
+
 
 **Rule of three (deprecated!)**
 
@@ -188,7 +210,7 @@ See the following rule from the C++ Coding Guideline: [C.21: If you define or =d
 
 [destructor-function-define-or-delete-them-all](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c21-if-you-define-or-delete-any-copy-move-or-destructor-function-define-or-delete-them-all) Appendix A - Rules for Special Member Function Generation 253
 
- 
+
 
 **Moveable only types**
 
@@ -210,7 +232,7 @@ Note that in the above case, because we declare move operations, then the compil
 
 Example types: std::unique_ptr.
 
- 
+
 
 **Polymorphic base classes**
 

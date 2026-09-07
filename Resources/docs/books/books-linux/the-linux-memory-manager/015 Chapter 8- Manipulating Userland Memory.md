@@ -1,17 +1,16 @@
 
- 
 
 **8**
 
- 
+
 
 **M A N I P U L A T I N G U S E R L A N D**
 
- 
+
 
 **M E M O R Y**
 
- 
+
 
 There are a number of situations where both kernel
 
@@ -29,11 +28,11 @@ manipulating the attributes of userland memory:
 
 [mremap()](https://man7.org/linux/man-pages/man2/mremap.2.html), [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html), [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html) and [mprotect()](https://man7.org/linux/man-pages/man2/mprotect.2.html)[.](https://man7.org/linux/man-pages/man2/mprotect.2.html)
 
- 
+
 
 **8.1 Accessing User Memory from the Kernel**
 
- 
+
 
 Sometimes the kernel needs to access userland memory. This is significantly
 
@@ -52,7 +51,7 @@ Userland mappings, on the other hand, are not at all so easily accessed
 if we need to determine the folios associated with them, may be accessed
 
 
- 
+
 
 and manipulated at any time by userland and can disappear from under you altogether as the userland process maps and unmaps memory.
 
@@ -68,7 +67,7 @@ GUP on the other hand allow folios to be pinned (i.e. incrementing the
 
 underlying folio’s reference count such that they will not be freed until un-pinned), optionally returns folio and VMA objects and allows fine-grained control over how the whole operation is performed.
 
- 
+
 
 ***8.1.1 User Access***
 
@@ -96,7 +95,7 @@ The key user access function, [copy_from_user()](https://git.kernel.org/pub/scm/
 
 cisely this mechanism in order to perform these actions. Examining both:-
 
- 
+
 
 148 **static \_\_always_inline unsigned long \_\_must_check** 149 **copy_from_user**(**void** \*to, **const void \_\_user** \*from, **unsigned long** n) 150 {
 
@@ -104,19 +103,19 @@ cisely this mechanism in order to perform these actions. Examining both:-
 
 154 }
 
- 
+
 
 *Listing 8-1:* include/linux/uaccess.h: [*copy_from_user()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/uaccess.h?h=v6.0#n149)
 
- 
+
 
 156 **static \_\_always_inline unsigned long \_\_must_check**
 
- 
 
 
 
- 
+
+
 
 157 **copy_to_user**(**void \_\_user** \*to, **const void** \*from, **unsigned long** n) 158 {
 
@@ -124,11 +123,11 @@ cisely this mechanism in order to perform these actions. Examining both:-
 
 162 }
 
- 
+
 
 *Listing 8-2:* include/linux/uaccess.h: [*copy_to_user()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/uaccess.h?h=v6.0#n157)
 
- 
+
 
 Note that \_\_must_check is a compiler directive that generates a warning if
 
@@ -154,7 +153,7 @@ The actual implementation of these functions are provided by
 
 chitecture, but on x86-64, which we focus on, it is not. Examining these:-
 
- 
+
 
 10 **unsigned long \_copy_from_user**(**void** \*to, **const void \_\_user** \*from, **unsigned long**
 
@@ -182,11 +181,11 @@ n\)
 
 21 }
 
- 
+
 
 *Listing 8-3:* lib/usercopy.c: [*\_copy_from_user()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/usercopy.c?h=v6.0#n10)
 
- 
+
 
 26 **unsigned long \_copy_to_user**(**void \_\_user** \*to, **const void** \*from, **unsigned long** n
 
@@ -210,23 +209,23 @@ n\)
 
 35 **return** n;
 
- 
 
 
 
- 
+
+
 
 36 }
 
- 
+
 
 *Listing 8-4:* lib/usercopy.c: [*\_copy_to_user()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/usercopy.c?h=v6.0#n26)
 
- 
+
 
 Note that:-
 
- 
+
 
 • [might_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/kernel.h?h=v6.0#n197) is used by kernel lock/atomic sleep debugging and only
 
@@ -240,7 +239,7 @@ if CONFIG_FAULT_INJECTION_USERCOPY is configured) and out of scope for the book.
 
 KASAN and KCSAN both of which are out of scope of the book.
 
- 
+
 
 The [access_ok()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/uaccess.h?h=v6.0#n40) macro determines whether the specified address is valid
 
@@ -252,27 +251,27 @@ The heavy lifting is left to the raw versions of the functions. Examining
 
 these:-
 
- 
+
 
 49 **static \_\_always_inline \_\_must_check unsigned long** 50 **raw_copy_from_user**(**void** \*dst, **const void \_\_user** \*src, **unsigned long** size) 51 {
 
 52 **return copy_user_generic**(dst, (**\_\_force void** \*)src, size); 53 }
 
- 
+
 
 *Listing 8-5:* arch/x86/include/asm/uaccess_64.h: [*raw_copy_from_user()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/uaccess_64.h?h=v6.0#n50)
 
- 
+
 
 55 **static \_\_always_inline \_\_must_check unsigned long** 56 **raw_copy_to_user**(**void \_\_user** \*dst, **const void** \*src, **unsigned long** size) 57 {
 
 58 **return copy_user_generic**((**\_\_force void** \*)dst, src, size); 59 }
 
- 
+
 
 *Listing 8-6:* arch/x86/include/asm/uaccess_64.h: [*raw_copy_to_user()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/uaccess_64.h?h=v6.0#n56)
 
- 
+
 
 Note that \_\_force is a static analysis hint that has no effect for an ordinary
 
@@ -282,7 +281,7 @@ These both invoke [copy_user_generic()](https://git.kernel.org/pub/scm/linux/ker
 
 operation:-
 
- 
+
 
 27 **static \_\_always_inline \_\_must_check unsigned long** 28 **copy_user_generic**(**void** \*to, **const void** \*from, **unsigned** len) 29 {
 
@@ -292,11 +291,11 @@ operation:-
 
 32 */\**
 
- 
 
 
 
- 
+
+
 
 33 *\* If CPU has ERMS feature, use copy_user_enhanced_fast_string.*
 
@@ -330,11 +329,11 @@ operation:-
 
 47 }
 
- 
+
 
 *Listing 8-7:* arch/x86/include/asm/uaccess_64.h: [*copy_user_generic()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/uaccess_64.h?h=v6.0#n28)
 
- 
+
 
 This x86-64-specific routine invokes different assembly routines to per-
 
@@ -342,7 +341,7 @@ form the actual copy depending on available CPU features. For the sake of
 
 brevity we will examine only one, [copy_user_enhanced_fast_string()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/lib/copy_user_64.S?h=v6.0#n161):-
 
- 
+
 
 149 */\**
 
@@ -384,19 +383,19 @@ brevity we will examine only one, [copy_user_enhanced_fast_string()](https://git
 
 173
 
- 
 
 
 
- 
+
+
 
 174 **\_ASM_EXTABLE_CPY**(1b, 12b) 175 **SYM_FUNC_END**(**copy_user_enhanced_fast_string**)
 
- 
+
 
 *Listing 8-8:* arch/x86/lib/copy_user_64.S: [*copy_user_enhanced_fast_string()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/lib/copy_user_64.S?h=v6.0#n161)
 
- 
+
 
 A description of how the actual copy is performed here is out of scope,
 
@@ -406,15 +405,15 @@ the assembler macro [\_ASM_EXTABLE_CPY()](https://git.kernel.org/pub/scm/linux/k
 
 in [\_ASM_EXTABLE_TYPE()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/asm.h?h=v6.0#n135)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/asm.h?h=v6.0#n135)
 
- 
+
 
 135 **\# define \_ASM_EXTABLE_TYPE**(from, to, type) \\ 136 .**pushsection** "\_\_ex_table","a" ; \\ 137 .**balign** 4 ; \\ 138 .**long** (from) - . ; \\ 139 .**long** (to) - . ; \\ 140 .**long** type ; \\ 141 .**popsection**
 
- 
+
 
 *Listing 8-9:* arch/x86/include/asm/asm.h: [*\_ASM_EXTABLE_TYPE()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/asm.h?h=v6.0#n135)
 
- 
+
 
 This sets up an entry in the exception table of type
 
@@ -430,7 +429,7 @@ mode can be handled or ought to result in a kernel oops (and thus poten-
 
 tially a system lockup) in x86-64 is [kernelmode_fixup_or_oops()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n712). Stripping out irrelevant details:-
 
- 
+
 
 711 **static noinline void**
 
@@ -448,19 +447,19 @@ tially a system lockup) in x86-64 is [kernelmode_fixup_or_oops()](https://git.ke
 
 . . .
 
- 
 
 
 
- 
+
+
 
 760 **page_fault_oops**(regs, error_code, address); 761 }
 
- 
+
 
 *Listing 8-10:* arch/x86/mm/fault.c: [*kernelmode_fixup_or_oops()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/fault.c?h=v6.0#n712)
 
- 
+
 
 This invokes [fixup_exception()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/extable.c?h=v6.0#n205) to check whether the faulting address is
 
@@ -470,7 +469,7 @@ referenced in an exception table (and perform the fixup if so). If it isn’t th
 
 Examining this function:-
 
- 
+
 
 205 **int fixup_exception**(**struct** pt_regs \*regs, **int** trapnr, **unsigned long** error_code
 
@@ -506,11 +505,11 @@ Examining this function:-
 
 277 }
 
- 
+
 
 *Listing 8-11:* arch/x86/mm/extable.c: [*fixup_exception()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/extable.c?h=v6.0#n205)
 
- 
+
 
 The key function here is [search_exception_tables()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/extable.c?h=v6.0#n54) which searches each of
 
@@ -528,7 +527,7 @@ using [ex_to_insn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 address:-
 
- 
+
 
 18 **static inline unsigned long ex_to_insn**(**const struct** exception_table_entry \*x)
 
@@ -538,15 +537,15 @@ address:-
 
 21 }
 
- 
 
 
 
- 
+
+
 
 *Listing 8-12:* lib/extable.c: [*ex_to_insn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/extable.c?h=v6.0#n18)
 
- 
+
 
 Which offsets from the location of the exception table entry to obtain
 
@@ -558,17 +557,17 @@ fixup. This in turn invokes [ex_handler_fault()](https://git.kernel.org/pub/scm/
 
 which fixes up the faulting instruction pointer using [ex_fixup_addr()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/extable.c?h=v6.0#n27):-
 
- 
+
 
 26 **static inline unsigned long** 27 **ex_fixup_addr**(**const struct** exception_table_entry \*x) 28 {
 
 29 **return** (**unsigned long**)&x-\>fixup + x-\>fixup; 30 }
 
- 
+
 
 *Listing 8-13:* arch/x86/mm/extable.c: [*ex_fixup_addr()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/extable.c?h=v6.0#n27)
 
- 
+
 
 This again uses the relative offset to point the instruction pointer at the
 
@@ -584,7 +583,7 @@ These perform careful cache operations to ensure that, on architectures
 
 where accessing the memory through the direct mapping might result in inconsistency in userland, the appropriate cache lines are invalidated. This is not applicable to x86-64.
 
- 
+
 
 ***8.1.2 Get User Pages (GUP)***
 
@@ -608,11 +607,11 @@ What GUP does with the input memory range is determined via GUP
 
 flags, each of which which we will examine shortly. Firstly, let’s take a look at the core GUP API and supporting functions:-
 
- 
 
 
 
- 
+
+
 
 Table 8-1: Core GUP functions
 
@@ -640,7 +639,7 @@ mmap_lock ? FOLL_GET? FOLL_PIN? FOLL_TOUCH? pages? vmas?
 
 [pin_user_pages_remote()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3186) *•* *•* *•* *•* *•*
 
- 
+
 
 *∗* and allows the use of FOLL_LONGTERM. We’ll get into what FOLL_GET, FOLL_PIN and FOLL_LONGTERM mean shortly.
 
@@ -658,7 +657,7 @@ additional ones that are specific to certain functions only. Examining them
 
 all:-
 
- 
+
 
 • start – (all functions) – An initial page-aligned virtual address.
 
@@ -688,21 +687,21 @@ the caller to hold the [struct mm_struct](https://git.kernel.org/pub/scm/linux/k
 
 to an optional output boolean indicating whether the mmap_lock read
 
- 
 
 
 
- 
+
+
 
 semaphore has been dropped due to VM_FAULT_RETRY. If specified, then the vmas parameter cannot be used as VMAs are no longer valid once the lock is dropped.
 
- 
+
 
 All of the functions return the number of base pages that the actions
 
 have been applied to, or a negative error code if something has gone wrong.
 
- 
+
 
 ***8.1.3 Pinning Folios***
 
@@ -732,7 +731,7 @@ same ends and must be unpinned via [unpin_user_page()](https://git.kernel.org/pu
 
 When deciding which interface to use the criteria are as follows\*:-
 
- 
+
 
 • Use get\_\*\_user_pages\*() when the user memory access is short-term, i.e.
 
@@ -748,13 +747,13 @@ the mmap_lock is held. Memory can either be kept briefly during which an operati
 
 In either case, the memory cannot be reclaimed or become a CoW map-ping on fork and any existing CoW mapping is immediately unshared even if read-only.
 
- 
+
 
 \*. See the [pin user pages](https://kernel.org/doc/html/v6.0/core-api/pin_user_pages.html) documentation for a lot more detail on this
 
 
 
- 
+
 
 The key users of the pin\_\*() functions are DMA\* routines utilising user-
 
@@ -770,7 +769,7 @@ their data manipulated. This is checked by [folio_maybe_dma_pinned()](https://gi
 
 [page_maybe_dma_pinned()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1515). The places where this check are performed are:-
 
- 
+
 
 **Reclaim** – Skips memory reclaim of folios which are marked this way in
 
@@ -790,7 +789,7 @@ is used by [page_try_dup_anon_rmap()](https://git.kernel.org/pub/scm/linux/kerne
 
 invoked via [copy_page_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1272) (called by [dup_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n580)[)](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n580) to force a copy. It is additionally used by huge page logic in the same fashion.
 
- 
+
 
 When FOLL_PIN is used, the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) flag [MMF_HAS_PINNED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/coredump.h?h=v6.0#n84) flag is set
 
@@ -832,17 +831,17 @@ subpage to store a precise GUP-pin count, compound_pincount, accessed via
 
 [folio_maybe_dma_pinned() :-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1498)
 
- 
+
 
 \*. DMA refers to Direct Memory Access – which refers to devices’s ability to read or write mem-
 
 ory directly rather than have memory accesses mediated by the CPU.
 
- 
 
 
 
- 
+
+
 
 1473 */\*\**
 
@@ -888,19 +887,19 @@ ory directly rather than have memory accesses mediated by the CPU.
 
 1511 **return** ((**unsigned int**)**folio_ref_count**(folio)) \>= 1512 **GUP_PIN_COUNTING_BIAS**; 1513 }
 
- 
+
 
 *Listing 8-14:* include/linux/mm.h: [*folio_maybe_dma_pinned()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1498)
 
- 
+
 
 Note the careful handling of reference count overflow.
 
- 
 
 
 
- 
+
+
 
 A flag that is closely related to FOLL_PIN (and requires it to be set to be
 
@@ -926,7 +925,7 @@ page cache, a topic that is out of scope for the book) to take into account
 
 this intended usage of the GUP-pinned memory.
 
- 
+
 
 ***8.1.4 Follow Flags***
 
@@ -936,7 +935,7 @@ via ‘follow’ flags prefixed with FOLL\_ and declared in the [include/linux/m
 
 header. Examining each:-
 
- 
+
 
 • [FOLL_GET](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2884) – One of the two core pinning flags, see the above section on pin-
 
@@ -978,11 +977,11 @@ mits access to any VMA. Checked in [can_follow_write_pte()](https://git.kernel.o
 
 [check_vma_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1027). A very powerful and dangerous flag that should be used carefully and sparingly. Typically used by ptrace to access other-wise inaccessible memory.
 
- 
 
 
 
- 
+
+
 
 • [FOLL_NOWAIT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2887) – Indicates that the mmap_lock should not be dropped, and
 
@@ -1054,17 +1053,17 @@ be retried in [\_\_get_user_pages_locked()](https://git.kernel.org/pub/scm/linux
 
 [pin_user_pages_fast_only()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3131). This prevents these functions from falling back to non-fast versions if a page fault is needed.
 
- 
+
 
 
 
 [pin_user_pages_fast_only()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3131) [get_user_pages_fast_only()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3032)
 
- 
+
 
 [pin_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3110) [get_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3077)
 
- 
+
 
 [pin_user_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3221) [get_user_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2245) [internal_get_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2964)
 
@@ -1072,31 +1071,31 @@ Slow path, no *FOLL_FAST_ONLY*
 
 [check_and_migrate_movable_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1935) [\_\_gup_longterm_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2063) [\_\_gup_longterm_unlocked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2892)
 
- 
+
 
 [\_\_get_user_pages_remote()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2109) [\_\_get_user_pages_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1387) [get_user_pages_unlocked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2272)
 
- 
+
 
 [get_user_pages_remote()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2198) [\_\_get_user_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1140) [pin_user_pages_unlocked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3243)
 
- 
+
 
 [pin_user_pages_remote()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3186) [follow_page_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n844) [lockless_pages_from_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2915)
 
- 
+
 
 [faultin_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n960) [follow_p4d_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n794) [gup_pgd_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2849)
 
- 
+
 
 [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129) [follow_pud_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n754) [gup_p4d_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2824)
 
- 
+
 
 Fault in page... [follow_pmd_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n646) [gup_pud_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2796)
 
- 
+
 
 [follow_page_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n519) [gup_pmd_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2753)
 
@@ -1104,27 +1103,27 @@ If FOLL_GET/PIN
 
 [try_grab_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n202) [gup_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2367)
 
- 
+
 
 [try_grab_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n124)
 
- 
+
 
 *Figure 8-1: GUP functions*
 
- 
+
 
 Note that:-
 
- 
+
 
 • Denotes non-static GUP functions.
 
- 
+
 
 • Denotes key functions.
 
- 
+
 
 ***8.1.5 GUP Functions***
 
@@ -1140,15 +1139,15 @@ non-fast functions, passing through [\_\_get_user_pages_locked()](https://git.ke
 
 let’s examine the non-fast GUP functions:-
 
- 
+
 
 2229 */\*\**
 
- 
 
 
 
- 
+
+
 
 2230 *\* get_user_pages() - pin user pages in memory* 2231 *\* @start:* *starting user address* 2232 *\* @nr_pages:* *number of pages from start to pin* 2233 *\* @gup_flags: flags modifying lookup behaviour* 2234 *\* @pages:* *array that receives pointers to the pages pinned.* 2235 *\** *Should be at least nr_pages long. Or NULL, if caller* 2236 *\** *only intends to ensure the pages are faulted in.* 2237 *\* @vmas:* *array of pointers to vmas corresponding to each page.* 2238 *\** *Or NULL if the caller does not require them.* 2239 *\**
 
@@ -1166,11 +1165,11 @@ let’s examine the non-fast GUP functions:-
 
 2252 **return \_\_gup_longterm_locked**(current-\>mm, start, nr_pages, 2253 pages, vmas, gup_flags \| **FOLL_TOUCH**); 2254 }
 
- 
+
 
 *Listing 8-15:* mm/gup.c: [*get_user_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2245)
 
- 
+
 
 This requires the mmap_lock read semaphore to be held on entry. It checks
 
@@ -1178,7 +1177,7 @@ flags for the get\_\*() core functions before invoking [\_\_gup_longterm_locked(
 
 [is_valid_gup_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2089):-
 
- 
+
 
 2089 **static bool is_valid_gup_flags**(**unsigned int** gup_flags) 2090 {
 
@@ -1202,21 +1201,21 @@ flags for the get\_\*() core functions before invoking [\_\_gup_longterm_locked(
 
 2102 **if** (**WARN_ON_ONCE**(gup_flags & **FOLL_LONGTERM**)) 2103 **return false**; 2104
 
- 
 
 
 
- 
+
+
 
 2105 **return true**;
 
 2106 }
 
- 
+
 
 *Listing 8-16:* mm/gup.c: [*is_valid_gup_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2089)
 
- 
+
 
 This enforces the rule that FOLL_PIN and FOLL_LONGTERM flags can only be set
 
@@ -1224,7 +1223,7 @@ by the pin\_\*() functions.
 
 Examining the pin variant, [pin_user_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3221):-
 
- 
+
 
 3204 */\*\**
 
@@ -1252,11 +1251,11 @@ Examining the pin variant, [pin_user_pages()](https://git.kernel.org/pub/scm/lin
 
 3232 gup_flags \|= **FOLL_PIN**; 3233 **return \_\_gup_longterm_locked**(current-\>mm, start, nr_pages, 3234 pages, vmas, gup_flags); 3235 }
 
- 
+
 
 *Listing 8-17:* mm/gup.c: [*pin_user_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3221)
 
- 
+
 
 This performs a check to ensure that FOLL_GET is not set, setting FOLL_PIN
 
@@ -1266,11 +1265,11 @@ heavy lifting.
 
 Examining the remote variant, [get_user_pages_remote()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2198)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2198)
 
- 
 
 
 
- 
+
+
 
 2138 */\*\**
 
@@ -1316,11 +1315,11 @@ Examining the remote variant, [get_user_pages_remote()](https://git.kernel.org/p
 
 2183 *\* be called after the page is finished with, and before put_page is called.*
 
- 
 
 
 
- 
+
+
 
 2184 *\**
 
@@ -1338,11 +1337,11 @@ Examining the remote variant, [get_user_pages_remote()](https://git.kernel.org/p
 
 2206 **return \_\_get_user_pages_remote**(mm, start, nr_pages, gup_flags, 2207 pages, vmas, locked); 2208 }
 
- 
+
 
 *Listing 8-18:* mm/gup.c: [*get_user_pages_remote()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2198)
 
- 
+
 
 This again checks the flags are valid for the get\_\*() set of GUP func-
 
@@ -1352,7 +1351,7 @@ tions via [is_valid_gup_flags()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 Examining its pin equivalent, [pin_user_pages_remote()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3186):-
 
- 
+
 
 3164 */\*\**
 
@@ -1360,11 +1359,11 @@ Examining its pin equivalent, [pin_user_pages_remote()](https://git.kernel.org/p
 
 3167 *\* @mm:* *mm_struct of target mm* 3168 *\* @start:* *starting user address* 3169 *\* @nr_pages:* *number of pages from start to pin* 3170 *\* @gup_flags: flags modifying lookup behaviour* 3171 *\* @pages:* *array that receives pointers to the pages pinned.* 3172 *\** *Should be at least nr_pages long.* 3173 *\* @vmas:* *array of pointers to vmas corresponding to each page.* 3174 *\** *Or NULL if the caller does not require them.* 3175 *\* @locked:* *pointer to lock flag indicating whether lock is held and* 3176 *\** *subsequently whether VM_FAULT_RETRY functionality can be* 3177 *\** *utilised. Lock must initially be held.* 3178 *\**
 
- 
 
 
 
- 
+
+
 
 3179 *\* Nearly the same as get_user_pages_remote(), except that FOLL_PIN is set.*
 
@@ -1390,11 +1389,11 @@ Examining its pin equivalent, [pin_user_pages_remote()](https://git.kernel.org/p
 
 3198 gup_flags \|= **FOLL_PIN**; 3199 **return \_\_get_user_pages_remote**(mm, start, nr_pages, gup_flags, 3200 pages, vmas, locked); 3201 }
 
- 
+
 
 *Listing 8-19:* mm/gup.c: [*pin_user_pages_remote()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3186)
 
- 
+
 
 This checks to ensure that the invalid FOLL_GET is not set, that pages are
 
@@ -1404,7 +1403,7 @@ specified, and then sets FOLL_PIN before invoking the shared remote function
 
 Let’s examine it now:-
 
- 
+
 
 2109 **static long \_\_get_user_pages_remote**(**struct** mm_struct \*mm, 2110 **unsigned long** start, **unsigned long**
 
@@ -1428,11 +1427,11 @@ pages,
 
 2121 **if** (gup_flags & **FOLL_LONGTERM**) {
 
- 
 
 
 
- 
+
+
 
 2122 **if** (**WARN_ON_ONCE**(locked)) 2123 **return**-**EINVAL**; 2124 */\**
 
@@ -1448,11 +1447,11 @@ pages,
 
 2133 **return \_\_get_user_pages_locked**(mm, start, nr_pages, pages, vmas, 2134 locked, 2135 gup_flags \| **FOLL_TOUCH** \| **FOLL_REMOTE**); 2136 }
 
- 
+
 
 *Listing 8-20:* mm/gup.c: [*\_\_get_user_pages_remote()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2109)
 
- 
+
 
 If the FOLL_LONGTERM flag is set, this invokes [\_\_gup_longterm_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2063)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2063) oth-
 
@@ -1468,7 +1467,7 @@ erence [\_\_gup_longterm_locked()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 [\_\_get_user_pages_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1387) shortly):-
 
- 
+
 
 2059 */\**
 
@@ -1488,11 +1487,11 @@ vmas,
 
 2078 rc = **\_\_get_user_pages_locked**(mm, start, nr_pages, pages, vmas, 2079 **NULL**, gup_flags); 2080 **if** (rc \<= 0)
 
- 
 
 
 
- 
+
+
 
 2081 **break**; 2082 rc = **check_and_migrate_movable_pages**(rc, pages, gup_flags); 2083 } **while** (!rc);
 
@@ -1502,11 +1501,11 @@ vmas,
 
 2087 }
 
- 
+
 
 *Listing 8-21:* mm/gup.c: [*\_\_gup_longterm_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2063)
 
- 
+
 
 Note that all invocations of [\_\_get_user_pages_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1387) pass NULL as the
 
@@ -1530,7 +1529,7 @@ progress), or an error arises, we simply exit with that result. Otherwise, we
 
 invoke the function [check_and_migrate_movable_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1935) (eliding huge page and device coherent page code as out of scope):-
 
- 
+
 
 1929 */\**
 
@@ -1554,11 +1553,11 @@ invoke the function [check_and_migrate_movable_pages()](https://git.kernel.org/p
 
 . . .
 
- 
 
 
 
- 
+
+
 
 1982 **if** (**folio_is_longterm_pinnable**(folio)) 1983 **continue**;
 
@@ -1588,7 +1587,7 @@ invoke the function [check_and_migrate_movable_pages()](https://git.kernel.org/p
 
 2017 **return** nr_pages;
 
- 
+
 
 *Listing 8-22:* mm/gup.c: [*check_and_migrate_movable_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1935) *get movable pages*
 
@@ -1616,7 +1615,7 @@ migration, storing them in movable_page_list and performing the steps (ex-
 
 amining distinct folios only):-
 
- 
+
 
 1. Check whether the folio is long-term pinnable via the function
 
@@ -1626,11 +1625,11 @@ amining distinct folios only):-
 
 trigger an LRU drain (see section 11.7.12), but only once during the iteration in order to rate-limit this expensive operation.
 
- 
 
 
 
- 
+
+
 
 3. Try to isolate the folio (remove it from all existing LRU lists) via
 
@@ -1638,7 +1637,7 @@ trigger an LRU drain (see section 11.7.12), but only once during the iteration i
 
 4. Append the folio to the movable_page_list and update statistics.
 
- 
+
 
 If, in this process no folios are found that fail the
 
@@ -1646,13 +1645,13 @@ folio_is_longterm_pinnable() test, we simply return the nr_pages to indi-cate th
 
 Examining [folio_is_longterm_pinnable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1565):-
 
- 
+
 
 1565 **static inline bool folio_is_longterm_pinnable**(**struct** folio \*folio) 1566 {
 
 1567 **return is_longterm_pinnable_page**(&folio-\>page); 1568 }
 
- 
+
 
 *Listing 8-23:* include/linux/mm.h: [*folio_is_longterm_pinnable()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1565)
 
@@ -1660,7 +1659,7 @@ Which invokes [is_longterm_pinnable_page()](https://git.kernel.org/pub/scm/linux
 
 handling):-
 
- 
+
 
 1539 **static inline bool is_longterm_pinnable_page**(**struct** page \*page) 1540 {
 
@@ -1672,7 +1671,7 @@ handling):-
 
 1555 */\* Otherwise, non-movable zone pages can be pinned. \*/* 1556 **return** !**is_zone_movable_page**(page); 1557 }
 
- 
+
 
 *Listing 8-24:* include/linux/mm.h: [*is_longterm_pinnable_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1539)
 
@@ -1682,27 +1681,27 @@ vice coherent memory (out of scope for the book) is absolutely not pinnable.
 
 Finally we are left with [is_zone_movable_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n811):-
 
- 
+
 
 811 **static inline bool is_zone_movable_page**(**const struct** page \*page) 812 {
 
 813 **return page_zonenum**(page) == **ZONE_MOVABLE**; 814 }
 
- 
+
 
 \*. See the reclaim chapter for more details on [folio_isolate_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2254), however broadly this pulls a
 
 page out of its current LRU list ready for it to be transferred into another. See section 11.2 for more on LRUs as a concept.
 
- 
 
 
 
- 
+
+
 
 *Listing 8-25:* include/linux/mmzone.h: [*is_zone_movable_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n811)
 
- 
+
 
 For the majority of examined pages the need to migrate to an unmovable
 
@@ -1714,7 +1713,7 @@ Once the list of movable pages is established in movable_page_list, we
 
 move on to attempting to migrate them:-
 
- 
+
 
 2019 **unpin_pages**:
 
@@ -1748,11 +1747,11 @@ move on to attempting to migrate them:-
 
 2049 }
 
- 
+
 
 *Listing 8-26:* mm/gup.c: [*check_and_migrate_movable_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1935) *unpin pages*
 
- 
+
 
 This starts by relinquishing the reference count on each page acquired
 
@@ -1762,11 +1761,11 @@ pinned via [unpin_user_page()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 them to be unpinned.
 
- 
 
 
 
- 
+
+
 
 If we have at least some pages to move we then invoke [migrate_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/migrate.c?h=v6.0#n1395)
 
@@ -1774,7 +1773,7 @@ to do so (see the chapter on migration for details as to how this functions). Fi
 
 were via [putback_movable_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/migrate.c?h=v6.0#n137)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/migrate.c?h=v6.0#n137)
 
- 
+
 
 **8.1.5.1 Unlocked GUP Functions**
 
@@ -1784,7 +1783,7 @@ We have now examined the key non-fast interfaces to the GUP function-ality, howe
 
 which is invoked by [internal_get_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2964) when the fast path cannot be used:-
 
- 
+
 
 2892 **static int \_\_gup_longterm_unlocked**(**unsigned long** start, **int** nr_pages, 2893 **unsigned int** gup_flags, **struct** page \*\*pages
 
@@ -1810,11 +1809,11 @@ which is invoked by [internal_get_user_pages_fast()](https://git.kernel.org/pub/
 
 2913 }
 
- 
+
 
 *Listing 8-27:* mm/gup.c: [*\_\_gup_longterm_unlocked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2892)
 
- 
+
 
 This simply invokes [\_\_gup_longterm_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2063) when FOLL_LONGTERM is set (see
 
@@ -1822,7 +1821,7 @@ listing 8-21) with a newly acquired read lock on the mmap_lock semaphore,
 
 otherwise it invokes the more general exported [get_user_pages_unlocked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2272) function:-
 
- 
+
 
 2257 */\**
 
@@ -1830,11 +1829,11 @@ otherwise it invokes the more general exported [get_user_pages_unlocked()](https
 
 2260 *\** *mmap_read_lock(mm);* 2261 *\** *get_user_pages(mm, ..., pages, NULL);*
 
- 
 
 
 
- 
+
+
 
 2262 *\** *mmap_read_unlock(mm);* 2263 *\**
 
@@ -1870,11 +1869,11 @@ otherwise it invokes the more general exported [get_user_pages_unlocked()](https
 
 2294 }
 
- 
+
 
 *Listing 8-28:* mm/gup.c: [*get_user_pages_unlocked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2272)
 
- 
+
 
 Again, this defers the heavy lifting to [\_\_get_user_pages_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1387) af-
 
@@ -1894,17 +1893,17 @@ be specified, that FOLL_GET cannot be and sets FOLL_PIN if not already specified
 
 before invoking [get_user_pages_unlocked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2272) to do the heavy lifting:-
 
- 
+
 
 3238 */\**
 
 3239 *\* pin_user_pages_unlocked() is the FOLL_PIN variant of* 3240 *\* get_user_pages_unlocked(). Behavior is the same, except that this one sets*
 
- 
 
 
 
- 
+
+
 
 3241 *\* FOLL_PIN and rejects FOLL_GET.* 3242 *\*/*
 
@@ -1916,17 +1915,17 @@ before invoking [get_user_pages_unlocked()](https://git.kernel.org/pub/scm/linux
 
 3253 gup_flags \|= **FOLL_PIN**; 3254 **return get_user_pages_unlocked**(start, nr_pages, pages, gup_flags); 3255 }
 
- 
+
 
 *Listing 8-29:* mm/gup.c: [*pin_user_pages_unlocked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3243)
 
- 
+
 
 **8.1.5.2 Core Non-Fast GUP Functions**
 
 All non-fast GUP functions eventually invoke [\_\_get_user_pages_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1387)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1387) The bulk of this function is dedicated to handling fault retrying logic, which oc-curs where the lock parameter is non-NULL. Examining the start of the func-tion, which is the entirety of the logic should the caller not wish to retry:-
 
- 
+
 
 1383 */\**
 
@@ -1946,11 +1945,11 @@ All non-fast GUP functions eventually invoke [\_\_get_user_pages_locked()](https
 
 1405 **if** (flags & **FOLL_PIN**)
 
- 
 
 
 
- 
+
+
 
 1406 **mm_set_has_pinned_flag**(&mm-\>flags); 1407
 
@@ -1978,11 +1977,11 @@ All non-fast GUP functions eventually invoke [\_\_get_user_pages_locked()](https
 
 1423 ret = **\_\_get_user_pages**(mm, start, nr_pages, flags, pages, 1424 vmas, locked); 1425 **if** (!locked) 1426 */\* VM_FAULT_RETRY couldn't trigger, bypass \*/* 1427 **return** ret;
 
- 
+
 
 *Listing 8-30:* mm/gup.c: [*\_\_get_user_pages_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1387) *non-retry logic*
 
- 
+
 
 We perform some sanity checks, set FOLL_GET if pages are specified but this
 
@@ -2024,17 +2023,17 @@ Examining the remainder of the function (reiterating the start of the
 
 loop for clarity) which handles this case:-
 
- 
+
 
 1422 **for** (;;) {
 
 1423 ret = **\_\_get_user_pages**(mm, start, nr_pages, flags, pages,
 
- 
 
 
 
- 
+
+
 
 1424 vmas, locked);
 
@@ -2072,11 +2071,11 @@ loop for clarity) which handles this case:-
 
 1468 **if** (**fatal_signal_pending**(current)) { 1469 **if** (!pages_done) 1470 pages_done = -**EINTR**; 1471 **break**; 1472 }
 
- 
 
 
 
- 
+
+
 
 1473
 
@@ -2100,25 +2099,25 @@ loop for clarity) which handles this case:-
 
 1512 **return** pages_done; 1513 }
 
- 
+
 
 *Listing 8-31:* mm/gup.c: [*\_\_get_user_pages_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1387) *retry logic*
 
- 
+
 
 The logic is as follows:-
 
- 
+
 
 1. Attempt to process nr_pages pages started at address start via
 
 [\_\_get_user_pages() .](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1140)
 
- 
 
 
 
- 
+
+
 
 2. Assert that neither an error occurred nor do we appear to have pro-
 
@@ -2154,13 +2153,13 @@ FOLL_TRIED set to indicate that we have retried once. If we have to retry again 
 
 done, exit the loop, otherwise repeat the whole operation from step 1 again until we are done or an error occurs.
 
- 
+
 
 Now we will examine the core non-fast handler, [\_\_get_user_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1140), start-
 
 ing with the rather complete comment describing it and initial checks and initialisation:-
 
- 
+
 
 1080 */\*\**
 
@@ -2168,11 +2167,11 @@ ing with the rather complete comment describing it and initial checks and initia
 
 1093 *\* Returns either number of pages pinned (which may be less than the* 1094 *\* number requested), or an error. Details about the return value:*
 
- 
 
 
 
- 
+
+
 
 1095 *\**
 
@@ -2210,11 +2209,11 @@ ing with the rather complete comment describing it and initial checks and initia
 
 1140 **static long \_\_get_user_pages**(**struct** mm_struct \*mm, 1141 **unsigned long** start, **unsigned long** nr_pages,
 
- 
 
 
 
- 
+
+
 
 1142 **unsigned int** gup_flags, **struct** page \*\*pages, 1143 **struct** vm_area_struct \*\*vmas, **int** \*locked) 1144 {
 
@@ -2238,11 +2237,11 @@ ing with the rather complete comment describing it and initial checks and initia
 
 1161 **if** (!(gup_flags & **FOLL_FORCE**)) 1162 gup_flags \|= **FOLL_NUMA**;
 
- 
+
 
 *Listing 8-32:* mm/gup.c: [*\_\_get_user_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1140) *initialisation*
 
- 
+
 
 This starts by initialising local variables and handling the trivial case
 
@@ -2256,7 +2255,7 @@ Finally, FOLL_NUMA is specified for all cases except FOLL_FORCE which causes
 
 the GUP code to trigger a full fault when NUMA balancing is indicated\*. Ex-amining the remainder of the function which comprises its main loop (elid-ing out of scope gate area, huge page, device page map and manual cache maintenance logic):-
 
- 
+
 
 1164 **do** {
 
@@ -2264,15 +2263,15 @@ the GUP code to trigger a full fault when NUMA balancing is indicated\*. Ex-amin
 
 1169 */\* first iteration or cross vma bound \*/* 1170 **if** (!vma \|\| start \>= vma-\>vm_end) {
 
- 
+
 
 \*. NUMA balancing is a process by which the kernel periodically unmaps memory and remaps it on a local node if it was not already.
 
- 
 
 
 
- 
+
+
 
 1171 vma = **find_extend_vma**(mm, start);
 
@@ -2306,11 +2305,11 @@ the GUP code to trigger a full fault when NUMA balancing is indicated\*. Ex-amin
 
 1239 *\* for this page.* 1240 *\*/*
 
- 
 
 
 
- 
+
+
 
 1241 **if** (pages) { 1242 ret = **PTR_ERR**(page); 1243 **goto out**; 1244 } 1245
 
@@ -2340,15 +2339,15 @@ the GUP code to trigger a full fault when NUMA balancing is indicated\*. Ex-amin
 
 1272 **return** i ? i : ret;
 
- 
+
 
 *Listing 8-33:* mm/gup.c: [*\_\_get_user_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1140) *main loop*
 
- 
+
 
 The logic is as follows:-
 
- 
+
 
 1. If necessary, retrieve the current VMA containing start via
 
@@ -2368,11 +2367,11 @@ this either returns a pointer to its [struct page](https://git.kernel.org/pub/sc
 
 function in section 8.1.6 below.
 
- 
 
 
 
- 
+
+
 
 4. If either the page was not faulted in or an EMLINK error occurred, indicat-
 
@@ -2416,13 +2415,13 @@ cessed, by one. Note that here the logic seems more complicated even with parts 
 
 return an error if any occurred or zero if we could simply not progress. We prioritise indicating how many pages were pinned or had actions performed upon them so the caller can retry or otherwise respond to the fact that others were not processed as they intend.
 
- 
+
 
 Returning to [check_vma_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1027) (eliding out of scope DAX and secret
 
 memory logic):-
 
- 
+
 
 1027 **static int check_vma_flags**(**struct** vm_area_struct \*vma, **unsigned long** gup_flags
 
@@ -2432,11 +2431,11 @@ memory logic):-
 
 1029 **vm_flags_t** vm_flags = vma-\>vm_flags; 1030 **int** write = (gup_flags & **FOLL_WRITE**); 1031 **int** foreign = (gup_flags & **FOLL_REMOTE**);
 
- 
 
 
 
- 
+
+
 
 1032
 
@@ -2480,11 +2479,11 @@ memory logic):-
 
 1078 }
 
- 
+
 
 *Listing 8-34:* mm/gup.c: [*check_vma_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1027)
 
- 
+
 
 This performs sanity checks on the [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA)’s flags
 
@@ -2492,11 +2491,11 @@ given the specified GUP flags, including permissions checks.
 
 An error is returned if:-
 
- 
 
 
 
- 
+
+
 
 • Either VM_IO or VM_PFNMAP are specified, indicating that this is a raw map-
 
@@ -2518,7 +2517,7 @@ FOLL_FORCE is not specified. If FOLL_FORCE is specified but the mapping can neve
 
 • The architecture-specific check [arch_vma_access_permitted()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/mmu_context.h?h=v6.0#n207) fails.
 
- 
+
 
 ***8.1.6 Walking Page Tables***
 
@@ -2532,7 +2531,7 @@ the PGD level with [follow_page_mask()](https://git.kernel.org/pub/scm/linux/ker
 
 ZONE_DEVICE memory):-
 
- 
+
 
 820 */\*\**
 
@@ -2558,11 +2557,11 @@ ZONE_DEVICE memory):-
 
 844 **static struct** page \***follow_page_mask**(**struct** vm_area_struct \*vma, 845 **unsigned long** address, **unsigned int** flags, 846 **struct** follow_page_context \*ctx)
 
- 
 
 
 
- 
+
+
 
 847 {
 
@@ -2580,17 +2579,17 @@ ZONE_DEVICE memory):-
 
 881 **return follow_p4d_mask**(vma, address, pgd, flags, ctx); 882 }
 
- 
+
 
 *Listing 8-35:* mm/gup.c: [*follow_page_mask()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n844)
 
- 
+
 
 On each occasion when a page table entry can’t be found, [no_page_table()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n444)
 
 is invoked. This handles an edge case around core dumping:-
 
- 
+
 
 444 **static struct** page \***no_page_table**(**struct** vm_area_struct \*vma, 445 **unsigned int** flags) 446 {
 
@@ -2610,11 +2609,11 @@ is invoked. This handles an edge case around core dumping:-
 
 459 }
 
- 
+
 
 *Listing 8-36:* mm/gup.c: [*no_page_table()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n444)
 
- 
+
 
 At each of the page table levels this is invoked when an entry cannot be
 
@@ -2622,7 +2621,7 @@ found (indicating that the memory needs to be faulted in).
 
 Examining [follow_p4d_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n794) (eliding huge page handling):-
 
- 
+
 
 794 **static struct** page \***follow_p4d_mask**(**struct** vm_area_struct \*vma, 795 **unsigned long** address, **pgd_t** \*pgdp, 796 **unsigned int** flags, 797 **struct** follow_page_context \*ctx) 798 {
 
@@ -2632,11 +2631,11 @@ Examining [follow_p4d_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 802 p4d = **p4d_offset**(pgdp, address);
 
- 
 
 
 
- 
+
+
 
 803 **if** (**p4d_none**(\*p4d)) 804 **return no_page_table**(vma, flags);
 
@@ -2648,11 +2647,11 @@ Examining [follow_p4d_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 817 **return follow_pud_mask**(vma, address, p4d, flags, ctx); 818 }
 
- 
+
 
 *Listing 8-37:* mm/gup.c: [*follow_p4d_mask()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n794)
 
- 
+
 
 This, as with all of the other page table walking logic, simply uses the
 
@@ -2662,7 +2661,7 @@ p\*d_offset() functions to access each page table level (see the virtual memory
 
 huge page and device map logic):-
 
- 
+
 
 754 **static struct** page \***follow_pud_mask**(**struct** vm_area_struct \*vma, 755 **unsigned long** address, **p4d_t** \*p4dp, 756 **unsigned int** flags, 757 **struct** follow_page_context \*ctx) 758 {
 
@@ -2684,17 +2683,17 @@ huge page and device map logic):-
 
 791 **return follow_pmd_mask**(vma, address, pud, flags, ctx); 792 }
 
- 
+
 
 *Listing 8-38:* mm/gup.c: [*follow_pud_mask()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n754)
 
- 
+
 
 Examining [follow_pmd_mask()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n646) (eliding out of scope huge page logic, huge
 
 page migration logic, device map logic):-
 
- 
+
 
 646 **static struct** page \***follow_pmd_mask**(**struct** vm_area_struct \*vma, 647 **unsigned long** address, **pud_t** \*pudp, 648 **unsigned int** flags, 649 **struct** follow_page_context \*ctx) 650 {
 
@@ -2702,11 +2701,11 @@ page migration logic, device map logic):-
 
 653 **struct** page \*page; 654 **struct** mm_struct \*mm = vma-\>vm_mm;
 
- 
 
 
 
- 
+
+
 
 655
 
@@ -2724,17 +2723,17 @@ page migration logic, device map logic):-
 
 752 }
 
- 
+
 
 *Listing 8-39:* mm/gup.c: [*follow_pmd_mask()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n646)
 
- 
+
 
 Note that the [pmd_bad()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n816) check is deferred to [follow_page_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n519), which we
 
 examine now, eliding out of scope Kernel Same page Merging (KSM) and device mapping logic:-
 
- 
+
 
 519 **static struct** page \***follow_page_pte**(**struct** vm_area_struct \*vma, 520 **unsigned long** address, **pmd_t** \*pmd, **unsigned int** flags, 521 **struct** dev_pagemap \*\*pgmap) 522 {
 
@@ -2764,19 +2763,19 @@ examine now, eliding out of scope Kernel Same page Merging (KSM) and device mapp
 
 557 **if** ((flags & **FOLL_NUMA**) && **pte_protnone**(pte)) 558 **goto no_page**; 559
 
- 
 
 
 
- 
+
+
 
 560 page = **vm_normal_page**(vma, address, pte);
 
- 
+
 
 *Listing 8-40:* mm/gup.c: [*follow_page_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n519) *page lookup*
 
- 
+
 
 We start by asserting that we do not simultaneously specify both FOLL_PIN
 
@@ -2800,7 +2799,7 @@ Finally, we obtain the underlying page via [vm_normal_page()](https://git.kernel
 
 Next, we perform a series of checks on the page:-
 
- 
+
 
 562 */\**
 
@@ -2832,15 +2831,15 @@ Next, we perform a series of checks on the page:-
 
 604 **VM_BUG_ON_PAGE**((flags & **FOLL_PIN**) && **PageAnon**(page) && 605 !**PageAnonExclusive**(page), page);
 
- 
 
 
 
- 
+
+
 
 *Listing 8-41:* mm/gup.c: [*follow_page_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n519) *page checks*
 
- 
+
 
 Firstly, we determine whether we are permitted to write fault
 
@@ -2848,7 +2847,7 @@ the memory if the GUP write flag FOLL_WRITE is set. This is done via
 
 [can_follow_write_pte():-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n482)
 
- 
+
 
 481 */\* FOLL_FORCE can write to even unwritable PTEs in COW mappings. \*/* 482 **static inline bool can_follow_write_pte**(**pte_t** pte, **struct** page \*page, 483 **struct** vm_area_struct \*vma, 484 **unsigned int** flags) 485 {
 
@@ -2876,15 +2875,15 @@ the memory if the GUP write flag FOLL_WRITE is set. This is done via
 
 513 */\* ... and a write-fault isn't required for other reasons. \*/* 514 **if** (**vma_soft_dirty_enabled**(vma) && !**pte_soft_dirty**(pte)) 515 **return false**; 516 **return** !**userfaultfd_pte_wp**(vma, pte); 517 }
 
- 
+
 
 *Listing 8-42:* mm/gup.c: [*can_follow_write_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n482)
 
- 
 
 
 
- 
+
+
 
 This starts by checking whether the page tables already map this read-
 
@@ -2924,7 +2923,7 @@ should not appearing, otherwise we we either simply return to page in the
 
 case of the zero page or otherwise defer to [follow_pfn_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n461):-
 
- 
+
 
 461 **static int follow_pfn_pte**(**struct** vm_area_struct \*vma, **unsigned long** address, 462 **pte_t** \*pte, **unsigned int** flags) 463 {
 
@@ -2948,11 +2947,11 @@ case of the zero page or otherwise defer to [follow_pfn_pte()](https://git.kerne
 
 479 }
 
- 
+
 
 *Listing 8-43:* mm/gup.c: [*follow_pfn_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n461)
 
- 
+
 
 This marks the PTE entry dirty if both FOLL_TOUCH and FOLL_WRITE were
 
@@ -2968,11 +2967,11 @@ the page mapping is currently marked read-only but needs to be unshared in
 
 order to address a thorny corner case – this is checked in [gup_must_unshare()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2985):-
 
- 
 
 
 
- 
+
+
 
 2968 */\**
 
@@ -3016,23 +3015,23 @@ order to address a thorny corner case – this is checked in [gup_must_unshare()
 
 3004 **return** !**PageAnonExclusive**(page); 3005 }
 
- 
+
 
 *Listing 8-44:* include/linux/mm.h: [*gup_must_unshare()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2985)
 
- 
+
 
 GUP sharing \* deals with the scenario where a forked Copy-on-Write page
 
 is read-only pinned, but mapped by more than one process. In this scenario, the pinned page will no longer be what’s mapped by the process in question once a fork takes place, which is likely not what the caller expects.
 
- 
+
 
 \*. Added in commit [a7f226604170: mm/gup: trigger FAULT_FLAG_UNSHARE when R/O-pinning](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=a7f226604170)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=a7f226604170)
 
 
 
- 
+
 
 This issue is resolved by ’unsharing’, i.e. triggering a CoW using the
 
@@ -3048,7 +3047,7 @@ ory escaped this check. We then move on to the actual pinning of pages and
 
 cleanup tasks:-
 
- 
+
 
 607 */\* try_grab_page() does nothing unless FOLL_GET or FOLL_PIN is set. \*/*
 
@@ -3084,15 +3083,15 @@ cleanup tasks:-
 
 640 **pte_unmap_unlock**(ptep, ptl); 641 **if** (!**pte_none**(pte)) 642 **return NULL**; 643 **return no_page_table**(vma, flags); 644 }
 
- 
 
 
 
- 
+
+
 
 *Listing 8-45:* mm/gup.c: [*follow_page_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n519) *pinning and cleanup*
 
- 
+
 
 The actual pinning is performed by [try_grab_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n202) which we will ex-
 
@@ -3110,7 +3109,7 @@ the [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux
 
 Examining [try_grab_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n202):-
 
- 
+
 
 184 */\*\**
 
@@ -3154,11 +3153,11 @@ Examining [try_grab_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 216 *\* so that the page really is pinned.*
 
- 
 
 
 
- 
+
+
 
 217 *\*/*
 
@@ -3176,11 +3175,11 @@ Examining [try_grab_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 229 }
 
- 
+
 
 *Listing 8-46:* mm/gup.c: [*try_grab_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n202)
 
- 
+
 
 This starts by obtaining the [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) associated with the page, that
 
@@ -3204,7 +3203,7 @@ a reference count to reach, and allows us to identify the pinned pages in
 
 [folio_maybe_dma_pinned()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1498) described previously in listing 8-14.
 
- 
+
 
 ***8.1.7 Faulting in Pages***
 
@@ -3212,7 +3211,7 @@ The actual faulting in of a page is performed via [faultin_page()](https://git.k
 
 enced through GUP whenever a faulting in operation has to be performed:-
 
- 
+
 
 955 */\**
 
@@ -3226,11 +3225,11 @@ enced through GUP whenever a faulting in operation has to be performed:-
 
 967 **if** (\*flags & **FOLL_NOFAULT**) 968 **return**-**EFAULT**; 969 **if** (\*flags & **FOLL_WRITE**)
 
- 
 
 
 
- 
+
+
 
 970 fault_flags \|= **FAULT_FLAG_WRITE**; 971 **if** (\*flags & **FOLL_REMOTE**) 972 fault_flags \|= **FAULT_FLAG_REMOTE**; 973 **if** (locked)
 
@@ -3282,11 +3281,11 @@ enced through GUP whenever a faulting in operation has to be performed:-
 
 1014 **return** err; 1015 **BUG**();
 
- 
 
 
 
- 
+
+
 
 1016 }
 
@@ -3300,11 +3299,11 @@ enced through GUP whenever a faulting in operation has to be performed:-
 
 1025 }
 
- 
+
 
 *Listing 8-47:* mm/gup.c: [*faultin_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n960)
 
- 
+
 
 This starts by checking whether the FOLL_NOFAULT flag is set – if so this is a
 
@@ -3344,7 +3343,7 @@ tion 6.
 
 Once the actual faulting in is complete the return value is handled:-
 
- 
+
 
 • [VM_FAULT_COMPLETED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n755) – Indicates that the lock has been dropped for I/O
 
@@ -3358,7 +3357,7 @@ via [vm_fault_to_errno()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 update locked accordingly.
 
- 
+
 
 ***8.1.8 Fast GUP Functions***
 
@@ -3370,11 +3369,11 @@ the non-fast kind but trying to avoid having to take a lock on the
 
 These differ from their non-fast counterparts in a few respects:-
 
- 
 
 
 
- 
+
+
 
 • There is no means of returning an array of [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA)
 
@@ -3390,7 +3389,7 @@ fall back to using the non-fast path if the fast one is unable to perform the op
 
 • Only a subset of flags are permitted, see below:-
 
- 
+
 
 Table 8-2: GUP flag validity
 
@@ -3430,11 +3429,11 @@ FOLL_PIN *•* *•*
 
 FOLL_FAST_ONLY *•*
 
- 
+
 
 Examining [get_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3077)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3077)
 
- 
+
 
 3061 */\*\**
 
@@ -3448,11 +3447,11 @@ Examining [get_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 3074 *\* If nr_pages is 0 or negative, returns 0. If no pages were pinned, returns*
 
- 
 
 
 
- 
+
+
 
 3075 *\* -errno.*
 
@@ -3486,11 +3485,11 @@ Examining [get_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 3091 }
 
- 
+
 
 *Listing 8-48:* mm/gup.c: [*get_user_pages_fast()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3077)
 
- 
+
 
 This checks [is_valid_gup_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2089) as do the non-fast get_user_pages\*() func-
 
@@ -3504,7 +3503,7 @@ cannot pin all of the requested pages. If this behaviour is not desired, then
 
 [get_user_pages_fast_only()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3032) will pin pages using the fast method only:-
 
- 
+
 
 3012 */\*\**
 
@@ -3526,11 +3525,11 @@ cannot pin all of the requested pages. If this behaviour is not desired, then
 
 3028 *\* Careful, careful! COW breaking can go either way, so a non-write*
 
- 
 
 
 
- 
+
+
 
 3029 *\* access can get ambiguous page results. If you call this function without*
 
@@ -3566,11 +3565,11 @@ cannot pin all of the requested pages. If this behaviour is not desired, then
 
 3057 **return** nr_pinned; 3058 }
 
- 
+
 
 *Listing 8-49:* mm/gup.c: [*get_user_pages_fast_only()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3032)
 
- 
+
 
 This sets FOLL_FAST_ONLY and returns the number pinned or zero if an er-
 
@@ -3580,7 +3579,7 @@ Similarly, the GUP pin variants are similar to these, only setting FOLL_PIN
 
 rather than FOLL_GET:-
 
- 
+
 
 3094 */\*\**
 
@@ -3590,11 +3589,11 @@ rather than FOLL_GET:-
 
 3103 *\* Nearly the same as get_user_pages_fast(), except that FOLL_PIN is set. See*
 
- 
 
 
 
- 
+
+
 
 3104 *\* get_user_pages_fast() for documentation on the function arguments, because*
 
@@ -3618,15 +3617,15 @@ rather than FOLL_GET:-
 
 3122 }
 
- 
+
 
 *Listing 8-50:* mm/gup.c: [*pin_user_pages_fast()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3110)
 
- 
+
 
 And the fast path only equivalent:-
 
- 
+
 
 3125 */\**
 
@@ -3656,11 +3655,11 @@ And the fast path only equivalent:-
 
 3147 *\* this routine: no fall back to regular ("slow") GUP.*
 
- 
 
 
 
- 
+
+
 
 3148 *\*/*
 
@@ -3676,17 +3675,17 @@ And the fast path only equivalent:-
 
 3160 **return** nr_pinned; 3161 }
 
- 
+
 
 *Listing 8-51:* mm/gup.c: [*pin_user_pages_fast_only()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n3131)
 
- 
+
 
 Each of these ultimately invoke [internal_get_user_pages_fast()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2964)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2964) This is
 
 somewhat equivalent to the non-fast [\_\_get_user_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1140) only with some addi-tional handling for the fast path:-
 
- 
+
 
 2964 **static int internal_get_user_pages_fast**(**unsigned long** start, 2965 **unsigned long** nr_pages, 2966 **unsigned int** gup_flags, 2967 **struct** page \*\*pages) 2968 {
 
@@ -3704,11 +3703,11 @@ somewhat equivalent to the non-fast [\_\_get_user_pages()](https://git.kernel.or
 
 2991 nr_pinned = **lockless_pages_from_mm**(start, end, gup_flags, pages);
 
- 
 
 
 
- 
+
+
 
 2992 **if** (nr_pinned == nr_pages \|\| gup_flags & **FOLL_FAST_ONLY**) 2993 **return** nr_pinned; 2994
 
@@ -3724,11 +3723,11 @@ somewhat equivalent to the non-fast [\_\_get_user_pages()](https://git.kernel.or
 
 3009 **return** ret + nr_pinned; 3010 }
 
- 
+
 
 *Listing 8-52:* mm/gup.c: [*internal_get_user_pages_fast()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2964)
 
- 
+
 
 This asserts that the flags are permitted as described in figure 8-2, before
 
@@ -3760,7 +3759,7 @@ indicate how many were.
 
 Examining [lockless_pages_from_mm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2915)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2915)
 
- 
+
 
 2915 **static unsigned long lockless_pages_from_mm**(**unsigned long** start, 2916 **unsigned long** end, 2917 **unsigned int** gup_flags, 2918 **struct** page \*\*pages) 2919 {
 
@@ -3770,11 +3769,11 @@ Examining [lockless_pages_from_mm()](https://git.kernel.org/pub/scm/linux/kernel
 
 2924 **if** (!**IS_ENABLED**(**CONFIG_HAVE_FAST_GUP**) \|\| 2925 !**gup_fast_permitted**(start, end))
 
- 
 
 
 
- 
+
+
 
 2926 **return** 0; 2927
 
@@ -3828,21 +3827,21 @@ Examining [lockless_pages_from_mm()](https://git.kernel.org/pub/scm/linux/kernel
 
 2961 **return** nr_pinned; 2962 }
 
- 
+
 
 *Listing 8-53:* mm/gup.c: [*lockless_pages_from_mm()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2915)
 
- 
+
 
 The whole idea here is to try to increment a reference count on pages
 
 in the range optimistically on the assumption that the pages have not been
 
- 
 
 
 
- 
+
+
 
 freed beneath us, this is ultimately done after traversing page tables as with
 
@@ -3898,7 +3897,7 @@ levels, starting from PGD. Again we elide out-of-scope huge page handling
 
 here:-
 
- 
+
 
 2849 **static void gup_pgd_range**(**unsigned long** addr, **unsigned long** end, 2850 **unsigned int** flags, **struct** page \*\*pages, **int** \*nr) 2851 {
 
@@ -3920,27 +3919,27 @@ nr))
 
 2871 **return**;
 
- 
+
 
 \*. See commit [57efa1fe5957: mm/gup: prevent gup_fast from racing with COW during fork](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=57efa1fe5957)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=57efa1fe5957)
 
 
 
- 
+
 
 2872 } **while** (pgdp++, addr = next, addr != end); 2873 }
 
- 
+
 
 *Listing 8-54:* mm/gup.c: [*gup_pgd_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2849)
 
- 
+
 
 This iterates through the input range, crossing PGD entry boundaries as
 
 necessary, deferring to the next level via [gup_p4d_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2824) (whose return value indicates if the operation has failed at any stage):-
 
- 
+
 
 2824 **static int gup_p4d_range**(**pgd_t** \*pgdp, **pgd_t** pgd, **unsigned long** addr, **unsigned**
 
@@ -3970,11 +3969,11 @@ nr))
 
 2847 }
 
- 
+
 
 *Listing 8-55:* mm/gup.c: [*gup_p4d_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2824)
 
- 
+
 
 One difference here is the use of the [p4d_offset_lockless()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pgtable.h?h=v6.0#n1625) variant of the
 
@@ -3982,7 +3981,7 @@ page table offset function. This is exactly equivalent to the non-lockless one f
 
 Examining the same function for the next level, [gup_pud_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2796):-
 
- 
+
 
 2796 **static int gup_pud_range**(**p4d_t** \*p4dp, **p4d_t** p4d, **unsigned long** addr, **unsigned**
 
@@ -3998,11 +3997,11 @@ Examining the same function for the next level, [gup_pud_range()](https://git.ke
 
 2804 **pud_t** pud = **READ_ONCE**(\*pudp);
 
- 
 
 
 
- 
+
+
 
 2805
 
@@ -4020,15 +4019,15 @@ nr))
 
 2822 }
 
- 
+
 
 *Listing 8-56:* mm/gup.c: [*gup_pud_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2796)
 
- 
+
 
 And for PMD:-
 
- 
+
 
 2753 **static int gup_pmd_range**(**pud_t** \*pudp, **pud_t** pud, **unsigned long** addr, **unsigned**
 
@@ -4058,17 +4057,17 @@ nr))
 
 2794 }
 
- 
+
 
 *Listing 8-57:* mm/gup.c: [*gup_pmd_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2753)
 
- 
+
 
 And finally we arrive at [gup_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2367) (eliding out of scope huge page,
 
 device map, secret memory logic and s390-specific page accessibility logic):-
 
- 
+
 
 2348 */\**
 
@@ -4078,11 +4077,11 @@ device map, secret memory logic and s390-specific page accessibility logic):-
 
 2352 *\* To pin the page, fast-gup needs to do below in order:*
 
- 
 
 
 
- 
+
+
 
 2353 *\* (1) pin the page (by prefetching pte), then (2) check pte not changed.*
 
@@ -4132,11 +4131,11 @@ device map, secret memory logic and s390-specific page accessibility logic):-
 
 2406 folio = **try_grab_folio**(page, 1, flags); 2407 **if** (!folio) 2408 **goto pte_unmap**;
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -4166,11 +4165,11 @@ device map, secret memory logic and s390-specific page accessibility logic):-
 
 2451 }
 
- 
+
 
 *Listing 8-58:* mm/gup.c: [*gup_pte_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n2367)
 
- 
+
 
 This follows the typical pattern of iterating through the page table as
 
@@ -4210,11 +4209,11 @@ itly check that the page table flags match expectations via the architecture-
 
 specific [pte_access_permitted()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable.h?h=v6.0#n1409).
 
- 
 
 
 
- 
+
+
 
 The most pertinent check here is whether the entry is writable should
 
@@ -4248,7 +4247,7 @@ tion clearly implies that a reference has been made and we add it to the pages a
 
 Coming back to [try_grab_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n124):-
 
- 
+
 
 98 */\*\**
 
@@ -4274,11 +4273,11 @@ Coming back to [try_grab_folio()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 124 **struct** folio \***try_grab_folio**(**struct** page \*page, **int** refs, **unsigned int** flags) 125 {
 
- 
 
 
 
- 
+
+
 
 126 **if** (flags & **FOLL_GET**) 127 **return try_get_folio**(page, refs); 128 **else if** (flags & **FOLL_PIN**) { 129 **struct** folio \*folio;
 
@@ -4334,15 +4333,15 @@ Coming back to [try_grab_folio()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 168 }
 
- 
+
 
 *Listing 8-59:* mm/gup.c: [*try_grab_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n124)
 
- 
 
 
 
- 
+
+
 
 The FOLL_GET case is easy – the actual increment of the folio reference
 
@@ -4364,7 +4363,7 @@ set by one to account for the reference count increment we did to keep the page 
 
 Examining [try_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n69) (eliding out of scope device mapping logic):-
 
- 
+
 
 65 */\**
 
@@ -4396,15 +4395,15 @@ Examining [try_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 96 }
 
- 
+
 
 *Listing 8-60:* mm/gup.c: [*try_get_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n69)
 
- 
 
 
 
- 
+
+
 
 The key operation here is [folio_ref_try_add_rcu()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page_ref.h?h=v6.0#n266) which ultimately in-
 
@@ -4422,7 +4421,7 @@ belong to the folio whose reference count we incremented, in which case we
 
 must retry.
 
- 
+
 
 ***8.1.9 GUP Helper Functions***
 
@@ -4440,7 +4439,7 @@ portant because it is the function used by the mapping logic when faulting
 
 in pages when the MAP_POPULATE function is invoked:-
 
- 
+
 
 1645 */\**
 
@@ -4472,11 +4471,11 @@ in pages when the MAP_POPULATE function is invoked:-
 
 1667 **if** (!locked) { 1668 locked = 1; 1669 **mmap_read_lock**(mm); 1670 vma = **find_vma**(mm, nstart); 1671 } **else if** (nstart \>= vma-\>vm_end) 1672 vma = vma-\>vm_next;
 
- 
 
 
 
- 
+
+
 
 1673 **if** (!vma \|\| vma-\>vm_start \>= end) 1674 **break**; 1675 */\**
 
@@ -4502,11 +4501,11 @@ in pages when the MAP_POPULATE function is invoked:-
 
 1701 **mmap_read_unlock**(mm); 1702 **return** ret; */\* 0 or negative error code \*/* 1703 }
 
- 
+
 
 *Listing 8-61:* mm/gup.c: [*\_\_mm_populate()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1652)
 
- 
+
 
 This acquires a read lock on the [struct mm_struct-\>mmap_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) semaphore,
 
@@ -4516,7 +4515,7 @@ in each VMA via [populate_vma_page_range()](https://git.kernel.org/pub/scm/linux
 
 [\_\_get_user_pages() :-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1140)
 
- 
+
 
 1515 */\*\**
 
@@ -4530,11 +4529,11 @@ in each VMA via [populate_vma_page_range()](https://git.kernel.org/pub/scm/linux
 
 1522 *\* This takes care of mlocking the pages too if VM_LOCKED is set.* 1523 *\**
 
- 
 
 
 
- 
+
+
 
 1524 *\* Return either number of pages pinned in the vma, or a negative error* 1525 *\* code on error.*
 
@@ -4578,11 +4577,11 @@ in each VMA via [populate_vma_page_range()](https://git.kernel.org/pub/scm/linux
 
 1569 **if** (**vma_is_accessible**(vma)) 1570 gup_flags \|= **FOLL_FORCE**;
 
- 
 
 
 
- 
+
+
 
 1571
 
@@ -4596,11 +4595,11 @@ in each VMA via [populate_vma_page_range()](https://git.kernel.org/pub/scm/linux
 
 1580 }
 
- 
+
 
 *Listing 8-62:* mm/gup.c: [*populate_vma_page_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1535)
 
- 
+
 
 We won’t examine this too closely, but the key points here are that cus-
 
@@ -4610,11 +4609,11 @@ ways succeeds. We eventually drain folio batches via [lru_add_drain()](https://g
 
 sure folios are present in LRU lists immediately afterwards (see section 11.7 for more on folio batches).
 
- 
+
 
 **8.2 Userland Memory Manipulation APIs**
 
- 
+
 
 ***8.2.1 mlock()***
 
@@ -4648,11 +4647,11 @@ By default, locking memory in this fashion causes non-resident memory
 
 to be populated and made resident before being locked. The [MLOCK_ONFAULT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/asm-generic/mman-common.h?h=v6.0#n39)
 
- 
 
 
 
- 
+
+
 
 and [MCL_ONFAULT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/asm-generic/mman.h?h=v6.0#n20) flags alter this behaviour, locking all resident memory and
 
@@ -4670,17 +4669,17 @@ The [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html) system call is
 
 63.
 
- 
+
 
 615 **SYSCALL_DEFINE2**(mlock, **unsigned long**, start, **size_t**, len) 616 {
 
 617 **return do_mlock**(start, len, **VM_LOCKED**); 618 }
 
- 
+
 
 *Listing 8-63:* mm/mlock.c: [*mlock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n615) *System Call*
 
- 
+
 
 The [mlock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n615) system call defers the actual locking mechanism imple-
 
@@ -4696,7 +4695,7 @@ The [mlock2()](https://man7.org/linux/man-pages/man2/mlock2.2.html) system call 
 
 in Listing 8-64.
 
- 
+
 
 620 **SYSCALL_DEFINE3**(mlock2, **unsigned long**, start, **size_t**, len, **int**, flags) 621 {
 
@@ -4714,11 +4713,11 @@ in Listing 8-64.
 
 630 **return do_mlock**(start, len, vm_flags); 631 }
 
- 
+
 
 *Listing 8-64:* mm/mlock.c: [*mlock2()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n620) *System Call*
 
- 
+
 
 The [mlock2()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n620) system call behaves similarly to the [mlock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n615) system call,
 
@@ -4740,11 +4739,11 @@ The [munlock()](https://man7.org/linux/man-pages/man2/munlock.2.html) system cal
 
 8-65.
 
- 
 
 
 
- 
+
+
 
 633 **SYSCALL_DEFINE2**(munlock, **unsigned long**, start, **size_t**, len) 634 {
 
@@ -4762,11 +4761,11 @@ The [munlock()](https://man7.org/linux/man-pages/man2/munlock.2.html) system cal
 
 648 }
 
- 
+
 
 *Listing 8-65:* mm/mlock.c: [*munlock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n633) *System Call*
 
- 
+
 
 The [munlock()](https://man7.org/linux/man-pages/man2/munlock.2.html) system call first obtains an untagged address equivalent of
 
@@ -4786,7 +4785,7 @@ For the sake of brevity, we won’t examine the [mlockall()](https://man7.org/li
 
 system call implementations as they are a variation on the same theme.
 
- 
+
 
 568 **static \_\_must_check int do_mlock**(**unsigned long** start, **size_t** len, vm_flags_t
 
@@ -4802,11 +4801,11 @@ flags)
 
 579 len = **PAGE_ALIGN**(len + (**offset_in_page**(start))); 580 start &= **PAGE_MASK**; 581
 
- 
 
 
 
- 
+
+
 
 582 lock_limit = **rlimit**(**RLIMIT_MEMLOCK**); 583 lock_limit \>\>= **PAGE_SHIFT**; 584 locked = len \>\> **PAGE_SHIFT**;
 
@@ -4848,11 +4847,11 @@ flags)
 
 613 }
 
- 
+
 
 *Listing 8-66:* mm/mlock.c: [*do_mlock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n568)
 
- 
+
 
 In [do_mlock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n568) we start by acquiring an untagged address (not relevant to
 
@@ -4860,7 +4859,7 @@ architectures in scope in the book), before performing a simple sanity check
 
 via [can_do_mlock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n40) which we examine in Listing 8-67.
 
- 
+
 
 40 **bool can_do_mlock**(**void**)
 
@@ -4878,15 +4877,15 @@ via [can_do_mlock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 47 }
 
- 
 
 
 
- 
+
+
 
 *Listing 8-67:* mm/mlock.c: [*can_do_mlock()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n40)
 
- 
+
 
 In [can_do_mlock()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n40) we check to ensure that the [RLIMIT_MEMLOCK](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/asm-generic/resource.h?h=v6.0#n35) resource limit
 
@@ -4924,7 +4923,7 @@ We examine the invoked [apply_vma_lock_flags()](https://git.kernel.org/pub/scm/l
 
 debug asserts.
 
- 
+
 
 468 tatic **int apply_vma_lock_flags**(**unsigned long** start, **size_t** len, 469 **vm_flags_t** flags) 470 {
 
@@ -4940,11 +4939,11 @@ debug asserts.
 
 490 **for** (nstart = start ; ; ) { 491 **vm_flags_t** newflags = vma-\>vm_flags & **VM_LOCKED_CLEAR_MASK**;
 
- 
 
 
 
- 
+
+
 
 492
 
@@ -4968,11 +4967,11 @@ debug asserts.
 
 515 }
 
- 
+
 
 *Listing 8-68:* mm/mlock.c: [*apply_vma_lock_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n468)
 
- 
+
 
 The [apply_vma_lock_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n468) function starts by checking for overflow and
 
@@ -5010,11 +5009,11 @@ ting everything ready for the next iteration, or if the iteration is complete,
 
 exiting, and handling the case where the next VMA in the range is invalid.
 
- 
 
 
 
- 
+
+
 
 The [mlock_fixup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n404) function handles any splitting/merging of VMAs as a
 
@@ -5024,7 +5023,7 @@ before setting folio-level flags via [mlock_vma_pages_range()](https://git.kerne
 
 For brevity, we will not examine these functions in detail.
 
- 
+
 
 ***8.2.2 mprotect()***
 
@@ -5040,7 +5039,7 @@ As the behaviour of [mprotect()](https://man7.org/linux/man-pages/man2/mprotect.
 
 and similar to other user memory manipulation functions explored here, we won’t examine the kernel implementation in detail.
 
- 
+
 
 ***8.2.3 mremap()***
 
@@ -5070,11 +5069,11 @@ The kernel implementation of the [mremap()](https://man7.org/linux/man-pages/man
 
 delicate as it must consider a great many different cases, so we will not exam-ine it in detail for sake of brevity.
 
- 
 
 
 
- 
+
+
 
 ***8.2.4 madvise()***
 
@@ -5096,15 +5095,15 @@ to be used than the kernel possesses.
 
 We examine the userland interface in Listing 8-69.
 
- 
+
 
 **int madvise**(**void** \*addr, **size_t** length, **int** advice);
 
- 
+
 
 *Listing 8-69:* [*madvise()*](https://man7.org/linux/man-pages/man2/madvise.2.html) *User API*
 
- 
+
 
 As with all kernel memory interfaces this operates at a page granularity
 
@@ -5116,7 +5115,7 @@ What the function does depends on which flag is specified in the advice
 
 field. This specifies a single flag which determines what [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html) will do:
 
- 
+
 
 **MADV_RANDOM** Indicates that the memory region is going to be accessed ran-
 
@@ -5148,11 +5147,11 @@ Section 9.7 for more details on readahead. This is equivalent to calling
 
 mappings and drop the reverse mapping (and thus a \_mapcount) from the underlying folio. This is a destructive action – if the memory is anony-mous, then it is not swapped out and the data is lost. If it is file-backed and dirty, it will not be written back to disk immediately. This operation will fail for mlock()ed memory. The underlying VMA is not adjusted so if this memory is accessed again the backing store will be faulted back in (though for anonymous pages
 
- 
 
 
 
- 
+
+
 
 it will be the zero page). This operation is useful for userland freeing up memory it may need in the future but knows it does not need now.
 
@@ -5216,11 +5215,11 @@ the [VM_DONTDUMP](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux
 
 with non-hugetlb VMAs possessing flags in the [VM_SPECIAL](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n410) bitmap.
 
- 
 
 
 
- 
+
+
 
 **MADV_COLD** Deactivates pages in the memory range, causing them to be more
 
@@ -5238,7 +5237,7 @@ tion [faultin_vma_page_range()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 i.e. CoW events where necessary.
 
- 
+
 
 Note that in addition to the [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html) system call, there is also a
 
@@ -5256,7 +5255,7 @@ scope block device hotplug and memory failure logic and removal of address
 
 tagging which is not relevant to x86-64).
 
- 
+
 
 1371 **int do_madvise**(**struct** mm_struct \*mm, **unsigned long** start, **size_t** len_in, **int**
 
@@ -5290,11 +5289,11 @@ behavior)
 
 1404 write = **madvise_need_mmap_write**(behavior);
 
- 
 
 
 
- 
+
+
 
 1405 **if** (write) {
 
@@ -5318,11 +5317,11 @@ behavior)
 
 1422 }
 
- 
+
 
 *Listing 8-70:* mm/madvise.c: [*do_madvise()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n1371)
 
- 
+
 
 We can see that in [do_madvise()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n1317) (Listing 8-70) no matter what the
 
@@ -5334,7 +5333,7 @@ In addition, we perform some checks to ensure the range values speci-
 
 fied are not so large as to overflow, and if the range turns out to be empty, we trivially indicate that the operation succeeded.
 
- 
+
 
 1131 **static bool**
 
@@ -5348,11 +5347,11 @@ fied are not so large as to overflow, and if the range turns out to be empty, we
 
 1150 **case MADV_MERGEABLE**:
 
- 
 
 
 
- 
+
+
 
 1151 **case MADV_UNMERGEABLE**: 1152 **\#endif**
 
@@ -5368,11 +5367,11 @@ fied are not so large as to overflow, and if the range turns out to be empty, we
 
 1170 }
 
- 
+
 
 *Listing 8-71:* mm/madvise.c: [*madvise_behavior_valid()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n1132)
 
- 
+
 
 This ensures that the specified madvise flag is valid (i.e. a known one)
 
@@ -5392,7 +5391,7 @@ reading in order that traversed VMAs remain stable throughout (see Section
 
 We examine this function in Listing 8-72.
 
- 
+
 
 45 */\**
 
@@ -5426,11 +5425,11 @@ We examine this function in Listing 8-72.
 
 60 **case MADV_POPULATE_READ**:
 
- 
 
 
 
- 
+
+
 
 61 **case MADV_POPULATE_WRITE**: 62 **return** 0; 63 **default**:
 
@@ -5438,11 +5437,11 @@ We examine this function in Listing 8-72.
 
 67 }
 
- 
+
 
 *Listing 8-72:* mm/madvise.c: [*madvise_need_mmap_write()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n50)
 
- 
+
 
 In order to be conservative and to avoid performing writes without ade-
 
@@ -5454,7 +5453,7 @@ lock, and perform the required behaviour using [madvise_walk_vmas()](https://git
 
 we examine in Listing 8-73) which in turn uses [madvise_vma_behavior()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n992) to visit each VMA and perform the required action.
 
- 
+
 
 1193 **static**
 
@@ -5480,11 +5479,11 @@ start,
 
 1221 */\* Here start \< (end\|vma-\>vm_end). \*/* 1222 **if** (start \< vma-\>vm_start) {
 
- 
 
 
 
- 
+
+
 
 1223 unmapped_error = -**ENOMEM**; 1224 start = vma-\>vm_start; 1225 **if** (start \>= end) 1226 **break**; 1227 }
 
@@ -5500,11 +5499,11 @@ start,
 
 1249 **return** unmapped_error; 1250 }
 
- 
+
 
 *Listing 8-73:* mm/madvise.c: [*madvise_walk_vmas()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n1194)
 
- 
+
 
 The [madvise_walk_vmas()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n1194) function iterates through all VMAs in the range
 
@@ -5540,11 +5539,11 @@ Since [find_vma_prev()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds
 
 amine in Listing 4-24 in Chapter 4) finds the first VMA whose end exceeds
 
- 
 
 
 
- 
+
+
 
 the specified address, this can result in returning a VMA which begins after the address.
 
@@ -5590,7 +5589,7 @@ is [madvise_vma_anon_name()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 [PR_SET_VMA_ANON_NAME](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/linux/prctl.h?h=v6.0#n285) set, so is out of scope here.
 
- 
+
 
 987 */\**
 
@@ -5610,11 +5609,11 @@ is [madvise_vma_anon_name()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 1001 **switch** (behavior) {
 
- 
 
 
 
- 
+
+
 
 1002 **case MADV_REMOVE**: 1003 **return madvise_remove**(vma, prev, start, end); 1004 **case MADV_WILLNEED**: 1005 **return madvise_willneed**(vma, prev, start, end); 1006 **case MADV_COLD**:
 
@@ -5640,11 +5639,11 @@ is [madvise_vma_anon_name()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 1046 **case MADV_DODUMP**: 1047 **if** (!**is_vm_hugetlb_page**(vma) && new_flags & **VM_SPECIAL**) 1048 **return**-**EINVAL**;
 
- 
 
 
 
- 
+
+
 
 1049 new_flags &= ~**VM_DONTDUMP**; 1050 **break**;
 
@@ -5668,11 +5667,11 @@ is [madvise_vma_anon_name()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 1079 }
 
- 
+
 
 *Listing 8-74:* mm/madvise.c: [*madvise_vma_behavior()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n992)
 
- 
+
 
 We won’t examine the details of each behaviour supported by
 
@@ -5682,7 +5681,7 @@ action, we invoke [madvise_update_vma()](https://git.kernel.org/pub/scm/linux/ke
 
 we examine in Listing 8-75.
 
- 
+
 
 133 */\**
 
@@ -5696,11 +5695,11 @@ we examine in Listing 8-75.
 
 start,
 
- 
 
 
 
- 
+
+
 
 141 **unsigned long** end, **unsigned long** new_flags, 142 **struct** anon_vma_name \*anon_name) 143 {
 
@@ -5744,11 +5743,11 @@ anon_name)) {
 
 184 vma-\>vm_flags = new_flags; 185 **if** (!vma-\>vm_file) { 186 error = **replace_anon_vma_name**(vma, anon_name);
 
- 
 
 
 
- 
+
+
 
 187 **if** (error) 188 **return** error; 189 }
 
@@ -5758,11 +5757,11 @@ anon_name)) {
 
 192 }
 
- 
+
 
 *Listing 8-75:* mm/madvise.c: [*madvise_update_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n139)
 
- 
+
 
 The [madvise_update_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n139) function assumes that only the flags or anony-
 
@@ -5784,12 +5783,5 @@ tem call implementation, leaving the detailed implementation of the various oper
 
 enced by [madvise_vma_behavior()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/madvise.c?h=v6.0#n992) and shown in Listing 8-74 will indicate how each of these are implemented.
 
- 
 
 
-
- 
-
-**9**
-
- 

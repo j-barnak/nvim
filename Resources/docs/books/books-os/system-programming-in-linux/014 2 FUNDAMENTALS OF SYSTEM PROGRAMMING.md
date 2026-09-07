@@ -1,3 +1,5 @@
+![](media/index-118_1.jpg)
+
 2 FUNDAMENTALS OF SYSTEM
 
 PROGRAMMING
@@ -2327,5 +2329,3 @@ so that this error cannot occur.
 any arguments are missing, if they are not two integers such that
 
 the first is less than or equal to the second, it should print an error message.
-
-![](media/index-171_1.jpg)

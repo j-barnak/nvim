@@ -32,9 +32,7 @@ We will re-use the kernel sources from our previous lab, in \$HOME/embedded-linu
 
 In the kernel configuration built in the previous lab, verify that you have all options needed for booting the system using a root filesystem mounted over NFS. Also check that [CONFIG_DEVTMPFS_MOUNT](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_DEVTMPFS_MOUNT) is enabled (we will explain it later in this lab). If necessary, rebuild your kernel.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 17
 
-Embedded Linux System Development
 
 **Setting up the NFS server**
 
@@ -88,9 +86,7 @@ Obviously, our root filesystem being mostly empty, there isn’t such an applica
 
 18
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 **Root filesystem with BusyBox**
 
@@ -144,9 +140,7 @@ Any issue after doing this?
 
 6halt can find the list of mounted filesystems in /proc/mounts, and unmount each of them in a clean way before shutting down.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 19
 
-Embedded Linux System Development
 
 **Starting the shell in a proper terminal**
 
@@ -198,9 +192,7 @@ Now, run the BusyBox http server from the target command line:
 
 7Invoke your cross-compiler in the same way you did during the toolchain lab 20
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 It will automatically background itself.
 
@@ -226,6 +218,3 @@ Note: you won’t need to modify your root= setting in the kernel command line. 
 
 When this works, go back to booting the system through NFS. This will be much more convenient in the next labs.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 21
-
-Embedded Linux System Development

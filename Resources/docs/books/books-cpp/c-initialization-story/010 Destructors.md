@@ -6,7 +6,7 @@ Each class has a special member function called a destructor. If you don’t wri
 
 members. For more information about lifetime, see a good summary at [C++Reference page¹](https://en.cppreference.com/w/cpp/language/lifetime).
 
- 
+
 
 **Basics**
 
@@ -16,15 +16,15 @@ C++ Standard defines an *object* in the following terms (simplified, based on [C
 
 [intro.object](https://timsong-cpp.github.io/cppwp/n4868/intro.object#1)²):
 
- 
+
 
 The constructs in a C++ program create, destroy, refer to, access, and manipulate objects. An object is created by a definition, by a new-expression, by an operation that implicitly creates objects, or when a temporary object is created. An object occupies a region of storage in its period of construction, throughout its lifetime, and in its period of destruction.
 
- 
+
 
 And continuing:
 
- 
+
 
 ¹<https://en.cppreference.com/w/cpp/language/lifetime>
 
@@ -34,7 +34,7 @@ And continuing:
 
 Destructors 74
 
- 
+
 
 • An object can have a name,
 
@@ -44,7 +44,7 @@ Destructors 74
 
 subobject, a base class subobject, or an array element.
 
- 
+
 
 Here’s a basic scenario for a destructor that handles a case where the lifetime of an object ends:
 
@@ -86,7 +86,7 @@ Now, let’s create two objects of that type:
 
 Destructors 75
 
- 
+
 
 **Ex 5.1. A logging destructor, continuation. Run** [**@Compiler Explorer**](https://godbolt.org/z/chEvdezvb)
 
@@ -138,17 +138,17 @@ TV Set destructor..
 
 As you can see, the destructors are called in the reverse order of how they were created. It’s because the stack is a LIFO structure (Last In, First Out). tvset was created first and added Destructors 76
 
- 
+
 
 to the stack, then car is added. When the function goes out of scope, the stack is cleared, taking elements in reverse order. So car is deleted first, and then tvset. This is illustrated by the following diagram:
 
 ![](media/index-91_1.png)
 
- 
+
 
 **Adding and removing objects from the stack.**
 
- 
+
 
 **Objects allocated on the heap**
 
@@ -220,7 +220,7 @@ example [@Compiler Explorer](https://godbolt.org/z/Ps9Ye79zc)³.
 
 ³<https://godbolt.org/z/Ps9Ye79zc> Destructors 78
 
- 
+
 
 For more information about smart pointers, have a look at my blog series: [6 Ways to](https://www.cppstories.com/2021/refactor-into-uniqueptr/)
 
@@ -234,7 +234,7 @@ What’s more, Modern C++ strongly suggests avoiding raw new and delete. Thanks 
 
 Core guideline: [R.11: Avoid calling](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r11-avoid-calling-new-and-delete-explicitly) [new](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r11-avoid-calling-new-and-delete-explicitly) [and](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r11-avoid-calling-new-and-delete-explicitly) [delete](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r11-avoid-calling-new-and-delete-explicitly) [explicitly⁶](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r11-avoid-calling-new-and-delete-explicitly). The code in this section with new can be treated only for illustrative purpose.
 
- 
+
 
 **Destructors and data members**
 
@@ -276,7 +276,7 @@ Wrapper w;
 
 ⁶<https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r11-avoid-calling-new-and-delete-explicitly> Destructors 79
 
- 
+
 
 In example 5.2, the Wrapper class contains Product as a data member.
 
@@ -330,7 +330,7 @@ This time I had to manually call delete prod\_ to release the data member proper
 
 Destructors 80
 
- 
+
 
 **Virtual destructors and polymorphism**
 
@@ -338,11 +338,11 @@ There’s also one feature of destructors that plays an essential part in inheri
 
 According to [Wikipedia](https://en.wikipedia.org/wiki/Polymorphism_(computer_science))⁷:
 
- 
+
 
 In programming language theory and type theory, polymorphism is the provision of a single interface to entities of different types or the use of a single symbol to represent multiple different types.
 
- 
+
 
 In C++, the definition means that if you have a pointer or a reference to a base class, and when you call a member function, the compiler invokes an implementation (if available) in the derived classes. C++ does this technique through virtual functions. We can demonstrate it with the following but naïve code in C++:
 
@@ -374,7 +374,7 @@ Have a look:
 
 Destructors 81
 
- 
+
 
 **Ex 5.4. Virtual destructor, derived classes. Run** [**@Compiler Explorer**](https://godbolt.org/z/cb9Pfhhqe)
 
@@ -394,7 +394,7 @@ Destructors 81
 
 **double** CalculateMass() **const override** { **return** 100.0; } };
 
- 
+
 
 The CalculateMass function has two separate and trivial implementations ⁸. The function signature also uses the override keyword, which is a C++11 addition. It tells the compiler that a given member function is about to be overridden, so the compiler can check if there’s a corresponding declaration in a base class. Read more about the keyword in my article:
 
@@ -432,7 +432,7 @@ properties of a particular type.
 
 Destructors 82
 
- 
+
 
 The demo use case is simple, it creates two smart pointers that are pointers to a base class,
 
@@ -470,7 +470,7 @@ std::cout \<\< name\_ \<\< " destructor...**\n**"; }
 
 This fixes our output:
 
- 
+
 
 ¹⁰<https://godbolt.org/z/cb9Pfhhqe> Destructors 83
 
@@ -496,11 +496,11 @@ There’s also a specific C++ Core Guideline related to this critical aspect. [S
 
 [class destructor should be either public and virtual, or protected and non-virtual¹²](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c35-a-base-class-destructor-should-be-either-public-and-virtual-or-protected-and-non-virtual):
 
- 
+
 
 **Reason**: To prevent undefined behavior. If the destructor is public, then the calling code can attempt to destroy a derived class object through a base class pointer, and the result is undefined if the base class’s destructor is non-virtual.
 
- 
+
 
 **Partially created objects**
 
@@ -520,7 +520,7 @@ std::cout \<\< name \<\< ", id " \<\< id \<\< '\n'; **if** (id \< 100)
 
 [virtual-or-protected-and-non-virtual](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c35-a-base-class-destructor-should-be-either-public-and-virtual-or-protected-and-non-virtual) Destructors 84
 
- 
+
 
 **Ex 5.5. Destructors and partial object creation. Run** [**@Compiler Explorer**](https://godbolt.org/z/rzhErcWfa)
 
@@ -556,15 +556,15 @@ This time the example creates two objects: TV set and Mustang. In the output, we
 
 Since destructors might be called when the compiler performs stack unwinding; they shouldn’t throw exceptions, as this might result in calling std::terminate() . Read this C++ Core Guideline suggestion for more information: [E.16: Destructors, deallocation, and](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Re-never-fail) [swap](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Re-never-fail) [must never fail¹³](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Re-never-fail).
 
- 
+
 
 Another important aspect is to manage resources allocated before the exception occurs properly. For example, if you allocate some memory dynamically using a raw pointer, you might get a memory leak. See the following sample:
 
- 
+
 
 ¹³<https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Re-never-fail> Destructors 85
 
- 
+
 
 **Ex 5.6. A memory leak in partially created objects. Run** [**@Compiler Explorer**](https://godbolt.org/z/az9d71jan) **class Product** {
 
@@ -620,7 +620,7 @@ The key mechanism to fix such leaking resources is to rely on variables and data
 
 Destructors 86
 
- 
+
 
 **Ex 5.7. Fixing memory leaks in partially created objects. Run** [**@Compiler Explorer**](https://godbolt.org/z/EWGchjvc5) **class Product** {
 
@@ -682,7 +682,7 @@ on the following sites:[throw](https://en.cppreference.com/w/cpp/language/throw#
 
 ¹⁵<https://isocpp.org/wiki/faq/exceptions#selfcleaning-members> Destructors 87
 
- 
+
 
 **A compiler-generated destructor**
 
@@ -728,7 +728,7 @@ You can read more about compiler-generated destructors in the “Implicitly-decl
 
 ¹⁶<https://en.cppreference.com/w/cpp/language/destructor> Destructors 88
 
- 
+
 
 **Summary and use cases**
 

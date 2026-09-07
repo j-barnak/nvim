@@ -39,19 +39,19 @@ closure();
 
 The outer function `makeClosure()` declares a variable, `local`. It also creates an inner function, `closure()` that captures that variable. Then `makeClosure()` returns a reference to that function. Since the closure escapes while holding on to the local variable, `local` must outlive the function call where it was created.
 
-![A local variable flying away from the stack.](media/image/closures/flying.png)
-
-Oh no, it’s escaping!
+> ![A local variable flying away from the stack.](media/image/closures/flying.png)
+>
+> Oh no, it’s escaping!
 
 We could solve this problem by dynamically allocating memory for all local variables. That’s what jlox does by putting everything in those Environment objects that float around in Java’s heap. But we don’t want to. Using a stack is *really* fast. Most local variables are *not* captured by closures and do have stack semantics. It would suck to make all of those slower for the benefit of the rare local that is captured.
 
-There is a reason that C and Java use the stack for their local variables, after all.
+> There is a reason that C and Java use the stack for their local variables, after all.
 
 This means a more complex approach than we used in our Java interpreter. Because some locals have very different lifetimes, we will have two implementation strategies. For locals that aren’t used in closures, we’ll keep them just as they are on the stack. When a local is captured by a closure, we’ll adopt another solution that lifts them onto the heap where they can live as long as needed.
 
 Closures have been around since the early Lisp days when bytes of memory and CPU cycles were more precious than emeralds. Over the intervening decades, hackers devised all manner of ways to compile closures to optimized runtime representations. Some are more efficient but require a more complex compilation process than we could easily retrofit into clox.
 
-Search for “closure conversion” or “lambda lifting” to start exploring.
+> Search for “closure conversion” or “lambda lifting” to start exploring.
 
 The technique I explain here comes from the design of the Lua VM. It is fast, parsimonious with memory, and implemented with relatively little code. Even more impressive, it fits naturally into the single-pass compilers clox and Lua both use. It is somewhat intricate, though. It might take a while before all the pieces click together in your mind. We’ll build them one step at a time, and I’ll try to introduce the concepts in stages.
 
@@ -59,7 +59,7 @@ The technique I explain here comes from the design of the Lua VM. It is fast, pa
 
 Our VM represents functions at runtime using ObjFunction. These objects are created by the front end during compilation. At runtime, all the VM does is load the function object from a constant table and bind it to a name. There is no operation to “create” a function at runtime. Much like string and number literals, they are constants instantiated purely at compile time.
 
-In other words, a function declaration in Lox *is* a kind of literal—a piece of syntax that defines a constant value of a built-in type.
+> In other words, a function declaration in Lox *is* a kind of literal—a piece of syntax that defines a constant value of a built-in type.
 
 That made sense because all of the data that composes a function is known at compile time: the chunk of bytecode compiled from the function’s body, and the constants used in the body. Once we introduce closures, though, that representation is no longer sufficient. Take a gander at:
 
@@ -81,7 +81,7 @@ The `makeClosure()` function defines and returns a function. We call it twice an
 
 We’ll work our way up to capturing variables, but a good first step is defining that object representation. Our existing ObjFunction type represents the “raw” compile-time state of a function declaration, since all closures created from a single declaration share the same code and constants. At runtime, when we execute a function declaration, we wrap the ObjFunction in a new ObjClosure structure. The latter has a reference to the underlying bare function along with runtime state for the variables the function closes over.
 
-The Lua implementation refers to the raw function object containing the bytecode as a “prototype”, which is a great word to describe this, except that word also gets overloaded to refer to [prototypal inheritance](https://en.wikipedia.org/wiki/Prototype-based_programming).
+> The Lua implementation refers to the raw function object containing the bytecode as a “prototype”, which is a great word to describe this, except that word also gets overloaded to refer to [prototypal inheritance](https://en.wikipedia.org/wiki/Prototype-based_programming).
 
 ![An ObjClosure with a reference to an ObjFunction.](media/image/closures/obj-closure.png)
 
@@ -163,7 +163,7 @@ We free only the ObjClosure itself, not the ObjFunction. That’s because the cl
 
 We also have the usual macros for checking a value’s type.
 
-Perhaps I should have defined a macro to make it easier to generate these macros. Maybe that would be a little too meta.
+> Perhaps I should have defined a macro to make it easier to generate these macros. Maybe that would be a little too meta.
 
 ```
 #define OBJ_TYPE(value)        (AS_OBJ(value)->type)
@@ -321,7 +321,7 @@ Once you have a closure, you’ll eventually want to call it.
 
 We remove the code for calling objects whose type is `OBJ_FUNCTION`. Since we wrap all functions in ObjClosures, the runtime will never try to invoke a bare ObjFunction anymore. Those objects live only in constant tables and get immediately wrapped in closures before anything else sees them.
 
-We don’t want any naked functions wandering around the VM! What would the neighbors say?
+> We don’t want any naked functions wandering around the VM! What would the neighbors say?
 
 We replace the old code with very similar code for calling a closure instead. The only difference is the type of object we pass to `call()`. The real changes are over in that function. First, we update its signature.
 
@@ -457,7 +457,7 @@ Almost there. The last piece is the blob of code that sets up the very first Cal
 
 The compiler still returns a raw ObjFunction when compiling a script. That’s fine, but it means we need to wrap it in an ObjClosure here, before the VM can execute it.
 
-The code looks a little silly because we still push the original ObjFunction onto the stack. Then we pop it after creating the closure, only to then push the closure. Why put the ObjFunction on there at all? As usual, when you see weird stack stuff going on, it’s to keep the forthcoming garbage collector aware of some heap-allocated objects.
+> The code looks a little silly because we still push the original ObjFunction onto the stack. Then we pop it after creating the closure, only to then push the closure. Why put the ObjFunction on there at all? As usual, when you see weird stack stuff going on, it’s to keep the forthcoming garbage collector aware of some heap-allocated objects.
 
 We are back to a working interpreter. The *user* can’t tell any difference, but the compiler now generates code telling the VM to create a closure for each function declaration. Every time the VM executes a function declaration, it wraps the ObjFunction in a new ObjClosure. The rest of the VM now handles those ObjClosures floating around. That’s the boring stuff out of the way. Now we’re ready to make these closures actually *do* something.
 
@@ -490,12 +490,14 @@ The upvalue points back into the stack to where the variable it captured lives. 
 
 For example, if we throw this program at clox,
 
-    {
-      var a = 3;
-      fun f() {
-        print a;
-      }
-    }
+```
+{
+  var a = 3;
+  fun f() {
+    print a;
+  }
+}
+```
 
 the compiler and runtime will conspire together to build up a set of objects in memory like this:
 
@@ -563,7 +565,7 @@ static int resolveUpvalue(Compiler* compiler, Token* name) {
 
 We call this after failing to resolve a local variable in the current function’s scope, so we know the variable isn’t in the current compiler. Recall that Compiler stores a pointer to the Compiler for the enclosing function, and these pointers form a linked chain that goes all the way to the root Compiler for the top-level code. Thus, if the enclosing Compiler is `NULL`, we know we’ve reached the outermost function without finding a local variable. The variable must be global, so we return -1.
 
-It might end up being an entirely undefined variable and not even global. But in Lox, we don’t detect that error until runtime, so from the compiler’s perspective, it’s “hopefully global”.
+> It might end up being an entirely undefined variable and not even global. But in Lox, we don’t detect that error until runtime, so from the compiler’s perspective, it’s “hopefully global”.
 
 Otherwise, we try to resolve the identifier as a *local* variable in the *enclosing* compiler. In other words, we look for it right outside the current function. For example:
 
@@ -595,7 +597,7 @@ The compiler keeps an array of upvalue structures to track the closed-over ident
 
 This function adds a new upvalue to that array. It also keeps track of the number of upvalues the function uses. It stores that count directly in the ObjFunction itself because we’ll also need that number for use at runtime.
 
-Like constants and function arity, the upvalue count is another one of those little pieces of data that form the bridge between the compiler and runtime.
+> Like constants and function arity, the upvalue count is another one of those little pieces of data that form the bridge between the compiler and runtime.
 
 The `index` field tracks the closed-over local variable’s slot index. That way the compiler knows *which* variable in the enclosing function needs to be captured. We’ll circle back to what that `isLocal` field is for before too long. Finally, `addUpvalue()` returns the index of the created upvalue in the function’s upvalue list. That index becomes the operand to the `OP_GET_UPVALUE` and `OP_SET_UPVALUE` instructions.
 
@@ -722,7 +724,7 @@ fun outer() {
 
 Here, we’re accessing `x` in `inner()`. That variable is defined not in `middle()`, but all the way out in `outer()`. We need to handle cases like this too. You *might* think that this isn’t much harder since the variable will simply be somewhere farther down on the stack. But consider this devious example:
 
-If you work on programming languages long enough, you will develop a finely honed skill at creating bizarre programs like this that are technically valid but likely to trip up an implementation written by someone with a less perverse imagination than you.
+> If you work on programming languages long enough, you will develop a finely honed skill at creating bizarre programs like this that are technically valid but likely to trip up an implementation written by someone with a less perverse imagination than you.
 
 ```
 fun outer() {
@@ -796,13 +798,13 @@ It’s only another three lines of code, but I found this function really challe
 
 We’ll walk through it slowly. First, we look for a matching local variable in the enclosing function. If we find one, we capture that local and return. That’s the base case.
 
-The other base case, of course, is if there is no enclosing function. In that case, the variable can’t be resolved lexically and is treated as global.
+> The other base case, of course, is if there is no enclosing function. In that case, the variable can’t be resolved lexically and is treated as global.
 
 Otherwise, we look for a local variable beyond the immediately enclosing function. We do that by recursively calling `resolveUpvalue()` on the *enclosing* compiler, not the current one. This series of `resolveUpvalue()` calls works its way along the chain of nested compilers until it hits one of the base cases—either it finds an actual local variable to capture or it runs out of compilers.
 
 When a local variable is found, the most deeply nested call to `resolveUpvalue()` captures it and returns the upvalue index. That returns to the next call for the inner function declaration. That call captures the *upvalue* from the surrounding function, and so on. As each nested call to `resolveUpvalue()` returns, we drill back down into the innermost function declaration where the identifier we are resolving appears. At each step along the way, we add an upvalue to the intervening function and pass the resulting upvalue index down to the next call.
 
-Each recursive call to `resolveUpvalue()` walks *out* one level of function nesting. So an inner *recursive call* refers to an *outer* nested declaration. The innermost recursive call to `resolveUpvalue()` that finds the local variable will be for the *outermost* function, just inside the enclosing function where that variable is actually declared.
+> Each recursive call to `resolveUpvalue()` walks *out* one level of function nesting. So an inner *recursive call* refers to an *outer* nested declaration. The innermost recursive call to `resolveUpvalue()` that finds the local variable will be for the *outermost* function, just inside the enclosing function where that variable is actually declared.
 
 It might help to walk through the original example when resolving `x`:
 
@@ -1056,7 +1058,7 @@ When I first introduced upvalues, I said each closure has an array of them. We�
 
 Different closures may have different numbers of upvalues, so we need a dynamic array. The upvalues themselves are dynamically allocated too, so we end up with a double pointer—a pointer to a dynamically allocated array of pointers to upvalues. We also store the number of elements in the array.
 
-Storing the upvalue count in the closure is redundant because the ObjFunction that the ObjClosure references also keeps that count. As usual, this weird code is to appease the GC. The collector may need to know an ObjClosure’s upvalue array size after the closure’s corresponding ObjFunction has already been freed.
+> Storing the upvalue count in the closure is redundant because the ObjFunction that the ObjClosure references also keeps that count. As usual, this weird code is to appease the GC. The collector may need to know an ObjClosure’s upvalue array size after the closure’s corresponding ObjFunction has already been freed.
 
 When we create an ObjClosure, we allocate an upvalue array of the proper size, which we determined at compile time and stored in the ObjFunction.
 
@@ -1203,7 +1205,7 @@ The operand is the index into the current function’s upvalue array. So we simp
 
 We take the value on top of the stack and store it into the slot pointed to by the chosen upvalue. Just as with the instructions for local variables, it’s important that these instructions are fast. User programs are constantly reading and writing variables, so if that’s slow, everything is slow. And, as usual, the way we make them fast is by keeping them simple. These two new instructions are pretty good: no control flow, no complex arithmetic, just a couple of pointer indirections and a `push()`.
 
-The set instruction doesn’t *pop* the value from the stack because, remember, assignment is an expression in Lox. So the result of the assignment—the assigned value—needs to remain on the stack for the surrounding expression.
+> The set instruction doesn’t *pop* the value from the stack because, remember, assignment is an expression in Lox. So the result of the assignment—the assigned value—needs to remain on the stack for the surrounding expression.
 
 This is a milestone. As long as all of the variables remain on the stack, we have working closures. Try this:
 
@@ -1244,7 +1246,7 @@ But if you run it right now . . . who knows what it does? At runtime, it 
 
 Before we get to writing code, I want to dig into an important semantic point. Does a closure close over a *value* or a *variable?* This isn’t purely an academic question. I’m not just splitting hairs. Consider:
 
-If Lox didn’t allow assignment, it *would* be an academic question.
+> If Lox didn’t allow assignment, it *would* be an academic question.
 
 ```
 var globalSet;
@@ -1267,7 +1269,7 @@ globalGet();
 
 The outer `main()` function creates two closures and stores them in global variables so that they outlive the execution of `main()` itself. Both of those closures capture the same variable. The first closure assigns a new value to it and the second closure reads the variable.
 
-The fact that I’m using a couple of global variables isn’t significant. I needed some way to return two values from a function, and without any kind of collection type in Lox, my options were limited.
+> The fact that I’m using a couple of global variables isn’t significant. I needed some way to return two values from a function, and without any kind of collection type in Lox, my options were limited.
 
 What does the call to `globalGet()` print? If closures capture *values* then each closure gets its own copy of `a` with the value that `a` had at the point in time that the closure’s function declaration executed. The call to `globalSet()` will modify `set()`’s copy of `a`, but `get()`’s copy will be unaffected. Thus, the call to `globalGet()` will print “initial”.
 
@@ -1289,11 +1291,11 @@ The answer to the first question is easy. We already have a convenient object on
 
 The second question is straightforward too. As long as the variable is on the stack, there may be code that refers to it there, and that code must work correctly. So the logical time to hoist the variable to the heap is as late as possible. If we move the local variable right when it goes out of scope, we are certain that no code after that point will try to access it from the stack. After the variable is out of scope, the compiler will have reported an error if any code tried to use it.
 
-By “after” here, I mean in the lexical or textual sense—code past the `}` for the block containing the declaration of the closed-over variable.
+> By “after” here, I mean in the lexical or textual sense—code past the `}` for the block containing the declaration of the closed-over variable.
 
 The compiler already emits an `OP_POP` instruction when a local variable goes out of scope. If a variable is captured by a closure, we will instead emit a different instruction to hoist that variable out of the stack and into its corresponding upvalue. To do that, the compiler needs to know which locals are closed over.
 
-The compiler doesn’t pop parameters and locals declared immediately inside the body of a function. We’ll handle those too, in the runtime.
+> The compiler doesn’t pop parameters and locals declared immediately inside the body of a function. We’ll handle those too, in the runtime.
 
 The compiler already maintains an array of Upvalue structs for each local variable in the function to track exactly that state. That array is good for answering “Which variables does this closure use?” But it’s poorly suited for answering, “Does *any* function capture this local variable?” In particular, once the Compiler for some closure has finished, the Compiler for the enclosing function whose variable has been captured no longer has access to any of the upvalue state.
 
@@ -1331,7 +1333,7 @@ This field is `true` if the local is captured by any later nested function decla
 
 Likewise, the special “slot zero local” that the compiler implicitly declares is not captured.
 
-Later in the book, it *will* become possible for a user to capture this variable. Just building some anticipation here.
+> Later in the book, it *will* become possible for a user to capture this variable. Just building some anticipation here.
 
 ```
   local->depth = 0;
@@ -1427,13 +1429,13 @@ Let’s move over to the runtime side. Before we can interpret `OP_CLOSE_UPVALUE
 
 Right now, if two closures capture the same local variable, the VM creates a separate Upvalue for each one. The necessary sharing is missing. When we move the variable off the stack, if we move it into only one of the upvalues, the other upvalue will have an orphaned value.
 
-The VM *does* share upvalues if one closure captures an *upvalue* from a surrounding function. The nested case works correctly. But if two *sibling* closures capture the same local variable, they each create a separate ObjUpvalue.
+> The VM *does* share upvalues if one closure captures an *upvalue* from a surrounding function. The nested case works correctly. But if two *sibling* closures capture the same local variable, they each create a separate ObjUpvalue.
 
 To fix that, whenever the VM needs an upvalue that captures a particular local variable slot, we will first search for an existing upvalue pointing to that slot. If found, we reuse that. The challenge is that all of the previously created upvalues are squirreled away inside the upvalue arrays of the various closures. Those closures could be anywhere in the VM’s memory.
 
 The first step is to give the VM its own list of all open upvalues that point to variables still on the stack. Searching a list each time the VM needs an upvalue sounds like it might be slow, but in practice, it’s not bad. The number of variables on the stack that actually get closed over tends to be small. And function declarations that create closures are rarely on performance critical execution paths in the user’s program.
 
-Closures are frequently *invoked* inside hot loops. Think about the closures passed to typical higher-order functions on collections like [`map()`](https://en.wikipedia.org/wiki/Map_(higher-order_function)) and [`filter()`](https://en.wikipedia.org/wiki/Filter_(higher-order_function)). That should be fast. But the function declaration that *creates* the closure happens only once and is usually outside of the loop.
+> Closures are frequently *invoked* inside hot loops. Think about the closures passed to typical higher-order functions on collections like [`map()`](https://en.wikipedia.org/wiki/Map_(higher-order_function)) and [`filter()`](https://en.wikipedia.org/wiki/Filter_(higher-order_function)). That should be fast. But the function declaration that *creates* the closure happens only once and is usually outside of the loop.
 
 Even better, we can order the list of open upvalues by the stack slot index they point to. The common case is that a slot has *not* already been captured—sharing variables between closures is uncommon—and closures tend to capture locals near the top of the stack. If we store the open upvalue array in stack slot order, as soon as we step past the slot where the local we’re capturing lives, we know it won’t be found. When that local is near the top of the stack, we can exit the loop pretty early.
 
@@ -1503,20 +1505,22 @@ The list starts out empty.
 
 Starting with the first upvalue pointed to by the VM, each open upvalue points to the next open upvalue that references a local variable farther down the stack. This script, for example,
 
-    {
-      var a = 1;
-      fun f() {
-        print a;
-      }
-      var b = 2;
-      fun g() {
-        print b;
-      }
-      var c = 3;
-      fun h() {
-        print c;
-      }
-    }
+```
+{
+  var a = 1;
+  fun f() {
+    print a;
+  }
+  var b = 2;
+  fun g() {
+    print b;
+  }
+  var c = 3;
+  fun h() {
+    print c;
+  }
+}
+```
 
 should produce a series of linked upvalues like so:
 
@@ -1549,7 +1553,7 @@ static ObjUpvalue* captureUpvalue(Value* local) {
 
 We start at the head of the list, which is the upvalue closest to the top of the stack. We walk through the list, using a little pointer comparison to iterate past every upvalue pointing to slots above the one we’re looking for. While we do that, we keep track of the preceding upvalue on the list. We’ll need to update that node’s `next` pointer if we end up inserting a node after it.
 
-It’s a singly linked list. It’s not like we have any other choice than to start at the head and go forward from there.
+> It’s a singly linked list. It’s not like we have any other choice than to start at the head and go forward from there.
 
 There are three reasons we can exit the loop:
 
@@ -1585,7 +1589,7 @@ The current incarnation of this function already creates the upvalue, so we only
 
 As you may have learned in Data Structures 101, to insert a node into a linked list, you set the `next` pointer of the previous node to point to your new one. We have been conveniently keeping track of that preceding node as we walked the list. We also need to handle the special case where we are inserting a new upvalue at the head of the list, in which case the “next” pointer is the VM’s head pointer.
 
-There is a shorter implementation that handles updating either the head pointer or the previous upvalue’s `next` pointer uniformly by using a pointer to a pointer, but that kind of code confuses almost everyone who hasn’t reached some Zen master level of pointer expertise. I went with the basic `if` statement approach.
+> There is a shorter implementation that handles updating either the head pointer or the previous upvalue’s `next` pointer uniformly by using a pointer to a pointer, but that kind of code confuses almost everyone who hasn’t reached some Zen master level of pointer expertise. I went with the basic `if` statement approach.
 
 With this updated function, the VM now ensures that there is only ever a single ObjUpvalue for any given local slot. If two closures capture the same variable, they will get the same upvalue. We’re ready to move those upvalues off the stack now.
 
@@ -1636,7 +1640,7 @@ The way an upvalue gets closed is pretty cool. First, we copy the variable’s v
 
 But there is already a level of indirection in play—those instructions dereference the `location` pointer to get to the variable’s value. When the variable moves from the stack to the `closed` field, we simply update that `location` to the address of the ObjUpvalue’s *own* `closed` field.
 
-I’m not praising myself here. This is all the Lua dev team’s innovation.
+> I’m not praising myself here. This is all the Lua dev team’s innovation.
 
 ![Moving a value from the stack to the upvalue's 'closed' field and then pointing the 'value' field to it.](media/image/closures/closing.png)
 
@@ -1674,7 +1678,7 @@ And we should zero it out when we create an ObjUpvalue so there’s no uninitial
 
 Whenever the compiler reaches the end of a block, it discards all local variables in that block and emits an `OP_CLOSE_UPVALUE` for each local variable that was closed over. The compiler does *not* emit any instructions at the end of the outermost block scope that defines a function body. That scope contains the function’s parameters and any locals declared immediately inside the function. Those need to get closed too.
 
-There’s nothing *preventing* us from closing the outermost function scope in the compiler and emitting `OP_POP` and `OP_CLOSE_UPVALUE` instructions. Doing so is just unnecessary because the runtime discards all of the stack slots used by the function implicitly when it pops the call frame.
+> There’s nothing *preventing* us from closing the outermost function scope in the compiler and emitting `OP_POP` and `OP_CLOSE_UPVALUE` instructions. Doing so is just unnecessary because the runtime discards all of the stack slots used by the function implicitly when it pops the call frame.
 
 This is the reason `closeUpvalues()` accepts a pointer to a stack slot. When a function returns, we call that same helper and pass in the first stack slot owned by the function.
 
@@ -1793,7 +1797,7 @@ closures[1]();
 
 Does this print “1” then “2”, or does it print “3” twice? You may be surprised to hear that it prints “3” twice. In this JavaScript program, there is only a single `i` variable whose lifetime includes all iterations of the loop, including the final exit.
 
-You’re wondering how *three* enters the picture? After the second iteration, `i++` is executed, which increments `i` to three. That’s what causes `i <= 2` to evaluate to false and end the loop. If `i` never reached three, the loop would run forever.
+> You’re wondering how *three* enters the picture? After the second iteration, `i++` is executed, which increments `i` to three. That’s what causes `i <= 2` to evaluate to false and end the loop. If `i` never reached three, the loop would run forever.
 
 If you’re familiar with JavaScript, you probably know that variables declared using `var` are implicitly *hoisted* to the surrounding function or top-level scope. It’s as if you really wrote this:
 

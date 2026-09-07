@@ -10,6 +10,5 @@ Corrections, suggestions, contributions and translations are welcome!
 
 2
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 Embedded Linux System Development

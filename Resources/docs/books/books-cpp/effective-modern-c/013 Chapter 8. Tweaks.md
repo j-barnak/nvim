@@ -72,7 +72,7 @@ Item 30), and if clients pass improper argument types, compiler error messages c
 
 be intimidating (see Item 27).
 
-Wouldn’t it be nice if there were a way to write functions like addName such that lvalues were copied, rvalues were moved, there was only one function to deal with (in both source and object code), and the idiosyncrasies of universal references were avoided? As it happens, there is. All you have to do is abandon one of the first rules you probably learned as a C++ programmer. That rule was to avoid passing objects of **282 \| Item 41**
+Wouldn’t it be nice if there were a way to write functions like addName such that lvalues were copied, rvalues were moved, there was only one function to deal with (in both source and object code), and the idiosyncrasies of universal references were avoided? As it happens, there is. All you have to do is abandon one of the first rules you probably learned as a C++ programmer. That rule was to avoid passing objects of
 
 user-defined types by value. For parameters like newName in functions like addName, pass by value may be an entirely reasonable strategy.
 
@@ -110,7 +110,6 @@ w.addName(name + "Jenne"); // call addName with rvalue
 
 // (see below)
 
-**Item 41 \| 283**
 
 In the first call to addName (when name is passed), the parameter newName is initialized with an lvalue. newName is thus copy constructed, just like it would be in C++98.
 
@@ -166,7 +165,6 @@ void addName(**std::string** newName)
 
 I refer to the first two versions as the “by-reference approaches,” because they’re both based on passing their parameters by reference.
 
-**284 \| Item 41**
 
 Here are the two calling scenarios we’ve examined:
 
@@ -198,7 +196,6 @@ Functions taking universal references can thus be uniquely efficient. However, t
 
 Compared to the by-reference approaches, that’s one extra move for both lvalues and rvalues.
 
-**Item 41 \| 285**
 
 Look again at this Item’s title:
 
@@ -236,7 +233,6 @@ A caller might use it this way:
 
 2 Sentences like this are why it’d be nice to have terminology that distinguishes copies made via copy operations from copies made via move operations.
 
-**286 \| Item 41**
 
 Widget w;
 
@@ -294,7 +290,6 @@ names.push_back(std::move(newName));
 
 }
 
-**Item 41 \| 287**
 
 …
 
@@ -332,7 +327,6 @@ std::string text; // text of password
 
 Storing the password as plain text will whip your software security SWAT team into a frenzy, but ignore that and consider this code:
 
-**288 \| Item 41**
 
 std::string initPwd("Supercalifragilisticexpialidocious"); Password p(initPwd);
 
@@ -370,7 +364,6 @@ void changeTo(**const std::string& newPwd**) // the overload
 
 …
 
-**Item 41 \| 289**
 
 private:
 
@@ -390,7 +383,6 @@ So, as I said, when parameters are copied via assignment, analyzing the cost of 
 
 Now, for software that must be as fast as possible, pass by value may not be a viable strategy, because avoiding even cheap moves can be important. Moreover, it’s not always clear how many moves will take place. In the Widget::addName example, pass by value incurs only a single extra move operation, but suppose that Widget::add Name called Widget::validateName, and this function also passed by value. (Presumably it has a reason for always copying its parameter, e.g., to store it in a data structure of all values it validates.) And suppose that validateName called a third function that also passed by value…
 
-**290 \| Item 41**
 
 You can see where this is headed. When there are chains of function calls, each of which employs pass by value because “it costs only one inexpensive move,” the cost for the entire chain of calls may not be something you can tolerate. Using by-reference parameter passing, chains of calls don’t incur this kind of accumulated overhead.
 
@@ -416,7 +408,6 @@ If you’re not familiar with the slicing problem, search engines and the Intern
 
 C++11 doesn’t fundamentally change the C++98 wisdom regarding pass by value. In general, pass by value still entails a performance hit you’d prefer to avoid, and pass by value can still lead to the slicing problem. What’s new in C++11 is the distinction between lvalue and rvalue arguments. Implementing functions that take advantage of move semantics for rvalues of copyable types requires either overloading or using universal references, both of which have drawbacks. For the special case of copyable, cheap-to-move types passed to functions that always copy them and where slicing is not a concern, pass by value can offer an easy-to-implement alternative that’s nearly as efficient as its pass-by-reference competitors, but avoids their disadvantages.
 
-**Item 41 \| 291**
 
 **Things to Remember**
 
@@ -458,7 +449,6 @@ In the call
 
 vs.push_back("xyzzy");
 
-**292 \| Item 41**
 
 compilers see a mismatch between the type of the argument (const char\[6\]) and the type of the parameter taken by push_back (a reference to a std::string). They address the mismatch by generating code to create a temporary std::string object from the string literal, and they pass that temporary object to push_back. In other words, they treat the call as if it had been written like this:
 
@@ -482,7 +472,7 @@ The performance freaks can’t help but notice that if there were a way to take 
 
 That would be maximally efficient, and even the performance freaks could content-edly decamp.
 
-Because you’re a C++ programmer, there’s an above-average chance you’re a performance freak. If you’re not, you’re still probably sympathetic to their point of view. (If you’re not at all interested in performance, shouldn’t you be in the Python room down the hall?) So I’m pleased to tell you that there is a way to do exactly what is **Item 42 \| 293**
+Because you’re a C++ programmer, there’s an above-average chance you’re a performance freak. If you’re not, you’re still probably sympathetic to their point of view. (If you’re not at all interested in performance, shouldn’t you be in the Python room down the hall?) So I’m pleased to tell you that there is a way to do exactly what is
 
 needed for maximal efficiency in the call to push_back. It’s to not call push_back.
 
@@ -526,7 +516,6 @@ vs. **push_back**(queenOfDisco); // copy-construct queenOfDisco
 
 vs. **emplace_back**(queenOfDisco); // ditto
 
-**294 \| Item 42**
 
 Emplacement functions can thus do everything insertion functions can. They sometimes do it more efficiently, and, at least in theory, they should never do it less efficiently. So why not use them all the time?
 
@@ -548,7 +537,6 @@ But move assignment requires an object to move from, and that means that a tempo
 
 Alas, whether adding a value to a container is accomplished by construction or assignment is generally up to the implementer. But, again, heuristics can help.
 
-**Item 42 \| 295**
 
 Node-based containers virtually always use construction to add new values, and most standard containers are node-based. The only ones that aren’t are
 
@@ -576,7 +564,7 @@ When deciding whether to use emplacement functions, two other issues are worth k
 
 std::list\<std::shared_ptr\<Widget\>\> ptrs;
 
-and you want to add a std::shared_ptr that should be released via a custom deleter (see Item 19). Item 21 explains that you should use std::make_shared to create **296 \| Item 42**
+and you want to add a std::shared_ptr that should be released via a custom deleter (see Item 19). Item 21 explains that you should use std::make_shared to create
 
 std::shared_ptrs whenever you can, but it also concedes that there are situations where you can’t. One such situation is when you want to specify a custom deleter. In that case, you must use new directly to get the raw pointer to be managed by the std::shared_ptr.
 
@@ -608,7 +596,6 @@ Now consider what happens if emplace_back is called instead of push_back: ptrs. 
 
 1\. The raw pointer resulting from “new Widget” is perfect-forwarded to the point inside emplace_back where a list node is to be allocated. That allocation fails, and an out-of-memory exception is thrown.
 
-**Item 42 \| 297**
 
 2. As the exception propagates out of emplace_back, the raw pointer that was the only way to get at the Widget on the heap is lost. That Widget (and any resources it owns) is leaked.
 
@@ -634,9 +621,7 @@ The emplace_back version is similar:
 
 ptrs.emplace_back(**std::move(spw)**);
 
-Either way, the approach incurs the cost of creating and destroying spw. Given that the motivation for choosing emplacement over insertion is to avoid the cost of a tem-298 \| Item 42
-
-porary object of the type held by the container, yet that’s conceptually what spw is, emplacement functions are unlikely to outperform insertion functions when you’re adding resource-managing objects to a container and you follow the proper practice of ensuring that nothing can intervene between acquiring a resource and turning it over to a resource-managing object.
+Either way, the approach incurs the cost of creating and destroying spw. Given that the motivation for choosing emplacement over insertion is to avoid the cost of a temporary object of the type held by the container, yet that’s conceptually what spw is, emplacement functions are unlikely to outperform insertion functions when you’re adding resource-managing objects to a container and you follow the proper practice of ensuring that nothing can intervene between acquiring a resource and turning it over to a resource-managing object.
 
 A second noteworthy aspect of emplacement functions is their interaction with explicit constructors. In honor of C++11’s support for regular expressions, suppose you create a container of regular expression objects:
 
@@ -668,7 +653,6 @@ regexes.push_back(nullptr); // error! won't compile
 
 In both cases, we’re requesting an implicit conversion from a pointer to a std::regex, and the explicitness of that constructor prevents such conversions.
 
-**Item 42 \| 299**
 
 In the call to emplace_back, however, we’re not claiming to pass a std::regex object. Instead, we’re passing a *constructor argument* for a std::regex object. That’s not considered an implicit conversion request. Rather, it’s viewed as if you’d written this code:
 
@@ -698,7 +682,6 @@ regexes. **push_back**(nullptr); // error! copy init forbids
 
 The lesson to take away is that when you use an emplacement function, be especially careful to make sure you’re passing the correct arguments, because even explicit constructors will be considered by compilers as they try to find a way to interpret your code as valid.
 
-**300 \| Item 42**
 
 **Things to Remember**
 
@@ -707,5 +690,3 @@ The lesson to take away is that when you use an emplacement function, be especia
 • In practice, they’re most likely to be faster when (1) the value being added is constructed into the container, not assigned; (2) the argument type(s) passed differ from the type held by the container; and (3) the container won’t reject the value being added due to it being a duplicate.
 
 • Emplacement functions may perform type conversions that would be rejected by insertion functions.
-
-**Item 42 \| 301**

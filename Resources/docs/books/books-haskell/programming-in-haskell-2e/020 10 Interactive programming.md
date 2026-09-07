@@ -4,7 +4,7 @@
 
 In this chapter we show how Haskell can be used to write interactive programs. We start by explaining the problem of handling interaction in a pure language, present the solution that is adopted in Haskell, introduce a range of primitives and derived functions for interactive programming, and conclude by developing three interactive games: hangman, nim and life.
 
-### **10.1The problem**
+### **10.1 The problem**
 
 In the early days of computing, most programs were *batch programs* that were run in isolation from their users, to maximise the amount of time the computer was performing useful work. For example, a compiler is a batch program that takes a high-level program as its input, silently performs a large number of operations, and then produces a low-level program as its output.
 
@@ -22,7 +22,7 @@ How can such programs be modelled as pure functions? At first sight, this may se
 
 Over the years many approaches to the problem of combining the use of pure functions with the need for side effects have been developed. In the remainder of this chapter we present the solution that is used in Haskell, which is based upon a new type together with a small number of primitive operations. As we shall see in later chapters, the underlying approach is not specific to interaction, but can also be used to program with other forms of effects.
 
-### **10.2The solution**
+### **10.2 The solution**
 
 In Haskell, an interactive program is viewed as a pure function that takes the current *state of the world* as its argument, and produces a modified world as its result, in which the modified world reflects any side effects that were performed by the program during its execution. Hence, given a suitable type World whose values represent states of the world, the notion of an interactive program can be represented by a function of type World -\> World, which we abbreviate as IO (short for input/output) using the following type declaration:
 
@@ -46,7 +46,7 @@ At this point the reader may, quite reasonably, be concerned about the feasibili
 data IO a = ...
 ```
 
-### **10.3Basic actions**
+### **10.3 Basic actions**
 
 We now introduce three basic IO actions that are provided in Haskell. First of all, the action getChar reads a character from the keyboard, echoes it to the screen, and returns the character as its result value.
 
@@ -71,18 +71,18 @@ return v = ...
 
 The function return provides a bridge from pure expressions without side effects to impure actions with side effects. Crucially, there is no bridge back — once we are impure we are impure for ever, with no possibility for redemption! As a result, we may suspect that impurity quickly permeates entire programs, but in practice this is usually not the case. For most Haskell programs, the vast majority of functions do not involve interaction, with this being handled by a relatively small number of interactive functions at the outermost level.
 
-### **10.4Sequencing**
+### **10.4 Sequencing**
 
 In Haskell, a sequence of IO actions can be combined into a single composite action using the do notation, whose typical form is as follows:
 
 ``` haskell
 do v1 <- a1
-v2 <- a2
-.
-.
-.
-vn <- an
-return (f v1 v2 ... vn)
+   v2 <- a2
+   .
+   .
+   .
+   vn <- an
+   return (f v1 v2 ... vn)
 ```
 
 Such expressions have a simple operational reading: first perform the action a1 and call its result value v1; then perform the action a2 and call its result value v2; ...; then perform the action an and call its result value vn; and finally, apply the function f to combine all the results into a single value, which is then returned as the result value from the expression as a whole.
@@ -94,14 +94,14 @@ For example, an action that reads three characters, discards the second, and ret
 ``` haskell
 act :: IO (Char,Char)
 act = do x <- getChar
-getChar
-y <- getChar
-return (x,y)
+      getChar
+      y <- getChar
+      return (x,y)
 ```
 
 Note that omitting the use of return in this example would give rise to a type error, because (x,y) is an expression of type (Char,Char), whereas in the above context we require an action of type IO (Char,Char).
 
-### **10.5Derived primitives**
+### **10.5 Derived primitives**
 
 Using the three basic actions together with sequencing, we can now define a number of other useful action primitives that are provided in the standard prelude. First of all, we define an action getLine that reads a string of characters from the keyboard, terminated by the newline character ’\n’:
 
@@ -123,7 +123,7 @@ Enter a string: Haskell
 The string has 7 characters
 ```
 
-### **10.6Hangman**
+### **10.6 Hangman**
 
 In the remainder of this chapter we present three extended programming examples, of increasing complexity. Our first example illustrates the basics of IO programming using a variant of the game *hangman*. At the start of the game, one player secretly enters a word. Another player then tries to deduce the word via a series of guesses. For each guess, we indicate which letters in the secret word occur in the guess, and the game ends when the guess is correct.
 
@@ -132,9 +132,9 @@ We implement the hangman game in a top-down manner, starting with a top-level ac
 ``` haskell
 hangman :: IO ()
 hangman = do putStrLn "Think of a word:"
-word <- sgetLine
-putStrLn "Try to guess it:"
-play word
+         word <- sgetLine
+         putStrLn "Try to guess it:"
+         play word
 ```
 
 It now remains to complete the definitions for sgetLine and play. First of all, the action sgetLine reads a string of characters from the keyboard in a similar manner to the basic action getLine, except that it echoes each character as a dash symbol ’-’ in order to keep the string secret:
@@ -146,9 +146,9 @@ In turn, the action getCh used in this definition reads a single character from 
 ``` haskell
 getCh :: IO Char
 getCh = do hSetEcho stdin False
-x <- getChar
-hSetEcho stdin True
-return x
+        x <- getChar
+        hSetEcho stdin True
+        return x
 ```
 
 (The primitive hSetEcho can be made available by including the declaration import System.IO at the start of a script.) We now return to the function play, which implements the main game loop by repeatedly prompting the second player to enter a guess until it equals the secret word:
@@ -179,7 +179,7 @@ nott-ngh--
 You got it!!
 ```
 
-### **10.7Nim**
+### **10.7 Nim**
 
 For our second example we consider a variant of the *game of nim*, played on a board comprising five numbered rows of stars, initially set up as follows:
 
@@ -219,7 +219,7 @@ valid board row num = board !! (row-1) >= num
 ``` haskell
 move :: Board -> Int -> Int -> Board
 move board row num = [update r n | (r,n) <- zip [1..] board]
-where update r n = if r == row then n-num else n
+  where update r n = if r == row then n-num else n
 ```
 
 For example, move initial 1 3 returns the new board \[2,4,3,2,1\] in which three stars have been removed from the first row.
@@ -280,7 +280,7 @@ nim = play initial 1
 
 We conclude with two further remarks about our implementation of nim. First of all, note that because Haskell is a pure language, we needed to supply the game state, which in this case comprises the current board and player number, as explicit arguments to the play function. And secondly, note the separation between the pure parts of our implementation, in the form of the utility functions on players and boards, from the impure parts that involve input/output. It is good practice to try and maintain this kind of separation in Haskell programs, to minimise and localise the use of side effects.
 
-### **10.8Life**
+### **10.8 Life**
 
 Our third and final interactive programming example concerns the *game of life*. The game models a simple evolutionary system based on cells, and is played on a two-dimensional board. Each square on the board is either empty, or contains a single living cell, as illustrated in the following example:
 
@@ -391,7 +391,7 @@ The auxiliary function rmdups removes duplicates from a list, and is used above 
 
 ``` haskell
 rmdups :: Eq a => [a] -> [a]
-rmdups []= []
+rmdups []     = []
 rmdups (x:xs) = x : rmdups (filter (/= x) xs)
 ```
 
@@ -407,9 +407,9 @@ Finally, we define a function life that implements the game of life itself, by c
 ``` haskell
 life :: Board -> IO ()
 life b = do cls
-showcells b
-wait 500000
-life (nextgen b)
+         showcells b
+         wait 500000
+         life (nextgen b)
 ```
 
 The function wait is used to slow down the game to a reasonable speed, and can be implemented by performing a given number of dummy actions:
@@ -421,19 +421,19 @@ wait n = sequence_ [return () | _ <- [1..n]]
 
 For fun, you might like to try out the life function with the glider example, and experiment with some patterns of your own. Note also that most of the definitions used to implement the game of life are pure functions, with only a small number of top-level definitions involving input/output. Moreover, the definitions that do have such side effects are clearly distinguishable from those that do not, through the presence of IO in their types.
 
-### **10.9Chapter remarks**
+### **10.9 Chapter remarks**
 
 The use of the IO type to perform other forms of side effects, including reading and writing from files, is discussed in the Haskell Report \[4\], and a formal meaning for this type is given in \[15\]. For specialised applications, a bridge back from impure actions to pure expressions is in fact available via the function unsafePerformIO :: IO a -\> a in the library System.IO.Unsafe. However, as suggested by the naming, this function is unsafe and should not be used in normal Haskell programs as it compromises the purity of the language.
 
-### **10.10Exercises**
+### **10.10 Exercises**
 
-1.Redefine putStr :: String -\> IO () using a list comprehension and the library function sequence\_ :: \[IO a\] -\> IO ().
+1\. Redefine putStr :: String -\> IO () using a list comprehension and the library function sequence\_ :: \[IO a\] -\> IO ().
 
-2.Using recursion, define a version of putBoard :: Board -\> IO () that displays nim boards of any size, rather than being specific to boards with just five rows of stars. Hint: first define an auxiliary function that takes the current row number as an additional argument.
+2\. Using recursion, define a version of putBoard :: Board -\> IO () that displays nim boards of any size, rather than being specific to boards with just five rows of stars. Hint: first define an auxiliary function that takes the current row number as an additional argument.
 
-3.In a similar manner to the first exercise, redefine the generalised version of putBoard using a list comprehension and sequence\_.
+3\. In a similar manner to the first exercise, redefine the generalised version of putBoard using a list comprehension and sequence\_.
 
-4.Define an action adder :: IO () that reads a given number of integers from the keyboard, one per line, and displays their sum. For example:
+4\. Define an action adder :: IO () that reads a given number of integers from the keyboard, one per line, and displays their sum. For example:
 
 ``` haskell
 > adder
@@ -448,8 +448,8 @@ The total is 25
 
 Hint: start by defining an auxiliary function that takes the current total and how many numbers remain to be read as arguments. You will also likely need to use the library functions read and show.
 
-5.Redefine adder using the function sequence :: \[IO a\] -\> IO \[a\] that performs a list of actions and returns a list of the resulting values.
+5\. Redefine adder using the function sequence :: \[IO a\] -\> IO \[a\] that performs a list of actions and returns a list of the resulting values.
 
-6.Using getCh, define an action readLine :: IO String that behaves in the same way as getLine, except that it also permits the delete key to be used to remove characters. Hint: the delete character is ’\DEL’, and the control character for moving the cursor back one space is ’\b’.
+6\. Using getCh, define an action readLine :: IO String that behaves in the same way as getLine, except that it also permits the delete key to be used to remove characters. Hint: the delete character is ’\DEL’, and the control character for moving the cursor back one space is ’\b’.
 
 Solutions to exercises 1–3 are given in appendix A.

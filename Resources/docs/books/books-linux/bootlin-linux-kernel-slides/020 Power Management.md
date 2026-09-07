@@ -1,20 +1,22 @@
-Power Management
-
- 
+![](media/index-422_1.jpg)
 
 Power Management
 
- 
+
+
+Power Management
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 408/436 PM building blocks
 
- 
+PM building blocks
+
+
 
 ▶ Several power management *building blocks*
 
@@ -32,11 +34,11 @@ Corrections, suggestions, contributions and translations are welcome!
 
 ▶ Independent *building blocks* that can be improved gradually during development
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 409/436 Clock framework (1)
 
- 
+Clock framework (1)
+
+
 
 ▶ Generic framework to manage clocks used by devices in the system ▶ Allows to reference count clock users and to shutdown the unused clocks to save
 
@@ -60,11 +62,11 @@ required.
 
 *•* [clk_set_rate()](https://elixir.bootlin.com/linux/latest/ident/clk_set_rate) to set the current clock rate (in Hz) of a clock source
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 410/436 Clock framework (2)
 
- 
+Clock framework (2)
+
+
 
 The common clock framework
 
@@ -76,15 +78,15 @@ Device Tree
 
 ▶ Is implemented in [drivers/clk/](https://elixir.bootlin.com/linux/latest/source/drivers/clk/)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 411/436 Diagram overview of the common clock framework
 
- 
+Diagram overview of the common clock framework
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 412/436 Clock framework (3)
 
- 
+
+Clock framework (3)
+
+
 
 The interface of the CCF divided into two halves:
 
@@ -106,11 +108,11 @@ structures
 
 *•* Example: [drivers/clk/mvebu/clk-cpu.c](https://elixir.bootlin.com/linux/latest/source/drivers/clk/mvebu/clk-cpu.c)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 413/436 Clock framework (4)
 
- 
+Clock framework (4)
+
+
 
 Hardware clock operations: device tree
 
@@ -134,11 +136,11 @@ See our presentation about the Clock Framework for more details:
 
 <https://bootlin.com/pub/conferences/2013/elce/common-clock-framework-how-to-use-it/>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 414/436 Suspend and resume (to / from RAM)
 
- 
+Suspend and resume (to / from RAM)
+
+
 
 ▶ Infrastructure in the kernel to support suspend and resume ▶ System on Chip hooks
 
@@ -162,13 +164,12 @@ structure. See the documentation for this structure for details about possible o
 
 a simulated suspend) to a swap partition.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 415/436
+
 
 Triggering suspend / hibernate
 
- 
+
 
 ▶ [struct suspend_ops](https://elixir.bootlin.com/linux/latest/ident/suspend_ops) functions are called by the [enter_state()](https://elixir.bootlin.com/linux/latest/ident/enter_state) function.
 
@@ -192,11 +193,11 @@ customizations
 
 [suspend.service.8.html](https://www.man7.org/linux/man-pages/man8/systemd-suspend.service.8.html)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 416/436 Saving power in the idle loop
 
- 
+Saving power in the idle loop
+
+
 
 ▶ The idle loop is what you run when there’s nothing left to run in the system.
 
@@ -210,11 +211,11 @@ disable the timers (tickless systems).
 
 ▶ See also <https://en.wikipedia.org/wiki/Idle_loop>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 417/436 Managing idle
 
- 
+Managing idle
+
+
 
 Adding support for multiple idle levels
 
@@ -230,11 +231,11 @@ and to know when the next event is scheduled, for smarter sleeps. ▶ CPUidle in
 
 *•* See [admin-guide/pm/cpuidle](https://www.kernel.org/doc/html/latest/admin-guide/pm/cpuidle.html) in kernel documentation.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 418/436 PowerTOP
 
- 
+PowerTOP
+
+
 
 <https://en.wikipedia.org/wiki/PowerTOP>
 
@@ -246,11 +247,11 @@ up the system too often.
 
 sudo powertop
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 419/436 Runtime power management
 
- 
+Runtime power management
+
+
 
 ▶ Managing per-device idle, each device being managed by its device driver
 
@@ -272,11 +273,11 @@ runtime_resume(), runtime_idle() in the [struct dev_pm_ops](https://elixir.bootl
 
 ▶ See [drivers/net/ethernet/cadence/macb_main.c](https://elixir.bootlin.com/linux/latest/source/drivers/net/ethernet/cadence/macb_main.c) again.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 420/436 Generic PM Domains (genpd)
 
- 
+Generic PM Domains (genpd)
+
+
 
 ▶ Generic infrastructure to implement power domains based on Device Tree
 
@@ -302,11 +303,10 @@ corresponding devices.
 
 <https://youtu.be/SctfvoskABM>
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 421/436
 
 Frequency and voltage scaling (1)
 
- 
+
 
 Frequency and voltage scaling possible through the cpufreq kernel infrastructure.
 
@@ -330,11 +330,11 @@ tasks running at full speed.
 
 /sys/devices/system/cpu/cpu\<n\>/cpufreq/
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 422/436 Frequency and voltage scaling (2)
 
- 
+Frequency and voltage scaling (2)
+
+
 
 ▶ CPU frequency drivers are in [drivers/cpufreq/](https://elixir.bootlin.com/linux/latest/source/drivers/cpufreq/). Example:
 
@@ -352,11 +352,11 @@ them using [cpufreq_register_driver()](https://elixir.bootlin.com/linux/latest/i
 
 ▶ See documentation in [cpu-freq/](https://www.kernel.org/doc/html/latest/cpu-freq/) for useful explanations
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 423/436 Regulator framework
 
- 
+Regulator framework
+
+
 
 ▶ Modern embedded platforms have hardware responsible for voltage and current
 
@@ -370,11 +370,11 @@ when parts of the system are unused
 
 ▶ See [power/regulator/](https://www.kernel.org/doc/html/latest/power/regulator/) in kernel documentation.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 424/436 BSP work for a new board
 
- 
+BSP work for a new board
+
+
 
 In case you just need to create a BSP for your board, and your CPU already has full PM support, you should just need to:
 
@@ -390,13 +390,12 @@ management)
 
 resume, cpuidle, cpu frequency and voltage scaling, PM domains.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 425/436
+
 
 Useful resources
 
- 
+
 
 ▶ [power/](https://www.kernel.org/doc/html/latest/power/) in kernel documentation.
 
@@ -412,8 +411,4 @@ Théo Lebrun (Embedded Linux Conference Europe 2024)
 
 *•* <https://www.youtube.com/watch?v=_jb6U40ZCZk>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 426/436
-
-![](media/index-441_1.jpg)

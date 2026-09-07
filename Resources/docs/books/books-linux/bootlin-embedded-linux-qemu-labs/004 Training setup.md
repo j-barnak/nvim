@@ -40,9 +40,7 @@ Can be useful throughout any of the labs
 
 1This tool from Microsoft is Open Source! To try it on Ubuntu: sudo snap install code --classic
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 3
 
-Embedded Linux System Development
 
 • If you ran commands from a root shell by mistake, your regular user may no longer be able to handle the corresponding generated files. In this case, use the chown -R command to give the new files back to your regular user.
 
@@ -50,6 +48,3 @@ Example: \$ sudo chown -R myuser.myuser linux/
 
 4
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
-
-Embedded Linux System Development

@@ -1,10 +1,10 @@
 ## Chapter 8
 
- 
+
 
 Graph Search and Its Applications
 
- 
+
 
 This chapter is all about fundamental primitives for graph search and their applications. One very cool aspect of this material is that all the algorithms that we’ll cover are blazingly fast (linear time with small constants), and it can be quite tricky to understand why they work! The culmination of this chapter—computing the strongly connected components of a directed graph with only two passes of depth-first
 
@@ -22,7 +22,7 @@ sequence tasks while respecting precedence constraints). Section 8.6 uses DFS to
 
 graph in linear time. Section 8.7 explains how this fast graph primitive can be used to explore the structure of the Web.
 
- 
+
 
 8.1 Overview
 
@@ -36,7 +36,7 @@ Why would we want to search a graph, or to figure out if a graph contains a path
 
 16 Graph Search and Its Applications
 
- 
+
 
 many reasons.
 
@@ -52,7 +52,7 @@ in Atom Egoyan’s 3 Where the Truth Lies (Figure 8.1).
 
 ![](media/index-29_1.jpg)
 
- 
+
 
 Jon *A Single Man* *Where the* Colin Kevin
 
@@ -62,7 +62,7 @@ Hamm Firth Bacon *Truth Lies*
 
 ![](media/index-29_3.jpg)
 
- 
+
 
 Figure 8.1: A snippet of the movie network, showing that Jon Hamm’s Bacon number is at most 2.
 
@@ -76,7 +76,7 @@ Figure 8.1: A snippet of the movie network, showing that Jon Hamm’s Bacon numb
 
 paper). 3 There are also lots of other two-hop paths between Bacon and Hamm. 8.1 Overview 17
 
- 
+
 
 Shortest paths. The Bacon number concerns the shortest path between two vertices of the movie network, meaning the path using
 
@@ -102,7 +102,7 @@ solvers incorporate some additional ideas.
 
 18 Graph Search and Its Applications
 
- 
+
 
 see applications of depth-first search to sequencing tasks (Section 8.5)
 
@@ -144,7 +144,7 @@ algorithmic toolbox with as many for-free primitives
 
 as possible, ready to be applied at will.
 
- 
+
 
 8.1.3 Generic Graph Search
 
@@ -158,7 +158,7 @@ The point of a graph search algorithm is to solve the following prob-lem.
 
 8.1 Overview 19
 
- 
+
 
 Problem: Graph Search
 
@@ -166,7 +166,7 @@ Input: An undirected or directed graph G = (V, E), and a starting vertex s 2 V .
 
 Goal: Identify the vertices of V reachable from s in G.
 
- 
+
 
 By a vertex v being “reachable,” we mean that there is a sequence of edges in G that travels from s to v. If G is a directed graph, all the path’s edges should be traversed in the forward (outgoing) direction.
 
@@ -176,7 +176,7 @@ is {s, u, v, w}. In the directed version of the graph in Figure 8.2(b), there is
 
 are reachable from s 8 via a directed path.
 
- 
+
 
 *u* *u*
 
@@ -204,7 +204,7 @@ Figure 8.2: In (a), the set of vertices reachable from s is {s, u, v, w}. In (b)
 
 ![](media/index-32_6.jpg)
 
- 
+
 
 The two graph search strategies that we’ll focus on—breadth-first
 
@@ -214,7 +214,7 @@ search and depth-first search—are different ways of instantiating a generic gr
 
 ![](media/index-32_8.jpg)
 
- 
+
 
 8 In general, most of the algorithms and arguments in this chapter apply
 
@@ -258,7 +258,7 @@ equally well to undirected and directed graphs. The big exception is computing c
 
 20 Graph Search and Its Applications
 
- 
+
 
 GenericSearch
 
@@ -272,7 +272,7 @@ w unexplored do
 
 choose some such edge (v, w) // underspecified mark w as explored
 
- 
+
 
 The algorithm is essentially the same for both directed and undirected graphs. In the directed case, the edge (v, w) chosen in an iteration of the while loop should be directed from an explored vertex v to an unexplored vertex w.
 
@@ -312,7 +312,7 @@ Still, there is no substitute for the detailed under-
 
 standing of an algorithm that comes from providing 8.1 Overview 21
 
- 
+
 
 your own working implementation of it. I strongly
 
@@ -326,7 +326,7 @@ For guidance, see the end-of-chapter Programming
 
 Problems and supporting test cases.
 
- 
+
 
 For example, in the graph in Figure 8.2(a), initially only our home
 
@@ -348,7 +348,7 @@ nical statements are labeled theorems. A lemma is a technical statement that ass
 
 a theorem (much as a subroutine assists with the 22 Graph Search and Its Applications
 
- 
+
 
 implementation of a larger program). A corollary is a statement that follows immediately from an already-
 
@@ -358,7 +358,7 @@ We use the term proposition for stand-alone techni-cal statements that are not p
 
 their own right.
 
- 
+
 
 What about the running time of the GenericSearch algorithm? The algorithm explores each edge at most once—after an edge (v, w) has been explored for the first time, both v and w are marked as explored and the edge will not be considered again. This suggests that it should be possible to implement the algorithm in linear time, as long as we can quickly identify an eligible edge (v, w) in each iteration of the while loop. We’ll see how this works in detail for breadth-first
 
@@ -382,19 +382,19 @@ first-out) data structure;
 
 shortest path between one vertex and all other vertices, with the 8.1 Overview 23
 
- 
+
 
 explored unexplored
 
 ![](media/index-36_1.jpg)
 
- 
+
 
 *s*
 
 ![](media/index-36_2.jpg)
 
- 
+
 
 the frontier
 
@@ -404,7 +404,7 @@ Figure 8.3: Every iteration of the GenericSearch algorithm chooses an edge “on
 
 ![](media/index-36_4.jpg)
 
- 
+
 
 layer-i vertices being precisely the vertices at distance i from s;
 
@@ -418,7 +418,7 @@ components of an undirected graph.
 
 ![](media/index-36_7.jpg)
 
- 
+
 
 Depth-first search (DFS). Depth-first search—DFS to its friends—is perhaps even more important. DFS employs a more aggressive strategy for exploring a graph, very much in the spirit of how you might explore a maze, going as deeply as you can and
 
@@ -446,7 +446,7 @@ nected components” of a directed graph, with applications to understanding the
 
 24 Graph Search and Its Applications
 
- 
+
 
 8.1.5 Correctness of the GenericSearch Algorithm
 
@@ -484,7 +484,7 @@ eligible for exploration!
 
 ![](media/index-38_2.jpg)
 
- 
+
 
 S = explored vertices
 
@@ -494,7 +494,7 @@ Figure 8.4: Proof of Proposition 8.1. As long as the GenericSearch algorithm has
 
 ![](media/index-38_4.jpg)
 
- 
+
 
 8.2 Breadth-First Search and Shortest Paths
 
@@ -540,19 +540,19 @@ Figure 8.5 comprises only the vertex e.
 
 26 Graph Search and Its Applications
 
- 
+
 
 *a* *e* layer 3
 
 ![](media/index-39_1.jpg)
 
- 
+
 
 *s* *c*
 
 ![](media/index-39_2.jpg)
 
- 
+
 
 *b* *d*
 
@@ -574,7 +574,7 @@ Figure 8.5: Breadth-first search discovers vertices in layers. The layer-i verti
 
 ![](media/index-39_7.jpg)
 
- 
+
 
 Quiz 8.1
 
@@ -604,7 +604,7 @@ d\) 2 and n
 
 ![](media/index-39_14.jpg)
 
- 
+
 
 8.2.2 Pseudocode for BFS
 
@@ -626,7 +626,7 @@ Implementing breadth-first search in linear time requires a simple “first-in f
 
 ![](media/index-39_22.jpg)
 
- 
+
 
 a queue is a data structure for maintaining a list of objects, and you can remove stuff from the front or add stuff to the back in constant
 
@@ -644,7 +644,7 @@ only if it is marked as “explored.”
 
 1 mark s as explored, all other vertices as unexplored 2 Q := a queue data structure, initialized with s 3 while Q is not empty do 4 remove the vertex from the front of Q, call it v 5 for each edge (v, w) in v’s adjacency list do 6 if w is unexplored then 7 mark w as explored 8 add w to the end of Q
 
- 
+
 
 Each iteration of the while loop explores one new vertex. In
 
@@ -662,7 +662,7 @@ Let’s see how our pseudocode works for the graph in Figure 8.5, num-bering the
 
 28 Graph Search and Its Applications
 
- 
+
 
 be explored. The first iteration of the while loop extracts s from the queue Q and the subsequent for loop examines the edges (s, a) and (s, b), in whatever order these edges appear in s’s adjacency list. Because neither a nor b is marked as explored, both get inserted into the queue. Let’s say that edge (s, a) came first and so a is inserted before b. The current state of the graph and the queue is now:
 
@@ -682,7 +682,7 @@ front of queue already removed
 
 ![](media/index-41_2.jpg)
 
- 
+
 
 *b* *b a s* *d*
 
@@ -692,7 +692,7 @@ front of queue already removed
 
 ![](media/index-41_4.jpg)
 
- 
+
 
 The next iteration of the while loop extracts the vertex a from the front of the queue, and considers its incident edges (s, a) and (a, c). It skips over the former after double-checking that s is already marked as explored, and adds the (previously unexplored) vertex c to the end of the queue. The third iteration extracts the vertex b from the front of the queue and adds vertex d to the end (because s and c are already marked as explored, they are skipped over). The new picture is:
 
@@ -798,13 +798,13 @@ In the fourth iteration, the vertex c is removed from the front of the queue. Of
 
 ![](media/index-41_45.jpg)
 
- 
+
 
 before, and it is added to the end of the queue. The final two iterations extract d and then e from the queue, and verify that all of their neighbors have already been explored. The queue is then empty, and the algorithm halts. The vertices are explored in order of the layers, with the layer-i vertices explored immediately after the
 
 layer-(i 1) vertices (Figure 8.6).
 
- 
+
 
 \#2 *a* *e* \#6 layer 3
 
@@ -840,7 +840,7 @@ Figure 8.6: In breadth-first search, the layer-i vertices are explored imme-diat
 
 ![](media/index-42_7.jpg)
 
- 
+
 
 8.2.4 Correctness and Running Time
 
@@ -920,7 +920,7 @@ n = \|V \| .
 
 30 Graph Search and Its Applications
 
- 
+
 
 \(c\) The running time of lines 2–8 of BFS is
 
@@ -936,7 +936,7 @@ We can prove part (c) by inspecting the pseudocode. The ini-tialization in line 
 
 twice—once when v 14 is explored, and once when w is explored. Thus the total amount of time spent in lines 5–6 is O(ms), and the overall running time for lines 2–8 is O(ms + ns). QE D
 
- 
+
 
 8.2.5 Shortest Paths
 
@@ -954,7 +954,7 @@ vertex is explored.
 
 8.2 Breadth-First Search and Shortest Paths 31
 
- 
+
 
 Problem Definition
 
@@ -962,7 +962,7 @@ In a graph G, we use the notation dist(v, w) for the fewest number of edges in a
 
 to 15 w ).
 
- 
+
 
 Problem: Shortest Paths (Unit Edge Lengths)
 
@@ -970,19 +970,19 @@ Input: An undirected or directed graph G = (V, E), and a starting vertex s 2 V .
 
 Output: 16 dist ( s, v ) for every vertex v 2 V .
 
- 
+
 
 For example, if G is the movie network and s is the vertex corre-sponding to Kevin Bacon, the problem of computing shortest paths is precisely the problem of computing everyone’s Bacon number (Sec-
 
 tion 8.1.1). The basic graph search problem (Section 8.1.3) cor-responds to the special case of identifying all the vertices v with dist(s, v) 6= +1.
 
- 
+
 
 Pseudocode
 
 To compute shortest paths, we add two lines to the basic BFS algorithm (lines 2 and 9 below); these increase the algorithm’s running time by a small constant factor. The first one initializes preliminary estimates of vertices’ shortest-path distances—0 for s, and +1 for the other vertices, which might not even be reachable from s. The second one executes whenever a vertex w is discovered for the first time, and computes w’s final shortest-path distance as one more than that of the vertex v that triggered w’s discovery.
 
- 
+
 
 15 As usual, if G is directed, all the edges of the path should be traversed in the forward direction.
 
@@ -992,7 +992,7 @@ sumption that each edge of G contributes 1 to the length of a path. Chapter 9 ge
 
 32 Graph Search and Its Applications
 
- 
+
 
 Augmented-BFS
 
@@ -1008,7 +1008,7 @@ equals the true shortest-path distance dist(s, v).
 
 10 add w to the end of Q
 
- 
+
 
 Example and Analysis
 
@@ -1042,7 +1042,7 @@ front of queue already removed
 
 ![](media/index-45_5.jpg)
 
- 
+
 
 The second iteration of the while loop processes the vertex a, leading to c’s discovery. The algorithm reassigns l(c) from +1 to l(a) + 1, which is 2. Similarly, in the third iteration, l(d) is set to l(b) + 1, which is also 2:
 
@@ -1150,7 +1150,7 @@ that is, not reachable from 17 s —both dist ( s, v ) and l ( v ) are + 1 .
 
 ![](media/index-46_16.jpg)
 
- 
+
 
 17 If you’re hungry for a more rigorous proof, then proceed—in the privacy of your own home—by induction on the number of while loop iterations performed
 
@@ -1176,7 +1176,7 @@ of the correctness of Dijkstra’s shortest-path algorithm, as proved in Section
 
 ![](media/index-46_25.jpg)
 
- 
+
 
 8.2.6 Solution to Quiz 8.1
 
@@ -1188,7 +1188,7 @@ each. Path graphs have n layers (Figure 8.7(b)).
 
 ![](media/index-47_1.jpg)
 
- 
+
 
 *s*
 
@@ -1198,7 +1198,7 @@ each. Path graphs have n layers (Figure 8.7(b)).
 
 ![](media/index-47_3.jpg)
 
- 
+
 
 layer 0 layer 1 layer 1 layer 3 layer 0 layer 2
 
@@ -1212,7 +1212,7 @@ Figure 8.7: An n-vertex graph can have anywhere from two to n different layers.
 
 ![](media/index-47_6.jpg)
 
- 
+
 
 8.3 Computing Connected Components
 
@@ -1278,7 +1278,7 @@ the equivalence classes of a suitable equivalence relation. Equivalence relation
 
 ![](media/index-47_29.jpg)
 
- 
+
 
 the connected components of the graph in Figure 8.8 are {1, 3, 5, 7, 9}, {2, 4} , and {6, 8, 10}.
 
@@ -1302,13 +1302,13 @@ the connected components of the graph in Figure 8.8 are {1, 3, 5, 7, 9}, {2, 4} 
 
 ![](media/index-48_5.jpg)
 
- 
+
 
 Figure 8.8: A graph with vertex set {1, 2, 3, . . . , 10} and three connected components.
 
 ![](media/index-48_6.jpg)
 
- 
+
 
 The goal of this section is to use breadth-first search to compute
 
@@ -1330,7 +1330,7 @@ Goal: Identify the connected components of G.
 
 ![](media/index-48_11.jpg)
 
- 
+
 
 Next, let’s double-check your understanding of the definition of
 
@@ -1356,7 +1356,7 @@ relation on a set X of objects specifies, for each pair x, y 2 X of objects, whe
 
 36 Graph Search and Its Applications
 
- 
+
 
 Quiz 8.2
 
@@ -1372,7 +1372,7 @@ d\) 2 and max {m, n}
 
 (See Section 8.3.6 for the solution and discussion.)
 
- 
+
 
 8.3.2 Applications
 
@@ -1388,11 +1388,11 @@ Clustering. Suppose you have a collection of objects that you care about, with e
 
 Now form an undirected graph G = (V, E), with vertices corre-sponding to objects and edges corresponding to pairs of similar objects. Intuitively, each connected component of this graph represents a set of objects that share much in common. For example, if the objects are crawled news stories, one might expect the vertices of a connected component to be variations on the same story reported on different 8.3 Computing Connected Components 37
 
- 
+
 
 Web sites. If the objects are genomes, a connected component might correspond to different individuals belonging to the same species.
 
- 
+
 
 8.3.3 The UCC Algorithm
 
@@ -1424,7 +1424,7 @@ if w is unexplored then
 
 mark w as explored add w to the end of Q 38 Graph Search and Its Applications
 
- 
+
 
 8.3.4 An Example
 
@@ -1532,7 +1532,7 @@ connected component \#1 connected component \#3 8.3 Computing Connected Componen
 
 ![](media/index-51_36.jpg)
 
- 
+
 
 Finally, the algorithm verifies that the remaining vertices (7, 8, 9, and 10) have already been explored and halts.
 
@@ -1560,17 +1560,17 @@ analysis of BFS (Theorem 8.2(c)). Each call to BFS from a vertex i runs in O(mi 
 
 or edge of G participates in exactly one component, the combined P P running time of all the BFS calls is O ( m + ) = O m n i i n + i i ( ) . The initialization and additional bookkeeping performed by the algorithm requires only O(n) time, so the final running time is O(m + n). QE D
 
- 
+
 
 8.3.6 Solution to Quiz 8.2
 
 Correct answer: (b). A graph with one connected component is one in which you can get from anywhere to anywhere else. Path 40 Graph Search and Its Applications
 
- 
+
 
 graphs and complete graphs (Figure 8.7) are two examples. At the other extreme, in a graph with no edges, each vertex is in its own connected component, for a total of n. There cannot be more than n connected components, as they are disjoint and each contains at least one vertex.
 
- 
+
 
 8.4 Depth-First Search
 
@@ -1578,7 +1578,7 @@ Why do we need another graph search strategy? After all, breadth-first search se
 
 There’s another linear-time graph search strategy, depth-first search (DFS), which comes with its own impressive catalog of applica-tions (not already covered by BFS). For example, we’ll see how to use DFS to compute in linear time a topological ordering of the vertices of a directed acyclic graph, as well as the connected components (appropriately defined) of a directed graph.
 
- 
+
 
 8.4.1 An Example
 
@@ -1590,19 +1590,19 @@ example used in Section 8.2 (Figure 8.9).
 
 ![](media/index-53_1.jpg)
 
- 
+
 
 *s* *c*
 
 ![](media/index-53_2.jpg)
 
- 
+
 
 *b* *d*
 
 ![](media/index-53_3.jpg)
 
- 
+
 
 Figure 8.9: Running example for depth-first search. 8.4 Depth-First Search 41
 
@@ -1628,7 +1628,7 @@ Figure 8.9: Running example for depth-first search. 8.4 Depth-First Search 41
 
 ![](media/index-53_14.jpg)
 
- 
+
 
 Like BFS, DFS marks a vertex as explored the first time it discovers
 
@@ -1646,13 +1646,13 @@ the frontier
 
 ![](media/index-54_1.jpg)
 
- 
+
 
 *b* *d*
 
 ![](media/index-54_2.jpg)
 
- 
+
 
 Then DFS examines in some order the neighbors of c, the most recently discovered vertex. To keep things interesting, let’s say that DFS discovers d next, followed by e:
 
@@ -1690,7 +1690,7 @@ the frontier
 
 ![](media/index-54_11.jpg)
 
- 
+
 
 From e, DFS has nowhere to go—both of e’s neighbors are already marked as explored. DFS is forced to retreat to the previous vertex, namely d, and resume exploring the rest of its neighbors. From d, DFS will discover the final vertex b (perhaps after checking c and finding it marked as explored). Once at b, the dominoes fall quickly. DFS 42 Graph Search and Its Applications
 
@@ -1738,11 +1738,11 @@ From e, DFS has nowhere to go—both of e’s neighbors are already marked as ex
 
 ![](media/index-54_33.jpg)
 
- 
+
 
 discovers that all of b’s neighbors have already been explored, and must backtrack to the previously visited vertex, which is d. Similarly, because all of d’s remaining neighbors are already marked as explored, DFS must rewind further, to c. DFS then retreats further to a (after checking that all of c’s remaining neighbors are marked as explored), then to s. It finally stops once it checks s’s remaining neighbor (which is b) and finds it marked as explored.
 
- 
+
 
 8.4.2 Pseudocode for DFS
 
@@ -1772,7 +1772,7 @@ mark v as explored for each edge (v, w) in v’s adjacency list do
 
 add (“push”) w to the front of S
 
- 
+
 
 20 A stack is a “last-in first-out” data structure—like those stacks of upside-down
 
@@ -1782,7 +1782,7 @@ with queues, see footnote 11). A stack maintains a list of objects, and you can 
 
 of the list (a “pop”) in constant time. 21 Would the algorithm behave the same if we made only the first change? 8.4 Depth-First Search 43
 
- 
+
 
 As usual, the edges processed in the for loop are the edges incident to v (if G is an undirected graph) or the edges outgoing from v (if G is a directed graph).
 
@@ -1816,7 +1816,7 @@ if v is unexplored then
 
 DFS (G, v)
 
- 
+
 
 In this implementation, all recursive calls to DFS have access to the same set of global variables which track the vertices that have been marked as explored (with all vertices initially unexplored). The aggres-sive nature of DFS is perhaps more obvious in this implementation—the
 
@@ -1824,7 +1824,7 @@ In this implementation, all recursive calls to DFS have access to the same set o
 
 44 Graph Search and Its Applications
 
- 
+
 
 algorithm immediately recurses on the first unexplored neighbor that
 
@@ -1876,7 +1876,7 @@ computing connected components in Section 8.3.
 
 8.5 Topological Sort 45
 
- 
+
 
 8.5 Topological Sort
 
@@ -1892,7 +1892,7 @@ Let G = (V, E) be a directed graph. A topological ordering of G is an assignment
 
 for every (v, w) 2 E, f (v) \< f (w).
 
- 
+
 
 The function f effectively orders the vertices, from the vertex with the smallest f-value to the one with the largest. The condition asserts that all of G’s (directed) edges should travel forward in the ordering, with the label of the tail of an edge smaller than that of its head.
 
@@ -1904,13 +1904,13 @@ How many different topological orderings does the following graph have? Use only
 
 ![](media/index-58_1.jpg)
 
- 
+
 
 *s* *t*
 
 ![](media/index-58_2.jpg)
 
- 
+
 
 *w* 46 Graph Search and Its Applications
 
@@ -1926,7 +1926,7 @@ How many different topological orderings does the following graph have? Use only
 
 ![](media/index-58_8.jpg)
 
- 
+
 
 a\) 0
 
@@ -1946,7 +1946,7 @@ orderings identified in the solution to Quiz 8.3.
 
 ![](media/index-59_1.jpg)
 
- 
+
 
 *s* *v* *w* *t* *s* *w* *v* *t*
 
@@ -1964,7 +1964,7 @@ Figure 8.10: A topological ordering effectively plots the vertices of a graph on
 
 ![](media/index-59_5.jpg)
 
- 
+
 
 When the vertices of a graph represent tasks and the directed edges represent precedence constraints, topological orderings correspond exactly to the different ways to sequence the tasks while respecting the precedence constraints.
 
@@ -2002,7 +2002,7 @@ Happily, directed cycles are the only obstruction to topological orderings. A di
 
 ![](media/index-59_16.jpg)
 
- 
+
 
 *w*
 
@@ -2010,7 +2010,7 @@ Happily, directed cycles are the only obstruction to topological orderings. A di
 
 ![](media/index-60_1.jpg)
 
- 
+
 
 *u* *y*
 
@@ -2036,7 +2036,7 @@ Figure 8.11: Only a graph without directed cycles can have a topological orderin
 
 ![](media/index-60_7.jpg)
 
- 
+
 
 wait for it—a directed acyclic graph, or simply a DAG. For example,
 
@@ -2096,7 +2096,7 @@ vertex, we’re done. If not, it has at least one incoming edge (v1, v0 ). If v1
 
 ![](media/index-60_24.jpg)
 
- 
+
 
 *v* *3* *v* *1*
 
@@ -2104,7 +2104,7 @@ vertex, we’re done. If not, it has at least one incoming edge (v1, v0 ). If v1
 
 ![](media/index-61_1.jpg)
 
- 
+
 
 *v* *5* *v* *7*
 
@@ -2118,7 +2118,7 @@ Figure 8.12: Tracing incoming edges back from a vertex fails to find a source ve
 
 ![](media/index-61_4.jpg)
 
- 
+
 
 We can prove Theorem 8.6 by populating a topological ordering
 
@@ -2166,13 +2166,13 @@ sink vertices. 30 If you prefer a formal proof of correctness, proceed in the pr
 
 ![](media/index-61_16.jpg)
 
- 
+
 
 8.5.3 Computing a Topological Ordering
 
 Theorem 8.6 implies that it makes sense to ask for a topological ordering of a directed graph if and only if the graph is directed acyclic.
 
- 
+
 
 Problem: Topological Sort
 
@@ -2180,7 +2180,7 @@ Input: A directed acyclic graph G = (V, E).
 
 Output: A topological ordering of the vertices of G.
 
- 
+
 
 The proofs of Lemma 8.7 and Theorem 8.6 naturally lead to an
 
@@ -2204,7 +2204,7 @@ own home by induction on the number of vertices.
 
 Theorem 8.6 can also be implemented in linear time—do you see how to do it? 50 Graph Search and Its Applications
 
- 
+
 
 TopoSort
 
@@ -2224,7 +2224,7 @@ if v is unexplored then // in a prior DFS
 
 DFS-Topo (G, v)
 
- 
+
 
 Second, we must add a line of code to DFS that assigns an f-value to a vertex. The right time to do this is immediately upon completion of the DFS call initiated at v.
 
@@ -2248,13 +2248,13 @@ DFS-Topo (G, v)
 
 f (s) := curLabel // s’s position in ordering curLabel := curLabel 1 // work right-to-left
 
- 
+
 
 8.5.5 An Example
 
 Suppose the input graph is the graph in Quiz 8.3. The TopoSort algorithm initializes the global variable curLabel to the number of vertices, which is 4. The outer loop in TopoSort iterates through the vertices in an arbitrary order; let’s assume this order is v, t, s, w. In the first iteration, because v is not marked as explored, the algorithm 8.5 Topological Sort 51
 
- 
+
 
 invokes the DFS-Topo subroutine with starting vertex v. The only outgoing edge from v is (v, t), and the next step is to recursively call DFS-Topo with starting vertex t. This call returns immediately (as t has no outgoing edges), at which point f (t) is set to 4 and curLabel is decremented from 4 to 3. Next, the DFS-Topo call at v completes (as v has no other outgoing edges), at which point f (v) is set to 3 and curLabel is decremented from 3 to 2. At this point, the TopoSort algorithm resumes its linear scan of the vertices in its outer loop. The next vertex is t; because t has already been marked as explored in the first call to DFS-Topo, the TopoSort algorithm skips it. Because the next vertex (which is s) has not yet been explored, the algorithm invokes DFS-Topo from s. From s, DFS-Topo skips v (which is already marked as explored) and recursively calls DFS-Topo at the newly discovered vertex w. The call at w completes immediately (the only outgoing edge is to the previously explored vertex t), at which point f(w) is set to 2 and curLabel is decremented from 2 to 1. Finally, the DFS-Topo call at vertex s completes, and f(s) is set to 1. The resulting topological ordering is the same as that in
 
@@ -2278,7 +2278,7 @@ computes a topological ordering.
 
 (See Section 8.5.7 for the solution and discussion.)
 
- 
+
 
 8.5.6 Correctness and Running Time
 
@@ -2286,7 +2286,7 @@ The TopoSort algorithm correctly computes a topological ordering of a directed a
 
 52 Graph Search and Its Applications
 
- 
+
 
 Theorem 8.8 (Properties of TopoSort) For every directed acyclic graph G = (V, E) in adjacency-list representation:
 
@@ -2310,11 +2310,11 @@ Second, suppose w is discovered by the TopoSort algorithm be-fore v. Because G i
 
 produce a directed cycle (Figure 8.13). Thus, the call to DFS-Topo starting at w cannot discover v and completes with v still unexplored. Once again, the DFS-Topo call at w completes before that at v and hence f (v) \< f (w). QE D
 
- 
+
 
 33 Both cases are possible, as we saw in Section 8.5.5. \*8.6 Computing Strongly Connected Components 53
 
- 
+
 
 *G*
 
@@ -2324,13 +2324,13 @@ produce a directed cycle (Figure 8.13). Thus, the call to DFS-Topo starting at w
 
 ![](media/index-66_2.jpg)
 
- 
+
 
 Figure 8.13: A directed acyclic graph cannot contain both an edge (v, w) and a path from w back to v.
 
 ![](media/index-66_3.jpg)
 
- 
+
 
 8.5.7 Solution to Quizzes 8.3–8.4
 
@@ -2370,7 +2370,7 @@ Figure 8.14: Two topological orderings of the graph in Quiz 8.3.
 
 ![](media/index-66_11.jpg)
 
- 
+
 
 Solution to Quiz 8.4
 
@@ -2402,7 +2402,7 @@ is directed acyclic (Theorem 8.5), and so TopoSort does as well. Any chance it h
 
 54 Graph Search and Its Applications
 
- 
+
 
 \*8.6 Computing Strongly Connected Components
 
@@ -2414,7 +2414,7 @@ rected case (Section 8.3), although less straightforward. Computing strongly con
 
 So, we’ll use two! 35
 
- 
+
 
 8.6.1 Defining Strongly Connected Components
 
@@ -2426,25 +2426,25 @@ in Figure 8.15 have?
 
 ![](media/index-67_1.jpg)
 
- 
+
 
 1 4
 
 ![](media/index-67_2.jpg)
 
- 
+
 
 3
 
 ![](media/index-67_3.jpg)
 
- 
+
 
 Figure 8.15: How many connected components?
 
 ![](media/index-67_4.jpg)
 
- 
+
 
 It’s tempting to say that this graph has one connected component— if it were a physical object, with the edges corresponding to strings tying the vertices together, we could pick it up and it would hang together in one piece. But remember how we defined connected
 
@@ -2470,7 +2470,7 @@ components of a directed graph with only one pass of depth-first search; see the
 
 \*8.6 Computing Strongly Connected Components 55
 
- 
+
 
 A strongly connected component or SCC of a directed graph is
 
@@ -2506,7 +2506,7 @@ SCC#1 SCC#2 SCC#4
 
 ![](media/index-68_5.jpg)
 
- 
+
 
 SCC#3 7
 
@@ -2516,13 +2516,13 @@ SCC#3 7
 
 ![](media/index-68_7.jpg)
 
- 
+
 
 Figure 8.16: A graph with vertex set {1, 2, 3, . . . , 11} and four strongly connected components.
 
 ![](media/index-68_8.jpg)
 
- 
+
 
 The relationships between the four SCCs of the graph in Fig-
 
@@ -2588,7 +2588,7 @@ equivalence relation mirrors that in the undirected case (footnote 18).
 
 56 Graph Search and Its Applications
 
- 
+
 
 meta-edge (x, y) in F whenever there is an edge in G from a vertex in the SCC corresponding to x to one in the SCC corresponding to y. Then H is a directed acyclic graph.
 
@@ -2614,7 +2614,7 @@ d\) n and n
 
 (See Section 8.6.7 for the solution and discussion.)
 
- 
+
 
 8.6.2 Why Depth-First Search?
 
@@ -2622,7 +2622,7 @@ To see why graph search might help in computing strongly connected
 
 components, let’s return to the graph in Figure 8.16. Suppose we invoke depth-first search (or breadth-first search, for that matter) from the vertex 6. The algorithm will find everything reachable from 6 \*8.6 Computing Strongly Connected Components 57
 
- 
+
 
 and nothing more, discovering {6, 8, 10}, which is exactly one of the strongly connected components. The bad case is if we instead initiate a graph search from vertex 1, in which case all the vertices (not only {1, 3, 5}) are discovered and we learn nothing about the component structure.
 
@@ -2658,7 +2658,7 @@ est to lowest position, to compute the identity of each
 
 vertex’s strongly connected component.
 
- 
+
 
 You might have at least a little intuition for the second and third
 
@@ -2668,13 +2668,13 @@ steps of Kosaraju’s algorithm. The second step presumably does
 
 58 Graph Search and Its Applications
 
- 
+
 
 something similar to the TopoSort algorithm from Section 8.5, with the goal of processing the SCCs of the input graph in the third step in reverse topological order. (Caveat: We thought about the TopoSort algorithm only in DAGs, and here we have a general directed graph.) The third step is hopefully analogous to the UCC algorithm from
 
 Section 8.3 for undirected graphs. (Caveat: In undirected graphs, the order in which you process the vertices doesn’t matter; in directed graphs, as we’ve seen, it does.) But what’s up with the first step? Why does the first pass work with the reversal of the input graph?
 
- 
+
 
 8.6.3 Why the Reversed Graph?
 
@@ -2688,7 +2688,7 @@ positions for an arbitrary directed graph (Quiz 8.4). We’re hoping these verte
 
 constitute a topological ordering (Theorem 8.8), and the vertex in the last position must be a sink vertex of G, with no outgoing edges. (Any such edges would travel backward in the ordering.) Perhaps with a general directed graph G, the vertex in the last position always belongs to a sink SCC?
 
- 
+
 
 An Example
 
@@ -2696,13 +2696,13 @@ Sadly, no. For example, suppose we run the TopoSort algorithm on
 
 the graph in Figure 8.16. Suppose that we process the vertices in increasing order, with vertex 1 considered first. (In this case, all the vertices are discovered in the first iteration of the outer loop.) \*8.6 Computing Strongly Connected Components 59
 
- 
+
 
 Suppose further that depth-first search traverses edge (3, 5) before (3, 11), (5, 7) before (5, 9), (9, 4) before (9, 2), and (9, 2) before (9, 8). In this case, you should check that the vertex positions wind up being:
 
 *f*(6)=10
 
- 
+
 
 *f* *f*(11)=3 6 (1)=1 *f* (3)=2 11 1 3
 
@@ -2732,7 +2732,7 @@ Suppose further that depth-first search traverses edge (3, 5) before (3, 11), (5
 
 ![](media/index-72_7.jpg)
 
- 
+
 
 Against our wishes, the vertex in the last position (vertex 4) does not belong to the sink SCC. The one piece of good news is that the vertex in the first position (vertex 1) belongs to a source SCC (meaning an SCC with no incoming edges).
 
@@ -2750,7 +2750,7 @@ depth-first search traverses edge (11, 6) before (11, 8) and edge (9, 2) before 
 
 ![](media/index-72_11.jpg)
 
- 
+
 
 *f* *f*(11)=8 6 (1)=2 *f* (3)=3 11 1 3
 
@@ -2780,7 +2780,7 @@ depth-first search traverses edge (11, 6) before (11, 8) and edge (9, 2) before 
 
 ![](media/index-72_18.jpg)
 
- 
+
 
 This time, the vertex in the last position is in the sink SCC, but we know this doesn’t happen in general. More intriguingly, the vertex in the first position belongs to the source SCC, albeit a different vertex from this SCC than last time. Could this be true in general?
 
@@ -2866,7 +2866,7 @@ This time, the vertex in the last position is in the sink SCC, but we know this 
 
 60 Graph Search and Its Applications
 
- 
+
 
 The First Vertex Resides in a Source SCC
 
@@ -2892,7 +2892,7 @@ Theorem 8.10 implies that the vertex in the first position always resides in a s
 
 38 Both cases are possible, as we saw in the preceding example. \*8.6 Computing Strongly Connected Components 61
 
- 
+
 
 with f (v) = 1, inhabiting the SCC S. If S were not a source SCC,
 
@@ -2902,7 +2902,7 @@ Summarizing, after one pass of depth-first search, we can immedi-
 
 ately identify a vertex in a source SCC. The only problem? We want to identify a vertex in a sink SCC. The fix? Reverse the graph first.
 
- 
+
 
 Reversing the Graph
 
@@ -2920,7 +2920,7 @@ d\) Every sink SCC of rev G becomes a source SCC of G.
 
 (See Section 8.6.7 for the solution and discussion.)
 
- 
+
 
 The following corollary rewrites Theorem 8.10 for the reversed
 
@@ -2930,7 +2930,7 @@ Corollary 8.11 Let G be a directed graph, with the vertices ordered arbitrarily,
 
 Let S1, S2 denote two SCCs of G, and suppose G has an edge (v, w) with v 2 S1 and w 2 S2. Then,
 
- 
+
 
 x min f (x) \> min f (y). (8.1) 2 S 1 y 2 S 2
 
@@ -2938,7 +2938,7 @@ In particular, the vertex in the first position resides in a sink SCC of G, and 
 
 62 Graph Search and Its Applications
 
- 
+
 
 8.6.4 Pseudocode for Kosaraju
 
@@ -2970,7 +2970,7 @@ if v is unexplored then
 
 numSCC := numSCC + 1 // assign scc-values (details below) DFS-SCC (G, v)
 
- 
+
 
 Three implementation details:39
 
@@ -2984,25 +2984,25 @@ Programming Problem 8.10).
 
 \*8.6 Computing Strongly Connected Components 63
 
- 
+
 
 graph, by replacing the clause “each edge (s, v) in s’s outgoing
 
 adjacency list” in the DFS-Topo subroutine of Section 8.5 with “each edge (v, s) in s’s incoming adjacency list.”
 
- 
+
 
 2\. For best results, the first pass of depth-first search should export
 
 an array that contains the vertices (or pointers to them) in order of their positions, so that the second pass can process them with a simple array scan. This adds only constant overhead to the TopoSort subroutine (as you should check).
 
- 
+
 
 3\. The DFS-SCC subroutine is the same as DFS, with one additional
 
 line of bookkeeping:
 
- 
+
 
 DFS-SCC
 
@@ -3022,7 +3022,7 @@ if v is unexplored then
 
 DFS-SCC (G, v)
 
- 
+
 
 8.6.5 An Example
 
@@ -3034,17 +3034,17 @@ of the input graph. We computed in Section 8.6.3 two ways in which the TopoSort 
 
 64 Graph Search and Its Applications
 
- 
+
 
 *f*(6)=10
 
- 
+
 
 *f* *f*(11)=3 6 (1)=1 *f* (3)=2 11 1 3
 
 ![](media/index-77_1.jpg)
 
- 
+
 
 *f*(8)=9 8 10 *f*(10)=8
 
@@ -3070,13 +3070,13 @@ of the input graph. We computed in Section 8.6.3 two ways in which the TopoSort 
 
 ![](media/index-77_7.jpg)
 
- 
+
 
 The second pass iterates through the vertices in increasing order of vertex position. Thus, the first call to DFS-SCC is initiated at the vertex in the first position (which happens to be vertex 1); it discovers the vertices 1, 3, and 5 and marks them as the vertices of the first SCC. The algorithm proceeds to consider the vertex in the second position (vertex 3); it was already explored by the first call to DFS-SCC and is skipped. The vertex in the third position (vertex 11) has not yet been discovered and is the next starting point for DFS-SCC. The only outgoing edge of this vertex travels to an already-explored vertex (vertex 3), so 11 is the only member of the second SCC. The algorithm skips the vertex in the fourth position (vertex 5, already explored) and next initiates DFS-SCC from vertex 7, the vertex in the fifth position. This search discovers the vertices 2, 4, 7, and 9 (the other outgoing edges are to the already-explored vertex 5) and classifies them as the third SCC. The algorithm skips vertex 9 and then vertex 2, and finally invokes DFS-SCC from vertex 10 to discover the final SCC (comprising the vertices 6, 8, and 10).
 
 ![](media/index-77_8.jpg)
 
- 
+
 
 8.6.6 Correctness and Running Time
 
@@ -3126,7 +3126,7 @@ Theorem 8.12 (Properties of Kosaraju) For every directed graph G = (V, E) in adj
 
 ![](media/index-77_29.jpg)
 
- 
+
 
 \(a\) At the conclusion of Kosaraju, for every pair v, w of vertices,
 
@@ -3160,7 +3160,7 @@ Correct answer: (d). In a directed acyclic graph G = (V, E), every vertex is in 
 
 starting vertex v that belongs to an SCC S. Corollary 8.11 implies that directed paths out of v can reach only SCCs containing at least one vertex assigned a position earlier than v’s. Because the Kosaraju algorithm processes vertices in order of position, all the vertices in SCCs reachable from v have already been explored by the algorithm. (Remember that once the algorithm finds one vertex from an SCC, it finds them all.) Thus, the edges going out of S reach only already-explored vertices. This call to DFS-SCC discovers the vertices of S and nothing more, as there are no available avenues for it to trespass on other SCCs. As every call to DFS-SCC discovers a single SCC and every vertex is eventually considered, the Kosaraju algorithm correctly identifies all the SCCs. 66 Graph Search and Its Applications
 
- 
+
 
 Solution to Quiz 8.6
 
@@ -3206,7 +3206,7 @@ Figure 8.17: A graph and its reversal have the same strongly connected component
 
 ![](media/index-79_8.jpg)
 
- 
+
 
 8.7 The Structure of the Web
 
@@ -3332,7 +3332,7 @@ meta-graph of G with every edge reversed. 8.7 The Structure of the Web 67
 
 ![](media/index-79_66.jpg)
 
- 
+
 
 8.7.1 The Web Graph
 
@@ -3340,7 +3340,7 @@ In the Web graph, vertices correspond to Web pages, and edges to hyperlinks. Thi
 
 instructors of online courses (Figure 8.18).
 
- 
+
 
 Tim’s
 
@@ -3380,13 +3380,13 @@ list Records
 
 ![](media/index-80_7.jpg)
 
- 
+
 
 Figure 8.18: A minuscule piece of the Web graph.
 
 ![](media/index-80_8.jpg)
 
- 
+
 
 While the Web’s origins date back to roughly 1990, the Web really
 
@@ -3410,7 +3410,7 @@ its strongly connected components. 43 The graph had more than 200
 
 68 Graph Search and Its Applications
 
- 
+
 
 million vertices and 1.5 billion edges, so linear-time algorithms were
 
@@ -3418,7 +3418,7 @@ absolutely essential\!44
 
 tubes
 
- 
+
 
 IN OUT
 
@@ -3432,7 +3432,7 @@ SCC
 
 ![](media/index-81_3.jpg)
 
- 
+
 
 tendrils islands
 
@@ -3442,7 +3442,7 @@ Figure 8.19: Visualizing the Web graph as a “bow tie.” Roughly the same numb
 
 ![](media/index-81_5.jpg)
 
- 
+
 
 8.7.2 The Bow Tie
 
@@ -3548,7 +3548,7 @@ duce and Hadoop, and this was an intimidating input size at the time. 45 Remembe
 
 8.7 The Structure of the Web 69
 
- 
+
 
 giant SCC, but not vice versa. One example of an SCC in this part is a corporate Web site for which the company policy dictates that all hyperlinks from its pages stay within the site. There’s also some other weird stuff: “tubes,” which travel from IN to OUT, bypassing the giant SCC; “tendrils,” which are reachable from IN or which can reach OUT (but not belonging to the giant SCC); and “islands” of Web pages that cannot reach or be reached from almost any other part of the Web.
 
@@ -3568,7 +3568,7 @@ The Upshot
 
 P Breadth-first search (BFS) explores a graph
 
- 
+
 
 46 The presence of ubiquitous short paths is also known as the “small world property,” which is closely related to the popular phrase “six degrees of separation.”
 
@@ -3576,7 +3576,7 @@ P Breadth-first search (BFS) explores a graph
 
 70 Graph Search and Its Applications
 
- 
+
 
 cautiously, in layers.
 
@@ -3642,7 +3642,7 @@ time.
 
 Problems 71
 
- 
+
 
 P In the Web graph, a giant strongly connected
 
@@ -3650,7 +3650,7 @@ component contains roughly 28% of the vertices
 
 and is internally richly connected.
 
- 
+
 
 Test Your Understanding
 
@@ -3684,7 +3684,7 @@ d\) ⇥(m · n)
 
 Problem 8.3 This problem explores the relationship between two definitions concerning graph distances. In this problem, we consider only graphs that are undirected and connected. The diameter of a graph is the maximum, over all choices of vertices v and w, of 72 Graph Search and Its Applications
 
- 
+
 
 the shortest-path distance between v 48 and w . Next, for a vertex v, let l(v) denote the maximum, over all vertices w, of the shortest-path distance between v and w. The radius of a graph is the minimum value of l(v), over all choices of the vertex v.
 
@@ -3728,7 +3728,7 @@ of edges in a v-w path.
 
 Problems 73
 
- 
+
 
 c\) There are examples in which the TopoSort algorithm computes
 
@@ -3738,31 +3738,31 @@ d\) The TopoSort algorithm computes an ordering of the vertices
 
 that minimizes the number of backward edges if and only if the input graph is a directed cycle.
 
- 
+
 
 ### *v* 
 
 ![](media/index-86_1.jpg)
 
- 
+
 
 *s* *t*
 
 ![](media/index-86_2.jpg)
 
- 
+
 
 *w*
 
 ![](media/index-86_3.jpg)
 
- 
+
 
 Figure 8.20: A graph with no topological ordering. In the ordering s, v, w, t, the only backward edge is (t, s).
 
 ![](media/index-86_4.jpg)
 
- 
+
 
 Problem 8.6 If you add one new edge to a directed graph G, then the number of strongly connected components. . . (Choose all that apply.)
 
@@ -3796,7 +3796,7 @@ search instead of depth-first search in both its passes.
 
 74 Graph Search and Its Applications
 
- 
+
 
 b\) The algorithm would remain correct if we used breadth-first
 
@@ -3828,13 +3828,13 @@ d\) The algorithm would remain correct if it used the original input
 
 graph in both passes, provided in the second pass it considered the vertices in decreasing (rather than increasing) order of vertex position.
 
- 
+
 
 Challenge Problems
 
 Problem 8.9 In the 2SAT problem, you are given a set of clauses, each of which is the disjunction (logical “or”) of two literals. (A literal is a Boolean variable or the negation of a Boolean variable.) You would like to assign a value “true” or “false” to each of the variables so that all the clauses are satisfied, with at least one true literal in each clause. For example, if the input contains the three clauses x1 \_ x2, ¬x1 \_ x3 , and ¬x2 \_ ¬x3, then one way to satisfy all of them is to Problems 75
 
- 
+
 
 set x 49 1 and x 3 to “true” and x 2 to “false.” Of the seven other possible truth assignments, only one satisfies all three clauses.
 
@@ -3854,6 +3854,6 @@ search, the recursive version (though see footnote 24), or both. (See
 
 [www.algorithmsilluminated.org](http://www.algorithmsilluminated.org) for test cases and challenge data sets.)
 
- 
+
 
 49 The symbol “ \_” stands for the logical “or” operation, while “¬” denotes the negation of a Boolean variable.

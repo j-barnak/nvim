@@ -1,16 +1,16 @@
 ## Appendix C
 
- 
+
 
 Quick Review of Asymptotic Notation
 
- 
+
 
 This appendix reviews asymptotic notation, especially big-O nota-tion. If you’re seeing this material for the first time, you proba-bly want to supplement this appendix with a more thorough treat-ment, such as Chapter 2 of Part 1 or the corresponding videos at
 
 [www.algorithmsilluminated.org.](http://www.algorithmsilluminated.org) If you have seen it before, don’t feel compelled to read this appendix from front to back—dip in as needed wherever you need a refresher.
 
- 
+
 
 C.1 The Gist
 
@@ -20,11 +20,11 @@ A good seven-word summary of asymptotic notation is:
 
 Asymptotic Notation in Seven Words
 
- 
+
 
 suppress constant factors and lower-order terms \| {z } \| {z } irrelevant for large inputs too system-dependent
 
- 
+
 
 The most important concept in asymptotic notation is big-O nota-
 
@@ -34,11 +34,11 @@ tion. Intuitively, saying that something is O(f(n)) for a function f (n) means t
 
 194 Quick Review of Asymptotic Notation
 
- 
+
 
 then g 1 ( n ) = O ( n log n ) . Big-O notation buckets algorithms and data structure operations into groups according to their asymptotic worst-case running times, such as linear-time (O(n)) or logarithmic-time (O(log n)) algorithms and operations.
 
- 
+
 
 C.2 Big-O Notation
 
@@ -48,7 +48,7 @@ Big-O Notation (English Version)
 
 T (n) = O(f (n)) if and only if T (n) is eventually bounded above by a constant multiple of f (n).
 
- 
+
 
 Here is the corresponding mathematical definition of big-O nota-tion, the definition you should use in formal proofs.
 
@@ -60,7 +60,7 @@ T (n)  c · f (n) (C.1)
 
 for all n n0.
 
- 
+
 
 The constant c quantifies the “constant multiple” and the constant n0
 
@@ -70,27 +70,27 @@ A Word of Caution
 
 When we say that c and n0 are constants, we mean they cannot depend on n. For example, in
 
- 
+
 
 1 When ignoring constant factors, we don’t need to specify the base of the logarithm. (Different logarithmic functions differ only by a constant factor.) C.3 Examples 195
 
- 
+
 
 *c*
 
- 
+
 
 3 ⋅ *f* (*n*)
 
 *T* (*n* )
 
- 
+
 
 *f* (*n*)
 
 ![](media/index-208_1.jpg)
 
- 
+
 
 *n* → ∞ *n*0
 
@@ -100,7 +100,7 @@ Figure C.1: A picture illustrating when T(n) = O(f (n)). The constant c quantifi
 
 ![](media/index-208_3.jpg)
 
- 
+
 
 Figure C.1, c and n0 were fixed numbers (like 3
 
@@ -118,7 +118,7 @@ as n grows arbitrarily large (looking rightward on the graph toward infinity). I
 
 ![](media/index-208_7.jpg)
 
- 
+
 
 C.3 Examples
 
@@ -132,7 +132,7 @@ T k ( n ) = a n + · · · a n + a , k 1 0
 
 where k 0 is a nonnegative integer and the ai’s are real numbers (positive or negative). Then k T ( n ) = O ( n). 196 Quick Review of Asymptotic Notation
 
- 
+
 
 Proof: Proving a big-O statement boils down to reverse engineering appropriate values for the constants c and n0. Here, to keep things easy to follow, we’ll pull values for these constants out of a hat: n0 = 1
 
@@ -172,7 +172,7 @@ Proposition C.2 If 10n T ( n ) = 2, then n T ( n ) is not O (2).
 
 and x when x  0. In particular, \|x\| is always nonnegative. C.4 Big-Omega and Big-Theta Notation 197
 
- 
+
 
 Proof: The usual way to prove that one function is not big-O of another is by contradiction. So, assume the opposite of the statement in the proposition, that n T ( n ) is, in fact, O (2). By the definition of big-O notation, there are positive constants c and n0 such that
 
@@ -184,7 +184,7 @@ for all n n n 0 . As 2 is a positive number, we can cancel it from both sides of
 
 for all n n0. But this inequality is patently false: The right-hand side is a fixed constant (independent of n), while the left-hand side goes to infinity as n grows large. This shows that our assumption that n 10n T ( n ) = O (2 ) cannot be correct, and we can conclude that 2 is not n O (2). QE D
 
- 
+
 
 C.4 Big-Omega and Big-Theta Notation
 
@@ -204,7 +204,7 @@ for all n n0.
 
 198 Quick Review of Asymptotic Notation
 
- 
+
 
 Big-theta notation, or simply theta notation, is analogous to “equal to.” Saying that T (n) = ⇥(f (n)) simply means that both T (n) = ⌦(f(n)) and T (n) = O(f (n)). Equivalently, T (n) is eventually sand-wiched between two different constant multiples of f (n).
 
@@ -216,7 +216,7 @@ c1 · f (n)  T(n)  c2 · f(n)
 
 for all n n0.
 
- 
+
 
 A Word of Caution
 
@@ -230,7 +230,7 @@ would be more accurate; for example, stating the
 
 running time of an algorithm as O(n) even when it’s clearly ⇥(n).
 
- 
+
 
 The next quiz checks your understanding of big-O, big-omega, and big-theta notation.
 
@@ -250,12 +250,12 @@ d\) 3 T ( n ) = O ( n)
 
 C.4 Big-Omega and Big-Theta Notation 199
 
- 
+
 
 (See below for the solution and discussion.)
 
 Correct answers: (b),(c),(d). The final three responses are all correct, and hopefully the intuition for why is clear. T (n) is a quadratic function. The linear term 3n doesn’t matter for large n, so we should expect that 2 T ( n ) = ⇥ ( n) (answer (c)). This automatically implies that 2 T ( n ) = ⌦ ( n) and hence T (n) = ⌦(n) also (answer (b)). Similarly, 2) implies that 2 T ( n ) = ⇥ ( n T ( n ) = O ( n ) and hence also T 3 ( n ) = O ( n) (answer (d)). Proving these statements formally boils down to exhibiting appropriate constants to satisfy the definitions.
 
- 
+
 
 For example, taking 1 n 0 = 1 and c = proves (b). Taking n0 = 1 and 2 1 c = 4 proves (d). Combining these constants ( n 0 = 1 , c 1 = , c 2 = 4 ) 2 proves (c). A proof by contradiction, in the spirit of Proposition C.2, shows that (a) is not a correct answer.

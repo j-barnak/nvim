@@ -1,34 +1,35 @@
+![](media/index-177_1.jpg)
+
 Linux device and driver model
 
- 
+
 
 Linux device and driver
 
- 
+
 
 model
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 163/436
+
 
 Linux device and driver model
 
- 
+
 
 Introduction
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 164/436 The need for a device model?
 
- 
+The need for a device model?
+
+
 
 ▶ The Linux kernel runs on a wide range of architectures and hardware platforms,
 
@@ -48,13 +49,12 @@ themselves, etc.
 
 advantages covered in this section.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 165/436
+
 
 Kernel and device drivers
 
- 
+
 
 In Linux, a driver is always interfacing with:
 
@@ -68,11 +68,11 @@ detect/communicate with the hardware.
 
 This section focuses on the *bus infrastructure*, while *kernel frameworks* are covered later in this training.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 166/436 Device model data structures
 
- 
+Device model data structures
+
+
 
 ▶ The *device model* is organized around three main data structures:
 
@@ -90,13 +90,12 @@ handling certain devices on a certain bus.
 
 [struct device_driver](https://elixir.bootlin.com/linux/latest/ident/device_driver) and [struct device](https://elixir.bootlin.com/linux/latest/ident/device) for each bus subsystem.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 167/436
+
 
 Bus drivers
 
- 
+
 
 ▶ The first component of the device model is the bus driver
 
@@ -118,11 +117,11 @@ etc.), managing the devices
 
 [struct usb_interface](https://elixir.bootlin.com/linux/latest/ident/usb_interface)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 168/436 sysfs
 
- 
+sysfs
+
+
 
 ▶ The bus, device, drivers, etc. structures are internal to the kernel ▶ The sysfs virtual filesystem offers a mechanism to export such information to
 
@@ -138,29 +137,28 @@ mounting of external media, etc.
 
 input, block...), whatever bus they are connected to. Very useful!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 169/436
+
 
 Linux device and driver model
 
- 
+
 
 Example of the USB bus
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 170/436 Example: USB bus 1/3
 
- 
+Example: USB bus 1/3
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 171/436 Example: USB bus 2/3
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 172/436 Example: USB bus 3/3
+Example: USB bus 2/3
 
- 
+
+
+Example: USB bus 3/3
+
+
 
 ▶ Core infrastructure (bus driver)
 
@@ -182,13 +180,12 @@ Example of the USB bus
 
 *•* Everywhere in the kernel tree, classified by their type (Example: [drivers/net/usb/](https://elixir.bootlin.com/linux/latest/source/drivers/net/usb/)[)](https://elixir.bootlin.com/linux/latest/source/drivers/net/usb/)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 173/436
+
 
 Example of device driver
 
- 
+
 
 ▶ To illustrate how drivers are implemented to work with the
 
@@ -206,11 +203,11 @@ adapter driver side
 
 ▶ The driver we will look at is [drivers/net/usb/rtl8150.c](https://elixir.bootlin.com/linux/latest/source/drivers/net/usb/rtl8150.c)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 174/436 Device identifiers
 
- 
+Device identifiers
+
+
 
 ▶ Defines the set of devices that this driver can manage, so that the USB core
 
@@ -224,7 +221,7 @@ drivers, so that drivers can be loaded automatically by udev. See
 
 /lib/modules/\$(uname -r)/modules.{alias,usbmap}
 
- 
+
 
 static struct usb_device_id rtl8150_table\[\] = {
 
@@ -244,13 +241,12 @@ static struct usb_device_id rtl8150_table\[\] = {
 
 MODULE_DEVICE_TABLE(usb, rtl8150_table);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 175/436
+
 
 Instantiation of usb_driver
 
- 
+
 
 ▶ [struct usb_driver](https://elixir.bootlin.com/linux/latest/ident/usb_driver) is a structure defined by the USB core. Each USB device
 
@@ -276,11 +272,11 @@ static struct usb_driver rtl8150_driver = {
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 176/436 Driver registration and unregistration
 
- 
+Driver registration and unregistration
+
+
 
 ▶ When the driver is loaded / unloaded, it must register / unregister itself to / from the
 
@@ -312,11 +308,10 @@ module_exit(usb_rtl8150_exit);
 
 module_usb_driver(rtl8150_driver);
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 177/436
 
 At Initialization
 
- 
+
 
 ▶ The USB adapter driver that corresponds to the USB controller of the system
 
@@ -324,21 +319,21 @@ registers itself to the USB core
 
 ▶ The [rtl8150](https://elixir.bootlin.com/linux/latest/ident/rtl8150) USB device driver registers itself to the USB core
 
- 
+
 
 ▶ The USB core now knows the association between the vendor/product IDs of
 
 [rtl8150](https://elixir.bootlin.com/linux/latest/ident/rtl8150) and the [struct usb_driver](https://elixir.bootlin.com/linux/latest/ident/usb_driver) structure of this driver
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 178/436 When a device is detected
 
- 
+When a device is detected
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 179/436 Probe method
 
- 
+
+Probe method
+
+
 
 ▶ Invoked **for each device** bound to a driver ▶ The probe() method receives as argument a structure describing the device,
 
@@ -356,11 +351,11 @@ bus infrastructure provides methods to get the addresses, interrupt numbers and 
 
 infrastructure.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 180/436 Example: probe() and disconnect() methods
 
- 
+Example: probe() and disconnect() methods
+
+
 
 static int rtl8150_probe(struct usb_interface \*intf, static void rtl8150_disconnect(struct usb_interface \*intf)
 
@@ -378,33 +373,30 @@ netdev = alloc_etherdev(sizeof(rtl8150_t)); set_bit(RTL8150_UNPLUG, &dev-\>flags
 
 }
 
- 
+
 
 Source: [drivers/net/usb/rtl8150.c](https://elixir.bootlin.com/linux/latest/source/drivers/net/usb/rtl8150.c)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 181/436
+
 
 The model is recursive
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 182/436
+
 
 Linux device and driver model
 
- 
+
 
 Platform drivers
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 183/436
+
 
 Platform devices
 
- 
+
 
 ▶ Amongst the non-discoverable devices, a huge family are the devices that are
 
@@ -416,11 +408,11 @@ handle such devices. Those get controlled through **memory-mapped registers**. �
 
 statically instead of being discovered dynamically.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 184/436 Implementation of a platform driver (1)
 
- 
+Implementation of a platform driver (1)
+
+
 
 The driver implements a [struct platform_driver](https://elixir.bootlin.com/linux/latest/ident/platform_driver) structure (example taken from
 
@@ -446,13 +438,12 @@ static struct platform_driver serial_imx_driver = {
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 185/436
+
 
 Implementation of a platform driver (2)
 
- 
+
 
 ... and registers its driver to the platform driver infrastructure
 
@@ -476,11 +467,11 @@ Most drivers actually use the [module_platform_driver()](https://elixir.bootlin.
 
 module_platform_driver(serial_imx_driver);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 186/436 Platform device instantiation
 
- 
+Platform device instantiation
+
+
 
 ▶ As platform devices cannot be detected dynamically, they are defined statically
 
@@ -492,13 +483,12 @@ on a few old ARM platforms. The device was part of a list, and the list of devic
 
 embedded platforms today, from which [struct platform_device](https://elixir.bootlin.com/linux/latest/ident/platform_device) instances are created.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 187/436
+
 
 Using additional hardware resources
 
- 
+
 
 ▶ Regular DT descriptions contain many information. It includes phandles
 
@@ -524,11 +514,11 @@ lookups.
 
 functioning similarly, but with different addresses, IRQs, etc.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 188/436 Using resources
 
- 
+Using resources
+
+
 
 ▶ The platform driver has access to the resources provided by the platform bus:
 
@@ -544,9 +534,8 @@ sport-\>rxirq = platform_get_irq(pdev, 0);
 
 *•* [dma_request_channel()](https://elixir.bootlin.com/linux/latest/ident/dma_request_channel)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 189/436
+
 
 Driver data
 
@@ -579,7 +568,3 @@ nfc-\>caps = (void \*)pdev-\>id_entry-\>driver_data;
 else /\* current way \*/
 
 nfc-\>caps = of_device_get_match_data(&pdev-\>dev);
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 190/436
-
-![](media/index-205_1.jpg)

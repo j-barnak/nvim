@@ -1,3 +1,5 @@
+![](media/index-1225_1.jpg)
+
 B UNICODE AND UTF-8
 
 Computers store all data as sequences of bits that are essentially
@@ -321,5 +323,3 @@ rightmost byte after a leading 10. The next 6 bits are placed into the middle by
 The sequence 11100000 10101010 10111100 in hexadecimal is 0xE0 0xAA
 
 0xBC, which in decimal is 224 170 188, the Gujarati sign *nuqta*.
-
-![](media/index-1233_1.jpg)

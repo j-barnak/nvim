@@ -16,17 +16,17 @@ This is why Lox is a **managed language**, which means that the language impleme
 
 Lox provides the illusion that the computer has an infinite amount of memory. Users can allocate and allocate and allocate and never once think about where all these bytes are coming from. Of course, computers do not yet *have* infinite memory. So the way managed languages maintain this illusion is by going behind the programmer’s back and reclaiming memory that the program no longer needs. The component that does this is called a **garbage collector**.
 
-Recycling would really be a better metaphor for this. The GC doesn’t *throw away* the memory, it reclaims it to be reused for new data. But managed languages are older than Earth Day, so the inventors went with the analogy they knew.
-
-![A recycle bin full of bits.](media/image/garbage-collection/recycle.png)
+> Recycling would really be a better metaphor for this. The GC doesn’t *throw away* the memory, it reclaims it to be reused for new data. But managed languages are older than Earth Day, so the inventors went with the analogy they knew.
+>
+> ![A recycle bin full of bits.](media/image/garbage-collection/recycle.png)
 
 ## 26.1 Reachability
 
 This raises a surprisingly difficult question: how does a VM tell what memory is *not* needed? Memory is only needed if it is read in the future, but short of having a time machine, how can an implementation tell what code the program *will* execute and which data it *will* use? Spoiler alert: VMs cannot travel into the future. Instead, the language makes a conservative approximation: it considers a piece of memory to still be in use if it *could possibly* be read in the future.
 
-I’m using “conservative” in the general sense. There is such a thing as a “conservative garbage collector” which means something more specific. All garbage collectors are “conservative” in that they keep memory alive if it *could* be accessed, instead of having a Magic 8-Ball that lets them more precisely know what data *will* be accessed.
-
-A **conservative GC** is a special kind of collector that considers any piece of memory to be a pointer if the value in there looks like it could be an address. This is in contrast to a **precise GC**—which is what we’ll implement—that knows exactly which words in memory are pointers and which store other kinds of values like numbers or strings.
+> I’m using “conservative” in the general sense. There is such a thing as a “conservative garbage collector” which means something more specific. All garbage collectors are “conservative” in that they keep memory alive if it *could* be accessed, instead of having a Magic 8-Ball that lets them more precisely know what data *will* be accessed.
+>
+> A **conservative GC** is a special kind of collector that considers any piece of memory to be a pointer if the value in there looks like it could be an address. This is in contrast to a **precise GC**—which is what we’ll implement—that knows exactly which words in memory are pointers and which store other kinds of values like numbers or strings.
 
 That sounds *too* conservative. Couldn’t *any* bit of memory potentially be read? Actually, no, at least not in a memory-safe language like Lox. Here’s an example:
 
@@ -55,7 +55,7 @@ All of these values are called **roots**. A root is any object that the VM can r
 
 Other values can be found by going through a reference inside another value. Fields on instances of classes are the most obvious case, but we don’t have those yet. Even without those, our VM still has indirect references. Consider:
 
-We’ll get there soon, though!
+> We’ll get there soon, though!
 
 ```
 fun makeClosure() {
@@ -94,13 +94,13 @@ These are the values that are still “live” and need to stay in memory. Any v
 
 Many different garbage collection algorithms are in use today, but they all roughly follow that same structure. Some may interleave the steps or mix them, but the two fundamental operations are there. They mostly differ in *how* they perform each step.
 
-If you want to explore other GC algorithms, [*The Garbage Collection Handbook*](http://gchandbook.org/) (Jones, et al.) is the canonical reference. For a large book on such a deep, narrow topic, it is quite enjoyable to read. Or perhaps I have a strange idea of fun.
+> If you want to explore other GC algorithms, [*The Garbage Collection Handbook*](http://gchandbook.org/) (Jones, et al.) is the canonical reference. For a large book on such a deep, narrow topic, it is quite enjoyable to read. Or perhaps I have a strange idea of fun.
 
 ## 26.2 Mark-Sweep Garbage Collection
 
 The first managed language was Lisp, the second “high-level” language to be invented, right after Fortran. John McCarthy considered using manual memory management or reference counting, but eventually settled on (and coined) garbage collection—once the program was out of memory, it would go back and find unused storage it could reclaim.
 
-In John McCarthy’s “History of Lisp”, he notes: “Once we decided on garbage collection, its actual implementation could be postponed, because only toy examples were being done.” Our choice to procrastinate adding the GC to clox follows in the footsteps of giants.
+> In John McCarthy’s “History of Lisp”, he notes: “Once we decided on garbage collection, its actual implementation could be postponed, because only toy examples were being done.” Our choice to procrastinate adding the GC to clox follows in the footsteps of giants.
 
 He designed the very first, simplest garbage collection algorithm, called **mark-and-sweep** or just **mark-sweep**. Its description fits in three short paragraphs in the initial paper on Lisp. Despite its age and simplicity, the same fundamental algorithm underlies many modern memory managers. Some corners of CS seem to be timeless.
 
@@ -114,7 +114,7 @@ It looks something like this:
 
 ![Starting from a graph of objects, first the reachable ones are marked, the remaining are swept, and then only the reachable remain.](media/image/garbage-collection/mark-sweep.png)
 
-A **tracing garbage collector** is any algorithm that traces through the graph of object references. This is in contrast with reference counting, which has a different strategy for tracking the reachable objects.
+> A **tracing garbage collector** is any algorithm that traces through the graph of object references. This is in contrast with reference counting, which has a different strategy for tracking the reachable objects.
 
 That’s what we’re gonna implement. Whenever we decide it’s time to reclaim some bytes, we’ll trace everything and mark all the reachable objects, free what didn’t get marked, and then resume the user’s program.
 
@@ -122,7 +122,7 @@ That’s what we’re gonna implement. Whenever we decide it’s time to reclaim
 
 This entire chapter is about implementing this one function:
 
-Of course, we’ll end up adding a bunch of helper functions too.
+> Of course, we’ll end up adding a bunch of helper functions too.
 
 ```
 void* reallocate(void* pointer, size_t oldSize, size_t newSize);
@@ -187,7 +187,7 @@ Whenever we call `reallocate()` to acquire more memory, we force a collection to
 
 Collecting right before allocation is the classic way to wire a GC into a VM. You’re already calling into the memory manager, so it’s an easy place to hook in the code. Also, allocation is the only time when you really *need* some freed up memory so that you can reuse it. If you *don’t* use allocation to trigger a GC, you have to make sure every possible place in code where you can loop and allocate memory also has a way to trigger the collector. Otherwise, the VM can get into a starved state where it needs more memory but never collects any.
 
-More sophisticated collectors might run on a separate thread or be interleaved periodically during program execution—often at function call boundaries or when a backward jump occurs.
+> More sophisticated collectors might run on a separate thread or be interleaved periodically during program execution—often at function call boundaries or when a backward jump occurs.
 
 ### 26.2.2 Debug logging
 
@@ -627,13 +627,13 @@ Those are all the roots. After running this, every object that the VM—runtime 
 
 The next step in the marking process is tracing through the graph of references between objects to find the indirectly reachable values. We don’t have instances with fields yet, so there aren’t many objects that contain references, but we do have some. In particular, ObjClosure has the list of ObjUpvalues it closes over as well as a reference to the raw ObjFunction that it wraps. ObjFunction, in turn, has a constant table containing references to all of the literals created in the function’s body. This is enough to build a fairly complex web of objects for our collector to crawl through.
 
-I slotted this chapter into the book right here specifically *because* we now have closures which give us interesting objects for the garbage collector to process.
+> I slotted this chapter into the book right here specifically *because* we now have closures which give us interesting objects for the garbage collector to process.
 
 Now it’s time to implement that traversal. We can go breadth-first, depth-first, or in some other order. Since we just need to find the *set* of all reachable objects, the order we visit them mostly doesn’t matter.
 
-I say “mostly” because some garbage collectors move objects in the order that they are visited, so traversal order determines which objects end up adjacent in memory. That impacts performance because the CPU uses locality to determine which memory to preload into the caches.
-
-Even when traversal order does matter, it’s not clear which order is *best*. It’s very difficult to determine which order objects will be used in in the future, so it’s hard for the GC to know which order will help performance.
+> I say “mostly” because some garbage collectors move objects in the order that they are visited, so traversal order determines which objects end up adjacent in memory. That impacts performance because the CPU uses locality to determine which memory to preload into the caches.
+>
+> Even when traversal order does matter, it’s not clear which order is *best*. It’s very difficult to determine which order objects will be used in in the future, so it’s hard for the GC to know which order will help performance.
 
 ### 26.4.1 The tricolor abstraction
 
@@ -641,7 +641,7 @@ As the collector wanders through the graph of objects, we need to make sure it d
 
 To help us soft-brained humans reason about this complex process, VM hackers came up with a metaphor called the **tricolor abstraction**. Each object has a conceptual “color” that tracks what state the object is in, and what work is left to do.
 
-Advanced garbage collection algorithms often add other colors to the abstraction. I’ve seen multiple shades of gray, and even purple in some designs. My puce-chartreuse-fuchsia-malachite collector paper was, alas, not accepted for publication.
+> Advanced garbage collection algorithms often add other colors to the abstraction. I’ve seen multiple shades of gray, and even purple in some designs. My puce-chartreuse-fuchsia-malachite collector paper was, alas, not accepted for publication.
 
 - **![A white circle.](media/image/garbage-collection/white.png) White:** At the beginning of a garbage collection, every object is white. This color means we have not reached or processed the object at all.
 
@@ -667,7 +667,7 @@ I find it helps to visualize this. You have a web of objects with references bet
 
 At the end, you’re left with a sea of reached, black objects sprinkled with islands of white objects that can be swept up and freed. Once the unreachable objects are freed, the remaining objects—all black—are reset to white for the next garbage collection cycle.
 
-Note that at every step of this process no black node ever points to a white node. This property is called the **tricolor invariant**. The traversal process maintains this invariant to ensure that no reachable object is ever collected.
+> Note that at every step of this process no black node ever points to a white node. This property is called the **tricolor invariant**. The traversal process maintains this invariant to ensure that no reachable object is ever collected.
 
 ### 26.4.2 A worklist for gray objects
 
@@ -752,7 +752,7 @@ And we need to free it when the VM shuts down.
 
 We take full responsibility for this array. That includes allocation failure. If we can’t create or grow the gray stack, then we can’t finish the garbage collection. This is bad news for the VM, but fortunately rare since the gray stack tends to be pretty small. It would be nice to do something more graceful, but to keep the code in this book simple, we just abort.
 
-To be more robust, we can allocate a “rainy day fund” block of memory when we start the VM. If the gray stack allocation fails, we free the rainy day block and try again. That may give us enough wiggle room on the heap to create the gray stack, finish the GC, and free up more memory.
+> To be more robust, we can allocate a “rainy day fund” block of memory when we start the VM. If the gray stack allocation fails, we free the rainy day block and try again. That may give us enough wiggle room on the heap to create the gray stack, finish the GC, and free up more memory.
 
 ```
     vm.grayStack = (Obj**)realloc(vm.grayStack,
@@ -818,11 +818,11 @@ static void blackenObject(Obj* object) {
 
 Each object kind has different fields that might reference other objects, so we need a specific blob of code for each type. We start with the easy ones—strings and native function objects contain no outgoing references so there is nothing to traverse.
 
-An easy optimization we could do in `markObject()` is to skip adding strings and native functions to the gray stack at all since we know they don’t need to be processed. Instead, they could darken from white straight to black.
+> An easy optimization we could do in `markObject()` is to skip adding strings and native functions to the gray stack at all since we know they don’t need to be processed. Instead, they could darken from white straight to black.
 
 Note that we don’t set any state in the traversed object itself. There is no direct encoding of “black” in the object’s state. A black object is any object whose `isMarked` field is set and that is no longer in the gray stack.
 
-You may rightly wonder why we have the `isMarked` field at all. All in good time, friend.
+> You may rightly wonder why we have the `isMarked` field at all. All in good time, friend.
 
 Now let’s start adding in the other object types. The simplest is upvalues.
 
@@ -1018,9 +1018,9 @@ We are almost done collecting. There is one remaining corner of the VM that has 
 
 During the mark phase, we deliberately did *not* treat the VM’s string table as a source of roots. If we had, no string would *ever* be collected. The string table would grow and grow and never yield a single byte of memory back to the operating system. That would be bad.
 
-This can be a real problem. Java does not intern *all* strings, but it does intern string *literals*. It also provides an API to add strings to the string table. For many years, the capacity of that table was fixed, and strings added to it could never be removed. If users weren’t careful about their use of `String.intern()`, they could run out of memory and crash.
-
-Ruby had a similar problem for years where symbols—interned string-like values—were not garbage collected. Both eventually enabled the GC to collect these strings.
+> This can be a real problem. Java does not intern *all* strings, but it does intern string *literals*. It also provides an API to add strings to the string table. For many years, the capacity of that table was fixed, and strings added to it could never be removed. If users weren’t careful about their use of `String.intern()`, they could run out of memory and crash.
+>
+> Ruby had a similar problem for years where symbols—interned string-like values—were not garbage collected. Both eventually enabled the GC to collect these strings.
 
 At the same time, if we *do* let the GC free strings, then the VM’s string table will be left with dangling pointers to freed memory. That would be even worse.
 
@@ -1098,7 +1098,7 @@ There are two key metrics we can use to understand that cost better:
 
   Throughput is the most fundamental measure because it tracks the total cost of collection overhead. All else being equal, you want to maximize throughput. Up until this chapter, clox had no GC at all and thus 100% throughput. That’s pretty hard to beat. Of course, it came at the slight expense of potentially running out of memory and crashing if the user’s program ran long enough. You can look at the goal of a GC as fixing that “glitch” while sacrificing as little throughput as possible.
 
-Well, not *exactly* 100%. It did still put the allocated objects into a linked list, so there was some tiny overhead for setting those pointers.
+> Well, not *exactly* 100%. It did still put the allocated objects into a linked list, so there was some tiny overhead for setting those pointers.
 
 - **Latency** is the longest *continuous* chunk of time where the user’s program is completely paused while garbage collection happens. It’s a measure of how “chunky” the collector is. Latency is an entirely different metric than throughput.
 
@@ -1106,29 +1106,29 @@ Well, not *exactly* 100%. It did still put the allocated objects into a linked l
 
 ![A bar representing execution time with slices for running user code and running the GC. The largest GC slice is latency. The size of all of the user code slices is throughput.](media/image/garbage-collection/latency-throughput.png)
 
-The bar represents the execution of a program, divided into time spent running user code and time spent in the GC. The size of the largest single slice of time running the GC is the latency. The size of all of the user code slices added up is the throughput.
+> The bar represents the execution of a program, divided into time spent running user code and time spent in the GC. The size of the largest single slice of time running the GC is the latency. The size of all of the user code slices added up is the throughput.
 
 If you like analogies, imagine your program is a bakery selling fresh-baked bread to customers. Throughput is the total number of warm, crusty baguettes you can serve to customers in a single day. Latency is how long the unluckiest customer has to wait in line before they get served.
 
 Running the garbage collector is like shutting down the bakery temporarily to go through all of the dishes, sort out the dirty from the clean, and then wash the used ones. In our analogy, we don’t have dedicated dishwashers, so while this is going on, no baking is happening. The baker is washing up.
 
-If each person represents a thread, then an obvious optimization is to have separate threads running garbage collection, giving you a **concurrent garbage collector**. In other words, hire some dishwashers to clean while others bake. This is how very sophisticated GCs work because it does let the bakers—the worker threads—keep running user code with little interruption.
-
-However, coordination is required. You don’t want a dishwasher grabbing a bowl out of a baker’s hands! This coordination adds overhead and a lot of complexity. Concurrent collectors are fast, but challenging to implement correctly.
-
-![Un baguette.](media/image/garbage-collection/baguette.png)
+> If each person represents a thread, then an obvious optimization is to have separate threads running garbage collection, giving you a **concurrent garbage collector**. In other words, hire some dishwashers to clean while others bake. This is how very sophisticated GCs work because it does let the bakers—the worker threads—keep running user code with little interruption.
+>
+> However, coordination is required. You don’t want a dishwasher grabbing a bowl out of a baker’s hands! This coordination adds overhead and a lot of complexity. Concurrent collectors are fast, but challenging to implement correctly.
+>
+> ![Un baguette.](media/image/garbage-collection/baguette.png)
 
 Selling fewer loaves of bread a day is bad, and making any particular customer sit and wait while you clean all the dishes is too. The goal is to maximize throughput and minimize latency, but there is no free lunch, even inside a bakery. Garbage collectors make different trade-offs between how much throughput they sacrifice and latency they tolerate.
 
 Being able to make these trade-offs is useful because different user programs have different needs. An overnight batch job that is generating a report from a terabyte of data just needs to get as much work done as fast as possible. Throughput is queen. Meanwhile, an app running on a user’s smartphone needs to always respond immediately to user input so that dragging on the screen feels buttery smooth. The app can’t freeze for a few seconds while the GC mucks around in the heap.
 
-Clearly the baking analogy is going to my head.
+> Clearly the baking analogy is going to my head.
 
 As a garbage collector author, you control some of the trade-off between throughput and latency by your choice of collection algorithm. But even within a single algorithm, we have a lot of control over *how frequently* the collector runs.
 
 Our collector is a **stop-the-world GC** which means the user’s program is paused until the entire garbage collection process has completed. If we wait a long time before we run the collector, then a large number of dead objects will accumulate. That leads to a very long pause while the collector runs, and thus high latency. So, clearly, we want to run the collector really frequently.
 
-In contrast, an **incremental garbage collector** can do a little collection, then run some user code, then collect a little more, and so on.
+> In contrast, an **incremental garbage collector** can do a little collection, then run some user code, then collect a little more, and so on.
 
 But every time the collector runs, it spends some time visiting live objects. That doesn’t really *do* anything useful (aside from ensuring that they don’t incorrectly get deleted). Time visiting live objects is time not freeing memory and also time not running user code. If you run the GC *really* frequently, then the user’s program doesn’t have enough time to even generate new garbage for the VM to collect. The VM will spend all of its time obsessively revisiting the same set of live objects over and over, and throughput will suffer. So, clearly, we want to run the collector really *in*frequently.
 
@@ -1180,7 +1180,7 @@ The first is a running total of the number of bytes of managed memory the VM has
 
 The starting threshold here is arbitrary. It’s similar to the initial capacity we picked for our various dynamic arrays. The goal is to not trigger the first few GCs *too* quickly but also to not wait too long. If we had some real-world Lox programs, we could profile those to tune this. But since all we have are toy programs, I just picked a number.
 
-A challenge with learning garbage collectors is that it’s *very* hard to discover the best practices in an isolated lab environment. You don’t see how a collector actually performs unless you run it on the kind of large, messy real-world programs it is actually intended for. It’s like tuning a rally car—you need to take it out on the course.
+> A challenge with learning garbage collectors is that it’s *very* hard to discover the best practices in an isolated lab environment. You don’t see how a collector actually performs unless you run it on the kind of large, messy real-world programs it is actually intended for. It’s like tuning a rally car—you need to take it out on the course.
 
 Every time we allocate or free some memory, we adjust the counter by that delta.
 
@@ -1297,9 +1297,9 @@ This is made harder by the fact that we don’t know when the collector will run
 
 How is it possible for the VM to use an object later—one that the GC itself doesn’t see? How can the VM find it? The most common answer is through a pointer stored in some local variable on the C stack. The GC walks the *VM’s* value and CallFrame stacks, but the C stack is hidden to it.
 
-Our GC can’t find addresses in the C stack, but many can. Conservative garbage collectors look all through memory, including the native stack. The most well-known of this variety is the [**Boehm–Demers–Weiser garbage collector**](https://en.wikipedia.org/wiki/Boehm_garbage_collector), usually just called the “Boehm collector”. (The shortest path to fame in CS is a last name that’s alphabetically early so that it shows up first in sorted lists of names.)
-
-Many precise GCs walk the C stack too. Even those have to be careful about pointers to live objects that exist only in *CPU registers*.
+> Our GC can’t find addresses in the C stack, but many can. Conservative garbage collectors look all through memory, including the native stack. The most well-known of this variety is the [**Boehm–Demers–Weiser garbage collector**](https://en.wikipedia.org/wiki/Boehm_garbage_collector), usually just called the “Boehm collector”. (The shortest path to fame in CS is a last name that’s alphabetically early so that it shows up first in sorted lists of names.)
+>
+> Many precise GCs walk the C stack too. Even those have to be careful about pointers to live objects that exist only in *CPU registers*.
 
 In previous chapters, we wrote seemingly pointless code that pushed an object onto the VM’s value stack, did a little work, and then popped it right back off. Most times, I said this was for the GC’s benefit. Now you see why. The code between pushing and popping potentially allocates memory and thus can trigger a GC. We had to make sure the object was on the value stack so that the collector’s mark phase would find it and keep it alive.
 
@@ -1459,7 +1459,7 @@ They discovered something they called the **generational hypothesis**, or the mu
 
 They designed a technique called **generational garbage collection**. It works like this: Every time a new object is allocated, it goes into a special, relatively small region of the heap called the “nursery”. Since objects tend to die young, the garbage collector is invoked frequently over the objects just in this region.
 
-Nurseries are also usually managed using a copying collector which is faster at allocating and freeing objects than a mark-sweep collector.
+> Nurseries are also usually managed using a copying collector which is faster at allocating and freeing objects than a mark-sweep collector.
 
 Each time the GC runs over the nursery is called a “generation”. Any objects that are no longer needed get freed. Those that survive are now considered one generation older, and the GC tracks this for each object. If an object survives a certain number of generations—often just a single collection—it gets *tenured*. At this point, it is copied out of the nursery into a much larger heap region for long-lived objects. The garbage collector runs over that region too, but much less frequently since odds are good that most of those objects will still be alive.
 

@@ -17,7 +17,7 @@ For example, consider the text “`((5.000000, 4.583333), (4.500000,5.000000))`�
 
 > ![](media/images/00043.jpg)
 
- 
+
 
 > Figure 6.1:
 
@@ -43,7 +43,7 @@ For compression, we will first write functions to recognise a “same” run and
 
 > ![](media/images/00063.jpg)
 
-The `get_different `function is rather more awkward. It will return the non-empty list of “different” characters starting at the current position. We must stop as soon as we notice two like characters, rewinding twice and removing a character from our accumulator. So, for example, if we are reading “`An Accumulation`” we want to return `['A'; 'n'; ' '; 'A'] `but we do not know this until we read the second `'c'`. Again, we must stop after 128 differing characters. As before, `End_of_file `is raised if we are at the end of the input on the initial call.
+The `get_different `function is rather more awkward. It will return the non-empty list of “different” characters starting at the current position. We must stop as soon as we notice two like characters, rewinding twice and removing a character from our accumulator. So, for example, if we are reading “`An Accumulation`” we want to return `['A'; 'n'; ' '; 'A'] `but we do not know this until we read the second `'c'`. Again, we must stop after 128 differing characters. As before, `End_of_file `is raised if we are at the end of the input on the initial call.
 
 > ![](media/images/00090.jpg)
 
@@ -53,28 +53,28 @@ The compression function is now relatively simple. We repeatedly call `get_same`
 
 Let us try with our sample data:
 
-`        OCaml  `  
-`  `  
-`# open Examples;;  `  
-`# example;;  `  
-`- : string = "((5.000000, 4.583333), (4.500000,5.000000))"  `  
-`  `  
-`# int_list_of_string example;;  `  
-`- : int list =  `  
-`[40; 40; 53; 46; 48; 48; 48; 48; 48; 48; 44; 32; 52; 46; 53; 56; 51; 51; 51;  `  
-` 51; 41; 44; 32; 40; 52; 46; 53; 48; 48; 48; 48; 48; 44; 53; 46; 48; 48; 48;  `  
-` 48; 48; 48; 41; 41]  `  
-`  `  
-`# let smaller = compress_string example;;  `  
-`val smaller : string = "?(\0015.?0\005, 4.58?3\006), (4.5?0\002,5.?0?)\128"  `  
-`  `  
-`# int_list_of_string smaller;;  `  
-`- : int list =  `  
-`[255; 40; 1; 53; 46; 251; 48; 5; 44; 32; 52; 46; 53; 56; 253; 51; 6; 41; 44;  `  
-` 32; 40; 52; 46; 53; 252; 48; 2; 44; 53; 46; 251; 48; 255; 41; 128]  `  
-`  `  
-`# decompress_string (compress_string example) = example;;  `  
-`- : bool = true `
+`        OCaml  `  
+`  `  
+`# open Examples;;  `  
+`# example;;  `  
+`- : string = "((5.000000, 4.583333), (4.500000,5.000000))"  `  
+`  `  
+`# int_list_of_string example;;  `  
+`- : int list =  `  
+`[40; 40; 53; 46; 48; 48; 48; 48; 48; 48; 44; 32; 52; 46; 53; 56; 51; 51; 51;  `  
+` 51; 41; 44; 32; 40; 52; 46; 53; 48; 48; 48; 48; 48; 44; 53; 46; 48; 48; 48;  `  
+` 48; 48; 48; 41; 41]  `  
+`  `  
+`# let smaller = compress_string example;;  `  
+`val smaller : string = "?(\0015.?0\005, 4.58?3\006), (4.5?0\002,5.?0?)\128"  `  
+`  `  
+`# int_list_of_string smaller;;  `  
+`- : int list =  `  
+`[255; 40; 1; 53; 46; 251; 48; 5; 44; 32; 52; 46; 53; 56; 253; 51; 6; 41; 44;  `  
+` 32; 40; 52; 46; 53; 252; 48; 2; 44; 53; 46; 251; 48; 255; 41; 128]  `  
+`  `  
+`# decompress_string (compress_string example) = example;;  `  
+`- : bool = true `
 
 A bit-by-bit compression scheme
 
@@ -86,8 +86,8 @@ We can put it into our source file using the characters `0 `and `1 `to ease read
 
 `let input_data =`  
 `"00000000000000000000000000000000000000000000000000000000000000000000000000000000\`  
-` 00000000000000000000000000000000000000000000000000000000000000000000000001000000\`  
-` 00000000111111110000000000011111111100000000000000000000000000000000000111100000\`  
+` 00000000000000000000000000000000000000000000000000000000000000000000000001000000\`  
+` 00000000111111110000000000011111111100000000000000000000000000000000000111100000\`  
 `00000011000000011100000001110000001110000000000000000000000000000000000011000000\`  
 `00000110000000001110000011000000000110000000000000000000000000000000000011000000\`  
 `00001110000000000111000111000000000000000000000000000000000000000000000011000000\`  
@@ -129,7 +129,7 @@ We have said that the compression will proceed by encoding the lengths of the ru
 
 > ![](media/images/00232.jpg)
 
- 
+
 
 > Figure 6.2:
 
@@ -141,7 +141,7 @@ Notice that no white symbol is a prefix of another white symbol, and no black sy
 
 > ![](media/images/00096.jpg)
 
- 
+
 
 > Figure 6.3:
 
@@ -149,8 +149,8 @@ Notice that no white symbol is a prefix of another white symbol, and no black sy
 
 The reason for distinguishing between white and black codes is to do with error correction in unreliable transport mechanisms (such as phone lines that fax machines operate over) – otherwise we could just have one set of codes and assume runs alternate. The reason for the existence of a zero-length run is that each line is defined to begin with a white run. If it is really black, a zero-length white run is output first. No run is longer than a line. As an example, let us compress the first three lines of our example data:
 
-` 00000000000000000000000000000000000000000000000000000000000000000000000000000000  `  
-`00000000000000000000000000000000000000000000000000000000000000000000000001000000  `  
+` 00000000000000000000000000000000000000000000000000000000000000000000000000000000  `  
+`00000000000000000000000000000000000000000000000000000000000000000000000001000000  `  
 `00000000111111110000000000011111111100000000000000000000000000000000000111100000 `
 
 We have the following:
@@ -167,7 +167,7 @@ First, we need to encode the terminating and make-up codes. We will use arrays f
 
 > ![](media/images/00021.jpg)
 
- 
+
 
 > Figure 6.4:
 
@@ -203,7 +203,7 @@ We can verify our code by evaluating `s = decompress_string_ccitt (compress_stri
 
 Questions
 
- 
+
 
 1.  How much complexity did using the input and output types add to `compress `and `decompress `in our byte-by-byte example? Rewrite the functions so they just operate over lists of integers, in functional style, and compare the two.
 2.  Replace our manual tree of codes with a tree automatically generated from the lists of codes used for compression. The tree will have no data at its branches (since no code is a prefix of another), and will have data at only some of its leaves. Define a suitable data type first.

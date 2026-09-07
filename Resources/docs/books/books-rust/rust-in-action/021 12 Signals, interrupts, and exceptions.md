@@ -24,7 +24,6 @@ We’ll address both concepts—signals and interrupts—together, as the progra
 
 ***Glossary***
 
-**391**
 
 focuses on the Linux OS running on x86 CPUs, that’s not to say that users of other operating systems won’t be able to follow along.
 
@@ -64,7 +63,6 @@ The meaning of the term *exception* may differ from your previous programming ex
 
 The two concepts that are most important to distinguish between are signals and interrupts. A *signal* is a software-level abstraction that is associated with an OS. An *interrupt* is a CPU-related abstraction that is closely associated with the system’s hardware.
 
-**392**
 
 CHAPTER 12
 
@@ -140,7 +138,6 @@ Interrupts can be specialized. A *trap* is an error detected by the CPU, so it g
 
 ***How interrupts affect applications***
 
-**393**
 
 Interrupts force an application’s control flow to change, whereas many signals can be ignored if desired. Upon receiving an interrupt, the CPU jumps to handler code, irrespective of the current state of the program. The location of the handler code is predefined by the BIOS and OS during a system’s bootup process.
 
@@ -202,10 +199,8 @@ A program that calculates the sum of two integers
 
 Irrespective of the number of hardware interrupts, c is always calculated. But the program’s wall clock time becomes nondeterministic because the CPU performs different tasks every time it runs.
 
-**394**
 
 
-***Signals, interrupts, and exceptions***
 
 When an interrupt occurs, the CPU immediately halts execution of the program and jumps to the interrupt handler. The next listing (illustrated in figure 12.2) details what happens when an interrupt occurs between lines 7 and 8 in listing 12.1.
 
@@ -355,7 +350,6 @@ Using addition to demonstrate control flow for handling signals
 
 ***Signal handling***
 
-**395**
 
 One important point to remember is that, from the program’s perspective, little changes.
 
@@ -419,10 +413,8 @@ detects an abnormal condition within an application, things don’t end well for
 
 ![](media/index-422_1.png)
 
-**396**
 
 
-***Signals, interrupts, and exceptions***
 
 **Key pressed!**
 
@@ -512,9 +504,7 @@ Your application can receive three common signals. The following lists them and 
 
 You may have noticed that the three examples listed here are heavily associated with terminating a running program. But that’s not necessarily the case.
 
-***Signal handling***
 
-**397**
 
 ***12.5.2***
 
@@ -592,10 +582,8 @@ A basic application that receives **SIGSTOP** and **SIGCONT**
 
 12 sleep(delay);
 
-**398**
 
 
-***Signals, interrupts, and exceptions***
 
 13 println!(". {}", i);
 
@@ -685,9 +673,7 @@ If you are unfamiliar with the shell command kill, its role is to send signals.
 
 It’s named after its most common role, terminating programs with either SIGKILL
 
-***Signal handling***
 
-**399**
 
 or SIGTERM. The numeric argument (23221) must match the PID provided in step 2.
 
@@ -797,10 +783,8 @@ Asks application to gracefully
 
 terminate.
 
-**400**
 
 
-***Signals, interrupts, and exceptions***
 
 Table 12.2
 
@@ -890,9 +874,7 @@ There are some additional restrictions in addition to the architectural one. Sig
 
  Moving fast reduces the likelihood of operating alongside another signal handler of a different type.
 
-***Handling signals with custom actions***
 
-**401**
 
 Signal handlers have reduced scope in what they’re permitted to do. For example, they must avoid executing any code that might itself generate signals.
 
@@ -934,10 +916,8 @@ The following listing provides the metadata for listing 12.6. You can access its
 
 1 Output assumes a fair random number generator, which Rust uses by default. This assumption holds as long as you trust your operating system’s random number generator.
 
-**402**
 
 
-***Signals, interrupts, and exceptions***
 
 Listing 12.5
 
@@ -1029,9 +1009,7 @@ Given that signal handlers must be quick and simple, we’ll do the minimal amou
 
 When run, the resulting executable produces a trace of where it is. The following console session shows the trace:
 
-***Handling signals with custom actions***
 
-**403**
 
 **\$ git clone https:/ /github.com/rust-in-action/code rust-in-action** **\$ cd rust-in-action/ch12/ch12-basic-handler**
 
@@ -1145,10 +1123,8 @@ Creating a signal handler that modifies a global variable
 
 **is unsafe.**
 
-**404**
 
 
-***Signals, interrupts, and exceptions***
 
 19 return;
 
@@ -1284,7 +1260,6 @@ In the preceding listing, there is something special about the calls to libc::si
 
 ***Sending application-defined signals***
 
-**405**
 
 Understanding the difference between **const** and **static**
 
@@ -1324,10 +1299,8 @@ A *pointer* is a data type that acts as a stand-in for its referent. Within an a
 
 The internal representation for pointers is an integer of usize. That makes pointers very economical to pass around. In C, making use of function pointers can feel like arcane magic. In Rust, they hide in plain sight.
 
-**406**
 
 
-***Signals, interrupts, and exceptions***
 
 Every fn declaration is actually declaring a function pointer. That means that listing 12.9 is legal code and should print something similar to the following line: **\$ rustc ch12/fn-ptr-demo-1.rs && ./fn-ptr-demo-1**
 
@@ -1391,7 +1364,6 @@ println!("noop as \*const T: {:p}", typed_fn_ptr);
 
 ***Ignoring signals***
 
-**407**
 
 ***12.8***
 
@@ -1491,10 +1463,8 @@ Ignoring signals with **libc::SIG_IGN**
 
 16
 
-**408**
 
 
-***Signals, interrupts, and exceptions***
 
 17 println!("not ok");
 
@@ -1570,9 +1540,7 @@ finishing!
 
 \#
 
-***Shutting down from deeply nested call stacks***
 
-**409**
 
 On the left side of table 12.3, the call stack grows one step as functions are called, then shrinks by one as each function returns. On the right side, the code jumps directly from the third call to the top to the call stack.
 
@@ -1642,10 +1610,8 @@ Listing 12.17 uses that functionality to bypass several layers of the call stack
 
 Listing 12.17 uses two intrinsics, setjmp() and longjmp(). To enable these in our programs, the crate must be annotated with the attribute provided. The following listing provides this documentation.
 
-**410**
 
 
-***Signals, interrupts, and exceptions***
 
 main()
 
@@ -1711,9 +1677,7 @@ This raises two immediate questions. We’ll answer the following shortly:
 
 Additionally, we need to tell Rust about the functions that are being provided by LLVM. Rust won’t know anything about them, apart from their type signatures, which means that any use of these must occur within an unsafe block. The following listing shows how to inform Rust about the LLVM functions. The source for this listing is in ch12/ch12-sjlj/src/main.rs.
 
-***Shutting down from deeply nested call stacks***
 
-**411**
 
 Listing 12.15
 
@@ -1769,10 +1733,8 @@ Rust programmers can draw from the tools it provides. One set of tools that LLVM
 
 provides is intrinsic functions.
 
-**412**
 
 
-***Signals, interrupts, and exceptions***
 
 LLVM is itself a compiler. Its role is illustrated in figure 12.6.
 
@@ -1884,9 +1846,7 @@ pub fn longjmp(\_: \*mut i8);
 
 }
 
-***Shutting down from deeply nested call stacks***
 
-**413**
 
 Requiring a \*mut i8 as an input argument is a problem because our Rust code only has a reference to a *jump buffer* (e.g., &jmp_buf).2 The next few paragraphs work through the process of resolving this conflict. The jmp_buf type is defined like this: const JMP_BUF_WIDTH: usize =
 
@@ -1946,10 +1906,8 @@ should be minor. The following snippet again shows the behavior we’re attempti
 
 2 jmp_buf is the conventional name for this buffer, which might be useful for any readers who want to dive deeper themselves.
 
-**414**
 
 
-***Signals, interrupts, and exceptions***
 
 **\$ git clone https:/ /github.com/rust-in-action/code rust-in-action** **\$ cd rust-in-action/ch12/ch12-sjlj**
 
@@ -2019,9 +1977,7 @@ edition = "2018"
 
 libc = "0.2"
 
-***Shutting down from deeply nested call stacks***
 
-**415**
 
 Listing 12.17
 
@@ -2173,10 +2129,8 @@ Using LLVM’s internal compiler machinery (intrinsics)
 
 52 SIGUSR1 =\> true,
 
-**416**
 
 
-***Signals, interrupts, and exceptions***
 
 53 \_ =\> false,
 
@@ -2286,7 +2240,6 @@ Using LLVM’s internal compiler machinery (intrinsics)
 
 ***Summary***
 
-**417**
 
 ***12.10 A note on applying these techniques***
 

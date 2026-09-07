@@ -8,7 +8,7 @@
 
 This is the very last chapter where we add new functionality to our VM. We’ve packed almost the entire Lox language in there already. All that remains is inheriting methods and calling superclass methods. We have another chapter after this one, but it introduces no new behavior. It only makes existing stuff faster. Make it to the end of this one, and you’ll have a complete Lox implementation.
 
-That “only” should not imply that making stuff faster isn’t important! After all, the whole purpose of our entire second virtual machine is better performance over jlox. You could argue that *all* of the past fifteen chapters are “optimization”.
+> That “only” should not imply that making stuff faster isn’t important! After all, the whole purpose of our entire second virtual machine is better performance over jlox. You could argue that *all* of the past fifteen chapters are “optimization”.
 
 Some of the material in this chapter will remind you of jlox. The way we resolve super calls is pretty much the same, though viewed through clox’s more complex mechanism for storing state on the stack. But we have an entirely different, much faster, way of handling inherited method calls this time around.
 
@@ -85,7 +85,7 @@ Before we implement the new `OP_INHERIT` instruction, we have an edge case to de
 
 A class cannot be its own superclass. Unless you have access to a deranged nuclear physicist and a very heavily modified DeLorean, you cannot inherit from yourself.
 
-Interestingly, with the way we implement method inheritance, I don’t think allowing cycles would actually cause any problems in clox. It wouldn’t do anything *useful*, but I don’t think it would cause a crash or infinite loop.
+> Interestingly, with the way we implement method inheritance, I don’t think allowing cycles would actually cause any problems in clox. It wouldn’t do anything *useful*, but I don’t think it would cause a crash or infinite loop.
 
 ### 29.1.1 Executing inheritance
 
@@ -157,17 +157,17 @@ The new approach is much faster. When the subclass is declared, we copy all of t
 
 ![Resolving a call to cook() in an instance of Cruller which has the method in its own method table.](media/image/superclasses/clox-resolve.png)
 
-Well, two hash table lookups, I guess. Because first we have to make sure a field on the instance doesn’t shadow the method.
+> Well, two hash table lookups, I guess. Because first we have to make sure a field on the instance doesn’t shadow the method.
 
 I’ve sometimes heard this technique called “copy-down inheritance”. It’s simple and fast, but, like most optimizations, you get to use it only under certain constraints. It works in Lox because Lox classes are *closed*. Once a class declaration is finished executing, the set of methods for that class can never change.
 
 In languages like Ruby, Python, and JavaScript, it’s possible to crack open an existing class and jam some new methods into it or even remove them. That would break our optimization because if those modifications happened to a superclass *after* the subclass declaration executed, the subclass would not pick up those changes. That breaks a user’s expectation that inheritance always reflects the current state of the superclass.
 
-As you can imagine, changing the set of methods a class defines imperatively at runtime can make it hard to reason about a program. It is a very powerful tool, but also a dangerous tool.
-
-Those who find this tool maybe a little *too* dangerous gave it the unbecoming name “monkey patching”, or the even less decorous “duck punching”.
-
-![A monkey with an eyepatch, naturally.](media/image/superclasses/monkey.png)
+> As you can imagine, changing the set of methods a class defines imperatively at runtime can make it hard to reason about a program. It is a very powerful tool, but also a dangerous tool.
+>
+> Those who find this tool maybe a little *too* dangerous gave it the unbecoming name “monkey patching”, or the even less decorous “duck punching”.
+>
+> ![A monkey with an eyepatch, naturally.](media/image/superclasses/monkey.png)
 
 Fortunately for us (but not for users who like the feature, I guess), Lox doesn’t let you patch monkeys or punch ducks, so we can safely apply this optimization.
 
@@ -209,7 +209,7 @@ Did you notice that when we added method inheritance, we didn’t actually add a
 
 That won’t be sufficient to support super calls. Since a subclass may override the superclass method, we need to be able to get our hands on superclass method tables. Before we get to that mechanism, I want to refresh your memory on how super calls are statically resolved.
 
-“May” might not be a strong enough word. Presumably the method *has* been overridden. Otherwise, why are you bothering to use `super` instead of just calling it directly?
+> “May” might not be a strong enough word. Presumably the method *has* been overridden. Otherwise, why are you bothering to use `super` instead of just calling it directly?
 
 Back in the halcyon days of jlox, I showed you this tricky example to explain the way super calls are dispatched:
 
@@ -305,7 +305,7 @@ static Token syntheticToken(const char* text) {
 
 *compiler.c*, add after *variable*()
 
-I say “constant string” because tokens don’t do any memory management of their lexeme. If we tried to use a heap-allocated string for this, we’d end up leaking memory because it never gets freed. But the memory for C string literals lives in the executable’s constant data section and never needs to be freed, so we’re fine.
+> I say “constant string” because tokens don’t do any memory management of their lexeme. If we tried to use a heap-allocated string for this, we’d end up leaking memory because it never gets freed. But the memory for C string literals lives in the executable’s constant data section and never needs to be freed, so we’re fine.
 
 Since we opened a local scope for the superclass variable, we need to close it.
 
@@ -382,7 +382,7 @@ This machinery gives us a mechanism at runtime to access the superclass object o
 
 With that runtime support in place, we are ready to implement super calls. As usual, we go front to back, starting with the new syntax. A super call begins, naturally enough, with the `super` keyword.
 
-This is it, friend. The very last entry you’ll add to the parsing table.
+> This is it, friend. The very last entry you’ll add to the parsing table.
 
 ```
   [TOKEN_RETURN]        = {NULL,     NULL,   PREC_NONE},
@@ -412,7 +412,7 @@ static void super_(bool canAssign) {
 
 This is pretty different from how we compiled `this` expressions. Unlike `this`, a `super` token is not a standalone expression. Instead, the dot and method name following it are inseparable parts of the syntax. However, the parenthesized argument list is separate. As with normal method access, Lox supports getting a reference to a superclass method as a closure without invoking it:
 
-Hypothetical question: If a bare `super` token *was* an expression, what kind of object would it evaluate to?
+> Hypothetical question: If a bare `super` token *was* an expression, what kind of object would it evaluate to?
 
 ```
 class A {
@@ -576,9 +576,9 @@ We pop that superclass and pass it to `bindMethod()`, which correctly skips over
 
 The rest of the behavior is the same. Popping the superclass leaves the instance at the top of the stack. When `bindMethod()` succeeds, it pops the instance and pushes the new bound method. Otherwise, it reports a runtime error and returns `false`. In that case, we abort the interpreter.
 
-Another difference compared to `OP_GET_PROPERTY` is that we don’t try to look for a shadowing field first. Fields are not inherited, so `super` expressions always resolve to methods.
-
-If Lox were a prototype-based language that used *delegation* instead of *inheritance*, then instead of one *class* inheriting from another *class*, instances would inherit from (“delegate to”) other instances. In that case, fields *could* be inherited, and we would need to check for them here.
+> Another difference compared to `OP_GET_PROPERTY` is that we don’t try to look for a shadowing field first. Fields are not inherited, so `super` expressions always resolve to methods.
+>
+> If Lox were a prototype-based language that used *delegation* instead of *inheritance*, then instead of one *class* inheriting from another *class*, instances would inherit from (“delegate to”) other instances. In that case, fields *could* be inherited, and we would need to check for them here.
 
 ### 29.3.2 Faster super calls
 
@@ -612,7 +612,7 @@ The compiler can certainly answer that question for itself if it sees a left par
 
 Now before we emit anything, we look for a parenthesized argument list. If we find one, we compile that. Then we load the superclass. After that, we emit a new `OP_SUPER_INVOKE` instruction. This superinstruction combines the behavior of `OP_GET_SUPER` and `OP_CALL`, so it takes two operands: the constant table index of the method name to look up and the number of arguments to pass to it.
 
-This is a particularly *super* superinstruction, if you get what I’m saying. I . . . I’m sorry for this terrible joke.
+> This is a particularly *super* superinstruction, if you get what I’m saying. I . . . I’m sorry for this terrible joke.
 
 Otherwise, if we don’t find a `(`, we continue to compile the expression as a super access like we did before and emit an `OP_GET_SUPER`.
 

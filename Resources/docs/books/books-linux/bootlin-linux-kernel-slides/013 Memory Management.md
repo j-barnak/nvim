@@ -1,26 +1,27 @@
-Memory Management
-
- 
+![](media/index-277_1.jpg)
 
 Memory Management
 
- 
+
+
+Memory Management
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 263/436
+
 
 Physical and virtual memory
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 264/436 Virtual memory organization
 
- 
+Virtual memory organization
+
+
 
 ▶ The top quarter reserved for kernel-space
 
@@ -34,17 +35,16 @@ Physical and virtual memory
 
 kernel log early at boot time
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 265/436
+
 
 Physical/virtual memory mapping on 32-bit systems
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 266/436 32-bit systems limitations
 
- 
+32-bit systems limitations
+
+
 
 ▶ Only less than 1GB memory addressable directly through kernel virtual addresses ▶ If more physical memory is present on the platform, part of the memory will not
 
@@ -64,17 +64,16 @@ Limited addresses ranges reserved for this usage
 
 Connect virtual 2020.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 267/436
+
 
 Physical/virtual memory mapping on 64-bit systems (4kiB-pages)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 268/436 User space virtual address space
 
- 
+User space virtual address space
+
+
 
 ▶ When a process
 
@@ -106,9 +105,9 @@ files
 
 *•* ...
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 269/436 Userspace memory allocations
+Userspace memory allocations
 
- 
+
 
 ▶ Userspace mappings can target the full memory ▶ When allocated, memory may not be physically allocated:
 
@@ -130,17 +129,16 @@ available physical memory) *⇒* can lead to out of memory situations.
 
 better than letting the system freeze.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 270/436 Kernel memory allocators
 
- 
+Kernel memory allocators
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 271/436
+
+
 
 Page allocator
 
- 
+
 
 ▶ Appropriate for medium-size allocations ▶ A page is usually 4K, but can be made greater in some architectures (sh, mips: 4,
 
@@ -164,11 +162,11 @@ memory fragmentation.
 
 memory at boot (see <https://lwn.net/Articles/486301/>[).](https://lwn.net/Articles/486301/)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 272/436 Page allocator API
 
- 
+Page allocator API
+
+
 
 ▶ unsigned long get_zeroed_page(gfp_t gfp_mask)
 
@@ -194,13 +192,12 @@ with the [get_order()](https://elixir.bootlin.com/linux/latest/ident/get_order) 
 
 *•* Frees multiple pages. Need to use the same order as in allocation.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 273/436
+
 
 Page allocator flags
 
- 
+
 
 The most common ones are:
 
@@ -220,11 +217,11 @@ critical sections). Never blocks, allows to access emergency pools, but can fail
 
 See also the documentation in [core-api/memory-allocation](https://www.kernel.org/doc/html/latest/core-api/memory-allocation.html)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 274/436 SLAB allocator 1/2
 
- 
+SLAB allocator 1/2
+
+
 
 ▶ The SLAB allocator allows to create *caches*, which contain a set of objects of the
 
@@ -246,15 +243,15 @@ descriptors, etc.
 
 ▶ See [include/linux/slab.h](https://elixir.bootlin.com/linux/latest/source/include/linux/slab.h) for the API
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 275/436 SLAB allocator 2/2
 
- 
+SLAB allocator 2/2
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 276/436 Different SLAB allocators
 
- 
+
+Different SLAB allocators
+
+
 
 There are different, but API compatible, implementations of a SLAB allocator in the Linux kernel. A particular implementation is chosen at configuration time.
 
@@ -272,13 +269,12 @@ scalability, debugging and other features. Not recommended for systems with more
 
 ![](media/index-291_1.png)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 277/436
+
 
 kmalloc allocator
 
- 
+
 
 ▶ The kmalloc allocator is the general purpose memory allocator in the Linux kernel ▶ For small sizes, it relies on generic SLAB caches, named kmalloc-XXX in
 
@@ -304,9 +300,9 @@ the same semantics.
 
 another one.
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 278/436 kmalloc API 1/2
+kmalloc API 1/2
 
- 
+
 
 ▶ \#include \<linux/slab.h\>
 
@@ -328,11 +324,11 @@ tprops = kmalloc(sizeof \*tprops, GFP_KERNEL);
 
 kfree(tprops);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 279/436 kmalloc API 2/2
 
- 
+kmalloc API 2/2
+
+
 
 ▶ void \*kzalloc(size_t size, gfp_t flags);
 
@@ -348,11 +344,11 @@ kfree(tprops);
 
 buffer and copying the data, unless new_size fits within the alignment of the existing buffer.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 280/436 devm_kmalloc functions
 
- 
+devm_kmalloc functions
+
+
 
 Allocations with automatic freeing when the corresponding device or module is unprobed.
 
@@ -362,13 +358,12 @@ Useful to immediately free an allocated buffer
 
 For use in probe() functions, in which you have access to a [struct device](https://elixir.bootlin.com/linux/latest/ident/device) structure.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 281/436
+
 
 vmalloc allocator
 
- 
+
 
 ▶ The [vmalloc()](https://elixir.bootlin.com/linux/latest/ident/vmalloc) allocator can be used to obtain memory zones that are contiguous
 
@@ -396,9 +391,9 @@ Returns a virtual address
 
 *•* void vfree(void \*addr);
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 282/436 Kernel memory debugging
+Kernel memory debugging
 
- 
+
 
 ▶ KASAN (*Kernel Address Sanitizer*)
 
@@ -424,11 +419,11 @@ be used in production systems.
 
 KASAN and Kmemleak have a significant overhead. Only use them in development!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 283/436 Kernel memory management: resources
 
- 
+Kernel memory management: resources
+
+
 
 Virtual memory and Linux, Alan Ott and Matt Porter, 2016 Great and much more complete presentation about this topic
 
@@ -436,8 +431,4 @@ Virtual memory and Linux, Alan Ott and Matt Porter, 2016 Great and much more com
 
 ![](media/index-298_1.jpg)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 284/436
-
-![](media/index-299_1.jpg)

@@ -2305,11 +2305,11 @@ The contents of the registers are given in the following table.
 | R9       | uninitialized   |
 | RAX      | uninitialized   |
 
- 
+
 
 ● Right column: the assembly instructions to call fun, from Listing 9-27, are stored in memory starting at address 0x10000000. RIP holds the address 0x10000000 and points to the first instruction, “pushq %rdi”. Instructions and their address are given in the following table.
 
- 
+
 
 | Instruction Addresses | Instructions    |
 |-----------------------|-----------------|
@@ -2360,7 +2360,7 @@ The contents of the registers are given in the following table.
 | R9       | 6               |
 | RAX      | uninitialized   |
 
- 
+
 
 ● Right column: the assembly instructions to call fun, from Listing 9-27, are stored in memory starting at address 0x10000000. RIP holds the address 0x1000000a and points to the eleventh instruction, “call fun”. Instructions and their address are given in the following table.
 
@@ -2413,7 +2413,7 @@ The contents of the registers are given in the following table.
 | R9       | 6               |
 | RAX      | uninitialized   |
 
- 
+
 
 ● Right column: the assembly instructions to call fun, from Listing 9-27, are stored in memory starting at address 0x10000000. These instructions are grayed out in this diagram.
 
@@ -2437,7 +2437,7 @@ The instructions to call fun and their addresses are given in the following tabl
 | 0x1000000b            | addq \$24, %rsp |
 | 0x1000000c            | popq %rdi       |
 
- 
+
 
 Instructions in the “fun” function and their addresses are given in the following table.
 
@@ -2488,7 +2488,7 @@ The contents of the registers are given in the following table.
 | R9       | 6               |
 | RAX      | uninitialized   |
 
- 
+
 
 ● Right column: the assembly instructions to call fun, from Listing 9-27, are stored in memory starting at address 0x10000000. These instructions are grayed out in this diagram.
 
@@ -2512,7 +2512,7 @@ The instructions to call fun and their addresses are given in the following tabl
 | 0x1000000b            | addq \$24, %rsp |
 | 0x1000000c            | popq %rdi       |
 
- 
+
 
 Instructions in the “fun” function and their addresses are given in the following table.
 
@@ -2561,7 +2561,7 @@ The contents of the registers are given in the following table.
 | R9       | 6               |
 | RAX      | 9               |
 
- 
+
 
 ● Right column: the assembly instructions to call fun, from Listing 9-27, are stored in memory starting at address 0x10000000. These instructions are grayed out in this diagram.
 
@@ -2585,7 +2585,7 @@ The instructions to call fun and their addresses are given in the following tabl
 | 0x1000000b            | addq \$24, %rsp |
 | 0x1000000c            | popq %rdi       |
 
- 
+
 
 Instructions in the “fun” function and their addresses are given in the following table.
 
@@ -2632,7 +2632,7 @@ The contents of the registers are given in the following table.
 | R9       | 6               |
 | RAX      | 9               |
 
- 
+
 
 ● Right column: the assembly instructions to call fun, from Listing 9-27, are stored in memory starting at address 0x10000000. These instructions are no longer grayed out. RIP holds the address 0x1000000b and points to the twelfth instruction, “addq \$24, %rsp”.
 
@@ -2679,7 +2679,7 @@ The contents of the registers are given in the following table.
 | R9       | 6               |
 | RAX      | 9               |
 
- 
+
 
 ● Right column: the assembly instructions to call fun, from Listing 9-27, are stored in memory starting at address 0x10000000. RIP holds the address 0x1000000d and points to the unspecified instruction just after “popq %rdi”.
 
@@ -3306,41 +3306,41 @@ Five diagrams show the contents of RDI at each step. Here each diagram is depict
 
 ● After movb x+2(%rip), %dil
 
-| RDI | RDI and EDI | RDI, EDI, and DIL |     |     |     |     |     |
-|-----|-------------|-------------------|-----|-----|-----|-----|-----|
-| 00  | 00          | 00                | 00  | 00  | 00  | 00  | 03  |
+| RDI |     |     |     | RDI and EDI |     |     | RDI, EDI, and DIL |
+|-----|-----|-----|-----|-------------|-----|-----|-------------------|
+| 00  | 00  | 00  | 00  | 00          | 00  | 00  | 03                |
 
- 
+
 
 ● After shlq \$8, %rdi
 
-| RDI | RDI and EDI | RDI, EDI, and DIL |     |     |     |     |     |
-|-----|-------------|-------------------|-----|-----|-----|-----|-----|
-| 00  | 00          | 00                | 00  | 00  | 00  | 03  | 00  |
+| RDI |     |     |     | RDI and EDI |     |     | RDI, EDI, and DIL |
+|-----|-----|-----|-----|-------------|-----|-----|-------------------|
+| 00  | 00  | 00  | 00  | 00          | 00  | 03  | 00                |
 
- 
+
 
 ● After movb x+1(%rip), %dil
 
-| RDI | RDI and EDI | RDI, EDI, and DIL |     |     |     |     |     |
-|-----|-------------|-------------------|-----|-----|-----|-----|-----|
-| 00  | 00          | 00                | 00  | 00  | 00  | 03  | 02  |
+| RDI |     |     |     | RDI and EDI |     |     | RDI, EDI, and DIL |
+|-----|-----|-----|-----|-------------|-----|-----|-------------------|
+| 00  | 00  | 00  | 00  | 00          | 00  | 03  | 02                |
 
- 
+
 
 ● After shlq \$8, %rdi
 
-| RDI | RDI and EDI | RDI, EDI, and DIL |     |     |     |     |     |
-|-----|-------------|-------------------|-----|-----|-----|-----|-----|
-| 00  | 00          | 00                | 00  | 00  | 03  | 02  | 00  |
+| RDI |     |     |     | RDI and EDI |     |     | RDI, EDI, and DIL |
+|-----|-----|-----|-----|-------------|-----|-----|-------------------|
+| 00  | 00  | 00  | 00  | 00          | 03  | 02  | 00                |
 
- 
+
 
 ● After movb x (%rip), %dil
 
-| RDI | RDI and EDI | RDI, EDI, and DIL |     |     |     |     |     |
-|-----|-------------|-------------------|-----|-----|-----|-----|-----|
-| 00  | 00          | 00                | 00  | 00  | 03  | 02  | 01  |
+| RDI |     |     |     | RDI and EDI |     |     | RDI, EDI, and DIL |
+|-----|-----|-----|-----|-------------|-----|-----|-------------------|
+| 00  | 00  | 00  | 00  | 00          | 03  | 02  | 01                |
 
 
 The contents of memory are given in the following table.

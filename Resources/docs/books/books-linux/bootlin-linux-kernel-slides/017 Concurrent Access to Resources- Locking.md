@@ -1,26 +1,27 @@
+![](media/index-355_1.jpg)
+
 Concurrent Access to Resources: Locking
 
- 
+
 
 Concurrent Access to
 
- 
+
 
 Resources: Locking
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 341/436
+
 
 Sources of concurrency issues
 
- 
+
 
 ▶ In terms of concurrency, the kernel has the same constraint as a multi-threaded
 
@@ -42,15 +43,15 @@ processors, and they may be using shared resources as well.
 
 resources that can’t be made local (such as hardware ones), use locking.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 342/436 Concurrency protection with locks
 
- 
+Concurrency protection with locks
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 343/436 Linux mutexes
 
- 
+
+Linux mutexes
+
+
 
 *mutex =* **mut***ual* **ex***clusion*
 
@@ -70,11 +71,11 @@ can therefore only be used in contexts where sleeping is allowed. ▶ Mutex defi
 
 *•* void mutex_init(struct mutex \*lock);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 344/436 Locking and unlocking mutexes 1/2
 
- 
+Locking and unlocking mutexes 1/2
+
+
 
 ▶ void mutex_lock(struct mutex \*lock);
 
@@ -94,13 +95,12 @@ non zero value and doesn’t hold the lock. Test the return value!!!
 
 *•* Releases the lock. Do it as soon as you leave the critical section.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 345/436
+
 
 Spinlocks
 
- 
+
 
 ▶ Locks to be used for code that is not allowed to sleep (interrupt handlers), or that
 
@@ -110,11 +110,11 @@ which can sleep!
 
 ▶ Originally intended for multiprocessor systems ▶ Spinlocks never sleep and keep spinning in a loop until the lock is available. ▶ The critical section protected by a spinlock is not allowed to sleep.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 346/436 The spinlock API
 
- 
+The spinlock API
+
+
 
 ▶ Spinlocks can be initialized:
 
@@ -134,17 +134,16 @@ Used for locking in process context (critical sections in which you do not want 
 
 *•* void spin_unlock(spinlock_t \*lock);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 347/436
+
 
 Using spinlocks 1/2
 
- 
+
 
 ▶ Manipulating spinlocks implies some care:
 
- 
+
 
 ▶ So, kernel preemption on the local CPU is disabled. We need to avoid deadlocks
 
@@ -156,27 +155,26 @@ the same lock.
 
 issue as pictured above from happening.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 348/436 Using spinlocks 2/2
 
- 
+Using spinlocks 2/2
+
+
 
 ▶ We also need to avoid deadlocks because of interrupts that could want to get the
 
 same lock:
 
- 
+
 
 ▶ void spin_lock_irqsave(spinlock_t \*lock, unsigned long flags); ▶ void spin_unlock_irqrestore(spinlock_t \*lock, unsigned long flags);
 
 *•* Disables/restores IRQs on the local CPU. *•* Typically used when the lock can be accessed in both process and interrupt context.
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 349/436
 
 Using spinlocks 3/3
 
- 
+
 
 ▶ void spin_lock_bh(spinlock_t \*lock); ▶ void spin_unlock_bh(spinlock_t \*lock);
 
@@ -190,11 +188,11 @@ Using spinlocks 3/3
 
 readers.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 350/436 Spinlock example
 
- 
+Spinlock example
+
+
 
 ▶ From [drivers/tty/serial/uartlite.c](https://elixir.bootlin.com/linux/latest/source/drivers/tty/serial/uartlite.c)
 
@@ -210,13 +208,13 @@ spinlock_t lock;
 
 ▶ Spinlock taken/released with protection against interrupts
 
- 
+
 
 static unsigned int ulite_tx_empty(struct uart_port \*port) {
 
 unsigned long flags;
 
- 
+
 
 spin_lock_irqsave(&port-\>lock, flags);
 
@@ -226,19 +224,18 @@ spin_unlock_irqrestore(&port-\>lock, flags);
 
 }
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 351/436
 
 More deadlock situations
 
- 
+
 
 They can lock up your system. Make sure they never happen!
 
- 
+
 
 Rule 1: don’t call a function that can try to Rule 2: if you need multiple locks, always get access to the same lock acquire them in the same order!
 
- 
+
 
 Get Lock 1 Call to Function 2
 
@@ -252,11 +249,11 @@ Wait for Lock 1
 
 Get Lock 2 Get Lock 1
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 352/436 Debugging locking
 
- 
+Debugging locking
+
+
 
 ▶ Lock debugging: prove locking correctness
 
@@ -278,13 +275,12 @@ atomic section (while holding lock typically).
 
 *•* Warning displayed in dmesg in case of such violation.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 353/436
+
 
 Concurrency issues
 
- 
+
 
 ▶ Kernel Concurrency SANitizer framework
 
@@ -292,11 +288,11 @@ Concurrency issues
 
 ▶ See [dev-tools/kcsan](https://www.kernel.org/doc/html/latest/dev-tools/kcsan.html) and <https://lwn.net/Articles/816850/> for details.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 354/436 Alternatives to locking
 
- 
+Alternatives to locking
+
+
 
 As we have just seen, locking can have a strong negative impact on system performance. In some situations, you could do without it.
 
@@ -310,13 +306,12 @@ works.
 
 ▶ When relevant, use atomic operations.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 355/436
+
 
 ## RCU API
 
- 
+
 
 ▶ Conditions where RCU is useful:
 
@@ -336,11 +331,11 @@ works.
 
 ▶ RCU mentorship session by Paul E. McKenney: <https://youtu.be/K-4TI5gFsig>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 356/436 RCU example: ensuring consistent accesses (1/2)
 
- 
+RCU example: ensuring consistent accesses (1/2)
+
+
 
 Unsafe read/write
 
@@ -364,13 +359,12 @@ shared_conf-\>b = new_b;
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 357/436
+
 
 RCU example: ensuring consistent accesses (2/2)
 
- 
+
 
 Safe read/write with RCU
 
@@ -414,9 +408,9 @@ rcu_assign_pointer(shared_conf, newconf);
 
 };
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 358/436 Atomic variables 1/2
+Atomic variables 1/2
 
- 
+
 
 \#include \<linux/atomic.h\>
 
@@ -432,13 +426,12 @@ void atomic_set(atomic_t \*v, int i); int atomic_read(atomic_t \*v);
 
 void atomic_inc(atomic_t \*v); void atomic_dec(atomic_t \*v); void atomic_add(int i, atomic_t \*v); void atomic_sub(int i, atomic_t \*v);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 359/436
+
 
 Atomic variables 2/2
 
- 
+
 
 ▶ Similar functions testing the result:
 
@@ -448,11 +441,11 @@ Atomic variables 2/2
 
 *•* int atomic_inc_return(...); *•* int atomic_dec_return(...); *•* int atomic_add_return(...); *•* int atomic_sub_return(...);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 360/436 Atomic bit operations
 
- 
+Atomic bit operations
+
+
 
 ▶ Supply very fast, atomic operations ▶ On most platforms, apply to an unsigned long \* type. ▶ Apply to a void \* type on a few others. ▶ Ideal for bitmaps
 
@@ -470,11 +463,10 @@ Atomic variables 2/2
 
 *•* int test_and_clear_bit(...); *•* int test_and_change_bit(...);
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 361/436
 
 Kernel locking: summary and references
 
- 
+
 
 Further reading: see the classical
 
@@ -496,17 +488,17 @@ addresses
 
 See [kernel-hacking/locking](https://www.kernel.org/doc/html/latest/kernel-hacking/locking.html) in kernel documentation for many details about kernel locking mechanisms.
 
- 
+
 
 Image source: [https://en.wikipedia.org/wiki/](https://en.wikipedia.org/wiki/Dining_philosophers_problem)
 
 [Dining_philosophers_problem)](https://en.wikipedia.org/wiki/Dining_philosophers_problem)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 362/436 Practical lab - Locking
+Practical lab - Locking
 
 ![](media/index-377_1.png)
 
- 
+
 
 ▶ Add locking to the driver to prevent concurrent
 
@@ -514,8 +506,4 @@ Image source: [https://en.wikipedia.org/wiki/](https://en.wikipedia.org/wiki/Din
 
 accesses to shared resources
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 363/436
-
-![](media/index-378_1.jpg)

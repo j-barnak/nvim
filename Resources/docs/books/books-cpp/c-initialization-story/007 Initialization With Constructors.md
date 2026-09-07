@@ -2,7 +2,7 @@
 
 In the previous chapter, you’ve seen that C++ might treat simple structures with all public data members as an aggregate class. Still, aggregates are insufficient if we want better data encapsulation and a more complex class API. For full flexibility in C++, we can leverage constructors that are special member functions invoked when an object is created.
 
- 
+
 
 **A simple class type**
 
@@ -48,7 +48,7 @@ checkSum\_ = calcCheckSum(data);
 
 Initialization With Constructors 12
 
- 
+
 
 The class above contains three *non-static data members*: data\_, checkSum\_, and serverID\_. I’m using the underscore suffix to indicate private data members, a common practice in
 
@@ -58,7 +58,7 @@ To keep things simple, I implemented the calcCheckSum function in terms of std::
 
 ![](media/index-27_1.png)
 
- 
+
 
 **Calculating simple checksum for a string**
 
@@ -82,7 +82,7 @@ Member functions might also have noexcept specifier applied. However, this topic
 
 ⁴<https://en.cppreference.com/w/cpp/language/noexcept_spec> Initialization With Constructors 13
 
- 
+
 
 Here’s the continuation of the example where we create and use the object of the DataPacket class:
 
@@ -110,7 +110,7 @@ packet.serverId = 10; // error: 'size_t DataPacket::serverId' is private...
 
 ![](media/index-28_1.png)
 
- 
+
 
 The only difference between class and struct in C++ is that class has private as the default access modifier and private inheritance, while struct has both
 
@@ -120,7 +120,7 @@ specified as public. Some C++ guidelines, for example, Google Style Guide [see](
 
 member is not public; see [C++ Core Guidelines - C.8⁷](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c8-use-class-rather-than-struct-if-any-member-is-non-public).
 
- 
+
 
 Since our class doesn’t have any user-defined constructors (more on them in the next section), we can also use value initialization syntax to set values to zero or default values:
 
@@ -132,7 +132,7 @@ Since our class doesn’t have any user-defined constructors (more on them in th
 
 [public](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c8-use-class-rather-than-struct-if-any-member-is-non-public) Initialization With Constructors 14
 
- 
+
 
 **Ex 2.3. Value initialization for the** **DataPacket** **class. Run** [**@Compiler Explorer**](https://godbolt.org/z/vEhzcsK6c) **int** main() {
 
@@ -144,7 +144,7 @@ std::cout \<\< "checkSum: " \<\< packet.getCheckSum() \<\< '\n';
 
 std::cout \<\< "serverId: " \<\< packet.getServerId() \<\< '\n'; }
 
- 
+
 
 This will generate the following output:
 
@@ -156,7 +156,7 @@ serverId: 0
 
 However, the main difference now is that because we moved the data members to the private section, the class is **not an aggregate**. That’s why we cannot use aggregate initialization to set all values at once. To fix this, we need to look at constructors. And that is the plan for further sections.
 
- 
+
 
 **Basics of constructors**
 
@@ -166,13 +166,13 @@ it using the enclosing class name⁸. You cannot invoke a constructor like other
 
 ![](media/index-29_1.png)
 
- 
+
 
 A constructor has the following parts:
 
 ⁸See the full definition at https://timsong-cpp.github.io/cppwp/n4868/class.ctor.general Initialization With Constructors 15
 
- 
+
 
 • constructor has no name, but we define it using the name of the class,
 
@@ -206,7 +206,7 @@ the scope of the book. Read more at [C++Reference - Constructors and member](htt
 
 [initializer lists](https://en.cppreference.com/w/cpp/language/constructor)⁹.
 
- 
+
 
 For illustrative purposes, you can find a simple class type with two data members below. The Product class will serve as a toy example, and then we’ll apply the knowledge to the DataPacket class I plan to update. Let’s have a look at one snippet:
 
@@ -232,7 +232,7 @@ The above example shows a class with two constructors. The first is called a *de
 
 ⁹<https://en.cppreference.com/w/cpp/language/constructor> Initialization With Constructors 16
 
- 
+
 
 C++ allows multiple constructors that look like overloaded functions (they differ by the number or types of arguments). Each constructor also has a regular function body where you can execute some code; in our case, they are both empty for now. I also applied the explicit
 
@@ -276,7 +276,7 @@ name\_ = "none";
 
 Initialization With Constructors 17
 
- 
+
 
 While this might not be a big issue for built-in simple types like int , you’ll need some more CPU cycles for larger objects like strings. Please don’t write such code and aim for a member initializer list to initialize your data members efficiently.
 
@@ -284,11 +284,11 @@ There’s also one important aspect about the *initializer list*: the order of i
 
 covered in The C++ Specification: [11.10.3 Classes](https://timsong-cpp.github.io/cppwp/n4868/class.base.init#13.3)¹⁰:
 
- 
+
 
 Non-static data members are initialized in the order they were declared in the class definition (regardless of the order of the mem-initializers).
 
- 
+
 
 When I write the constructor in the following way:
 
@@ -324,7 +324,7 @@ In the above example, the first constructor initializes x and y and then uses th
 
 ¹¹<https://godbolt.org/z/jE77169qd> Initialization With Constructors 18
 
- 
+
 
 other hand, in the second (commented out) constructor, the order of initialization will create an undefined behavior for initializing x, as z and y won’t be initialized yet. It’s best to avoid such dependencies to minimize the risk of bugs.
 
@@ -390,13 +390,13 @@ Product tvSet{77, "tv set" };
 
 std::cout \<\< tvSet.Id() \<\< ", " \<\< tvSet.Name() \<\< '\n'; }
 
- 
+
 
 You might also scratch your head and ask why I declared the name parameter as const std::string& rather than just std::string&. First, we don’t want to modify this parameter in the constructor’s body. What’s more, const T&-const references can bind to “temporary” objects like a string literal "super car". Without a const reference, we would have to pass some named string object. Alternatively, we can pass the name by value and perform a “move operation” on that argument. Further in the book, I’ll address this topic in detail; see
 
 chapter: A Use Case - Best Way to Initialize string Data Members.
 
- 
+
 
 **More on uniform initialization**
 
@@ -406,7 +406,7 @@ For example, because of the C++ language grammar rules, the following line won�
 
 Initialization With Constructors 20
 
- 
+
 
 **Ex 2.5. The Most Vexing Parse Rule. Run** [**@Compiler Explorer**](https://godbolt.org/z/c48K7c9vq)
 
@@ -456,7 +456,7 @@ modify the example [@Compiler Explorer¹²](https://godbolt.org/z/c48K7c9vq) and
 
 ¹²<https://godbolt.org/z/c48K7c9vq> Initialization With Constructors 21
 
- 
+
 
 to know more about this rule: [The Most Vexing Parse: How to Spot It and Fix It Quickly -](https://www.fluentcpp.com/2018/01/30/most-vexing-parse/)
 
@@ -494,7 +494,7 @@ Product p{'x', 'y', 'z', 100.0};
 
 std::cout \<\< p.name \<\< ", " \<\< p.value; }
 
- 
+
 
 In the above example, we not only used list initialization to call the Product constructor with four arguments, but we also used it to initialize the name and value data members.
 
@@ -532,23 +532,23 @@ C++ Core Guidelines suggest sticking to this way of initialization, as its benef
 
 the opposing sides. See [ES.23](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#es23-prefer-the--initializer-syntax)¹⁵
 
- 
+
 
 **ES.23: Prefer the** **{}****-initializer syntax**
 
 Reason: Prefer {}. The rules for {} initialization are simpler, more general, less ambiguous, and safer than for other initialization forms. Use = only when you are sure there can be no narrowing conversions. For built-in arithmetic types, use = only with auto. Avoid () initialization, which allows parsing ambiguities.
 
- 
+
 
 The guideline also mentions some exceptions:
 
- 
+
 
 **Exception:** For containers, there is a tradition for using {…} for a list of elements and (…) for sizes: vector\<int\> v(10); // 10 elements with the default value 0
 
 vector\<int\> v2{10}; // vector of 1 element with the value 10
 
- 
+
 
 In this book, I’ll use {} for variable initialization and mention exceptions if needed.
 
@@ -556,7 +556,7 @@ In this book, I’ll use {} for variable initialization and mention exceptions i
 
 ¹⁵<https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#es23-prefer-the--initializer-syntax> Initialization With Constructors 23
 
- 
+
 
 **Body of a constructor**
 
@@ -622,7 +622,7 @@ The constexpr specifier has been available since C++11 and guarantees that a val
 
 at [C++Reference -](https://en.cppreference.com/w/cpp/language/constexpr)[constexpr](https://en.cppreference.com/w/cpp/language/constexpr)[¹⁶](https://en.cppreference.com/w/cpp/language/constexpr).
 
- 
+
 
 If you run this program, you can see the following output:
 
@@ -636,17 +636,17 @@ Error - id cannot be lower than LOWEST_ID_VALUE!
 
 Please notice that while two constructors were called, we can see that only the first one succeeded. Since the constructor for box threw an exception, this object is not treated as fully created. More on that later when we’ll talk about destructors.
 
- 
+
 
 **Adding constructors to** **DataPacket**
 
 After the introduction, we can start adding constructors to our DataPacket class.
 
- 
+
 
 ¹⁶<https://en.cppreference.com/w/cpp/language/constexpr> Initialization With Constructors 25
 
- 
+
 
 **Ex 2.8. Adding constructors. Run** [**@Compiler Explorer**](https://godbolt.org/z/dEx1Yv91a)
 
@@ -674,7 +674,7 @@ DataPacket() : data\_{}, checkSum\_{0}, serverId\_{0} { }
 
 **size_t** getServerId() **const** { **return** serverId\_; } };
 
- 
+
 
 And here’s the demo code that creates some objects:
 
@@ -748,7 +748,7 @@ This constructor makes it easy to pass parameters all at once (previously, we ne
 
 We can also use default member initializers inside a class, but we’ll address that in detail in a separate chapter.
 
- 
+
 
 **Compiler-generated default constructors**
 
@@ -798,7 +798,7 @@ Value v; // fine, default constructor available
 
 CtorValue z{10}; // using custom ctor }
 
- 
+
 
 As you can see above, the compiler will create an implicit default constructor for the Value class (since it has no other constructors), but it won’t generate a default constructor for the CtorValue class. Also, notice that Value::x will have an indeterminate value as a default constructor is empty and won’t set any value for x.
 
@@ -808,7 +808,7 @@ Default constructors only default-initialize data members, so in the case of bui
 
 Initialization With Constructors 28
 
- 
+
 
 You can control the creation of such a default constructor using two keywords, default and delete. In short, default tells the compiler to use the default implementation, while delete blocks the implementation.
 
@@ -854,13 +854,13 @@ CtorValue z{10}; // using custom ctor
 
 DeletedValue u{10}; // using custom ctor }
 
- 
+
 
 In the above example, you can see that we declare Value() = default; this tells the compiler to create an empty (doing nothing) implementation. Also, in the CtorValue class, we also use the same technique, and, as you can notice, the default construction works now. The third class has = delete as its default constructor, and you’ll get an error if you want to create an object of this class using its default constructor.
 
 The implicit default constructor won’t be created if your type has data members that are not default-constructible or inherits from a type that is not default-constructible. That Initialization With Constructors 29
 
- 
+
 
 includes references, const data members, unions, and others. See the complete list here
 
@@ -874,7 +874,7 @@ constructors in the section: Trivial classes and user-declared/user-provided def
 
 constructors.
 
- 
+
 
 **Explicit constructors and conversions**
 
@@ -908,7 +908,7 @@ Product numbers = 100.2; // copy initialization Product box = {"a box", 1}; // c
 
 ¹⁷<https://en.cppreference.com/w/cpp/language/default_constructor#Deleted_implicitly-declared_default_constructor> Initialization With Constructors 30
 
- 
+
 
 We can read that those two lines create products, but what values do the data members get? It needs to be clarified! The case in the first line is especially interesting, as I passed a double value of 100.2, and the compiler tried to convert it into the int type (a narrowing conversion) and then passed it to the constructor.
 
@@ -986,7 +986,7 @@ the code [@Compiler Explorer¹⁹](https://godbolt.org/z/7Kab4eT5T).
 
 Constructors not declared with the explicit keyword, also called *converting* *constructors*. They take part in the implicit conversion sequence. In C++03, those constructors must also be callable with a single argument, but that limitation was lifted in C++11. More on the implicit conversion in a separate section in this chapter.
 
- 
+
 
 ¹⁸<https://godbolt.org/z/3KT5MfnT8>
 
@@ -994,7 +994,7 @@ Constructors not declared with the explicit keyword, also called *converting* *c
 
 Initialization With Constructors 32
 
- 
+
 
 **Difference between direct and copy initialization**
 
@@ -1078,7 +1078,7 @@ Aggregate ag2 = { 0, Point{0, 1}};
 
 See the working code [@Compiler Explorer](https://godbolt.org/z/d8cronMM1)²⁰.
 
- 
+
 
 **Even more**
 
@@ -1090,7 +1090,7 @@ The explicit keyword is so important that it has its own rule in C++ Core guidel
 
 ²¹<https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rc-explicit> Initialization With Constructors 34
 
- 
+
 
 C.46. By default, declare single-argument constructors explicit
 
@@ -1098,13 +1098,13 @@ C.46. By default, declare single-argument constructors explicit
 
 ![](media/index-49_1.png)
 
- 
+
 
 Additionally, in C++20, we have an extended syntax explicit(bool) to mark explicit constructors conditionally. This is a bit advanced feature, so we won’t
 
 address this in this book. You can read more [@C++Reference²²](https://en.cppreference.com/w/cpp/language/explicit).
 
- 
+
 
 **Implicit conversion and converting constructors**
 
@@ -1128,7 +1128,7 @@ While it’s best to use explicit constructors, there are some cases where impli
 
 For now, we can skip the part about “conditional explicitness”. But as you can see, for “wrapper” types, it’s usually handy to initialize them from the “wrapped” type. For example:
 
- 
+
 
 ²²<https://en.cppreference.com/w/cpp/language/explicit> Initialization With Constructors 35
 
@@ -1144,13 +1144,13 @@ foo(std::string{"Hello World"});
 
 ![](media/index-50_1.png)
 
- 
+
 
 When designed carefully, types that wrap other types are suitable to have converting constructors. In C++20, it’s even possible to set a conditional explicit constructor when the wrapped type has explicit constructors. Read more in
 
 [C++20’s Conditionally Explicit Constructors - C++ Team Blog](https://devblogs.microsoft.com/cppblog/c20s-conditionally-explicit-constructors/)²³.
 
- 
+
 
 It’s also good to know that the compiler is allowed to use only *one conversion sequence* rather than arbitrary one. For example:
 
@@ -1184,11 +1184,11 @@ This one doesn’t compile, because the compiler would have to first convert the
 
 Based on [C++ Reference - copy initialization²⁴](https://en.cppreference.com/w/cpp/language/copy_initialization):
 
- 
+
 
 For T object = other;: If T is a class type, and the cv-unqualified version of the type of other is not T or derived from T, or if T is non-class type, but the type of other is a class type, user-defined conversion sequences that can convert from the type of other to T (or to a type derived from T if T is a class type and a conversion function is available) are examined and the best one is selected through overload resolution. The result of the conversion, which is a prvalue expression of the cv-unqualified version of T if a converting constructor was used, is then used to direct-initialize the object.
 
- 
+
 
 The key rule here is that the compiler can perform only **one** conversion step, and our example requires two steps. That’s why we’ll get an error. You can fix the code by making conversion explicit:
 
@@ -1204,7 +1204,7 @@ A user-defined conversion sequence consists of an initial standard conversion se
 
 ![](media/index-51_1.png)
 
- 
+
 
 Read more in [Standard conversions @Microsoft Learn](https://learn.microsoft.com/en-us/cpp/cpp/standard-conversions?view=msvc-170)²⁷ and [User-Defined Type](https://learn.microsoft.com/en-us/cpp/cpp/user-defined-type-conversions-cpp?view=msvc-170)
 
@@ -1220,7 +1220,7 @@ Read more in [Standard conversions @Microsoft Learn](https://learn.microsoft.com
 
 ²⁸<https://learn.microsoft.com/en-us/cpp/cpp/user-defined-type-conversions-cpp?view=msvc-170> Initialization With Constructors 37
 
- 
+
 
 **Constructor summary**
 

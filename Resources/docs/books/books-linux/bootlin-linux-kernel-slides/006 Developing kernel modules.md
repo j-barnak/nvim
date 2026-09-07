@@ -1,22 +1,24 @@
+![](media/index-92_1.jpg)
+
 Developing kernel modules
 
- 
+
 
 Developing kernel
 
- 
+
 
 modules
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 92/436 Hello module 1/2
+
+Hello module 1/2
 
 // SPDX-License-Identifier: GPL-2.0
 
@@ -54,9 +56,9 @@ MODULE_DESCRIPTION("Greeting module");
 
 MODULE_AUTHOR("William Shakespeare");
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 93/436 Hello module 2/2
+Hello module 2/2
 
- 
+
 
 ▶ Code marked as [\_\_init:](https://elixir.bootlin.com/linux/latest/ident/__init)
 
@@ -64,7 +66,7 @@ MODULE_AUTHOR("William Shakespeare");
 
 \[ 2.689854\] VFS: Mounted root (nfs filesystem) on device 0:15. \[ 2.698796\] devtmpfs: mounted \[ 2.704277\] Freeing unused kernel memory: 1024K \[ 2.710136\] Run /sbin/init as init process
 
- 
+
 
 ▶ Code marked as [\_\_exit:](https://elixir.bootlin.com/linux/latest/ident/__exit)
 
@@ -76,11 +78,11 @@ unloading support is not enabled.
 
 <https://raw.githubusercontent.com/bootlin/training-materials/master/code/hello/hello.c>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 94/436 Hello module explanations
 
- 
+Hello module explanations
+
+
 
 ▶ Headers specific to the Linux kernel: linux/xxx.h
 
@@ -106,11 +108,11 @@ even though \<modulename\>\_init() is a convention.
 
 and [MODULE_AUTHOR()](https://elixir.bootlin.com/linux/latest/ident/MODULE_AUTHOR)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 95/436 Symbols exported to modules 1/2
 
- 
+Symbols exported to modules 1/2
+
+
 
 ▶ From a kernel module, only a limited number of kernel functions can be called ▶ Functions and variables have to be explicitly exported by the kernel to be visible
 
@@ -128,17 +130,16 @@ symbols with [EXPORT_SYMBOL_GPL()](https://elixir.bootlin.com/linux/latest/ident
 
 ▶ A normal driver should not need any non-exported function.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 96/436 Symbols exported to modules 2/2
 
- 
+Symbols exported to modules 2/2
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 97/436
+
+
 
 Module license
 
- 
+
 
 ▶ Several usages
 
@@ -164,11 +165,11 @@ GPL and additional rights, Dual MIT/GPL, Dual BSD/GPL, Dual MPL/GPL)
 
 *•* Proprietary
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 98/436 Compiling a module
 
- 
+Compiling a module
+
+
 
 Two solutions
 
@@ -184,13 +185,12 @@ directory
 
 *•* Well integrated into the kernel configuration/compilation process *•* The driver can be built statically or as a module
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 99/436
+
 
 Compiling an out-of-tree module 1/2
 
- 
+
 
 ▶ The below Makefile should be reusable for any single-file out-of-tree Linux
 
@@ -214,15 +214,15 @@ all:
 
 endif
 
- 
+
 
 ▶ KDIR: kernel source or headers directory (see next slides)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 100/436 Compiling an out-of-tree module 2/2
 
- 
+Compiling an out-of-tree module 2/2
+
+
 
 ▶ The module Makefile is interpreted with KERNELRELEASE undefined, so it calls
 
@@ -234,11 +234,10 @@ then interpreted with KERNELRELEASE defined, so the kernel sees the obj-m
 
 definition.
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 101/436
 
 Modules and kernel version
 
- 
+
 
 ▶ To be compiled, a kernel module needs access to *kernel headers*, containing the
 
@@ -260,11 +259,11 @@ kernel version Y
 
 *•* modprobe / insmod will say Invalid module format
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 102/436 New driver in kernel sources 1/2
 
- 
+New driver in kernel sources 1/2
+
+
 
 ▶ To add a new driver to the kernel sources:
 
@@ -280,7 +279,7 @@ code big. Only really big drivers are split in several files or have their own d
 
 to the Kconfig file in this directory:
 
- 
+
 
 config USB_SERIAL_NAVMAN
 
@@ -294,13 +293,12 @@ To compile this driver as a module, choose M
 
 here: the module will be called navman.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 103/436
+
 
 New driver in kernel sources 2/2
 
- 
+
 
 ▶ Add a line in the Makefile file based on the Kconfig setting:
 
@@ -314,11 +312,11 @@ option is enabled. It works both if compiled statically or as a module.
 
 files, or drivers in their own subdirectory, etc.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 104/436 Hello module with parameters 1/2
 
- 
+Hello module with parameters 1/2
+
+
 
 // SPDX-License-Identifier: GPL-2.0
 
@@ -328,11 +326,11 @@ files, or drivers in their own subdirectory, etc.
 
 \#include \<linux/module.h\>
 
- 
+
 
 MODULE_LICENSE("GPL");
 
- 
+
 
 static char \*whom = "world";
 
@@ -340,7 +338,7 @@ module_param(whom, charp, 0644);
 
 MODULE_PARM_DESC(whom, "Recipient of the hello message");
 
- 
+
 
 static int howmany = 1;
 
@@ -348,11 +346,11 @@ module_param(howmany, int, 0644);
 
 MODULE_PARM_DESC(howmany, "Number of greetings");
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 105/436 Hello module with parameters 2/2
 
- 
+Hello module with parameters 2/2
+
+
 
 static int \_\_init hello_init(void)
 
@@ -360,7 +358,7 @@ static int \_\_init hello_init(void)
 
 int i;
 
- 
+
 
 for (i = 0; i \< howmany; i++)
 
@@ -378,7 +376,7 @@ pr_alert("Goodbye, cruel %s\n", whom);
 
 }
 
- 
+
 
 module_init(hello_init);
 
@@ -388,9 +386,9 @@ Thanks to Jonathan Corbet for the examples
 
 Source code available on: <https://github.com/bootlin/training-materials/blob/master/code/hello-param/hello_param.c>
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 106/436 Declaring a module parameter
+Declaring a module parameter
 
- 
+
 
 module_param(
 
@@ -410,7 +408,7 @@ perm /\* for /sys/module/\<module_name\>/parameters/\<param\>,
 
 );
 
- 
+
 
 /\* Example: drivers/block/loop.c \*/
 
@@ -422,20 +420,16 @@ MODULE_PARM_DESC(max_loop, "Maximum number of loop devices");
 
 Modules parameter arrays are also possible with [module_param_array().](https://elixir.bootlin.com/linux/latest/ident/module_param_array)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 107/436
 
 Practical lab - Writing modules
 
- 
+
 
 ▶ Create, compile and load your first module ▶ Add module parameters ▶ Access kernel internals from your module
 
 ![](media/index-108_1.png)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 108/436
+
 
 ![](media/index-108_2.png)
-
-![](media/index-109_1.jpg)

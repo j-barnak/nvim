@@ -1,24 +1,26 @@
+![](media/index-9_1.jpg)
+
 Generic course information
 
- 
+
 
 Generic course
 
- 
+
 
 information
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 9/436 Supported hardware
 
- 
+Supported hardware
+
+
 
 BeagleBone Black or BeagleBone Black Wireless, from [BeagleBoard.org](https://beagleboard.org) ▶ Texas Instruments AM335x (ARM Cortex-A8 CPU) ▶ SoC with 3D acceleration, additional processors (PRUs) and lots of
 
@@ -40,19 +42,19 @@ and more)
 
 <https://elinux.org/Beagleboard:BeagleBone_Capes>.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 10/436 Labs proposed on another platform
+
+Labs proposed on another platform
 
 ![](media/index-11_1.png)
 
- 
+
 
 You can also run the labs of this course on the Beagleplay board.
 
 ![](media/index-11_2.png)
 
- 
+
 
 Lab instructions are available at
 
@@ -60,15 +62,14 @@ Lab instructions are available at
 
 [beagleplay/](https://bootlin.com/doc/training/linux-kernel-beagleplay/)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 11/436
+
 
 Shopping list: hardware for this course
 
 ![](media/index-12_1.jpg)
 
- 
+
 
 ▶ BeagleBone Black or BeagleBone Black Wireless - Multiple distributors:
 
@@ -102,11 +103,11 @@ Only the gender of their connector changes.
 
 <https://www.olimex.com/Products/Components/Cables/USB-Serial-Cable/USB-SERIAL-M/>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 12/436 Training quiz and certificate
 
- 
+Training quiz and certificate
+
+
 
 ▶ You have been given a quiz to test your knowledge on the topics covered by the
 
@@ -124,13 +125,12 @@ answers are in the course!
 
 least a 50% score in the final quiz **and** who attended all the sessions.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 13/436
+
 
 Participate!
 
- 
+
 
 During the lectures...
 
@@ -156,13 +156,13 @@ don’t want to interrupt.
 
 clarifying and make the session more interactive, enjoyable and useful for everyone.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 14/436 Collaborate!
+
+Collaborate!
 
 ![](media/index-15_1.png)
 
- 
+
 
 As in the Free Software and Open Source community, collaboration between participants is valuable in this training session:
 
@@ -182,15 +182,14 @@ especially when the trainer is unavailable.
 
 of training hours, and after the course is over.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 15/436
+
 
 Practical lab - Training Setup
 
 ![](media/index-16_1.png)
 
- 
+
 
 Prepare your lab environment
 
@@ -198,8 +197,4 @@ Prepare your lab environment
 
 ▶ Download and extract the lab archive
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 16/436
-
-![](media/index-17_1.jpg)

@@ -1,8 +1,60 @@
+**4. Delegating and Inheriting**
+
+
+
+**Constructors**
+
+In this chapter, we’ll look at improvements from C++11 related to inheritance and the ability to call constructors from other constructors.
+
+
+
+**Delegating constructors**
+
+Sometimes, when your class contains many data members and several constructors, it might be convenient to reuse their initialization code. Fortunately, since C++11, you can use **delegating constructors**. Let’s look at an example:
+
+**Ex 4.1. Delegating constructors. Run** [**@Compiler Explorer**](https://godbolt.org/z/qrYa9zq6e)
+
+**class Product** {
+
+**public**:
+
+Product(**int** id, **unsigned** quantity, **const** std::string& name)
+
+: id\_{id}, quantity\_{quantity}, name\_{name} { verifyData();
+
+}
+
+Product(**const** std::string& name)
+
+: Product{0, 0, name}
+
+{ }
+
+**void** verifyData() {
+
+**if** (quantity\_ \> MaxQuantity)
+
+**throw** std::invalid_argument("quantity is too large!");
+
+}
+
+**const** std::string& getName() **const** { **return** name\_; } **private**:
+
+**int** id\_;
+
+**unsigned** quantity\_;
+
+std::string name\_;
+
+
+
+64
+
 Delegating and Inheriting Constructors 65
 
 **static constexpr unsigned** MaxQuantity = 100; };
 
- 
+
 
 In the above example, we declare two constructors. The first one performs the core job. The second calls the “primary” one. Inside this main constructor, we not only initialize data members but also call other code. In our case, it’s a form of basic data validation. Please notice that I also used a default parameter (id = 0 ) for the constructor, so that’s another alternative when you want to offer various options for calling it.
 
@@ -74,7 +126,7 @@ explicit PropertyInfo(double price) { PropertyInfo(...); }
 
 The above line will create a local object rather than calling the other constructor! The call to a constructor has to appear before the constructor body.
 
- 
+
 
 **Limitations**
 
@@ -106,7 +158,7 @@ You might get a segmentation fault and stack overflow! This is a recursive call,
 
 ![](media/index-82_1.png)
 
- 
+
 
 Another “restriction” is that you cannot mix member initialization with calling other constructors.
 
@@ -128,7 +180,7 @@ To sum up, if you want to use delegating constructors, you cannot initialize oth
 
 Let’s go to another section on constructors, where you’ll learn one more modern C++ trick.
 
- 
+
 
 **Inheritance**
 
@@ -164,7 +216,7 @@ accessible as protected members of the derived class.
 
 Delegating and Inheriting Constructors 69
 
- 
+
 
 • Private inheritance makes all public and protected base class members accessible as
 
@@ -276,11 +328,11 @@ Additionally, it’s best not to call virtual functions in constructors as they 
 
 ²<https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rc-ctor-virtual> Delegating and Inheriting Constructors 71
 
- 
+
 
 After introducing the inheritance topic, we can discuss one improvement we got with Modern C++.
 
- 
+
 
 **Inheriting constructors**
 
@@ -304,7 +356,7 @@ In our previous example with DebugPropertyInfo we didn’t have any new data mem
 13   }
 ```
 
- 
+
 
 Consider **line 3**:
 
@@ -314,7 +366,7 @@ This tells the compiler that it can use **all** constructors from the base class
 
 Delegating and Inheriting Constructors 72
 
- 
+
 
 **Ex 4.5. Inheriting constructors and protected section. Run** [**@Compiler Explorer**](https://godbolt.org/z/T4GhY7Gab)
 

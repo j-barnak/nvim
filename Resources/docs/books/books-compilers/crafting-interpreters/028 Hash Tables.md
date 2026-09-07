@@ -14,11 +14,11 @@ A hash table, whatever your language calls it, associates a set of **keys** with
 
 Hash tables appear in so many languages because they are incredibly powerful. Much of this power comes from one metric: given a key, a hash table returns the corresponding value in constant time, *regardless of how many keys are in the hash table*.
 
-More specifically, the *average-case* lookup time is constant. Worst-case performance can be, well, worse. In practice, it’s easy to avoid degenerate behavior and stay on the happy path.
+> More specifically, the *average-case* lookup time is constant. Worst-case performance can be, well, worse. In practice, it’s easy to avoid degenerate behavior and stay on the happy path.
 
 That’s pretty remarkable when you think about it. Imagine you’ve got a big stack of business cards and I ask you to find a certain person. The bigger the pile is, the longer it will take. Even if the pile is nicely sorted and you’ve got the manual dexterity to do a binary search by hand, you’re still talking *O(log n)*. But with a hash table, it takes the same time to find that business card when the stack has ten cards as when it has a million.
 
-Stuff all those cards in a Rolodex—does anyone even remember those things anymore?—with dividers for each letter, and you improve your speed dramatically. As we’ll see, that’s not too far from the trick a hash table uses.
+> Stuff all those cards in a Rolodex—does anyone even remember those things anymore?—with dividers for each letter, and you improve your speed dramatically. As we’ll see, that’s not too far from the trick a hash table uses.
 
 ## 20.1 An Array of Buckets
 
@@ -26,11 +26,11 @@ A complete, fast hash table has a couple of moving parts. I’ll introduce them 
 
 For now, imagine if Lox was a *lot* more restricted in variable names. What if a variable’s name could only be a single lowercase letter. How could we very efficiently represent a set of variable names and their values?
 
-This limitation isn’t *too* far-fetched. The initial versions of BASIC out of Dartmouth allowed variable names to be only a single letter followed by one optional digit.
+> This limitation isn’t *too* far-fetched. The initial versions of BASIC out of Dartmouth allowed variable names to be only a single letter followed by one optional digit.
 
 With only 26 possible variables (27 if you consider underscore a “letter”, I guess), the answer is easy. Declare a fixed-size array with 26 elements. We’ll follow tradition and call each element a **bucket**. Each represents a variable with `a` starting at index zero. If there’s a value in the array at some letter’s index, then that key is present with that value. Otherwise, the bucket is empty and that key/value pair isn’t in the data structure.
 
-![A row of buckets, each labeled with a letter of the alphabet.](media/image/hash-tables/bucket-array.png)
+> ![A row of buckets, each labeled with a letter of the alphabet.](media/image/hash-tables/bucket-array.png)
 
 Memory usage is great—just a single, reasonably sized array. There’s some waste from the empty buckets, but it’s not huge. There’s no overhead for node pointers, padding, or other stuff you’d get with something like a linked list or tree.
 
@@ -42,7 +42,7 @@ This is sort of our Platonic ideal data structure. Lightning fast, dead simple, 
 
 Confining Lox to single-letter variables would make our job as implementers easier, but it’s probably no fun programming in a language that gives you only 26 storage locations. What if we loosened it a little and allowed variables up to eight characters long?
 
-Again, this restriction isn’t so crazy. Early linkers for C treated only the first six characters of external identifiers as meaningful. Everything after that was ignored. If you’ve ever wondered why the C standard library is so enamored of abbreviation—looking at you, `strncmp()`—it turns out it wasn’t entirely because of the small screens (or teletypes!) of the day.
+> Again, this restriction isn’t so crazy. Early linkers for C treated only the first six characters of external identifiers as meaningful. Everything after that was ignored. If you’ve ever wondered why the C standard library is so enamored of abbreviation—looking at you, `strncmp()`—it turns out it wasn’t entirely because of the small screens (or teletypes!) of the day.
 
 That’s small enough that we can pack all eight characters into a 64-bit integer and easily turn the string into a number. We can then use it as an array index. Or, at least, we could if we could somehow allocate a 295,148 *petabyte* array. Memory’s gotten cheaper over time, but not quite *that* cheap. Even if we could make an array that big, it would be heinously wasteful. Almost every bucket would be empty unless users started writing way bigger Lox programs than we’ve anticipated.
 
@@ -50,7 +50,7 @@ Even though our variable keys cover the full 64-bit numeric range, we clearly do
 
 For example, say we want to store “bagel”. We allocate an array with eight elements, plenty enough to store it and more later. We treat the key string as a 64-bit integer. On a little-endian machine like Intel, packing those characters into a 64-bit word puts the first letter, “b” (ASCII value 98), in the least-significant byte. We take that integer modulo the array size (8) to fit it in the bounds and get a bucket index, 2. Then we store the value there as usual.
 
-I’m using powers of two for the array sizes here, but they don’t need to be. Some styles of hash tables work best with powers of two, including the one we’ll build in this book. Others prefer prime number array sizes or have other rules.
+> I’m using powers of two for the array sizes here, but they don’t need to be. Some styles of hash tables work best with powers of two, including the one we’ll build in this book. Others prefer prime number array sizes or have other rules.
 
 Using the array size as a modulus lets us map the key’s numeric range down to fit an array of any size. We can thus control the number of buckets independently of the key range. That solves our waste problem, but introduces a new one. Any two variables whose key number has the same remainder when divided by the array size will end up in the same bucket. Keys can **collide**. For example, if we try to add “jam”, it also ends up in bucket 2.
 
@@ -68,9 +68,9 @@ A low load factor can make collisions rarer, but the [*pigeonhole principle*](ht
 
 Thus we still have to handle collisions gracefully when they occur. Users don’t like it when their programming language can look up variables correctly only *most* of the time.
 
-Put these two funny-named mathematical rules together and you get this observation: Take a birdhouse containing 365 pigeonholes, and use each pigeon’s birthday to assign it to a pigeonhole. You’ll need only about 26 randomly chosen pigeons before you get a greater than 50% chance of two pigeons in the same box.
-
-![Two pigeons in the same hole.](media/image/hash-tables/pigeons.png)
+> Put these two funny-named mathematical rules together and you get this observation: Take a birdhouse containing 365 pigeonholes, and use each pigeon’s birthday to assign it to a pigeonhole. You’ll need only about 26 randomly chosen pigeons before you get a greater than 50% chance of two pigeons in the same box.
+>
+> ![Two pigeons in the same hole.](media/image/hash-tables/pigeons.png)
 
 ### 20.2.1 Separate chaining
 
@@ -82,19 +82,19 @@ In catastrophically bad cases where every entry collides in the same bucket, the
 
 Separate chaining is conceptually simple—it’s literally an array of linked lists. Most operations are straightforward to implement, even deletion which, as we’ll see, can be a pain. But it’s not a great fit for modern CPUs. It has a lot of overhead from pointers and tends to scatter little linked list nodes around in memory which isn’t great for cache usage.
 
-There are a few tricks to optimize this. Many implementations store the first entry right in the bucket so that in the common case where there’s only one, no extra pointer indirection is needed. You can also make each linked list node store a few entries to reduce the pointer overhead.
+> There are a few tricks to optimize this. Many implementations store the first entry right in the bucket so that in the common case where there’s only one, no extra pointer indirection is needed. You can also make each linked list node store a few entries to reduce the pointer overhead.
 
 ### 20.2.2 Open addressing
 
 The other technique is called **open addressing** or (confusingly) **closed hashing**. With this technique, all entries live directly in the bucket array, with one entry per bucket. If two entries collide in the same bucket, we find a different empty bucket to use instead.
 
-It’s called “open” addressing because the entry may end up at an address (bucket) outside of its preferred one. It’s called “closed” hashing because all of the entries stay inside the array of buckets.
+> It’s called “open” addressing because the entry may end up at an address (bucket) outside of its preferred one. It’s called “closed” hashing because all of the entries stay inside the array of buckets.
 
 Storing all entries in a single, big, contiguous array is great for keeping the memory representation simple and fast. But it makes all of the operations on the hash table more complex. When inserting an entry, its bucket may be full, sending us to look at another bucket. That bucket itself may be occupied and so on. This process of finding an available bucket is called **probing**, and the order that you examine buckets is a **probe sequence**.
 
 There are a number of algorithms for determining which buckets to probe and how to decide which entry goes in which bucket. There’s been a ton of research here because even slight tweaks can have a large performance impact. And, on a data structure as heavily used as hash tables, that performance impact touches a very large number of real-world programs across a range of hardware capabilities.
 
-If you’d like to learn more (and you should, because some of these are really cool), look into “double hashing”, “cuckoo hashing”, “Robin Hood hashing”, and anything those lead you to.
+> If you’d like to learn more (and you should, because some of these are really cool), look into “double hashing”, “cuckoo hashing”, “Robin Hood hashing”, and anything those lead you to.
 
 As usual in this book, we’ll pick the simplest one that gets the job done efficiently. That’s good old **linear probing**. When looking for an entry, we look in the first bucket its key maps to. If it’s not in there, we look in the very next element in the array, and so on. If we reach the end, we wrap back around to the beginning.
 
@@ -138,7 +138,7 @@ We can now build ourselves a reasonably efficient table for storing variable nam
 
 Finally, we get to the “hash” part of “hash table”. A **hash function** takes some larger blob of data and “hashes” it to produce a fixed-size integer **hash code** whose value depends on all of the bits of the original data. A good hash function has three main goals:
 
-Hash functions are also used for cryptography. In that domain, “good” has a *much* more stringent definition to avoid exposing details about the data being hashed. We, thankfully, don’t need to worry about those concerns for this book.
+> Hash functions are also used for cryptography. In that domain, “good” has a *much* more stringent definition to avoid exposing details about the data being hashed. We, thankfully, don’t need to worry about those concerns for this book.
 
 - **It must be *deterministic*.** The same input must always hash to the same number. If the same variable ends up in different buckets at different points in time, it’s gonna get really hard to find it.
 
@@ -146,13 +146,13 @@ Hash functions are also used for cryptography. In that domain, “good” has a 
 
 - **It must be *fast*.** Every operation on the hash table requires us to hash the key first. If hashing is slow, it can potentially cancel out the speed of the underlying array storage.
 
-One of the original names for a hash table was “scatter table” because it takes the entries and scatters them throughout the array. The word “hash” came from the idea that a hash function takes the input data, chops it up, and tosses it all together into a pile to come up with a single number from all of those bits.
+> One of the original names for a hash table was “scatter table” because it takes the entries and scatters them throughout the array. The word “hash” came from the idea that a hash function takes the input data, chops it up, and tosses it all together into a pile to come up with a single number from all of those bits.
 
 There is a veritable pile of hash functions out there. Some are old and optimized for architectures no one uses anymore. Some are designed to be fast, others cryptographically secure. Some take advantage of vector instructions and cache sizes for specific chips, others aim to maximize portability.
 
 There are people out there for whom designing and evaluating hash functions is, like, their *jam*. I admire them, but I’m not mathematically astute enough to *be* one. So for clox, I picked a simple, well-worn hash function called [FNV-1a](http://www.isthe.com/chongo/tech/comp/fnv/) that’s served me fine over the years. Consider trying out different ones in your code and see if they make a difference.
 
-Who knows, maybe hash functions could turn out to be your thing too?
+> Who knows, maybe hash functions could turn out to be your thing too?
 
 OK, that’s a quick run through of buckets, load factors, open addressing, collision resolution, and hash functions. That’s an awful lot of text and not a lot of real code. Don’t worry if it still seems vague. Once we’re done coding it up, it will all click into place.
 
@@ -201,7 +201,7 @@ typedef struct {
 
 It’s a simple key/value pair. Since the key is always a string, we store the ObjString pointer directly instead of wrapping it in a Value. It’s a little faster and smaller this way.
 
-In clox, we only need to support keys that are strings. Handling other types of keys doesn’t add much complexity. As long as you can compare two objects for equality and reduce them to sequences of bits, it’s easy to use them as hash keys.
+> In clox, we only need to support keys that are strings. Handling other types of keys doesn’t add much complexity. As long as you can compare two objects for equality and reduce them to sequences of bits, it’s easy to use them as hash keys.
 
 To create a new, empty hash table, we declare a constructor-like function.
 
@@ -470,7 +470,7 @@ void initTable(Table* table) {
 
 This is how we manage the table’s load factor. We don’t grow when the capacity is completely full. Instead, we grow the array before then, when the array becomes at least 75% full.
 
-Ideal max load factor varies based on the hash function, collision-handling strategy, and typical keysets you’ll see. Since a toy language like Lox doesn’t have “real world” data sets, it’s hard to optimize this, and I picked 75% somewhat arbitrarily. When you build your own hash tables, benchmark and tune this.
+> Ideal max load factor varies based on the hash function, collision-handling strategy, and typical keysets you’ll see. Since a toy language like Lox doesn’t have “real world” data sets, it’s hard to optimize this, and I picked 75% somewhat arbitrarily. When you build your own hash tables, benchmark and tune this.
 
 We’ll get to the implementation of `adjustCapacity()` soon. First, let’s look at that `findEntry()` function you’ve been wondering about.
 
@@ -501,7 +501,7 @@ There are a few cases to check for:
 
 - If the key in the bucket is equal to the key we’re looking for, then that key is already present in the table. If we’re doing a lookup, that’s good—we’ve found the key we seek. If we’re doing an insert, this means we’ll be replacing the value for that key instead of adding a new entry.
 
-It looks like we’re using `==` to see if two strings are equal. That doesn’t work, does it? There could be two copies of the same string at different places in memory. Fear not, astute reader. We’ll solve this further on. And, strangely enough, it’s a hash table that provides the tool we need.
+> It looks like we’re using `==` to see if two strings are equal. That doesn’t work, does it? There could be two copies of the same string at different places in memory. Fear not, astute reader. We’ll solve this further on. And, strangely enough, it’s a hash table that provides the tool we need.
 
 - Otherwise, the bucket has an entry in it, but with a different key. This is a collision. In that case, we start probing. That’s what that `for` loop does. We start at the bucket where the entry would ideally go. If that bucket is empty or has the same key, we’re done. Otherwise, we advance to the next element—this is the *linear* part of “linear probing”—and check there. If we go past the end of the array, that second modulo operator wraps us back around to the beginning.
 
@@ -654,7 +654,7 @@ There is one more fundamental operation a full-featured hash table needs to supp
 
 I could have taken that route too. In fact, we use deletion in clox only in a tiny edge case in the VM. But if you want to actually understand how to completely implement a hash table, this feels important. I can sympathize with their desire to overlook it. As we’ll see, deleting from a hash table that uses open addressing is tricky.
 
-With separate chaining, deleting is as easy as removing a node from a linked list.
+> With separate chaining, deleting is as easy as removing a node from a linked list.
 
 At least the declaration is simple.
 
@@ -711,7 +711,7 @@ bool tableDelete(Table* table, ObjString* key) {
 
 First, we find the bucket containing the entry we want to delete. (If we don’t find it, there’s nothing to delete, so we bail out.) We replace the entry with a tombstone. In clox, we use a `NULL` key and a `true` value to represent that, but any representation that can’t be confused with an empty bucket or a valid entry works.
 
-![A tombstone enscribed 'Here lies entry biscuit → 3.75, gone but not deleted'.](media/image/hash-tables/tombstone.png)
+> ![A tombstone enscribed 'Here lies entry biscuit → 3.75, gone but not deleted'.](media/image/hash-tables/tombstone.png)
 
 That’s all we need to do to delete an entry. Simple and fast. But all of the other operations need to correctly handle tombstones too. A tombstone is a sort of “half” entry. It has some of the characteristics of a present entry, and some of the characteristics of an empty one.
 
@@ -839,15 +839,15 @@ The reason the hash table doesn’t totally work is that when `findEntry()` chec
 
 Remember, back when we added strings in the last chapter, we added explicit support to compare the strings character-by-character in order to get true value equality. We could do that in `findEntry()`, but that’s slow.
 
-In practice, we would first compare the hash codes of the two strings. That quickly detects almost all different strings—it wouldn’t be a very good hash function if it didn’t. But when the two hashes are the same, we still have to compare characters to make sure we didn’t have a hash collision on different strings.
+> In practice, we would first compare the hash codes of the two strings. That quickly detects almost all different strings—it wouldn’t be a very good hash function if it didn’t. But when the two hashes are the same, we still have to compare characters to make sure we didn’t have a hash collision on different strings.
 
 Instead, we’ll use a technique called **string interning**. The core problem is that it’s possible to have different strings in memory with the same characters. Those need to behave like equivalent values even though they are distinct objects. They’re essentially duplicates, and we have to compare all of their bytes to detect that.
 
 String interning is a process of deduplication. We create a collection of “interned” strings. Any string in that collection is guaranteed to be textually distinct from all others. When you intern a string, you look for a matching string in the collection. If found, you use that original one. Otherwise, the string you have is unique, so you add it to the collection.
 
-I’m guessing “intern” is short for “internal”. I think the idea is that the language’s runtime keeps its own “internal” collection of these strings, whereas other strings could be user created and floating around in memory. When you intern a string, you ask the runtime to add the string to that internal collection and return a pointer to it.
-
-Languages vary in how much string interning they do and how it’s exposed to the user. Lua interns *all* strings, which is what clox will do too. Lisp, Scheme, Smalltalk, Ruby and others have a separate string-like type called “symbol” that is implicitly interned. (This is why they say symbols are “faster” in Ruby.) Java interns constant strings by default, and provides an API to let you explicitly intern any string you give it.
+> I’m guessing “intern” is short for “internal”. I think the idea is that the language’s runtime keeps its own “internal” collection of these strings, whereas other strings could be user created and floating around in memory. When you intern a string, you ask the runtime to add the string to that internal collection and return a pointer to it.
+>
+> Languages vary in how much string interning they do and how it’s exposed to the user. Lua interns *all* strings, which is what clox will do too. Lisp, Scheme, Smalltalk, Ruby and others have a separate string-like type called “symbol” that is implicitly interned. (This is why they say symbols are “faster” in Ruby.) Java interns constant strings by default, and provides an API to let you explicitly intern any string you give it.
 
 In this way, you know that each sequence of characters is represented by only one string in memory. This makes value equality trivial. If two strings point to the same address in memory, they are obviously the same string and must be equal. And, because we know strings are unique, if two strings point to different addresses, they must be distinct strings.
 
@@ -1072,7 +1072,7 @@ We also sped up testing strings for equality. This is nice for when the user doe
 
     All of this variety wasn’t created just to give CS doctoral candidates something to publish theses on: each has its uses in the many varied domains and hardware scenarios where hashing comes into play. Look up a few hash table implementations in different open source systems, research the choices they made, and try to figure out why they did things that way.
 
-    Well, at least that wasn’t the *only* reason they were created. Whether that was the *main* reason is up for debate.
+    > Well, at least that wasn’t the *only* reason they were created. Whether that was the *main* reason is up for debate.
 
 3.  Benchmarking a hash table is notoriously difficult. A hash table implementation may perform well with some keysets and poorly with others. It may work well at small sizes but degrade as it grows, or vice versa. It may choke when deletions are common, but fly when they aren’t. Creating benchmarks that accurately represent how your users will use the hash table is a challenge.
 

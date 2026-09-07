@@ -1,26 +1,27 @@
+![](media/index-227_1.jpg)
+
 Kernel frameworks for device drivers
 
- 
+
 
 Kernel frameworks for
 
- 
+
 
 device drivers
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 213/436
+
 
 Kernel and Device Drivers
 
- 
+
 
 In Linux, a driver is always interfacing with:
 
@@ -34,22 +35,20 @@ detect/communicate with the hardware.
 
 This section focuses on the *kernel frameworks*, while the *bus infrastructure* was covered earlier in this training.
 
- 
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 214/436
 
 
- 
+
+
+
 
 User space vision of devices
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 215/436
+
 
 Types of devices
 
- 
+
 
 Under Linux, there are essentially four types of devices:
 
@@ -77,9 +76,9 @@ I/O).
 
 *→* Most devices are *character devices*, so we will study these in more details.
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 216/436 Major and minor numbers
+Major and minor numbers
 
- 
+
 
 ▶ Within the kernel, all block and character devices are identified using a *major* and
 
@@ -99,13 +98,12 @@ framework itself. Allocation happens in order of enumeration of the devices.
 
 ▶ Pre-defined values, ranges and rules can be found in [admin-guide/devices](https://www.kernel.org/doc/html/latest/admin-guide/devices.html).
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 217/436
+
 
 Devices: everything is a file
 
- 
+
 
 ▶ A very important UNIX design decision was to represent most *system objects* as
 
@@ -119,17 +117,17 @@ files
 
 applications to the triplet *(type, major, minor)* that the kernel understands ▶ All *device files* are by convention stored in the /dev directory
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 218/436 Device files examples
 
- 
+Device files examples
+
+
 
 Example of device files in a Linux system
 
 \$ ls -l /dev/ttyS0 /dev/tty1 /dev/sda /dev/sda1 /dev/sda2 /dev/sdc1 /dev/zero brw-rw---- 1 root disk 8, 0 2011-05-27 08:56 /dev/sda brw-rw---- 1 root disk 8, 1 2011-05-27 08:56 /dev/sda1 brw-rw---- 1 root disk 8, 2 2011-05-27 08:56 /dev/sda2 brw-rw---- 1 root disk 8, 32 2011-05-27 08:56 /dev/sdc crw------- 1 root root 4, 1 2011-05-27 08:57 /dev/tty1 crw-rw---- 1 root dialout 4, 64 2011-05-27 08:56 /dev/ttyS0 crw-rw-rw- 1 root root 1, 5 2011-05-27 08:56 /dev/zero
 
- 
+
 
 Example C code that uses the usual file API to write data to a serial port int fd;
 
@@ -139,13 +137,12 @@ write(fd, "Hello", 5);
 
 close(fd);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 219/436
+
 
 Creating device files
 
- 
+
 
 ▶ Before Linux 2.6.32, on basic Linux systems, the device files had to be created
 
@@ -171,22 +168,20 @@ permission/ownership, load kernel modules automatically and create symbolic
 
 links to devices.
 
- 
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 220/436
 
 
- 
+
+
+
 
 Character drivers
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 221/436
+
 
 A character driver in the kernel
 
- 
+
 
 ▶ From the point of view of an application, a *character device* is essentially a **file**. ▶ Character device drivers therefore implement **operations** that let applications
 
@@ -198,17 +193,16 @@ from the [struct file_operations](https://elixir.bootlin.com/linux/latest/ident/
 
 a user space application makes the corresponding system call.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 222/436 From user space to the kernel: character devices
 
- 
+From user space to the kernel: character devices
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 223/436
+
+
 
 File operations
 
- 
+
 
 Here are the most important operations for a character driver, from the definition of
 
@@ -242,11 +236,11 @@ int (\*release) (struct inode \*, struct file \*);
 
 Many operations exist, they are all optional.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 224/436 open() and release()
 
- 
+open() and release()
+
+
 
 ▶ int foo_open(struct inode \*i, struct file \*f)
 
@@ -272,13 +266,12 @@ A pointer to the [file](https://elixir.bootlin.com/linux/latest/ident/file) stru
 
 **at** close() **time.**
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 225/436
+
 
 read() and write()
 
- 
+
 
 ▶ ssize_t foo_read(struct file \*f, char \_\_user \*buf, size_t sz, loff_t \*off)
 
@@ -300,11 +293,11 @@ from the device
 
 update off and return the number of bytes written.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 226/436 Exchanging data with user space 1/3
 
- 
+Exchanging data with user space 1/3
+
+
 
 ▶ Kernel code isn’t allowed to directly access user space memory, using [memcpy()](https://elixir.bootlin.com/linux/latest/ident/memcpy) or
 
@@ -324,13 +317,12 @@ you could overwrite with device data (read case), or which you could dump to the
 
 driver must use special kernel functions to exchange data with user space.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 227/436
+
 
 Exchanging data with user space 2/3
 
- 
+
 
 ▶ A single value
 
@@ -356,15 +348,15 @@ unsigned long n);
 
 non-zero, the convention is to return-[EFAULT](https://elixir.bootlin.com/linux/latest/ident/EFAULT).
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 228/436 Exchanging data with user space 3/3
 
- 
+Exchanging data with user space 3/3
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 229/436 Zero copy access to user memory
 
- 
+
+Zero copy access to user memory
+
+
 
 ▶ Having to copy data to or from an intermediate kernel buffer can become
 
@@ -378,11 +370,11 @@ See our mmap() chapter.
 
 having to copy them.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 230/436 unlocked_ioctl()
 
- 
+unlocked_ioctl()
+
+
 
 ▶ long unlocked_ioctl(struct file \*f, unsigned int cmd, unsigned long arg)
 
@@ -400,9 +392,8 @@ Can be an integer, an address, etc.
 
 *•* The semantic of cmd and arg is driver-specific.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 231/436
+
 
 ioctl() example: kernel side
 
@@ -456,13 +447,13 @@ return 0;
 
 Selected excerpt from [drivers/misc/phantom.c](https://elixir.bootlin.com/linux/latest/source/drivers/misc/phantom.c)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 232/436 Ioctl() Example: Application Side
+Ioctl() Example: Application Side
 
- 
+
 
 \#include \<linux/phantom.h\>
 
- 
+
 
 int main(void)
 
@@ -472,13 +463,13 @@ int fd, ret;
 
 struct phm_reg reg;
 
- 
+
 
 fd = open("/dev/phantom");
 
 assert(fd \> 0);
 
- 
+
 
 reg.field1 = 42;
 
@@ -488,24 +479,23 @@ ret = ioctl(fd, PHN_SET_REG, &reg);
 
 assert(ret == 0);
 
- 
+
 
 return 0;
 
 }
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 233/436
 
 
- 
+
 
 The concept of kernel frameworks
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 234/436 Beyond character drivers: kernel frameworks
 
- 
+Beyond character drivers: kernel frameworks
+
+
 
 ▶ Many device drivers are not implemented directly as character drivers ▶ They are implemented under a *framework*, specific to a given device type
 
@@ -519,15 +509,15 @@ devices
 
 every type of device, regardless of the driver
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 235/436 Example: Some Kernel Frameworks
 
- 
+Example: Some Kernel Frameworks
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 236/436 Example: Framebuffer Framework
 
- 
+
+Example: Framebuffer Framework
+
+
 
 ▶ Kernel option [CONFIG_FB](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_FB)
 
@@ -547,9 +537,8 @@ functions for the drivers
 
 *•* [include/linux/fb.h](https://elixir.bootlin.com/linux/latest/source/include/linux/fb.h)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 237/436
+
 
 Framebuffer driver operations
 
@@ -595,9 +584,9 @@ Here are the operations a framebuffer driver can or must implement, and define t
 
 };
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 238/436 Framebuffer driver code
+Framebuffer driver code
 
- 
+
 
 ▶ In the probe() function, registration of the framebuffer device and operations
 
@@ -627,20 +616,19 @@ return-EINVAL;
 
 be used by user space applications with the generic framebuffer API.
 
- 
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 239/436
 
 
- 
+
+
+
 
 Device-managed allocations
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 240/436 Device managed allocations
 
- 
+Device managed allocations
+
+
 
 ▶ The probe() function is typically responsible for allocating a significant number
 
@@ -660,15 +648,15 @@ automatically release those resources
 
 ▶ See [driver-api/driver-model/devres](https://www.kernel.org/doc/html/latest/driver-api/driver-model/devres.html) for details
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 241/436 Device managed allocations: memory allocation example
 
- 
+Device managed allocations: memory allocation example
+
+
 
 ▶ Normally done with kmalloc(size_t, gfp_t), released with kfree(void \*) ▶ Device managed with devm_kmalloc(struct device \*, size_t, gfp_t)
 
- 
+
 
 Without devm functions With devm functions int foo_probe(struct platform_device \*pdev) int foo_probe(struct platform_device \*pdev) { {
 
@@ -710,9 +698,9 @@ kfree(foo); }
 
 }
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 242/436 Device managed allocations caveats
+Device managed allocations caveats
 
- 
+
 
 ▶ Cleanup is done when the struct device is cleaned up. There is no reference
 
@@ -726,20 +714,19 @@ userspace device file is still open after remove. ▶ Be very careful when there
 
 [Pinchart, LPC 2022](https://lpc.events/event/16/contributions/1227/)
 
- 
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 243/436
 
 
- 
+
+
+
 
 Driver data structures and links
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 244/436 Driver-specific Data Structure
 
- 
+Driver-specific Data Structure
+
+
 
 ▶ Each *framework* defines a structure that a device driver must register to be
 
@@ -757,13 +744,12 @@ information about each device
 
 *•* By subclassing the appropriate framework structure *•* By storing a reference to the appropriate framework structure *•* Or by including your information in the framework structure
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 245/436
+
 
 Driver-specific Data Structure Examples 1/2
 
- 
+
 
 ▶ i.MX serial driver: [struct imx_port](https://elixir.bootlin.com/linux/latest/ident/imx_port) is a subclass of [struct uart_port](https://elixir.bootlin.com/linux/latest/ident/uart_port)
 
@@ -783,11 +769,11 @@ unsigned int have_rtscts:1;
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 246/436 Driver-specific Data Structure Examples 2/2
 
- 
+Driver-specific Data Structure Examples 2/2
+
+
 
 ▶ ds1305 RTC driver: [struct ds1305](https://elixir.bootlin.com/linux/latest/ident/ds1305) has a reference to [struct rtc_device](https://elixir.bootlin.com/linux/latest/ident/rtc_device)
 
@@ -827,11 +813,10 @@ struct net_device \*netdev;
 
 };
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 247/436
 
 Links between structures 1/4
 
- 
+
 
 ▶ The framework structure typically contains a [struct device](https://elixir.bootlin.com/linux/latest/ident/device) \* pointer that the
 
@@ -851,11 +836,11 @@ framework.
 
 structure describing the logical device
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 248/436 Links between structures 2/4
 
- 
+Links between structures 2/4
+
+
 
 static int serial_imx_probe(struct platform_device \*pdev)
 
@@ -899,13 +884,12 @@ uart_remove_one_port(&imx_reg, &sport-\>port);
 
 }
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 249/436
+
 
 Links between structures 3/4
 
- 
+
 
 static int ds1305_probe(struct spi_device \*spi)
 
@@ -945,9 +929,9 @@ struct ds1305 \*ds1305 = spi_get_drvdata(spi);
 
 }
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 250/436 Links between structures 4/4
+
+Links between structures 4/4
 
 static int rtl8150_probe(struct usb_interface \*intf,
 
@@ -990,7 +974,3 @@ rtl8150_t \*dev = usb_get_intfdata(intf);
 \[...\]
 
 }
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 251/436
-
-![](media/index-266_1.jpg)

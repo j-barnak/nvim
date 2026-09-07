@@ -1,20 +1,22 @@
-Kernel Resources
-
- 
+![](media/index-441_1.jpg)
 
 Kernel Resources
 
- 
+
+
+Kernel Resources
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 427/436 Kernel Development News
 
- 
+Kernel Development News
+
+
 
 Linux Weekly News
 
@@ -32,9 +34,9 @@ window
 
 ▶ Subscribe to finance the editors (\$7 / month) ▶ Articles available for non subscribers after 1 week.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 428/436 Useful Online Resources
+
+Useful Online Resources
 
 ▶ Kernel documentation
 
@@ -66,11 +68,10 @@ getting familiar with Linux kernel or driver development.
 
 ▶ The <https://elinux.org> wiki
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 429/436
 
 International Conferences (1)
 
- 
+
 
 ▶ Embedded Linux Conference:
 
@@ -96,11 +97,11 @@ management, device management, multimedia, etc.
 
 presentations, but rather a place where contributors on each topic meet, share their progress and make plans for work ahead.
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 430/436 International Conferences (2)
+International Conferences (2)
 
 ![](media/index-445_1.png)
 
- 
+
 
 ▶ Kernel Recipes: <https://kernel-recipes.org/>
 
@@ -120,9 +121,8 @@ are much more affordable and often free.
 
 ![](media/index-445_2.png)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 431/436
+
 
 After the course
 
@@ -156,9 +156,9 @@ own hardware, of course! issues reported by Coverity Scan:
 
 [projects/linux](https://scan.coverity.com/projects/linux)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 432/436 Contribute your changes
+Contribute your changes
 
- 
+
 
 Recommended resources
 
@@ -176,8 +176,4 @@ A guide to the kernel development process.
 
 <http://www.static.linuxfound.org/sites/lfcorp/files/How-Participate-Linux-Community_0.pdf>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 433/436
-
-![](media/index-448_1.jpg)

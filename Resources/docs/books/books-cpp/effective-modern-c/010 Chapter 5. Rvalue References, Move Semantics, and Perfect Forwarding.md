@@ -56,7 +56,6 @@ return **static_cast\<ReturnType\>(param)**;
 
 }
 
-**158 \| Item 22**
 
 I’ve highlighted two parts of the code for you. One is the name of the function, because the return type specification is rather noisy, and I don’t want you to lose your bearings in the din. The other is the cast that comprises the essence of the function.
 
@@ -100,7 +99,6 @@ public:
 
 explicit Annotation(**std::string** text); // param to be copied,
 
-**Item 23 \| 159**
 
 … // so per Item 41,
 
@@ -156,7 +154,6 @@ string(string&& rhs); // move ctor
 
 };
 
-**160 \| Item 23**
 
 In the Annotation constructor’s member initialization list, the result of std::move(text) is an rvalue of type const std::string. That rvalue can’t be passed to std::string’s move constructor, because the move constructor takes an rvalue reference to a *non-const* std::string. The rvalue can, however, be passed to the copy constructor, because an lvalue-reference-to-const is permitted to bind to a const rvalue. The member initialization therefore invokes the *copy* constructor in std::string, even though text has been cast to an rvalue! Such behavior is essential to maintaining const-correctness. Moving a value out of an object generally modifies the object, so the language should not permit const objects to be passed to functions (such as move constructors) that could modify them.
 
@@ -190,7 +187,6 @@ logAndProcess(w); // call with lvalue
 
 logAndProcess(std::move(w)); // call with rvalue
 
-**Item 23 \| 161**
 
 Inside logAndProcess, the parameter param is passed to the function process. pro cess is overloaded for lvalues and rvalues. When we call logAndProcess with an lvalue, we naturally expect that lvalue to be forwarded to process as an lvalue, and when we call logAndProcess with an rvalue, we expect the rvalue overload of pro cess to be invoked.
 
@@ -214,7 +210,6 @@ Widget(Widget&& rhs)
 
 …
 
-**162 \| Item 23**
 
 private:
 
@@ -252,7 +247,6 @@ More importantly, the use of std::move conveys an unconditional cast to an rvalu
 
 • Neither std::move nor std::forward do anything at runtime.
 
-**Item 23 \| 163**
 
 **Item 24: Distinguish universal references from rvalue** **references.**
 
@@ -272,7 +266,6 @@ Universal references arise in two contexts. The most common is function template
 
 1 Item 25 explains that universal references should almost always have std::forward applied to them, and as this book goes to press, some members of the C++ community have started referring to universal references as *forwarding references*.
 
-**164 \| Item 24**
 
 template\<typename T\>
 
@@ -308,9 +301,7 @@ For a reference to be universal, type deduction is necessary, but it’s not suf
 
 template\<typename T\>
 
-void f(**std::vector\<T\>&&** param); // param is an rvalue reference When f is invoked, the type T will be deduced (unless the caller explicitly specifies it, an edge case we’ll not concern ourselves with). But the form of param’s type declara-Item 24 \| 165
-
-tion isn’t “T&&”, it’s “std::vector\<T\>&&”. That rules out the possibility that param is a universal reference. param is therefore an rvalue reference, something that your compilers will be happy to confirm for you if you try to pass an lvalue to f: std::vector\<int\> v;
+void f(**std::vector\<T\>&&** param); // param is an rvalue reference When f is invoked, the type T will be deduced (unless the caller explicitly specifies it, an edge case we’ll not concern ourselves with). But the form of param’s type declaration isn’t “T&&”, it’s “std::vector\<T\>&&”. That rules out the possibility that param is a universal reference. param is therefore an rvalue reference, something that your compilers will be happy to confirm for you if you try to pass an lvalue to f: std::vector\<int\> v;
 
 f(v); // error! can't bind lvalue to
 
@@ -354,7 +345,6 @@ Now you can see clearly that push_back employs no type deduction. This push_back
 
 In contrast, the conceptually similar emplace_back member function in std::vec tor *does* employ type deduction:
 
-**166 \| Item 24**
 
 template\<class T, class Allocator = allocator\<T\>\> // still from class vector { // C++
 
@@ -396,7 +386,7 @@ std::forward\<decltype(params)\>(params)... // on params
 
 If your reaction to the “std::forward\<decltype( *blah* *blah* *blah*)\>” code inside the lambda is, “What the…?!”, that probably just means you haven’t yet read Item 33.
 
-Don’t worry about it. The important thing in this Item is the auto&& parameters that **Item 24 \| 167**
+Don’t worry about it. The important thing in this Item is the auto&& parameters that
 
 the lambda declares. func is a universal reference that can be bound to any callable object, lvalue or rvalue. args is zero or more universal references (i.e., a universal reference parameter pack) that can be bound to any number of objects of arbitrary types. The result, thanks to auto universal references, is that timeFuncInvocation can time pretty much any function execution. (For information on the difference
 
@@ -424,7 +414,7 @@ Distinguishing between rvalue references and universal references will help you 
 
 Rvalue references bind only to objects that are candidates for moving. If you have an rvalue reference parameter, you *know* that the object it’s bound to may be moved: class Widget {
 
-Widget(**Widget&&** rhs); // rhs *definitely* refers to an **168 \| Item 24**
+Widget(**Widget&&** rhs); // rhs *definitely* refers to an
 
 … // object eligible for moving
 
@@ -476,7 +466,6 @@ In short, rvalue references should be *unconditionally cast* to rvalues (via std
 
 Item 23 explains that using std::forward on rvalue references can be made to exhibit the proper behavior, but the source code is wordy, error-prone, and unidiomatic, so you should avoid using std::forward with rvalue references. Even worse is the idea of using std::move with universal references, because that can have the effect of unexpectedly modifying lvalues (e.g., local variables):
 
-**Item 25 \| 169**
 
 class Widget {
 
@@ -528,7 +517,6 @@ void setName(**std::string&&** newName) // set from
 
 };
 
-**170 \| Item 25**
 
 That would certainly work in this case, but there are drawbacks. First, it’s more source code to write and maintain (two functions instead of a single template). Second, it can be less efficient. For example, consider this use of setName: w.setName("Adela Novak");
 
@@ -550,7 +538,7 @@ template\<class T, class... Args\> // from C++11
 
 shared_ptr\<T\> make_shared(**Args&&...** args); // Standard template\<class T, class... Args\> // from C++14
 
-unique_ptr\<T\> make_unique(**Args&&...** args); // Standard **Item 25 \| 171**
+unique_ptr\<T\> make_unique(**Args&&...** args); // Standard
 
 For functions like these, overloading on lvalues and rvalues is not an option: universal references are the only way to go. And inside such functions, I assure you, std::forward is applied to the universal reference parameters when they’re passed to other functions. Which is exactly what you should do.
 
@@ -590,7 +578,6 @@ function to add two matrices together, where the left-hand matrix is known to be
 
 lhs += rhs;
 
-**172 \| Item 25**
 
 return **std::move(lhs)**; // *move* lhs into
 
@@ -634,7 +621,7 @@ return **std::forward\<T\>(frac)**; // move rvalue into return
 
 If the call to std::forward were omitted, frac would be unconditionally copied into reduceAndCopy’s return value.
 
-Some programmers take the information above and try to extend it to situations where it doesn’t apply. “If using std::move on an rvalue reference parameter being **Item 25 \| 173**
+Some programmers take the information above and try to extend it to situations where it doesn’t apply. “If using std::move on an rvalue reference parameter being
 
 copied into a return value turns a copy construction into a move construction,” they reason, “I can perform the same optimization on local variables that I’m returning.”
 
@@ -680,7 +667,6 @@ Paraphrasing the legalistic (arguably toxic) prose of the Standard, this particu
 
 2 Eligible local objects include most local variables (such as w inside makeWidget) as well as temporary objects created as part of a return statement. Function parameters don’t qualify. Some people draw a distinction between application of the RVO to named and unnamed (i.e., temporary) local objects, limiting the term RVO to unnamed objects and calling its application to named objects the *named return value optimization* (NRVO).
 
-**174 \| Item 25**
 
 Widget makeWidget() // "Copying" version of makeWidget
 
@@ -706,7 +692,7 @@ But the RVO is an optimization. Compilers aren’t *required* to elide copy and 
 
 In that case, applying std::move to a local object would *still* be a bad idea. The part of the Standard blessing the RVO goes on to say that if the conditions for the RVO
 
-are met, but compilers choose not to perform copy elision, the object being returned *must be treated as an rvalue*. In effect, the Standard requires that when the RVO is **Item 25 \| 175**
+are met, but compilers choose not to perform copy elision, the object being returned *must be treated as an rvalue*. In effect, the Standard requires that when the RVO is
 
 permitted, either copy elision takes place or std::move is implicitly applied to local objects being returned. So in the “copying” version of makeWidget,
 
@@ -760,7 +746,6 @@ return **std::move(w)**; // treat w as rvalue
 
 This means that if you use std::move on a local object being returned from a function that’s returning by value, you can’t help your compilers (they have to treat the local object as an rvalue if they don’t perform copy elision), but you can certainly hinder them (by precluding the RVO). There are situations where applying std::move to a local variable can be a reasonable thing to do (i.e., when you’re passing it to a function and you know you won’t be using the variable any longer), but as part of a return statement that would otherwise qualify for the RVO or that returns a by-value parameter isn’t among them.
 
-**176 \| Item 25**
 
 **Things to Remember**
 
@@ -800,7 +785,6 @@ logAndAdd(**petName**); // pass lvalue std::string logAndAdd(**std::string("Pers
 
 Within logAndAdd, name is ultimately passed to names.emplace. Because name is an lvalue, it is copied into names. There’s no way to avoid that copy, because an lvalue (petName) was passed into logAndAdd.
 
-**Item 25 \| 177**
 
 In the second call, the parameter name is bound to an rvalue (the temporary std::string explicitly created from "Persephone"). name itself is an lvalue, so it’s copied into names, but we recognize that, in principle, its value could be moved into names. In this call, we pay for a copy, but we should be able to get by with only a move.
 
@@ -842,7 +826,7 @@ logAndAdd(**"Patty Dog"** ); // *create std::string*
 
 Hurray, optimal efficiency!
 
-Were this the end of the story, we could stop here and proudly retire, but I haven’t told you that clients don’t always have direct access to the names that logAndAdd **178 \| Item 26**
+Were this the end of the story, we could stop here and proudly retire, but I haven’t told you that clients don’t always have direct access to the names that logAndAdd
 
 requires. Some clients have only an index that logAndAdd uses to look up the corresponding name in a table. To support such clients, logAndAdd is overloaded: std::string nameFromIdx(int idx); // return name
 
@@ -886,7 +870,7 @@ Within that overload, the parameter name is bound to the short that’s passed i
 
 name is then std::forwarded to the emplace member function on names (a
 
-std::multiset\<std::string\>), which, in turn, dutifully forwards it to the std::string constructor. There is no constructor for std::string that takes a short, so the std::string constructor call inside the call to multiset::emplace **Item 26 \| 179**
+std::multiset\<std::string\>), which, in turn, dutifully forwards it to the std::string constructor. There is no constructor for std::string that takes a short, so the std::string constructor call inside the call to multiset::emplace
 
 inside the call to logAndAdd fails. All because the universal reference overload was a better match for a short argument than an int.
 
@@ -930,7 +914,6 @@ explicit Person(T&& n)
 
 : name(std::forward\<T\>(n)) {}
 
-**180 \| Item 26**
 
 explicit Person(int idx); // int ctor
 
@@ -970,7 +953,6 @@ public:
 
 explicit Person(int idx); // as before
 
-**Item 26 \| 181**
 
 Person(const Person& rhs); // copy ctor
 
@@ -1012,7 +994,6 @@ Person(const Person& rhs); // copy ctor
 
 but this doesn’t matter, because one of the overload-resolution rules in C++ is that in situations where a template instantiation and a non-template function (i.e., a “normal” function) are equally good matches for a function call, the normal function is preferred. The copy constructor (a normal function) thereby trumps an instantiated template with the same signature.
 
-**182 \| Item 26**
 
 (If you’re wondering why compilers generate a copy constructor when they could instantiate a templatized constructor to get the signature that the copy constructor would have, review Item 17.)
 
@@ -1050,7 +1031,6 @@ an entire Item to them. It’s Item 27. The next Item. Keep reading, you’ll bu
 
 • Perfect-forwarding constructors are especially problematic, because they’re typically better matches than copy constructors for non-const lvalues, and they can hijack derived class calls to base class copy and move constructors.
 
-**Item 26 \| 183**
 
 **Item 27: Familiarize yourself with alternatives to**
 
@@ -1082,7 +1062,7 @@ class Person {
 
 public:
 
-explicit Person(**std::string** n) // replaces T&& ctor; see **184 \| Item 27**
+explicit Person(**std::string** n) // replaces T&& ctor; see
 
 : name(std::move(n)) {} // Item 41 for use of std::move explicit Person(int idx) // as before
 
@@ -1114,7 +1094,6 @@ std::multiset\<std::string\> names; // global data structure
 
 template\<typename T\> // make log entry and add
 
-**Item 27 \| 185**
 
 void logAndAdd(T&& name) // name to data structure
 
@@ -1158,7 +1137,6 @@ Item 28 explains, if an lvalue argument is passed to the universal reference nam
 
 Recognizing the problem is tantamount to solving it, because the ever-handy Standard C++ Library has a type trait (see Item 9), std::remove_reference, that does both what its name suggests and what we need: remove any reference qualifiers from a type. The proper way to write logAndAdd is therefore:
 
-**186 \| Item 27**
 
 template\<typename T\>
 
@@ -1204,7 +1182,6 @@ The second overload covers the opposite case: when T is an integral type. In tha
 
 std::string nameFromIdx(int idx); // as in Item 26
 
-**Item 27 \| 187**
 
 void logAndAddImpl(int idx, **std::true_type**) // integral
 
@@ -1232,7 +1209,6 @@ A keystone of tag dispatch is the existence of a single (unoverloaded) function 
 
 and move constructors themselves, so even if you write only one constructor and use tag dispatch within it, some constructor calls may be handled by compiler-generated functions that bypass the tag dispatch system.
 
-**188 \| Item 27**
 
 In truth, the real problem is not that the compiler-generated functions sometimes bypass the tag dispatch design, it’s that they don’t *always* pass it by. You virtually always want the copy constructor for a class to handle requests to copy lvalues of that
 
@@ -1260,7 +1236,6 @@ template\<typename T,
 
 …
 
-**Item 27 \| 189**
 
 };
 
@@ -1290,7 +1265,7 @@ This means we need a way to strip any references, consts, and volatiles from T
 
 before checking to see if that type is the same as Person. Once again, the Standard Library gives us what we need in the form of a type trait. That trait is std::decay.
 
-std::decay\<T\>::type is the same as T, except that references and *cv-qualifiers* (i.e., const or volatile qualifiers) are removed. (I’m fudging the truth here, because std::decay, as its name suggests, also turns array and function types into pointers **190 \| Item 27**
+std::decay\<T\>::type is the same as T, except that references and *cv-qualifiers* (i.e., const or volatile qualifiers) are removed. (I’m fudging the truth here, because std::decay, as its name suggests, also turns array and function types into pointers
 
 (see Item 1), but for purposes of this discussion, std::decay behaves as I’ve described.) The condition we want to control whether our constructor is enabled, then, is
 
@@ -1338,7 +1313,6 @@ Um, no. Belay that celebration. There’s still one loose end from Item 26 that 
 
 Suppose a class derived from Person implements the copy and move operations in the conventional manner:
 
-**Item 27 \| 191**
 
 class SpecialPerson: public Person {
 
@@ -1368,7 +1342,7 @@ You should not be surprised to hear that among the standard type traits is one t
 
 std::is_base_of\<T1, T2\>::value is true if T2 is derived from T1. Types are considered to be derived from themselves, so std::is_base_of\<T, T\>::value is true.
 
-This is handy, because we want to revise our condition controlling Person’s perfect-forwarding constructor such that the constructor is enabled only if the type T, after stripping it of references and cv-qualifiers, is neither Person nor a class derived from Person. Using std::is_base_of instead of std::is_same gives us what we need: **192 \| Item 27**
+This is handy, because we want to revise our condition controlling Person’s perfect-forwarding constructor such that the constructor is enabled only if the type T, after stripping it of references and cv-qualifiers, is neither Person nor a class derived from Person. Using std::is_base_of instead of std::is_same gives us what we need:
 
 class Person {
 
@@ -1430,7 +1404,6 @@ Honest.
 
 We’ve seen how to use std::enable_if to selectively disable Person’s universal reference constructor for argument types we want to have handled by the class’s copy and move constructors, but we haven’t yet seen how to apply it to distinguish integral and non-integral arguments. That was, after all, our original goal; the constructor ambiguity problem was just something we got dragged into along the way.
 
-**Item 27 \| 193**
 
 All we need to do—and I really do mean that this is everything—is (1) add a Person constructor overload to handle integral arguments and (2) further constrain the templatized constructor so that it’s disabled for such arguments. Pour these ingredi-ents into the pot with everything else we’ve discussed, simmer over a low flame, and savor the aroma of success:
 
@@ -1480,7 +1453,6 @@ std::string name;
 
 The first three techniques considered in this Item—abandoning overloading, passing by const T&, and passing by value—specify a type for each parameter in the function(s) to be called. The last two techniques—tag dispatch and constraining template eligibility—use perfect forwarding, hence don’t specify types for the parameters. This fundamental decision—to specify a type or not—has consequences.
 
-**194 \| Item 27**
 
 As a rule, perfect forwarding is more efficient, because it avoids the creation of temporary objects solely for the purpose of conforming to the type of a parameter declaration. In the case of the Person constructor, perfect forwarding permits a string literal such as "Nancy" to be forwarded to the constructor for the std::string inside Person, whereas techniques not using perfect forwarding must create a temporary std::string object from the string literal to satisfy the parameter specification for the Person constructor.
 
@@ -1502,7 +1474,7 @@ With one of the compilers I use, it’s more than 160 lines long.
 
 In this example, the universal reference is forwarded only once (from the Person constructor to the std::string constructor), but the more complex the system, the more likely that a universal reference is forwarded through several layers of function calls before finally arriving at a site that determines whether the argument type(s) are acceptable. The more times the universal reference is forwarded, the more baffling the error message may be when something goes wrong. Many developers find that this issue alone is grounds to reserve universal reference parameters for interfaces where performance is a foremost concern.
 
-In the case of Person, we know that the forwarding function’s universal reference parameter is supposed to be an initializer for a std::string, so we can use a **Item 27 \| 195**
+In the case of Person, we know that the forwarding function’s universal reference parameter is supposed to be an initializer for a std::string, so we can use a
 
 static_assert to verify that it can play that role. The std::is_constructible type trait performs a compile-time test to determine whether an object of one type can be constructed from an object (or set of objects) of a different type (or set of types), so the assertion is easy to write:
 
@@ -1552,7 +1524,6 @@ explicit Person(T&& n)
 
 This causes the specified error message to be produced if client code tries to create a Person from a type that can’t be used to construct a std::string. Unfortunately, in this example the static_assert is in the body of the constructor, but the forwarding code, being part of the member initialization list, precedes it. With the compilers I use, the result is that the nice, readable message arising from the static_assert appears only *after* the usual error messages (up to 160-plus lines of them) have been emitted.
 
-**196 \| Item 27**
 
 **Things to Remember**
 
@@ -1586,7 +1557,6 @@ func(widgetFactory()); // call func with rvalue; T deduced
 
 // to be **Widget**
 
-**Item 27 \| 197**
 
 In both calls to func, a Widget is passed, yet because one Widget is an lvalue and one is an rvalue, different types are deduced for the template parameter T. This, as we shall soon see, is what determines whether universal references become rvalue references or lvalue references, and it’s also the underlying mechanism through which std::forward does its work.
 
@@ -1620,7 +1590,6 @@ The answer is *reference collapsing*. Yes, *you* are forbidden from declaring re
 
 There are two kinds of references (lvalue and rvalue), so there are four possible reference-reference combinations (lvalue to lvalue, lvalue to rvalue, rvalue to lvalue, and rvalue to rvalue). If a reference to a reference arises in a context where this is permitted (e.g., during template instantiation), the references *collapse* to a single reference according to this rule:
 
-**198 \| Item 28**
 
 If either reference is an lvalue reference, the result is an lvalue reference.
 
@@ -1660,7 +1629,7 @@ This isn’t quite Standards-conformant (I’ve omitted a few interface details)
 
 Suppose that the argument passed to f is an lvalue of type Widget. T will be deduced as Widget&, and the call to std::forward will instantiate as std::forward
 
-\<Widget&\>. Plugging Widget& into the std::forward implementation yields this: **Item 28 \| 199**
+\<Widget&\>. Plugging Widget& into the std::forward implementation yields this:
 
 **Widget&** && forward(typename
 
@@ -1700,7 +1669,6 @@ There are no references to references here, so there’s no reference collapsing
 
 Rvalue references returned from functions are defined to be rvalues, so in this case, std::forward will turn f’s parameter fParam (an lvalue) into an rvalue. The end result is that an rvalue argument passed to f will be forwarded to someFunc as an rvalue, which is precisely what is supposed to happen.
 
-**200 \| Item 28**
 
 In C++14, the existence of std::remove_reference_t makes it possible to implement std::forward a bit more concisely:
 
@@ -1752,7 +1720,6 @@ On the other hand, this declaration,
 
 initializes w2 with an rvalue, causing the non-reference type Widget to be deduced for auto. Substituting Widget for auto gives us this:
 
-**Item 28 \| 201**
 
 **Widget&&** w2 = widgetFactory();
 
@@ -1796,7 +1763,6 @@ typedef **int&** RvalueRefToT;
 
 which makes clear that the name we chose for the typedef is perhaps not as descriptive as we’d hoped: *RvalueRef* ToT is a typedef for an *lvalue reference* when Widget is instantiated with an lvalue reference type.
 
-**202 \| Item 28**
 
 The final context in which reference collapsing takes place is uses of decltype. If, during analysis of a type involving decltype, a reference to a reference arises, reference collapsing will kick in to eliminate it. (For information about decltype, see
 
@@ -1820,7 +1786,7 @@ Move semantics is arguably *the* premier feature of C++11. “Moving containers 
 
 Move semantics can really pull that off, and that grants the feature an aura worthy of legend. Legends, however, are generally the result of exaggeration. The purpose of this Item is to keep your expectations grounded.
 
-Let’s begin with the observation that many types fail to support move semantics. The entire C++98 Standard Library was overhauled for C++11 to add move operations for types where moving could be implemented faster than copying, and the implementation of the library components was revised to take advantage of these operations, but chances are that you’re working with a code base that has not been completely revised to take advantage of C++11. For types in your applications (or in the libraries you use) where no modifications for C++11 have been made, the exis-Item 28 \| 203
+Let’s begin with the observation that many types fail to support move semantics. The entire C++98 Standard Library was overhauled for C++11 to add move operations for types where moving could be implemented faster than copying, and the implementation of the library components was revised to take advantage of these operations, but chances are that you’re working with a code base that has not been completely revised to take advantage of C++11. For types in your applications (or in the libraries you use) where no modifications for C++11 have been made, the exis-
 
 ![](media/index-222_1.jpg)
 
@@ -1884,7 +1850,6 @@ auto vw2 = std::move(vw1);
 
 std::array objects lack such a pointer, because the data for a std::array’s contents are stored directly in the std::array object:
 
-**204 \| Item 29**
 
 ![](media/index-223_1.jpg)
 
@@ -1944,9 +1909,7 @@ Even for types supporting speedy move operations, some seemingly sure-fire move
 
 situations can end up making copies. Item 14 explains that some container opera‐
 
-tions in the Standard Library offer the strong exception safety guarantee and that to ensure that legacy C++98 code dependent on that guarantee isn’t broken when upgrading to C++11, the underlying copy operations may be replaced with move operations only if the move operations are known to not throw. A consequence is that even if a type offers move operations that are more efficient than the corre-Item 29 \| 205
-
-sponding copy operations, and even if, at a particular point in the code, a move operation would generally be appropriate (e.g., if the source object is an rvalue), compilers might still be forced to invoke a copy operation because the corresponding move operation isn’t declared noexcept.
+tions in the Standard Library offer the strong exception safety guarantee and that to ensure that legacy C++98 code dependent on that guarantee isn’t broken when upgrading to C++11, the underlying copy operations may be replaced with move operations only if the move operations are known to not throw. A consequence is that even if a type offers move operations that are more efficient than the corresponding copy operations, and even if, at a particular point in the code, a move operation would generally be appropriate (e.g., if the source object is an rvalue), compilers might still be forced to invoke a copy operation because the corresponding move operation isn’t declared noexcept.
 
 There are thus several scenarios in which C++11’s move semantics do you no good:
 
@@ -1974,7 +1937,6 @@ When that’s the case, you don’t need to make assumptions. You can simply loo
 
 • In code with known types or support for move semantics, there is no need for assumptions.
 
-**206 \| Item 29**
 
 **Item 30: Familiarize yourself with perfect forwarding** **failure cases.**
 
@@ -2006,7 +1968,6 @@ void fwd(Ts&& **...** params) // accept any arguments
 
 {
 
-**Item 30 \| 207**
 
 f(std::forward\<Ts\>(params)**...** ); // forward them to f
 
@@ -2046,7 +2007,7 @@ That’s because the use of a braced initializer is a perfect forwarding failure
 
 All such failure cases have the same cause. In a direct call to f (such as f({ 1, 2, 3 })), compilers see the arguments passed at the call site, and they see the types of the parameters declared by f. They compare the arguments at the call site to the parameter declarations to see if they’re compatible, and, if necessary, they perform implicit conversions to make the call succeed. In the example above, they generate a temporary std::vector\<int\> object from { 1, 2, 3 } so that f’s parameter v has a std::vector\<int\> object to bind to.
 
-When calling f indirectly through the forwarding function template fwd, compilers no longer compare the arguments passed at fwd’s call site to the parameter declarations in f. Instead, they *deduce* the types of the arguments being passed to fwd, and **208 \| Item 30**
+When calling f indirectly through the forwarding function template fwd, compilers no longer compare the arguments passed at fwd’s call site to the parameter declarations in f. Instead, they *deduce* the types of the arguments being passed to fwd, and
 
 they compare the deduced types to f’s parameter declarations. Perfect forwarding fails when either of the following occurs:
 
@@ -2068,7 +2029,6 @@ fwd(il); // fine, perfect-forwards il to f
 
 Item 8 explains that when you try to pass 0 or NULL as a null pointer to a template, type deduction goes awry, deducing an integral type (typically int) instead of a pointer type for the argument you pass. The result is that neither 0 nor NULL can be perfect-forwarded as a null pointer. The fix is easy, however: pass nullptr instead of 0 or NULL. For details, consult Item 8.
 
-**Item 30 \| 209**
 
 **Declaration-only integral static const data members** As a general rule, there’s no need to define integral static const data members in classes; declarations alone suffice. That’s because compilers perform *const propagation* on such members’ values, thus eliminating the need to set aside memory for them. For example, consider this code:
 
@@ -2106,7 +2066,7 @@ fwd(**Widget::MinVals**); // error! shouldn't link
 
 This code will compile, but it shouldn’t link. If that reminds you of what happens if we write code that takes MinVals’ address, that’s good, because the underlying problem is the same.
 
-Although nothing in the source code takes MinVals’ address, fwd’s parameter is a universal reference, and references, in the code generated by compilers, are usually treated like pointers. In the program’s underlying binary code (and on the hardware), **210 \| Item 30**
+Although nothing in the source code takes MinVals’ address, fwd’s parameter is a universal reference, and references, in the code generated by compilers, are usually treated like pointers. In the program’s underlying binary code (and on the hardware),
 
 pointers and references are essentially the same thing. At this level, there’s truth to the adage that references are simply pointers that are automatically dereferenced.
 
@@ -2144,7 +2104,6 @@ int processVal(int value, int priority);
 
 We can pass processVal to f,
 
-**Item 30 \| 211**
 
 f(processVal); // fine
 
@@ -2182,7 +2141,7 @@ int (\*)(int); // see Item 9
 
 fwd(processValPtr); // fine
 
-fwd(**static_cast\<ProcessFuncType\>(workOnVal)**); // also fine **212 \| Item 30**
+fwd(**static_cast\<ProcessFuncType\>(workOnVal)**); // also fine
 
 Of course, this requires that you know the type of function pointer that fwd is forwarding to. It’s not unreasonable to assume that a perfect-forwarding function will document that. After all, perfect-forwarding functions are designed to accept *anything*, so if there’s no documentation telling you what to pass, how would you know?
 
@@ -2220,7 +2179,6 @@ Trying to forward h.totalLength to f via fwd, however, is a different story: **f
 
 The problem is that fwd’s parameter is a reference, and h.totalLength is a non-const bitfield. That may not sound so bad, but the C++ Standard condemns the combination in unusually clear prose: “A non-const reference shall not be bound to a bit-field.” There’s an excellent reason for the prohibition. Bitfields may consist of arbitrary parts of machine words (e.g., bits 3-5 of a 32-bit int), but there’s no way to directly address such things. I mentioned earlier that references and pointers are the same thing at the hardware level, and just as there’s no way to create a pointer to 3 This assumes that bitfields are laid out lsb (least significant bit) to msb (most significant bit). C++ doesn’t guarantee that, but compilers often provide a mechanism that allows programmers to control bitfield layout.
 
-**Item 30 \| 213**
 
 arbitrary bits (C++ dictates that the smallest thing you can point to is a char), there’s no way to bind a reference to arbitrary bits, either.
 
@@ -2241,5 +2199,3 @@ In most cases, perfect forwarding works exactly as advertised. You rarely have t
 • Perfect forwarding fails when template type deduction fails or when it deduces the wrong type.
 
 • The kinds of arguments that lead to perfect forwarding failure are braced initializers, null pointers expressed as 0 or NULL, declaration-only integral const static data members, template and overloaded function names, and bitfields.
-
-**214 \| Item 30**

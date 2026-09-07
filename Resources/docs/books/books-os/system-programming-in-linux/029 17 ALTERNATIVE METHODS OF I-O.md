@@ -1,3 +1,5 @@
+![](media/index-1032_1.jpg)
+
 17 ALTERNATIVE METHODS OF I/O
 
 Most of the programs in previous chapters are based on a model of I/O
@@ -2127,5 +2129,3 @@ because it has a timeout parameter. Write a function like usleep()
 that is given a number of microseconds and suspends the calling
 
 process for that time, unless it’s interrupted by a signal, by calling select() with suitable arguments.
-
-![](media/index-1082_1.jpg)

@@ -1,13 +1,13 @@
 
- 
+
 
 **10**
 
- 
+
 
 **W R I T E B A C K**
 
- 
+
 
 Writeback, as the names suggests, is the process by
 
@@ -43,7 +43,7 @@ ground writeback. In detail:
 
 Writeback in Linux is divided into several different stages:
 
- 
+
 
 **Dirty Tracking** We first need to know that data has changed in the page
 
@@ -52,7 +52,7 @@ cache, which occurs when data is written to the page cache. Both the folio writt
 scribed in Section 10.1.
 
 
- 
+
 
 **Dirty Page Balancing** Each time data is marked dirty, the kernel checks to
 
@@ -88,11 +88,11 @@ mitted to the underlying block device. What we must write back is deter-mined by
 
 tions, which we examine in Section 9.10.4.
 
- 
+
 
 **10.1 Dirty Tracking in the Kernel**
 
- 
+
 
 In order to keep track of what needs to be written back to disk in the page cache we need to track two separate things–the dirty folios themselves and the inodes which back them.
 
@@ -102,45 +102,45 @@ veloped by its describing [struct inode](https://git.kernel.org/pub/scm/linux/ke
 
 ing is performed in Figure 10-1.
 
- 
 
 
 
- 
+
+
 
 [bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) [inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593)
 
- 
+
 
 [address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424)
 
 b_dirty
 
- 
+
 
 i_pages
 
- 
+
 
 [xarray](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/xarray.h?h=v6.0#n296)
 
- 
+
 
 Dirty
 
- 
+
 
 Dirty
 
- 
+
 
 [folio folio folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256)
 
- 
+
 
 *Figure 10-1: Dirty Page and inode Tracking*
 
- 
+
 
 Each device which ‘backs’ the data stored in the page cache is termed
 
@@ -190,11 +190,11 @@ be subdivided between cgroups. Discussion of cgroups is out of scope
 
 for the book, but it is useful to note that if CONFIG_CGROUP_WRITEBACK is set,
 
- 
 
 
 
- 
+
+
 
 then a pointer to the [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) relevant object is stored in the
 
@@ -218,17 +218,17 @@ cur either through a write operation such as that accomplished through the
 
 on a memory-mapped file-backed page, discussed in Section 10.12.
 
- 
+
 
 **10.2 Marking the Folio Dirty**
 
- 
+
 
 Regardless of what makes the pages dirty, we mark the xarray accordingly in
 
 [\_\_folio_mark_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2607), as shown in Listing 10-1.
 
- 
+
 
 2594 */\**
 
@@ -254,15 +254,15 @@ Regardless of what makes the pages dirty, we mark the xarray accordingly in
 
 2619 **xa_unlock_irqrestore**(&mapping-\>i_pages, flags); 2620 }
 
- 
+
 
 *Listing 10-1:* mm/page-writeback.c: [*\_\_folio_mark_dirty()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2607)
 
- 
 
 
 
- 
+
+
 
 Here the mark is set to [PAGECACHE_TAG_DIRTY](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n452) for the folio under lock, with
 
@@ -274,11 +274,11 @@ Statistics are updated in [folio_account_dirtied()](https://git.kernel.org/pub/s
 
 [struct inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593)-\>i_wb field if not already set via [inode_attach_wb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/writeback.h?h=v6.0#n239).
 
- 
+
 
 **10.3 Marking the inode Dirty**
 
- 
+
 
 Now we have marked the dirty folios in the xarray, we need to add the sur-
 
@@ -310,7 +310,7 @@ metadata for a filesystem mounted with the lazytime option specified via
 
 noting that these cases are handled.
 
- 
+
 
 **N O T E** Linux provides three timestamps associated with file metadata encapsulated in a
 
@@ -326,7 +326,7 @@ Typically file systems are mounted such that the access time is updated only if 
 
 when absolutely necessary (*lazytime* mode).
 
- 
+
 
 The [I_DIRTY_PAGES](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2435) flag specifies that the underlying file data has been
 
@@ -336,7 +336,7 @@ ically tied to this case in [\_\_mark_inode_dirty()](https://git.kernel.org/pub/
 
 vant code.
 
- 
+
 
 2363 **void \_\_mark_inode_dirty**(**struct** inode \*inode, **int** flags) 2364 {
 
@@ -354,11 +354,11 @@ vant code.
 
 2409 **if** ((inode-\>i_state & flags) != flags) { 2410 **const int** was_dirty = inode-\>i_state & **I_DIRTY**; 2411
 
- 
 
 
 
- 
+
+
 
 2412 **inode_attach_wb**(inode, **NULL**);
 
@@ -418,11 +418,11 @@ vant code.
 
 2458 inode-\>dirtied_when = **jiffies**;
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -452,11 +452,11 @@ vant code.
 
 2490 **spin_unlock**(&inode-\>i_lock); 2491 }
 
- 
+
 
 *Listing 10-2:* fs/fs-writeback.c: [*\_\_mark_inode_dirty()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2363)
 
- 
+
 
 The flags specified for the dirtying operation are provided by the
 
@@ -492,11 +492,11 @@ We do this early, as the kernel thread which ultimately flushes
 
 data back to disk (see Section 10.10) may race with us if we do not
 
- 
 
 
 
- 
+
+
 
 acquire this at this stage. We must re-lock [struct inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593)-\>i_lock as
 
@@ -534,13 +534,13 @@ See Section 9.10.2 for more details on blockdev and accessing block de-
 
 vices directly via device files.
 
- 
+
 
 **N O T E** The kernel counts time in jiffies, which is an internal kernel field that is updated a
 
 certain number of times a second.
 
- 
+
 
 [inode_io_list_move_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n118) proceeds to place the inode on the BDI’s dirty
 
@@ -566,43 +566,43 @@ invoking [wb_wakeup_delayed()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 10.10.
 
- 
 
 
 
- 
+
+
 
 **10.4 Page Fault Dirty Tracking**
 
- 
+
 
 [handle_pte_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4860)
 
- 
+
 
 [do_wp_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3360)
 
- 
+
 
 [wp_page_shared()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3304) [fault_dirty_shared_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n2993)
 
- 
+
 
 [do_page_mkwrite()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n2959) [balance_dirty_pages_ratelimited()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1949)
 
- 
+
 
 vm_ops-\>page_mkwrite()
 
- 
+
 
 [filemap_page_mkwrite()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3399)
 
- 
+
 
 [folio_mark_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2730)
 
- 
+
 
 a_op-\>dirty_folio()
 
@@ -610,15 +610,15 @@ Typically
 
 [block_dirty_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n616)
 
- 
+
 
 [\_\_folio_mark_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2607) [\_\_mark_inode_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2363)
 
- 
+
 
 *Figure 10-2: Typical Write Fault Dirty Page Tracking*
 
- 
+
 
 We have already discussed how folios are read from disk in Section 9.4 above,
 
@@ -652,17 +652,17 @@ The majority of files systems use a generic function when memory map-
 
 ping, [generic_file_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3433) as shown in Listing 10-3.
 
- 
+
 
 3431 */\* This is used for a general mmap of a disk file \*/* 3432
 
 3433 **int generic_file_mmap**(**struct** file \*file, **struct** vm_area_struct \*vma)
 
- 
 
 
 
- 
+
+
 
 3434 {
 
@@ -672,11 +672,11 @@ ping, [generic_file_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 3442 }
 
- 
+
 
 *Listing 10-3:* mm/filemap.c: [*generic_file_mmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3433)
 
- 
+
 
 This function sets [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403)-\>vm_ops to the [generic_file_vm_ops](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3425)
 
@@ -684,15 +684,15 @@ object, which specifies each of the fault, map_pages and page_mkwrite callbacks,
 
 shown in Listing 10-4.
 
- 
+
 
 3425 **const struct** vm_operations_struct **generic_file_vm_ops** = { 3426 .fault = **filemap_fault**, 3427 .map_pages = **filemap_map_pages**, 3428 .page_mkwrite = **filemap_page_mkwrite**, 3429 };
 
- 
+
 
 *Listing 10-4:* mm/filemap.c: [*generic_file_vm_ops*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3425)
 
- 
+
 
 We have already discussed [filemap_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084) in Listing 9-35 and
 
@@ -702,7 +702,7 @@ However, we have yet to examine [filemap_page_mkwrite()](https://git.kernel.org/
 
 mines how the folio dirtying takes place, as shown in Listing 10-5.
 
- 
+
 
 3399 **vm_fault_t filemap_page_mkwrite**(**struct** vm_fault \*vmf) 3400 {
 
@@ -720,11 +720,11 @@ mines how the folio dirtying takes place, as shown in Listing 10-5.
 
 3418 **folio_mark_dirty**(folio); 3419 **folio_wait_stable**(folio);
 
- 
 
 
 
- 
+
+
 
 3420 **out**:
 
@@ -732,11 +732,11 @@ mines how the folio dirtying takes place, as shown in Listing 10-5.
 
 3423 }
 
- 
+
 
 *Listing 10-5:* mm/filemap.c: [*filemap_page_mkwrite()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3399)
 
- 
+
 
 This starts by invoking [sb_start_pagefault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n1928) which increments a
 
@@ -746,7 +746,7 @@ place in order to permit the freezing of file systems such that they can be kept
 
 stable, as shown in Listing 10-6. [sb_end_pagefault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n1863) reverts this lock.
 
- 
+
 
 1909 */\*\**
 
@@ -778,11 +778,11 @@ stable, as shown in Listing 10-6. [sb_end_pagefault()](https://git.kernel.org/pu
 
 1930 **\_\_sb_start_write**(sb, **SB_FREEZE_PAGEFAULT**); 1931 }
 
- 
+
 
 *Listing 10-6:* include/linux/fs.h: [*sb_start_pagefault()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n1928)
 
- 
+
 
 The mtime and ctime of the file are updated via [file_update_time()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/inode.c?h=v6.0#n2110)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/inode.c?h=v6.0#n2110) and
 
@@ -806,11 +806,11 @@ amine what remains, specifically [folio_wait_stable()](https://git.kernel.org/pu
 
 Listing 10-7.
 
- 
 
 
 
- 
+
+
 
 3065 */\*\**
 
@@ -828,11 +828,11 @@ Listing 10-7.
 
 3080 **if** (**folio_inode**(folio)-\>i_sb-\>s_iflags & **SB_I_STABLE_WRITES**) 3081 **folio_wait_writeback**(folio); 3082 }
 
- 
+
 
 *Listing 10-7:* mm/page-writeback.c: [*folio_wait_stable()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n3078)
 
- 
+
 
 Once the page fault is complete and the folio is unlocked, it becomes
 
@@ -858,11 +858,11 @@ In some cases however, we cannot tolerate this possibility. For instance,
 
 the NFS file system allows other systems to observe the written data. Also some block devices might not be able to tolerate this kind of race midway through a write, or either a block device or filesystem may rely on check-sums remaining consistent.
 
- 
 
 
 
- 
+
+
 
 In these cases, either the file system institutes its own means of maintain-
 
@@ -896,7 +896,7 @@ issue.
 
 Returning to folio dirtying, we can observe this function in Listing 10-8.
 
- 
+
 
 2717 */\*\**
 
@@ -926,11 +926,11 @@ Returning to folio dirtying, we can observe this function in Listing 10-8.
 
 2739 *\* reset. So no problem.* 2740 *\* About lru_deactivate_page, if the folio is redirtied,* 2741 *\* the flag will be reset. So no problem. but if the* 2742 *\* folio is used by readahead it will confuse readahead* 2743 *\* and make it restart the size rampup process. But it's* 2744 *\* a trivial problem.* 2745 *\*/*
 
- 
 
 
 
- 
+
+
 
 2746 **if** (**folio_test_reclaim**(folio)) 2747 **folio_clear_reclaim**(folio); 2748 **return** mapping-\>a_ops-\>**dirty_folio**(mapping, folio); 2749 }
 
@@ -938,11 +938,11 @@ Returning to folio dirtying, we can observe this function in Listing 10-8.
 
 2751 **return noop_dirty_folio**(mapping, folio); 2752 }
 
- 
+
 
 *Listing 10-8:* mm/page-writeback.c: [*folio_mark_dirty()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2730)
 
- 
+
 
 We start by handling a race condition, before deferring to the file
 
@@ -956,7 +956,7 @@ defer this to a generic library function, [block_dirty_folio()](https://git.kern
 
 10-9 (eliding out of scope cgroup logic).
 
- 
+
 
 591 */\**
 
@@ -1008,11 +1008,11 @@ defer this to a generic library function, [block_dirty_folio()](https://git.kern
 
 618 **struct** buffer_head \*head; 619 **bool** newly_dirty; 620
 
- 
 
 
 
- 
+
+
 
 621 **spin_lock**(&mapping-\>private_lock); 622 head = **folio_buffers**(folio); 623 **if** (head) {
 
@@ -1044,11 +1044,11 @@ defer this to a generic library function, [block_dirty_folio()](https://git.kern
 
 642 **return** newly_dirty; 643 }
 
- 
+
 
 *Listing 10-9:* fs/buffer.c: [*block_dirty_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n616)
 
- 
+
 
 This starts by performing some block logic, setting any attached
 
@@ -1092,11 +1092,11 @@ the important [balance_dirty_pages_ratelimited()](https://git.kernel.org/pub/scm
 
 Section 10.14 below and Listing **??**.
 
- 
 
 
 
- 
+
+
 
 This balancing is performed whenever folios are dirtied and is a key part
 
@@ -1104,35 +1104,35 @@ of the writeback mechanism. Since this always occurs we defer the descrip-
 
 tion of this to Section 10.14.
 
- 
+
 
 **10.5 File Write Dirty Tracking**
 
- 
+
 
 [write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n646) syscall
 
- 
+
 
 [ksys_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n637)
 
- 
+
 
 [vfs_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n584)
 
- 
+
 
 [new_sync_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/read_write.c?h=v6.0#n491)
 
- 
+
 
 [call_write_iter()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2187)
 
- 
+
 
 f_op-\>write_iter()
 
- 
+
 
 [generic_file_write_iter()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3890) [generic_write_sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2866)
 
@@ -1140,11 +1140,11 @@ If synced
 
 [\_\_generic_file_write_iter()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3800) [vfs_fsync_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n180)
 
- 
+
 
 [generic_perform_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3701) [balance_dirty_pages_ratelimited()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1949)
 
- 
+
 
 a_ops-\>write_begin() [copy_page_from_iter_atomic()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/iov_iter.c?h=v6.0#n804) a_ops-\>write_end()
 
@@ -1152,11 +1152,11 @@ Typically Typically
 
 [block_write_begin()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2106) [\_\_block_write_begin()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2053) [generic_write_end()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2165)
 
- 
+
 
 [grab_cache_page_write_begin()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n111) [\_\_block_write_begin_int()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1968) [block_write_end()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2129)
 
- 
+
 
 [pagecache_get_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n99) Read non-present folios into [\_\_block_commit_write()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2061)
 
@@ -1164,19 +1164,19 @@ page cache as necessary
 
 [\_\_filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1914) [mark_buffer_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1079)
 
- 
+
 
 [\_\_set_page_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1054) [\_\_mark_inode_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2363)
 
- 
+
 
 [\_\_folio_mark_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2607)
 
- 
+
 
 *Figure 10-3: Typical File Write Dirty Page Tracking*
 
- 
+
 
 We have already discussed how files are read from the page cache using the
 
@@ -1184,11 +1184,11 @@ We have already discussed how files are read from the page cache using the
 
 task as a write page fault does (discussed in Section 10.12 above), only span-
 
- 
 
 
 
- 
+
+
 
 ning the whole range of the write and copying data from the input user
 
@@ -1222,7 +1222,7 @@ We examine [\_\_generic_file_write_iter()](https://git.kernel.org/pub/scm/linux/
 
 scope direct write logic.
 
- 
+
 
 3779 */\*\**
 
@@ -1252,11 +1252,11 @@ scope direct write logic.
 
 3802 **struct** file \*file = iocb-\>ki_filp; 3803 **struct** address_space \*mapping = file-\>f_mapping; 3804 **struct** inode \*inode = mapping-\>host; 3805 **ssize_t** written = 0; 3806 **ssize_t** err; 3807 **ssize_t** status; 3808
 
- 
 
 
 
- 
+
+
 
 3809 */\* We can write back this queue in page reclaim \*/* 3810 current-\>backing_dev_info = **inode_to_bdi**(inode); 3811 err = **file_remove_privs**(file); 3812 **if** (err)
 
@@ -1276,11 +1276,11 @@ scope direct write logic.
 
 3871 current-\>backing_dev_info = **NULL**; 3872 **return** written ? written : err; 3873 }
 
- 
+
 
 *Listing 10-10:* mm/filemap.c: [*\_\_generic_file_write_iter()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3800)
 
- 
+
 
 This function first sets the current thread’s backing device field to
 
@@ -1298,7 +1298,7 @@ The actual ‘meat’ of the write is performed in [generic_perform_write()](htt
 
 which we examine in Listing 10-11 (eliding out of scope real time kernel logic and x86-64 irrelevant dcache flushes).
 
- 
+
 
 3701 **ssize_t generic_perform_write**(**struct** kiocb \*iocb, **struct** iov_iter \*i) 3702 {
 
@@ -1312,11 +1312,11 @@ which we examine in Listing 10-11 (eliding out of scope real time kernel logic a
 
 3717 offset = (pos & (**PAGE_SIZE**- 1));
 
- 
 
 
 
- 
+
+
 
 3718 bytes = **min_t**(**unsigned long**, **PAGE_SIZE**- offset, 3719 **iov_iter_count**(i)); 3720
 
@@ -1350,11 +1350,11 @@ which we examine in Listing 10-11 (eliding out of scope real time kernel logic a
 
 3769 pos += status;
 
- 
 
 
 
- 
+
+
 
 3770 written += status; 3771
 
@@ -1362,11 +1362,11 @@ which we examine in Listing 10-11 (eliding out of scope real time kernel logic a
 
 3775 **return** written ? written : status; 3776 }
 
- 
+
 
 *Listing 10-11:* mm/filemap.c: [*generic_perform_write()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3701)
 
- 
+
 
 For brevity we will skip over some of the iterator housekeeping here
 
@@ -1392,7 +1392,7 @@ tem, but is often deferred to the generic library function [block_write_begin()]
 
 which we examine in Listing 10-12.
 
- 
+
 
 2100 */\**
 
@@ -1416,11 +1416,11 @@ which we examine in Listing 10-12.
 
 2123
 
- 
 
 
 
- 
+
+
 
 2124 \*pagep = page;
 
@@ -1428,17 +1428,17 @@ which we examine in Listing 10-12.
 
 2126 }
 
- 
+
 
 *Listing 10-12:* fs/buffer.c: [*block_write_begin()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2106)
 
- 
+
 
 This starts by actually pulling the page cache folio from the page cache
 
 via [grab_cache_page_write_begin()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n111), shown in Listing **??**.
 
- 
+
 
 111 **struct** page \***grab_cache_page_write_begin**(**struct** address_space \*mapping, 112 **pgoff_t** index) 113 {
 
@@ -1448,11 +1448,11 @@ via [grab_cache_page_write_begin()](https://git.kernel.org/pub/scm/linux/kernel/
 
 116 **return pagecache_get_page**(mapping, index, fgp_flags, 117 **mapping_gfp_mask**(mapping)); 118 }
 
- 
+
 
 *Listing 10-13:* mm/folio-compat.c: [*grab_cache_page_write_begin()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n111)
 
- 
+
 
 The [pagecache_get_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n99) function this defers to ultimately wraps the
 
@@ -1514,11 +1514,11 @@ The [\_\_block_commit_write()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 defer examination of this to Section 9.10.4 and Listing 9-132.
 
- 
 
 
 
- 
+
+
 
 However the key thing to note is that on first dirtying a folio, this func-
 
@@ -1550,11 +1550,11 @@ being correctly marked dirty. However one more task is performed by
 
 Listing 10-79.
 
- 
+
 
 **10.6 Synchronising to Disk**
 
- 
+
 
 Sometimes a user needs to ensure that the page cache is synchronised to disk manually which ultimately invokes the core writeback logic described in
 
@@ -1562,47 +1562,47 @@ Section 10.10. This can be achieved through various system calls as shown in
 
 Figure 10-4 (we elide the [sync_file_range()](https://man7.org/linux/man-pages/man2/sync_file_range.2.html) and [sync_file_range2()](https://man7.org/linux/man-pages/man2/sync_file_range2.2.html) system calls here as these are considered dangerous).
 
- 
+
 
 [fsync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n218) syscall [fdatasync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n223) syscall [sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n111) syscall [syncfs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n149) syscall
 
- 
+
 
 [do_fsync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n206) [sync_bdevs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n1021) [ksys_sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n97) [sync_filesystem()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n30)
 
- 
+
 
 [vfs_fsync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n200) [wakeup_flusher_threads()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2269) [sync_fs_one_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n80) [sync_inodes_one_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n74)
 
- 
+
 
 [vfs_fsync_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n180) [msync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/msync.c?h=v6.0#n32) syscall s_op-\>sync_fs() [sync_inodes_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2667)
 
- 
+
 
 f_op-\>fsync() [\*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2866) [generic_write_sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2866) [filemap_write_and_wait()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n667) [writeback_inodes_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2637)
 
- 
+
 
 [generic_file_fsync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/libfs.c?h=v6.0#n1150) [blkdev_issue_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/blk-flush.c?h=v6.0#n459) [sync_blockdev()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n193)
 
- 
+
 
 [\_\_generic_file_fsync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/libfs.c?h=v6.0#n1108) [sync_inode_metadata()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2736) [sync_blockdev_nowait()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n181)
 
- 
+
 
 [sync_mapping_buffers()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n541) [file_write_and_wait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n767) [filemap_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n452)
 
- 
+
 
 *Figure 10-4: Page Cache Synchronisation*
 
- 
+
 
 Key:
 
- 
+
 
 
 
@@ -1620,7 +1620,7 @@ B
 
 back procedure described in Section 10.10.
 
- 
+
 
 \*Note that we also include the [generic_write_sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2866) call, which we dis-
 
@@ -1630,7 +1630,7 @@ is opened with synchronisation options specified (and the file system opts to
 
 use this general library function). We examine this function in Listing 10-14.
 
- 
+
 
 2861 */\**
 
@@ -1648,11 +1648,11 @@ use this general library function). We examine this function in Listing 10-14.
 
 2877 }
 
- 
+
 
 *Listing 10-14:* include/linux/fs.h: [*generic_write_sync()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2866)
 
- 
+
 
 This ultimately defers the operation to [vfs_fsync_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n180) which we de-
 
@@ -1662,11 +1662,11 @@ tor described by [struct kiocb](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 [iocb_is_dsync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2855).
 
- 
+
 
 **10.7 sync**
 
- 
+
 
 The most general means of synchronising the page cache to disk is via the
 
@@ -1676,7 +1676,7 @@ which, if no parameters are specified, invokes this system call to perform a
 
 general file system sync. We examine the [sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n111) system call in Listing 10-15.
 
- 
+
 
 111 **SYSCALL_DEFINE0**(sync)
 
@@ -1684,21 +1684,21 @@ general file system sync. We examine the [sync()](https://git.kernel.org/pub/scm
 
 113 **ksys_sync**();
 
- 
 
 
 
- 
+
+
 
 114 **return** 0;
 
 115 }
 
- 
+
 
 *Listing 10-15:* fs/sync.c: [*sync()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n111) *system call*
 
- 
+
 
 This defers the core of the operation to [ksys_sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n97) which we examine in
 
@@ -1710,7 +1710,7 @@ Note that we keep track of the reason for writeback using the
 
 writeback to perform synchronisation via [WB_REASON_SYNC](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n47).
 
- 
+
 
 87 */\**
 
@@ -1734,17 +1734,17 @@ writeback to perform synchronisation via [WB_REASON_SYNC](https://git.kernel.org
 
 101 **wakeup_flusher_threads**(**WB_REASON_SYNC**); 102 **iterate_supers**(**sync_inodes_one_sb**, **NULL**); 103 **iterate_supers**(**sync_fs_one_sb**, &nowait); 104 **iterate_supers**(**sync_fs_one_sb**, &wait); 105 **sync_bdevs**(**false**); 106 **sync_bdevs**(**true**); 107 **if** (**unlikely**(**laptop_mode**)) 108 **laptop_sync_completion**(); 109 }
 
- 
+
 
 *Listing 10-16:* fs/sync.c: [*ksys_sync()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n97)
 
- 
+
 
 The function pipelines the synchronisation by first ensuring I/O is sub-
 
 mitted for all pending writeback requests, before synchronising each I/O op-eration, waiting for each to complete one-by-one. This proceeds as follows:
 
- 
+
 
 **Wake up flusher threads** We start by waking up the background writeback
 
@@ -1760,11 +1760,11 @@ ing data and filesystem metadata via [sync_inodes_one_sb()](https://git.kernel.o
 
 call to [sync_inodes_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2667), which we examine in Section 10.10 and Listing
 
- 
 
 
 
- 
+
+
 
 10-39. This is the key function which actually performs the synchronised writeback.
 
@@ -1786,11 +1786,11 @@ file system) via [sync_bdevs()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 book.
 
- 
+
 
 **10.8 syncfs**
 
- 
+
 
 The [syncfs()](https://man7.org/linux/man-pages/man2/syncfs.2.html) system call performs the same task as [sync()](https://man7.org/linux/man-pages/man2/sync.2.html) only it operates
 
@@ -1798,7 +1798,7 @@ only on the file system containing the specified file. The [syncfs()](https://gi
 
 wraps a call to [sync_filesystem()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n30)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n30) described in Listing 10-17.
 
- 
+
 
 25 */\**
 
@@ -1856,11 +1856,11 @@ wraps a call to [sync_filesystem()](https://git.kernel.org/pub/scm/linux/kernel/
 
 *block*
 
- 
 
 
 
- 
+
+
 
 52 *\* at a time.*
 
@@ -1880,17 +1880,17 @@ wraps a call to [sync_filesystem()](https://git.kernel.org/pub/scm/linux/kernel/
 
 70 **return sync_blockdev**(sb-\>s_bdev); 71 }
 
- 
+
 
 *Listing 10-17:* fs/sync.c: [*sync_filesystem()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n30)
 
- 
+
 
 This proceeds only if the super block is read/write (naturally), checked
 
 by [sb_rdonly()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2297)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2297) It follows the pattern that [ksys_sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n97) establishes of initiating background writeback before performing blocking writeback.
 
- 
+
 
 **Initiate folio writeback** We begin the process of writing back on this super
 
@@ -1928,11 +1928,11 @@ the blockdev file system describing the block device the super
 
 block is mounted on via [sync_blockdev()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n193)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/block/bdev.c?h=v6.0#n193) This ultimately invokes
 
- 
 
 
 
- 
+
+
 
 [filemap_write_and_wait()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n58) which invokes [filemap_write_and_wait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n667) for
 
@@ -1940,11 +1940,11 @@ the entire address range. We explore this function in Listing 10-71 and
 
 Section 10.10.
 
- 
+
 
 **10.9 fsync**
 
- 
+
 
 Synchronisation can be performed on a file level as well as on a general or
 
@@ -1960,7 +1960,7 @@ to 1 (i.e. true). This indicates whether filesystem metadata should be written
 
 back alongside data folios (the former case) or not (the latter case).
 
- 
+
 
 206 **static int do_fsync**(**unsigned int** fd, **int** datasync) 207 {
 
@@ -1976,11 +1976,11 @@ back alongside data folios (the former case) or not (the latter case).
 
 216 }
 
- 
+
 
 *Listing 10-18:* fs/sync.c: [*do_fsync()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n206)
 
- 
+
 
 This increments the reference count for the [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) associated with
 
@@ -1998,7 +1998,7 @@ file should be synchronised. We examine this function in Listing 10-19 (elid-
 
 ing out of scope dirty time logic).
 
- 
+
 
 169 */\*\**
 
@@ -2012,11 +2012,11 @@ ing out of scope dirty time logic).
 
 180 **int vfs_fsync_range**(**struct** file \*file, loff_t start, loff_t end, **int** datasync)
 
- 
 
 
 
- 
+
+
 
 181 {
 
@@ -2028,11 +2028,11 @@ ing out of scope dirty time logic).
 
 188 **return** file-\>f_op-\>**fsync**(file, start, end, datasync); 189 }
 
- 
+
 
 *Listing 10-19:* fs/sync.c: [*vfs_fsync_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n180)
 
- 
+
 
 This defers the fsync operation to the [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940)-\>f_op-\>fsync function
 
@@ -2044,7 +2044,7 @@ however typically they invoke a library function provided for this operation,
 
 [generic_file_fsync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/libfs.c?h=v6.0#n1150) shown in Listing **??**.
 
- 
+
 
 1140 */\*\**
 
@@ -2066,11 +2066,11 @@ however typically they invoke a library function provided for this operation,
 
 1158 **return** err; 1159 **return blkdev_issue_flush**(inode-\>i_sb-\>s_bdev); 1160 }
 
- 
+
 
 *Listing 10-20:* fs/libfs.c: [*generic_file_fsync()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/libfs.c?h=v6.0#n1150)
 
- 
+
 
 This defers the heavy lifting of the operation to [\_\_generic_file_fsync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/libfs.c?h=v6.0#n1108),
 
@@ -2082,7 +2082,7 @@ issuing a block device flush operation on the underlying block device via
 
 We examine [\_\_generic_file_fsync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/libfs.c?h=v6.0#n1108) in Listing 10-21.
 
- 
+
 
 1096 */\*\**
 
@@ -2090,11 +2090,11 @@ We examine [\_\_generic_file_fsync()](https://git.kernel.org/pub/scm/linux/kerne
 
 1098 *\**
 
- 
 
 
 
- 
+
+
 
 1099 *\* @file:* *file to synchronize* 1100 *\* @start:* *start offset in bytes* 1101 *\* @end:* *end offset in bytes (inclusive)* 1102 *\* @datasync:* *only synchronize essential metadata if true* 1103 *\**
 
@@ -2130,11 +2130,11 @@ We examine [\_\_generic_file_fsync()](https://git.kernel.org/pub/scm/linux/kerne
 
 1137 }
 
- 
+
 
 *Listing 10-21:* fs/libfs.c: [*\_\_generic_file_fsync()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/libfs.c?h=v6.0#n1108)
 
- 
+
 
 This performs the write via [file_write_and_wait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n767) which we examine
 
@@ -2144,11 +2144,11 @@ We acquire the inode lock and submit any outstanding I/O related to the
 
 file via [sync_mapping_buffers()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n541)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n541) which is out of scope for the book.
 
- 
 
 
 
- 
+
+
 
 Now we have the inode lock we can then check the current state of
 
@@ -2164,25 +2164,25 @@ Finally, we retrieve any errors that arose during the operation and return
 
 them to the caller via [file_check_and_advance_wb_err()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n723)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n723)
 
- 
+
 
 **10.10 Writing Back to Disk**
 
- 
+
 
 The code paths which perform the ultimate writeback operation to disk are
 
 shown in Figure 10-5.
 
- 
 
 
 
- 
+
+
 
 [do_writepages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2457)
 
- 
+
 
 a_ops-\>writepages()
 
@@ -2190,15 +2190,15 @@ Typically
 
 [generic_writepages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2439)
 
- 
+
 
 [write_cache_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2281) [clear_page_dirty_for_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n72)
 
- 
+
 
 [\_\_writepage()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2420) [folio_clear_dirty_for_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2826)
 
- 
+
 
 Mark folio clean, make
 
@@ -2210,21 +2210,21 @@ Typically
 
 [block_write_full_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n2619) Asynchronous I/O completed
 
- 
+
 
 [set_page_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n54) [\_\_block_write_full_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/buffer.c?h=v6.0#n1709) [end_page_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n24)
 
 See Section 9.10.4 for block-level writeback.
 
- 
+
 
 [folio_start_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n765) [folio_end_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1599)
 
- 
+
 
 [\_\_folio_start_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2955) [\_\_folio_end_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2910)
 
- 
+
 
 Clear folio [PG_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n116) flag,
 
@@ -2238,11 +2238,11 @@ i_sb-\>s_inodes_wb.
 
 Add inode to i_sb-\>s_inodes_wb.
 
- 
+
 
 *Figure 10-5: Core Writeback Code Paths*
 
- 
+
 
 There are two principle means through which data is ultimately written
 
@@ -2270,11 +2270,11 @@ call from figure 10-1 that each BDI has one or more [struct bdi_writeback](https
 
 objects associated with it, each of which independently represents pending
 
- 
 
 
 
- 
+
+
 
 writeback work which can be throttled according to the current I/O band-width of the block device.
 
@@ -2286,7 +2286,7 @@ We examine the [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kerne
 
 scope cgroup logic and dirty time stamp tracking.
 
- 
+
 
 83 */\**
 
@@ -2326,11 +2326,11 @@ scope cgroup logic and dirty time stamp tracking.
 
 135 **struct** fprop_local_percpu completions; 136 **int** dirty_exceeded; 137 **enum** wb_reason start_all_reason;
 
- 
 
 
 
- 
+
+
 
 138
 
@@ -2354,11 +2354,11 @@ scope cgroup logic and dirty time stamp tracking.
 
 163 };
 
- 
+
 
 *Listing 10-22:* include/linux/backing-dev-defs.h: [*struct bdi_writeback*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)
 
- 
+
 
 We already discussed the b_dirty list in Section 10.1, which is the key list
 
@@ -2418,7 +2418,7 @@ No matter what path is taken, the actual process of writeback is per-
 
 formed in [do_writepages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2457) as shown in Listing 10-23.
 
- 
+
 
 2457 **int do_writepages**(**struct** address_space \*mapping, **struct** writeback_control \*wbc
 
@@ -2426,11 +2426,11 @@ formed in [do_writepages()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 2458 {
 
- 
 
 
 
- 
+
+
 
 2459 **int** ret;
 
@@ -2464,11 +2464,11 @@ formed in [do_writepages()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 2492 }
 
- 
+
 
 *Listing 10-23:* mm/page-writeback.c: [*do_writepages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2457)
 
- 
+
 
 We start by obtaining the [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) object associated with this
 
@@ -2490,11 +2490,11 @@ We then enter a loop in which the actual write operation is deferred to
 
 the [struct address_space-\>a_ops-\>writepages](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) handler (from the page cache en-
 
- 
 
 
 
- 
+
+
 
 try’s [struct address_space_operations](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n356) callback object), or [generic_writepages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2439) if
 
@@ -2532,7 +2532,7 @@ Before examining [write_cache_pages()](https://git.kernel.org/pub/scm/linux/kern
 
 and swap plug logic).
 
- 
+
 
 45 */\**
 
@@ -2592,11 +2592,11 @@ and swap plug logic).
 
 70 **unsigned** for_sync:1; */\* sync(2) WB_SYNC_ALL writeback \*/*
 
- 
 
 
 
- 
+
+
 
 71 **unsigned** unpinned_fscache_wb:1; */\* Cleared I_PINNING_FSCACHE_WB \*/*
 
@@ -2604,13 +2604,13 @@ and swap plug logic).
 
 102 };
 
- 
+
 
 *Listing 10-24:* include/linux/writeback.h: [*struct writeback_control*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/writeback.h?h=v6.0#n50)
 
 Examining each field:
 
- 
+
 
 **nr_to_write** The number of pages to write, or LONG_MAX if all dirty pages
 
@@ -2672,11 +2672,11 @@ queueing I/O via [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 dition, [\_\_writeback_single_inode()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1576) does not wait on writeout as a calling
 
- 
 
 
 
- 
+
+
 
 function handles this separately. This is set in [sync_inodes_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2667) and indi-
 
@@ -2686,7 +2686,7 @@ cates that the user has invoked a [sync()](https://man7.org/linux/man-pages/man2
 
 file system. Out of scope for the book.
 
- 
+
 
 Now we have examined the [struct writeback_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/writeback.h?h=v6.0#n50) type, we can examine
 
@@ -2694,7 +2694,7 @@ how it is used on writeback in [write_cache_pages()](https://git.kernel.org/pub/
 
 out of scope trace logic).
 
- 
+
 
 2250 */\*\**
 
@@ -2748,11 +2748,11 @@ out of scope trace logic).
 
 2285 **int** ret = 0;
 
- 
 
 
 
- 
+
+
 
 2286 **int** done = 0;
 
@@ -2776,11 +2776,11 @@ out of scope trace logic).
 
 2312 done_index = index;
 
- 
+
 
 *Listing 10-25:* mm/page-writeback.c: [*write_cache_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2281) *initialisation*
 
- 
+
 
 Note that the function is passed a void \* field in data which contains
 
@@ -2810,11 +2810,11 @@ In non-cyclic mode, we use the range_start and range_end fields of the
 
 [struct writeback_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/writeback.h?h=v6.0#n50) argument to determine which page indexes to span,
 
- 
 
 
 
- 
+
+
 
 setting range_whole to true if this implies a scan of the whole of the page
 
@@ -2838,7 +2838,7 @@ pages faster than we can write them back.
 
 Next we examine the core loop of this function in Listing 10-26.
 
- 
+
 
 2313 **while** (!done && (index \<= end)) { 2314 **int** i;
 
@@ -2874,11 +2874,11 @@ end,
 
 2342 **if** (!**PageDirty**(page)) { 2343 */\* someone wrote it for us \*/* 2344 **goto continue_unlock**; 2345 } 2346
 
- 
 
 
 
- 
+
+
 
 2347 **if** (**PageWriteback**(page)) { 2348 **if** (wbc-\>sync_mode != **WB_SYNC_NONE**) 2349 **wait_on_page_writeback**(page); 2350 **else** 2351 **goto continue_unlock**; 2352 } 2353
 
@@ -2918,17 +2918,17 @@ end,
 
 2391 *\*/* 2392 **if** (--wbc-\>nr_to_write \<= 0 &&
 
- 
 
 
 
- 
+
+
 
 2393 wbc-\>sync_mode == **WB_SYNC_NONE**) { 2394 done = 1; 2395 **break**; 2396 } 2397 }
 
 2398 **pagevec_release**(&pvec); 2399 **cond_resched**(); 2400 }
 
- 
+
 
 *Listing 10-26:* mm/page-writeback.c: [*write_cache_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2281) *main loop*
 
@@ -3002,17 +3002,17 @@ achieved by [clear_page_dirty_for_io()](https://git.kernel.org/pub/scm/linux/ker
 
 which we will explore shortly in detail in Listing 10-30.
 
- 
+
 
 **N O T E** When a page fault occurs, most modern file systems and block devices will not wait
 
 for a folio undergoing writeback to complete. Rather, they rely on the fact that any
 
- 
 
 
 
- 
+
+
 
 further writes to the folio will cause it to be marked dirty and thus written back again at a later date. This does mean that an unfortunate race can result in torn writes,
 
@@ -3020,7 +3020,7 @@ i.e. observable data corruption. We discussed this in Section 10.12 and Listing 
 
 in reference to a page fault, but this is equally applicable to a [*write()*](https://man7.org/linux/man-pages/man2/write.2.html) operation.
 
- 
+
 
 Note that on page fault [folio_wait_stable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n3078) (see Listing 10-7) is invoked
 
@@ -3082,17 +3082,17 @@ Once the loop is complete, we handle some cyclic range edge cases as
 
 shown in Listing 10-27.
 
- 
+
 
 2402 */\**
 
 2403 *\* If we hit the last page and there is more work to be done: wrap*
 
- 
 
 
 
- 
+
+
 
 2404 *\* back the index back to the start of the file for the next* 2405 *\* time we are called.* 2406 *\*/*
 
@@ -3102,11 +3102,11 @@ shown in Listing 10-27.
 
 2413 }
 
- 
+
 
 *Listing 10-27:* mm/page-writeback.c: [*write_cache_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2281) *cyclic edge cases*
 
- 
+
 
 If the range is cyclic and we were not able to process all dirty
 
@@ -3148,7 +3148,7 @@ updates, out of scope cgroup logic and details that distract from the core of
 
 this function.
 
- 
+
 
 2955 **bool \_\_folio_start_writeback**(**struct** folio \*folio, **bool** keep_write) 2956 {
 
@@ -3162,11 +3162,11 @@ this function.
 
 2969 **xas_lock_irqsave**(&xas, flags); 2970 **xas_load**(&xas); 2971 ret = **folio_test_set_writeback**(folio);
 
- 
 
 
 
- 
+
+
 
 2972 **if** (!ret) { 2973 **bool** on_wblist; 2974
 
@@ -3188,11 +3188,11 @@ this function.
 
 3016 }
 
- 
+
 
 *Listing 10-28:* mm/page-writeback.c: [*\_\_folio_start_writeback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2955)
 
- 
+
 
 This sets the folio’s writeback flag if not already set and marks it tagged
 
@@ -3222,7 +3222,7 @@ anything waiting on the writeback via [folio_wake()](https://git.kernel.org/pub/
 
 in Section 9.11. Again we elide irrelevant detail to focus on the core of what this does.
 
- 
+
 
 2910 **bool \_\_folio_end_writeback**(**struct** folio \*folio) 2911 {
 
@@ -3232,11 +3232,11 @@ in Section 9.11. Again we elide irrelevant detail to focus on the core of what t
 
 2918 **struct** inode \*inode = mapping-\>host; 2919 **struct** backing_dev_info \*bdi = **inode_to_bdi**(inode);
 
- 
 
 
 
- 
+
+
 
 2920 **unsigned long** flags; 2921
 
@@ -3266,11 +3266,11 @@ in Section 9.11. Again we elide irrelevant detail to focus on the core of what t
 
 2953 }
 
- 
+
 
 *Listing 10-29:* mm/page-writeback.c: [*\_\_folio_end_writeback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2910)
 
- 
+
 
 This is more or less the inverse of [\_\_folio_start_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2955)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2955) clearing
 
@@ -3292,7 +3292,7 @@ Finally, we examine the key [folio_clear_dirty_for_io()](https://git.kernel.org/
 
 10-30, eliding less critical logic around update of statistics and debug checks.
 
- 
+
 
 2812 */\**
 
@@ -3302,11 +3302,11 @@ Finally, we examine the key [folio_clear_dirty_for_io()](https://git.kernel.org/
 
 2823 *\* This incoherency between the folio's dirty flag and xarray tag is* 2824 *\* unfortunate, but it only exists while the folio is locked.*
 
- 
 
 
 
- 
+
+
 
 2825 *\*/*
 
@@ -3350,11 +3350,11 @@ Finally, we examine the key [folio_clear_dirty_for_io()](https://git.kernel.org/
 
 2874 **if** (**folio_test_clear_dirty**(folio)) {
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -3366,11 +3366,11 @@ Finally, we examine the key [folio_clear_dirty_for_io()](https://git.kernel.org/
 
 2884 **return folio_test_clear_dirty**(folio); 2885 }
 
- 
+
 
 *Listing 10-30:* mm/page-writeback.c: [*folio_clear_dirty_for_io()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2826)
 
- 
+
 
 This starts by checking whether the [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) page cache ob-
 
@@ -3446,21 +3446,21 @@ the folio dirty flag and begin writeback, if another thread has not already
 
 cleared the folio at this point.
 
- 
 
 
 
- 
+
+
 
 As the comment states, the fact we hold a folio lock on page fault pre-
 
 vents a race between a dirty page table entry being installed and flipping the folio to dirty.
 
- 
+
 
 **10.11 File System and Background Writeback**
 
- 
+
 
 When folios are dirtied within the file system, we must track which fo-lios and inodes are dirty in order that we can later write them back.
 
@@ -3482,13 +3482,13 @@ We examine how the process of file system writeback occurs in Figure
 
 10-6.
 
- 
+
 
 Scheduled to be executed at vm.dirty_writeback_centisecs intervals.
 
 [bdi_wq](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n36) ...
 
- 
+
 
 [bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)
 
@@ -3496,7 +3496,7 @@ Each [bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 [bdi_wq](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n36) using its dwork field.
 
- 
+
 
 dwork
 
@@ -3508,25 +3508,25 @@ Move from b_dirty to b_io
 
 via [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1416)
 
- 
+
 
 [inode inode inode inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593)
 
- 
+
 
 ... ...
 
 i_io_list i_io_list i_io_list i_io_list
 
- 
+
 
 Older than vm.dirty_expire_centisecs
 
- 
+
 
 *Figure 10-6: File System Writeback*
 
- 
+
 
 The process of file system level writeback is accomplished via a [work](https://kernel.org/doc/html/v6.0/core-api/workqueue.html)
 
@@ -3536,23 +3536,23 @@ All [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 work queue object, [bdi_wq](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n36)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n36)
 
- 
+
 
 **N O T E** Work queues are a generic means by which the kernel can execute work asyn-
 
 chronously and in the context of a process, using a kernel-managed thread pool.
 
- 
 
 
 
- 
+
+
 
 The [bdi_wq](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n36) work queue is initialised in [default_bdi_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n234), shown in List-
 
 ing 10-31.
 
- 
+
 
 234 **static int \_\_init default_bdi_init**(**void**) 235 {
 
@@ -3562,11 +3562,11 @@ ing 10-31.
 
 241 }
 
- 
+
 
 *Listing 10-31:* mm/backing-dev.c: [*default_bdi_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n234)
 
- 
+
 
 This function allocates a work queue via [alloc_workqueue()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/workqueue.c?h=v6.0#n4287), notably set-
 
@@ -3608,7 +3608,7 @@ has no dirtied folios, in other words the work queue task is only ‘woken up’
 
 when there is work to do.
 
- 
+
 
 244 */\**
 
@@ -3632,11 +3632,11 @@ when there is work to do.
 
 256 *\* earlier. Thus we use queue_delayed_work().* 257 *\*/*
 
- 
 
 
 
- 
+
+
 
 258 **void wb_wakeup_delayed**(**struct** bdi_writeback \*wb) 259 {
 
@@ -3644,11 +3644,11 @@ when there is work to do.
 
 262 timeout = **msecs_to_jiffies**(dirty_writeback_interval \* 10); 263 **spin_lock_irq**(&wb-\>work_lock); 264 **if** (**test_bit**(**WB_registered**, &wb-\>state)) 265 **queue_delayed_work**(bdi_wq, &wb-\>dwork, timeout); 266 **spin_unlock_irq**(&wb-\>work_lock); 267 }
 
- 
+
 
 *Listing 10-32:* mm/backing-dev.c: [*wb_wakeup_delayed()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n258)
 
- 
+
 
 This checks to see whether the object has been correctly initialised and
 
@@ -3682,17 +3682,17 @@ has occurred, this is ultimately performed by [wb_wakeup()](https://git.kernel.o
 
 in Listing 10-33.
 
- 
+
 
 135 **static void wb_wakeup**(**struct** bdi_writeback \*wb) 136 {
 
 137 **spin_lock_irq**(&wb-\>work_lock); 138 **if** (**test_bit**(WB_registered, &wb-\>state)) 139 **mod_delayed_work**(**bdi_wq**, &wb-\>dwork, 0); 140 **spin_unlock_irq**(&wb-\>work_lock); 141 }
 
- 
+
 
 *Listing 10-33:* fs/fs-writeback.c: [*wb_wakeup()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n135)
 
- 
+
 
 This function uses [mod_delayed_work()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/workqueue.h?h=v6.0#n529) to set the delay to zero, effectively
 
@@ -3700,11 +3700,11 @@ causing the task to be executed immediately, i.e. invoking [wb_workfn()](https:/
 
 specified [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) immediately.
 
- 
 
 
 
- 
+
+
 
 When file system super blocks need to be explicitly synchronised, this
 
@@ -3716,7 +3716,7 @@ the [struct bdi_writeback-\>work_list](https://git.kernel.org/pub/scm/linux/kern
 
 we examine in Listing 10-34 (eliding out of scope tracing logic).
 
- 
+
 
 159 **static void wb_queue_work**(**struct** bdi_writeback \*wb, 160 **struct** wb_writeback_work \*work) 161 {
 
@@ -3740,11 +3740,11 @@ we examine in Listing 10-34 (eliding out of scope tracing logic).
 
 175 **spin_unlock_irq**(&wb-\>work_lock); 176 }
 
- 
+
 
 *Listing 10-34:* fs/fs-writeback.c: [*wb_queue_work()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n159)
 
- 
+
 
 This starts by incrementing the atomic counter of the
 
@@ -3780,11 +3780,11 @@ ground writeback, we examine how [wb_wakeup()](https://git.kernel.org/pub/scm/li
 
 cgroup and laptop mode handling).
 
- 
 
 
 
- 
+
+
 
 From [sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n111) syscall vm.dirty_writeback_centisecs
 
@@ -3792,11 +3792,11 @@ Reclaim-triggered writeback
 
 see Figure 10-4 changed
 
- 
+
 
 [ksys_sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n97) [dirty_writeback_centisecs_handler()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2022) [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402)
 
- 
+
 
 Dirty ratio exceeded,
 
@@ -3804,19 +3804,19 @@ Dirty ratio exceeded,
 
 See Section 10.14
 
- 
+
 
 [balance_dirty_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557) [\_\_wakeup_flusher_threads_bdi()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2246) [\_\_mark_inode_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2363)
 
- 
+
 
 [wb_start_background_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1219) [wb_start_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1188) [wb_workfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2205)
 
- 
+
 
 [wb_queue_work()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n159) [wb_wakeup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n135) [wb_wakeup_delayed()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n258)
 
- 
+
 
 From [sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n111) / [syncfs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n149)
 
@@ -3824,21 +3824,21 @@ From [sync()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
 
 syscalls see Figure 10-4
 
- 
+
 
 [\_\_writeback_inodes_sb_nr()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2588) [writeback_inodes_sb_nr()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2620) [writeback_inodes_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2637)
 
- 
+
 
 From [syncfs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/sync.c?h=v6.0#n149) syscall
 
 see Figure 10-4
 
- 
+
 
 *Figure 10-7: File System Writeback Wakeup*
 
- 
+
 
 This diagram shows all of the means by which [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) write-
 
@@ -3870,11 +3870,11 @@ When the vm.dirty_background_ratio or vm.dirty_background_bytes lim-
 
 its are breached when we dirty a folio, we invoke background writeback, if the vm.dirty_ratio or vm.dirty_bytes limits are breached then the pro-cess doing this waits on the operation to complete. This is all achieved in
 
- 
 
 
 
- 
+
+
 
 [balance_dirty_pages() , ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557)which we discuss in detail in Section 10.14, invoking
 
@@ -3904,7 +3904,7 @@ We examine the function which wakes up the flusher threads for each
 
 [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105), [wakeup_flusher_threads()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2269) in Listing 10-35.
 
- 
+
 
 2266 */\**
 
@@ -3928,11 +3928,11 @@ We examine the function which wakes up the flusher threads for each
 
 2279 **list_for_each_entry_rcu**(bdi, &bdi_list, bdi_list) 2280 **\_\_wakeup_flusher_threads_bdi**(bdi, reason); 2281 **rcu_read_unlock**(); 2282 }
 
- 
+
 
 *Listing 10-35:* fs/fs-writeback.c: [*wakeup_flusher_threads()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2269)
 
- 
+
 
 We disregard the [blk_flush_plug()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/blkdev.h?h=v6.0#n1025) function here as this is an out of scope
 
@@ -3946,7 +3946,7 @@ vice in the global variable [bdi_list](https://git.kernel.org/pub/scm/linux/kern
 
 [\_\_wakeup_flusher_threads_bdi()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2246) on each of them, shown in Listing 10-36.
 
- 
+
 
 2246 **static void \_\_wakeup_flusher_threads_bdi**(**struct** backing_dev_info \*bdi, 2247 **enum** wb_reason reason) 2248 {
 
@@ -3954,21 +3954,21 @@ vice in the global variable [bdi_list](https://git.kernel.org/pub/scm/linux/kern
 
 2251 **if** (!**bdi_has_dirty_io**(bdi)) 2252 **return**;
 
- 
 
 
 
- 
+
+
 
 2253
 
 2254 **list_for_each_entry_rcu**(wb, &bdi-\>wb_list, bdi_node) 2255 **wb_start_writeback**(wb, reason); 2256 }
 
- 
+
 
 *Listing 10-36:* fs/fs-writeback.c: [*\_\_wakeup_flusher_threads_bdi()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2246)
 
- 
+
 
 This function starts by invoking [bdi_has_dirty_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev.h?h=v6.0#n56) to determine if
 
@@ -3980,7 +3980,7 @@ through each of the BDI’s [struct bdi_writeback](https://git.kernel.org/pub/sc
 
 which we examine in Listing 10-37.
 
- 
+
 
 1188 **static void wb_start_writeback**(**struct** bdi_writeback \*wb, **enum** wb_reason reason
 
@@ -4004,11 +4004,11 @@ which we examine in Listing 10-37.
 
 1207 }
 
- 
+
 
 *Listing 10-37:* fs/fs-writeback.c: [*wb_start_writeback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1188)
 
- 
+
 
 If the [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) object does not have dirty I/O associated with
 
@@ -4030,11 +4030,11 @@ Finally we invoke [wb_wakeup()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 than periodic writeback of folios older than vm.dirty_expire_centisecs,
 
- 
 
 
 
- 
+
+
 
 we maintain the [struct bdi_writeback-\>work_list](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) which maintains a list of
 
@@ -4042,7 +4042,7 @@ we maintain the [struct bdi_writeback-\>work_list](https://git.kernel.org/pub/sc
 
 [struct writeback_control . ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/writeback.h?h=v6.0#n50)We examine this in Listing 10-38.
 
- 
+
 
 39 */\**
 
@@ -4080,17 +4080,17 @@ we maintain the [struct bdi_writeback-\>work_list](https://git.kernel.org/pub/sc
 
 56 };
 
- 
+
 
 *Listing 10-38:* fs/fs-writeback.c: [*struct wb_writeback_work*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n42)
 
- 
+
 
 This is a subset of [struct writeback_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/writeback.h?h=v6.0#n50) (see Listing 10-24) but includes
 
 some additional fields:
 
- 
+
 
 **nr_pages** This field indicates the number of pages to write, similar to
 
@@ -4116,7 +4116,7 @@ This is needed because [bdi_split_work_to_wbs()](https://git.kernel.org/pub/scm/
 
 [struct wb_writeback_work](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n42) object using the slab allocator, which needs to be freed. Other invocations use stack-allocated objects so do not need this so will not set this flag.
 
- 
+
 
 Importantly, while the actual underlying writeback as described in
 
@@ -4128,11 +4128,11 @@ sation functions, or periodic background writeback is performed using
 
 [struct wb_writeback_work](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n42) objects.
 
- 
 
 
 
- 
+
+
 
 Let’s examine how [struct bdi_writeback-\>work_list](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) gets populated. This is
 
@@ -4144,7 +4144,7 @@ and asynchronous writeback performed by [writeback_inodes_sb()](https://git.kern
 
 Let’s start by examining [sync_inodes_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2667) in Listing 10-39.
 
- 
+
 
 2660 */\*\**
 
@@ -4178,15 +4178,15 @@ Let’s start by examining [sync_inodes_sb()](https://git.kernel.org/pub/scm/lin
 
 2696 **wait_sb_inodes**(sb); 2697 }
 
- 
+
 
 *Listing 10-39:* fs/fs-writeback.c: [*sync_inodes_sb()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2667)
 
- 
 
 
 
- 
+
+
 
 This establishes a [struct wb_writeback_work](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n42) object spanning all dirty folios
 
@@ -4226,7 +4226,7 @@ We examine the asynchronous version of this performed by
 
 [writeback_inodes_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2637) in Listing 10-40.
 
- 
+
 
 2628 */\*\**
 
@@ -4242,11 +4242,11 @@ We examine the asynchronous version of this performed by
 
 2639 **return writeback_inodes_sb_nr**(sb, **get_nr_dirty_pages**(), reason); 2640 }
 
- 
+
 
 *Listing 10-40:* fs/fs-writeback.c: [*writeback_inodes_sb()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2637)
 
- 
+
 
 This function obtains an upper bound for the number of dirty pages via
 
@@ -4256,7 +4256,7 @@ This function obtains an upper bound for the number of dirty pages via
 
 10-41.
 
- 
+
 
 2610 */\*\**
 
@@ -4268,11 +4268,11 @@ This function obtains an upper bound for the number of dirty pages via
 
 2617 *\* on how many (if any) will be written, and this function does not wait*
 
- 
 
 
 
- 
+
+
 
 2618 *\* for IO completion of submitted IO.* 2619 *\*/*
 
@@ -4280,17 +4280,17 @@ This function obtains an upper bound for the number of dirty pages via
 
 2624 **\_\_writeback_inodes_sb_nr**(sb, nr, reason, **false**); 2625 }
 
- 
+
 
 *Listing 10-41:* fs/fs-writeback.c: [*writeback_inodes_sb_nr()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2620)
 
- 
+
 
 This performs writeback without synchronisation in the
 
 [\_\_writeback_inodes_sb_nr()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2588) function, shown in Listing 10-42.
 
- 
+
 
 2588 **static void \_\_writeback_inodes_sb_nr**(**struct** super_block \*sb, **unsigned long** nr, 2589 **enum** wb_reason reason, **bool** skip_if_busy) 2590 {
 
@@ -4304,11 +4304,11 @@ This performs writeback without synchronisation in the
 
 2606 **bdi_split_work_to_wbs**(sb-\>s_bdi, &work, skip_if_busy); 2607 **wb_wait_for_completion**(&done); 2608 }
 
- 
+
 
 *Listing 10-42:* fs/fs-writeback.c: [*\_\_writeback_inodes_sb_nr()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2588)
 
- 
+
 
 This resembles [sync_inodes_sb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2667) (see Listing 10-39) except that synchro-
 
@@ -4318,7 +4318,7 @@ In each case, the heavy lifting is performed by [bdi_split_work_to_wbs()](https:
 
 which we examine in Listing 10-43.
 
- 
+
 
 925 */\*\**
 
@@ -4326,11 +4326,11 @@ which we examine in Listing 10-43.
 
 927 *\* @bdi: target backing_dev_info* 928 *\* @base_work: wb_writeback_work to issue* 929 *\* @skip_if_busy: skip wb's which already have writeback in progress* 930 *\**
 
- 
 
 
 
- 
+
+
 
 931 *\* Split and issue @base_work to all wb's (bdi_writeback's) of @bdi which* 932 *\* have dirty inodes. If @base_work-\>nr_page isn't %LONG_MAX, it's* 933 *\* distributed to the busy wbs according to each wb's proportion in the* 934 *\* total active write bandwidth of @bdi.* 935 *\*/*
 
@@ -4366,11 +4366,11 @@ which we examine in Listing 10-43.
 
 976
 
- 
 
 
 
- 
+
+
 
 977 */\* alloc failed, execute synchronously using on-stack fallback*
 
@@ -4396,11 +4396,11 @@ which we examine in Listing 10-43.
 
 1001 **wb_put**(last_wb); 1002 }
 
- 
+
 
 *Listing 10-43:* fs/fs-writeback.c: [*bdi_split_work_to_wbs()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n936)
 
- 
+
 
 This function is meaningful only when cgroup writeback is used, mean-
 
@@ -4422,15 +4422,15 @@ the locks that an [GFP_KERNEL](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 [struct wb_writeback_work](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n42) object and does so synchronously.
 
- 
 
 
 
- 
+
+
 
 **10.12 Flusher Thread Operation**
 
- 
+
 
 We have now explored how the flusher thread is ultimately invoked in detail,
 
@@ -4438,7 +4438,7 @@ so it’s time to examine what it actually does. The function which the flusher
 
 threads invoke is [wb_workfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2205)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2205) shown in Listing 10-44 (eliding trace hooks).
 
- 
+
 
 2201 */\**
 
@@ -4480,15 +4480,15 @@ threads invoke is [wb_workfn()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 2236 **if** (!**list_empty**(&wb-\>work_list)) 2237 **wb_wakeup**(wb); 2238 **else if** (**wb_has_dirty_io**(wb) && **dirty_writeback_interval**) 2239 **wb_wakeup_delayed**(wb); 2240 }
 
- 
+
 
 *Listing 10-44:* fs/fs-writeback.c: [*wb_workfn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2205)
 
- 
 
 
 
- 
+
+
 
 The flusher thread is implemented as a wait queue thread as described
 
@@ -4502,7 +4502,7 @@ thread. This is running the rescuer thread, as can be observed using procfs
 
 as shown in Listing 10-45.
 
- 
+
 
 \$ sudo cat /proc/\$(pidof -sw "writeback")/stack
 
@@ -4514,11 +4514,11 @@ as shown in Listing 10-45.
 
 \[\<0\>\] ret_from_fork_asm+0x1b/0x30
 
- 
+
 
 *Listing 10-45: procfs Output of Writeback Rescuer Thread Call Stack*
 
- 
+
 
 This thread is not used outside of extreme memory pressure, rather the
 
@@ -4566,11 +4566,11 @@ Finally the function must reschedule itself, as once the delayed work
 
 item assigned to [bdi_wq](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/backing-dev.c?h=v6.0#n36) has been executed, invoking this function, it is also removed the work queue altogether.
 
- 
 
 
 
- 
+
+
 
 If, despite looping on writeback, the [struct bdi_writeback-\>work_list](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) is still
 
@@ -4588,43 +4588,43 @@ back.
 
 We examine the code paths invoked by [wb_workfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2205) in Figure 10-8.
 
- 
+
 
 [wb_workfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2205)
 
- 
+
 
 [writeback_inodes_wb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1951) [wb_do_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2174)
 
- 
+
 
 [wb_check_background_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2095) [wb_check_old_data_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2113) [wb_check_start_all()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2147)
 
- 
+
 
 [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1416) [wb_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1988)
 
- 
+
 
 [\_\_writeback_inodes_wb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1917) [writeback_sb_inodes()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1772)
 
- 
+
 
 [\_\_writeback_single_inode()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1576)
 
- 
+
 
 [do_writepages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2457)
 
- 
+
 
 See Section 10.10
 
- 
+
 
 *Figure 10-8:* [*wb_workfn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2205) *Code Paths*
 
- 
+
 
 **N O T E** [*queue_io()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1416) is called by both [*writeback_inodes_wb()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1951) and [*wb_writeback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1988)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1988) prior to
 
@@ -4632,7 +4632,7 @@ calling [*writeback_sb_inodes()*](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 [*queue_io()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1416) is so critical a function it’s important to highlight it here.
 
- 
+
 
 Ultimately the task of the functions shown in Figure 10-8 is to prepare
 
@@ -4656,11 +4656,11 @@ This is a key function which transfers dirty inodes from the
 
 10-46 (eliding out of scope dirty time handling and trace callbacks).
 
- 
 
 
 
- 
+
+
 
 Dirtied inodes transition through three different lists—b_dirty, b_io and
 
@@ -4674,31 +4674,31 @@ We examine how these transition in Figure 10-9 (eliding out of scope
 
 cgroup logic and list moves performed by [writeback_single_inode()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1670)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1670)
 
- 
+
 
 [inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593)
 
 [\_\_mark_inode_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2363)
 
- 
+
 
 b_dirty
 
- 
+
 
 [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1416)
 
- 
+
 
 [redirty_tail()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1308)\*
 
 [bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)
 
- 
+
 
 [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1416)
 
- 
+
 
 b_io b_more_io
 
@@ -4706,7 +4706,7 @@ b_io b_more_io
 
 via [requeue_inode()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1505)
 
- 
+
 
 \* Also [redirty_tail_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1293),
 
@@ -4714,11 +4714,11 @@ Removed from lists
 
 which [redirty_tail()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1308) invokes.
 
- 
+
 
 *Figure 10-9:* [*struct bdi_writeback*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) *lifecycle in* [*writeback_sb_inodes()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1772)
 
- 
+
 
 A folio that is written back at a file-system level (i.e. not synchronised
 
@@ -4726,7 +4726,7 @@ by [fsync()](https://man7.org/linux/man-pages/man2/fsync.2.html) or similar syst
 
 shown in Figure 10-9):
 
- 
+
 
 **Dirtying** When an inode is first dirtied, it is added to the
 
@@ -4750,11 +4750,11 @@ In addition, [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 I/O, [writeback_sb_inodes()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1772) (see Listing 10-57) is invoked for all file sys-
 
- 
 
 
 
- 
+
+
 
 tem writeback. This function iterates through all inodes belonging to
 
@@ -4778,7 +4778,7 @@ no requeueing was yet necessary, [requeue_inode()](https://git.kernel.org/pub/sc
 
 [inode_cgwb_move_to_attached()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n278) which has cgroup-specific handling but also deletes the inode from the list.
 
- 
+
 
 **N O T E** An important point to pay attention to here is that the *b_dirty* list is
 
@@ -4792,13 +4792,13 @@ that have been moved from *b_dirty* to *b_io* backwards as it is the inode updat
 
 recently that must be written back first.
 
- 
+
 
 In exploring this lifecycle, we will first examine the queueing step, per-
 
 formed by [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1416) in Listing 10-46.
 
- 
+
 
 1405 */\**
 
@@ -4820,11 +4820,11 @@ formed by [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 1429 **if** (moved)
 
- 
 
 
 
- 
+
+
 
 1430 **wb_io_lists_populated**(wb);
 
@@ -4832,11 +4832,11 @@ formed by [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 1432 }
 
- 
+
 
 *Listing 10-46:* fs/fs-writeback.c: [*queue_io()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1416)
 
- 
+
 
 Note that this function is parameterised by dirtied_before, which specifies
 
@@ -4874,7 +4874,7 @@ Next, inodes which are older than dirtied_before are moved from
 
 amine in Listing 10-47.
 
- 
+
 
 1350 */\**
 
@@ -4890,11 +4890,11 @@ amine in Listing 10-47.
 
 1365 **while** (!**list_empty**(delaying_queue)) { 1366 inode = **wb_inode**(delaying_queue-\>prev); 1367 **if** (**inode_dirtied_after**(inode, dirtied_before)) 1368 **break**;
 
- 
 
 
 
- 
+
+
 
 1369 **spin_lock**(&inode-\>i_lock); 1370 **list_move**(&inode-\>i_io_list, &tmp); 1371 moved++;
 
@@ -4932,11 +4932,11 @@ amine in Listing 10-47.
 
 1403 }
 
- 
+
 
 *Listing 10-47:* fs/fs-writeback.c: [*move_expired_inodes()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1354)
 
- 
+
 
 The delaying_queue parameter is set to [struct bdi_writeback-\>b_dirty](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) and
 
@@ -4954,11 +4954,11 @@ This traversal assumes that b_dirty is maintained in an ordering of
 
 youngest inode to eldest, which is correct, as at each point of being dirtied,
 
- 
 
 
 
- 
+
+
 
 an inode is placed at the front of the list. This makes the list a queue, though in reverse order.
 
@@ -5028,11 +5028,11 @@ Which trivially gets prepended to b_io thusly: c 2b1b2a1a2a3a4
 
 c1c2b1b2a1a2a3a4
 
- 
 
 
 
- 
+
+
 
 When we examine [writeback_sb_inodes()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1772) in Listing 10-57, we will see how this
 
@@ -5048,7 +5048,7 @@ move has occurred, we invoke [wb_io_lists_populated()](https://git.kernel.org/pu
 
 Listing 10-48.
 
- 
+
 
 85 **static bool wb_io_lists_populated**(**struct** bdi_writeback \*wb)
 
@@ -5074,11 +5074,11 @@ Listing 10-48.
 
 96 }
 
- 
+
 
 *Listing 10-48:* fs/fs-writeback.c: [*wb_io_lists_populated()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n85)
 
- 
+
 
 This function returns a boolean indicating whether this is the first
 
@@ -5102,7 +5102,7 @@ is invoked when inodes are removed from I/O lists, which clears this flag if
 
 there are no inodes on any of the b-lists, dirty or I/O.
 
- 
+
 
 **N O T E** We can observe from these hook functions that the writeback flusher threads are an
 
@@ -5112,7 +5112,7 @@ of flusher thread writeback and dirtying of folios, ensuring that, should there 
 
 folios to flush, the thread is always woken up, but if there aren’t, it isn’t.
 
- 
+
 
 Now we have examined inode queuing, and before diving into the
 
@@ -5126,15 +5126,15 @@ ically low and the ‘rescuer’ thread is used. We examine this function in Lis
 
 ing 10-49, eliding out of scope block device plug logic.
 
- 
+
 
 1951 **static long writeback_inodes_wb**(**struct** bdi_writeback \*wb, **long** nr_pages, 1952 **enum** wb_reason reason)
 
- 
 
 
 
- 
+
+
 
 1953 {
 
@@ -5148,11 +5148,11 @@ ing 10-49, eliding out of scope block device plug logic.
 
 1970 **return** nr_pages - work.nr_pages; 1971 }
 
- 
+
 
 *Listing 10-49:* fs/fs-writeback.c: [*writeback_inodes_wb()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1951)
 
- 
+
 
 This function establishes [struct wb_writeback_work](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n42) with synchronisation
 
@@ -5170,7 +5170,7 @@ Having examined this emergency writeback mode, we return to the usual
 
 procedure and examine [wb_do_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2174) in Listing 10-50 (eliding out of scope tracing hook).
 
- 
+
 
 2171 */\**
 
@@ -5188,11 +5188,11 @@ procedure and examine [wb_do_writeback()](https://git.kernel.org/pub/scm/linux/k
 
 2182 wrote += **wb_writeback**(wb, work); 2183 **finish_writeback_work**(wb, work); 2184 }
 
- 
 
 
 
- 
+
+
 
 2185
 
@@ -5212,11 +5212,11 @@ procedure and examine [wb_do_writeback()](https://git.kernel.org/pub/scm/linux/k
 
 2199 }
 
- 
+
 
 *Listing 10-50:* fs/fs-writeback.c: [*wb_do_writeback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2174)
 
- 
+
 
 During core writeback in [wb_do_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2174), the
 
@@ -5234,7 +5234,7 @@ tion to the standard periodic writeback, [get_next_work_item()](https://git.kern
 
 entry off the [struct bdi_writeback-\>work_list](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105). We examine this in Listing **??**.
 
- 
+
 
 2078 */\**
 
@@ -5252,11 +5252,11 @@ entry off the [struct bdi_writeback-\>work_list](https://git.kernel.org/pub/scm/
 
 2093 }
 
- 
+
 
 *Listing 10-51:* fs/fs-writeback.c: [*get_next_work_item()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2081)
 
- 
+
 
 This is the mirror image of [wb_queue_work()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n159) (shown in Listing 10-34),
 
@@ -5266,11 +5266,11 @@ so here we pop from the head of the list (i.e. its first entry) each time. This
 
 makes this a work queue.
 
- 
 
 
 
- 
+
+
 
 Each time an entry is retrieved the work_lock is taken and the work entry
 
@@ -5306,7 +5306,7 @@ forms the writeback that [wb_start_writeback()](https://git.kernel.org/pub/scm/l
 
 We examine this in Listing 10-52.
 
- 
+
 
 2147 **static long wb_check_start_all**(**struct** bdi_writeback \*wb) 2148 {
 
@@ -5330,11 +5330,11 @@ We examine this in Listing 10-52.
 
 2168 }
 
- 
+
 
 *Listing 10-52:* fs/fs-writeback.c: [*wb_check_start_all()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2147)
 
- 
+
 
 This uses [get_nr_dirty_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1182) to obtain an estimate of the number
 
@@ -5342,11 +5342,11 @@ of dirty pages, establishing a [struct wb_writeback_work](https://git.kernel.org
 
 [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) object describing the writeback via [wb_split_bdi_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n906)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n906) This is specifically implemented to handle cgroup-mediated writeback which is out of scope of the book so we will not examine this.
 
- 
 
 
 
- 
+
+
 
 The work is cyclic, and thus we set [struct address_space-\>writeback_index](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424)
 
@@ -5372,7 +5372,7 @@ ground writeback limits established by vm.dirty_background_bytes or
 
 vm.dirty_background_ratio have been exceeded. We examine it in Listing **??**.
 
- 
+
 
 2095 **static long wb_check_background_flush**(**struct** bdi_writeback \*wb) 2096 {
 
@@ -5390,11 +5390,11 @@ vm.dirty_background_ratio have been exceeded. We examine it in Listing **??**.
 
 2111 }
 
- 
+
 
 *Listing 10-53:* fs/fs-writeback.c: [*wb_check_background_flush()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2095)
 
- 
+
 
 This determines whether the background writeback threshold has been
 
@@ -5416,7 +5416,7 @@ or background writeback is triggered, the true workhorse of writeback is
 
 examine it in Listing **??**.
 
- 
+
 
 2113 **static long wb_check_old_data_flush**(**struct** bdi_writeback \*wb) 2114 {
 
@@ -5424,11 +5424,11 @@ examine it in Listing **??**.
 
 2117
 
- 
 
 
 
- 
+
+
 
 2118 */\**
 
@@ -5454,11 +5454,11 @@ examine it in Listing **??**.
 
 2145 }
 
- 
+
 
 *Listing 10-54:* fs/fs-writeback.c: [*wb_check_old_data_flush()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2113)
 
- 
+
 
 The vm.dirty_expire_centisecs tunable is maintained in the
 
@@ -5476,17 +5476,17 @@ Again we initiate a cyclic writeback for all dirty pages and defer the heavy
 
 lifting to [wb_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1988)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1988) which we examine in Listing 10-55 (eliding out of scope trace and block device plug hooks).
 
- 
+
 
 1973 */\**
 
 1974 *\* Explicit flushing or periodic writeback of "old" data.* 1975 *\**
 
- 
 
 
 
- 
+
+
 
 1976 *\* Define "old": the first time one of an inode's pages is dirtied, we mark*
 
@@ -5536,11 +5536,11 @@ lifting to [wb_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 2020 **if** (work-\>for_background && !**wb_over_bg_thresh**(wb)) 2021 **break**; 2022
 
- 
 
 
 
- 
+
+
 
 2023 */\**
 
@@ -5588,11 +5588,11 @@ lifting to [wb_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 2065 inode = **wb_inode**(wb-\>b_more_io.prev); 2066 **spin_lock**(&inode-\>i_lock); 2067 **spin_unlock**(&wb-\>list_lock); 2068 */\* This function drops i_lock... \*/* 2069 **inode_sleep_on_writeback**(inode); 2070 **spin_lock**(&wb-\>list_lock); 2071 }
 
- 
 
 
 
- 
+
+
 
 2072 **spin_unlock**(&wb-\>list_lock);
 
@@ -5600,11 +5600,11 @@ lifting to [wb_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 2075 **return** nr_pages - work-\>nr_pages; 2076 }
 
- 
+
 
 *Listing 10-55:* fs/fs-writeback.c: [*wb_writeback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1988)
 
- 
+
 
 **N O T E** Moving forward we will refer to the standard periodic background writeback as
 
@@ -5614,7 +5614,7 @@ the *vm.background_ratio* or *vm.background_bytes* background dirty limits were 
 
 ceeded.
 
- 
+
 
 This function loops until either—the [struct wb_writeback_work-\>nr_pages](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n42)
 
@@ -5628,23 +5628,23 @@ threshold has been reached, or finally no progress has been made.
 
 We examine the details of the logic of this function in Figure 10-10.
 
- 
 
 
 
- 
+
+
 
 Work is complete when
 
 [struct wb_writeback_work-\>nr_pages](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n42) 0. *≤*
 
- 
+
 
 Yes
 
 Complete? Exit
 
- 
+
 
 No
 
@@ -5654,7 +5654,7 @@ Kind of work?
 
 Background kupdate
 
- 
+
 
 There is other, higher priority work
 
@@ -5662,7 +5662,7 @@ if [struct bdi_writeback-\>work_list](https://git.kernel.org/pub/scm/linux/kerne
 
 is non-empty.
 
- 
+
 
 Exit, [wb_workfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n2205)
 
@@ -5680,7 +5680,7 @@ No, Background
 
 [wb_over_bg_thresh()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1964) No, kupdate [?](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1964)
 
- 
+
 
 Yes, update
 
@@ -5690,19 +5690,19 @@ Examine all inodes older
 
 Examine all inodes vm.dirty_expire_centisecs than
 
- 
+
 
 Pending I/O exists if
 
 [struct bdi_writeback-\>b_io](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) is non-empty.
 
- 
+
 
 No
 
 [queue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1416) Pending I/O?
 
- 
+
 
 Yes
 
@@ -5712,19 +5712,19 @@ Superblock?
 
 [struct wb_writeback_work-\>sb](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n42) is non-NULL. Yes No
 
- 
+
 
 Per-SB
 
 [writeback_sb_inodes()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1772) [\_\_writeback_inodes_wb()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1917)
 
- 
+
 
 Yes
 
 Progress?
 
- 
+
 
 No
 
@@ -5732,19 +5732,19 @@ Yes No
 
 b_more_io? Exit
 
- 
+
 
 [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)-\>b_more_io [inode_sleep_on_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1482) on eldest
 
 inodes may have I_SYNC set. b_more_io inode to wait for I_SYNC.
 
- 
+
 
 *Figure 10-10:* [*wb_writeback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1988) *Logic*
 
 
 
- 
+
 
 **N O T E** An important nuance to note here is that the *dirtied_before* argument is set prior to
 
@@ -5756,7 +5756,7 @@ value is updated, however, if this is background or *kupdate* writeback as descr
 
 below.
 
- 
+
 
 This operates in a loop, processing all pending work specified by func-
 
@@ -5840,11 +5840,11 @@ field updated with the [I_SYNC](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 has all dirty folios submitted for writeback to the underlying block device.
 
- 
 
 
 
- 
+
+
 
 This failing to have occurred, resulting in the inode being transferred to
 
@@ -5862,7 +5862,7 @@ blocks owned by all inodes scheduled for writeback, [\_\_writeback_inodes_wb()](
 
 which we examine in Listing 10-56.
 
- 
+
 
 1917 **static long \_\_writeback_inodes_wb**(**struct** bdi_writeback \*wb, 1918 **struct** wb_writeback_work \*work) 1919 {
 
@@ -5892,15 +5892,15 @@ which we examine in Listing 10-56.
 
 1949 }
 
- 
+
 
 *Listing 10-56:* fs/fs-writeback.c: [*\_\_writeback_inodes_wb()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1917)
 
- 
 
 
 
- 
+
+
 
 This function simply iterates through each of the inodes in
 
@@ -5948,7 +5948,7 @@ do in Listing 10-57 (eliding irrelevant tracing hooks and realtime scheduler
 
 rescheduling logic).
 
- 
+
 
 1763 */\**
 
@@ -5966,19 +5966,19 @@ rescheduling logic).
 
 1786 **unsigned long** start_time = jiffies;
 
- 
 
 
 
- 
+
+
 
 1787 **long** write_chunk; 1788 **long** total_wrote = 0; */\* count both pages and inodes \*/*
 
- 
+
 
 *Listing 10-57:* fs/fs-writeback.c: [*writeback_sb_inodes()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1772) *preface*
 
- 
+
 
 The writeback core, as described in Section 10.10 uses the
 
@@ -6002,7 +6002,7 @@ We note the start time using the global jiffies value before proceeding
 
 with the core writeback loop beginning in Listing 10-58.
 
- 
+
 
 1790 **while** (!**list_empty**(&wb-\>b_io)) { 1791 **struct** inode \*inode = **wb_inode**(wb-\>b_io.prev); 1792 **struct** bdi_writeback \*tmp_wb; 1793 **long** wrote; 1794
 
@@ -6026,11 +6026,11 @@ with the core writeback loop beginning in Listing 10-58.
 
 1817 *\* kind writeout is handled by the freer.* 1818 *\*/*
 
- 
 
 
 
- 
+
+
 
 1819 **spin_lock**(&inode-\>i_lock); 1820 **if** (inode-\>i_state & (**I_NEW** \| **I_FREEING** \| **I_WILL_FREE**)) { 1821 **redirty_tail_locked**(inode, wb); 1822 **spin_unlock**(&inode-\>i_lock); 1823 **continue**; 1824 }
 
@@ -6064,11 +6064,11 @@ with the core writeback loop beginning in Listing 10-58.
 
 1848 **inode_sleep_on_writeback**(inode); 1849 */\* Inode may be gone, start again \*/* 1850 **spin_lock**(&wb-\>list_lock); 1851 **continue**; 1852 }
 
- 
+
 
 *Listing 10-58:* fs/fs-writeback.c: [*writeback_sb_inodes()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1772) *initial checks*
 
- 
+
 
 We iterate through each [struct inode](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n593) in the [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)-\>b_io
 
@@ -6088,11 +6088,11 @@ the super block locked against unmount, and therefore absolutely must limit
 
 ourselves to processing inodes which belong to specified superblock.
 
- 
 
 
 
- 
+
+
 
 In order to put this check in context we examine from where
 
@@ -6160,27 +6160,27 @@ The ‘redirtying’ process is performed by [redirty_tail()](https://git.kernel
 
 10-59.
 
- 
+
 
 1308 **static void redirty_tail**(**struct** inode \*inode, **struct** bdi_writeback \*wb) 1309 {
 
 1310 **spin_lock**(&inode-\>i_lock); 1311 **redirty_tail_locked**(inode, wb); 1312 **spin_unlock**(&inode-\>i_lock); 1313 }
 
- 
+
 
 *Listing 10-59:* fs/fs-writeback.c: [*redirty_tail()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1308)
 
- 
 
 
 
- 
+
+
 
 This locks the inode and defers the actual redirtying to
 
 [redirty_tail_locked()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1293) shown in Listing 10-60.
 
- 
+
 
 1284 */\**
 
@@ -6206,11 +6206,11 @@ This locks the inode and defers the actual redirtying to
 
 1304 **inode_io_list_move_locked**(inode, wb, &wb-\>b_dirty); 1305 inode-\>i_state &= ~**I_SYNC_QUEUED**; 1306 }
 
- 
+
 
 *Listing 10-60:* fs/fs-writeback.c: [*redirty_tail_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1293)
 
- 
+
 
 This ultimately moves the inode to the tail of the
 
@@ -6220,7 +6220,7 @@ its [I_SYNC_QUEUED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/lin
 
 writeback (a flag that is set by [move_expired_inodes()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1354)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1354) shown in Listing 10-47).
 
- 
+
 
 **N O T E** Despite [*redirty_tail_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1293)’s name, the [*inode_io_list_move_locked()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n118) function ul-
 
@@ -6232,7 +6232,7 @@ However, since we process inodes backwards, the inode is thereby placed at the b
 
 this list, so is conceptually indeed its tail.
 
- 
+
 
 We have to be careful about the inode’s timestamp here, it is vital to
 
@@ -6250,11 +6250,11 @@ ining in Listing 10-58, we next acquire the [struct inode-\>i_lock](https://git.
 
 keep the inode stable as we examine it for subsequent state checks.
 
- 
 
 
 
- 
+
+
 
 We check whether the inode is either new, freeing or soon to be freed.
 
@@ -6290,7 +6290,7 @@ later processing by placing it on the [struct bdi_writeback-\>b_more_io](https:/
 
 [requeue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1318) which very simply moves the inode to this list as shown in List-ing **??**.
 
- 
+
 
 1315 */\**
 
@@ -6300,11 +6300,11 @@ later processing by placing it on the [struct bdi_writeback-\>b_more_io](https:/
 
 1320 **inode_io_list_move_locked**(inode, wb, &wb-\>b_more_io); 1321 }
 
- 
+
 
 *Listing 10-61:* fs/fs-writeback.c: [*requeue_io()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1318)
 
- 
+
 
 You can observe how the [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)-\>b_more_io list is processed
 
@@ -6324,17 +6324,17 @@ ing the actual writeback in [writeback_sb_inodes()](https://git.kernel.org/pub/s
 
 10-62.
 
- 
+
 
 1854 inode-\>i_state \|= **I_SYNC**; 1855 **wbc_attach_and_unlock_inode**(&wbc, inode); 1856
 
 1857 write_chunk = **writeback_chunk_size**(wb, work); 1858 wbc.nr_to_write = write_chunk; 1859 wbc.pages_skipped = 0;
 
- 
 
 
 
- 
+
+
 
 1860
 
@@ -6352,11 +6352,11 @@ ing the actual writeback in [writeback_sb_inodes()](https://git.kernel.org/pub/s
 
 . . .
 
- 
+
 
 *Listing 10-62:* fs/fs-writeback.c: [*writeback_sb_inodes()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1772) *writeback*
 
- 
+
 
 We start by marking the inode being processed for writeback via [I_SYNC](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2442),
 
@@ -6412,7 +6412,7 @@ Finally, we examine the post-writeback handling at the end of the core
 
 loop in Listing 10-63.
 
- 
+
 
 1886 */\**
 
@@ -6422,11 +6422,11 @@ loop in Listing 10-63.
 
 1890 tmp_wb = **inode_to_wb_and_lock_list**(inode);
 
- 
 
 
 
- 
+
+
 
 1891 **spin_lock**(&inode-\>i_lock); 1892 **if** (!(inode-\>i_state & **I_DIRTY_ALL**)) 1893 total_wrote++; 1894 **requeue_inode**(inode, tmp_wb, &wbc); 1895 **inode_sync_complete**(inode); 1896 **spin_unlock**(&inode-\>i_lock); 1897
 
@@ -6446,7 +6446,7 @@ loop in Listing 10-63.
 
 1914 **return** total_wrote; 1915 }
 
- 
+
 
 *Listing 10-63:* fs/fs-writeback.c: [*writeback_sb_inodes()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1772) *suffix*
 
@@ -6476,11 +6476,11 @@ was completely written out, whether work remains and where to place the
 
 inode. We examine it in Listing 10-64 (eliding out of scope dirty time han-dling).
 
- 
 
 
 
- 
+
+
 
 1497 */\**
 
@@ -6532,11 +6532,11 @@ inode. We examine it in Listing 10-64 (eliding out of scope dirty time han-dling
 
 1538 */\** 1539 *\* Writeback blocked by something other than* 1540 *\* congestion. Delay the inode for some time to* 1541 *\* avoid spinning on the CPU (100% iowait)* 1542 *\* retrying writeback of the dirty page/inode*
 
- 
 
 
 
- 
+
+
 
 1543 *\* that cannot be performed immediately.* 1544 *\*/* 1545 **redirty_tail_locked**(inode, wb); 1546 }
 
@@ -6560,11 +6560,11 @@ inode. We examine it in Listing 10-64 (eliding out of scope dirty time han-dling
 
 1562 }
 
- 
+
 
 *Listing 10-64:* fs/fs-writeback.c: [*requeue_inode()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1505)
 
- 
+
 
 This processes each inode, determining whether to place it back on
 
@@ -6578,11 +6578,11 @@ ing 10-60), requeue it onto the [struct bdi_writeback-\>b_more_io](https://git.k
 
 We explore the logic of this function in Figure 10-11.
 
- 
 
 
 
- 
+
+
 
 inode is [?](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2439)
 
@@ -6600,7 +6600,7 @@ or work-\>tagged_writepages
 
 is specified).
 
- 
+
 
 Yes Update dirtied_when
 
@@ -6618,19 +6618,19 @@ Skipped pages?
 
 No No
 
- 
+
 
 wbc-\>nr_to_write 0? *≤* Yes
 
 inode dirty pages?
 
- 
+
 
 Yes No
 
 Requeue via [requeue_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1318) Yes Dirty inode?
 
- 
+
 
 No
 
@@ -6638,11 +6638,11 @@ Remove from lists via
 
 [inode_cgwb_move_to_attached()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n278)
 
- 
+
 
 *Figure 10-11:* [*requeue_inode()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1505) *Logic*
 
- 
+
 
 We start by checking whether the inode is currently being freed, if so
 
@@ -6686,11 +6686,11 @@ associated with the inode’s [struct address_space](https://git.kernel.org/pub/
 
 then we proceed on the basis that dirty data remains.
 
- 
 
 
 
- 
+
+
 
 In this case, where we have simply written at or beyond the current spec-
 
@@ -6712,7 +6712,7 @@ Finally, if no requeueing is deemed to be required, we remove the inode
 
 from all lists using [inode_cgwb_move_to_attached()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n278)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n278) as shown in Listing 10-65.
 
- 
+
 
 270 */\*\**
 
@@ -6730,11 +6730,11 @@ from all lists using [inode_cgwb_move_to_attached()](https://git.kernel.org/pub/
 
 288 **list_del_init**(&inode-\>i_io_list); 289 **wb_io_lists_depopulated**(wb); 290 }
 
- 
+
 
 *Listing 10-65:* fs/fs-writeback.c: [*inode_cgwb_move_to_attached()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n278)
 
- 
+
 
 This function starts by clearing the inode’s [I_SYNC_QUEUED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2452) flag to indi-
 
@@ -6750,17 +6750,17 @@ This also invokes [wb_io_lists_depopulated()](https://git.kernel.org/pub/scm/lin
 
 in the [struct bdi_writeback-\>state](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) field, as shown in Listing 10-66.
 
- 
+
 
 98 **static void wb_io_lists_depopulated**(**struct** bdi_writeback \*wb) 99 {
 
 100 **if** (**wb_has_dirty_io**(wb) && **list_empty**(&wb-\>b_dirty) &&
 
- 
 
 
 
- 
+
+
 
 101 **list_empty**(&wb-\>b_io) && **list_empty**(&wb-\>b_more_io)) { 102 **clear_bit**(**WB_has_dirty_io**, &wb-\>state); 103 **WARN_ON_ONCE**(**atomic_long_sub_return**(wb-\>avg_write_bandwidth, 104 &wb-\>bdi-\>tot_write_bandwidth) \< 0);
 
@@ -6768,11 +6768,11 @@ in the [struct bdi_writeback-\>state](https://git.kernel.org/pub/scm/linux/kerne
 
 106 }
 
- 
+
 
 *Listing 10-66:* fs/fs-writeback.c: [*wb_io_lists_depopulated()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n98)
 
- 
+
 
 This resets the [WB_has_dirty_io](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n27) flag if all [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) lists are
 
@@ -6788,7 +6788,7 @@ ing irrelevant trace hook points and out of scope dirty time handling and
 
 fscache pinning logic).
 
- 
+
 
 1564 */\**
 
@@ -6836,11 +6836,11 @@ fscache pinning logic).
 
 *guaranteeing*
 
- 
 
 
 
- 
+
+
 
 1594 *\* inode metadata is written back correctly.* 1595 *\*/*
 
@@ -6898,15 +6898,15 @@ fscache pinning logic).
 
 1659 }
 
- 
+
 
 *Listing 10-67:* fs/fs-writeback.c: [*\_\_writeback_single_inode()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1576)
 
- 
 
 
 
- 
+
+
 
 This function immediately invokes [do_writepages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2457) shown in Listing 10-23
 
@@ -6948,11 +6948,11 @@ Finally, if the inode metadata is dirty, the inode is written back via
 
 [write_inode(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1434)however this is out of scope for the book.
 
- 
+
 
 **10.13 File Writeback**
 
- 
+
 
 We’ve seen how writeback proceeds at a file system granularity, but there re-
 
@@ -6964,7 +6964,7 @@ via the [fsync()](https://man7.org/linux/man-pages/man2/fsync.2.html) or [fdatas
 
 ual pages of a [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html) memory-mapped file via [msync()](https://man7.org/linux/man-pages/man2/msync.2.html)[.](https://man7.org/linux/man-pages/man2/msync.2.html)
 
- 
+
 
 **N O T E** Users can also specify the synchronisation of individual pages of an open file descrip-
 
@@ -6974,7 +6974,7 @@ as dangerous, so we don’t examine it in detail. This system call ultimately in
 
 the same functions that we examine here in any case.
 
- 
+
 
 In Section 10.6 and Figure 10-4 we examine these synchronisation meth-
 
@@ -7000,45 +7000,45 @@ We observe how each of the aforementioned calls ultimately end up call-
 
 ing this pair functions in Figure 10-12.
 
- 
 
 
 
- 
+
+
 
 [fsync()](https://man7.org/linux/man-pages/man2/fsync.2.html) and [fdatasync()](https://man7.org/linux/man-pages/man2/fdatasync.2.html)
 
- 
+
 
 [file_write_and_wait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n767)
 
- 
+
 
 [syncfs()](https://man7.org/linux/man-pages/man2/syncfs.2.html) for blockdev [syncfs()](https://man7.org/linux/man-pages/man2/syncfs.2.html) for blockdev [\_\_writeback_single_inode()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1576)
 
- 
+
 
 [filemap_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n452) [filemap_write_and_wait()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n58) [filemap_fdatawait()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n41)
 
- 
+
 
 [\_\_filemap_fdatawrite()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n424) [filemap_write_and_wait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n667) [filemap_fdatawait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n548)
 
- 
+
 
 [\_\_filemap_fdatawrite_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n411) [\_\_filemap_fdatawait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n501)
 
- 
+
 
 *Figure 10-12: File Writeback Call Stack*
 
- 
+
 
 Let’s examine each of the functions referenced here, starting with
 
 [filemap_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n452) in Listing 10-68.
 
- 
+
 
 443 */\*\**
 
@@ -7052,11 +7052,11 @@ Let’s examine each of the functions referenced here, starting with
 
 454 **return \_\_filemap_fdatawrite**(mapping, **WB_SYNC_NONE**); 455 }
 
- 
+
 
 *Listing 10-68:* mm/filemap.c: [*filemap_flush()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n452)
 
- 
+
 
 This function simply defers its operation to [\_\_filemap_fdatawrite()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n424)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n424) speci-
 
@@ -7064,7 +7064,7 @@ fying [WB_SYNC_NONE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 examine this in Listing 10-69.
 
- 
+
 
 424 **static inline int \_\_filemap_fdatawrite**(**struct** address_space \*mapping, 425 **int** sync_mode)
 
@@ -7072,15 +7072,15 @@ examine this in Listing 10-69.
 
 427 **return \_\_filemap_fdatawrite_range**(mapping, 0, **LLONG_MAX**, sync_mode); 428 }
 
- 
+
 
 *Listing 10-69:* mm/filemap.c: [*\_\_filemap_fdatawrite()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n424)
 
- 
 
 
 
- 
+
+
 
 This simply defers its operation to the core function [\_\_filemap_fdatawrite](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n411),
 
@@ -7090,7 +7090,7 @@ specifying that the entire file be written back. We examine this in Listing
 
 Next we examine [filemap_write_and_wait()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n667) in **??**.
 
- 
+
 
 58 **static inline int filemap_write_and_wait**(**struct** address_space \*mapping)
 
@@ -7100,17 +7100,17 @@ Next we examine [filemap_write_and_wait()](https://git.kernel.org/pub/scm/linux/
 
 61 }
 
- 
+
 
 *Listing 10-70:* /include/linux/pagemap.h: [*filemap_write_and_wait()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree//include/linux/pagemap.h?h=v6.0#n58)
 
- 
+
 
 This simply defers the heavy lifting to [filemap_write_and_wait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n667)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n667) spec-
 
 ifying the entire range of the Listing 10-71.
 
- 
+
 
 654 \*\*
 
@@ -7144,19 +7144,19 @@ ifying the entire range of the Listing 10-71.
 
 686 err = err2; 687 **return** err;
 
- 
 
 
 
- 
+
+
 
 688 }
 
- 
+
 
 *Listing 10-71:* mm/filemap.c: [*filemap_write_and_wait_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n667)
 
- 
+
 
 This uses [mapping_needs_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n625) to determine whether to proceed
 
@@ -7186,17 +7186,17 @@ done via [filemap_check_errors()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 Next we examine [filemap_fdatawait()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n41) in Listing 10-72.
 
- 
+
 
 41 **static inline int filemap_fdatawait**(**struct** address_space \*mapping) 42 {
 
 43 **return filemap_fdatawait_range**(mapping, 0, **LLONG_MAX**); 44 }
 
- 
+
 
 *Listing 10-72:* include/linux/pagemap.h: [*filemap_fdatawait()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n41)
 
- 
+
 
 This defers its operation to [filemap_fdatawait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n548)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n548) specifying that the
 
@@ -7204,7 +7204,7 @@ writeback for the entire file should be waited upon. This is shown in Listing
 
 10-73.
 
- 
+
 
 532 */\*\**
 
@@ -7216,11 +7216,11 @@ writeback for the entire file should be waited upon. This is shown in Listing
 
 543 *\* callers are responsible for checking the return value and handling and/or*
 
- 
 
 
 
- 
+
+
 
 544 *\* reporting the error.*
 
@@ -7232,11 +7232,11 @@ writeback for the entire file should be waited upon. This is shown in Listing
 
 551 **\_\_filemap_fdatawait_range**(mapping, start_byte, end_byte); 552 **return filemap_check_errors**(mapping); 553 }
 
- 
+
 
 *Listing 10-73:* mm/filemap.c: [*filemap_fdatawait_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n548)
 
- 
+
 
 This defers the heavy lifting to [\_\_filemap_fdatawait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n501) (shown in List-
 
@@ -7246,7 +7246,7 @@ tached to the [struct address_space](https://git.kernel.org/pub/scm/linux/kernel
 
 Finally, we examine [file_write_and_wait_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n767)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n767) shown in Listing 10-74.
 
- 
+
 
 751 */\*\**
 
@@ -7278,17 +7278,17 @@ Finally, we examine [file_write_and_wait_range()](https://git.kernel.org/pub/scm
 
 781 err = err2;
 
- 
 
 
 
- 
+
+
 
 782 **return** err;
 
 783 }
 
- 
+
 
 *Listing 10-74:* mm/filemap.c: [*file_write_and_wait_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n767)
 
@@ -7310,7 +7310,7 @@ Now we have examined the core means by which we reach
 
 We begin by examining [\_\_filemap_fdatawrite_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n411) in Listing 10-75.
 
- 
+
 
 394 */\*\**
 
@@ -7340,15 +7340,15 @@ We begin by examining [\_\_filemap_fdatawrite_range()](https://git.kernel.org/pu
 
 421 **return filemap_fdatawrite_wbc**(mapping, &wbc); 422 }
 
- 
+
 
 *Listing 10-75:* mm/filemap.c: [*\_\_filemap_fdatawrite_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n411)
 
- 
 
 
 
- 
+
+
 
 This establishes a [struct writeback_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/writeback.h?h=v6.0#n50) object used to proceed with
 
@@ -7356,7 +7356,7 @@ writeback, passing this to [filemap_fdatawrite_wbc()](https://git.kernel.org/pub
 
 as shown in Listing 10-76.
 
- 
+
 
 368 */\*\**
 
@@ -7384,11 +7384,11 @@ as shown in Listing 10-76.
 
 391 }
 
- 
+
 
 *Listing 10-76:* mm/filemap.c: [*filemap_fdatawrite_wbc()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n378)
 
- 
+
 
 This starts by checking whether the mapping has any pages in the page
 
@@ -7412,17 +7412,17 @@ We will now examine the core [\_\_filemap_fdatawait_range()](https://git.kernel.
 
 Listing 10-77.
 
- 
+
 
 501 **static void \_\_filemap_fdatawait_range**(**struct** address_space \*mapping, 502 **loff_t** start_byte, **loff_t** end_byte) 503 {
 
 504 **pgoff_t** index = start_byte \>\> **PAGE_SHIFT**; 505 **pgoff_t** end = end_byte \>\> **PAGE_SHIFT**; 506 **struct** pagevec pvec;
 
- 
 
 
 
- 
+
+
 
 507 **int** nr_pages;
 
@@ -7444,11 +7444,11 @@ Listing 10-77.
 
 530 }
 
- 
+
 
 *Listing 10-77:* mm/filemap.c: [*\_\_filemap_fdatawait_range()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n501)
 
- 
+
 
 This iterates through folio batches at a time of folios tagged
 
@@ -7482,15 +7482,15 @@ The net result is all folios being written back to disk are waited upon as
 
 required.
 
- 
 
 
 
- 
+
+
 
 **10.14 Dirty Throttling**
 
- 
+
 
 In the process of performing writeback, it is absolutely vital to ensure that
 
@@ -7532,7 +7532,7 @@ dirty pages, with the ratio values expressed as a proportion of available
 
 is taken by the kernel:
 
- 
+
 
 **Background dirty limits** vm.dirty_background_ratio (or, alternatively, ex-
 
@@ -7544,7 +7544,7 @@ Section 10.11. This defaults to using vm.dirty_background_ratio equal to 10% of 
 
 tate the hard limit at which processes writing back to a block device block when dirtying pages until writeback can ensure that the proportion of dirty pages has dropped below this threshold again. This defaults to us-ing vm.dirty_ratio equal to 20% of dirtyable memory.
 
- 
+
 
 This does not tell the whole story, however. Between these two limits, it’s
 
@@ -7570,11 +7570,11 @@ We will examine how this works in detail, but before we do we will exam-
 
 ine what the ratio versions of the aforementioned tunables are a proportion
 
- 
 
 
 
- 
+
+
 
 of. This is what is referred to as the global (i.e. system-wide) dirtyable pages count.
 
@@ -7582,7 +7582,7 @@ This is determined by the [global_dirtyable_memory()](https://git.kernel.org/pub
 
 Listing 10-78 (eliding out of scope 32-bit system high memory logic).
 
- 
+
 
 338 */\*\**
 
@@ -7608,11 +7608,11 @@ Listing 10-78 (eliding out of scope 32-bit system high memory logic).
 
 362 **return** x + 1; */\* Ensure that we never return 0 \*/* 363 }
 
- 
+
 
 *Listing 10-78:* mm/page-writeback.c: [*global_dirtyable_memory()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n344)
 
- 
+
 
 This uses kernel statistics to determine how many free pages are available
 
@@ -7638,17 +7638,17 @@ cally in [generic_perform_write()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 Section 6.9) as part of memory-mapped page fault handling.
 
- 
+
 
 1937 */\*\**
 
 1938 *\* balance_dirty_pages_ratelimited - balance dirty memory state.*
 
- 
 
 
 
- 
+
+
 
 1939 *\* @mapping: address_space which was dirtied.* 1940 *\**
 
@@ -7664,11 +7664,11 @@ Section 6.9) as part of memory-mapped page fault handling.
 
 1951 **balance_dirty_pages_ratelimited_flags**(mapping, 0); 1952 }
 
- 
+
 
 *Listing 10-79:* mm/page-writeback.c: [*balance_dirty_pages_ratelimited()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1949)
 
- 
+
 
 This invokes [balance_dirty_pages_ratelimited_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1880) in turn, which we
 
@@ -7712,7 +7712,7 @@ threshold, it’d simply be wasteful to unnecessarily put any thread to sleep
 
 when dirtying pages.
 
- 
+
 
 **N O T E** To avoid having to repeatedly refer to *vm.dirty_background_ratio* or
 
@@ -7720,7 +7720,7 @@ when dirtying pages.
 
 say ‘background threshold’ and ‘dirty threshold’ respectively, from this point on.
 
- 
+
 
 We must therefore find a solution that performs better. Ultimately the
 
@@ -7730,11 +7730,11 @@ so they can no longer dirty pages. All of the dirty throttling logic attempts to
 
 do so in sensible fashion as follows:
 
- 
 
 
 
- 
+
+
 
 **Throttle threads earlier** Instead of only putting threads to sleep at the dirty
 
@@ -7784,11 +7784,11 @@ cal to ‘smooth out’ the degree by which we pause threads, which we achieve b
 
 smoothed target per-thread per-block device dirty rate, we can use this to scale pauses such that we can pause each thread for either a shorter or a longer period of time such that the dirty rate trends towards the setpoint.
 
- 
 
 
 
- 
+
+
 
 **Maintain minimum and maximum thread pause times** To avoid a pause
 
@@ -7798,7 +7798,7 @@ imum pause times using [wb_min_pause()](https://git.kernel.org/pub/scm/linux/ker
 
 [MAX_PAUSE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n47), hardcoded to 200ms).
 
- 
+
 
 The point at which we transition from freerun to global dirty control
 
@@ -7808,33 +7808,33 @@ ing 10-80 which is determined to be halfway between background and dirty
 
 threshold.
 
- 
+
 
 701 **static unsigned long dirty_freerun_ceiling**(**unsigned long** thresh, 702 **unsigned long** bg_thresh) 703 {
 
 704 **return** (thresh + bg_thresh) / 2; 705 }
 
- 
+
 
 *Listing 10-80:* mm/page-writeback.c: [*dirty_freerun_ceiling()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n701)
 
- 
+
 
 This implementation results in heavy dirtying proceeding as shown in
 
 Figure 10-13.
 
- 
+
 
 Global Dirty Control Scope
 
 Dirty Threshold
 
- 
+
 
 Setpoint
 
- 
+
 
 es Freerun Ceiling ag
 
@@ -7844,15 +7844,15 @@ ty
 
 Dir Background Threshold
 
- 
+
 
 Time
 
- 
+
 
 *Figure 10-13: Example Dirty Page Throttling*
 
- 
+
 
 Here dirtying threads cause a dramatic increase in dirtied pages before
 
@@ -7864,21 +7864,21 @@ are dirtied, so the dirtying exceeds the freerun ceiling before threads start
 
 being slowed down, establishing an equilibrium around the setpoint.
 
- 
 
 
 
- 
+
+
 
 **10.15 Rate-Limited Dirty Throttling**
 
- 
+
 
 It is relatively expensive to perform this balancing operation even if it results in no action being taken, so in addition to performing this bal-ancing we also rate limit the operation itself. We can observe this in
 
 [balance_dirty_pages_ratelimited_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1880) which we examine in Listing 10-81.
 
- 
+
 
 1863 */\*\**
 
@@ -7916,11 +7916,11 @@ It is relatively expensive to perform this balancing operation even if it result
 
 1902 **preempt_disable**(); 1903 */\**
 
- 
 
 
 
- 
+
+
 
 1904 *\* This prevents one CPU to accumulate too many dirtied pages without*
 
@@ -7958,11 +7958,11 @@ It is relatively expensive to perform this balancing operation even if it result
 
 1935 }
 
- 
+
 
 *Listing 10-81:* mm/page-writeback.c: [*balance_dirty_pages_ratelimited_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1880)
 
- 
+
 
 We start by checking whether the underlying block device is even ca-
 
@@ -7990,11 +7990,11 @@ This value is set by [balance_dirty_pages()](https://git.kernel.org/pub/scm/linu
 
 still within the freerun region (which could be relatively large), or the num-
 
- 
 
 
 
- 
+
+
 
 ber of pages that would be dirtied before reaching the minimum pause inter-val (as it’d be pointless trying to balance dirty pages if we are below this) as
 
@@ -8062,11 +8062,11 @@ Finally we perform the core check—determining whether the thread’s
 
 limit value. If so, we invoke the [balance_dirty_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557) (see Listing 10-97) func-tion in order to perform dirty throttling.
 
- 
 
 
 
- 
+
+
 
 We will examine [balance_dirty_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557) shortly, but before we do so let’s
 
@@ -8082,13 +8082,13 @@ track the number of pages dirtied since we last paused a thread and when to
 
 assess the same thing per-thread.
 
- 
+
 
 **10.16 Dirty Throttle Statistics**
 
 Let’s examine each field which we regularly update:
 
- 
+
 
 • [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)[-\>stats\[WB_DIRTIED\]](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n34) – Measures the number of folios
 
@@ -8142,11 +8142,11 @@ ten per second for this [struct bdi_writeback](https://git.kernel.org/pub/scm/li
 
 from write_bandwidth which evens out short-term variations in the write bandwidth figure.
 
- 
 
 
 
- 
+
+
 
 • [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)-\>balanced_dirty_ratelimit – The per-thread limit on
 
@@ -8212,11 +8212,11 @@ is reset to zero when a thread is paused in [balance_dirty_pages()](https://git.
 
 the thread was paused (or permitted to freerun).
 
- 
 
 
 
- 
+
+
 
 • [struct task_struct-\>nr_dirtied_pause](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727) – The number of pages which
 
@@ -8226,11 +8226,11 @@ must be dirtied by this thread before dirty throttling is applied in
 
 if the thread was paused, or by [dirty_poll_interval()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1406) (see Listing **??**) if the thread is freerunning.
 
- 
+
 
 **10.17 Bandwidth Updates**
 
- 
+
 
 Let’s examine the functions we’ve referred to here, starting with bandwidth
 
@@ -8238,7 +8238,7 @@ updates in [\_\_wb_update_bandwidth()](https://git.kernel.org/pub/scm/linux/kern
 
 out of scope cgroup writeback logic).
 
- 
+
 
 1330 **static void \_\_wb_update_bandwidth**(**struct** dirty_throttle_control \*gdtc, 1331 **struct** dirty_throttle_control \*mdtc, 1332 **bool** update_ratelimit) 1333 {
 
@@ -8266,15 +8266,15 @@ out of scope cgroup writeback logic).
 
 1367 wb-\>dirtied_stamp = dirtied; 1368 wb-\>written_stamp = written; 1369 **WRITE_ONCE**(wb-\>bw_time_stamp, now); 1370 **spin_unlock**(&wb-\>list_lock); 1371 }
 
- 
+
 
 *Listing 10-82:* mm/page-writeback.c: [*\_\_wb_update_bandwidth()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1330)
 
- 
 
 
 
- 
+
+
 
 This uses the [struct dirty_throttle_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n123) object to thread state through
 
@@ -8314,7 +8314,7 @@ intervals, this is done via [wb_update_bandwidth()](https://git.kernel.org/pub/s
 
 10-83.
 
- 
+
 
 1373 **void wb_update_bandwidth**(**struct** bdi_writeback \*wb) 1374 {
 
@@ -8322,11 +8322,11 @@ intervals, this is done via [wb_update_bandwidth()](https://git.kernel.org/pub/s
 
 1377 **\_\_wb_update_bandwidth**(&gdtc, **NULL**, **false**); 1378 }
 
- 
+
 
 *Listing 10-83:* mm/page-writeback.c: [*wb_update_bandwidth()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1373)
 
- 
+
 
 Importantly, this establishes a local [struct dirty_throttle_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n123) ob-
 
@@ -8338,7 +8338,7 @@ We now return to the [struct dirty_throttle_control](https://git.kernel.org/pub/
 
 Listing 10-84, eliding out of scope cgroup writeback fields.
 
- 
+
 
 122 */\* consolidated parameters for balance_dirty_pages() and its subroutines \*/* 123 **struct** dirty_throttle_control {
 
@@ -8348,11 +8348,11 @@ Listing 10-84, eliding out of scope cgroup writeback fields.
 
 131 **unsigned long** avail; */\* dirtyable \*/* 132 **unsigned long** dirty; */\* file_dirty + write + nfs \*/*
 
- 
 
 
 
- 
+
+
 
 133 **unsigned long** thresh; */\* dirty threshold \*/* 134 **unsigned long** bg_thresh; */\* dirty background threshold*
 
@@ -8366,11 +8366,11 @@ Listing 10-84, eliding out of scope cgroup writeback fields.
 
 140 **unsigned long** pos_ratio; 141 };
 
- 
+
 
 *Listing 10-84:* mm/page-writeback.c: [*struct dirty_throttle_control*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n123)
 
- 
+
 
 Each time this is used in a context where a [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) must
 
@@ -8410,7 +8410,7 @@ start by examining the common write bandwidth update logic in
 
 [wb_update_write_bandwidth()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1068) in Listing 10-85.
 
- 
+
 
 1068 **static void wb_update_write_bandwidth**(**struct** bdi_writeback \*wb, 1069 **unsigned long** elapsed, 1070 **unsigned long** written) 1071 {
 
@@ -8430,11 +8430,11 @@ start by examining the common write bandwidth update logic in
 
 *---------------------------------------------------*
 
- 
 
 
 
- 
+
+
 
 1082 *\** *period* 1083 *\**
 
@@ -8464,17 +8464,17 @@ start by examining the common write bandwidth update logic in
 
 1114 wb-\>write_bandwidth = bw; 1115 **WRITE_ONCE**(wb-\>avg_write_bandwidth, avg); 1116 }
 
- 
+
 
 *Listing 10-85:* mm/page-writeback.c: [*wb_update_write_bandwidth()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1068)
 
- 
+
 
 **N O T E** The dirty throttling logic we explore from this point on involves some rather delicate
 
 mathematics. Rather than dwell too long on these, we shall examine the core of the functions under examination, showing the remainder so as to leave further mathe-matical examination of the details as an exercise for the reader.
 
- 
+
 
 Note that in this function and many others, careful choices around how
 
@@ -8482,11 +8482,11 @@ integer mathematical operations are performed occur, such as using power-
 
 of-2 values for instance here via [roundup_pow_of_two()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/log2.h?h=v6.0#n174)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/log2.h?h=v6.0#n174) In service of brevity, we do not examine these too closely but rather proceed referring to what the value ultimately represents.
 
- 
 
 
 
- 
+
+
 
 Note that this function is passed [struct bdi_writeback-\>stats\[WB_WRITTEN\]](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)
 
@@ -8530,11 +8530,11 @@ perform some careful smoothing against the previous average value, assign-
 
 ing this to [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)-\>avg_write_bandwidth.
 
- 
+
 
 **10.18 Dirty Position Control Ratio**
 
- 
+
 
 Before we examine the dirty rate calculation, let’s reflect on the dirty position
 
@@ -8558,29 +8558,29 @@ overwhelm the block device.
 
 We examine how this value is intended to be maintained in Figure 10-14.
 
- 
 
 
 
- 
+
+
 
 Global dirty control scope
 
 2
 
- 
+
 
 atio
 
 R
 
- 
+
 
 osition 1
 
 P
 
- 
+
 
 0
 
@@ -8588,11 +8588,11 @@ freerun setpoint limit
 
 Dirty Pages
 
- 
+
 
 *Figure 10-14: Example Dirty Position Control Ratio*
 
- 
+
 
 Compare this figure to the impact this is intended to have in Figure 10-
 
@@ -8604,7 +8604,7 @@ which we examine in Listing 10-86. Note that we elide handling of block de-
 
 vice strict limit logic for brevity (as specified by [BDI_CAP_STRICTLIMIT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev.h?h=v6.0#n118)[),](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev.h?h=v6.0#n118) and a number of comments that would make the function overlong.
 
- 
+
 
 889 **static void wb_position_ratio**(**struct** dirty_throttle_control \*dtc) 890 {
 
@@ -8626,11 +8626,11 @@ bg_thresh);
 
 903 dtc-\>pos_ratio = 0; 904
 
- 
 
 
 
- 
+
+
 
 905 **if** (**unlikely**(dtc-\>dirty \>= limit)) 906 **return**;
 
@@ -8690,11 +8690,11 @@ bg_thresh);
 
 1049 pos_ratio /= 4;
 
- 
 
 
 
- 
+
+
 
 1050
 
@@ -8716,11 +8716,11 @@ bg_thresh);
 
 1065 dtc-\>pos_ratio = pos_ratio; 1066 }
 
- 
+
 
 *Listing 10-86:* mm/page-writeback.c: [*wb_position_ratio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n889)
 
- 
+
 
 We won’t delve too deeply into the mathematics here, rather we will
 
@@ -8748,7 +8748,7 @@ While we won’t examine the mathematics, it’s instructive to observe
 
 [pos_ratio_polynom()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n797) in Listing 10-87.
 
- 
+
 
 783 */\**
 
@@ -8756,11 +8756,11 @@ While we won’t examine the mathematics, it’s instructive to observe
 
 788 *\* it's a 3rd order polynomial that subjects to* 789 *\**
 
- 
 
 
 
- 
+
+
 
 790 *\* (1) f(freerun) = 2.0 =\> rampup dirty_ratelimit reasonably fast* 791 *\* (2) f(setpoint) = 1.0 =\> the balance point* 792 *\* (3) f(limit)* *= 0* *=\> the hard limit* 793 *\* (4) df/dx* *\<= 0* *=\> negative feedback control* 794 *\* (5) the closer to setpoint, the smaller \|df/dx\| (and the reverse)* 795 *\** *=\> fast response on large errors; small oscillation near setpoint* 796 *\*/*
 
@@ -8778,11 +8778,11 @@ While we won’t examine the mathematics, it’s instructive to observe
 
 811 **return clamp**(pos_ratio, 0**LL**, 2**LL** \<\< **RATELIMIT_CALC_SHIFT**); 812 }
 
- 
+
 
 *Listing 10-87:* mm/page-writeback.c: [*pos_ratio_polynom()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n797)
 
- 
+
 
 Importantly, note that lengths are taken in order to maintain this cal-
 
@@ -8828,11 +8828,11 @@ old [struct dirty_throttle_control-\>wb_thresh](https://git.kernel.org/pub/scm/l
 
 [struct dirty_throttle_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n123)-\>thresh.
 
- 
 
 
 
- 
+
+
 
 We therefore obtain a scaled [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)-specific setpoint
 
@@ -8842,17 +8842,17 @@ Again we do not dwell the mathematical details of this function as they
 
 are somewhat out of the scope of the book.
 
- 
+
 
 **10.19 Dirty Limits**
 
- 
+
 
 As we’ve examined both global and [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)[-specif](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)ic threshold values, let’s look at how these are calculated. The global values are calcu-
 
 lated in [domain_dirty_limits()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n374) as shown in Listing 10-88 (eliding out of scope cgroup writeback and tracing logic).
 
- 
+
 
 365 */\*\**
 
@@ -8884,11 +8884,11 @@ lated in [domain_dirty_limits()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 417 **if** (bg_thresh \>= thresh) 418 bg_thresh = thresh / 2; 419 tsk = current;
 
- 
 
 
 
- 
+
+
 
 420 **if** (**rt_task**(tsk)) { 421 bg_thresh += bg_thresh / 4 + global_wb_domain.dirty_limit /
 
@@ -8902,11 +8902,11 @@ lated in [domain_dirty_limits()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 430 }
 
- 
+
 
 *Listing 10-88:* mm/page-writeback.c: [*domain_dirty_limits()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n374)
 
- 
+
 
 This retrieves the vm.dirty_bytes from the [vm_dirty_bytes](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n96) global variable
 
@@ -8956,7 +8956,7 @@ We determine [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/
 
 [wb_dirty_limits()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1509) which we explore in Listing 10-89.
 
- 
+
 
 1509 **static inline void wb_dirty_limits**(**struct** dirty_throttle_control \*dtc) 1510 {
 
@@ -8966,11 +8966,11 @@ We determine [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/
 
 1515 *\* wb_thresh is not treated as some limiting factor as* 1516 *\* dirty_thresh, due to reasons* 1517 *\* - in JBOD setup, wb_thresh can fluctuate a lot* 1518 *\* - in a system with HDD and USB key, the USB key may somehow* 1519 *\** *go into state (wb_dirty \>\> wb_thresh) either because* 1520 *\** *wb_dirty starts high, or because wb_thresh drops low.*
 
- 
 
 
 
- 
+
+
 
 1521 *\** *In this case we don't want to hard throttle the USB key* 1522 *\** *dirtiers for 100 seconds until wb_dirty drops under* 1523 *\** *wb_thresh. Instead the auxiliary wb control line in* 1524 *\** *wb_position_ratio() will let the dirtier task progress* 1525 *\** *at some rate \<= (write_bw / 2) for bringing down wb_dirty.* 1526 *\*/*
 
@@ -8998,11 +8998,11 @@ We determine [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/
 
 1548 }
 
- 
+
 
 *Listing 10-89:* mm/page-writeback.c: [*wb_dirty_limits()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1509)
 
- 
+
 
 This defers the calculation of the [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)[-specif](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105)ied dirty
 
@@ -9028,11 +9028,11 @@ in [WB_STAT_BATCH](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linu
 
 [wb_stat_sum()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev.h?h=v6.0#n86) rather than [wb_stat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev.h?h=v6.0#n81) to force the summing of each per-CPU value rather than taking the typical batch-updated value.
 
- 
 
 
 
- 
+
+
 
 We store this dirty count in [struct dirty_throttle_control-\>wb_dirty](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n123).
 
@@ -9040,7 +9040,7 @@ Let’s now examine [\_\_wb_calc_thresh()](https://git.kernel.org/pub/scm/linux/
 
 [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) dirty threshold calculation in Listing 10-90.
 
- 
+
 
 728 */\*\**
 
@@ -9102,11 +9102,11 @@ Let’s now examine [\_\_wb_calc_thresh()](https://git.kernel.org/pub/scm/linux/
 
 767 **wb_min_max_ratio**(dtc-\>wb, &wb_min_ratio, &wb_max_ratio);
 
- 
 
 
 
- 
+
+
 
 768
 
@@ -9114,11 +9114,11 @@ Let’s now examine [\_\_wb_calc_thresh()](https://git.kernel.org/pub/scm/linux/
 
 773 **return** wb_thresh; 774 }
 
- 
+
 
 *Listing 10-90:* mm/page-writeback.c: [*\_\_wb_calc_thresh()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n749)
 
- 
+
 
 This obtains a fraction representing the proportion of
 
@@ -9138,11 +9138,11 @@ minimum and maximum ratio sysfs tunables described in
 
 [Documentation/ABI/testing/sysfs-class-bdi](https://elixir.bootlin.com/linux/v6.0/source/Documentation/ABI/testing/sysfs-class-bdi) tunables documentation. The min-imum and maximum ratios default to 0% and 100% respectively, so unless these are specified to be otherwise, this will have no effect.
 
- 
+
 
 **10.20 Dirty Poll Interval**
 
- 
+
 
 Let’s briefly examine [dirty_poll_interval()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1406)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1406) which determines the
 
@@ -9150,7 +9150,7 @@ Let’s briefly examine [dirty_poll_interval()](https://git.kernel.org/pub/scm/l
 
 shown in Listing 10-91.
 
- 
+
 
 1398 */\**
 
@@ -9172,21 +9172,21 @@ shown in Listing 10-91.
 
 1409 **if** (thresh \> dirty) 1410 **return** 1UL \<\< (**ilog2**(thresh - dirty) \>\> 1); 1411
 
- 
 
 
 
- 
+
+
 
 1412 **return** 1;
 
 1413 }
 
- 
+
 
 *Listing 10-91:* mm/page-writeback.c: [*dirty_poll_interval()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1406)
 
- 
+
 
 This determines the number of pages to be dirtied prior to *√*
 
@@ -9198,11 +9198,11 @@ exceeds the dirty threshold at this point we default the result to 1 to encour-
 
 age dirty throttling to occur almost immediately.
 
- 
+
 
 **10.21 Dirty Rate Limit**
 
- 
+
 
 We have now examined the means by which a great many of the param-
 
@@ -9216,7 +9216,7 @@ ing 10-92 (eliding out of scope BDI strict limit mode and tracing logic and
 
 some superfluous comments).
 
- 
+
 
 1166 */\**
 
@@ -9244,11 +9244,11 @@ bg_thresh);
 
 1193 *\*/*
 
- 
 
 
 
- 
+
+
 
 1194 dirty_rate = (dirtied - wb-\>dirtied_stamp) \* **HZ** / elapsed; 1195
 
@@ -9318,17 +9318,17 @@ bg_thresh);
 
 1244 *\** *wb-\>dirty_ratelimit = balanced_dirty_ratelimit;* 1245 *\**
 
- 
 
 
 
- 
+
+
 
 *Listing 10-92:* mm/page-writeback.c: [*wb_update_dirty_ratelimit()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1172) *basic*
 
 *calculation*
 
- 
+
 
 We start by examining the core dirty rate logic. The function is invoked
 
@@ -9364,7 +9364,7 @@ Note that, importantly, this is the per[-](https://git.kernel.org/pub/scm/linux/
 
 rather than global dirty rate.
 
- 
+
 
 **N O T E** Here I refer to threads in order specifically to differentiate between processes which
 
@@ -9378,7 +9378,7 @@ a task one, embodied in a [*struct task_struct*](https://git.kernel.org/pub/scm/
 
 larity rather than a process one.
 
- 
+
 
 The dirty_ratelimit variable is set to [struct bdi_writeback-\>dirty_ratelimit](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105),
 
@@ -9420,11 +9420,11 @@ The issue is that we do not know N. Instead we infer it—if we assume that
 
 the dirty rate expressed in dirty_rate is achieving this aim, then we can infer
 
- 
 
 
 
- 
+
+
 
 that *dirty*\_*rate* = *N* *×* *task*\_*ratelimit*, as each thread which is writing back would be operating at this rate limit.
 
@@ -9452,7 +9452,7 @@ which does not vary as much as this potentially will to ease calculations which 
 
 do so as shown in Listing 10-93.
 
- 
+
 
 1246 \* However to get a more stable dirty_ratelimit, the below elaborated
 
@@ -9492,11 +9492,11 @@ do so as shown in Listing 10-93.
 
 1272 *\* due to the small 200ms estimation period of dirty_rate (we want to*
 
- 
 
 
 
- 
+
+
 
 1273 *\* keep that period small to reduce time lags).* 1274 *\*/*
 
@@ -9530,11 +9530,11 @@ do so as shown in Listing 10-93.
 
 1322 dirty_ratelimit -= step;
 
- 
+
 
 *Listing 10-93:* mm/page-writeback.c: [*wb_update_dirty_ratelimit()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1172) *refinement*
 
- 
+
 
 As usual we do not delve too deeply into the mathematics for brevity, but
 
@@ -9544,7 +9544,7 @@ Finally, we examine how these rate limit values are outputted in Listing
 
 10-94.
 
- 
+
 
 1246 **WRITE_ONCE**(wb-\>dirty_ratelimit, **max**(dirty_ratelimit, 1UL)); 1247 wb-\>balanced_dirty_ratelimit = balanced_dirty_ratelimit;
 
@@ -9552,11 +9552,11 @@ Finally, we examine how these rate limit values are outputted in Listing
 
 1328 }
 
- 
+
 
 *Listing 10-94:* mm/page-writeback.c: [*wb_update_dirty_ratelimit()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1172) *suffix*
 
- 
+
 
 Here we store the raw balanced dirty rate balanced_dirty_ratelimit in
 
@@ -9564,21 +9564,21 @@ Here we store the raw balanced dirty rate balanced_dirty_ratelimit in
 
 dirty_ratelimit in [struct bdi_writeback-\>dirty_ratelimit](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105).
 
- 
 
 
 
- 
+
+
 
 **10.22 Maximum and Minimum Pause Time**
 
- 
+
 
 In order to prevent threads from entirely freezing and to avoid sleeps so long writeback falls off altogether, we specify a maximum task pause period,
 
 calculated in [wb_max_pause()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1415)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1415) which we explore in Listing **??**.
 
- 
+
 
 1415 **static unsigned long wb_max_pause**(**struct** bdi_writeback \*wb, 1416 **unsigned long** wb_dirty) 1417 {
 
@@ -9606,11 +9606,11 @@ calculated in [wb_max_pause()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 1431 **return min_t**(**unsigned long**, t, **MAX_PAUSE**); 1432 }
 
- 
+
 
 *Listing 10-95:* mm/page-writeback.c: [*wb_max_pause()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1415)
 
- 
+
 
 This is always capped by [MAX_PAUSE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n47), which is hardcoded to 200ms, so we
 
@@ -9648,15 +9648,15 @@ This calculation is simple relative to that for the minimum pause, which
 
 is determined by [wb_min_pause()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1434)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1434) which we examine in Listing 10-96 (eliding some of the longer comments which, while useful, take up rather a lot of space).
 
- 
+
 
 1434 **static long wb_min_pause**(**struct** bdi_writeback \*wb,
 
- 
 
 
 
- 
+
+
 
 1435 **long** max_pause, 1436 **unsigned long** task_ratelimit, 1437 **unsigned long** dirty_ratelimit, 1438 **int** \*nr_dirtied_pause) 1439 {
 
@@ -9694,11 +9694,11 @@ is determined by [wb_min_pause()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 1506 **return** pages \>= **DIRTY_POLL_THRESH** ? 1 + t / 2 : t; 1507 }
 
- 
+
 
 *Listing 10-96:* mm/page-writeback.c: [*wb_min_pause()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1434)
 
- 
+
 
 We establish a baseline of 10ms, which we initially scale up using loga-
 
@@ -9706,11 +9706,11 @@ rithms such that this time is multiplied by *M* *M* for 2 concurrent threads, en
 
 suring that each thread receives sufficient time to dirty pages, while scaling
 
- 
 
 
 
- 
+
+
 
 in such a way that we don’t slow things down. We clamp this to a maximum of half the previously determined maximum pause time.
 
@@ -9742,7 +9742,7 @@ This allows processes to operate for a period of time without triggering
 
 dirty throttling (as they will be rate limited) and reduces latency.
 
- 
+
 
 **10.23 Core Dirty Throttling**
 
@@ -9760,7 +9760,7 @@ the relevant [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/
 
 (equal to the current thread’s [struct task_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727)-\>nr_dirtied) and flags (these flags are only used by an out of scope caller so we can ignore them).
 
- 
+
 
 1550 */\**
 
@@ -9784,11 +9784,11 @@ the relevant [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/
 
 1559 {
 
- 
 
 
 
- 
+
+
 
 1560 **struct** dirty_throttle_control gdtc_stor = { **GDTC_INIT**(wb) };
 
@@ -9812,11 +9812,11 @@ the relevant [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/
 
 1577 **unsigned long** start_time = **jiffies**; 1578 **int** ret = 0;
 
- 
+
 
 *Listing 10-97:* mm/page-writeback.c: [*balance_dirty_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557) *Prelude*
 
- 
+
 
 We start by establishing a [struct dirty_throttle_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n123) objet which we
 
@@ -9832,7 +9832,7 @@ After this, we start an infinite loop, one which is typically exited without
 
 repeating. We explore the beginning of this loop in Listing 10-98.
 
- 
+
 
 1580 **for** (;;) {
 
@@ -9864,11 +9864,11 @@ repeating. We explore the beginning of this loop in Listing 10-98.
 
 1635 *\* minimal disk activity.*
 
- 
 
 
 
- 
+
+
 
 1636 *\**
 
@@ -9880,11 +9880,11 @@ repeating. We explore the beginning of this loop in Listing 10-98.
 
 1640 **if** (!laptop_mode && nr_reclaimable \> gdtc-\>bg_thresh && 1641 !**writeback_in_progress**(wb)) 1642 **wb_start_background_writeback**(wb);
 
- 
+
 
 *Listing 10-98:* mm/page-writeback.c: [*balance_dirty_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557) *Initial Checks*
 
- 
+
 
 We set the [struct dirty_throttle_control-\>avail](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n123) field to the total global
 
@@ -9916,7 +9916,7 @@ Next, we gather the statistics previously discussed in order to be able to
 
 perform dirty throttling, which we examine in Listing 10-99.
 
- 
+
 
 1644 */\**
 
@@ -9950,11 +9950,11 @@ perform dirty throttling, which we examine in Listing 10-99.
 
 1674 */\* Start writeback even when in laptop mode \*/*
 
- 
 
 
 
- 
+
+
 
 1675 **if** (**unlikely**(!**writeback_in_progress**(wb))) 1676 **wb_start_background_writeback**(wb);
 
@@ -9980,11 +9980,11 @@ perform dirty throttling, which we examine in Listing 10-99.
 
 1736 **if** (**time_is_before_jiffies**(**READ_ONCE**(wb-\>bw_time_stamp) + 1737 **BANDWIDTH_INTERVAL**)) 1738 **\_\_wb_update_bandwidth**(gdtc, mdtc, **true**);
 
- 
+
 
 *Listing 10-99:* mm/page-writeback.c: [*balance_dirty_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557) *Gather Statistics*
 
- 
+
 
 We start by determining whether the global number of dirty pages is
 
@@ -10030,11 +10030,11 @@ We calculate the position ratio for the global
 
 [struct dirty_throttle_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n123) object via [wb_position_ratio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n889) (see Listing
 
- 
 
 
 
- 
+
+
 
 10-86), and take a copy of the pointer to the global dirty throttle control object in sdtc.
 
@@ -10056,7 +10056,7 @@ Next we perform the actual pausing of the calling thread, explored in
 
 Listing 10-100.
 
- 
+
 
 1740 */\* throttle according to the chosen dtc \*/* 1741 dirty_ratelimit = **READ_ONCE**(wb-\>dirty_ratelimit); 1742 task_ratelimit = ((**u64**)dirty_ratelimit \* sdtc-\>pos_ratio) \>\> 1743 **RATELIMIT_CALC_SHIFT**;
 
@@ -10084,11 +10084,11 @@ Listing 10-100.
 
 1778 **if** (pause \< -**HZ**) { 1779 **current**-\>dirty_paused_when = now; 1780 **current**-\>nr_dirtied = 0; 1781 } **else if** (period) { 1782 **current**-\>dirty_paused_when += period; 1783 **current**-\>nr_dirtied = 0; 1784 } **else if** (**current**-\>nr_dirtied_pause \<= pages_dirtied)
 
- 
 
 
 
- 
+
+
 
 1785 **current**-\>nr_dirtied_pause += pages_dirtied; 1786 **break**; 1787 }
 
@@ -10102,11 +10102,11 @@ Listing 10-100.
 
 1811 **\_\_set_current_state**(**TASK_KILLABLE**); 1812 wb-\>dirty_sleep = now; 1813 **io_schedule_timeout**(pause);
 
- 
+
 
 *Listing 10-100:* mm/page-writeback.c: [*balance_dirty_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557) *Thread Pausing*
 
- 
+
 
 We establish the [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) dirty rate limit and place it in
 
@@ -10168,11 +10168,11 @@ the [struct task_struct-\>dirty_paused_when](https://git.kernel.org/pub/scm/linu
 
 ied pages, essentially ‘skipping’ these pages.
 
- 
 
 
 
- 
+
+
 
 Finally if the number of dirtied pages is very small, but is higher than the
 
@@ -10202,7 +10202,7 @@ After this we perform some house keeping and determine whether to
 
 persist in the loop, as explored in Listing 10-101.
 
- 
+
 
 1740 **current**-\>dirty_paused_when = now + pause; 1741 **current**-\>nr_dirtied = 0; 1742 **current**-\>nr_dirtied_pause = nr_dirtied_pause; 1743
 
@@ -10238,11 +10238,11 @@ persist in the loop, as explored in Listing 10-101.
 
 1764 **if** (**fatal_signal_pending**(**current**))
 
- 
 
 
 
- 
+
+
 
 1765 **break**; 1766 }
 
@@ -10250,7 +10250,7 @@ persist in the loop, as explored in Listing 10-101.
 
 1768 }
 
- 
+
 
 *Listing 10-101:* mm/page-writeback.c: [*balance_dirty_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557) *Suffix*
 
@@ -10284,11 +10284,11 @@ Otherwise, in cases of extreme dirtying we repeat the procedure until we
 
 are able to bring the thread into line.
 
- 
+
 
 **10.24 Writeback Chunk Size**
 
- 
+
 
 When writing back, we determine the ‘chunk size’ i.e the number of pages
 
@@ -10296,7 +10296,7 @@ to write back in one batched operation in [writeback_sb_inodes()](https://git.ke
 
 10-62) via [writeback_chunk_size()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1732)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1732) which we explore in Listing 10-102.
 
- 
+
 
 1732 **static long writeback_chunk_size**(**struct** bdi_writeback \*wb, 1733 **struct** wb_writeback_work \*work) 1734 {
 
@@ -10314,11 +10314,11 @@ to write back in one batched operation in [writeback_sb_inodes()](https://git.ke
 
 1750 **if** (work-\>sync_mode == **WB_SYNC_ALL** \|\| work-\>tagged_writepages) 1751 pages = **LONG_MAX**;
 
- 
 
 
 
- 
+
+
 
 1752 **else** {
 
@@ -10330,7 +10330,7 @@ to write back in one batched operation in [writeback_sb_inodes()](https://git.ke
 
 1761 }
 
- 
+
 
 *Listing 10-102:* fs/fs-writeback.c: [*writeback_chunk_size()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/fs-writeback.c?h=v6.0#n1732)
 
@@ -10352,11 +10352,11 @@ All of this is designed to heuristically avoid issues with locking and to
 
 improve performance.
 
- 
+
 
 **10.25 Background Writeback Threshold**
 
- 
+
 
 When checking to determine whether the current [struct bdi_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/backing-dev-defs.h?h=v6.0#n105) object
 
@@ -10366,7 +10366,7 @@ invoked by [wb_check_background_flush()](https://git.kernel.org/pub/scm/linux/ke
 
 We examine this in Listing 10-103, eliding out of scope cgroup handling.
 
- 
+
 
 1955 */\*\**
 
@@ -10390,11 +10390,11 @@ We examine this in Listing 10-103, eliding out of scope cgroup handling.
 
 . . .
 
- 
 
 
 
- 
+
+
 
 1971 **unsigned long** reclaimable; 1972 **unsigned long** thresh; 1973
 
@@ -10420,11 +10420,11 @@ We examine this in Listing 10-103, eliding out of scope cgroup handling.
 
 2016 }
 
- 
+
 
 *Listing 10-103:* mm/page-writeback.c: [*wb_over_bg_thresh()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1964)
 
- 
+
 
 This function is something like a mini-[balance_dirty_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n1557) (see Listing
 
@@ -10462,23 +10462,23 @@ We invoke [wb_calc_thresh()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 specified dirty threshold, which we examine in Listing 10-104.
 
- 
+
 
 776 **unsigned long wb_calc_thresh**(**struct** bdi_writeback \*wb, **unsigned long** thresh) 777 {
 
- 
 
 
 
- 
+
+
 
 778 **struct** dirty_throttle_control gdtc = { **GDTC_INIT**(wb), 779 .thresh = thresh }; 780 **return \_\_wb_calc_thresh**(&gdtc); 781 }
 
- 
+
 
 *Listing 10-104:* mm/page-writeback.c: [*wb_calc_thresh()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n776)
 
- 
+
 
 This is simply a wrapper around [\_\_wb_calc_thresh()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n749) (see Listing 10-90),
 
@@ -10492,12 +10492,5 @@ If this exceeds the hard dirty threshold of the [struct bdi_writeback](https://g
 
 we heuristically deem this worthy of background writeback and thus return indicating that the threshold has been breached, otherwise we do not.
 
- 
 
 
-
- 
-
-**11**
-
- 

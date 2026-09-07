@@ -6,7 +6,7 @@ Part 2: Graph Algorithms and Data
 
 Structures
 
- 
+
 
 Tim Roughgarden
 
@@ -24,7 +24,7 @@ ISBN: 978-0-9992829-3-9 (ebook)
 
 Library of Congress Control Number: 2017914282
 
- 
+
 
 Soundlikeyourself Publishing, LLC
 
@@ -36,13 +36,13 @@ soundlikeyourselfpublishing@gmail.com
 
 In memory of James Wesley Shean
 
- 
+
 
 (1921–2010)
 
 ## Contents
 
- 
+
 
 Preface vii
 
@@ -98,7 +98,7 @@ Problems 91
 
 v vi Contents
 
- 
+
 
 10.4 Speeding Up Dijkstra’s Algorithm 106
 

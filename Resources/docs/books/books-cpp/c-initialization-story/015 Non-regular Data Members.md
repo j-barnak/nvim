@@ -8,7 +8,7 @@ However, you can also have other categories of objects in a class. For example, 
 
 In this chapter, we’ll shed some light on such cases.
 
- 
+
 
 **Constant non-static data members**
 
@@ -48,7 +48,7 @@ https://en.cppreference.com/w/cpp/concepts/regular.
 
 Non-regular Data Members 151
 
- 
+
 
 **int** main() {
 
@@ -60,7 +60,7 @@ ProductConst copy { tvset };
 
 std::cout \<\< copy.name() \<\< ", id: " \<\< copy.id() \<\< '\n'; }
 
- 
+
 
 In the example above, the class ProductConst has a constant data member id\_. We can set the constant inside the constructor; from now on, it will be fixed, and we won’t be able to change its value.
 
@@ -118,7 +118,7 @@ You can read more about this semantic problem with constant data members in a
 
 good overview by Arthur O’Dwyer; see at [const](https://quuxplusone.github.io/blog/2022/01/23/dont-const-all-the-things/) [all the things?](https://quuxplusone.github.io/blog/2022/01/23/dont-const-all-the-things/)³.
 
- 
+
 
 We can summarize a class type with a const non-static data member as:
 
@@ -136,7 +136,7 @@ We can summarize a class type with a const non-static data member as:
 
 Non-regular Data Members 153
 
- 
+
 
 **Pointers as data members**
 
@@ -174,7 +174,7 @@ std::cout \<\< \*w.name() \<\< '\n'; // urgh... !!
 
 std::cout \<\< \*w.name() \<\< '\n'; // urgh... !! }
 
- 
+
 
 It looks simple. pName\_ is a raw pointer to std::string, and when used correctly, it seems to work. A pointer can be copied and assigned; thus, the compiler creates the default copy constructor, move constructor, copy assignment and move assignment.
 
@@ -186,7 +186,7 @@ Every time you access a pointer, you should check if it’s not null. For exampl
 
 Non-regular Data Members 154
 
- 
+
 
 It can generate undefined behavior if pName\_ is null. In practical terms, you’ll probably get a runtime crash on x86/64 platforms like Windows or Linux.
 
@@ -222,7 +222,7 @@ abbreviation⁴.
 
 Here’s one version of the pattern and raw pointers:
 
- 
+
 
 ⁴PIMPL is often used to reduce compilation times, and in C++20, this might not be needed because of modules. Still, PIMPL
 
@@ -280,7 +280,7 @@ You can read about all benefits of this pattern in my article [The Pimpl Pattern
 
 [Non-regular Data Members 156](https://www.cppstories.com/2018/01/pimpl/)
 
- 
+
 
 [should know - C++ Stories⁵](https://www.cppstories.com/2018/01/pimpl/).
 
@@ -302,7 +302,7 @@ In all of the above cases, the lifetime of the stored pointer is “inside” or
 
 Raw pointers are usually tricky to use, so be careful or use smart pointers.
 
- 
+
 
 In summary, a class type with a raw pointer non-static data member has the following properties:
 
@@ -316,19 +316,19 @@ In summary, a class type with a raw pointer non-static data member has the follo
 
 the operations will also be shallow!
 
- 
+
 
 **Smart pointers as data members**
 
 If you need to use a pointer as a data member, consider using a smart pointer. The main benefit of smart pointers is that they wrap resource creation and deletion. That’s why you don’t need to remember about releasing a resource manually. Let’s have a look at the example which shows a unique_ptr inside a class:
 
- 
+
 
 ⁵<https://www.cppstories.com/2018/01/pimpl/>
 
 Non-regular Data Members 157
 
- 
+
 
 **Ex 10.3. A unique pointer as a data member. Run** [**@Compiler Explorer**](https://godbolt.org/z/qWdMaoM6E) **struct Value** {
 
@@ -458,7 +458,7 @@ Going further, here’s an improved version, which uses unique_ptr based on our 
 
 Non-regular Data Members 160
 
- 
+
 
 **Ex 10.4. PIMPL with** **unique_ptr****, header. Run** [**@Wandbox**](https://wandbox.org/permlink/r7zLHqaMfLu1emIO)
 
@@ -500,7 +500,7 @@ MyClassImpl\* Pimpl() { **return** m_pImpl.get(); }
 
 std::unique_ptr\<MyClassImpl\> m_pImpl; };
 
- 
+
 
 And the source file:
 
@@ -526,7 +526,7 @@ And the source file:
 
 Non-regular Data Members 161
 
- 
+
 
 MyClass::MyClass() : m_pImpl(std::make_unique\<MyClassImpl\>()) { }
 
@@ -564,7 +564,7 @@ Pimpl()-\>DoConst();
 
 The above code uses unique_ptr to hold the pointer to “implementation”. The class defines special member functions so that when you copy an object, you’ll copy the implementation details.
 
- 
+
 
 **Using** **std::shared_ptr**
 
@@ -572,7 +572,7 @@ On the other hand, we can also use shared_ptr, which has different semantics. Ra
 
 Non-regular Data Members 162
 
- 
+
 
 **Ex 10.5. A shared pointer as a data member. Run** [**@Compiler Explorer**](https://godbolt.org/z/jGPxGMTb7)
 
@@ -634,7 +634,7 @@ Non-regular Data Members 163
 
 cout \<\< "pId use count: " \<\< pId.use_count() \<\< '\n'; }
 
- 
+
 
 Value(123)
 
@@ -658,7 +658,7 @@ pId use count: 2
 
 As you can see, we still have a single Value resource, and then we pass it to the tvset object. When we copy the object into copy, the pointer is shared (the resource is not copied). This is safer than a shallow copy of a raw pointer because we have precise semantics, and we can see where are the owners of the resource. For example, when copy goes out of scope, it won’t delete the Value object; it will just decrease the reference counter (see “use count” going from 3 to 2). In the end, tvset as well as pId goes out of scope, the reference counter decreases to zero, and thus the memory block is deleted.
 
- 
+
 
 **Summary for smart pointers**
 
@@ -680,7 +680,7 @@ is still safer than copying raw pointers, as this time, we copy shared pointers 
 
 Non-regular Data Members 164
 
- 
+
 
 **References as data members**
 
@@ -808,7 +808,7 @@ std::string & str;
 
 See [@C++Insights⁶](https://cppinsights.io/s/82fbe838).
 
- 
+
 
 **Changing to** **std::reference_wrapper**
 
@@ -876,7 +876,7 @@ references.
 
 Non-regular Data Members 168
 
- 
+
 
 • Passing reference-like arguments to the start function of std::thread.
 
@@ -884,7 +884,7 @@ Non-regular Data Members 168
 
 std::refrence_wrapper is usually implemented as a raw pointer to the wrapped type. Extra member functions and operators make it “feel” like a reference type that can also rebind.
 
- 
+
 
 **Summary**
 
@@ -912,7 +912,7 @@ cout \<\< "copy constructible " \<\< is_copy_constructible_v\<T\> \<\< " \| ";
 
 cout \<\< "move constructible " \<\< is_move_constructible_v\<T\> \<\< '\n'; }
 
- 
+
 
 Using the above function template, I generated the following table:
 
@@ -920,7 +920,7 @@ Non-regular Data Members 169
 
 ![](media/index-184_1.png)
 
- 
+
 
 **Non-regular data members summary**
 

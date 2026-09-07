@@ -43,7 +43,7 @@ int main(int argc, const char* argv[]) {
 
 If you pass no arguments to the executable, you are dropped into the REPL. A single command line argument is understood to be the path to a script to run.
 
-The code tests for one and two arguments, not zero and one, because the first argument in `argv` is always the name of the executable being run.
+> The code tests for one and two arguments, not zero and one, because the first argument in `argv` is always the name of the executable being run.
 
 We’ll need a few system headers, so let’s get them all out of the way.
 
@@ -104,9 +104,9 @@ We read the file and execute the resulting string of Lox source code. Then, base
 
 We also need to free the source code string because `readFile()` dynamically allocates it and passes ownership to its caller. That function looks like this:
 
-C asks us not just to manage memory explicitly, but *mentally*. We programmers have to remember the ownership rules and hand-implement them throughout the program. Java just does it for us. C++ gives us tools to encode the policy directly so that the compiler validates it for us.
-
-I like C’s simplicity, but we pay a real price for it—the language requires us to be more conscientious.
+> C asks us not just to manage memory explicitly, but *mentally*. We programmers have to remember the ownership rules and hand-implement them throughout the program. Java just does it for us. C++ gives us tools to encode the policy directly so that the compiler validates it for us.
+>
+> I like C’s simplicity, but we pay a real price for it—the language requires us to be more conscientious.
 
 ```
 static char* readFile(const char* path) {
@@ -131,7 +131,7 @@ Like a lot of C code, it takes more effort than it seems like it should, especia
 
 The code here is the classic trick to solve that. We open the file, but before reading it, we seek to the very end using `fseek()`. Then we call `ftell()` which tells us how many bytes we are from the start of the file. Since we seeked (sought?) to the end, that’s the size. We rewind back to the beginning, allocate a string of that size, and read the whole file in a single batch.
 
-Well, that size *plus one*. Always gotta remember to make room for the null byte.
+> Well, that size *plus one*. Always gotta remember to make room for the null byte.
 
 So we’re done, right? Not quite. These function calls, like most calls in the C standard library, can fail. If this were Java, the failures would be thrown as exceptions and automatically unwind the stack so we wouldn’t *really* need to handle them. In C, if we don’t check for them, they silently get ignored.
 
@@ -200,7 +200,7 @@ Finally, the read itself may fail.
 
 This is also unlikely. Actually, the calls to `fseek()`, `ftell()`, and `rewind()` could theoretically fail too, but let’s not go too far off in the weeds, shall we?
 
-Even good old `printf()` can fail. Yup. How many times have you handled *that* error?
+> Even good old `printf()` can fail. Yup. How many times have you handled *that* error?
 
 ### 16.1.1 Opening the compilation pipeline
 
@@ -324,7 +324,7 @@ There are surprisingly few fields. The `start` pointer marks the beginning of th
 
 ![The start and current fields pointing at 'print bacon;'. Start points at 'b' and current points at 'o'.](media/image/scanning-on-demand/fields.png)
 
-Here, we are in the middle of scanning the identifier `bacon`. The current character is `o` and the character we most recently consumed is `c`.
+> Here, we are in the middle of scanning the identifier `bacon`. The current character is `o` and the character we most recently consumed is `c`.
 
 We have a `line` field to track what line the current lexeme is on for error reporting. That’s it! We don’t even keep a pointer to the beginning of the source code string. The scanner works its way through the code once and is done after that.
 
@@ -376,7 +376,7 @@ Unfortunately, we don’t have a compiler yet that can ask the scanner for token
 
 *compiler.c*, in *compile*()
 
-That `%.*s` in the format string is a neat feature. Usually, you set the output precision—the number of characters to show—by placing a number inside the format string. Using `*` instead lets you pass the precision as an argument. So that `printf()` call prints the first `token.length` characters of the string at `token.start`. We need to limit the length like that because the lexeme points into the original source string and doesn’t have a terminator at the end.
+> That `%.*s` in the format string is a neat feature. Usually, you set the output precision—the number of characters to show—by placing a number inside the format string. Using `*` instead lets you pass the precision as an argument. So that `printf()` call prints the first `token.length` characters of the string at `token.start`. We need to limit the length like that because the lexeme points into the original source string and doesn’t have a terminator at the end.
 
 This loops indefinitely. Each turn through the loop, it scans one token and prints it. When it reaches a special “end of file” token or an error, it stops. For example, if we run the interpreter on this program:
 
@@ -395,7 +395,7 @@ It prints out:
 
 The first column is the line number, the second is the numeric value of the token type, and then finally the lexeme. That last empty lexeme on line 2 is the EOF token.
 
-Yeah, the raw index of the token type isn’t exactly human readable, but it’s all C gives us.
+> Yeah, the raw index of the token type isn’t exactly human readable, but it’s all C gives us.
 
 The goal for the rest of the chapter is to make that blob of code work by implementing this key function:
 
@@ -479,7 +479,7 @@ The novel part in clox’s Token type is how it represents the lexeme. In jlox, 
 
 Instead, we use the original source string as our character store. We represent a lexeme by a pointer to its first character and the number of characters it contains. This means we don’t need to worry about managing memory for lexemes at all and we can freely copy tokens around. As long as the main source code string outlives all of the tokens, everything works fine.
 
-I don’t mean to sound flippant. We really do need to think about and ensure that the source string, which is created far away over in the “main” module, has a long enough lifetime. That’s why `runFile()` doesn’t free the string until `interpret()` finishes executing the code and returns.
+> I don’t mean to sound flippant. We really do need to think about and ensure that the source string, which is created far away over in the “main” module, has a long enough lifetime. That’s why `runFile()` doesn’t free the string until `interpret()` finishes executing the code and returns.
 
 ### 16.2.1 Scanning tokens
 
@@ -545,9 +545,9 @@ static Token errorToken(const char* message) {
 
 *scanner.c*, add after *makeToken*()
 
-This part of the chapter is pretty dry, so here’s a picture of an axolotl.
-
-![A drawing of an axolotl.](media/image/scanning-on-demand/axolotl.png)
+> This part of the chapter is pretty dry, so here’s a picture of an axolotl.
+>
+> ![A drawing of an axolotl.](media/image/scanning-on-demand/axolotl.png)
 
 The only difference is that the “lexeme” points to the error message string instead of pointing into the user’s source code. Again, we need to ensure that the error message sticks around long enough for the compiler to read it. In practice, we only ever call this function with C string literals. Those are constant and eternal, so we’re fine.
 
@@ -803,7 +803,7 @@ Implementing that in C would require a lot of work. We’d need some sort of uni
 
 Instead of adding that complexity to the scanner, we defer converting the literal lexeme to a runtime value until later. In clox, tokens only store the lexeme—the character sequence exactly as it appears in the user’s source code. Later in the compiler, we’ll convert that lexeme to a runtime value right when we are ready to store it in the chunk’s constant table.
 
-Doing the lexeme-to-value conversion in the compiler does introduce some redundancy. The work to scan a number literal is awfully similar to the work required to convert a sequence of digit characters to a number value. But there isn’t *that* much redundancy, it isn’t in anything performance critical, and it keeps our scanner simpler.
+> Doing the lexeme-to-value conversion in the compiler does introduce some redundancy. The work to scan a number literal is awfully similar to the work required to convert a sequence of digit characters to a number value. But there isn’t *that* much redundancy, it isn’t in anything performance critical, and it keeps our scanner simpler.
 
 Next up, numbers. Instead of adding a switch case for each of the ten digits that can start a number, we handle them here:
 
@@ -910,7 +910,7 @@ Okay, I guess that’s not very exciting yet. That’s what it looks like if we 
 
 A hash table would be overkill anyway. To look up a string in a hash table, we need to walk the string to calculate its hash code, find the corresponding bucket in the hash table, and then do a character-by-character equality comparison on any string it happens to find there.
 
-Don’t worry if this is unfamiliar to you. When we get to building our own hash table from scratch, we’ll learn all about it in exquisite detail.
+> Don’t worry if this is unfamiliar to you. When we get to building our own hash table from scratch, we’ll learn all about it in exquisite detail.
 
 Let’s say we’ve scanned the identifier “gorgonzola”. How much work *should* we need to do to tell if that’s a reserved word? Well, no Lox keyword starts with “g”, so looking at the first character is enough to definitively answer no. That’s a lot simpler than a hash table lookup.
 
@@ -920,7 +920,7 @@ Here’s a visual representation of that branching character-inspection logic:
 
 ![A trie that contains all of Lox's keywords.](media/image/scanning-on-demand/keywords.png)
 
-Read down each chain of nodes and you’ll see Lox’s keywords emerge.
+> Read down each chain of nodes and you’ll see Lox’s keywords emerge.
 
 We start at the root node. If there is a child node whose letter matches the first character in the lexeme, we move to that node. Then repeat for the next letter in the lexeme and so on. If at any point the next letter in the lexeme doesn’t match a child node, then the identifier must not be a keyword and we stop. If we reach a double-lined box, and we’re at the last character of the lexeme, then we found a keyword.
 
@@ -928,7 +928,7 @@ We start at the root node. If there is a child node whose letter matches the fir
 
 This tree diagram is an example of a thing called a [**trie**](https://en.wikipedia.org/wiki/Trie). A trie stores a set of strings. Most other data structures for storing strings contain the raw character arrays and then wrap them inside some larger construct that helps you search faster. A trie is different. Nowhere in the trie will you find a whole string.
 
-“Trie” is one of the most confusing names in CS. Edward Fredkin yanked it out of the middle of the word “retrieval”, which means it should be pronounced like “tree”. But, uh, there is already a pretty important data structure pronounced “tree” *which tries are a special case of*, so unless you never speak of these things out loud, no one can tell which one you’re talking about. Thus, people these days often pronounce it like “try” to avoid the headache.
+> “Trie” is one of the most confusing names in CS. Edward Fredkin yanked it out of the middle of the word “retrieval”, which means it should be pronounced like “tree”. But, uh, there is already a pretty important data structure pronounced “tree” *which tries are a special case of*, so unless you never speak of these things out loud, no one can tell which one you’re talking about. Thus, people these days often pronounce it like “try” to avoid the headache.
 
 Instead, each string the trie “contains” is represented as a *path* through the tree of character nodes, as in our traversal above. Nodes that match the last character in a string have a special marker—the double lined boxes in the illustration. That way, if your trie contains, say, “banquet” and “ban”, you are able to tell that it does *not* contain “banque”—the “e” node won’t have that marker, while the “n” and “t” nodes will.
 
@@ -940,23 +940,23 @@ Our keyword tree is exactly a DFA that recognizes Lox keywords. But DFAs are mor
 
 ![A syntax diagram that recognizes integer and floating point literals.](media/image/scanning-on-demand/numbers.png)
 
-This style of diagram is called a [**syntax diagram**](https://en.wikipedia.org/wiki/Syntax_diagram) or the more charming **railroad diagram**. The latter name is because it looks something like a switching yard for trains.
-
-Back before Backus-Naur Form was a thing, this was one of the predominant ways of documenting a language’s grammar. These days, we mostly use text, but there’s something delightful about the official specification for a *textual language* relying on an *image*.
+> This style of diagram is called a [**syntax diagram**](https://en.wikipedia.org/wiki/Syntax_diagram) or the more charming **railroad diagram**. The latter name is because it looks something like a switching yard for trains.
+>
+> Back before Backus-Naur Form was a thing, this was one of the predominant ways of documenting a language’s grammar. These days, we mostly use text, but there’s something delightful about the official specification for a *textual language* relying on an *image*.
 
 I’ve collapsed the nodes for the ten digits together to keep it more readable, but the basic process works the same—you work through the path, entering nodes whenever you consume a corresponding character in the lexeme. If we were so inclined, we could construct one big giant DFA that does *all* of the lexical analysis for Lox, a single state machine that recognizes and spits out all of the tokens we need.
 
 However, crafting that mega-DFA by hand would be challenging. That’s why [Lex](https://en.wikipedia.org/wiki/Lex_(software)) was created. You give it a simple textual description of your lexical grammar—a bunch of regular expressions—and it automatically generates a DFA for you and produces a pile of C code that implements it.
 
-This is also how most regular expression engines in programming languages and text editors work under the hood. They take your regex string and convert it to a DFA, which they then use to match strings.
-
-If you want to learn the algorithm to convert a regular expression into a DFA, [the dragon book](https://en.wikipedia.org/wiki/Compilers:_Principles,_Techniques,_and_Tools) has you covered.
+> This is also how most regular expression engines in programming languages and text editors work under the hood. They take your regex string and convert it to a DFA, which they then use to match strings.
+>
+> If you want to learn the algorithm to convert a regular expression into a DFA, [the dragon book](https://en.wikipedia.org/wiki/Compilers:_Principles,_Techniques,_and_Tools) has you covered.
 
 We won’t go down that road. We already have a perfectly serviceable hand-rolled scanner. We just need a tiny trie for recognizing keywords. How should we map that to code?
 
 The absolute simplest solution is to use a switch statement for each node with cases for each branch. We’ll start with the root node and handle the easy keywords.
 
-Simple doesn’t mean dumb. The same approach is [essentially what V8 does](https://github.com/v8/v8/blob/e77eebfe3b747fb315bd3baad09bec0953e53e68/src/parsing/scanner.cc#L1643), and that’s currently one of the world’s most sophisticated, fastest language implementations.
+> Simple doesn’t mean dumb. The same approach is [essentially what V8 does](https://github.com/v8/v8/blob/e77eebfe3b747fb315bd3baad09bec0953e53e68/src/parsing/scanner.cc#L1643), and that’s currently one of the world’s most sophisticated, fastest language implementations.
 
 ```
 static TokenType identifierType() {
@@ -1057,13 +1057,13 @@ That’s it. A couple of nested `switch` statements. Not only is this code short
 
 And with that, our scanner is complete.
 
-We sometimes fall into the trap of thinking that performance comes from complicated data structures, layers of caching, and other fancy optimizations. But, many times, all that’s required is to do less work, and I often find that writing the simplest code I can is sufficient to accomplish that.
+> We sometimes fall into the trap of thinking that performance comes from complicated data structures, layers of caching, and other fancy optimizations. But, many times, all that’s required is to do less work, and I often find that writing the simplest code I can is sufficient to accomplish that.
 
 ## Challenges
 
 1.  Many newer languages support [**string interpolation**](https://en.wikipedia.org/wiki/String_interpolation). Inside a string literal, you have some sort of special delimiters—most commonly `${` at the beginning and `}` at the end. Between those delimiters, any expression can appear. When the string literal is executed, the inner expression is evaluated, converted to a string, and then merged with the surrounding string literal.
 
-    For example, if Lox supported string interpolation, then this . . . 
+    For example, if Lox supported string interpolation, then this . . . 
 
     ```
     var drink = "Tea";
@@ -1072,7 +1072,7 @@ We sometimes fall into the trap of thinking that performance comes from complica
     print "${drink} will be ready in ${steep + cool} minutes.";
     ```
 
-     . . . would print:
+     . . . would print:
 
         Tea will be ready in 6 minutes.
 

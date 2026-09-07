@@ -1,3 +1,5 @@
+![](media/index-295_1.jpg)
+
 5 FILE I/O AND LOGIN ACCOUNTING
 
 In the preceding chapter, we learned the fundamental concepts of file
@@ -2993,5 +2995,3 @@ times to compare their running times. If you have access to some
 Linux systems with many users, run the two versions on them to
 
 see which is faster.
-
-![](media/index-366_1.jpg)

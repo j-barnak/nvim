@@ -26,7 +26,6 @@ Welcome to chapter 3. If we spent the last chapter looking at Rust’s atoms, th
 
 This chapter focuses on two key building blocks for Rust programmers, struct and enum. Both are forms of *compound data types*. Together, struct and enum can compose other types to create something more useful than what those other types would be alone. Consider how a 2D point (x,y) is composed from two numbers, *x* and *y*. We wouldn’t want to maintain two variables, x and y, in our program. Instead, **77**
 
-**78**
 
 CHAPTER 3
 
@@ -142,7 +141,6 @@ Using type aliases to stub out a type
 
 ***Using plain functions to experiment with an API***
 
-**79**
 
 There are *lots* of things that needs to be built on from listing 3.1. For example
 
@@ -210,10 +208,8 @@ panic!("you have reached a dead end");
 
 **never to return.**
 
-**80**
 
 
-***Compound data types***
 
 ***(continued)***
 
@@ -323,9 +319,7 @@ Defining an instance of **struct** to represent files
 
 17 println!("{} is {} bytes long", f1_name, f1_length); 18 }
 
-***Modeling files with struct***
 
-**81**
 
 Here is a detailed overview of listing 3.2:
 
@@ -393,10 +387,8 @@ The **newtype** pattern
 
 Sometimes the type keyword is all that you need. But what about when you need the compiler to treat your new “type” as a fully-fledged, distinct type rather than just an alias? Enter newtype. The newtype pattern consists of wrapping a core type within a single field struct (or perhaps a tuple). The following code shows how to distinguish network hostnames from ordinary strings. You’ll find this code in ch3/ch3-newtype-pattern.rs:
 
-**82**
 
 
-***Compound data types***
 
 ***(continued)***
 
@@ -486,9 +478,7 @@ Using **struct** to mimic a file and simulate reading its contents 1 \#\![allow(
 
 **at the bottom of the listing)**
 
-***Modeling files with struct***
 
-**83**
 
 5 name: String,
 
@@ -630,10 +620,8 @@ These last two points remain:
 
  None of our functions are methods.
 
-**84**
 
 
-***Compound data types***
 
 ***3.3***
 
@@ -697,7 +685,6 @@ Table 3.1 summarizes the conventions.
 
 ***Adding methods to a struct with impl***
 
-**85**
 
 Table 3.1
 
@@ -811,10 +798,8 @@ File { name: "2.txt", data: \[114, 117, 115, 116, 33\] }
 
 **Still hidden!**
 
-**86**
 
 
-***Compound data types***
 
 Listing 3.5
 
@@ -946,7 +931,6 @@ Using **impl** to improve the ergonomics of **File**
 
 ***Returning errors***
 
-**87**
 
 54 open(&mut f3);
 
@@ -1004,10 +988,8 @@ Setting errno to either EIO or EINTR means to set it to some magical internal co
 
 The specific values are arbitrary and defined per OS. With the Rust syntax, checking global variables for error codes would look something like the following listing.
 
-**88**
 
 
-***Compound data types***
 
 Listing 3.6
 
@@ -1093,9 +1075,7 @@ Listing 3.7, presented next, introduces some new syntax. The most significant is
 
 Figure 3.3 provides a visual overview of the flow control error and error handling in listing 3.7.
 
-***Returning errors***
 
-**89**
 
 Start
 
@@ -1167,10 +1147,8 @@ including explanations of problems with
 
 using global error codes
 
-**90**
 
 
-***Compound data types***
 
 Listing 3.7
 
@@ -1298,9 +1276,7 @@ As an optional step, you can verify that the rand crate is now a dependency by i
 
 rand = "0.8"
 
-***Returning errors***
 
-**91**
 
 5
 
@@ -1346,10 +1322,8 @@ Some types such as std:sync::Arc and std:rc::Rc present an immutable façade, ye
 
 At the level of the compiler, let relates more to aliasing than immutability. *Aliasing* in compiler terminology refers to having multiple references to the same location in memory at the same time. Read-only references (borrows) to variables declared with let can alias the same data. Read-write references (mutable borrows) are guaranteed to never alias data.
 
-**92**
 
 
-***Compound data types***
 
 ***3.4.2***
 
@@ -1389,9 +1363,7 @@ Execute cargo new --bin --vcs none fileresult.
 
 Ensure that the crate’s Cargo.toml file specifies the 2018 edition and includes the rand crate as a dependency:
 
-***Returning errors***
 
-**93**
 
 \[package\]
 
@@ -1523,10 +1495,8 @@ Using **Result** to mark functions liable to filesystem errors 1 use rand::prelu
 
 30 ) -\> Result\<usize, String\> {
 
-**94**
 
 
-***Compound data types***
 
 31 let mut tmp = self.data.clone();
 
@@ -1634,7 +1604,6 @@ So, what is a Result? Result is an enum defined in Rust’s standard library. It
 
 ***Defining and making use of an enum***
 
-**95**
 
 ***3.5***
 
@@ -1748,10 +1717,8 @@ Defining an enum and using it to parse an event log
 
 **returns an error**
 
-**96**
 
 
-***Compound data types***
 
 17
 
@@ -1855,9 +1822,7 @@ Pip(Suit, usize),
 
 Now that you’ve seen how to define and use an enum, how is this useful when applied to modelling files? We can expand our File type and allow it to change as it is opened and closed. Listing 3.11 (ch3/ch3-file-states.rs) produces code that prints a short alert to the console:
 
-***Defining and making use of an enum***
 
-**97**
 
 Error checking is working
 
@@ -1965,10 +1930,8 @@ An enum that represents a **File** being open or closed
 
 49 let mut f5 = File::new("5.txt");
 
-**98**
 
 
-***Compound data types***
 
 50
 
@@ -2026,9 +1989,7 @@ Traits enable the compiler (and other humans) to know that multiple types are at
 
 For the sake of brevity, listing 3.12 (ch3/ch3-skeleton-read-trait.rs) is a bare-bones version of the code that we’ve already seen. It shows the distinction between the trait keyword, which is used for definitions, and the impl keyword, which attaches a trait to
 
-***Defining common behavior with traits***
 
-**99**
 
 a specific type. When built with rustc and executed, listing 3.12 prints the following line to the console:
 
@@ -2130,10 +2091,8 @@ If you’ve spent some time looking through the Rust community’s forums and do
 
 The println! macro and a number of others live within a family of macros that all use the same underlying machinery. The macros println!, print!, write!, writeln!, and format! all rely on the Display and Debug traits, and these rely on trait implementations provided by programmers to convert from {} to what is printed to the console.
 
-**100**
 
 
-***Compound data types***
 
 Looking back a few pages to listing 3.11, the File type was composed of a few fields and a custom subtype, FileState. If you recall, that listing illustrated the use of the Debug trait as repeated in the following listing.
 
@@ -2235,9 +2194,7 @@ fn fmt(&self, f:
 
 write!(f, "\<{} ({})\>",
 
-***Defining common behavior with traits***
 
-**101**
 
 self.name, self.state)
 
@@ -2373,10 +2330,8 @@ Working code snippet to implement **Display**
 
 43 }
 
-**102**
 
 
-***Compound data types***
 
 44
 
@@ -2482,7 +2437,6 @@ Using **pub** to mark the name and state fields of **File** public 1 \#\[derive(
 
 ***Creating inline documentation for your projects***
 
-**103**
 
 18 data: Vec::new(),
 
@@ -2584,10 +2538,8 @@ Adding doc comments to code
 
 26 pub fn name(&self) -\> String {
 
-**104**
 
 
-***Compound data types***
 
 27 self.name.clone()
 
@@ -2677,9 +2629,7 @@ Now save the source code from listing 3.17 to filebasics/src/main.rs, overwritin
 
 ![](media/index-131_1.png)
 
-***Creating inline documentation for your projects***
 
-**105**
 
 To skip a few steps, clone the repository. Execute these commands from a terminal: **\$ git clone https:/ /github.com/rust-in-action/code rust-in-action** **\$ cd rust-in-action/ch3/filebasics**
 
@@ -2707,10 +2657,8 @@ Figure 3.4
 
 Rendered output of cargo doc
 
-**106**
 
 
-***Compound data types***
 
 TIP
 

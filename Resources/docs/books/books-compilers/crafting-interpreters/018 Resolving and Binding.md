@@ -26,9 +26,9 @@ Here, we know that the `a` being printed is the variable declared on the previou
 
 I haven’t spelled out those scope rules, but now is the time for precision:
 
-This is still nowhere near as precise as a real language specification. Those docs must be so explicit that even a Martian or an outright malicious programmer would be forced to implement the correct semantics provided they followed the letter of the spec.
-
-That exactitude is important when a language may be implemented by competing companies who want their product to be incompatible with the others to lock customers onto their platform. For this book, we can thankfully ignore those kinds of shady shenanigans.
+> This is still nowhere near as precise as a real language specification. Those docs must be so explicit that even a Martian or an outright malicious programmer would be forced to implement the correct semantics provided they followed the letter of the spec.
+>
+> That exactitude is important when a language may be implemented by competing companies who want their product to be incompatible with the others to lock customers onto their platform. For this book, we can thankfully ignore those kinds of shady shenanigans.
 
 **A variable usage refers to the preceding declaration with the same name in the innermost scope that encloses the expression where the variable is used.**
 
@@ -48,22 +48,26 @@ There’s a lot to unpack in that:
 
   Here, the `a` being printed is the outer one since it appears before the `print` statement that uses it. In most cases, in straight line code, the declaration preceding in *text* will also precede the usage in *time*. But that’s not always true. As we’ll see, functions may defer a chunk of code such that its *dynamic temporal* execution no longer mirrors the *static textual* ordering.
 
-  In JavaScript, variables declared using `var` are implicitly “hoisted” to the beginning of the block. Any use of that name in the block will refer to that variable, even if the use appears before the declaration. When you write this in JavaScript:
-
-      {
-        console.log(a);
-        var a = "value";
-      }
-
-  It behaves like:
-
-      {
-        var a; // Hoist.
-        console.log(a);
-        a = "value";
-      }
-
-  That means that in some cases you can read a variable before its initializer has run—an annoying source of bugs. The alternate `let` syntax for declaring variables was added later to address this problem.
+  > In JavaScript, variables declared using `var` are implicitly “hoisted” to the beginning of the block. Any use of that name in the block will refer to that variable, even if the use appears before the declaration. When you write this in JavaScript:
+  >
+  > ```
+  > {
+  >   console.log(a);
+  >   var a = "value";
+  > }
+  > ```
+  >
+  > It behaves like:
+  >
+  > ```
+  > {
+  >   var a; // Hoist.
+  >   console.log(a);
+  >   a = "value";
+  > }
+  > ```
+  >
+  > That means that in some cases you can read a variable before its initializer has run—an annoying source of bugs. The alternate `let` syntax for declaring variables was added later to address this problem.
 
 - “Innermost” is there because of our good friend shadowing. There may be more than one variable with the given name in enclosing scopes, as in:
 
@@ -94,7 +98,7 @@ var a = "global";
 
 Before you type this in and run it, decide what you think it *should* print.
 
-I know, it’s a totally pathological, contrived program. It’s just *weird*. No reasonable person would ever write code like this. Alas, more of your life than you’d expect will be spent dealing with bizarro snippets of code like this if you stay in the programming language game for long.
+> I know, it’s a totally pathological, contrived program. It’s just *weird*. No reasonable person would ever write code like this. Alas, more of your life than you’d expect will be spent dealing with bizarro snippets of code like this if you stay in the programming language game for long.
 
 OK . . . got it? If you’re familiar with closures in other languages, you’ll expect it to print “global” twice. The first call to `showA()` should definitely print “global” since we haven’t even reached the declaration of the inner `a` yet. And by our rule that a variable expression always resolves to the same variable, that implies the second call to `showA()` should print the same thing.
 
@@ -141,16 +145,18 @@ I chose to implement environments in a way that I hoped would agree with your in
 
 That intuition, like many in life, isn’t quite right. A block is not necessarily all the same scope. Consider:
 
-    {
-      var a;
-      // 1.
-      var b;
-      // 2.
-    }
+```
+{
+  var a;
+  // 1.
+  var b;
+  // 2.
+}
+```
 
 At the first marked line, only `a` is in scope. At the second line, both `a` and `b` are. If you define a “scope” to be a set of declarations, then those are clearly not the same scope—they don’t contain the same declarations. It’s like each `var` statement splits the block into two separate scopes, the scope before the variable is declared and the one after, which includes the new variable.
 
-Some languages make this split explicit. In Scheme and ML, when you declare a local variable using `let`, you also delineate the subsequent code where the new variable is in scope. There is no implicit “rest of the block”.
+> Some languages make this split explicit. In Scheme and ML, when you declare a local variable using `let`, you also delineate the subsequent code where the new variable is in scope. There is no implicit “rest of the block”.
 
 But in our implementation, environments do act like the entire block is one scope, just a scope that changes over time. Closures do not like that. When a function is declared, it captures a reference to the current environment. The function *should* capture a frozen snapshot of the environment *as it existed at the moment the function was declared*. But instead, in the Java code, it has a reference to the actual mutable environment object. When a variable is later declared in the scope that environment corresponds to, the closure sees the new variable, even though the declaration does *not* precede the function.
 
@@ -158,7 +164,7 @@ But in our implementation, environments do act like the entire block is one scop
 
 There is a style of programming that uses what are called **persistent data structures**. Unlike the squishy data structures you’re familiar with in imperative programming, a persistent data structure can never be directly modified. Instead, any “modification” to an existing structure produces a brand new object that contains all of the original data and the new modification. The original is left unchanged.
 
-This sounds like it might waste tons of memory and time copying the structure for each operation. In practice, persistent data structures share most of their data between the different “copies”.
+> This sounds like it might waste tons of memory and time copying the structure for each operation. In practice, persistent data structures share most of their data between the different “copies”.
 
 If we were to apply that technique to Environment, then every time you declared a variable it would return a *new* environment that contained all of the previously declared variables along with the one new name. Declaring a variable would do the implicit “split” where you have an environment before the variable is declared and one after:
 
@@ -204,7 +210,7 @@ Our variable resolution pass works like a sort of mini-interpreter. It walks the
 
 - **There is no control flow.** Loops are visited only once. Both branches are visited in `if` statements. Logic operators are not short-circuited.
 
-Variable resolution touches each node once, so its performance is *O(n)* where *n* is the number of syntax tree nodes. More sophisticated analyses may have greater complexity, but most are carefully designed to be linear or not far from it. It’s an embarrassing faux pas if your compiler gets exponentially slower as the user’s program grows.
+> Variable resolution touches each node once, so its performance is *O(n)* where *n* is the number of syntax tree nodes. More sophisticated analyses may have greater complexity, but most are carefully designed to be linear or not far from it. It’s an embarrassing faux pas if your compiler gets exponentially slower as the user’s program grows.
 
 ## 11.3 A Resolver Class
 
@@ -245,39 +251,47 @@ The rest of the nodes don’t do anything special, but we still need to implemen
 
 We start with blocks since they create the local scopes where all the magic happens.
 
-      @Override
-      public Void visitBlockStmt(Stmt.Block stmt) {
-        beginScope();
-        resolve(stmt.statements);
-        endScope();
-        return null;
-      }
+```
+  @Override
+  public Void visitBlockStmt(Stmt.Block stmt) {
+    beginScope();
+    resolve(stmt.statements);
+    endScope();
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *Resolver*()
 
 This begins a new scope, traverses into the statements inside the block, and then discards the scope. The fun stuff lives in those helper methods. We start with the simple one.
 
-      void resolve(List<Stmt> statements) {
-        for (Stmt statement : statements) {
-          resolve(statement);
-        }
-      }
+```
+  void resolve(List<Stmt> statements) {
+    for (Stmt statement : statements) {
+      resolve(statement);
+    }
+  }
+```
 
 *lox/Resolver.java*, add after *Resolver*()
 
 This walks a list of statements and resolves each one. It in turn calls:
 
-      private void resolve(Stmt stmt) {
-        stmt.accept(this);
-      }
+```
+  private void resolve(Stmt stmt) {
+    stmt.accept(this);
+  }
+```
 
 *lox/Resolver.java*, add after *visitBlockStmt*()
 
 While we’re at it, let’s add another overload that we’ll need later for resolving an expression.
 
-      private void resolve(Expr expr) {
-        expr.accept(this);
-      }
+```
+  private void resolve(Expr expr) {
+    expr.accept(this);
+  }
+```
 
 *lox/Resolver.java*, add after *resolve*(Stmt stmt)
 
@@ -285,9 +299,11 @@ These methods are similar to the `evaluate()` and `execute()` methods in Interpr
 
 The real interesting behavior is around scopes. A new block scope is created like so:
 
-      private void beginScope() {
-        scopes.push(new HashMap<String, Boolean>());
-      }
+```
+  private void beginScope() {
+    scopes.push(new HashMap<String, Boolean>());
+  }
+```
 
 *lox/Resolver.java*, add after *resolve*()
 
@@ -313,9 +329,11 @@ The scope stack is only used for local block scopes. Variables declared at the t
 
 Since scopes are stored in an explicit stack, exiting one is straightforward.
 
-      private void endScope() {
-        scopes.pop();
-      }
+```
+  private void endScope() {
+    scopes.pop();
+  }
+```
 
 *lox/Resolver.java*, add after *beginScope*()
 
@@ -325,15 +343,17 @@ Now we can push and pop a stack of empty scopes. Let’s put some things in them
 
 Resolving a variable declaration adds a new entry to the current innermost scope’s map. That seems simple, but there’s a little dance we need to do.
 
-      @Override
-      public Void visitVarStmt(Stmt.Var stmt) {
-        declare(stmt.name);
-        if (stmt.initializer != null) {
-          resolve(stmt.initializer);
-        }
-        define(stmt.name);
-        return null;
-      }
+```
+  @Override
+  public Void visitVarStmt(Stmt.Var stmt) {
+    declare(stmt.name);
+    if (stmt.initializer != null) {
+      resolve(stmt.initializer);
+    }
+    define(stmt.name);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitBlockStmt*()
 
@@ -373,12 +393,14 @@ Since the first two options are likely to mask user errors, we’ll take the thi
 
 In order to do that, as we visit expressions, we need to know if we’re inside the initializer for some variable. We do that by splitting binding into two steps. The first is **declaring** it.
 
-      private void declare(Token name) {
-        if (scopes.isEmpty()) return;
+```
+  private void declare(Token name) {
+    if (scopes.isEmpty()) return;
 
-        Map<String, Boolean> scope = scopes.peek();
-        scope.put(name.lexeme, false);
-      }
+    Map<String, Boolean> scope = scopes.peek();
+    scope.put(name.lexeme, false);
+  }
+```
 
 *lox/Resolver.java*, add after *endScope*()
 
@@ -386,10 +408,12 @@ Declaration adds the variable to the innermost scope so that it shadows any oute
 
 After declaring the variable, we resolve its initializer expression in that same scope where the new variable now exists but is unavailable. Once the initializer expression is done, the variable is ready for prime time. We do that by **defining** it.
 
-      private void define(Token name) {
-        if (scopes.isEmpty()) return;
-        scopes.peek().put(name.lexeme, true);
-      }
+```
+  private void define(Token name) {
+    if (scopes.isEmpty()) return;
+    scopes.peek().put(name.lexeme, true);
+  }
+```
 
 *lox/Resolver.java*, add after *declare*()
 
@@ -399,17 +423,19 @@ We set the variable’s value in the scope map to `true` to mark it as fully ini
 
 Variable declarations—and function declarations, which we’ll get to—write to the scope maps. Those maps are read when we resolve variable expressions.
 
-      @Override
-      public Void visitVariableExpr(Expr.Variable expr) {
-        if (!scopes.isEmpty() &&
-            scopes.peek().get(expr.name.lexeme) == Boolean.FALSE) {
-          Lox.error(expr.name,
-              "Can't read local variable in its own initializer.");
-        }
+```
+  @Override
+  public Void visitVariableExpr(Expr.Variable expr) {
+    if (!scopes.isEmpty() &&
+        scopes.peek().get(expr.name.lexeme) == Boolean.FALSE) {
+      Lox.error(expr.name,
+          "Can't read local variable in its own initializer.");
+    }
 
-        resolveLocal(expr, expr.name);
-        return null;
-      }
+    resolveLocal(expr, expr.name);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitVarStmt*()
 
@@ -417,14 +443,16 @@ First, we check to see if the variable is being accessed inside its own initiali
 
 After that check, we actually resolve the variable itself using this helper:
 
-      private void resolveLocal(Expr expr, Token name) {
-        for (int i = scopes.size() - 1; i >= 0; i--) {
-          if (scopes.get(i).containsKey(name.lexeme)) {
-            interpreter.resolve(expr, scopes.size() - 1 - i);
-            return;
-          }
-        }
+```
+  private void resolveLocal(Expr expr, Token name) {
+    for (int i = scopes.size() - 1; i >= 0; i--) {
+      if (scopes.get(i).containsKey(name.lexeme)) {
+        interpreter.resolve(expr, scopes.size() - 1 - i);
+        return;
       }
+    }
+  }
+```
 
 *lox/Resolver.java*, add after *define*()
 
@@ -436,12 +464,14 @@ If we walk through all of the block scopes and never find the variable, we leave
 
 The other expression that references a variable is assignment. Resolving one looks like this:
 
-      @Override
-      public Void visitAssignExpr(Expr.Assign expr) {
-        resolve(expr.value);
-        resolveLocal(expr, expr.name);
-        return null;
-      }
+```
+  @Override
+  public Void visitAssignExpr(Expr.Assign expr) {
+    resolve(expr.value);
+    resolveLocal(expr, expr.name);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitVarStmt*()
 
@@ -451,14 +481,16 @@ First, we resolve the expression for the assigned value in case it also contains
 
 Finally, functions. Functions both bind names and introduce a scope. The name of the function itself is bound in the surrounding scope where the function is declared. When we step into the function’s body, we also bind its parameters into that inner function scope.
 
-      @Override
-      public Void visitFunctionStmt(Stmt.Function stmt) {
-        declare(stmt.name);
-        define(stmt.name);
+```
+  @Override
+  public Void visitFunctionStmt(Stmt.Function stmt) {
+    declare(stmt.name);
+    define(stmt.name);
 
-        resolveFunction(stmt);
-        return null;
-      }
+    resolveFunction(stmt);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitBlockStmt*()
 
@@ -466,15 +498,17 @@ Similar to `visitVariableStmt()`, we declare and define the name of the function
 
 Then we resolve the function’s body using this:
 
-      private void resolveFunction(Stmt.Function function) {
-        beginScope();
-        for (Token param : function.params) {
-          declare(param);
-          define(param);
-        }
-        resolve(function.body);
-        endScope();
-      }
+```
+  private void resolveFunction(Stmt.Function function) {
+    beginScope();
+    for (Token param : function.params) {
+      declare(param);
+      define(param);
+    }
+    resolve(function.body);
+    endScope();
+  }
+```
 
 *lox/Resolver.java*, add after *resolve*()
 
@@ -486,27 +520,31 @@ Once that’s ready, it resolves the function body in that scope. This is differ
 
 That covers the interesting corners of the grammars. We handle every place where a variable is declared, read, or written, and every place where a scope is created or destroyed. Even though they aren’t affected by variable resolution, we also need visit methods for all of the other syntax tree nodes in order to recurse into their subtrees. Sorry this bit is boring, but bear with me. We’ll go kind of “top down” and start with statements.
 
-I did say the book would have every single line of code for these interpreters. I didn’t say they’d all be exciting.
+> I did say the book would have every single line of code for these interpreters. I didn’t say they’d all be exciting.
 
 An expression statement contains a single expression to traverse.
 
-      @Override
-      public Void visitExpressionStmt(Stmt.Expression stmt) {
-        resolve(stmt.expression);
-        return null;
-      }
+```
+  @Override
+  public Void visitExpressionStmt(Stmt.Expression stmt) {
+    resolve(stmt.expression);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitBlockStmt*()
 
 An if statement has an expression for its condition and one or two statements for the branches.
 
-      @Override
-      public Void visitIfStmt(Stmt.If stmt) {
-        resolve(stmt.condition);
-        resolve(stmt.thenBranch);
-        if (stmt.elseBranch != null) resolve(stmt.elseBranch);
-        return null;
-      }
+```
+  @Override
+  public Void visitIfStmt(Stmt.If stmt) {
+    resolve(stmt.condition);
+    resolve(stmt.thenBranch);
+    if (stmt.elseBranch != null) resolve(stmt.elseBranch);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitFunctionStmt*()
 
@@ -514,35 +552,41 @@ Here, we see how resolution is different from interpretation. When we resolve an
 
 Like expression statements, a `print` statement contains a single subexpression.
 
-      @Override
-      public Void visitPrintStmt(Stmt.Print stmt) {
-        resolve(stmt.expression);
-        return null;
-      }
+```
+  @Override
+  public Void visitPrintStmt(Stmt.Print stmt) {
+    resolve(stmt.expression);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitIfStmt*()
 
 Same deal for return.
 
-      @Override
-      public Void visitReturnStmt(Stmt.Return stmt) {
-        if (stmt.value != null) {
-          resolve(stmt.value);
-        }
+```
+  @Override
+  public Void visitReturnStmt(Stmt.Return stmt) {
+    if (stmt.value != null) {
+      resolve(stmt.value);
+    }
 
-        return null;
-      }
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitPrintStmt*()
 
 As in `if` statements, with a `while` statement, we resolve its condition and resolve the body exactly once.
 
-      @Override
-      public Void visitWhileStmt(Stmt.While stmt) {
-        resolve(stmt.condition);
-        resolve(stmt.body);
-        return null;
-      }
+```
+  @Override
+  public Void visitWhileStmt(Stmt.While stmt) {
+    resolve(stmt.condition);
+    resolve(stmt.body);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitVarStmt*()
 
@@ -550,46 +594,54 @@ That covers all the statements. On to expressions . . . 
 
 Our old friend the binary expression. We traverse into and resolve both operands.
 
-      @Override
-      public Void visitBinaryExpr(Expr.Binary expr) {
-        resolve(expr.left);
-        resolve(expr.right);
-        return null;
-      }
+```
+  @Override
+  public Void visitBinaryExpr(Expr.Binary expr) {
+    resolve(expr.left);
+    resolve(expr.right);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitAssignExpr*()
 
 Calls are similar—we walk the argument list and resolve them all. The thing being called is also an expression (usually a variable expression), so that gets resolved too.
 
-      @Override
-      public Void visitCallExpr(Expr.Call expr) {
-        resolve(expr.callee);
+```
+  @Override
+  public Void visitCallExpr(Expr.Call expr) {
+    resolve(expr.callee);
 
-        for (Expr argument : expr.arguments) {
-          resolve(argument);
-        }
+    for (Expr argument : expr.arguments) {
+      resolve(argument);
+    }
 
-        return null;
-      }
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitBinaryExpr*()
 
 Parentheses are easy.
 
-      @Override
-      public Void visitGroupingExpr(Expr.Grouping expr) {
-        resolve(expr.expression);
-        return null;
-      }
+```
+  @Override
+  public Void visitGroupingExpr(Expr.Grouping expr) {
+    resolve(expr.expression);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitCallExpr*()
 
 Literals are easiest of all.
 
-      @Override
-      public Void visitLiteralExpr(Expr.Literal expr) {
-        return null;
-      }
+```
+  @Override
+  public Void visitLiteralExpr(Expr.Literal expr) {
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitGroupingExpr*()
 
@@ -597,22 +649,26 @@ A literal expression doesn’t mention any variables and doesn’t contain any s
 
 Since a static analysis does no control flow or short-circuiting, logical expressions are exactly the same as other binary operators.
 
-      @Override
-      public Void visitLogicalExpr(Expr.Logical expr) {
-        resolve(expr.left);
-        resolve(expr.right);
-        return null;
-      }
+```
+  @Override
+  public Void visitLogicalExpr(Expr.Logical expr) {
+    resolve(expr.left);
+    resolve(expr.right);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitLiteralExpr*()
 
 And, finally, the last node. We resolve its one operand.
 
-      @Override
-      public Void visitUnaryExpr(Expr.Unary expr) {
-        resolve(expr.right);
-        return null;
-      }
+```
+  @Override
+  public Void visitUnaryExpr(Expr.Unary expr) {
+    resolve(expr.right);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitLogicalExpr*()
 
@@ -622,9 +678,11 @@ With all of these visit methods, the Java compiler should be satisfied that Reso
 
 Let’s see what our resolver is good for. Each time it visits a variable, it tells the interpreter how many scopes there are between the current scope and the scope where the variable is defined. At runtime, this corresponds exactly to the number of *environments* between the current one and the enclosing one where the interpreter can find the variable’s value. The resolver hands that number to the interpreter by calling this:
 
-      void resolve(Expr expr, int depth) {
-        locals.put(expr, depth);
-      }
+```
+  void resolve(Expr expr, int depth) {
+    locals.put(expr, depth);
+  }
+```
 
 *lox/Interpreter.java*, add after *execute*()
 
@@ -632,7 +690,7 @@ We want to store the resolution information somewhere so we can use it when the 
 
 We could do that, but it would require mucking around with our syntax tree generator. Instead, we’ll take another common approach and store it off to the side in a map that associates each syntax tree node with its resolved data.
 
-I *think* I’ve heard this map called a “side table” since it’s a tabular data structure that stores data separately from the objects it relates to. But whenever I try to Google for that term, I get pages about furniture.
+> I *think* I’ve heard this map called a “side table” since it’s a tabular data structure that stores data separately from the objects it relates to. But whenever I try to Google for that term, I get pages about furniture.
 
 Interactive tools like IDEs often incrementally reparse and re-resolve parts of the user’s program. It may be hard to find all of the bits of state that need recalculating when they’re hiding in the foliage of the syntax tree. A benefit of storing this data outside of the nodes is that it makes it easy to *discard* it—simply clear the map.
 
@@ -704,14 +762,16 @@ Our interpreter now has access to each variable’s resolved location. Finally, 
 
 That delegates to:
 
-      private Object lookUpVariable(Token name, Expr expr) {
-        Integer distance = locals.get(expr);
-        if (distance != null) {
-          return environment.getAt(distance, name.lexeme);
-        } else {
-          return globals.get(name);
-        }
-      }
+```
+  private Object lookUpVariable(Token name, Expr expr) {
+    Integer distance = locals.get(expr);
+    if (distance != null) {
+      return environment.getAt(distance, name.lexeme);
+    } else {
+      return globals.get(name);
+    }
+  }
+```
 
 *lox/Interpreter.java*, add after *visitVariableExpr*()
 
@@ -719,30 +779,34 @@ There are a couple of things going on here. First, we look up the resolved dista
 
 If we *do* get a distance, we have a local variable, and we get to take advantage of the results of our static analysis. Instead of calling `get()`, we call this new method on Environment:
 
-      Object getAt(int distance, String name) {
-        return ancestor(distance).values.get(name);
-      }
+```
+  Object getAt(int distance, String name) {
+    return ancestor(distance).values.get(name);
+  }
+```
 
 *lox/Environment.java*, add after *define*()
 
 The old `get()` method dynamically walks the chain of enclosing environments, scouring each one to see if the variable might be hiding in there somewhere. But now we know exactly which environment in the chain will have the variable. We reach it using this helper method:
 
-      Environment ancestor(int distance) {
-        Environment environment = this;
-        for (int i = 0; i < distance; i++) {
-          environment = environment.enclosing;
-        }
+```
+  Environment ancestor(int distance) {
+    Environment environment = this;
+    for (int i = 0; i < distance; i++) {
+      environment = environment.enclosing;
+    }
 
-        return environment;
-      }
+    return environment;
+  }
+```
 
 *lox/Environment.java*, add after *define*()
 
 This walks a fixed number of hops up the parent chain and returns the environment there. Once we have that, `getAt()` simply returns the value of the variable in that environment’s map. It doesn’t even have to check to see if the variable is there—we know it will be because the resolver already found it before.
 
-The way the interpreter assumes the variable is in that map feels like flying blind. The interpreter code trusts that the resolver did its job and resolved the variable correctly. This implies a deep coupling between these two classes. In the resolver, each line of code that touches a scope must have its exact match in the interpreter for modifying an environment.
-
-I felt that coupling firsthand because as I wrote the code for the book, I ran into a couple of subtle bugs where the resolver and interpreter code were slightly out of sync. Tracking those down was difficult. One tool to make that easier is to have the interpreter explicitly assert—using Java’s assert statements or some other validation tool—the contract it expects the resolver to have already upheld.
+> The way the interpreter assumes the variable is in that map feels like flying blind. The interpreter code trusts that the resolver did its job and resolved the variable correctly. This implies a deep coupling between these two classes. In the resolver, each line of code that touches a scope must have its exact match in the interpreter for modifying an environment.
+>
+> I felt that coupling firsthand because as I wrote the code for the book, I ran into a couple of subtle bugs where the resolver and interpreter code were slightly out of sync. Tracking those down was difficult. One tool to make that easier is to have the interpreter explicitly assert—using Java’s assert statements or some other validation tool—the contract it expects the resolver to have already upheld.
 
 ### 11.4.2 Assigning to a resolved variable
 
@@ -770,9 +834,11 @@ We can also use a variable by assigning to it. The changes to visiting an assign
 
 Again, we look up the variable’s scope distance. If not found, we assume it’s global and handle it the same way as before. Otherwise, we call this new method:
 
-      void assignAt(int distance, Token name, Object value) {
-        ancestor(distance).values.put(name.lexeme, value);
-      }
+```
+  void assignAt(int distance, Token name, Object value) {
+    ancestor(distance).values.put(name.lexeme, value);
+  }
+```
 
 *lox/Environment.java*, add after *getAt*()
 
@@ -866,10 +932,12 @@ We can extend the resolver to detect this statically. Much like we track scopes 
 
 Instead of a bare Boolean, we use this funny enum:
 
-      private enum FunctionType {
-        NONE,
-        FUNCTION
-      }
+```
+  private enum FunctionType {
+    NONE,
+    FUNCTION
+  }
+```
 
 *lox/Resolver.java*, add after *Resolver*()
 
@@ -965,7 +1033,7 @@ You could imagine doing lots of other analysis in here. For example, if we added
 
 We could go farther and report warnings for code that isn’t necessarily *wrong* but probably isn’t useful. For example, many IDEs will warn if you have unreachable code after a `return` statement, or a local variable whose value is never read. All of that would be pretty easy to add to our static visiting pass, or as separate passes.
 
-The choice of how many different analyses to lump into a single pass is difficult. Many small isolated passes, each with their own responsibility, are simpler to implement and maintain. However, there is a real runtime cost to traversing the syntax tree itself, so bundling multiple analyses into a single pass is usually faster.
+> The choice of how many different analyses to lump into a single pass is difficult. Many small isolated passes, each with their own responsibility, are simpler to implement and maintain. However, there is a real runtime cost to traversing the syntax tree itself, so bundling multiple analyses into a single pass is usually faster.
 
 But, for now, we’ll stick with that limited amount of analysis. The important part is that we fixed that one weird annoying edge case bug, though it might be surprising that it took this much work to do it.
 

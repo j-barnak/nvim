@@ -4,7 +4,7 @@
 
 In this chapter we introduce mechanisms for declaring new types and classes in Haskell. We start with three approaches to declaring types, then consider recursive types, show how to declare classes and their instances, and conclude by developing a tautology checker and an abstract machine.
 
-### **8.1Type declarations**
+### **8.1 Type declarations**
 
 The simplest way of declaring a new type is to introduce a new name for an existing type, using the type mechanism of Haskell. For example, the following declaration from the standard prelude states that the type String is just a synonym for the type \[Char\] of lists of characters:
 
@@ -46,7 +46,7 @@ find :: Eq k => k -> Assoc k v -> v
 find k t = head [v | (k’,v) <- t, k == k’]
 ```
 
-### **8.2Data declarations**
+### **8.2 Data declarations**
 
 A completely new type, as opposed to a synonym for an existing type, can be declared by specifying its values using the data mechanism of Haskell. For example, the following declaration from the standard prelude states that the type Bool comprises two new values, named False and True:
 
@@ -70,16 +70,16 @@ functions that apply a move to a position, apply a list of moves to a position, 
 move :: Move -> Pos -> Pos
 move North (x,y) = (x,y+1)
 move South (x,y) = (x,y-1)
-move East (x,y)= (x+1,y)
-move West (x,y)= (x-1,y)
+move East (x,y)  = (x+1,y)
+move West (x,y)  = (x-1,y)
 moves :: [Move] -> Pos -> Pos
 moves [] p = p
 moves (m:ms) p = moves ms (move m p)
 rev :: Move -> Move
 rev North = South
 rev South = North
-rev East= West
-rev West= East
+rev East  = West
+rev West  = East
 ```
 
 (If you wish to try out such examples in GHCi, the phrase deriving Show must be added to the end of the data declaration, to ensure the system can display values of the new type; the deriving mechanism itself will be covered in later on in this chapter when we consider type classes.)
@@ -128,7 +128,7 @@ safehead [] = Nothing
 safehead xs = Just (head xs)
 ```
 
-### **8.3Newtype declarations**
+### **8.3 Newtype declarations**
 
 If a new type has a single constructor with a single argument, then it can also be declared using the newtype mechanism. For example, a type of natural numbers (non-negative integers) could be declared as follows:
 
@@ -145,7 +145,7 @@ data Nat = N Int
 
 First of all, using newtype rather than type means that Nat and Int are different types rather than synonyms, and hence the type system of Haskell ensures that they cannot accidentally be mixed up in our programs, for example by using an integer when we expect a natural number. And secondly, using newtype rather than data brings an efficiency benefit, because newtype constructors such as N do not incur any cost when programs are evaluated, as they are automatically removed by the compiler once type checking is completed. In summary, using newtype helps improve type safety, without affecting performance.
 
-### **8.4Recursive types**
+### **8.4 Recursive types**
 
 New types declared using the data and newtype mechanisms can also be recursive. As a simple first example, the type of natural numbers from the previous section can also be declared in a recursive manner:
 
@@ -169,7 +169,7 @@ In this manner, values of type Nat correspond to natural numbers with Zero repre
 
 ``` haskell
 nat2int :: Nat -> Int
-nat2int Zero= 0
+nat2int Zero     = 0
 nat2int (Succ n) = 1 + nat2int n
 int2nat :: Int -> Nat
 int2nat 0 = Zero
@@ -187,20 +187,20 @@ However, using recursion the function add can be redefined without the need for 
 
 ``` haskell
 add :: Nat -> Nat -> Nat
-add Zero n= n
+add Zero n     = n
 add (Succ m) n = Succ (add m n)
 ```
 
 This definition formalises the idea that two natural numbers can be added by copying Succ constructors from the first number until they are exhausted, at which point the Zero at the end is replaced by the second number. For example, showing that 2 + 1 = 3 proceeds as follows:
 
 ``` haskell
-add (Succ (Succ Zero)) (Succ Zero)
-={ applying add }
-Succ (add (Succ Zero) (Succ Zero))
-={ applying add }
-Succ (Succ (add Zero (Succ Zero)))
-={ applying add }
-Succ (Succ (Succ Zero))
+  add (Succ (Succ Zero)) (Succ Zero)
+=   { applying add }
+  Succ (add (Succ Zero) (Succ Zero))
+=   { applying add }
+  Succ (Succ (add Zero (Succ Zero)))
+=   { applying add }
+  Succ (Succ (Succ Zero))
 ```
 
 As another example, the data mechanism can be used to declare our own version of the built-in type of lists, parameterised by an arbitrary type:
@@ -213,7 +213,7 @@ That is, a value of type List a is either Nil, representing the empty list, or o
 
 ``` haskell
 len :: List a -> Int
-len Nil= 0
+len Nil         = 0
 len (Cons _ xs) = 1 + len xs
 ```
 
@@ -232,7 +232,7 @@ and the tree pictured above can then be represented as follows:
 ``` haskell
 t :: Tree Int
 t = Node (Node (Leaf 1) 3 (Leaf 4)) 5
-(Node (Leaf 6) 7 (Leaf 9))
+        (Node (Leaf 6) 7 (Leaf 9))
 ```
 
 We now consider a number of functions on such trees. First of all, we define a function that decides if a given value occurs in a tree:
@@ -268,14 +268,14 @@ data Tree a = Node a [Tree a]
 
 Which form of tree is most appropriate depends upon the situation. Note that in the last example, there is no constructor for leaves, because a node with an empty list of subtrees can play the role of a leaf.
 
-### **8.5Class and instance declarations**
+### **8.5 Class and instance declarations**
 
 We now turn our attention from types to classes. In Haskell, a new class can be declared using the class mechanism. For example, the class Eq of equality types is declared in the standard prelude as follows:
 
 ``` haskell
 class Eq a where
-(==), (/=) :: a -> a -> Bool
-x /= y = not (x == y)
+   (==), (/=) :: a -> a -> Bool
+   x /= y = not (x == y)
 ```
 
 This declaration states that for a type a to be an instance of the class Eq, it must support equality and inequality operators of the specified types. In fact, because a *default definition* has already been included for the /= operator, declaring an instance only requires a definition for the == operator. For example, the type Bool can be made into an equality type as follows:
@@ -298,7 +298,7 @@ When new types are declared, it is usually appropriate to make them into instanc
 
 ``` haskell
 data Bool = False | True
-deriving (Eq, Ord, Show, Read)
+            deriving (Eq, Ord, Show, Read)
 ```
 
 As a result, all the member functions from the four derived classes can then be used with logical values. For example:
@@ -332,7 +332,7 @@ True
 False
 ```
 
-### **8.6Tautology checker**
+### **8.6 Tautology checker**
 
 We conclude this chapter with two extended programming examples. For our first example, we develop a function that decides if simple logical propositions are always true. Such propositions are called *tautologies*.
 
@@ -365,7 +365,7 @@ p3 :: Prop
 p3 = Imply (Var ’A’) (And (Var ’A’) (Var ’B’))
 p4 :: Prop
 p4 = Imply (And (Var ’A’) (Imply
-(Var ’A’) (Var ’B’))) (Var ’B’)
+     (Var ’A’) (Var ’B’))) (Var ’B’)
 ```
 
 In order to evaluate a proposition to a logical value, we need to know the value of each of its variables. For this purpose, we declare a *substitution* as a lookup table that associates variable names to logical values, using the Assoc type that was introduced at the start of this chapter:
@@ -391,13 +391,13 @@ The key to generating substitutions is producing lists of logical values of a gi
 ``` haskell
 > bools 3
 [[False, False, False],
-[False, False, True],
-[False, True, False],
-[False, True, True],
-[True, False, False],
-[True, False, True],
-[True, True, False],
-[True, True, True]]
+ [False, False, True],
+ [False, True, False],
+ [False, True, True],
+ [True, False, False],
+ [True, False, True],
+ [True, True, False],
+ [True, True, True]]
 ```
 
 One way to achieve this behaviour is to observe that each component list corresponds to a binary number, by interpreting False and True as the binary digits 0 and 1. For example, the list \[True,False,True\] corresponds to the binary number 101. Given this interpretation, we can think of the function bools as simply counting in binary over the appropriate range of numbers.
@@ -416,7 +416,7 @@ This observation leads to a recursive definition for bools. In the base case, bo
 bools :: Int -> [[Bool]]
 bools 0 = [[]]
 bools n = map (False:) bss ++ map (True:) bss
-where bss = bools (n-1)
+          where bss = bools (n-1)
 ```
 
 Using bools, it is now straightforward to define a function that generates all possible substitutions for a proposition by extracting its variables, removing duplicates from this list (using the function rmdups from chapter 7), generating all possible lists of logical values for this many variables, and then zipping the list of variables with each of the resulting lists:
@@ -424,7 +424,7 @@ Using bools, it is now straightforward to define a function that generates all p
 ``` haskell
 substs :: Prop -> [Subst]
 substs p = map (zip vs) (bools (length vs))
-where vs = rmdups (vars p)
+           where vs = rmdups (vars p)
 ```
 
 For example:
@@ -457,35 +457,35 @@ False
 True
 ```
 
-### **8.7Abstract machine**
+### **8.7 Abstract machine**
 
 For our second extended example, consider a type of simple arithmetic expressions built up from integers using an addition operator, together with a function that evaluates such an expression to an integer value:
 
 ``` haskell
 data Expr = Val Int | Add Expr Expr
 value :: Expr -> Int
-value (Val n)= n
+value (Val n)   = n
 value (Add x y) = value x + value y
 ```
 
 For example, the expression (2 + 3) + 4 is evaluated as follows:
 
 ``` haskell
-value (Add (Add (Val 2) (Val 3)) (Val 4))
-={ applying value }
-value (Add (Val 2) (Val 3)) + value (Val 4)
-={ applying the first value }
-(value (Val 2) + value (Val 3)) + value (Val 4)
-={ applying the first value }
-(2 + value (Val 3)) + value (Val 4)
-={ applying the first value }
-(2 + 3) + value (Val 4)
-={ applying the first + }
-5 + value (Val 4)
-={ applying value }
-5 + 4
-={ applying + }
-9
+  value (Add (Add (Val 2) (Val 3)) (Val 4))
+=   { applying value }
+  value (Add (Val 2) (Val 3)) + value (Val 4)
+=   { applying the first value }
+  (value (Val 2) + value (Val 3)) + value (Val 4)
+=   { applying the first value }
+  (2 + value (Val 3)) + value (Val 4)
+=   { applying the first value }
+  (2 + 3) + value (Val 4)
+=   { applying the first + }
+  5 + value (Val 4)
+=   { applying value }
+  5 + 4
+=   { applying + }
+  9
 ```
 
 Note that the definition of the value function does not specify that the left argument of an addition should be evaluated before the right, or, more generally, what the next step of evaluation should be at each point. Rather, the order of evaluation is determined by Haskell. If desired, however, such control information can be made explicit by defining an *abstract machine* for expressions, which specifies the step-by-step process of their evaluation.
@@ -517,44 +517,44 @@ value e = eval e []
 The fact that our abstract machine uses two mutually recursive functions, eval and exec, reflects the fact that it has two modes of operation, depending upon whether it is being driven by the structure of the expression or the control stack. To illustrate the machine, here is how it evaluates (2 + 3) +4:
 
 ``` haskell
-value (Add (Add (Val 2) (Val 3)) (Val 4))
-={ applying value }
-eval (Add (Add (Val 2) (Val 3)) (Val 4)) []
-={ applying eval }
-eval (Add (Val 2) (Val 3)) [EVAL (Val 4)]
-={ applying eval }
-eval (Val 2) [EVAL (Val 3), EVAL (Val 4)]
-={ applying eval }
-exec [EVAL (Val 3), EVAL (Val 4)] 2
-={ applying exec }
-eval (Val 3) [ADD 2, EVAL (Val 4)]
-={ applying eval }
-exec [ADD 2, EVAL (Val 4)] 3
-={ applying exec }
-exec [EVAL (Val 4)] 5
-={ applying exec }
-eval (Val 4) [ADD 5]
-={ applying eval }
-exec [ADD 5] 4
-={ applying exec }
-exec [] 9
-={ applying exec }
-9
+  value (Add (Add (Val 2) (Val 3)) (Val 4))
+=   { applying value }
+  eval (Add (Add (Val 2) (Val 3)) (Val 4)) []
+=   { applying eval }
+  eval (Add (Val 2) (Val 3)) [EVAL (Val 4)]
+=   { applying eval }
+  eval (Val 2) [EVAL (Val 3), EVAL (Val 4)]
+=   { applying eval }
+  exec [EVAL (Val 3), EVAL (Val 4)] 2
+=   { applying exec }
+  eval (Val 3) [ADD 2, EVAL (Val 4)]
+=   { applying eval }
+  exec [ADD 2, EVAL (Val 4)] 3
+=   { applying exec }
+  exec [EVAL (Val 4)] 5
+=   { applying exec }
+  eval (Val 4) [ADD 5]
+=   { applying eval }
+  exec [ADD 5] 4
+=   { applying exec }
+  exec [] 9
+=   { applying exec }
+  9
 ```
 
 Note how eval proceeds downwards to the leftmost integer in the expression, maintaining a trail of the pending right-hand expressions on the control stack. In turn, exec then proceeds upwards through the trail, transferring control back to eval and performing additions as appropriate.
 
-### **8.8Chapter remarks**
+### **8.8 Chapter remarks**
 
 The abstract machine example is derived from \[11\], and the type of control stacks used in this example is a special case of the zipper data structure for traversing values of recursive types \[12\]. As well as the basic mechanisms for declaring new types and classes introduced in this chapter, the GHC system also supports a number of more advanced and experimental typing features; see <http://www.haskell.org/ghc> for further details.
 
-### **8.9Exercises**
+### **8.9 Exercises**
 
-1.In a similar manner to the function add, define a recursive multiplication function mult :: Nat -\> Nat -\> Nat for the recursive type of natural numbers:
+1\. In a similar manner to the function add, define a recursive multiplication function mult :: Nat -\> Nat -\> Nat for the recursive type of natural numbers:
 
 Hint: make use of add in your definition.
 
-2.Although not included in appendix B, the standard prelude defines
+2\. Although not included in appendix B, the standard prelude defines
 
 ``` haskell
 data Ordering = LT | EQ | GT
@@ -568,7 +568,7 @@ compare :: Ord a => a -> a -> Ordering
 
 that decides if one value in an ordered type is less than (LT), equal to (EQ), or greater than (GT) another value. Using this function, redefine the function occurs :: Ord a =\> a -\> Tree a -\> Bool for search trees. Why is this new definition more efficient than the original version?
 
-3.Consider the following type of binary trees:
+3\. Consider the following type of binary trees:
 
 ``` haskell
 data Tree a = Leaf a | Node (Tree a) (Tree a)
@@ -578,9 +578,9 @@ Let us say that such a tree is *balanced* if the number of leaves in the left an
 
 Hint: first define a function that returns the number of leaves in a tree.
 
-4.Define a function balance :: \[a\] -\> Tree a that converts a non-empty list into a balanced tree. Hint: first define a function that splits a list into two halves whose length differs by at most one.
+4\. Define a function balance :: \[a\] -\> Tree a that converts a non-empty list into a balanced tree. Hint: first define a function that splits a list into two halves whose length differs by at most one.
 
-5.Given the type declaration
+5\. Given the type declaration
 
 ``` haskell
 data Expr = Val Int | Add Expr Expr
@@ -594,19 +594,19 @@ folde :: (Int -> a) -> (a -> a -> a) -> Expr -> a
 
 such that folde f g replaces each Val constructor in an expression by the function f, and each Add constructor by the function g.
 
-6.Using folde, define a function eval :: Expr -\> Int that evaluates an expression to an integer value, and a function size :: Expr -\> Int that calculates the number of values in an expression.
+6\. Using folde, define a function eval :: Expr -\> Int that evaluates an expression to an integer value, and a function size :: Expr -\> Int that calculates the number of values in an expression.
 
-7.Complete the following instance declarations:
+7\. Complete the following instance declarations:
 
 ``` haskell
 instance Eq a => Eq (Maybe a) where
-...
+ ...
 instance Eq a => Eq [a] where
-...
+ ...
 ```
 
-8.Extend the tautology checker to support the use of logical disjunction ![image](media/Images/ch8-01.png) and equivalence (⇔) in propositions.
+8\. Extend the tautology checker to support the use of logical disjunction ![image](media/Images/ch8-01.png) and equivalence (⇔) in propositions.
 
-9.Extend the abstract machine to support the use of multiplication.
+9\. Extend the abstract machine to support the use of multiplication.
 
 Solutions to exercises 1–4 are given in appendix A.

@@ -1,14 +1,14 @@
 ## Chapter 7
 
- 
+
 
 Graphs: The Basics
 
- 
+
 
 This short chapter explains what graphs are, what they are good for, and the most common ways to represent them in a computer program. The next two chapters cover a number of famous and useful algorithms for reasoning about graphs.
 
- 
+
 
 7.1 Some Vocabulary
 
@@ -64,7 +64,7 @@ Figure 7.1: In algorithms, a graph is a representation of a set of objects (such
 
 ![](media/index-14_8.jpg)
 
- 
+
 
 The second type of graph has two ingredients—the objects being
 
@@ -84,7 +84,7 @@ represented, and their pairwise relationships. The former are called
 
 2 Graphs: The Basics
 
- 
+
 
 the 1 vertices (singular: vertex) or the nodes of the graph. The pairwise relationships translate to the edges of the graph. We usually denote the vertex and edge sets of a graph by V and E, respectively, and sometimes write G = (V, E) to mean the graph G with vertices V and edges E.
 
@@ -94,19 +94,19 @@ the edge (Figure 7.2(a)). In an undirected graph, there is no difference between
 
 vertex v 2 (called the tail ) to the second w (the head ); see Figure 7.2(b).
 
- 
+
 
 *v* *v*
 
 ![](media/index-15_1.jpg)
 
- 
+
 
 *s* *s* *t* *t*
 
 ![](media/index-15_2.jpg)
 
- 
+
 
 *w* *w*
 
@@ -120,7 +120,7 @@ Figure 7.2: Graphs with four vertices and five edges. The edges of undirected an
 
 ![](media/index-15_5.jpg)
 
- 
+
 
 7.2 A Few Applications
 
@@ -158,7 +158,7 @@ Graphs are a fundamental concept, and they show up all the time in computer scie
 
 7.3 Measuring the Size of a Graph 3
 
- 
+
 
 Road networks. When your smartphone’s software computes driv-ing directions, it searches through a graph that represents the road network, with vertices corresponding to intersections and edges corre-sponding to individual road segments.
 
@@ -170,7 +170,7 @@ Precedence constraints. Graphs are also useful in problems that lack an obvious 
 
 apply the topological sorting algorithm described in Section 8.5 to the following directed graph: there is one vertex for each course that your major requires, with an edge directed from course A to course B whenever A is a prerequisite for B.
 
- 
+
 
 7.3 Measuring the Size of a Graph
 
@@ -180,7 +180,7 @@ In this book, like in Part 1, we’ll analyze the running time of different algo
 
 Two parameters control a graph’s size—the number of vertices and the number of edges. Here is the most common notation for these 4 Graphs: The Basics
 
- 
+
 
 quantities.
 
@@ -192,7 +192,7 @@ For a graph G = (V, E) with vertex set V and edge set E:
 
 • m 3 = \| E \| denotes the number of edges.
 
- 
+
 
 The next quiz asks you to think about how the number m of edges in an undirected graph can depend on the number n of vertices. For this question, we’ll assume that there’s at most one undirected edge between each pair of vertices—no “parallel edges” are allowed. We’ll also assume that the graph is “connected.” We’ll define this concept
 
@@ -204,13 +204,13 @@ are connected, while the graph in Figure 7.3 is not.
 
 ![](media/index-17_1.jpg)
 
- 
+
 
 Figure 7.3: An undirected graph that is not connected.
 
 ![](media/index-17_2.jpg)
 
- 
+
 
 Quiz 7.1
 
@@ -220,7 +220,7 @@ Consider an undirected graph with n vertices and no parallel edges. Assume that 
 
 ![](media/index-17_4.jpg)
 
- 
+
 
 3 For a finite set S, \|S\| denotes the number of elements in S. 7.3 Measuring the Size of a Graph 5
 
@@ -240,7 +240,7 @@ Consider an undirected graph with n vertices and no parallel edges. Assume that 
 
 ![](media/index-17_12.jpg)
 
- 
+
 
 a\) n(n 1) n 1 and
 
@@ -254,7 +254,7 @@ d\) n n and n
 
 (See Section 7.3.3 for the solution and discussion.)
 
- 
+
 
 7.3.2 Sparse vs. Dense Graphs
 
@@ -272,7 +272,7 @@ Informally, a graph is sparse if the number of edges is relatively
 
 close to linear in the number of vertices, and dense if this number is closer to quadratic in the number of vertices. For example, graphs with n vertices and O(n log n) edges are usually considered sparse, while those with 2 ⌦ ( n/ log n) edges are considered dense. “Partially dense” graphs, like those with 3/2 ⇡ n edges, may be considered either sparse or dense, depending on the specific application.
 
- 
+
 
 7.3.3 Solution to Quiz 7.1
 
@@ -284,7 +284,7 @@ arbitrarily large number of edges.
 
 6 Graphs: The Basics
 
- 
+
 
 and at most n(n 1)/2. To see why the lower bound is correct, consider a graph G = (V, E). As a thought experiment, imagine building up G one edge at a time, starting from the graph with vertices V and no edges. Initially, before any edges are added, each of the n vertices is completely isolated, so the graph trivially has n distinct “pieces.” Adding an edge (v, w) has the effect of fusing the
 
@@ -298,7 +298,7 @@ only n 1 edges—these are called trees (Figure 7.5).
 
 ![](media/index-19_1.jpg)
 
- 
+
 
 newly added edge
 
@@ -308,7 +308,7 @@ Figure 7.4: Adding a new edge fuses the pieces containing its endpoints into a s
 
 ![](media/index-19_3.jpg)
 
- 
+
 
 (a) A path on four vertices (b) A star on four vertices
 
@@ -318,7 +318,7 @@ Figure 7.5: Two connected undirected graphs with four vertices and three edges.
 
 ![](media/index-19_5.jpg)
 
- 
+
 
 The maximum number of edges in a graph with no parallel edges is achieved by the complete graph, with every possible edge present.
 
@@ -378,7 +378,7 @@ The maximum number of edges in a graph with no parallel edges is achieved by the
 
 7.4 Representing a Graph 7
 
- 
+
 
 Because there are n n( 1) n = pairs of vertices in an n-vertex graph, 2 2 this is also the maximum number of edges. For example, when n = 4,
 
@@ -386,13 +386,13 @@ the maximum number of edges is 4 8 = 6 (Figure 7.6). 2
 
 ![](media/index-20_1.jpg)
 
- 
+
 
 Figure 7.6: The complete graph on four vertices has 4 = 6 edges. 2
 
 ![](media/index-20_2.jpg)
 
- 
+
 
 7.4 Representing a Graph
 
@@ -442,7 +442,7 @@ remaining options). The n(n 1) resulting outcomes produce each pair (x, y) of ob
 
 8 Graphs: The Basics
 
- 
+
 
 The adjacency list representation boils down to two arrays (or linked lists, if you prefer): one for keeping track of the vertices, and one for the edges. These two arrays cross-reference each other in the natural way, with each edge associated with pointers to its endpoints and each vertex with pointers to the edges for which it is an endpoint.
 
@@ -464,7 +464,7 @@ d\) 2 ⇥ ( n)
 
 (See Section 7.4.4 for the solution and discussion.)
 
- 
+
 
 7.4.2 The Adjacency Matrix
 
@@ -478,13 +478,13 @@ Thus, an adjacency matrix maintains one bit for each pair of vertices,
 
 which keeps track of whether or not the edge is present (Figure 7.7). 7.4 Representing a Graph 9
 
- 
+
 
 1 0 1 2 3 41
 
 ![](media/index-22_1.jpg)
 
- 
+
 
 2 B C 1 1 0 1 0 0
 
@@ -510,7 +510,7 @@ Figure 7.7: The adjacency matrix of a graph maintains one bit for each vertex pa
 
 ![](media/index-22_6.jpg)
 
- 
+
 
 It’s easy to add bells and whistles to the adjacency matrix repre-
 
@@ -542,7 +542,7 @@ What are the memory requirements of an adjacency matrix?
 
 10 Graphs: The Basics
 
- 
+
 
 Quiz 7.3
 
@@ -558,7 +558,7 @@ d\) 2 ⇥ ( n)
 
 (See Section 7.4.4 for the solution and discussion.)
 
- 
+
 
 7.4.3 Comparing the Representations
 
@@ -584,13 +584,13 @@ vertices in one fell swoop by squaring the graph’s adjacency matrix.
 
 7.4 Representing a Graph 11
 
- 
+
 
 the size of this graph, but a conservative lower bound on the number of vertices is 10 billion, or 10 10. Storing and reading through an array of this length already requires significant computational resources, but it is well within the limits of what modern computers can do. The size of the adjacency matrix of this graph, however, is proportional to 100 quintillion ( 20 10). This is way too big to store or process with today’s technology. But the Web graph is sparse—the average num-ber of outgoing edges from a vertex is well under 100. The memory requirements of the adjacency list representation of the Web graph are therefore proportional to 12 10 (a trillion). This may be too big for your laptop, but it’s within the capabilities of state-of-the-art
 
 data-processing systems.11
 
- 
+
 
 7.4.4 Solutions to Quizzes 7.2–7.3
 
@@ -610,7 +610,7 @@ of the n vertices can participate in as many as n 1 edges—one per other vertex
 
 12 Graphs: The Basics
 
- 
+
 
 exactly the same amount of space, namely ⇥(m). The final scorecard is:
 
@@ -658,7 +658,7 @@ write ⇥(m) in place of ⇥(m + n). 14 This waste can be reduced by using trick
 
 Problems 13
 
- 
+
 
 P The adjacency list representation of a graph
 
@@ -684,7 +684,7 @@ ferred one for sparse graphs, and for applications
 
 that involve graph exploration.
 
- 
+
 
 Test Your Understanding
 
@@ -704,7 +704,7 @@ Problem 7.2 (S) Consider an undirected graph G = (V, E) that is represented as a
 
 15 The abbreviation “i.e.” stands for id est, and means “that is.” 14 Graphs: The Basics
 
- 
+
 
 a\) ⇥(1)
 

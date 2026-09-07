@@ -10,9 +10,9 @@ The past few chapters were huge, packed full of complex techniques and pages of 
 
 Lox is dynamically typed. A single variable can hold a Boolean, number, or string at different points in time. At least, that’s the idea. Right now, in clox, all values are numbers. By the end of the chapter, it will also support Booleans and `nil`. While those aren’t super interesting, they force us to figure out how our value representation can dynamically handle different types.
 
-There is a third category next to statically typed and dynamically typed: **unityped**. In that paradigm, all variables have a single type, usually a machine register integer. Unityped languages aren’t common today, but some Forths and BCPL, the language that inspired C, worked like this.
-
-As of this moment, clox is unityped.
+> There is a third category next to statically typed and dynamically typed: **unityped**. In that paradigm, all variables have a single type, usually a machine register integer. Unityped languages aren’t common today, but some Forths and BCPL, the language that inspired C, worked like this.
+>
+> As of this moment, clox is unityped.
 
 ## 18.1 Tagged Unions
 
@@ -46,9 +46,9 @@ typedef double Value;
 
 *value.h*
 
-The cases here cover each kind of value that has *built-in support in the VM*. When we get to adding classes to the language, each class the user defines doesn’t need its own entry in this enum. As far as the VM is concerned, every instance of a class is the same type: “instance”.
-
-In other words, this is the VM’s notion of “type”, not the user’s.
+> The cases here cover each kind of value that has *built-in support in the VM*. When we get to adding classes to the language, each class the user defines doesn’t need its own entry in this enum. As far as the VM is concerned, every instance of a class is the same type: “instance”.
+>
+> In other words, this is the VM’s notion of “type”, not the user’s.
 
 For now, we have only a couple of cases, but this will grow as we add strings, functions, and classes to clox. In addition to the type, we also need to store the data for the value—the `double` for a number, `true` or `false` for a Boolean. We could define a struct with fields for each possible type.
 
@@ -56,13 +56,13 @@ For now, we have only a couple of cases, but this will grow as we add strings, f
 
 But this is a waste of memory. A value can’t simultaneously be both a number and a Boolean. So at any point in time, only one of those fields will be used. C lets you optimize this by defining a union. A union looks like a struct except that all of its fields overlap in memory.
 
-If you’re familiar with a language in the ML family, structs and unions in C roughly mirror the difference between product and sum types, between tuples and algebraic data types.
+> If you’re familiar with a language in the ML family, structs and unions in C roughly mirror the difference between product and sum types, between tuples and algebraic data types.
 
 ![A union with two fields overlapping in memory.](media/image/types-of-values/union.png)
 
 The size of a union is the size of its largest field. Since the fields all reuse the same bits, you have to be very careful when working with them. If you store data using one field and then access it using another, you will reinterpret what the underlying bits mean.
 
-Using a union to interpret bits as different types is the quintessence of C. It opens up a number of clever optimizations and lets you slice and dice each byte of memory in ways that memory-safe languages disallow. But it is also wildly unsafe and will happily saw your fingers off if you don’t watch out.
+> Using a union to interpret bits as different types is the quintessence of C. It opens up a number of clever optimizations and lets you slice and dice each byte of memory in ways that memory-safe languages disallow. But it is also wildly unsafe and will happily saw your fingers off if you don’t watch out.
 
 As the name “tagged union” implies, our new value representation combines these two parts into a single struct.
 
@@ -88,13 +88,13 @@ typedef struct {
 
 There’s a field for the type tag, and then a second field containing the union of all of the underlying values. On a 64-bit machine with a typical C compiler, the layout looks like this:
 
-A smart language hacker gave me the idea to use “as” for the name of the union field because it reads nicely, almost like a cast, when you pull the various values out.
+> A smart language hacker gave me the idea to use “as” for the name of the union field because it reads nicely, almost like a cast, when you pull the various values out.
 
 ![The full value struct, with the type and as fields next to each other in memory.](media/image/types-of-values/value.png)
 
 The four-byte type tag comes first, then the union. Most architectures prefer values be aligned to their size. Since the union field contains an eight-byte double, the compiler adds four bytes of padding after the type field to keep that double on the nearest eight-byte boundary. That means we’re effectively spending eight bytes on the type tag, which only needs to represent a number between zero and three. We could stuff the enum in a smaller size, but all that would do is increase the padding.
 
-We could move the tag field *after* the union, but that doesn’t help much either. Whenever we create an array of Values—which is where most of our memory usage for Values will be—the C compiler will insert that same padding *between* each Value to keep the doubles aligned.
+> We could move the tag field *after* the union, but that doesn’t help much either. Whenever we create an array of Values—which is where most of our memory usage for Values will be—the C compiler will insert that same padding *between* each Value to keep the doubles aligned.
 
 So our Values are 16 bytes, which seems a little large. We’ll improve it later. In the meantime, they’re still small enough to store on the C stack and pass around by value. Lox’s semantics allow that because the only types we support so far are **immutable**. If we pass a copy of a Value containing the number three to some function, we don’t need to worry about the caller seeing modifications to the value. You can’t “modify” three. It’s three forever.
 
@@ -139,7 +139,7 @@ Each one of these takes a C value of the appropriate type and produces a Value t
 
 *value.h*, add after struct *Value*
 
-There’s no `AS_NIL` macro because there is only one `nil` value, so a Value with type `VAL_NIL` doesn’t carry any extra data.
+> There’s no `AS_NIL` macro because there is only one `nil` value, so a Value with type `VAL_NIL` doesn’t carry any extra data.
 
 These macros go in the opposite direction. Given a Value of the right type, they unwrap it and return the corresponding raw C value. The “right type” part is important! These macros directly access the union fields. If we were to do something like:
 
@@ -168,9 +168,9 @@ Then we may open a smoldering portal to the Shadow Realm. It’s not safe to use
 
 These macros return `true` if the Value has that type. Any time we call one of the `AS_` macros, we need to guard it behind a call to one of these first. With these eight macros, we can now safely shuttle data between Lox’s dynamic world and C’s static one.
 
-![The earthly C firmament with the Lox heavens above.](media/image/types-of-values/universe.png)
-
-The `_VAL` macros lift a C value into the heavens. The `AS_` macros bring it back down.
+> ![The earthly C firmament with the Lox heavens above.](media/image/types-of-values/universe.png)
+>
+> The `_VAL` macros lift a C value into the heavens. The `AS_` macros bring it back down.
 
 ## 18.3 Dynamically Typed Numbers
 
@@ -244,7 +244,7 @@ For unary negation, the check looks like this:
 
 First, we check to see if the Value on top of the stack is a number. If it’s not, we report the runtime error and stop the interpreter. Otherwise, we keep going. Only after this validation do we unwrap the operand, negate it, wrap the result and push it.
 
-Lox’s approach to error-handling is rather . . . *spare*. All errors are fatal and immediately halt the interpreter. There’s no way for user code to recover from an error. If Lox were a real language, this is one of the first things I would remedy.
+> Lox’s approach to error-handling is rather . . . *spare*. All errors are fatal and immediately halt the interpreter. There’s no way for user code to recover from an error. If Lox were a real language, this is one of the first things I would remedy.
 
 To access the Value, we use a new little function.
 
@@ -258,7 +258,7 @@ static Value peek(int distance) {
 
 It returns a Value from the stack but doesn’t pop it. The `distance` argument is how far down from the top of the stack to look: zero is the top, one is one slot down, etc.
 
-Why not just pop the operand and then validate it? We could do that. In later chapters, it will be important to leave operands on the stack to ensure the garbage collector can find them if a collection is triggered in the middle of the operation. I do the same thing here mostly out of habit.
+> Why not just pop the operand and then validate it? We could do that. In later chapters, it will be important to leave operands on the stack to ensure the garbage collector can find them if a collection is triggered in the middle of the operation. I do the same thing here mostly out of habit.
 
 We report the runtime error using a new function that we’ll get a lot of mileage out of over the remainder of the book.
 
@@ -281,7 +281,7 @@ static void runtimeError(const char* format, ...) {
 
 You’ve certainly *called* variadic functions—ones that take a varying number of arguments—in C before: `printf()` is one. But you may not have *defined* your own. This book isn’t a C tutorial, so I’ll skim over it here, but basically the `...` and `va_list` stuff let us pass an arbitrary number of arguments to `runtimeError()`. It forwards those on to `vfprintf()`, which is the flavor of `printf()` that takes an explicit `va_list`.
 
-If you are looking for a C tutorial, I love *[The C Programming Language](https://www.cs.princeton.edu/~bwk/cbook.html)*, usually called “K&R” in honor of its authors. It’s not entirely up to date, but the quality of the writing more than makes up for it.
+> If you are looking for a C tutorial, I love *[The C Programming Language](https://www.cs.princeton.edu/~bwk/cbook.html)*, usually called “K&R” in honor of its authors. It’s not entirely up to date, but the quality of the writing more than makes up for it.
 
 Callers can pass a format string to `runtimeError()` followed by a number of arguments, just like they can when calling `printf()` directly. `runtimeError()` then formats and prints those arguments. We won’t take advantage of that in this chapter, but later chapters will produce formatted runtime error messages that contain other data.
 
@@ -289,7 +289,7 @@ After we show the hopefully helpful error message, we tell the user which line o
 
 We look into the chunk’s debug line array using the current bytecode instruction index *minus one*. That’s because the interpreter advances past each instruction before executing it. So, at the point that we call `runtimeError()`, the failed instruction is the previous one.
 
-Just showing the immediate line where the error occurred doesn’t provide much context. Better would be a full stack trace. But we don’t even have functions to call yet, so there is no call stack to trace.
+> Just showing the immediate line where the error occurred doesn’t provide much context. Better would be a full stack trace. But we don’t even have functions to call yet, so there is no call stack to trace.
 
 In order to use `va_list` and the macros for working with it, we need to bring in a standard header.
 
@@ -338,7 +338,7 @@ Yeah, I realize that’s a monster of a macro. It’s not what I’d normally co
 
 If the operands are fine, we pop them both and unwrap them. Then we apply the given operator, wrap the result, and push it back on the stack. Note that we don’t wrap the result by directly using `NUMBER_VAL()`. Instead, the wrapper to use is passed in as a macro parameter. For our existing arithmetic operators, the result is a number, so we pass in the `NUMBER_VAL` macro.
 
-Did you know you can pass macros as parameters to macros? Now you do!
+> Did you know you can pass macros as parameters to macros? Now you do!
 
 ```
       }
@@ -369,9 +369,9 @@ With number literals, we had to deal with the fact that there are billions of po
 
 But given that there are literally (heh) only three possible values we need to worry about with these new types, it’s gratuitous—and slow\!—to waste a two-byte instruction and a constant table entry on them. Instead, we’ll define three dedicated instructions to push each of these literals on the stack.
 
-I’m not kidding about dedicated operations for certain constant values being faster. A bytecode VM spends much of its execution time reading and decoding instructions. The fewer, simpler instructions you need for a given piece of behavior, the faster it goes. Short instructions dedicated to common operations are a classic optimization.
-
-For example, the Java bytecode instruction set has dedicated instructions for loading 0.0, 1.0, 2.0, and the integer values from -1 through 5. (This ends up being a vestigial optimization given that most mature JVMs now JIT-compile the bytecode to machine code before execution anyway.)
+> I’m not kidding about dedicated operations for certain constant values being faster. A bytecode VM spends much of its execution time reading and decoding instructions. The fewer, simpler instructions you need for a given piece of behavior, the faster it goes. Short instructions dedicated to common operations are a classic optimization.
+>
+> For example, the Java bytecode instruction set has dedicated instructions for loading 0.0, 1.0, 2.0, and the integer values from -1 through 5. (This ends up being a vestigial optimization given that most mature JVMs now JIT-compile the bytecode to machine code before execution anyway.)
 
 ```
   OP_CONSTANT,
@@ -454,7 +454,7 @@ static void literal() {
 
 Since `parsePrecedence()` has already consumed the keyword token, all we need to do is output the proper instruction. We figure that out based on the type of token we parsed. Our front end can now compile Boolean and nil literals to bytecode. Moving down the execution pipeline, we reach the interpreter.
 
-We could have used separate parser functions for each literal and saved ourselves a switch but that felt needlessly verbose to me. I think it’s mostly a matter of taste.
+> We could have used separate parser functions for each literal and saved ourselves a switch but that felt needlessly verbose to me. I think it’s mostly a matter of taste.
 
 ```
       case OP_CONSTANT: {
@@ -612,7 +612,7 @@ print !nil;
 
 For unary minus, we made it an error to negate anything that isn’t a number. But Lox, like most scripting languages, is more permissive when it comes to `!` and other contexts where a Boolean is expected. The rule for how other types are handled is called “falsiness”, and we implement it here:
 
-Now I can’t help but try to figure out what it would mean to negate other types of values. `nil` is probably its own negation, sort of like a weird pseudo-zero. Negating a string could, uh, reverse it?
+> Now I can’t help but try to figure out what it would mean to negate other types of values. `nil` is probably its own negation, sort of like a weird pseudo-zero. Negating a string could, uh, reverse it?
 
 ```
 static bool isFalsey(Value value) {
@@ -668,9 +668,9 @@ But my main goal is to teach you about bytecode compilers. I want you to start i
 
 The expression `a != b` has the same semantics as `!(a == b)`, so the compiler is free to compile the former as if it were the latter. Instead of a dedicated `OP_NOT_EQUAL` instruction, it can output an `OP_EQUAL` followed by an `OP_NOT`. Likewise, `a <= b` is the same as `!(a > b)` and `a >= b` is `!(a < b)`. Thus, we only need three new instructions.
 
-*Is* `a <= b` always the same as `!(a > b)`? According to [IEEE 754](https://en.wikipedia.org/wiki/IEEE_754), all comparison operators return false when an operand is NaN. That means `NaN <= 1` is false and `NaN > 1` is also false. But our desugaring assumes the latter is always the negation of the former.
-
-For the book, we won’t get hung up on this, but these kinds of details will matter in your real language implementations.
+> *Is* `a <= b` always the same as `!(a > b)`? According to [IEEE 754](https://en.wikipedia.org/wiki/IEEE_754), all comparison operators return false when an operand is NaN. That means `NaN <= 1` is false and `NaN > 1` is also false. But our desugaring assumes the latter is always the negation of the former.
+>
+> For the book, we won’t get hung up on this, but these kinds of details will matter in your real language implementations.
 
 Over in the parser, though, we do have six new operators to slot into the parse table. We use the same `binary()` parser function from before. Here’s the row for `!=`:
 
@@ -786,11 +786,11 @@ bool valuesEqual(Value a, Value b) {
 
 First, we check the types. If the Values have different types, they are definitely not equal. Otherwise, we unwrap the two Values and compare them directly.
 
-Some languages have “implicit conversions” where values of different types may be considered equal if one can be converted to the other’s type. For example, the number 0 is equivalent to the string “0” in JavaScript. This looseness was a large enough source of pain that JS added a separate “strict equality” operator, `===`.
-
-PHP considers the strings “1” and “01” to be equivalent because both can be converted to equivalent numbers, though the ultimate reason is because PHP was designed by a Lovecraftian eldritch god to destroy the mind.
-
-Most dynamically typed languages that have separate integer and floating-point number types consider values of different number types equal if the numeric values are the same (so, say, 1.0 is equal to 1), though even that seemingly innocuous convenience can bite the unwary.
+> Some languages have “implicit conversions” where values of different types may be considered equal if one can be converted to the other’s type. For example, the number 0 is equivalent to the string “0” in JavaScript. This looseness was a large enough source of pain that JS added a separate “strict equality” operator, `===`.
+>
+> PHP considers the strings “1” and “01” to be equivalent because both can be converted to equivalent numbers, though the ultimate reason is because PHP was designed by a Lovecraftian eldritch god to destroy the mind.
+>
+> Most dynamically typed languages that have separate integer and floating-point number types consider values of different number types equal if the numeric values are the same (so, say, 1.0 is equal to 1), though even that seemingly innocuous convenience can bite the unwary.
 
 For each value type, we have a separate case that handles comparing the value itself. Given how similar the cases are, you might wonder why we can’t simply `memcmp()` the two Value structs and be done with it. The problem is that because of padding and different-sized union fields, a Value contains unused bits. C gives no guarantee about what is in those, so it’s possible that two equal Values actually differ in memory that isn’t used.
 
@@ -843,7 +843,9 @@ As always, the coda to today’s aria is disassembling the new instructions.
 
 With that, our numeric calculator has become something closer to a general expression evaluator. Fire up clox and type in:
 
-    !(5 - 4 > 3 * 2 == !nil)
+```
+!(5 - 4 > 3 * 2 == !nil)
+```
 
 OK, I’ll admit that’s maybe not the most *useful* expression, but we’re making progress. We have one missing built-in type with its own literal form: strings. Those are much more complex because strings can vary in size. That tiny difference turns out to have implications so large that we give strings their very own chapter.
 

@@ -58,7 +58,6 @@ On the other hand, uncopyable objects (e.g., std::atomics—see Item 40) may be 
 
 std::atomic\<int\> ai1**{** 0 **}**; // fine
 
-**50 \| Item 7**
 
 std::atomic\<int\> ai2**(**0**)**; // fine std::atomic\<int\> ai3 **=** 0; // error!
 
@@ -96,7 +95,6 @@ Functions can’t be declared using braces for the parameter list, so default-co
 
 Widget w3**{}**; // calls Widget ctor with no args
 
-**Item 7 \| 51**
 
 There’s thus a lot to be said for braced initialization. It’s the syntax that can be used in the widest variety of contexts, it prevents implicit narrowing conversions, and it’s immune to C++’s most vexing parse. A trifecta of goodness! So why isn’t this Item entitled something like “Prefer braced initialization syntax”?
 
@@ -136,7 +134,6 @@ Widget(int i, bool b); // as before
 
 Widget(int i, double d); // as before
 
-**52 \| Item 7**
 
 **Widget(std::initializer_list\<long double\> il);** // added
 
@@ -194,7 +191,6 @@ Widget w5**(**w4**)**; // uses parens, *calls copy ctor* Widget w6**{**w4**}**; 
 
 // converts to long double)
 
-**Item 7 \| 53**
 
 Widget w7**(**std::move(w4)**)**; // uses parens, *calls move ctor* Widget w8**{**std::move(w4)**}**; // uses braces, *calls*
 
@@ -238,7 +234,6 @@ Widget(std::initializer_list\< **std::string**\> il);
 
 … // no implicit
 
-**54 \| Item 7**
 
 }; // conversion funcs Widget w1**(**10, true**)**; // uses parens, still calls first ctor Widget w2**{**10, true**}**; // uses braces, *now calls first ctor* Widget w3**(**10, 5.0**)**; // uses parens, still calls second ctor Widget w4**{**10, 5.0**}**; // uses braces, *now calls second ctor* This brings us near the end of our examination of braced initializers and constructor overloading, but there’s an interesting edge case that needs to be addressed. Suppose you use an empty set of braces to construct an object that supports default construction and also supports std::initializer_list construction. What do your empty braces mean? If they mean “no arguments,” you get default construction, but if they mean “empty std::initializer_list,” you get construction from a std::ini tializer_list with no elements.
 
@@ -272,7 +267,6 @@ Widget w4(**{}**); // calls std::initializer_list ctor
 
 Widget w5{**{}**}; // ditto
 
-**Item 7 \| 55**
 
 At this point, with seemingly arcane rules about braced initializers, std::initial izer_lists, and constructor overloading burbling about in your brain, you may be wondering how much of this information matters in day-to-day programming. More than you might think, because one of the classes directly affected is std::vector.
 
@@ -296,7 +290,7 @@ But let’s step back from std::vector and also from the details of parentheses,
 
 An implication is that if you have a class with no std::initializer_list constructor, and you add one, client code using braced initialization may find that calls that used to resolve to non-std::initializer_list constructors now resolve to the new function. Of course, this kind of thing can happen any time you add a new function to a set of overloads: calls that used to resolve to one of the old overloads might start calling the new one. The difference with std::initializer_list constructor overloads is that a std::initializer_list overload doesn’t just compete with other overloads, it overshadows them to the point where the other overloads may hardly be considered. So add such overloads only with great deliberation.
 
-The second lesson is that as a class client, you must choose carefully between parentheses and braces when creating objects. Most developers end up choosing one kind **56 \| Item 7**
+The second lesson is that as a class client, you must choose carefully between parentheses and braces when creating objects. Most developers end up choosing one kind
 
 of delimiter as a default, using the other only when they have to. Braces-by-default folks are attracted by their unrivaled breadth of applicability, their prohibition of narrowing conversions, and their immunity to C++’s most vexing parse. Such folks understand that in some cases (e.g., creation of a std::vector with a given size and initial element value), parentheses are required. On the other hand, the go-parentheses-go crowd embraces parentheses as their default argument delimiter.
 
@@ -328,7 +322,6 @@ std::vector\<int\> v;
 
 doSomeWork\<std::vector\<int\>\>(10, 20);
 
-**Item 7 \| 57**
 
 If doSomeWork uses parentheses when creating localObject, the result is a std::vector with 10 elements. If doSomeWork uses braces, the result is a std::vec tor with 2 elements. Which is correct? The author of doSomeWork can’t know. Only the caller can.
 
@@ -360,7 +353,6 @@ Practically speaking, the same is true of NULL. There is some uncertainty in the
 
 [*blog*, “](http://akrzemi1.wordpress.com/)[Intuitive interface — Part I](http://akrzemi1.wordpress.com/2013/06/05/intuitive-interface-part-i/).”
 
-**58 \| Item 7**
 
 In C++98, the primary implication of this was that overloading on pointer and integral types could lead to surprises. Passing 0 or NULL to such overloads never called a pointer overload:
 
@@ -388,7 +380,6 @@ Using nullptr instead of 0 or NULL thus avoids overload resolution surprises, bu
 
 if (**result == 0**) {
 
-**Item 8 \| 59**
 
 …
 
@@ -448,7 +439,6 @@ auto result = f2(**NULL**); // pass NULL as null ptr to f2
 
 {
 
-**60 \| Item 8**
 
 MuxGuard g(f3m); // lock mutex for f3
 
@@ -514,7 +504,6 @@ auto result2 = lockAndCall(f2, f2m, **NULL**); // error!
 
 …
 
-**Item 8 \| 61**
 
 auto result3 = lockAndCall(f3, f3m, **nullptr**); // fine Well, they can write it, but, as the comments indicate, in two of the three cases, the code won’t compile. The problem in the first call is that when 0 is passed to lockAnd Call, template type deduction kicks in to figure out its type. The type of 0 is, was, and always will be int, so that’s the type of the parameter ptr inside the instantiation of this call to lockAndCall. Unfortunately, this means that in the call to func inside lockAndCall, an int is being passed, and that’s not compatible with the std::shared_ptr\<Widget\> parameter that f1 expects. The 0 passed in the call to lockAndCall was intended to represent a null pointer, but what actually got passed was a run-of-the-mill int. Trying to pass this int to f1 as a std::shared_ptr
 
@@ -536,7 +525,6 @@ Combined with the fact that nullptr doesn’t suffer from the overload resolutio
 
 • Avoid overloading on integral and pointer types.
 
-**62 \| Item 8**
 
 **Item 9: Prefer alias declarations to typedefs.**
 
@@ -576,7 +564,6 @@ But a compelling reason does exist: templates. In particular, alias declarations
 
 This gives C++11 programmers a straightforward mechanism for expressing things that in C++98 had to be hacked together with typedefs nested inside templatized structs. For example, consider defining a synonym for a linked list that uses a custom allocator, MyAlloc. With an alias template, it’s a piece of cake:
 
-**Item 9 \| 63**
 
 **template\<typename T\>** // MyAllocList\<T\> **using MyAllocList** = std::list\<T, MyAlloc\<T\>\>; // is synonym for
 
@@ -626,7 +613,7 @@ private:
 
 };
 
-To you, MyAllocList\<T\> (i.e., use of the alias template) may look just as dependent on the template parameter T as MyAllocList\<T\>::type (i.e., use of the nested type **64 \| Item 9**
+To you, MyAllocList\<T\> (i.e., use of the alias template) may look just as dependent on the template parameter T as MyAllocList\<T\>::type (i.e., use of the nested type
 
 def), but you’re not a compiler. When compilers process the Widget template and encounter the use of MyAllocList\<T\> (i.e., use of the alias template), they know that MyAllocList\<T\> is the name of a type, because MyAllocList is an alias template: it *must* name a type. MyAllocList\<T\> is thus a *non-dependent type*, and a typename specifier is neither required nor permitted.
 
@@ -656,7 +643,7 @@ If you’ve done any template metaprogramming (TMP), you’ve almost certainly b
 
 You can see examples of TMP in action, including the kinds of type transformations I
 
-just mentioned, in Items 23 and 27.) **Item 9 \| 65**
+just mentioned, in Items 23 and 27.)
 
 C++11 gives you the tools to perform these kinds of transformations in the form of *type traits*, an assortment of templates inside the header \<type_traits\>. There are dozens of type traits in that header, and not all of them perform type transformations, but the ones that do offer a predictable interface. Given a type T to which you’d like to apply a transformation, the resulting type is std:: *transformation*
 
@@ -682,7 +669,7 @@ std::add_lvalue_reference\<T\>::type // C++11: T → T&
 
 std::add_lvalue_reference**\_t**\<T\> // C++14 equivalent
 
-The C++11 constructs remain valid in C++14, but I don’t know why you’d want to use them. Even if you don’t have access to C++14, writing the alias templates yourself is child’s play. Only C++11 language features are required, and even children can **66 \| Item 9**
+The C++11 constructs remain valid in C++14, but I don’t know why you’d want to use them. Even if you don’t have access to C++14, writing the alias templates yourself is child’s play. Only C++11 language features are required, and even children can
 
 mimic a pattern, right? If you happen to have access to an electronic copy of the C++14 Standard, it’s easier still, because all that’s required is some copying and past-ing. Here, I’ll get you started:
 
@@ -732,7 +719,6 @@ counterparts, *scoped enums*, don’t leak names in this way:
 
 auto **white** = false; // fine, no other
 
-**Item 9 \| 67**
 
 // "white" in scope Color c = **white**; // error! no enumerator named
 
@@ -778,7 +764,6 @@ if (c \< 14.5) { // error! can't compare
 
 // Color and double
 
-**68 \| Item 10**
 
 auto factors = // error! can't pass Color to primeFactors(c); // function expecting std::size_t
 
@@ -824,7 +809,6 @@ indeterminate = 0xFFFFFFFF
 
 Here the values to be represented range from 0 to 0xFFFFFFFF. Except on unusual machines (where a char consists of at least 32 bits), compilers will have to select an integral type larger than char for the representation of Status values.
 
-**Item 10 \| 69**
 
 To make efficient use of memory, compilers often want to choose the smallest underlying type for an enum that’s sufficient to represent its range of enumerator values. In some cases, compilers will optimize for speed instead of size, and in that case, they may not choose the smallest permissible underlying type, but they certainly want to be *able* to optimize for size. To make that possible, C++98 supports only enum definitions (where all enumerators are listed); enum declarations are not allowed. That makes it possible for compilers to select an underlying type for each enum prior to the enum being used.
 
@@ -862,7 +846,7 @@ enum class Status; // forward declaration
 
 void continueProcessing(Status s); // use of fwd-declared enum
 
-The header containing these declarations requires no recompilation if Status’s definition is revised. Furthermore, if Status is modified (e.g., to add the audited enumerator), but continueProcessing’s behavior is unaffected (e.g., because **70 \| Item 10**
+The header containing these declarations requires no recompilation if Status’s definition is revised. Furthermore, if Status is modified (e.g., to add the audited enumerator), but continueProcessing’s behavior is unaffected (e.g., because
 
 continueProcessing doesn’t use audited), continueProcessing’s implementation need not be recompiled, either.
 
@@ -912,7 +896,6 @@ using UserInfo = // type alias; see Item 9
 
 std::tuple\<std::string, // name
 
-**Item 10 \| 71**
 
 std::string, // email
 
@@ -952,7 +935,7 @@ std::get\< **static_cast\<std::size_t\>(UserInfoFields::uiEmail)**\> (uInfo);
 
 The verbosity can be reduced by writing a function that takes an enumerator and returns its corresponding std::size_t value, but it’s a bit tricky. std::get is a template, and the value you provide is a template argument (notice the use of angle brackets, not parentheses), so the function that transforms an enumerator into a std::size_t has to produce its result *during compilation*. As Item 15 explains, that means it must be a constexpr function.
 
-In fact, it should really be a constexpr function template, because it should work with any kind of enum. And if we’re going to make that generalization, we should **72 \| Item 10**
+In fact, it should really be a constexpr function template, because it should work with any kind of enum. And if we’re going to make that generalization, we should
 
 generalize the return type, too. Rather than returning std::size_t, we’ll return the enum’s underlying type. It’s available via the std::underlying_type type trait. (See
 
@@ -1010,7 +993,6 @@ Regardless of how it’s written, toUType permits us to access a field of the tu
 
 auto val = std::get\< **toUType(UserInfoFields::uiEmail)**\>(uInfo); It’s still more to write than use of the unscoped enum, but it also avoids namespace pollution and inadvertent conversions involving enumerators. In many cases, you may decide that typing a few extra characters is a reasonable price to pay for the ability to avoid the pitfalls of an enum technology that dates to a time when the state of the art in digital telecommunications was the 2400-baud modem.
 
-**Item 10 \| 73**
 
 **Things to Remember**
 
@@ -1038,7 +1020,6 @@ tions that C++ automatically generates when they’re needed. Item 17 discusses 
 
 The C++98 approach to preventing use of these functions is to declare them private and not define them. For example, near the base of the iostreams hierarchy in the C++ Standard Library is the class template basic_ios. All istream and ostream classes inherit (possibly indirectly) from this class. Copying istreams and ostreams is undesirable, because it’s not really clear what such operations should do. An istream object, for example, represents a stream of input values, some of which may have already been read, and some of which will potentially be read later. If an istream were to be copied, would that entail copying all the values that had already been read as well as all the values that would be read in the future? The easiest way to deal with such questions is to define them out of existence. Prohibiting the copying of streams does just that.
 
-**74 \| Item 10**
 
 To render istream and ostream classes uncopyable, basic_ios is specified in C++98
 
@@ -1084,7 +1065,7 @@ basic_ios& operator=(const basic_ios&) **= delete;**
 
 The difference between deleting these functions and declaring them private may seem more a matter of fashion than anything else, but there’s greater substance here than you might think. Deleted functions may not be used in any way, so even code that’s in member and friend functions will fail to compile if it tries to copy basic_ios objects. That’s an improvement over the C++98 behavior, where such improper usage wouldn’t be diagnosed until link-time.
 
-By convention, deleted functions are declared public, not private. There’s a reason for that. When client code tries to use a member function, C++ checks accessibility before deleted status. When client code tries to use a deleted private function, some compilers complain only about the function being private, even though the function’s accessibility doesn’t really affect whether it can be used. It’s worth bearing this in mind when revising legacy code to replace private-and-not-defined member **Item 11 \| 75**
+By convention, deleted functions are declared public, not private. There’s a reason for that. When client code tries to use a member function, C++ checks accessibility before deleted status. When client code tries to use a deleted private function, some compilers complain only about the function being private, even though the function’s accessibility doesn’t really affect whether it can be used. It’s worth bearing this in mind when revising legacy code to replace private-and-not-defined member
 
 functions with deleted ones, because making the new functions public will generally result in better error messages.
 
@@ -1118,7 +1099,6 @@ bool isLucky(double) **= delete**; // reject doubles and
 
 Although deleted functions can’t be used, they are part of your program. As such, they are taken into account during overload resolution. That’s why, with the deleted function declarations above, the undesirable calls to isLucky will be rejected: if (isLucky('a')) … // error! call to deleted function
 
-**76 \| Item 11**
 
 if (isLucky(true)) … // error!
 
@@ -1160,7 +1140,7 @@ And if you really want to be thorough, you’ll also delete the const volatile v
 
 and const volatile char\* overloads, and then you’ll get to work on the overloads for pointers to the other standard character types: std::wchar_t, std::char16_t, and std::char32_t.
 
-Interestingly, if you have a function template inside a class, and you’d like to disable some instantiations by declaring them private (à la classic C++98 convention), you can’t, because it’s not possible to give a member function template specialization a **Item 11 \| 77**
+Interestingly, if you have a function template inside a class, and you’d like to disable some instantiations by declaring them private (à la classic C++98 convention), you can’t, because it’s not possible to give a member function template specialization a
 
 different access level from that of the main template. If processPointer were a member function template inside Widget, for example, and you wanted to disable calls for void\* pointers, this would be the C++98 approach, though it would not compile:
 
@@ -1212,7 +1192,6 @@ void Widget::processPointer\<void\>(void\*) = delete; // public,
 
 The truth is that the C++98 practice of declaring functions private and not defining them was really an attempt to achieve what C++11’s deleted functions actually accomplish. As an emulation, the C++98 approach is not as good as the real thing. It doesn’t work outside classes, it doesn’t always work inside classes, and when it does work, it may not work until link-time. So stick to deleted functions.
 
-**78 \| Item 11**
 
 **Things to Remember**
 
@@ -1260,7 +1239,6 @@ upb-\>doWork(); // call doWork through base
 
 For overriding to occur, several requirements must be met:
 
-**Item 11 \| 79**
 
 • The base class function must be virtual.
 
@@ -1306,7 +1284,7 @@ makeWidget().doWork(); // calls Widget::doWork for rvalues
 
 // (i.e., Widget::doWork &&)
 
-I’ll say more about member functions with reference qualifiers later, but for now, simply note that if a virtual function in a base class has a reference qualifier, derived class overrides of that function must have exactly the same reference **80 \| Item 12**
+I’ll say more about member functions with reference qualifiers later, but for now, simply note that if a virtual function in a base class has a reference qualifier, derived class overrides of that function must have exactly the same reference
 
 qualifier. If they don’t, the declared functions will still exist in the derived class, but they won’t override anything in the base class.
 
@@ -1352,7 +1330,7 @@ Need some help?
 
 You may think, “Hey, in practice, these things will elicit compiler warnings, so I don’t need to worry.” Maybe that’s true. But maybe it’s not. With two of the compilers I checked, the code was accepted without complaint, and that was with all warnings enabled. (Other compilers provided warnings about some of the issues, but not all of them.)
 
-Because declaring derived class overrides is important to get right, but easy to get wrong, C++11 gives you a way to make explicit that a derived class function is **Item 12 \| 81**
+Because declaring derived class overrides is important to get right, but easy to get wrong, C++11 gives you a way to make explicit that a derived class function is
 
 supposed to override a base class version: declare it override. Applying this to the example above would yield this derived class:
 
@@ -1404,7 +1382,7 @@ void mf4() const override; // adding "virtual" is OK,
 
 Note that in this example, part of getting things to work involves declaring mf4 virtual in Base. Most overriding-related errors occur in derived classes, but it’s possible for things to be incorrect in base classes, too.
 
-A policy of using override on all your derived class overrides can do more than just enable compilers to tell you when would-be overrides aren’t overriding anything. It can also help you gauge the ramifications if you’re contemplating changing the signature of a virtual function in a base class. If derived classes use override everywhere, you can just change the signature, recompile your system, see how much damage you’ve caused (i.e., how many derived classes fail to compile), then decide whether the signature change is worth the trouble. Without override, you’d have to hope you have comprehensive unit tests in place, because, as we’ve seen, derived class virtuals **82 \| Item 12**
+A policy of using override on all your derived class overrides can do more than just enable compilers to tell you when would-be overrides aren’t overriding anything. It can also help you gauge the ramifications if you’re contemplating changing the signature of a virtual function in a base class. If derived classes use override everywhere, you can just change the signature, recompile your system, see how much damage you’ve caused (i.e., how many derived classes fail to compile), then decide whether the signature change is worth the trouble. Without override, you’d have to hope you have comprehensive unit tests in place, because, as we’ve seen, derived class virtuals
 
 that are supposed to override base class functions, but don’t, need not elicit compiler diagnostics.
 
@@ -1440,7 +1418,6 @@ public:
 
 2 Applying final to a virtual function prevents the function from being overridden in derived classes. final may also be applied to a class, in which case the class is prohibited from being used as a base class.
 
-**Item 12 \| 83**
 
 using DataType = std::vector\<double\>; // see Item 9 for
 
@@ -1482,7 +1459,6 @@ It’d be preferable to move it, but, because data is returning an lvalue refere
 
 What’s needed is a way to specify that when data is invoked on an rvalue Widget, the result should also be an rvalue. Using reference qualifiers to overload data for lvalue and rvalue Widgets makes that possible:
 
-**84 \| Item 12**
 
 class Widget {
 
@@ -1530,7 +1506,6 @@ This is certainly nice, but don’t let the warm glow of this happy ending distr
 
 • Member function reference qualifiers make it possible to treat lvalue and rvalue objects (\*this) differently.
 
-**Item 12 \| 85**
 
 **Item 13: Prefer const_iterators to iterators.**
 
@@ -1570,7 +1545,6 @@ values.insert(**static_cast\<IterT\>(ci)**, 1998); // may not
 
 // below
 
-**86 \| Item 13**
 
 The typedefs aren’t required, of course, but they make the casts in the code easier to write. (If you’re wondering why I’m showing typedefs instead of following the
 
@@ -1592,7 +1566,7 @@ std::vector\<int\> values; // as before
 
 …
 
-**auto** it = // use cbegin **Item 13 \| 87**
+**auto** it = // use cbegin
 
 std::find(values. **c**begin(),values. **c**end(), 1983); // and cend values.insert(it, 1998);
 
@@ -1636,7 +1610,6 @@ auto cbegin(const C& container)-\>decltype(std::begin(container))
 
 {
 
-**88 \| Item 13**
 
 return std::begin(container); // see explanation below
 
@@ -1656,7 +1629,6 @@ But back to basics. The point of this Item is to encourage you to use const_iter
 
 rbegin, etc., over their member function counterparts.
 
-**Item 13 \| 89**
 
 **Item 14: Declare functions noexcept if they won’t emit** **exceptions.**
 
@@ -1670,7 +1642,6 @@ Whether a function should be so declared is a matter of interface design. The ex
 
 But there’s an additional incentive to apply noexcept to functions that won’t produce exceptions: it permits compilers to generate better object code. To understand why, it helps to examine the difference between the C++98 and C++11 ways of saying that a function won’t emit exceptions. Consider a function f that promises callers they’ll never receive an exception. The two ways of expressing that are: int f(int x) **throw()**; // no exceptions from f: *C++98 style* int f(int x) **noexcept**; // no exceptions from f: *C++11 style* If, at runtime, an exception leaves f, f’s exception specification is violated. With the C++98 exception specification, the call stack is unwound to f’s caller, and, after some actions not relevant here, program execution is terminated. With the C++11 exception specification, runtime behavior is slightly different: the stack is only *possibly* unwound before program execution is terminated.
 
-**90 \| Item 14**
 
 The difference between unwinding the call stack and *possibly* unwinding it has a surprisingly large impact on code generation. In a noexcept function, optimizers need not keep the runtime stack in an unwindable state if an exception would propagate out of the function, nor must they ensure that objects in a noexcept function are destroyed in the inverse order of construction should an exception leave the function.
 
@@ -1698,7 +1669,7 @@ However, you do want to take advantage of the fact that C++11’s move semantics
 
 Item 17).
 
-When a new element is added to a std::vector, it’s possible that the std::vector lacks space for it, i.e., that the std::vector’s size is equal to its capacity. When that happens, the std::vector allocates a new, larger, chunk of memory to hold its **Item 14 \| 91**
+When a new element is added to a std::vector, it’s possible that the std::vector lacks space for it, i.e., that the std::vector’s size is equal to its capacity. When that happens, the std::vector allocates a new, larger, chunk of memory to hold its
 
 elements, and it transfers the elements from the existing chunk of memory to the new one. In C++98, the transfer was accomplished by copying each element from the old memory to the new memory, then destroying the objects in the old memory. This approach enabled push_back to offer the strong exception safety guarantee: if an exception was thrown during the copying of the elements, the state of the std::vec tor remained unchanged, because none of the elements in the old memory were destroyed until all elements had been successfully copied into the new memory.
 
@@ -1714,7 +1685,6 @@ swap functions comprise another case where noexcept is particularly desirable. s
 
 based on whether the move constructor has a noexcept (or throw()) designation.
 
-**92 \| Item 14**
 
 defined swaps are noexcept. For example, the declarations for the Standard Library’s swaps for arrays and std::pair are:
 
@@ -1746,7 +1716,7 @@ You can remove noexcept from the function’s declaration (i.e., change its inte
 
 None of these options is appealing.
 
-The fact of the matter is that most functions are *exception-neutral*. Such functions throw no exceptions themselves, but functions they call might emit one. When that **Item 14 \| 93**
+The fact of the matter is that most functions are *exception-neutral*. Such functions throw no exceptions themselves, but functions they call might emit one. When that
 
 happens, the exception-neutral function allows the emitted exception to pass through on its way to a handler further up the call chain. Exception-neutral functions are never noexcept, because they may emit such “just passing through” exceptions. Most functions, therefore, quite properly lack the noexcept designation.
 
@@ -1762,7 +1732,6 @@ For some functions, being noexcept is so important, they’re that way by defaul
 
 Such destructors are uncommon. There are none in the Standard Library, and if the 4 The interface specifications for move operations on containers in the Standard Library lack noexcept. However, implementers are permitted to strengthen exception specifications for Standard Library functions, and, in practice, it is common for at least some container move operations to be declared noexcept. That practice exemplifies this Item’s advice. Having found that it’s possible to write container move operations such that exceptions aren’t thrown, implementers often declare the operations noexcept, even though the Standard does not require them to do so.
 
-**94 \| Item 14**
 
 destructor for an object being used by the Standard Library (e.g., because it’s in a container or was passed to an algorithm) emits an exception, the behavior of the program is undefined.
 
@@ -1786,7 +1755,6 @@ But how should a precondition violation be reported such that a test harness or 
 
 “precondition was violated” exception, but if f is declared noexcept, that would be impossible; throwing an exception would lead to program termination. For this rea-5 “Regardless of the state of the program” and “no constraints” doesn’t legitimize programs whose behavior is already undefined. For example, std::vector::size has a wide contract, but that doesn’t require that it behave reasonably if you invoke it on a random chunk of memory that you’ve cast to a std::vector. The result of the cast is undefined, so there are no behavioral guarantees for the program containing the cast.
 
-**Item 14 \| 95**
 
 son, library designers who distinguish wide from narrow contracts generally reserve noexcept for functions with wide contracts.
 
@@ -1820,7 +1788,6 @@ Because there are legitimate reasons for noexcept functions to rely on code lack
 
 • Most functions are exception-neutral rather than noexcept.
 
-**96 \| Item 14**
 
 **Item 15: Use constexpr whenever possible.**
 
@@ -1844,7 +1811,6 @@ std::array\<int, sz\> data1; // error! same problem
 
 constexpr auto arraySize2 = 10; // fine, 10 is a
 
-**Item 15 \| 97**
 
 // compile-time constant std::array\<int, arraySize2\> data2; // fine, arraySize2
 
@@ -1872,9 +1838,7 @@ Usage scenarios for constexpr objects become more interesting when constexpr fun
 
 • When a constexpr function is called with one or more values that are not known during compilation, it acts like a normal function, computing its result at runtime. This means you don’t need two functions to perform the same operation, one for compile-time constants and one for all other values. The constexpr function does it all.
 
-Suppose we need a data structure to hold the results of an experiment that can be run in a variety of ways. For example, the lighting level can be high, low, or off during the course of the experiment, as can the fan speed and the temperature, etc. If there are *n* environmental conditions relevant to the experiment, each of which has three possi-98 \| Item 15
-
-ble states, the number of combinations is 3 *n*. Storing experimental results for all combinations of conditions thus requires a data structure with enough room for 3 *n* values.
+Suppose we need a data structure to hold the results of an experiment that can be run in a variety of ways. For example, the lighting level can be high, low, or off during the course of the experiment, as can the fan speed and the temperature, etc. If there are *n* environmental conditions relevant to the experiment, each of which has three possible states, the number of combinations is 3 *n*. Storing experimental results for all combinations of conditions thus requires a data structure with enough room for 3 *n* values.
 
 Assuming each result is an int and that *n* is known (or can be computed) during compilation, a std::array could be a reasonable data structure choice. But we’d need a way to compute 3 *n* during compilation. The C++ Standard Library provides std::pow, which is the mathematical functionality we need, but, for our purposes, there are two problems with it. First, std::pow works on floating-point types, and we need an integral result. Second, std::pow isn’t constexpr (i.e., isn’t guaranteed to return a compile-time result when called with compile-time values), so we can’t use it to specify a std::array’s size.
 
@@ -1910,7 +1874,7 @@ Because constexpr functions must be able to return compile-time results when cal
 
 The restrictions differ between C++11 and C++14.
 
-In C++11, constexpr functions may contain no more than a single executable statement: a return. That sounds more limiting than it is, because two tricks can be used **Item 15 \| 99**
+In C++11, constexpr functions may contain no more than a single executable statement: a return. That sounds more limiting than it is, because two tricks can be used
 
 to extend the expressiveness of constexpr functions beyond what you might think.
 
@@ -1962,9 +1926,7 @@ double x, y;
 
 };
 
-Here, the Point constructor can be declared constexpr, because if the arguments passed to it are known during compilation, the value of the data members of the con-100 \| Item 15
-
-structed Point can also be known during compilation. Points so initialized could thus be constexpr:
+Here, the Point constructor can be declared constexpr, because if the arguments passed to it are known during compilation, the value of the data members of the constructed Point can also be known during compilation. Points so initialized could thus be constexpr:
 
 **constexpr** Point p1(9.4, 27.7); // fine, "runs" constexpr
 
@@ -1992,7 +1954,6 @@ This is very exciting. It means that the object mid, though its initialization i
 
 6 Because Point::xValue returns double, the type of mid.xValue() \* 10 is also double. Floating-point types can’t be used to instantiate templates or to specify enumerator values, but they can be used as part of larger expressions that yield integral types. For example, static_cast\<int\>(mid.xValue() \* 10) could be used to instantiate a template or to specify an enumerator value.
 
-**Item 15 \| 101**
 
 class Point {
 
@@ -2048,7 +2009,7 @@ The advice of this Item is to use constexpr whenever possible, and by now I hope
 
 It’s important to note that constexpr is part of an object’s or function’s interface.
 
-constexpr proclaims “I can be used in a context where C++ requires a constant expression.” If you declare an object or function constexpr, clients may use it in **102 \| Item 15**
+constexpr proclaims “I can be used in a context where C++ requires a constant expression.” If you declare an object or function constexpr, clients may use it in
 
 such contexts. If you later decide that your use of constexpr was a mistake and you remove it, you may cause arbitrarily large amounts of client code to stop compiling.
 
@@ -2084,7 +2045,7 @@ std::vector\<double\>; // where polynomial evals to zero
 
 };
 
-Computing the roots of a polynomial can be expensive, so we don’t want to do it if we don’t have to. And if we do have to do it, we certainly don’t want to do it more than once. We’ll thus cache the root(s) of the polynomial if we have to compute **Item 15 \| 103**
+Computing the roots of a polynomial can be expensive, so we don’t want to do it if we don’t have to. And if we do have to do it, we certainly don’t want to do it more than once. We’ll thus cache the root(s) of the polynomial if we have to compute
 
 them, and we’ll implement roots to return the cached value. Here’s the basic approach:
 
@@ -2128,9 +2089,7 @@ Imagine now that two threads simultaneously call roots on a Polynomial object: P
 
 /\*----- Thread 1 ----- \*/ /\*------- Thread 2 ------- \*/
 
-auto rootsOfP = **p.roots()**; auto valsGivingZero = **p.roots()**; This client code is perfectly reasonable. roots is a const member function, and that means it represents a read operation. Having multiple threads perform a read operation without synchronization is safe. At least it’s supposed to be. In this case, it’s not, because inside roots, one or both of these threads might try to modify the data members rootsAreValid and rootVals. That means that this code could have dif-104 \| Item 16
-
-ferent threads reading and writing the same memory without synchronization, and that’s the definition of a data race. This code has undefined behavior.
+auto rootsOfP = **p.roots()**; auto valsGivingZero = **p.roots()**; This client code is perfectly reasonable. roots is a const member function, and that means it represents a read operation. Having multiple threads perform a read operation without synchronization is safe. At least it’s supposed to be. In this case, it’s not, because inside roots, one or both of these threads might try to modify the data members rootsAreValid and rootVals. That means that this code could have different threads reading and writing the same memory without synchronization, and that’s the definition of a data race. This code has undefined behavior.
 
 The problem is that roots is declared const, but it’s not thread safe. The const declaration is as correct in C++11 as it would be in C++98 (retrieving the roots of a polynomial doesn’t change the value of the polynomial), so what requires rectification is the lack of thread safety.
 
@@ -2176,7 +2135,7 @@ It’s worth noting that because std::mutex is a *move-only type* (i.e., a type 
 
 In some situations, a mutex is overkill. For example, if all you’re doing is counting how many times a member function is called, a std::atomic counter (i.e, one where other threads are guaranteed to see its operations occur indivisibly—see Item 40) will
 
-often be a less expensive way to go. (Whether it actually is less expensive depends on **Item 16 \| 105**
+often be a less expensive way to go. (Whether it actually is less expensive depends on
 
 the hardware you’re running on and the implementation of mutexes in your Standard Library.) Here’s how you can employ a std::atomic to count calls:
 
@@ -2238,7 +2197,6 @@ return cachedValue;
 
 private:
 
-**106 \| Item 16**
 
 mutable **std::atomic\<bool\>** cacheValid{ false }; mutable **std::atomic\<int\>** cachedValue;
 
@@ -2286,7 +2244,7 @@ Imagine that cacheValid is false, and then:
 
 • One thread calls Widget::magicValue and executes through the point where cacheValid is set to true.
 
-• At that moment, a second thread calls Widget::magicValue and checks cache Valid. Seeing it true, the thread returns cachedValue, even though the first **Item 16 \| 107**
+• At that moment, a second thread calls Widget::magicValue and checks cache Valid. Seeing it true, the thread returns cachedValue, even though the first
 
 thread has not yet made an assignment to it. The returned value is therefore incorrect.
 
@@ -2334,9 +2292,7 @@ mutable bool cacheValid{ false }; // no longer atomic
 
 };
 
-Now, this Item is predicated on the assumption that multiple threads may simultaneously execute a const member function on an object. If you’re writing a const member function where that’s not the case—where you can *guarantee* that there will never be more than one thread executing that member function on an object—the thread safety of the function is immaterial. For example, it’s unimportant whether member functions of classes designed for exclusively single-threaded use are thread safe. In such cases, you can avoid the costs associated with mutexes and std::atomics, as well as the side effect of their rendering the classes containing them move-only. However, such threading-free scenarios are increasingly uncommon, and they’re likely to become rarer still. The safe bet is that const member functions will be subject to con-108 \| Item 16
-
-current execution, and that’s why you should ensure that your const member functions are thread safe.
+Now, this Item is predicated on the assumption that multiple threads may simultaneously execute a const member function on an object. If you’re writing a const member function where that’s not the case—where you can *guarantee* that there will never be more than one thread executing that member function on an object—the thread safety of the function is immaterial. For example, it’s unimportant whether member functions of classes designed for exclusively single-threaded use are thread safe. In such cases, you can avoid the costs associated with mutexes and std::atomics, as well as the side effect of their rendering the classes containing them move-only. However, such threading-free scenarios are increasingly uncommon, and they’re likely to become rarer still. The safe bet is that const member functions will be subject to concurrent execution, and that’s why you should ensure that your const member functions are thread safe.
 
 **Things to Remember**
 
@@ -2370,7 +2326,6 @@ public:
 
 };
 
-**Item 16 \| 109**
 
 The rules governing their generation and behavior are analogous to those for their copying siblings. The move operations are generated only if they’re needed, and if they are generated, they perform “memberwise moves” on the non-static data members of the class. That means that the move constructor move-constructs each non-static data member of the class from the corresponding member of its parameter rhs, and the move assignment operator move-assigns each non-static data member from its parameter. The move constructor also move-constructs its base class parts (if there are any), and the move assignment operator move-assigns its base class parts.
 
@@ -2388,9 +2343,7 @@ The two copy operations are independent: declaring one doesn’t prevent compile
 
 The two move operations are not independent. If you declare either, that prevents compilers from generating the other. The rationale is that if you declare, say, a move constructor for your class, you’re indicating that there’s something about how move construction should be implemented that’s different from the default memberwise move that compilers would generate. And if there’s something wrong with memberwise move construction, there’d probably be something wrong with memberwise move assignment, too. So declaring a move constructor prevents a move assignment operator from being generated, and declaring a move assignment operator prevents compilers from generating a move constructor.
 
-Furthermore, move operations won’t be generated for any class that explicitly declares a copy operation. The justification is that declaring a copy operation (con-110 \| Item 17
-
-struction or assignment) indicates that the normal approach to copying an object (memberwise copy) isn’t appropriate for the class, and compilers figure that if memberwise copy isn’t appropriate for the copy operations, memberwise move probably isn’t appropriate for the move operations.
+Furthermore, move operations won’t be generated for any class that explicitly declares a copy operation. The justification is that declaring a copy operation (construction or assignment) indicates that the normal approach to copying an object (memberwise copy) isn’t appropriate for the class, and compilers figure that if memberwise copy isn’t appropriate for the copy operations, memberwise move probably isn’t appropriate for the move operations.
 
 This goes in the other direction, too. Declaring a move operation (construction or assignment) in a class causes compilers to disable the copy operations. (The copy operations are disabled by deleting them—see Item 11). After all, if memberwise move isn’t the proper way to move an object, there’s no reason to expect that memberwise copy is the proper way to copy it. This may sound like it could break C++98
 
@@ -2402,7 +2355,6 @@ A consequence of the Rule of Three is that the presence of a user-declared destr
 
 The reasoning behind the Rule of Three remains valid, however, and that, combined with the observation that declaration of a copy operation precludes the implicit generation of the move operations, motivates the fact that C++11 does *not* generate move operations for a class with a user-declared destructor.
 
-**Item 17 \| 111**
 
 So move operations are generated for classes (when needed) only if these three things are true:
 
@@ -2440,7 +2392,7 @@ This approach is often useful in polymorphic base classes, i.e., classes definin
 
 public:
 
-**virtual** ~Base() **= default**; // make dtor virtual **112 \| Item 17**
+**virtual** ~Base() **= default**; // make dtor virtual
 
 **Base(Base&&) = default;** // support moving **Base& operator=(Base&&) = default;**
 
@@ -2486,7 +2438,6 @@ StringTable()
 
 … // other funcs as before
 
-**Item 17 \| 113**
 
 private:
 
@@ -2518,7 +2469,6 @@ Generation of this function in a class with a user-declared copy assignment oper
 
 • **Copy assignment operator**: Same runtime behavior as C++98: memberwise copy assignment of non-static data members. Generated only if the class lacks a user-declared copy assignment operator. Deleted if the class declares a move operation. Generation of this function in a class with a user-declared copy constructor or destructor is deprecated.
 
-**114 \| Item 17**
 
 • **Move constructor** and **move assignment operator**: Each performs memberwise moving of non-static data members. Generated only if the class contains no user-declared copy operations, move operations, or destructor.
 
@@ -2557,5 +2507,3 @@ quences.
 The copy assignment operator is generated only for classes lacking an explicitly declared copy assignment operator, and it’s deleted if a move operation is declared. Generation of the copy operations in classes with an explicitly declared destructor is deprecated.
 
 • Member function templates never suppress generation of special member functions.
-
-**Item 17 \| 115**

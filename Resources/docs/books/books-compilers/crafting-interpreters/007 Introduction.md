@@ -8,19 +8,19 @@
 
 I’m really excited we’re going on this journey together. This is a book on implementing interpreters for programming languages. It’s also a book on how to design a language worth implementing. It’s the book I wish I’d had when I first started getting into languages, and it’s the book I’ve been writing in my head for nearly a decade.
 
-To my friends and family, sorry I’ve been so absentminded!
+> To my friends and family, sorry I’ve been so absentminded!
 
 In these pages, we will walk step-by-step through two complete interpreters for a full-featured language. I assume this is your first foray into languages, so I’ll cover each concept and line of code you need to build a complete, usable, fast language implementation.
 
 In order to cram two full implementations inside one book without it turning into a doorstop, this text is lighter on theory than others. As we build each piece of the system, I will introduce the history and concepts behind it. I’ll try to get you familiar with the lingo so that if you ever find yourself at a cocktail party full of PL (programming language) researchers, you’ll fit in.
 
-Strangely enough, a situation I have found myself in multiple times. You wouldn’t believe how much some of them can drink.
+> Strangely enough, a situation I have found myself in multiple times. You wouldn’t believe how much some of them can drink.
 
 But we’re mostly going to spend our brain juice getting the language up and running. This is not to say theory isn’t important. Being able to reason precisely and formally about syntax and semantics is a vital skill when working on a language. But, personally, I learn best by doing. It’s hard for me to wade through paragraphs full of abstract concepts and really absorb them. But if I’ve coded something, run it, and debugged it, then I *get* it.
 
-Static type systems in particular require rigorous formal reasoning. Hacking on a type system has the same feel as proving a theorem in mathematics.
-
-It turns out this is no coincidence. In the early half of last century, Haskell Curry and William Alvin Howard showed that they are two sides of the same coin: [the Curry-Howard isomorphism](https://en.wikipedia.org/wiki/Curry%E2%80%93Howard_correspondence).
+> Static type systems in particular require rigorous formal reasoning. Hacking on a type system has the same feel as proving a theorem in mathematics.
+>
+> It turns out this is no coincidence. In the early half of last century, Haskell Curry and William Alvin Howard showed that they are two sides of the same coin: [the Curry-Howard isomorphism](https://en.wikipedia.org/wiki/Curry%E2%80%93Howard_correspondence).
 
 That’s my goal for you. I want you to come away with a solid intuition of how a real language lives and breathes. My hope is that when you read other, more theoretical books later, the concepts there will firmly stick in your mind, adhered to this tangible substrate.
 
@@ -36,7 +36,7 @@ For every successful general-purpose language, there are a thousand successful n
 
 ![A random selection of little languages.](media/image/introduction/little-languages.png)
 
-A random selection of some little languages you might run into.
+> A random selection of some little languages you might run into.
 
 Almost every large software project needs a handful of these. When you can, it’s good to reuse an existing one instead of rolling your own. Once you factor in documentation, debuggers, editor support, syntax highlighting, and all of the other trappings, doing it yourself becomes a tall order.
 
@@ -58,7 +58,7 @@ Later, the mixture of awe and terror on my college friends’ faces when talking
 
 It’s a charming image, but it has a darker side. *I* didn’t feel like a wizard, so I was left thinking I lacked some inborn quality necessary to join the cabal. Though I’ve been fascinated by languages ever since I doodled made-up keywords in my school notebook, it took me decades to muster the courage to try to really learn them. That “magical” quality, that sense of exclusivity, excluded *me*.
 
-And its practitioners don’t hesitate to play up this image. Two of the seminal texts on programming languages feature a [dragon](https://en.wikipedia.org/wiki/Compilers:_Principles,_Techniques,_and_Tools) and a [wizard](https://mitpress.mit.edu/sites/default/files/sicp/index.html) on their covers.
+> And its practitioners don’t hesitate to play up this image. Two of the seminal texts on programming languages feature a [dragon](https://en.wikipedia.org/wiki/Compilers:_Principles,_Techniques,_and_Tools) and a [wizard](https://mitpress.mit.edu/sites/default/files/sicp/index.html) on their covers.
 
 When I did finally start cobbling together my own little interpreters, I quickly learned that, of course, there is no magic at all. It’s just code, and the people who hack on languages are just people.
 
@@ -82,13 +82,13 @@ We’re about *crafting* interpreters, so this book contains real code. Every si
 
 Many other language books and language implementations use tools like [Lex](https://en.wikipedia.org/wiki/Lex_(software)) and [Yacc](https://en.wikipedia.org/wiki/Yacc), so-called **compiler-compilers**, that automatically generate some of the source files for an implementation from some higher-level description. There are pros and cons to tools like those, and strong opinions—some might say religious convictions—on both sides.
 
-Yacc is a tool that takes in a grammar file and produces a source file for a compiler, so it’s sort of like a “compiler” that outputs a compiler, which is where we get the term “compiler-compiler”.
-
-Yacc wasn’t the first of its ilk, which is why it’s named “Yacc”—*Yet Another* Compiler-Compiler. A later similar tool is [Bison](https://en.wikipedia.org/wiki/GNU_bison), named as a pun on the pronunciation of Yacc like “yak”.
-
-![A yak.](media/image/introduction/yak.png)
-
-If you find all of these little self-references and puns charming and fun, you’ll fit right in here. If not, well, maybe the language nerd sense of humor is an acquired taste.
+> Yacc is a tool that takes in a grammar file and produces a source file for a compiler, so it’s sort of like a “compiler” that outputs a compiler, which is where we get the term “compiler-compiler”.
+>
+> Yacc wasn’t the first of its ilk, which is why it’s named “Yacc”—*Yet Another* Compiler-Compiler. A later similar tool is [Bison](https://en.wikipedia.org/wiki/GNU_bison), named as a pun on the pronunciation of Yacc like “yak”.
+>
+> ![A yak.](media/image/introduction/yak.png)
+>
+> If you find all of these little self-references and puns charming and fun, you’ll fit right in here. If not, well, maybe the language nerd sense of humor is an acquired taste.
 
 We will abstain from using them here. I want to ensure there are no dark corners where magic and confusion can hide, so we’ll write everything by hand. As you’ll see, it’s not as bad as it sounds, and it means you really will understand each line of code and how both interpreters work.
 
@@ -128,7 +128,7 @@ In the center, you have the new code to add. It may have a few faded out lines a
 
 Asides contain biographical sketches, historical background, references to related topics, and suggestions of other areas to explore. There’s nothing that you *need* to know in them to understand later parts of the book, so you can skip them if you want. I won’t judge you, but I might be a little sad.
 
-Well, some asides do, at least. Most of them are just dumb jokes and amateurish drawings.
+> Well, some asides do, at least. Most of them are just dumb jokes and amateurish drawings.
 
 ### 1.2.4 Challenges
 
@@ -136,17 +136,17 @@ Each chapter ends with a few exercises. Unlike textbook problem sets, which tend
 
 Vanquish the challenges and you’ll come away with a broader understanding and possibly a few bumps and scrapes. Or skip them if you want to stay inside the comfy confines of the tour bus. It’s your book.
 
-A word of warning: the challenges often ask you to make changes to the interpreter you’re building. You’ll want to implement those in a copy of your code. The later chapters assume your interpreter is in a pristine (“unchallenged”?) state.
+> A word of warning: the challenges often ask you to make changes to the interpreter you’re building. You’ll want to implement those in a copy of your code. The later chapters assume your interpreter is in a pristine (“unchallenged”?) state.
 
 ### 1.2.5 Design notes
 
 Most “programming language” books are strictly programming language *implementation* books. They rarely discuss how one might happen to *design* the language being implemented. Implementation is fun because it is so precisely defined. We programmers seem to have an affinity for things that are black and white, ones and zeroes.
 
-I know a lot of language hackers whose careers are based on this. You slide a language spec under their door, wait a few months, and code and benchmark results come out.
+> I know a lot of language hackers whose careers are based on this. You slide a language spec under their door, wait a few months, and code and benchmark results come out.
 
 Personally, I think the world needs only so many implementations of FORTRAN 77. At some point, you find yourself designing a *new* language. Once you start playing *that* game, then the softer, human side of the equation becomes paramount. Things like which features are easy to learn, how to balance innovation and familiarity, what syntax is more readable and to whom.
 
-Hopefully your new language doesn’t hardcode assumptions about the width of a punched card into its grammar.
+> Hopefully your new language doesn’t hardcode assumptions about the width of a punched card into its grammar.
 
 All of that stuff profoundly affects the success of your new language. I want your language to succeed, so in some chapters I end with a “design note”, a little essay on some corner of the human aspect of programming languages. I’m no expert on this—I don’t know if anyone really is—so take these with a large pinch of salt. That should make them tastier food for thought, which is my main aim.
 
@@ -154,7 +154,7 @@ All of that stuff profoundly affects the success of your new language. I want yo
 
 We’ll write our first interpreter, jlox, in Java. The focus is on *concepts*. We’ll write the simplest, cleanest code we can to correctly implement the semantics of the language. This will get us comfortable with the basic techniques and also hone our understanding of exactly how the language is supposed to behave.
 
-The book uses Java and C, but readers have ported the code to [many other languages](https://github.com/munificent/craftinginterpreters/wiki/Lox-implementations). If the languages I picked aren’t your bag, take a look at those.
+> The book uses Java and C, but readers have ported the code to [many other languages](https://github.com/munificent/craftinginterpreters/wiki/Lox-implementations). If the languages I picked aren’t your bag, take a look at those.
 
 Java is a great language for this. It’s high level enough that we don’t get overwhelmed by fiddly implementation details, but it’s still pretty explicit. Unlike in scripting languages, there tends to be less complex machinery hiding under the hood, and you’ve got static types to see what data structures you’re working with.
 
@@ -162,11 +162,11 @@ I also chose Java specifically because it is an object-oriented language. That p
 
 While academic language folks sometimes look down on object-oriented languages, the reality is that they are widely used even for language work. GCC and LLVM are written in C++, as are most JavaScript virtual machines. Object-oriented languages are ubiquitous, and the tools and compilers *for* a language are often written *in* the same language.
 
-A compiler reads files in one language, translates them, and outputs files in another language. You can implement a compiler in any language, including the same language it compiles, a process called **self-hosting**.
-
-You can’t compile your compiler using itself yet, but if you have another compiler for your language written in some other language, you use *that* one to compile your compiler once. Now you can use the compiled version of your own compiler to compile future versions of itself, and you can discard the original one compiled from the other compiler. This is called **bootstrapping**, from the image of pulling yourself up by your own bootstraps.
-
-![Fact: This is the primary mode of transportation of the American cowboy.](media/image/introduction/bootstrap.png)
+> A compiler reads files in one language, translates them, and outputs files in another language. You can implement a compiler in any language, including the same language it compiles, a process called **self-hosting**.
+>
+> You can’t compile your compiler using itself yet, but if you have another compiler for your language written in some other language, you use *that* one to compile your compiler once. Now you can use the compiled version of your own compiler to compile future versions of itself, and you can discard the original one compiled from the other compiler. This is called **bootstrapping**, from the image of pulling yourself up by your own bootstraps.
+>
+> ![Fact: This is the primary mode of transportation of the American cowboy.](media/image/introduction/bootstrap.png)
 
 And, finally, Java is hugely popular. That means there’s a good chance you already know it, so there’s less for you to learn to get going in the book. If you aren’t that familiar with Java, don’t freak out. I try to stick to a fairly minimal subset of it. I use the diamond operator from Java 7 to make things a little more terse, but that’s about it as far as “advanced” features go. If you know another object-oriented language, like C# or C++, you can muddle through.
 
@@ -182,11 +182,11 @@ If you aren’t there yet, pick up an introductory book on C and chew through it
 
 In our C interpreter, clox, we are forced to implement for ourselves all the things Java gave us for free. We’ll write our own dynamic array and hash table. We’ll decide how objects are represented in memory, and build a garbage collector to reclaim them.
 
-I pronounce the name like “sea-locks”, but you can say it “clocks” or even “cloch”, where you pronounce the “x” like the Greeks do if it makes you happy.
+> I pronounce the name like “sea-locks”, but you can say it “clocks” or even “cloch”, where you pronounce the “x” like the Greeks do if it makes you happy.
 
 Our Java implementation was focused on being correct. Now that we have that down, we’ll turn to also being *fast*. Our C interpreter will contain a compiler that translates Lox to an efficient bytecode representation (don’t worry, I’ll get into what that means soon), which it then executes. This is the same technique used by implementations of Lua, Python, Ruby, PHP, and many other successful languages.
 
-Did you think this was just an interpreter book? It’s a compiler book as well. Two for the price of one!
+> Did you think this was just an interpreter book? It’s a compiler book as well. Two for the price of one!
 
 We’ll even try our hand at benchmarking and optimization. By the end, we’ll have a robust, accurate, fast interpreter for our language, able to keep up with other professional caliber implementations out there. Not bad for one book and a few thousand lines of code.
 

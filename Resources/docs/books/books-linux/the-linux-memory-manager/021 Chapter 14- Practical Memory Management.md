@@ -1,17 +1,17 @@
 
- 
+
 
 **14**
 
- 
+
 
 **P R A C T I C A L M E M O R Y**
 
- 
+
 
 **M A N A G E M E N T**
 
- 
+
 
 We’ve explored the detailed internals of numerous features of the kernel
 
@@ -23,7 +23,7 @@ What users interact with are the interfaces exposed by the kernel. These
 
 consist of:-
 
- 
+
 
 **Userland** **libc** **memory allocation functions** – [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html) (a wrapper around
 
@@ -40,7 +40,7 @@ terrogating memory in the kernel exposed in the procfs and sysfs file systems.
 sysfs which allow a user to perform actions as well as to customise the memory manager’s behaviour.
 
 
- 
+
 
 **Crash reports and** **sysrq** – When the Out Of Memory (OOM) killer frees up
 
@@ -96,27 +96,27 @@ Get User Pages or GUP functionality, see section 8.1.2 for more details on this)
 
 pages are resident in memory and which will result in a page fault.
 
- 
+
 
 Covering each of these in depth would constitute a book of its own, so
 
 instead we will examine a useful subset of these interfaces in detail.
 
- 
 
 
 
- 
+
+
 
 **14.1 Measuring free memory**
 
- 
+
 
 When trying to determine how much free memory is available in the system,
 
 a user will almost certainly reach for the [free](https://man7.org/linux/man-pages/man1/free.1.html) utility. For instance:-
 
- 
+
 
 \[~\]\$ free
 
@@ -130,17 +130,17 @@ Mem: 65779944 3973116 59395864 232428 3344276
 
 Swap: 10485756 0 10485756
 
- 
+
 
 *Listing 14-1:* [*free*](https://man7.org/linux/man-pages/man1/free.1.html) *example*
 
- 
+
 
 By default the output is expressed in KiB, as a result it’s often useful to
 
 pass the-h flag to obtain ‘human readable’ output:-
 
- 
+
 
 \[~\]\$ free -h
 
@@ -154,11 +154,11 @@ Gi
 
 Swap: 9Gi 0B 9Gi
 
- 
+
 
 *Listing 14-2:* [*free*](https://man7.org/linux/man-pages/man1/free.1.html) *-h* *example*
 
- 
+
 
 There are a number of other options that can be passed to this com-
 
@@ -170,7 +170,7 @@ we should examine where [free](https://man7.org/linux/man-pages/man1/free.1.html
 
 /proc/meminfo (eliding fields not relevant to the output of [free](https://man7.org/linux/man-pages/man1/free.1.html)):-
 
- 
+
 
 \[~\]\$ cat /proc/meminfo
 
@@ -204,19 +204,19 @@ SUnreclaim: 130708 kB
 
 ...
 
- 
 
 
 
- 
+
+
 
 *Listing 14-3: Example output of* */proc/meminfo*
 
- 
+
 
 It is this interface that [free](https://man7.org/linux/man-pages/man1/free.1.html) retrieves its data from, mapped as follows:-
 
- 
+
 
 • total = MemTotal – Total usable physical memory in the system. This may
 
@@ -240,13 +240,13 @@ utilised by kernel buffers and the page cache (see the page cache chapter for mo
 
 without causing swapping, thrashing (a cycle of evicting and refaulting page cache entries which causes significant system stress) or triggering the Out Of Memory killer. See below for details on how this is calcu-lated.
 
- 
+
 
 **N O T E** See [*https://gitlab.com/procps-ng/procps/-/blob/master/src/free.c*](https://gitlab.com/procps-ng/procps/-/blob/master/src/free.c) and [*https:*](https://gitlab.com/procps-ng/procps/-/blob/master/library/meminfo.c)
 
 [*//gitlab.com/procps-ng/procps/-/blob/master/library/meminfo.c*](https://gitlab.com/procps-ng/procps/-/blob/master/library/meminfo.c) for [*free*](https://man7.org/linux/man-pages/man1/free.1.html) imple-mentation details (as of the time of writing).
 
- 
+
 
 The most important metric for determining available memory is, natu-
 
@@ -266,11 +266,11 @@ The algorithm for determining available pages is determined empirically
 
 as follows:
 
- 
 
 
 
- 
+
+
 
 • Determine the sum of the low water marks for each zone in the system.
 
@@ -290,7 +290,7 @@ add it to available memory on assumption it can be freed, less the sum of low wa
 
 /proc/meminfo), and add it to available memory on assumption it can be freed, less the sum of low water marks for each zone (capped at half of reclaimable slab memory—that is, we reserve at maximum half of slab reclaimable memory).
 
- 
+
 
 **N O T E** An added complication to page cache considerations is shmem—folios belonging to
 
@@ -304,13 +304,13 @@ pressure (they need to be swapped out), we do not consider them as part of this 
 
 lation.
 
- 
+
 
 So in summary – MemAvailable is equal to the sum of free and quickly re-
 
 claimable non-reserved memory.
 
- 
+
 
 ***14.1.1 Kernel implementation of MemAvailable***
 
@@ -320,7 +320,7 @@ The function which generates the data for /proc/meminfo is
 
 MemAvailable value:-
 
- 
+
 
 5919 **long si_mem_available**(**void**) 5920 {
 
@@ -330,11 +330,11 @@ MemAvailable value:-
 
 5928
 
- 
 
 
 
- 
+
+
 
 5929 **for** (lru = **LRU_BASE**; lru \< **NR_LRU_LISTS**; lru++) 5930 pages\[lru\] = **global_node_page_state**(**NR_LRU_BASE** + lru); 5931
 
@@ -374,11 +374,11 @@ MemAvailable value:-
 
 5959 **if** (available \< 0) 5960 available = 0; 5961 **return** available; 5962 }
 
- 
+
 
 *Listing 14-4:* mm/page_alloc.c: [*si_mem_available()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5919)
 
- 
+
 
 This function utilises [global_node_page_state()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/vmstat.h?h=v6.0#n200) to obtain aggregate node
 
@@ -394,11 +394,11 @@ tain the number of slab-reclaimable pages via [NR_SLAB_RECLAIMABLE_B](https://gi
 
 [NR_KERNEL_MISC_RECLAIMABLE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n211).
 
- 
 
 
 
- 
+
+
 
 The [global_zone_page_state()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/vmstat.h?h=v6.0#n179) function is used to obtain total free pages via
 
@@ -406,7 +406,7 @@ The [global_zone_page_state()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 how this value is obtained).
 
- 
+
 
 ***14.1.2 Higher order folios***
 
@@ -454,7 +454,7 @@ quire memory on a specific node. (see section 2.4 for more on nodes and
 
 zones).
 
- 
+
 
 **N O T E** It may also be the case that for instance a driver requires memory from a specific
 
@@ -464,7 +464,7 @@ this resource (see section 2.4.1), so it is unlikely to cause significant fragme
 
 issues.
 
- 
+
 
 It is therefore useful to get a sense of memory availability for each node,
 
@@ -472,7 +472,7 @@ zone and folio order. This information is available in /proc/buddyinfo, for
 
 example:-
 
- 
+
 
 \$ cat /proc/buddyinfo
 
@@ -488,15 +488,15 @@ Node 0, zone Normal 3310 6163 9144 6336 2200 547 106 53 27 14
 
 14288
 
- 
+
 
 *Listing 14-5: Example of output of* */proc/buddyinfo*
 
- 
 
 
 
- 
+
+
 
 Each column relates to a folio order, so for instance this indicates that
 
@@ -506,7 +506,7 @@ This interface can be useful for determining if fragmentation has oc-
 
 curred or is likely to soon occur within a system – if there is a scarcity of higher order folios, then higher order folio fragmentation becomes signif-icantly more likely.
 
- 
+
 
 ***14.1.3 Summary***
 
@@ -516,7 +516,7 @@ If higher order folio fragmentation is a concern, check /proc/buddyinfo to
 
 determine the current availability of higher order folios.
 
- 
+
 
 **14.2 Measuring the memory usage of a process**
 
@@ -526,13 +526,13 @@ The most direct means of gathering the details of a process’s memory
 
 usage is via /proc/\$pid/status or the more succinct /proc/\$pid/stat.
 
- 
+
 
 **N O T E** The */proc/\$pid/statm* interface is frankly rather obsolete and doesn’t provide overly
 
 useful information.
 
- 
+
 
 Here we will focus on determining the how much resident memory a pro-
 
@@ -542,7 +542,7 @@ The first port of call is /proc/\$pid/status. For instance, examining the
 
 relevant fields in some example output:-
 
- 
+
 
 \$ cat /proc/\$pid/status
 
@@ -554,25 +554,25 @@ VmRSS: 97276 kB
 
 RssAnon: 48080 kB RssFile: 49196 kB RssShmem: 0 kB ...
 
- 
+
 
 *Listing 14-6: Example output of* */proc/\$pid/status*
 
- 
+
 
 Examining each:-
 
- 
+
 
 • VmHWM – This indicates the peak resident memory usage of the process,
 
 i.e. the maximum amount of resident memory the process has utilised during its execution.
 
- 
 
 
 
- 
+
+
 
 • VmRSS – This indicates the amount of resident memory currently in use,
 
@@ -590,7 +590,7 @@ backed mappings (excluding shmem memory).
 
 in tmpfs, ‘anonymous’ shared memory, system V shared memory and the like (see section **??** for more details).
 
- 
+
 
 These value are derived from the memory management statistical coun-
 
@@ -622,7 +622,7 @@ this information by explicitly walking a process’s VMAs and determining
 
 memory usage, e.g.:-
 
- 
+
 
 \$ cat /proc/\$pid/smaps_rollup
 
@@ -666,19 +666,19 @@ Shared_Hugetlb: 0 kB
 
 Private_Hugetlb: 0 kB
 
- 
 
 
 
- 
+
+
 
 Swap: 0 kB SwapPss: 0 kB Locked: 0 kB
 
- 
+
 
 *Listing 14-7: Example* */proc/\$pid/smaps_rollup* *output*
 
- 
+
 
 This walks the process address space’s VMAs while holding
 
@@ -688,7 +688,7 @@ page’s page tables in order to reach the underlying [struct page](https://git.
 
 each virtual address range (in [smaps_account()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n444)).
 
- 
+
 
 ***14.2.1 Proportional Set Size***
 
@@ -710,7 +710,7 @@ See below in section 14.5.2 for further discussion of proportional set size
 
 in the context of a process’s /proc/\$pid/smaps output.
 
- 
+
 
 ***14.2.2 Summary***
 
@@ -720,11 +720,11 @@ However, if you require absolute precision, your process spawns a great
 
 many threads, or you want proportional values then use /proc/\$pid/smaps or /proc/\$pid/smaps_rollup.
 
- 
+
 
 **14.3 Memory mapping using mmap()**
 
- 
+
 
 The [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html) function is the most direct means of establishing memory map-
 
@@ -732,11 +732,11 @@ pings within a process. In most cases, its use is unnecessary, as [malloc()](htt
 
 abstractions which wrap it) will utilise [sbrk()](https://man7.org/linux/man-pages/man2/sbrk.2.html) and mmap() to map memory from the kernel as necessary for you, with the added benefit of maintaining efficient sub-page size free lists.
 
- 
 
 
 
- 
+
+
 
 However there are circumstances where it makes sense to do so, for in-
 
@@ -784,13 +784,13 @@ Note that we explore use of [mmap()](https://man7.org/linux/man-pages/man2/mmap.
 
 in section 14.7.
 
- 
+
 
 ***14.3.1 Mapping anonymous memory***
 
 Therefore, a typical invocation of [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html) is as follows:-
 
- 
+
 
 1 **\#include** \<stdio.h\>
 
@@ -830,11 +830,11 @@ Therefore, a typical invocation of [mmap()](https://man7.org/linux/man-pages/man
 
 19 **if** (**munmap**(ptr, page_size)) {
 
- 
 
 
 
- 
+
+
 
 20 **perror**("**munmap**"); 21 **return EXIT_FAILURE**; 22 }
 
@@ -842,11 +842,11 @@ Therefore, a typical invocation of [mmap()](https://man7.org/linux/man-pages/man
 
 24 **return EXIT_SUCCESS**; 25 }
 
- 
+
 
 *Listing 14-8: Example of a basic anonymous* [*mmap()*](https://man7.org/linux/man-pages/man2/mmap.2.html) *mapping*
 
- 
+
 
 We specify PROT_READ and PROT_WRITE as we intend the mapping to be read-
 
@@ -856,7 +856,7 @@ We must always check whether [mmap()](https://man7.org/linux/man-pages/man2/mmap
 
 unmap the memory via [munmap()](https://man7.org/linux/man-pages/man2/munmap.2.html)[.](https://man7.org/linux/man-pages/man2/munmap.2.html)
 
- 
+
 
 ***14.3.2 Mapping a file***
 
@@ -864,7 +864,7 @@ Mapping a file is rather more useful, and follows a similar pattern, only we
 
 open a file via [open()](https://man7.org/linux/man-pages/man2/open.2.html) and pass the associated file descriptor alongside an off-set into the file:-
 
- 
+
 
 1 **\#include** \<fcntl.h\>
 
@@ -904,11 +904,11 @@ open a file via [open()](https://man7.org/linux/man-pages/man2/open.2.html) and 
 
 25 ptr = **mmap**(**NULL**, st.st_size, **PROT_READ** \| **PROT_WRITE**, 26 **MAP_SHARED_VALIDATE**, fd, 0); 27 **if** (ptr == **MAP_FAILED**) {
 
- 
 
 
 
- 
+
+
 
 28 **perror**("**mmap**");
 
@@ -950,11 +950,11 @@ open a file via [open()](https://man7.org/linux/man-pages/man2/open.2.html) and 
 
 47 }
 
- 
+
 
 *Listing 14-9: Example of a basic file* [*mmap()*](https://man7.org/linux/man-pages/man2/mmap.2.html) *mapping*
 
- 
+
 
 Here we map the file at offset 0, indicating that we are mapping it shared
 
@@ -1006,11 +1006,11 @@ SIGBUS error will arise, which is very important to account for when memory-
 
 mapping files.
 
- 
 
 
 
- 
+
+
 
 It is also important to note that if an error occurs while accessing the file
 
@@ -1020,7 +1020,7 @@ Note that a file being removed, or more accurately [unlink()](https://man7.org/l
 
 pact – this simply means the file is no longer hard linked from the opened location, but still exists as an inode on disk (until we are finished with it) and thus an entry in the page cache.
 
- 
+
 
 ***14.3.3 Private file mapping***
 
@@ -1040,7 +1040,7 @@ semantics this implies – if mapped pages in the file are truncated (which can 
 
 Examining an example:-
 
- 
+
 
 1 **\#include** \<fcntl.h\>
 
@@ -1080,11 +1080,11 @@ Examining an example:-
 
 22 **if** (**fstat**(fd, &st)) {
 
- 
 
 
 
- 
+
+
 
 23 **perror**("**fstat**");
 
@@ -1160,11 +1160,11 @@ Examining an example:-
 
 59 }
 
- 
+
 
 *Listing 14-10: Example of a* *MAP_PRIVATE* *file* [*mmap()*](https://man7.org/linux/man-pages/man2/mmap.2.html) *mapping*
 
- 
+
 
 This program loops updating the contents of the first character of the
 
@@ -1178,11 +1178,11 @@ the data that has been written so far is immediately lost as the mapping is ‘r
 
 set’ to match that of the file.
 
- 
 
 
 
- 
+
+
 
 ***14.3.4 Fixed mappings***
 
@@ -1214,7 +1214,7 @@ more restrictive overcommit modes (see section 4.1 for more on overcom-mit) and 
 
 Considering an example:-
 
- 
+
 
 1 **\#include** \<stdio.h\>
 
@@ -1242,11 +1242,11 @@ Considering an example:-
 
 17 span = **mmap**(**NULL**, size, **PROT_NONE**, **MAP_ANON** \| **MAP_PRIVATE**, -1, 0); 18 **if** (span == **MAP_FAILED**) { 19 **perror**("**mmap**"); 20 **return EXIT_FAILURE**; 21 }
 
- 
 
 
 
- 
+
+
 
 22
 
@@ -1290,7 +1290,7 @@ Considering an example:-
 
 42 }
 
- 
+
 
 *Listing 14-11: Example of a fixed* [*mmap()*](https://man7.org/linux/man-pages/man2/mmap.2.html) *mapping*
 
@@ -1304,11 +1304,11 @@ freed, no matter what is contained within it (see section 5.0.6 for a detailed
 
 discussion of how this is implemented).
 
- 
+
 
 **14.4 Interpreting Out Of Memory reports**
 
- 
+
 
 When the Out Of Memory (OOM) killer is invoked (see the OOM chapter
 
@@ -1318,7 +1318,7 @@ the out of memory condition. Let’s examine an example of this report,
 
 which appears in the kernel log (accessible via dmesg):-
 
- 
+
 
 \[ 5.168012\] oom invoked oom-killer: gfp_mask=0x140dca(GFP_HIGHUSER_MOVABLE\|\_\_GFP_COMP\|
 
@@ -1340,11 +1340,11 @@ which appears in the kernel log (accessible via dmesg):-
 
 \[ 5.168040\] ? oom_kill_process+0xd0/0xd5
 
- 
 
 
 
- 
+
+
 
 \[ 5.168042\] ? out_of_memory+0xbf/0x225 \[ 5.168044\] ? \_\_alloc_pages_may_oom+0xea/0x14f \[ 5.168046\] ? \_\_alloc_pages_slowpath+0x2b3/0x4e6 \[ 5.168048\] ? \_\_alloc_pages+0x157/0x181 \[ 5.168050\] ? \_\_folio_alloc+0xf/0x36
 
@@ -1394,11 +1394,11 @@ reserved_highatomic:0KB active_anon:0kB inactive_anon:2984160kB active_file:0kB 
 
 reserved_highatomic:0KB active_anon:180kB inactive_anon:5003724kB active_file:1604kB
 
- 
 
 
 
- 
+
+
 
 inactive_file:800kB unevictable:0kB writepending:224kB present:5242880kB managed:5097828kB
 
@@ -1488,11 +1488,11 @@ worker)
 
 worker)
 
- 
 
 
 
- 
+
+
 
 \[ 5.168163\] \[ 146\] 0 146 7481 377 90112 0 0 (udev-
 
@@ -1562,11 +1562,11 @@ global_oom,task_memcg=/user.slice/user-1000.slice/session-c1.scope,task=oom,pid=
 
 , file-rss:4kB, shmem-rss:0kB, UID:1000 pgtables:15632kB oom_score_adj:0
 
- 
 
 
 
- 
+
+
 
 *Listing 14-12: Example OOM report*
 
@@ -1576,7 +1576,7 @@ etrable. Let’s therefore break this down bit-by-bit and analyse the output,
 
 starting with the first line:-
 
- 
+
 
 ***14.4.1 Failed allocation statistics***
 
@@ -1584,13 +1584,13 @@ The first line in the output outputs statistics related to the allocation which
 
 failed:-
 
- 
+
 
 \[ 5.168012\] oom invoked oom-killer: gfp_mask=0x140dca(GFP_HIGHUSER_MOVABLE\|
 
 \_\_GFP_COMP\|\_\_GFP_ZERO), order=0, oom_score_adj=0
 
- 
+
 
 *Listing 14-13: Example OOM failed allocation statistics*
 
@@ -1608,7 +1608,7 @@ This line, generated by [dump_header()](https://git.kernel.org/pub/scm/linux/ker
 
 information:-
 
- 
+
 
 **Invoking process name** – The name of the process that caused the OOM
 
@@ -1638,15 +1638,15 @@ In the example above, the triggering allocation is of order-0, so higher order f
 
 of memory ‘score’ used to apply a weight to processes which are being
 
- 
 
 
 
- 
+
+
 
 considered for OOM killing. See the OOM chapter for more details on how this functions.
 
- 
+
 
 **N O T E** The out of memory killer will not be invoked for higher-order allocations which ex-
 
@@ -1654,13 +1654,13 @@ ceed [*PAGE_ALLOC_COSTLY_ORDER*](https://git.kernel.org/pub/scm/linux/kernel/git
 
 heavy fragmentation (see section 11.3 for more details on direct reclaim logic).
 
- 
+
 
 ***14.4.2 Stack trace***
 
 Immediately following this is a call stack indicating how the allocation occurred:-
 
- 
+
 
 \[ 5.168019\] CPU: 0 PID: 246 Comm: oom Not tainted 6.0.0+ \#27 \[ 5.168021\] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS
 
@@ -1670,15 +1670,15 @@ Arch Linux 1.16.2-1-1 04/01/2014
 
 \[ 5.168029\] ? \_\_dump_stack+0x1b/0x21 \[ 5.168034\] ? dump_stack_lvl+0x27/0x3a \[ 5.168036\] ? dump_stack+0xc/0x11 \[ 5.168038\] ? dump_header+0x43/0x97 \[ 5.168040\] ? oom_kill_process+0xd0/0xd5 \[ 5.168042\] ? out_of_memory+0xbf/0x225 \[ 5.168044\] ? \_\_alloc_pages_may_oom+0xea/0x14f \[ 5.168046\] ? \_\_alloc_pages_slowpath+0x2b3/0x4e6 \[ 5.168048\] ? \_\_alloc_pages+0x157/0x181 \[ 5.168050\] ? \_\_folio_alloc+0xf/0x36 \[ 5.168052\] ? vma_alloc_folio+0x79/0x1d9 \[ 5.168054\] ? do_anonymous_page+0x86/0x31f \[ 5.168056\] ? follow_page_pte+0xe3/0x2a2 \[ 5.168059\] ? handle_pte_fault+0x144/0x168 \[ 5.168060\] ? \_\_handle_mm_fault+0x26c/0x28d \[ 5.168063\] ? handle_mm_fault+0x84/0xf6 \[ 5.168064\] ? faultin_page+0x52/0xc3 \[ 5.168066\] ? \_\_get_user_pages+0x25c/0x311 \[ 5.168068\] ? populate_vma_page_range+0x46/0x67 \[ 5.168070\] ? \_\_mm_populate+0x6b/0x106 \[ 5.168071\] ? vm_mmap_pgoff+0xdd/0xeb \[ 5.168074\] ? ksys_mmap_pgoff+0x4c/0x154 \[ 5.168076\] ? \_\_do_sys_mmap+0x12/0x23 \[ 5.168078\] ? \_\_se_sys_mmap+0x5/0xa \[ 5.168079\] ? \_\_x64_sys_mmap+0x20/0x25 \[ 5.168081\] ? do_syscall_64+0x5a/0x86 \[ 5.168083\] ? entry_SYSCALL_64_after_hwframe+0x63/0xcd \[ 5.168086\] \</TASK\>
 
- 
+
 
 *Listing 14-14: Example OOM stack trace*
 
- 
 
 
 
- 
+
+
 
 Importantly, the first line indicates the CPU on which the allocation
 
@@ -1710,7 +1710,7 @@ for a detailed examination fo this code), which lead to the OOM killer being
 
 invoked via [out_of_memory()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n1107).
 
- 
+
 
 ***14.4.3 Global free page statistics***
 
@@ -1718,7 +1718,7 @@ Following this information about the current state of memory in the system
 
 is reported, starting with global page counts:-
 
- 
+
 
 \[ 5.168087\] Mem-Info:
 
@@ -1736,11 +1736,11 @@ kernel_misc_reclaimable:0
 
 free:25619 free_pcp:62 free_cma:0
 
- 
+
 
 *Listing 14-15: Example OOM memory info – Global free page statistics*
 
- 
+
 
 This provides a summary of memory status data, invoked from [show_mem()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/show_mem.c?h=v6.0#n11)
 
@@ -1758,7 +1758,7 @@ Each of these other than free_pcp utilise either [global_node_page_state()](http
 
 parameter respectively to specify the desired counters:-
 
- 
+
 
 • active_anon – node – [NR_ACTIVE_ANON](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n174) (counter for [LRU_ACTIVE_ANON](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n280)) – Total
 
@@ -1770,11 +1770,11 @@ likely to undergo reclaim in the near future, see section 11.2 for details on LR
 
 Total number of anonymous pages which sit on the inactive LRU (i.e.
 
- 
 
 
 
- 
+
+
 
 which have not been recently used and are thus subject to reclaim in the near future should memory pressure arise).
 
@@ -1818,11 +1818,11 @@ Once the foreground dirty limit has been reached, processes will block on I/O un
 
 When a file page undergoes writeback, it is not considered to be dirty in respect of this statistic, so these statistics are non-overlapping.
 
- 
 
 
 
- 
+
+
 
 • writeback – node – [NR_WRITEBACK](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n198) – Total number of file-backed pages which
 
@@ -1872,11 +1872,11 @@ The PCP interface provides a fast per-CPU cache for allocating and free-ing of a
 
 mance (see section 2.7.3 for a complete description).
 
- 
 
 
 
- 
+
+
 
 This value therefore is the total number of free PCP pages across all CPUs.
 
@@ -1884,23 +1884,23 @@ This value therefore is the total number of free PCP pages across all CPUs.
 
 pages, a topic which is outside the scope of this book.
 
- 
+
 
 ***14.4.4 Per-node statistics***
 
 Next, statistics are displayed for each online node:-
 
- 
+
 
 \[ 5.168090\] Node 0 active_anon:180kB inactive_anon:7988452kB active_file
 
 :1204kB inactive_file:1200kB unevictable:0kB isolated(anon):0kB isolated( file):0kB mapped:84kB dirty:224kB writeback:0kB shmem:320kB shmem_thp: 0 kB shmem_pmdmapped: 0kB anon_thp: 7897088kB writeback_tmp:0kB kernel_stack:1792kB pagetables:17972kB all_unreclaimable? yes
 
- 
+
 
 *Listing 14-16: Example OOM memory info – Per-node statistics*
 
- 
+
 
 These largely provide the same data as above (although expressed
 
@@ -1908,7 +1908,7 @@ in KiB), noting that in the example shown there is only a single node. Examining
 
 [global_node_page_state() , ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/vmstat.h?h=v6.0#n200)again invoked from [show_free_areas()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n6069):-
 
- 
+
 
 • shmem_thp – [NR_SHMEM_THPS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n201) – Kilobytes of memory used for shmem (mapping
 
@@ -1942,11 +1942,11 @@ section 11.4 for more details) has failed to make progress freeing any pages on 
 
 section 11.3 for details on how this functions).
 
- 
 
 
 
- 
+
+
 
 At this stage, the node is considered unreclaimable, and thus in that in-stance this field will be set to yes, otherwise it is set to no.
 
@@ -1956,7 +1956,7 @@ time [balance_pgdat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 equal to or greater than [MAX_RECLAIM_RETRIES](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n170) (hardcoded to 16) then the node is considered unreclaimable.
 
- 
+
 
 ***14.4.5 Zone-specific statistics***
 
@@ -1964,7 +1964,7 @@ And then zone-specific statistics similar to what you would observe in
 
 /proc/zoneinfo are displayed for each zone in each online node:-
 
- 
+
 
 \[ 5.168093\] Node 0 DMA free:15360kB boost:0kB min:124kB low:152kB high:180
 
@@ -1984,11 +1984,11 @@ high:63456kB reserved_highatomic:0KB active_anon:180kB inactive_anon :5003724kB 
 
 \[ 5.168107\] lowmem_reserve\[\]: 0 0 0 0
 
- 
+
 
 *Listing 14-17: Example OOM memory info – Per-zone statistics*
 
- 
+
 
 Importantly, the watermarks and free pages are shown here for each
 
@@ -2014,17 +2014,17 @@ progress cannot be made, the out of memory killer is invoked.
 
 Examining the example watermarks:-
 
- 
 
 
 
- 
+
+
 
 Table 14-1: Example OOM watermark status (KiB)
 
 Zone Minimum Low High Free DMA 124 152 180 15,360 DMA32 45,060 51,344 37,57,628 44,940 Normal 42,304 52,880 63,456 42,176
 
- 
+
 
 In the output shown in listing 14-17,each zone’s low memory reserve
 
@@ -2044,13 +2044,13 @@ If we take into account low memory reserve values, and assume that fail-
 
 ing allocation is taken from the normal zone (this is the case unless a GFP flag specifying a different zone is shown in the output, not the case in the example), we end up with the following values:-
 
- 
+
 
 Table 14-2: Example OOM watermark status with low memory reserve (KiB)
 
 Zone Minimum Low High Free DMA 31,876 31,904 31,932 15,360 DMA32 25,148 31432 37,716 44,940 Normal 42,304 52,880 63,456 42,176
 
- 
+
 
 Factoring in the low memory reserve, we can observe immediately that
 
@@ -2066,7 +2066,7 @@ Each zone within each node is listed, stating the node number, the zone
 
 name and a number of statistics, as determine by [show_free_areas()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n6069) (all values expressed in base pages):-
 
- 
+
 
 • free – The number of free pages within the zone.
 
@@ -2078,11 +2078,11 @@ This value is set in [boost_watermark()](https://git.kernel.org/pub/scm/linux/ke
 
 [steal_suitable_fallback(). ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2756)See section 2.4 for more details.
 
- 
 
 
 
- 
+
+
 
 • min – The minimum water mark for this zone.
 
@@ -2156,11 +2156,11 @@ the zone, i.e. the raw range over which it spans which are backed by physical me
 
 within the zone, i.e. present pages which are available to the buddy al-locator (whether allocated or not).
 
- 
 
 
 
- 
+
+
 
 • mlocked – The number of resident pages which have been marked as
 
@@ -2192,13 +2192,13 @@ for this zone. See section 2.7.3 for more on PCPs.
 
 the book.
 
- 
+
 
 ***14.4.6 Zone buddy page statistics***
 
 After this each node and zone outputs its buddy page statistics, giving details similar to /proc/buddyinfo:-
 
- 
+
 
 \[ 5.168109\] Node 0 DMA: 0\*4kB 0\*8kB 0\*16kB 0\*32kB 0\*64kB 0\*128kB 0\*256kB
 
@@ -2216,11 +2216,11 @@ kB (UME) 53\*64kB (UE) 25\*128kB (UE) 6\*256kB (UME) 3\*512kB (UME) 1\*1024kB (E
 
 hugepages_size=2048kB
 
- 
+
 
 *Listing 14-18: Example OOM memory info – Zone buddy page statistics*
 
- 
+
 
 These list available buddy allocator pages (the underlying physical alloca-
 
@@ -2230,11 +2230,11 @@ At the end of the report, per-node huge page data is also reported. In the examp
 
 KiB, in a system with a single node and 3 zones (DMA, DMA32 and Nor-mal). Each of the folio orders has its size explicitly shown and then a series
 
- 
 
 
 
- 
+
+
 
 of letters in parentheses indicating which migrate type page blocks are avail-
 
@@ -2276,7 +2276,7 @@ See section 2.5 for a detailed analysis of migrate types. The mapping from migra
 
 in [show_migration_types()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n6033) and is as follows:-
 
- 
+
 
 • U – [MIGRATE_UNMOVABLE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n43) – Unmovable – Kernel allocations which can neither
 
@@ -2298,7 +2298,7 @@ reserved for high-order atomic memory allocations which, operating in atomic mod
 
 fined by the CONFIG_MEMORY_ISOLATION feature which is out of scope for the book.
 
- 
+
 
 If memory of one migrate type is required but the zone lacks memory
 
@@ -2322,11 +2322,11 @@ on this logic).
 
 Some useful rules of thumb:-
 
- 
 
 
 
- 
+
+
 
 • Migrate types of H, C and I cannot be ‘stolen’ or taken from at all. They
 
@@ -2344,7 +2344,7 @@ order-9, this will be equal to order-4) or higher may also be stolen from.
 
 steal movable pageblocks regardless.
 
- 
+
 
 Generally speaking, these values are only really worth evaluating if there
 
@@ -2352,7 +2352,7 @@ is a significant lack of higher order buddy pages, which might indicate frag-men
 
 Expanding the buddy statistics from our example report to a table:-
 
- 
+
 
 Table 14-3: Example OOM free buddy pages
 
@@ -2366,21 +2366,21 @@ DMA 0 0 0 0 0 0 0 0 1 U 1 M 3 M 15,360 KiB
 
 DMA32 1 M 4 UM 4 UM 3 U 3 UM 0 1 M 1 M 3 M 2 UM 9 M 45,188 KiB Normal 340 UME 164 UE 113 UME 76 UME 53 UE 25 UE 6 UME 3 UME 1 E 0 6 UM 42,176 KiB
 
- 
+
 
 ***14.4.7 Global statistics***
 
 The ‘Show memory’ portion of the output is wrapped up with some global statistics:-
 
- 
+
 
 \[ 5.168138\] 706 total pagecache pages \[ 5.168138\] 0 pages in swap cache \[ 5.168139\] Free swap = 0kB \[ 5.168139\] Total swap = 0kB \[ 5.168140\] 2097019 pages RAM \[ 5.168141\] 0 pages HighMem/MovableOnly \[ 5.168141\] 59859 pages reserved
 
- 
+
 
 *Listing 14-19: Example OOM global statistics*
 
- 
+
 
 Each statistic here is relatively self-explanatory, though it’s important to
 
@@ -2392,11 +2392,11 @@ Note that all of the above ‘Show memory’ information can also be ob-
 
 tained via the sysrq-trigger interface specifying the m option, for instance:-
 
- 
 
 
 
- 
+
+
 
 \$ echo m \| sudo tee /proc/sysrq-trigger \>/dev/null
 
@@ -2404,11 +2404,11 @@ tained via the sysrq-trigger interface specifying the m option, for instance:-
 
 ... details as above ...
 
- 
+
 
 *Listing 14-20: Example of obtaining memory info from* */proc/sysrq-trigger*
 
- 
+
 
 ***14.4.8 Out of memory killer report***
 
@@ -2416,7 +2416,7 @@ Finally, the decision process of the OOM killer is shown with all running
 
 processes listed:-
 
- 
+
 
 \[ 5.168142\] \[ pid \] uid tgid total_vm rss pgtables_bytes swapents oom_score_adj
 
@@ -2490,11 +2490,11 @@ worker)
 
 worker)
 
- 
 
 
 
- 
+
+
 
 \[ 5.168167\] \[ 150\] 0 150 7312 325 77824 0 0 (udev-
 
@@ -2548,21 +2548,21 @@ global_oom,task_memcg=/user.slice/user-1000.slice/session-c1.scope,task=oom,pid=
 
 , file-rss:4kB, shmem-rss:0kB, UID:1000 pgtables:15632kB oom_score_adj:0
 
- 
+
 
 *Listing 14-21: Example OOM kill report*
 
- 
+
 
 This lists all running processes within the system, their OOM score ad-
 
 justment (see section **??** for more on this), which is used to make the OOM killer more or less likely to kill a process and a number of statistics includ-ing each process’s PID (from the kernel’s perspective) as well as its TGID (Thread Group ID).
 
- 
 
 
 
- 
+
+
 
 This output is generated from [dump_tasks()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n423)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n423) which calls [dump_task()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/oom_kill.c?h=v6.0#n381) for
 
@@ -2606,7 +2606,7 @@ See the out of memory killer chapter for a more detailed analysis of how
 
 the kernel handles out of memory conditions.
 
- 
+
 
 **14.5 procfs memory interfaces**
 
@@ -2620,7 +2620,7 @@ There are a number of different memory interfaces available within the
 
 kernel:-
 
- 
+
 
 • /proc/vmstat – A wrapper around all global memory statistical counters,
 
@@ -2646,11 +2646,11 @@ shown. The kernel implementation is in [zoneinfo_show()](https://git.kernel.org/
 
 folio order. The kernel implementation is in [frag_show()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmstat.c?h=v6.0#n1489)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmstat.c?h=v6.0#n1489)
 
- 
 
 
 
- 
+
+
 
 • /proc/pagetypeinfo – (requires elevated permissions) – Outputs the page back
 
@@ -2700,11 +2700,11 @@ The kernel implementation is implemented in [kpageflags_read()](https://git.kern
 
 tus, including memory statistics, most notably VmRSS and VmHWM indicating
 
- 
 
 
 
- 
+
+
 
 the current and high watermark Resident Set Size usage for the process.
 
@@ -2752,11 +2752,11 @@ documented in [pagemap](https://kernel.org/doc/html/v6.0/admin-guide/mm/pagemap.
 
 The kernel implementation is in [pagemap_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n1627)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n1627)
 
- 
 
 
 
- 
+
+
 
 • /proc/\$pid/mem – Provides raw access to the entire virtual address space
 
@@ -2770,13 +2770,13 @@ utilises the Get User Pages or GUP functionality (see section 8.1.2 for
 
 more details on this) in [access_remote_vm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5513).
 
- 
+
 
 These interfaces are largely self-explanatory well documented in the
 
 [procfs](https://man7.org/linux/man-pages/man5/proc.5.html) man pages for the most part, so we won’t go into enormous depth here on each, however let’s take a moment to examine some in detail to ex-plore the kind of information we can obtain:-
 
- 
+
 
 ***14.5.1 A quick tour: Physical memory***
 
@@ -2784,11 +2784,11 @@ Let’s examine the state of physical memory using procfs interfaces. The first 
 
 as discussed in section 14.1 above:-
 
- 
+
 
 MemTotal: 4000696 kB MemFree: 302552 kB MemAvailable: 3112644 kB
 
- 
+
 
 *Listing 14-22: Example* */proc/meminfo* *free memory fields*
 
@@ -2800,7 +2800,7 @@ Next, examining /proc/zoneinfo which provides per-node, per-zone details
 
 of memory state in the system (focusing on the most important values):-
 
- 
+
 
 Node 0, zone DMA
 
@@ -2830,11 +2830,11 @@ nr_file_pages 17511
 
 nr_dirty 30
 
- 
 
 
 
- 
+
+
 
 nr_writeback 0
 
@@ -2866,11 +2866,11 @@ nr_page_table_pages 196
 
 nr_swapcached 0
 
- 
+
 
 *Listing 14-23: Example* */proc/zoneinfo* *output – per-node statistics*
 
- 
+
 
 The first zone in each node also includes per-node statistics. These re-
 
@@ -2882,7 +2882,7 @@ Following this are per-zone statistics, for instance example output for the
 
 normal zone (focusing on core statistics):-
 
- 
+
 
 Node 0, zone Normal
 
@@ -2934,11 +2934,11 @@ high: 3305
 
 batch: 63
 
- 
 
 
 
- 
+
+
 
 vm stats threshold: 42
 
@@ -2976,7 +2976,7 @@ node_unreclaimable: 0
 
 start_pfn: 1048576
 
- 
+
 
 *Listing 14-24: Example* */proc/zoneinfo* *output – Normal zone statistics*
 
@@ -2984,7 +2984,7 @@ All values are expressed in base pages. The counters are broadly self-
 
 explanatory, so we shall focus on the zone-specific fields:-
 
- 
+
 
 • free – The number of free pages in the zone.
 
@@ -3024,17 +3024,17 @@ reservation, i.e. the array of [struct page](https://git.kernel.org/pub/scm/linu
 
 physical page(see 2.3 for more details on the memory model as a whole).
 
- 
 
 
 
- 
+
+
 
 • protection – Indicates the low memory reserve values for this zone in
 
 relation to the zones that sit above it in this node (see section 2.4.1 for more details on this).
 
- 
+
 
 See section 2.4 for more on zones.
 
@@ -3044,7 +3044,7 @@ cache which sits between node free lists and physical allocations. Examining
 
 each field:-
 
- 
+
 
 • count – The number of base pages currently present in this CPU’s Per-
 
@@ -3062,7 +3062,7 @@ when populated or freed back to them when the cache exceeds high.
 
 fore the statistics are actually updated.
 
- 
+
 
 There are separate page sets for each migrate type and orders up to and
 
@@ -3074,7 +3074,7 @@ If we wish to examine the current state of the buddy allocator,
 
 /proc/buddyinfo is a good place to start:-
 
- 
+
 
 Node 0, zone DMA 0 0 0 0 0 0 0 0 1 1
 
@@ -3088,11 +3088,11 @@ Node 0, zone Normal 2 1 1 0 3 2 1 1 1 1
 
 1206
 
- 
+
 
 *Listing 14-25: Example output from* */proc/buddyinfo*
 
- 
+
 
 This very simply outputs free pages for each node, zone and order avail-
 
@@ -3102,7 +3102,7 @@ right, we can observe counts for order-0 to order-10. So this example data
 
 translates to:-
 
- 
+
 
 Table 14-4: Example OOM free buddy pages
 
@@ -3114,23 +3114,23 @@ Zone
 
 DMA 0 0 0 0 0 0 0 0 1 1 3 DMA32 3 1 2 2 1 1 3 3 3 3 737 Normal 2 1 1 0 3 2 1 1 1 1 1206
 
- 
+
 
 See section 2.7 for more details on the buddy allocator. If we have sufficient permissions, we can see a more detailed breakdown
 
 in /proc/pagetypeinfo (spacing adjusted slightly for readability):-
 
- 
 
 
 
- 
+
+
 
 Page block order: 9
 
 Pages per block: 512
 
- 
+
 
 Free pages count per migrate type at order 0 1 2 3 4 5 6 7 8 9
 
@@ -3184,15 +3184,15 @@ Node 0, zone Normal, type HighAtomic 0 0 0 0 0 0 0 0 0 0
 
 0
 
- 
+
 
 Number of blocks type Unmovable Movable Reclaimable HighAtomic Node 0, zone DMA 1 7 0 0 Node 0, zone DMA32 2 1526 0 0 Node 0, zone Normal 22 2530 8 0
 
- 
+
 
 *Listing 14-26: Example output from* */proc/pagetypeinfo*
 
- 
+
 
 Here each individual set of free pages is broken down into migrate types,
 
@@ -3204,11 +3204,11 @@ The free page output is determined in [pagetypeinfo_showfree_print()](https://gi
 
 page block designation is determined in [pagetypeinfo_showblockcount_print()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmstat.c?h=v6.0#n1553)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmstat.c?h=v6.0#n1553)
 
- 
 
 
 
- 
+
+
 
 ***14.5.2 A quick tour: Virtual memory***
 
@@ -3228,7 +3228,7 @@ Let’s examine these interfaces for an example program (eliding less use-
 
 ful fields and adjusting whitespace):-
 
- 
+
 
 Name: mupdf
 
@@ -3252,11 +3252,11 @@ RssFile: 7980 kB
 
 RssShmem: 768 kB
 
- 
+
 
 *Listing 14-27: Example output from* */proc/\$pid/status*
 
- 
+
 
 This indicates that its current, mapped, virtual address space spans
 
@@ -3274,7 +3274,7 @@ Examining the /proc/\$pid/maps of this process (skipping a number of
 
 shared library mappings for space):-
 
- 
+
 
 556cf266e000-556cf26b1000 r--p 00000000 103:05 4805731 /usr/bin/mupdf 556cf26b1000-556cf288f000 r-xp 00043000 103:05 4805731 /usr/bin/mupdf 556cf288f000-556cf2a0d000 r--p 00221000 103:05 4805731 /usr/bin/mupdf 556cf2a0d000-556cf2a1e000 r--p 0039e000 103:05 4805731 /usr/bin/mupdf 556cf2a1e000-556cf49c1000 rw-p 003af000 103:05 4805731 /usr/bin/mupdf 556cf49c1000-556cf49de000 rw-p 00000000 00:00 0
 
@@ -3296,11 +3296,11 @@ shared library mappings for space):-
 
 7f3592240000-7f359224d000 rw-p 00000000 00:00 0
 
- 
 
 
 
- 
+
+
 
 ...
 
@@ -3318,11 +3318,11 @@ shared library mappings for space):-
 
 7ffe32c2e000-7ffe32c4f000 rw-p 00000000 00:00 0 \[stack\] 7ffe32de8000-7ffe32dec000 r--p 00000000 00:00 0 \[vvar\] 7ffe32dec000-7ffe32dee000 r-xp 00000000 00:00 0 \[vdso\] ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0 \[vsyscall\]
 
- 
+
 
 *Listing 14-28: Example output from* */proc/\$pid/maps*
 
- 
+
 
 This shows virtual address ranges for mapped memory, both anonymous
 
@@ -3346,7 +3346,7 @@ In addition certain anonymous mappings are given names based on
 
 criteria:-
 
- 
+
 
 **vDSO** – If the VMA has no associated [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) object referenced in
 
@@ -3364,7 +3364,7 @@ and ends at or above this value, then it is designated the process’s stack
 
 (as determined by [is_stack()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n240)). This is distinct from mappings which have been designated as user-defined stacks by e.g. MAP_GROWSDOWN but is rather intended to indicate the process’s overall stack.
 
- 
+
 
 Each VMA’s output is implemented in [show_map_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n272)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n272) which is also used
 
@@ -3374,11 +3374,11 @@ This provides the basic details about mappings, but /proc/\$pid/smaps pro-
 
 vides per-VMA statistics in addition to this (eliding out of scope huge page and page size fields):-
 
- 
 
 
 
- 
+
+
 
 556cf266e000-556cf26b1000 r--p 00000000 103:05 4805731 /usr/
 
@@ -3420,11 +3420,11 @@ Locked: 0 kB
 
 VmFlags: rd mr mw me sd
 
- 
+
 
 *Listing 14-29: Example* */proc/\$pid/smaps* *output*
 
- 
+
 
 After showing a line with the same data shown in /proc/\$pid/maps for this
 
@@ -3432,7 +3432,7 @@ VMA, a number of statistics describing the range follow (each expressed in
 
 kilobytes):-
 
- 
+
 
 • Size – Shows the size of the virtual mapping, equal to
 
@@ -3452,11 +3452,11 @@ This can get complicated, as files can be mapped at different off-sets meaning m
 
 Considering a MAP_PRIVATE mapping spanning 10 pages of 4 KiB each, with half of its pages copied to private anonymous memory and half still
 
- 
 
 
 
- 
+
+
 
 mapping the shared page cache pages for the underlying file, which has been mapped twice.
 
@@ -3506,11 +3506,11 @@ set checked by [pte_young()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 is marked referenced (i.e. its [struct page](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) has the [PG_referenced](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n102) flag set, indicating that reclaim has determined the page to have been accessed recently (reducing the chance of reclaim).
 
- 
 
 
 
- 
+
+
 
 If this memory is considered for reclaim, the existence of the sticky PTE bit will guarantee this memory will be marked referenced (see the re-claim chapter for more details on the reclaim algorithm, especially sec-
 
@@ -3564,17 +3564,17 @@ Determined in [smaps_page_accumulate()](https://git.kernel.org/pub/scm/linux/ker
 
 Determined in [show_smap_vma_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/proc/task_mmu.c?h=v6.0#n640).
 
- 
+
 
 Examining the mapping between VMA flags and VmFlags mnemonics
 
 shown in the VmFlags field (eliding arm64-specific flags):-
 
- 
 
 
 
- 
+
+
 
 Table 14-5: VmFlags mappings
 
@@ -3642,7 +3642,7 @@ uw VM_UFFD_WP
 
 ui VM_UFFD_MINOR
 
- 
+
 
 See section 4.4.1 for a detailed description of each of these flags.
 
@@ -3664,7 +3664,7 @@ and all we wish to determine are the overall statistics for the process. There-f
 
 (previously referenced in section 14.2):-
 
- 
+
 
 556cf266e000-7ffe32dee000 ---p 00000000 00:00 0 \[
 
@@ -3672,11 +3672,11 @@ rollup\]
 
 Rss: 19916 kB
 
- 
 
 
 
- 
+
+
 
 Pss: 14553 kB
 
@@ -3718,7 +3718,7 @@ SwapPss: 0 kB
 
 Locked: 0 kB
 
- 
+
 
 *Listing 14-30: Example* */proc/\$pid/smaps_rollup* *output*
 
@@ -3754,7 +3754,7 @@ mapped using MAP_SHARED. The sum of Pss_Anon, Pss_File and Pss_Shmem is equal
 
 to Pss.
 
- 
+
 
 ***14.5.3 A quick tour: Page table introspection***
 
@@ -3772,11 +3772,11 @@ from kpagecount and kpageflags.
 
 Let’s examine a program that interacts with these interfaces:-
 
- 
 
 
 
- 
+
+
 
 1 **\#include** \<fcntl.h\>
 
@@ -3828,27 +3828,27 @@ Let’s examine a program that interacts with these interfaces:-
 
 41 }
 
- 
+
 
 *Listing 14-31: Example page table introspection (header)*
 
- 
+
 
 We start by establishing some constants based on the documented values
 
 within the /proc/\$pid/pagemap fields, and implement a simple function for re-
 
- 
 
 
 
- 
+
+
 
 trieving a 64-bit value from a specific offset within a file which we will reuse
 
 for each of the interfaces.
 
- 
+
 
 43 **static uint64_t read_pagemap**(**const void** \*ptr)
 
@@ -3886,11 +3886,11 @@ for each of the interfaces.
 
 60 }
 
- 
+
 
 *Listing 14-32: Example page table introspection (interface readers)*
 
- 
+
 
 Here we utilise the read_u64() helper function to read from each of the
 
@@ -3900,7 +3900,7 @@ After this, we implement functions to read through each of these values
 
 and describe the obtained data:-
 
- 
+
 
 62 **static void describe_swapped**(**uint64_t** pagemap)
 
@@ -3942,11 +3942,11 @@ and describe the obtained data:-
 
 81 **\#define PRINT_FLAGS**(flag) \\
 
- 
 
 
 
- 
+
+
 
 82 **if** (kpageflags & (1UL \<\< KPF\_##flag)) \\ 83 **printf**(" \[" \#flag "\]"); 84
 
@@ -3986,11 +3986,11 @@ and describe the obtained data:-
 
 127 mapcount = **read_mapcount**(pfn); 128 **printf**(" mapped=%lu", mapcount);
 
- 
 
 
 
- 
+
+
 
 129
 
@@ -4002,11 +4002,11 @@ and describe the obtained data:-
 
 133 }
 
- 
+
 
 *Listing 14-33: Example page table introspection (describers)*
 
- 
+
 
 We observe that if the page is not present, then it might be
 
@@ -4030,7 +4030,7 @@ Finally, examining an example program which maps anonymous mem-
 
 ory, then a file, then writes to file observing the output at each instance:-
 
- 
+
 
 135 **int** main(**void**)
 
@@ -4062,11 +4062,11 @@ ory, then a file, then writes to file observing the output at each instance:-
 
 160 ptr = **mmap**(**NULL**, page_size, **PROT_READ** \| **PROT_WRITE**, 161 MAP_SHARED, fd, 0); 162 **if** (ptr == **MAP_FAILED**) { 163 **perror**("**mmap**");
 
- 
 
 
 
- 
+
+
 
 164 **return EXIT_FAILURE**; 165 }
 
@@ -4082,15 +4082,15 @@ ory, then a file, then writes to file observing the output at each instance:-
 
 178 **return EXIT_SUCCESS**; 179 }
 
- 
+
 
 *Listing 14-34: Example page table introspection (main)*
 
- 
+
 
 **14.6 Memory tunables**
 
- 
+
 
 There are a number of VM tunables, located in /proc/sys/vm or accessible via
 
@@ -4100,7 +4100,7 @@ The [procfs](https://man7.org/linux/man-pages/man5/proc.5.html) documentation on
 
 [documentation), ](https://kernel.org/doc/html/v6.0/admin-guide/sysctl/vm.html)so we will examine a core subset of these in detail:-
 
- 
+
 
 • admin_reserve_kbytes – [sysctl_admin_reserve_kbytes](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n899) – The amount of mem-
 
@@ -4136,11 +4136,11 @@ initially set in [init_user_reserve()](https://git.kernel.org/pub/scm/linux/kern
 
 – The first, when written to, triggers the [sysctl_compaction_handler()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/compaction.c?h=v6.0#n2752)
 
- 
 
 
 
- 
+
+
 
 function and the state of the latter two tunables are stored in
 
@@ -4180,11 +4180,11 @@ The state of dirty_background_bytes is stored in the [dirty_background_bytes](ht
 
 global value, dirty_background_ratio is stored in [dirty_background_ratio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n73),
 
- 
 
 
 
- 
+
+
 
 dirty_bytes is stored in [vm_dirty_bytes](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n96) and dirty_ratio is stored in
 
@@ -4220,11 +4220,11 @@ tail in section 9.9.4. The principle function which invokes this action is
 
 [drop_caches_sysctl_handler()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/drop_caches.c?h=v6.0#n50).
 
- 
 
 
 
- 
+
+
 
 • lowmem_reserve_ratio – Determines the low memory reserves per-zone for
 
@@ -4254,7 +4254,7 @@ This is important, as it is critical to maintain some memory at all times, other
 
 The default value is determined by [calculate_min_free_kbytes()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n8788), which
 
- 
+
 
 attempts to set this value according to available system memory, calcu-*√* lating this to be equal to 4 *p* where *p* is the amount of memory in kilo-bytes which exceeds the high water mark if each zone. On my machine this yields a 67,584 KiB value.
 
@@ -4278,11 +4278,11 @@ The update is performed in [update_mmap_min_addr()](https://git.kernel.org/pub/s
 
 [mmap_min_addr_handler()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/security/min_addr.c?h=v6.0#n32). On my 64-bit x86-64 system this defaults to 64 KiB.
 
- 
 
 
 
- 
+
+
 
 Update is only permitted if the user has the CAP_SYS_RAWIO [capability](https://man7.org/linux/man-pages/man7/capabilities.7.html)[.](https://man7.org/linux/man-pages/man7/capabilities.7.html)
 
@@ -4330,11 +4330,11 @@ This is stored in the global [sysctl_panic_on_oom](https://git.kernel.org/pub/sc
 
 in each zone which can be stored on Per-CPU-Pages (or PCPs), which are caches maintained on each CPU to prevent the need for a lock for
 
- 
 
 
 
- 
+
+
 
 freeing and allocating pages (see section 2.7.3 for more details on how this mechanism works).
 
@@ -4378,11 +4378,11 @@ different migrate types mixed into them, this can cause fragmentation
 
 (see section 2.5 for a detailed explanation of migrate types). In order to counteract the impact of this, a boost factor can be applied to the water-marks in a zone when this kind of mixing has occurred.
 
- 
 
 
 
- 
+
+
 
 The boost factor determines the boost to be a factor of the high water-mark of that zone, which is multiplied by 10,000, and defaults to 15,000 (meaning that the default boost is 1.5x the high water mark of a zone). The watermark_scale_factor determines the distances between watermarks
 
@@ -4414,11 +4414,11 @@ The check for this tunable is performed in [get_page_from_freelist()](https://gi
 
 where [node_reclaim_enabled()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n438) determines whether this is enabled at all.
 
- 
+
 
 **14.7 Sharing memory**
 
- 
+
 
 The use of virtual memory means linux can map the same physical mem-ory from multiple processes simultaneously. This can be used to explicitly share memory between processes, often used as an efficient means of Inter-Process Communication (IPC).
 
@@ -4430,23 +4430,23 @@ Shared memory can be used for Inter-Process Communication (IPC),
 
 however its important to note that simply having the same memory mapped between two processes isn’t sufficient to establish usable IPC – synchronisa-tion between the sharing processes is still required by some means.
 
- 
+
 
 ***14.7.1 System V shared memory***
 
 The system V shared memory interface is the oldest existing shared memory interface available in linux and provides a lot of tooling around the mecha-nism to permit the construction of robust IPC.
 
- 
 
 
 
- 
+
+
 
 Examining a simple server/client architecture, which simply establishes a
 
 shared memory mapping and has each write to it:-
 
- 
+
 
 1 **\#include** \<stdio.h\>
 
@@ -4526,11 +4526,11 @@ shared memory mapping and has each write to it:-
 
 39 }
 
- 
+
 
 *Listing 14-35: Example System V shared memory server*
 
- 
+
 
 A key is established using [shmget()](https://man7.org/linux/man-pages/man2/shmget.2.html)[,](https://man7.org/linux/man-pages/man2/shmget.2.html) specifying IPC_CREAT to create a new
 
@@ -4540,11 +4540,11 @@ should be created rather than simply accessed. The permissions are set for
 
 this region in the same fashion as those that are specified by [chmod()](https://man7.org/linux/man-pages/man2/chmod.2.html)[.](https://man7.org/linux/man-pages/man2/chmod.2.html)
 
- 
 
 
 
- 
+
+
 
 A pointer to the region is then obtained via [shmat()](https://man7.org/linux/man-pages/man2/shmat.2.html) which attaches to it,
 
@@ -4554,7 +4554,7 @@ At this point we have created a shared memory mapping which can be
 
 accessed by specifying the same key in the client:-
 
- 
+
 
 1 **\#include** \<stdio.h\>
 
@@ -4604,21 +4604,21 @@ accessed by specifying the same key in the client:-
 
 35 **return EXIT_SUCCESS**; 36 }
 
- 
+
 
 *Listing 14-36: Example System V shared memory client*
 
- 
+
 
 This largely reflects the server, only without specifying IPC_CREAT, to in-
 
 dicate that we are not creating the shared memory segment, only accessing it.
 
- 
 
 
 
- 
+
+
 
 Note that this is a very brief overview of how the mechanism works, and
 
@@ -4642,7 +4642,7 @@ erate an unlinked tmpfs file (i.e. one that is present in tmpfs but has no file
 
 entry in any directory) which acts as the shared file.
 
- 
+
 
 ***14.7.2 POSIX shared memory***
 
@@ -4662,7 +4662,7 @@ which is [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html)’d into sh
 
 is established at /dev/shm/\<name\> where name is specified in [shm_open()](https://man7.org/linux/man-pages/man3/shm_open.3.html)[:-](https://man7.org/linux/man-pages/man3/shm_open.3.html)
 
- 
+
 
 1 **\#include** \<fcntl.h\>
 
@@ -4714,11 +4714,11 @@ is established at /dev/shm/\<name\> where name is specified in [shm_open()](http
 
 25 **perror**("**ftruncate**");
 
- 
 
 
 
- 
+
+
 
 26 **return EXIT_FAILURE**; 27 }
 
@@ -4744,11 +4744,11 @@ is established at /dev/shm/\<name\> where name is specified in [shm_open()](http
 
 53 **return EXIT_SUCCESS**; 54 }
 
- 
+
 
 *Listing 14-37: Example POSIX shared memory server*
 
- 
+
 
 Note that, similar to system V shared memory, we must specify that this
 
@@ -4762,7 +4762,7 @@ directory until it is removed via [shm_unlink()](https://man7.org/linux/man-page
 
 Examining the client:-
 
- 
+
 
 1 **\#include** \<fcntl.h\>
 
@@ -4780,11 +4780,11 @@ Examining the client:-
 
 8 **\#define SHM_NAME** "test"
 
- 
 
 
 
- 
+
+
 
 9 **\#define SIZE** (4096)
 
@@ -4842,11 +4842,11 @@ Examining the client:-
 
 36 }
 
- 
+
 
 *Listing 14-38: Example POSIX shared memory client*
 
- 
+
 
 This largely mirrors the server, only with O_CREAT left unspecified. This
 
@@ -4860,7 +4860,7 @@ The implementation relies upon /dev/shm being mapped as a tmpfs file
 
 system which is required by the standard.
 
- 
+
 
 ***14.7.3 Anonymous shared memory across forked processes***
 
@@ -4874,17 +4874,17 @@ However, through the use of an anonymous shared mapping via [mmap()](https://man
 
 memory can easily be shared between parent and child:-
 
- 
+
 
 1 **\#include** \<stdio.h\>
 
 2 **\#include** \<stdlib.h\>
 
- 
 
 
 
- 
+
+
 
 3 **\#include** \<unistd.h\>
 
@@ -4940,11 +4940,11 @@ memory can easily be shared between parent and child:-
 
 46 **if** (**waitpid**(pid, **NULL**, 0) == -1) { 47 **perror**("**waitpid**"); 48 **return EXIT_FAILURE**; 49 }
 
- 
 
 
 
- 
+
+
 
 50
 
@@ -4952,11 +4952,11 @@ memory can easily be shared between parent and child:-
 
 52 }
 
- 
+
 
 *Listing 14-39: Example anonymous shared mapping across fork*
 
- 
+
 
 Here we establish a shared, anonymous mapping using a combination of
 
@@ -4972,7 +4972,7 @@ child processes. This example code iterates through letters, outputting both
 
 in parent and child to demonstrate that the memory is, in fact, shared.
 
- 
+
 
 ***14.7.4 Sharing memory via memfd***
 
@@ -4986,7 +4986,7 @@ ever permitting further special operations on that file descriptor.
 
 Examining a simple server for this approach:-
 
- 
+
 
 1 **\#define \_GNU_SOURCE**
 
@@ -5040,11 +5040,11 @@ Examining a simple server for this approach:-
 
 26 **perror**("**ftruncate**");
 
- 
 
 
 
- 
+
+
 
 27 **return EXIT_FAILURE**; 28 }
 
@@ -5074,11 +5074,11 @@ Examining a simple server for this approach:-
 
 59 **return EXIT_SUCCESS**; 60 }
 
- 
+
 
 *Listing 14-40: Example memfd shared mapping server*
 
- 
+
 
 This establishes a file descriptor via [memfd_create()](https://man7.org/linux/man-pages/man2/memfd_create.2.html), specifying
 
@@ -5092,15 +5092,15 @@ Finally we are able to [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.htm
 
 cation of the file descriptor entry in the process’s procfs fd directory. This is a simplified example for illustration’s sake, in reality you’d transmit the file descriptor using another IPC method such as a UNIX socket.
 
- 
 
 
 
- 
+
+
 
 Finally we can pass this path to the client:-
 
- 
+
 
 1 **\#include** \<**fcntl**.h\>
 
@@ -5184,11 +5184,11 @@ Finally we can pass this path to the client:-
 
 41 }
 
- 
+
 
 *Listing 14-41: Example memfd shared mapping client*
 
- 
+
 
 This simply maps the file descriptor and accesses it as it would any file,
 
@@ -5196,4 +5196,4 @@ modifying data in the mapping so we can observe both server and client up-
 
 dating data.
 
- 
+

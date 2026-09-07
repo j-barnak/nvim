@@ -36,7 +36,7 @@ The smart pointer APIs are remarkably varied. About the only functionality commo
 
 **resource management.**
 
-When you reach for a smart pointer, std::unique_ptr should generally be the one closest at hand. It’s reasonable to assume that, by default, std::unique_ptrs are the same size as raw pointers, and for most operations (including dereferencing), they execute exactly the same instructions. This means you can use them even in situa-118 \| Item 17
+When you reach for a smart pointer, std::unique_ptr should generally be the one closest at hand. It’s reasonable to assume that, by default, std::unique_ptrs are the same size as raw pointers, and for most operations (including dereferencing), they execute exactly the same instructions. This means you can use them even in situa-
 
 ![](media/index-137_1.jpg)
 
@@ -94,7 +94,6 @@ Callers could use the returned std::unique_ptr in a single scope as follows,
 
 …
 
-**Item 18 \| 119**
 
 auto pInvestment = // pInvestment is of type makeInvestment( *arguments* ); // std::unique_ptr\<Investment\>
 
@@ -128,7 +127,6 @@ pInv(nullptr, delInvmt); // returned
 
 1 There are a few exceptions to this rule. Most stem from abnormal program termination. If an exception propagates out of a thread’s primary function (e.g., main, for the program’s initial thread) or if a noexcept specification is violated (see Item 14), local objects may not be destroyed, and if std::abort or an exit function (i.e., std::\_Exit, std::exit, or std::quick_exit) is called, they definitely won’t be.
 
-**120 \| Item 18**
 
 if ( /\* a Stock object should be created \*/ )
 
@@ -170,7 +168,6 @@ All custom deletion functions accept a raw pointer to the object to be destroyed
 
 • The basic strategy of makeInvestment is to create a null std::unique_ptr, make it point to an object of the appropriate type, and then return it. To associate the custom deleter delInvmt with pInv, we pass that as its second constructor argument.
 
-**Item 18 \| 121**
 
 • Attempting to assign a raw pointer (e.g., from new) to a std::unique_ptr won’t compile, because it would constitute an implicit conversion from a raw to a smart pointer. Such implicit conversions can be problematic, so C++11’s smart pointers prohibit them. That’s why reset is used to have pInv assume ownership of the object created via new.
 
@@ -226,7 +223,6 @@ pInv.reset(new Stock(std::forward\<Ts\>(params)...));
 
 else if ( … ) // as before
 
-**122 \| Item 18**
 
 {
 
@@ -282,7 +278,6 @@ makeInvestment(Ts&&... params); // *of function pointer!*
 
 Function object deleters with extensive state can yield std::unique_ptr objects of significant size. If you find that a custom deleter makes your std::unique_ptrs unacceptably large, you probably need to change your design.
 
-**Item 18 \| 123**
 
 Factory functions are not the only common use case for std::unique_ptrs. They’re even more popular as a mechanism for implementing the Pimpl Idiom. The code for that isn’t complicated, but in some cases it’s less than straightforward, so I’ll refer you
 
@@ -308,7 +303,6 @@ This is a key part of why std::unique_ptr is so well suited as a factory functio
 
 • Converting a std::unique_ptr to a std::shared_ptr is easy.
 
-**124 \| Item 18**
 
 **Item 19: Use std::shared_ptr for shared-ownership**
 
@@ -326,7 +320,6 @@ A std::shared_ptr can tell whether it’s the last one pointing to a resource by
 
 The existence of the reference count has performance implications:
 
-**Item 19 \| 125**
 
 • **std::shared_ptrs are twice the size of a raw pointer**, because they internally contain a raw pointer to the resource as well as a raw pointer to the resource’s reference count.2
 
@@ -350,7 +343,6 @@ Like std::unique_ptr (see Item 18), std::shared_ptr uses delete as its default r
 
 The design of this support differs from that for std::unique_ptr, however. For 2 This implementation is not required by the Standard, but every Standard Library implementation I’m familiar with employs it.
 
-**126 \| Item 19**
 
 std::unique_ptr, the type of the deleter is part of the type of the smart pointer. For std::shared_ptr, it’s not:
 
@@ -396,7 +388,6 @@ In another difference from std::unique_ptr, specifying a custom deleter doesn’
 
 std::shared_ptr object is two pointers in size. That’s great news, but it should make you vaguely uneasy. Custom deleters can be function objects, and function objects can contain arbitrary amounts of data. That means they can be arbitrarily large. How can a std::shared_ptr refer to a deleter of arbitrary size without using any more memory?
 
-**Item 19 \| 127**
 
 ![](media/index-146_1.jpg)
 
@@ -458,7 +449,6 @@ std::shared_ptr to the object. At least that’s what’s supposed to happen. In
 
 Unique-ownership pointers don’t use control blocks, so there should be no control block for the pointed-to object. (As part of its construction, the std::shared_ptr assumes ownership of the pointed-to object, so the unique-ownership pointer is set to null.)
 
-**128 \| Item 19**
 
 • **When a std::shared_ptr constructor is called with a raw pointer, it creates a** **control block.** If you wanted to create a std::shared_ptr from an object that already had a control block, you’d presumably pass a std::shared_ptr or a std::weak_ptr (see Item 20) as a constructor argument, not a raw pointer.
 
@@ -496,7 +486,6 @@ The second destruction is responsible for the undefined behavior.
 
 There are at least two lessons regarding std::shared_ptr use here. First, try to avoid passing raw pointers to a std::shared_ptr constructor. The usual alternative is to use std::make_shared (see Item 21), but in the example above, we’re using cus‐
 
-**Item 19 \| 129**
 
 tom deleters, and that’s not possible with std::make_shared. Second, if you must pass a raw pointer to a std::shared_ptr constructor, pass the result of new directly instead of going through a raw pointer variable. If the first part of the code above were rewritten like this,
 
@@ -538,7 +527,7 @@ processedWidgets.emplace_back(**this**); // add it to list of
 
 The comment about this being wrong says it all—or at least most of it. (The part that’s wrong is the passing of this, not the use of emplace_back. If you’re not familiar with emplace_back, see Item 42.) This code will compile, but it’s passing a raw
 
-pointer (this) to a container of std::shared_ptrs. The std::shared_ptr thus constructed will create a new control block for the pointed-to Widget (\*this). That **130 \| Item 19**
+pointer (this) to a container of std::shared_ptrs. The std::shared_ptr thus constructed will create a new control block for the pointed-to Widget (\*this). That
 
 doesn’t sound harmful until you realize that if there are std::shared_ptrs outside the member function that already point to that Widget, it’s game, set, and match for undefined behavior.
 
@@ -578,7 +567,6 @@ processedWidgets.emplace_back(**shared_from_this()**);
 
 }
 
-**Item 19 \| 131**
 
 Internally, shared_from_this looks up the control block for the current object, and it creates a new std::shared_ptr that refers to that control block. The design relies on the current object having an associated control block. For that to be the case, there must be an existing std::shared_ptr (e.g., one outside the member function calling shared_from_this) that points to the current object. If no such std::shared_ptr exists (i.e., if the current object has no associated control block), behavior is undefined, although shared_from_this typically throws an exception.
 
@@ -616,7 +604,6 @@ A control block is typically only a few words in size, although custom deleters 
 
 Having read about dynamically allocated control blocks, arbitrarily large deleters and allocators, virtual function machinery, and atomic reference count manipulations, your enthusiasm for std::shared_ptrs may have waned somewhat. That’s fine.
 
-**132 \| Item 19**
 
 They’re not the best solution to every resource management problem. But for the functionality they provide, std::shared_ptrs exact a very reasonable cost. Under typical conditions, where the default deleter and default allocator are used and where the std::shared_ptr is created by std::make_shared, the control block is only about three words in size, and its allocation is essentially free. (It’s incorporated into
 
@@ -630,7 +617,7 @@ The reverse is not true. Once you’ve turned lifetime management of a resource 
 
 Something else std::shared_ptrs can’t do is work with arrays. In yet another difference from std::unique_ptr, std::shared_ptr has an API that’s designed only for pointers to single objects. There’s no std::shared_ptr\<T\[\]\>. From time to time, “clever” programmers stumble on the idea of using a std::shared_ptr\<T\> to point to an array, specifying a custom deleter to perform an array delete (i.e., delete
 
-\[\]). This can be made to compile, but it’s a horrible idea. For one thing, std::shared_ptr offers no operator\[\], so indexing into the array requires awk-ward expressions based on pointer arithmetic. For another, std::shared_ptr supports derived-to-base pointer conversions that make sense for single objects, but that open holes in the type system when applied to arrays. (For this reason, the **Item 19 \| 133**
+\[\]). This can be made to compile, but it’s a horrible idea. For one thing, std::shared_ptr offers no operator\[\], so indexing into the array requires awk-ward expressions based on pointer arithmetic. For another, std::shared_ptr supports derived-to-base pointer conversions that make sense for single objects, but that open holes in the type system when applied to arrays. (For this reason, the
 
 std::unique_ptr\<T\[\]\> API prohibits such conversions.) Most importantly, given the variety of C++11 alternatives to built-in arrays (e.g., std::array, std::vector, std::string), declaring a smart pointer to a dumb array is almost always a sign of bad design.
 
@@ -662,7 +649,6 @@ The relationship begins at birth. std::weak_ptrs are typically created from std:
 
 std::make_shared\<Widget\>(); // the pointed-to Widget's
 
-**134 \| Item 19**
 
 // ref count (RC) is 1. (See
 
@@ -706,7 +692,6 @@ The other form is the std::shared_ptr constructor taking a std::weak_ptr as an a
 
 // throw std::bad_weak_ptr
 
-**Item 20 \| 135**
 
 But you’re probably still wondering about how std::weak_ptrs can be useful. Consider a factory function that produces smart pointers to read-only objects based on a
 
@@ -748,7 +733,6 @@ return objPtr;
 
 }
 
-**136 \| Item 20**
 
 ![](media/index-155_1.jpg)
 
@@ -810,7 +794,7 @@ There are three choices:
 
 may inadvertently dereference the dangling pointer. That would yield undefined behavior.
 
-• **A std::shared_ptr.** In this design, A and B contain std::shared_ptrs to each other. The resulting std::shared_ptr cycle (A points to B and B points to A) will **Item 20 \| 137**
+• **A std::shared_ptr.** In this design, A and B contain std::shared_ptrs to each other. The resulting std::shared_ptr cycle (A points to B and B points to A) will
 
 prevent both A and B from being destroyed. Even if A and B are unreachable from other program data structures (e.g., because C no longer points to B), each will have a reference count of one. If that happens, A and B will have been leaked, for all practical purposes: it will be impossible for the program to access them, yet their resources will never be reclaimed.
 
@@ -824,7 +808,6 @@ From an efficiency perspective, the std::weak_ptr story is essentially the same 
 
 shared_ptrs (see Item 19), and operations such as construction, destruction, and assignment involve atomic reference count manipulations. That probably surprises you, because I wrote at the beginning of this Item that std::weak_ptrs don’t participate in reference counting. Except that’s not quite what I wrote. What I wrote was that std::weak_ptrs don’t participate in the *shared ownership* of objects and hence don’t affect the *pointed-to object’s reference count*. There’s actually a second reference count in the control block, and it’s this second reference count that std::weak_ptrs manipulate. For details, continue on to Item 21.
 
-**138 \| Item 20**
 
 **Things to Remember**
 
@@ -864,7 +847,6 @@ std::make_shared, except its first argument is an allocator object to be used fo
 
 3 To create a full-featured make_unique with the smallest effort possible, search for the standardization document that gave rise to it, then copy the implementation you’ll find there. The document you want is N3656 by Stephan T. Lavavej, dated 2013-04-18.
 
-**Item 21 \| 139**
 
 Even the most trivial comparison of smart pointer creation using and not using a make function reveals the first reason why using such functions is preferable. Consider:
 
@@ -888,7 +870,7 @@ processWidget(std::shared_ptr\<Widget\>(new Widget), // *potential* computePrior
 
 // *leak!*
 
-As the comment indicates, this code could leak the Widget conjured up by new. But how? Both the calling code and the called function are using std::shared_ptrs, and std::shared_ptrs are designed to prevent resource leaks. They automatically **140 \| Item 21**
+As the comment indicates, this code could leak the Widget conjured up by new. But how? Both the calling code and the called function are using std::shared_ptrs, and std::shared_ptrs are designed to prevent resource leaks. They automatically
 
 destroy what they point to when the last std::shared_ptr pointing there goes away.
 
@@ -916,7 +898,6 @@ Using std::make_shared avoids this problem. Calling code would look like this: p
 
 At runtime, either std::make_shared or computePriority will be called first. If it’s std::make_shared, the raw pointer to the dynamically allocated Widget is safely stored in the returned std::shared_ptr before computePriority is called. If compu tePriority then yields an exception, the std::shared_ptr destructor will see to it that the Widget it owns is destroyed. And if computePriority is called first and yields an exception, std::make_shared will not be invoked, and there will hence be no dynamically allocated Widget to worry about.
 
-**Item 21 \| 141**
 
 If we replace std::shared_ptr and std::make_shared with std::unique_ptr and std::make_unique, exactly the same reasoning applies. Using std::make_unique instead of new is thus just as important in writing exception-safe code as using std::make_shared.
 
@@ -944,7 +925,6 @@ auto widgetDeleter = \[\](Widget\* pw) { … };
 
 creating a smart pointer using it is straightforward using new:
 
-**142 \| Item 21**
 
 std::unique_ptr\<Widget, decltype(widgetDeleter)\> upw(**new Widget**, **widgetDeleter**);
 
@@ -974,7 +954,6 @@ Item 30 also describes a workaround: use auto type deduction to create a std::in
 
 auto spv = std::make_shared\<std::vector\<int\>\>(**initList**); For std::unique_ptr, these two scenarios (custom deleters and braced initializers) are the only ones where its make functions are problematic. For std::shared_ptr and its make functions, there are two more. Both are edge cases, but some developers live on the edge, and you may be one of them.
 
-**Item 21 \| 143**
 
 Some classes define their own versions of operator new and operator delete. The presence of these functions implies that the global memory allocation and deallocation routines for objects of these types are inappropriate. Often, class-specific routines are designed only to allocate and deallocate chunks of memory of precisely the size of objects of the class, e.g., operator new and operator delete for class Widget are often designed only to handle allocation and deallocation of chunks of memory of exactly size sizeof(Widget). Such routines are a poor fit for std::shared_ptr’s support for custom allocation (via std::allocate_shared) and deallocation (via custom deleters), because the amount of memory that std::allocate_shared requests isn’t the size of the dynamically allocated object, it’s the size of that object *plus* the size of a control block. Consequently, using make functions to create objects of types with class-specific versions of operator new and operator delete is typically a poor idea.
 
@@ -988,7 +967,6 @@ As long as std::weak_ptrs refer to a control block (i.e., the weak count is grea
 
 4 In practice, the value of the weak count isn’t always equal to the number of std::weak_ptrs referring to the control block, because library implementers have found ways to slip additional information into the weak count that facilitate better code generation. For purposes of this Item, we’ll ignore this and assume that the weak count’s value is the number of std::weak_ptrs referring to the control block.
 
-**144 \| Item 21**
 
 If the object type is quite large and the time between destruction of the last std::shared_ptr and the last std::weak_ptr is significant, a lag can occur between when an object is destroyed and when the memory it occupied is freed:
 
@@ -1044,7 +1022,7 @@ std::shared_ptr\<ReallyBigType\> pBigObj(**new** ReallyBigType);
 
 // memory for control block is released
 
-Should you find yourself in a situation where use of std::make_shared is impossible or inappropriate, you’ll want to guard yourself against the kind of exception-safety **Item 21 \| 145**
+Should you find yourself in a situation where use of std::make_shared is impossible or inappropriate, you’ll want to guard yourself against the kind of exception-safety
 
 problems we saw earlier. The best way to do that is to make sure that when you use new directly, you immediately pass the result to a smart pointer constructor in *a* *statement that does nothing else*. This prevents compilers from generating code that could emit an exception between the use of new and invocation of the constructor for the smart pointer that will manage the newed object.
 
@@ -1082,7 +1060,6 @@ This works, because a std::shared_ptr assumes ownership of the raw pointer passe
 
 The minor performance hitch is that in the exception-unsafe call, we’re passing an rvalue to processWidget,
 
-**146 \| Item 21**
 
 processWidget(
 
@@ -1112,7 +1089,7 @@ outlive the corresponding std::shared_ptrs.
 
 **member functions in the implementation file.**
 
-If you’ve ever had to combat excessive build times, you’re familiar with the *Pimpl* (“pointer to implementation”) *Idiom*. That’s the technique whereby you replace the data members of a class with a pointer to an implementation class (or struct), put the **Item 21 \| 147**
+If you’ve ever had to combat excessive build times, you’re familiar with the *Pimpl* (“pointer to implementation”) *Idiom*. That’s the technique whereby you replace the data members of a class with a pointer to an implementation class (or struct), put the
 
 data members that used to be in the primary class into the implementation class, and access those data members indirectly through the pointer. For example, suppose Widget looks like this:
 
@@ -1162,7 +1139,6 @@ A type that has been declared, but not defined, is known as an *incomplete type*
 
 Widget::Impl is such a type. There are very few things you can do with an incomplete type, but declaring a pointer to it is one of them. The Pimpl Idiom takes advantage of that.
 
-**148 \| Item 22**
 
 Part 1 of the Pimpl Idiom is the declaration of a data member that’s a pointer to an incomplete type. Part 2 is the dynamic allocation and deallocation of the object that holds the data members that used to be in the original class. The allocation and deallocation code goes in the implementation file, e.g., for Widget, in widget.cpp:
 
@@ -1208,7 +1184,6 @@ Widget();
 
 private:
 
-**Item 22 \| 149**
 
 struct Impl;
 
@@ -1256,7 +1231,7 @@ The error message you receive depends on the compiler you’re using, but the te
 
 This apparent failure of the Pimpl Idiom using std::unique_ptrs is alarming, because (1) std::unique_ptr is advertised as supporting incomplete types, and (2) the Pimpl Idiom is one of std::unique_ptrs most common use cases. Fortunately, getting the code to work is easy. All that’s required is a basic understanding of the cause of the problem.
 
-The issue arises due to the code that’s generated when w is destroyed (e.g., goes out of scope). At that point, its destructor is called. In the class definition using std::unique_ptr, we didn’t declare a destructor, because we didn’t have any code to put into it. In accord with the usual rules for compiler-generated special member **150 \| Item 22**
+The issue arises due to the code that’s generated when w is destroyed (e.g., goes out of scope). At that point, its destructor is called. In the class definition using std::unique_ptr, we didn’t declare a destructor, because we didn’t have any code to put into it. In accord with the usual rules for compiler-generated special member
 
 functions (see Item 17), the compiler generates a destructor for us. Within that destructor, the compiler inserts code to call the destructor for Widget’s data member pImpl. pImpl is a std::unique_ptr\<Widget::Impl\>, i.e., a std::unique_ptr using the default deleter. The default deleter is a function that uses delete on the raw pointer inside the std::unique_ptr. Prior to using delete, however, implementations typically have the default deleter employ C++11’s static_assert to ensure that the raw pointer doesn’t point to an incomplete type. When the compiler generates code for the destruction of the Widget w, then, it generally encounters a static_assert that fails, and that’s usually what leads to the error message. This message is associated with the point where w is destroyed, because Widget’s destructor, like all compiler-generated special member functions, is implicitly inline. The message itself often refers to the line where w is created, because it’s the source code explicitly creating the object that leads to its later implicit destruction.
 
@@ -1294,7 +1269,6 @@ Define it in widget.cpp after Widget::Impl has been defined:
 
 struct Widget::Impl { // as before, definition of
 
-**Item 22 \| 151**
 
 std::string name; // Widget::Impl
 
@@ -1342,9 +1316,7 @@ std::unique_ptr\<Impl\> pImpl;
 
 };
 
-This approach leads to the same kind of problem as declaring the class without a destructor, and for the same fundamental reason. The compiler-generated move assignment operator needs to destroy the object pointed to by pImpl before reassigning it, but in the Widget header file, pImpl points to an incomplete type. The situa-152 \| Item 22
-
-tion is different for the move constructor. The problem there is that compilers typically generate code to destroy pImpl in the event that an exception arises inside the move constructor, and destroying pImpl requires that Impl be complete.
+This approach leads to the same kind of problem as declaring the class without a destructor, and for the same fundamental reason. The compiler-generated move assignment operator needs to destroy the object pointed to by pImpl before reassigning it, but in the Widget header file, pImpl points to an incomplete type. The situation is different for the move constructor. The problem there is that compilers typically generate code to destroy pImpl in the event that an exception arises inside the move constructor, and destroying pImpl requires that Impl be complete.
 
 Because the problem is the same as before, so is the fix—move the definition of the move operations into the implementation file:
 
@@ -1386,7 +1358,7 @@ Widget::~Widget() = default; // as before
 
 **Widget::Widget(Widget&& rhs) = default;** // *defini-Widget& Widget::operator=(Widget&& rhs) = default; // *tions* The Pimpl Idiom is a way to reduce compilation dependencies between a class’s implementation and the class’s clients, but, conceptually, use of the idiom doesn’t change what the class represents. The original Widget class contained std::string, std::vector, and Gadget data members, and, assuming that Gadgets, like*
 
-std::strings and std::vectors, can be copied, it would make sense for Widget to support the copy operations. We have to write these functions ourselves, because (1) compilers won’t generate copy operations for classes with move-only types like std::unique_ptr and (2) even if they did, the generated functions would copy only **Item 22 \| 153**
+std::strings and std::vectors, can be copied, it would make sense for Widget to support the copy operations. We have to write these functions ourselves, because (1) compilers won’t generate copy operations for classes with move-only types like std::unique_ptr and (2) even if they did, the generated functions would copy only
 
 the std::unique_ptr (i.e., perform a *shallow copy*), and we want to copy what the pointer points to (i.e., perform a *deep copy*).
 
@@ -1436,7 +1408,6 @@ Both function implementations are conventional. In each case, we simply copy the
 
 that we still follow the advice of Item 21 to prefer use of std::make_unique over direct use of new.
 
-**154 \| Item 22**
 
 For purposes of implementing the Pimpl Idiom, std::unique_ptr is the smart pointer to use, because the pImpl pointer inside an object (e.g., inside a Widget) has exclusive ownership of the corresponding implementation object (e.g., the Widget::Impl object). Still, it’s interesting to note that if we were to use std::shared_ptr instead of std::unique_ptr for pImpl, we’d find that the advice of this Item no longer applied. There’d be no need to declare a destructor in Widget, and without a user-declared destructor, compilers would happily generate the move operations, which would do exactly what we’d want them to. That is, given this code in widget.h,
 
@@ -1470,7 +1441,6 @@ everything would compile and run as we’d hope: w1 would be default constructed
 
 The difference in behavior between std::unique_ptr and std::shared_ptr for pImpl pointers stems from the differing ways these smart pointers support custom deleters. For std::unique_ptr, the type of the deleter is part of the type of the smart pointer, and this makes it possible for compilers to generate smaller runtime data structures and faster runtime code. A consequence of this greater efficiency is that pointed-to types must be complete when compiler-generated special functions (e.g., destructors or move operations) are used. For std::shared_ptr, the type of the deleter is not part of the type of the smart pointer. This necessitates larger runtime data structures and somewhat slower code, but pointed-to types need not be complete when compiler-generated special functions are employed.
 
-**Item 22 \| 155**
 
 For the Pimpl Idiom, there’s not really a trade-off between the characteristics of std::unique_ptr and std::shared_ptr, because the relationship between classes like Widget and classes like Widget::Impl is exclusive ownership, and that makes std::unique_ptr the proper tool for the job. Nevertheless, it’s worth knowing that in other situations—situations where shared ownership exists (and
 
@@ -1483,5 +1453,3 @@ std::shared_ptr is hence a fitting design choice), there’s no need to jump thr
 • For std::unique_ptr pImpl pointers, declare special member functions in the class header, but implement them in the implementation file. Do this even if the default function implementations are acceptable.
 
 • The above advice applies to std::unique_ptr, but not to std::shared_ptr.
-
-**156 \| Item 22**

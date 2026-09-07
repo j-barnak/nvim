@@ -1,3 +1,5 @@
+![](media/index-842_1.jpg)
+
 13 PIPES AND FIFOS
 
 This chapter concentrates exclusively on pipes and FIFOs. A *pipe* is an interprocess communication facility that acts the way its name suggests
@@ -1751,5 +1753,3 @@ command line argument, creates a structure containing its
 process ID and that message, and writes that structure into
 
 the FIFO whose name is in the *fifodef.h* file. If the message on the command line is too long, decide how to handle it.
-
-![](media/index-884_1.jpg)

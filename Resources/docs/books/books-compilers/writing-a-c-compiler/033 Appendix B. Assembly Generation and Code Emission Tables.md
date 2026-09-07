@@ -311,9 +311,8 @@ Label(label)
 
 `Table B-10:` `Formatting Assembly Operands`
 
-|                    |          |                       |
-|--------------------|----------|-----------------------|
 | `Assembly operand` |          | `Output`              |
+|--------------------|----------|-----------------------|
 | `Reg(AX)`          | `8-byte` | `%rax`                |
 |                    | `4-byte` | `%eax`                |
 |                    | `1-byte` | `%al`                 |
@@ -926,24 +925,23 @@ StaticConstant(<upper-bound>, 8,
 
 `Table B-14:` `Converting TACKY Comparisons to Assembly`
 
-| `TACKY comparison`           | `Assembly condition code`    |      |
-|------------------------------|------------------------------|------|
-| `Equal`                      | `E`                          |      |
-| `NotEqual`                   | `NE`                         |      |
-| `LessThan`                   | `Signed`                     | `L`  |
-| Unsigned, pointer, or double | `B`                          |      |
-| `LessOrEqual`                | `Signed`                     | `LE` |
-|                              | Unsigned, pointer, or double | `BE` |
-| `GreaterThan`                | `Signed`                     | `G`  |
-|                              | Unsigned, pointer, or double | `A`  |
-| `GreaterOrEqual`             | `Signed`                     | `GE` |
-|                              | Unsigned, pointer, or double | `AE` |
+| `TACKY comparison` |                              | `Assembly condition code` |
+|--------------------|------------------------------|---------------------------|
+| `Equal`            |                              | `E`                       |
+| `NotEqual`         |                              | `NE`                      |
+| `LessThan`         | `Signed`                     | `L`                       |
+| `LessThan`         | Unsigned, pointer, or double | `B`                       |
+| `LessOrEqual`      | `Signed`                     | `LE`                      |
+|                    | Unsigned, pointer, or double | `BE`                      |
+| `GreaterThan`      | `Signed`                     | `G`                       |
+|                    | Unsigned, pointer, or double | `A`                       |
+| `GreaterOrEqual`   | `Signed`                     | `GE`                      |
+|                    | Unsigned, pointer, or double | `AE`                      |
 
 `Table B-15:` `Converting TACKY Operands to Assembly`
 
-|                                 |                   |                                                                                                       |
-|---------------------------------|-------------------|-------------------------------------------------------------------------------------------------------|
 | `TACKY operand`                 |                   | `Assembly operand`                                                                                    |
+|---------------------------------|-------------------|-------------------------------------------------------------------------------------------------------|
 | `Constant(ConstChar(int))`      |                   | `Imm(int)`                                                                                            |
 | `Constant(ConstInt(int))`       |                   | `Imm(int)`                                                                                            |
 | `Constant(ConstLong(int))`      |                   | `Imm(int)`                                                                                            |
@@ -956,9 +954,8 @@ StaticConstant(<upper-bound>, 8,
 
 `Table B-16:` `Converting Types to Assembly`
 
-|                         |                                         |                                                                       |                             |
-|-------------------------|-----------------------------------------|-----------------------------------------------------------------------|-----------------------------|
 | `Source type`           |                                         | `Assembly type`                                                       | `Alignment`                 |
+|-------------------------|-----------------------------------------|-----------------------------------------------------------------------|-----------------------------|
 | `Char`                  |                                         | `Byte`                                                                | `1`                         |
 | `SChar`                 |                                         | `Byte`                                                                | `1`                         |
 | `UChar`                 |                                         | `Byte`                                                                | `1`                         |
@@ -1616,53 +1613,53 @@ Label(label)
 
 `Table B-28:` `Formatting Assembly Operands`
 
-| `Assembly operand` | `Output`              |         |
-|--------------------|-----------------------|---------|
-| `Reg(AX)`          | `8-byte`              | `%rax`  |
-|                    | `4-byte`              | `%eax`  |
-|                    | `1-byte`              | `%al`   |
-| `Reg(DX)`          | `8-byte`              | `%rdx`  |
-|                    | `4-byte`              | `%edx`  |
-|                    | `1-byte`              | `%dl`   |
-| `Reg(CX)`          | `8-byte`              | `%rcx`  |
-|                    | `4-byte`              | `%ecx`  |
-|                    | `1-byte`              | `%cl`   |
-| `Reg(BX)`          | `8-byte`              | `%rbx`  |
-|                    | `4-byte`              | `%ebx`  |
-|                    | `1-byte`              | `%bl`   |
-| `Reg(DI)`          | `8-byte`              | `%rdi`  |
-|                    | `4-byte`              | `%edi`  |
-|                    | `1-byte`              | `%dil`  |
-| `Reg(SI)`          | `8-byte`              | `%rsi`  |
-|                    | `4-byte`              | `%esi`  |
-|                    | `1-byte`              | `%sil`  |
-| `Reg(R8)`          | `8-byte`              | `%r8`   |
-|                    | `4-byte`              | `%r8d`  |
-|                    | `1-byte`              | `%r8b`  |
-| `Reg(R9)`          | `8-byte`              | `%r9`   |
-|                    | `4-byte`              | `%r9d`  |
-|                    | `1-byte`              | `%r9b`  |
-| `Reg(R10)`         | `8-byte`              | `%r10`  |
-|                    | `4-byte`              | `%r10d` |
-|                    | `1-byte`              | `%r10b` |
-| `Reg(R11)`         | `8-byte`              | `%r11`  |
-|                    | `4-byte`              | `%r11d` |
-|                    | `1-byte`              | `%r11b` |
-| `Reg(R12)`         | `8-byte`              | `%r12`  |
-|                    | `4-byte`              | `%r12d` |
-|                    | `1-byte`              | `%r12b` |
-| `Reg(R13)`         | `8-byte`              | `%r13`  |
-|                    | `4-byte`              | `%r13d` |
-|                    | `1-byte`              | `%r13b` |
-| `Reg(R14)`         | `8-byte`              | `%r14`  |
-|                    | `4-byte`              | `%r14d` |
-|                    | `1-byte`              | `%r14b` |
-| `Reg(R15)`         | `8-byte`              | `%r15`  |
-|                    | `4-byte`              | `%r15d` |
-|                    | `1-byte`              | `%r15b` |
-| `Stack(int)`       | \<int\> (%rbp)        |         |
-| `Imm(int)`         | \$ \<int\>            |         |
-| `Data(identifier)` | \<identifier\> (%rip) |         |
+| `Assembly operand` |          | `Output`              |
+|--------------------|----------|-----------------------|
+| `Reg(AX)`          | `8-byte` | `%rax`                |
+|                    | `4-byte` | `%eax`                |
+|                    | `1-byte` | `%al`                 |
+| `Reg(DX)`          | `8-byte` | `%rdx`                |
+|                    | `4-byte` | `%edx`                |
+|                    | `1-byte` | `%dl`                 |
+| `Reg(CX)`          | `8-byte` | `%rcx`                |
+|                    | `4-byte` | `%ecx`                |
+|                    | `1-byte` | `%cl`                 |
+| `Reg(BX)`          | `8-byte` | `%rbx`                |
+|                    | `4-byte` | `%ebx`                |
+|                    | `1-byte` | `%bl`                 |
+| `Reg(DI)`          | `8-byte` | `%rdi`                |
+|                    | `4-byte` | `%edi`                |
+|                    | `1-byte` | `%dil`                |
+| `Reg(SI)`          | `8-byte` | `%rsi`                |
+|                    | `4-byte` | `%esi`                |
+|                    | `1-byte` | `%sil`                |
+| `Reg(R8)`          | `8-byte` | `%r8`                 |
+|                    | `4-byte` | `%r8d`                |
+|                    | `1-byte` | `%r8b`                |
+| `Reg(R9)`          | `8-byte` | `%r9`                 |
+|                    | `4-byte` | `%r9d`                |
+|                    | `1-byte` | `%r9b`                |
+| `Reg(R10)`         | `8-byte` | `%r10`                |
+|                    | `4-byte` | `%r10d`               |
+|                    | `1-byte` | `%r10b`               |
+| `Reg(R11)`         | `8-byte` | `%r11`                |
+|                    | `4-byte` | `%r11d`               |
+|                    | `1-byte` | `%r11b`               |
+| `Reg(R12)`         | `8-byte` | `%r12`                |
+|                    | `4-byte` | `%r12d`               |
+|                    | `1-byte` | `%r12b`               |
+| `Reg(R13)`         | `8-byte` | `%r13`                |
+|                    | `4-byte` | `%r13d`               |
+|                    | `1-byte` | `%r13b`               |
+| `Reg(R14)`         | `8-byte` | `%r14`                |
+|                    | `4-byte` | `%r14d`               |
+|                    | `1-byte` | `%r14b`               |
+| `Reg(R15)`         | `8-byte` | `%r15`                |
+|                    | `4-byte` | `%r15d`               |
+|                    | `1-byte` | `%r15b`               |
+| `Stack(int)`       |          | \<int\> (%rbp)        |
+| `Imm(int)`         |          | \$ \<int\>            |
+| `Data(identifier)` |          | \<identifier\> (%rip) |
 
 Tables B-29 through B-35 show the complete code emission pass after completing Parts I, II, and III.
 
@@ -2014,70 +2011,70 @@ Label(label)
 
 `Table B-35:` `Formatting Assembly Operands`
 
-| `Assembly operand`         | `Output`                          |            |
-|----------------------------|-----------------------------------|------------|
-| `Reg(AX)`                  | `8-byte`                          | `%rax`     |
-|                            | `4-byte`                          | `%eax`     |
-|                            | `1-byte`                          | `%al`      |
-| `Reg(DX)`                  | `8-byte`                          | `%rdx`     |
-|                            | `4-byte`                          | `%edx`     |
-|                            | `1-byte`                          | `%dl`      |
-| `Reg(CX)`                  | `8-byte`                          | `%rcx`     |
-|                            | `4-byte`                          | `%ecx`     |
-|                            | `1-byte`                          | `%cl`      |
-| `Reg(BX)`                  | `8-byte`                          | `%rbx`     |
-|                            | `4-byte`                          | `%ebx`     |
-|                            | `1-byte`                          | `%bl`      |
-| `Reg(DI)`                  | `8-byte`                          | `%rdi`     |
-|                            | `4-byte`                          | `%edi`     |
-|                            | `1-byte`                          | `%dil`     |
-| `Reg(SI)`                  | `8-byte`                          | `%rsi`     |
-|                            | `4-byte`                          | `%esi`     |
-|                            | `1-byte`                          | `%sil`     |
-| `Reg(R8)`                  | `8-byte`                          | `%r8`      |
-|                            | `4-byte`                          | `%r8d`     |
-|                            | `1-byte`                          | `%r8b`     |
-| `Reg(R9)`                  | `8-byte`                          | `%r9`      |
-|                            | `4-byte`                          | `%r9d`     |
-|                            | `1-byte`                          | `%r9b`     |
-| `Reg(R10)`                 | `8-byte`                          | `%r10`     |
-|                            | `4-byte`                          | `%r10d`    |
-|                            | `1-byte`                          | `%r10b`    |
-| `Reg(R11)`                 | `8-byte`                          | `%r11`     |
-|                            | `4-byte`                          | `%r11d`    |
-|                            | `1-byte`                          | `%r11b`    |
-| `Reg(R12)`                 | `8-byte`                          | `%r12`     |
-|                            | `4-byte`                          | `%r12d`    |
-|                            | `1-byte`                          | `%r12b`    |
-| `Reg(R13)`                 | `8-byte`                          | `%r13`     |
-|                            | `4-byte`                          | `%r13d`    |
-|                            | `1-byte`                          | `%r13b`    |
-| `Reg(R14)`                 | `8-byte`                          | `%r14`     |
-|                            | `4-byte`                          | `%r14d`    |
-|                            | `1-byte`                          | `%r14b`    |
-| `Reg(R15)`                 | `8-byte`                          | `%r15`     |
-|                            | `4-byte`                          | `%r15d`    |
-|                            | `1-byte`                          | `%r15b`    |
-| `Reg(SP)`                  |                                   | `%rsp`     |
-| `Reg(BP)`                  |                                   | `%rbp`     |
-| `Reg(XMM0)`                |                                   | `%xmm0`    |
-| `Reg(XMM1)`                |                                   | `%xmm1`    |
-| `Reg(XMM2)`                |                                   | `%xmm2`    |
-| `Reg(XMM3)`                |                                   | `%xmm3`    |
-| `Reg(XMM4)`                |                                   | `%xmm4`    |
-| `Reg(XMM5)`                |                                   | `%xmm5`    |
-| `Reg(XMM6)`                |                                   | `%xmm6`    |
-| `Reg(XMM7)`                |                                   | `%xmm7`    |
-| `Reg(XMM8)`                |                                   | `%xmm8`    |
-| `Reg(XMM9)`                |                                   | `%xmm9`    |
-| `Reg(XMM10)`               |                                   | `%xmm10`   |
-| `Reg(XMM11)`               |                                   | `%xmm11`   |
-| `Reg(XMM12)`               |                                   | `%xmm12`   |
-| `Reg(XMM13)`               |                                   | `%xmm13`   |
-| `Reg(XMM14)`               |                                   | `%xmm14`   |
-| `Reg(XMM15)`               |                                   | `%xmm15`   |
-| `Memory(reg, int)`         | \<int\> ( \<reg\> )               |            |
-| `Indexed(reg1, reg2, int)` | ( \<reg1\> , \<reg2\> , \<int\> ) |            |
-| `Imm(int)`                 |                                   | \$ \<int\> |
-| `Data(identifier, 0)`      | \<identifier\> (%rip)             |            |
-| `Data(identifier, int)`    | \<identifier\> + \<int\> (%rip)   |            |
+| `Assembly operand`         |          | `Output`                          |
+|----------------------------|----------|-----------------------------------|
+| `Reg(AX)`                  | `8-byte` | `%rax`                            |
+|                            | `4-byte` | `%eax`                            |
+|                            | `1-byte` | `%al`                             |
+| `Reg(DX)`                  | `8-byte` | `%rdx`                            |
+|                            | `4-byte` | `%edx`                            |
+|                            | `1-byte` | `%dl`                             |
+| `Reg(CX)`                  | `8-byte` | `%rcx`                            |
+|                            | `4-byte` | `%ecx`                            |
+|                            | `1-byte` | `%cl`                             |
+| `Reg(BX)`                  | `8-byte` | `%rbx`                            |
+|                            | `4-byte` | `%ebx`                            |
+|                            | `1-byte` | `%bl`                             |
+| `Reg(DI)`                  | `8-byte` | `%rdi`                            |
+|                            | `4-byte` | `%edi`                            |
+|                            | `1-byte` | `%dil`                            |
+| `Reg(SI)`                  | `8-byte` | `%rsi`                            |
+|                            | `4-byte` | `%esi`                            |
+|                            | `1-byte` | `%sil`                            |
+| `Reg(R8)`                  | `8-byte` | `%r8`                             |
+|                            | `4-byte` | `%r8d`                            |
+|                            | `1-byte` | `%r8b`                            |
+| `Reg(R9)`                  | `8-byte` | `%r9`                             |
+|                            | `4-byte` | `%r9d`                            |
+|                            | `1-byte` | `%r9b`                            |
+| `Reg(R10)`                 | `8-byte` | `%r10`                            |
+|                            | `4-byte` | `%r10d`                           |
+|                            | `1-byte` | `%r10b`                           |
+| `Reg(R11)`                 | `8-byte` | `%r11`                            |
+|                            | `4-byte` | `%r11d`                           |
+|                            | `1-byte` | `%r11b`                           |
+| `Reg(R12)`                 | `8-byte` | `%r12`                            |
+|                            | `4-byte` | `%r12d`                           |
+|                            | `1-byte` | `%r12b`                           |
+| `Reg(R13)`                 | `8-byte` | `%r13`                            |
+|                            | `4-byte` | `%r13d`                           |
+|                            | `1-byte` | `%r13b`                           |
+| `Reg(R14)`                 | `8-byte` | `%r14`                            |
+|                            | `4-byte` | `%r14d`                           |
+|                            | `1-byte` | `%r14b`                           |
+| `Reg(R15)`                 | `8-byte` | `%r15`                            |
+|                            | `4-byte` | `%r15d`                           |
+|                            | `1-byte` | `%r15b`                           |
+| `Reg(SP)`                  |          | `%rsp`                            |
+| `Reg(BP)`                  |          | `%rbp`                            |
+| `Reg(XMM0)`                |          | `%xmm0`                           |
+| `Reg(XMM1)`                |          | `%xmm1`                           |
+| `Reg(XMM2)`                |          | `%xmm2`                           |
+| `Reg(XMM3)`                |          | `%xmm3`                           |
+| `Reg(XMM4)`                |          | `%xmm4`                           |
+| `Reg(XMM5)`                |          | `%xmm5`                           |
+| `Reg(XMM6)`                |          | `%xmm6`                           |
+| `Reg(XMM7)`                |          | `%xmm7`                           |
+| `Reg(XMM8)`                |          | `%xmm8`                           |
+| `Reg(XMM9)`                |          | `%xmm9`                           |
+| `Reg(XMM10)`               |          | `%xmm10`                          |
+| `Reg(XMM11)`               |          | `%xmm11`                          |
+| `Reg(XMM12)`               |          | `%xmm12`                          |
+| `Reg(XMM13)`               |          | `%xmm13`                          |
+| `Reg(XMM14)`               |          | `%xmm14`                          |
+| `Reg(XMM15)`               |          | `%xmm15`                          |
+| `Memory(reg, int)`         |          | \<int\> ( \<reg\> )               |
+| `Indexed(reg1, reg2, int)` |          | ( \<reg1\> , \<reg2\> , \<int\> ) |
+| `Imm(int)`                 |          | \$ \<int\>                        |
+| `Data(identifier, 0)`      |          | \<identifier\> (%rip)             |
+| `Data(identifier, int)`    |          | \<identifier\> + \<int\> (%rip)   |

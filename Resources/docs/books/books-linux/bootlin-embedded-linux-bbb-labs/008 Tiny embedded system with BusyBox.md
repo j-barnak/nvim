@@ -1,12 +1,12 @@
 **Tiny embedded system with BusyBox**
 
- 
 
- 
+
+
 
 *Objective: making a tiny yet full featured embedded system*
 
- 
+
 
 After this lab, you will:
 
@@ -34,7 +34,7 @@ It isn’t practical at all to reflash the root filesystem on the target every t
 
 Unless you test a boot sequence, you no longer need to reboot the target to test the impact of script or application updates.
 
- 
+
 
 **Setup**
 
@@ -48,7 +48,7 @@ In the kernel configuration built in the previous lab, verify that you have all 
 
 system using a root filesystem mounted over NFS. Also check that [CONFIG_DEVTMPFS_MOUNT](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_DEVTMPFS_MOUNT) is enabled (we will explain it later in this lab). If necessary, rebuild your kernel.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 19 **Setting up the NFS server**
+**Setting up the NFS server**
 
 Create a nfsroot directory in the current lab directory. This nfsroot directory will be used to store the contents of our new root filesystem.
 
@@ -102,7 +102,7 @@ Kernel panic - not syncing: No working init found. Try passing init= option to k
 
 Obviously, our root filesystem being mostly empty, there isn’t such an application yet. In the next paragraph, you will add BusyBox to your root filesystem and finally make it usable.
 
-20 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license **Root filesystem with BusyBox**
+**Root filesystem with BusyBox**
 
 Download the sources of the latest BusyBox 1.37.x release:
 
@@ -158,7 +158,7 @@ Any issue after doing this?
 
 down.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 21 **Starting the shell in a proper terminal**
+**Starting the shell in a proper terminal**
 
 Before the shell prompt, you probably noticed the below warning message:
 
@@ -214,7 +214,7 @@ Now, run the BusyBox http server from the target command line:
 
 8 Invoke your cross-compiler in the same way you did during the toolchain lab
 
-22 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license It will automatically background itself.
+It will automatically background itself.
 
 If you use a proxy, configure your host browser so that it doesn’t go through the proxy to connect to the target IP address, or simply disable proxy usage. Now, test that your web interface works well by opening http://192.168.0.100/index.html on the host.
 
@@ -226,7 +226,7 @@ Finish by adding the command that starts the web server to your startup script, 
 
 If you have time before the others complete their labs...
 
- 
+
 
 **Initramfs booting**
 
@@ -240,6 +240,4 @@ Note: you won’t need to modify your root= setting in the kernel command line. 
 
 When this works, go back to booting the system through NFS. This will be much more convenient in the next labs.
 
- 
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 23

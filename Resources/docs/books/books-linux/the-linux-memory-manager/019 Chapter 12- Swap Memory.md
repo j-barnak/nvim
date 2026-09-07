@@ -1,6 +1,12 @@
+
+
+**12**
+
+
+
 **S W A P M E M O R Y**
 
- 
+
 
 Overcommit and demand paging mean that Linux
 
@@ -41,7 +47,7 @@ This means that the kernel must provide some special means of marking
 memory as being swapped out for some processes which maps it (via “swap
 
 
- 
+
 
 entries”) and designating such memory as being not long for this world (oc-cupying the “swap cache”). We explore both in detail.
 
@@ -53,23 +59,23 @@ This is important, as under heavy memory pressure reclaiming either
 
 page cache folios or anonymous memory alone is likely to cause “thrashing”, and having the ability to reclaim anonymous memory helps address this.
 
- 
+
 
 **N O T E** Thrashing describes the pathological condition in which heavy memory pressure re-
 
 sults in the system being in a perpetual state of faulting data in from disk (whether swapped in or read into the page cache from disk) and writing it back out again (ei-ther through swapping it out or writing back dirty file data to disk). This results in the system becoming slow and unstable, and ultimately unusable if the situation is not resolved.
 
- 
+
 
 As a result swap is inescapably linked to both reclaim (see Chapter 11)
 
 and page faulting (see Chapter 6). We will examine how, under memory pressure, reclaim triggers swap-out, and how, when swapped out memory is accessed, a page fault triggers swap-in.
 
- 
+
 
 **12.1 The Swap Cache**
 
- 
+
 
 The page cache acts as a bridge between data that exists on disk and the pro-cesses that interact with it, abstracting reading from files (see Chapter **??**)
 
@@ -97,23 +103,23 @@ of [MAX_SWAPFILES](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linu
 
 [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) objects, as shown in Listing **??**.
 
- 
+
 
 40 **struct** address_space \***swapper_spaces**\[**MAX_SWAPFILES**\] **\_\_read_mostly**;
 
- 
 
 
 
- 
+
+
 
 41 **static unsigned int nr_swapper_spaces**\[**MAX_SWAPFILES**\] **\_\_read_mostly**;
 
- 
+
 
 *Listing 12-1:* mm/swap_state.c: [*swapper_spaces*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n40) *and [nr_swapper_spaces](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n41)*
 
- 
+
 
 In effect, [swapper_spaces](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n40) is a 2 dimensional array, with the first dimension
 
@@ -153,7 +159,7 @@ an unsigned long value, as shown in Listing 12-2. This value is architecture-
 
 independent.
 
- 
+
 
 814 */\**
 
@@ -165,15 +171,15 @@ independent.
 
 819 **unsigned long** val; 820 } **swp_entry_t**;
 
- 
+
 
 *Listing 12-2:* include/linux/mm_types.h: [*swp_entry_t*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n820)
 
- 
+
 
 Swap entries are encoded via [swp_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n41) as shown in Listing 12-3.
 
- 
+
 
 38 */\**
 
@@ -195,21 +201,21 @@ Swap entries are encoded via [swp_entry()](https://git.kernel.org/pub/scm/linux/
 
 47 }
 
- 
+
 
 *Listing 12-3:* include/linux/swapops.h: [*swp_entry()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n41)
 
- 
+
 
 The “type” referred to here, though oddly named, refers to the swap file
 
 index. The type values are shifted up to the high bits by [SWP_TYPE_SHIFT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n23), and
 
- 
 
 
 
- 
+
+
 
 the offset has the [SWP_OFFSET_MASK](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n24) applied, limiting its value to that of the un-
 
@@ -219,11 +225,11 @@ We can access swapper [struct address_space](https://git.kernel.org/pub/scm/linu
 
 [swap_address_space()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.h?h=v6.0#n30) macro, as shown in Listing 12-4.
 
- 
+
 
 30 **\#define swap_address_space**(entry) \\ 31 (&**swapper_spaces**\[**swp_type**(entry)\]\[**swp_offset**(entry) \\ 32 \>\> **SWAP_ADDRESS_SPACE_SHIFT**\])
 
- 
+
 
 *Listing 12-4:* mm/swap.h: [*swap_address_space()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.h?h=v6.0#n30)
 
@@ -237,7 +243,7 @@ We determine the index of the swap file (or its “type”) via [swp_type()](htt
 
 which we examine in Listing 12-5.
 
- 
+
 
 49 */\**
 
@@ -247,7 +253,7 @@ which we examine in Listing 12-5.
 
 55 **return** (entry.val \>\> **SWP_TYPE_SHIFT**); 56 }
 
- 
+
 
 *Listing 12-5:* include/linux/swapops.h: [*swp_type()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n53)
 
@@ -255,7 +261,7 @@ This simply shifts the [swp_entry_t](https://git.kernel.org/pub/scm/linux/kernel
 
 page offset from the entry via [swp_offset()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n62) which we examine in Listing 12-6.
 
- 
+
 
 58 */\**
 
@@ -265,7 +271,7 @@ page offset from the entry via [swp_offset()](https://git.kernel.org/pub/scm/lin
 
 64 **return** entry.val & **SWP_OFFSET_MASK**; 65 }
 
- 
+
 
 *Listing 12-6:* include/linux/swapops.h: [*swp_offset()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n62)
 
@@ -273,7 +279,7 @@ Both of these functions simply invert what was performed in [swp_entry()](https:
 
 (see Listing 12-3) to obtain the component type and offset fields contained within the entry.
 
- 
+
 
 ***12.1.1 Swapper Initialisation***
 
@@ -281,15 +287,15 @@ A swap file is made available to the kernel via the [swapon()](https://git.kerne
 
 in turn invokes [init_swap_address_space()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n661), which we examine in Listing 12-7.
 
- 
+
 
 661 **int init_swap_address_space**(**unsigned int** type, **unsigned long** nr_pages)
 
- 
 
 
 
- 
+
+
 
 662 {
 
@@ -309,11 +315,11 @@ in turn invokes [init_swap_address_space()](https://git.kernel.org/pub/scm/linux
 
 682 }
 
- 
+
 
 *Listing 12-7:* mm/swap_state.c: [*init_swap_address_space()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n661)
 
- 
+
 
 This function is passed the index of the swapper file (it’s “type”), and the
 
@@ -341,7 +347,7 @@ writepage callback to [swap_writepage()](https://git.kernel.org/pub/scm/linux/ke
 
 27.
 
- 
+
 
 **N O T E** The [*struct address_space*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) associated with each entry in the [*swapper_spaces*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n40) arrays
 
@@ -349,7 +355,7 @@ are independent of those describing the underlying swap file or partition, they 
 
 entirely an abstraction.
 
- 
+
 
 We then set the [nr_swapper_spaces](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n41) field to the page count, and then assign
 
@@ -357,11 +363,11 @@ our newly allocated [struct address_space](https://git.kernel.org/pub/scm/linux/
 
 [swapper_spaces](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n40).
 
- 
 
 
 
- 
+
+
 
 ***12.1.2 Assigning Folios to the Swap Cache***
 
@@ -371,7 +377,7 @@ Once we have placed a folio into the swap cache, we need to be able to look up t
 
 [swp_entry_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n820) value which in turn allows us to look up the swap cache entry.
 
- 
+
 
 **N O T E** All of the subpages of a folio will be placed in the same [*struct address_space*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) as con-
 
@@ -379,7 +385,7 @@ secutive pages. Therefore the swap entries for the folio will be contiguous from
 
 from [*struct folio*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256)*-\>private* up to the number of pages the folio spans.
 
- 
+
 
 This is done in [add_to_swap_cache()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n88) which we examine in Listing 12-22
 
@@ -409,7 +415,7 @@ lookup. For convenience we show the relevant part of this function here in
 
 Listing 12-8.
 
- 
+
 
 799 **struct** address_space \***folio_mapping**(**struct** folio \*folio) 800 {
 
@@ -421,11 +427,11 @@ Listing 12-8.
 
 815 }
 
- 
+
 
 *Listing 12-8:* mm/util.c: [*folio_mapping()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n799) *Swap Cache Handling*
 
- 
+
 
 This invokes [swap_address_space()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.h?h=v6.0#n30) (as shown in Listing 12-4) to look up
 
@@ -433,7 +439,7 @@ the entry, which in turn obtains the [swp_entry_t](https://git.kernel.org/pub/sc
 
 which we examine in Listing 12-9.
 
- 
+
 
 348 **static inline swp_entry_t folio_swap_entry**(**struct** folio \*folio) 349 {
 
@@ -441,21 +447,21 @@ which we examine in Listing 12-9.
 
 352 }
 
- 
+
 
 *Listing 12-9:* include/linux/swap.h: [*folio_swap_entry()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n348)
 
- 
 
 
 
- 
+
+
 
 Which simply looks up the swap entry from [struct folio-\>private](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) via
 
 [page_private()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n333).
 
- 
+
 
 ***12.1.3 Page Table Mappings***
 
@@ -479,7 +485,7 @@ We identify swap PTEs using [is_swap_pte()](https://git.kernel.org/pub/scm/linux
 
 12-10.
 
- 
+
 
 67 */\* check whether a pte points to a swap entry \*/*
 
@@ -491,11 +497,11 @@ We identify swap PTEs using [is_swap_pte()](https://git.kernel.org/pub/scm/linux
 
 71 }
 
- 
+
 
 *Listing 12-10:* include/linux/swapops.h: [*is_swap_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n68)
 
- 
+
 
 The defining characteristic of a PTE swap entry is that the present bit has
 
@@ -513,7 +519,7 @@ independent [swp_entry_t](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 and ready to be inserted in the page table. We examine it in Listing 12-11.
 
- 
+
 
 86 */\**
 
@@ -537,11 +543,11 @@ and ready to be inserted in the page table. We examine it in Listing 12-11.
 
 96 }
 
- 
+
 
 *Listing 12-11:* include/linux/swapops.h: [*swp_entry_to_pte()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n90)
 
- 
+
 
 This extracts the type (i.e. swap file index) and offset of the swap entry
 
@@ -549,11 +555,11 @@ via [swp_type()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.
 
 tively.
 
- 
 
 
 
- 
+
+
 
 This is then passed to the architecture-specific [\_\_swp_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64.h?h=v6.0#n234) function
 
@@ -567,7 +573,7 @@ which converts the generated PTE value contained in a [swp_entry_t](https://git.
 
 PTE-specific type, [pte_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64_types.h?h=v6.0#n21). For x86-64, this is simply pass-through.
 
- 
+
 
 229 */\**
 
@@ -577,11 +583,11 @@ PTE-specific type, [pte_t](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 234 **\#define \_\_swp_entry**(type, offset) ((**swp_entry_t**) { \\ 235 (~(**unsigned long**)(offset) \<\< **SWP_OFFSET_SHIFT** \>\> **SWP_TYPE_BITS**) \\ 236 \| ((**unsigned long**)(type) \<\< (64-**SWP_TYPE_BITS**)) })
 
- 
+
 
 *Listing 12-12:* arch/x86/include/asm/pgtable_64.h: [*\_\_swp_entry()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64.h?h=v6.0#n234)
 
- 
+
 
 The x86-64-specific [\_\_swp_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64.h?h=v6.0#n234) function first shifts the bitwise-inverse
 
@@ -589,13 +595,13 @@ of the offset value by [SWP_OFFSET_SHIFT](https://git.kernel.org/pub/scm/linux/k
 
 value in Listing 12-13.
 
- 
+
 
 **N O T E** We invert the offset value in order to mitigate the *L1TF* side-channel vulnerability,
 
 discussion of which is outside the scope of the book. However the intent is that this inversion results in an invalid physical address being specified (even once shifted back into place) and thus prevents speculation, mitigating the issue.
 
- 
+
 
 218 */\* We always extract/encode the offset by shifting it all the way up, and then*
 
@@ -603,11 +609,11 @@ discussion of which is outside the scope of the book. However the intent is that
 
 219 **\#define SWP_OFFSET_SHIFT** (**SWP_OFFSET_FIRST_BIT**+**SWP_TYPE_BITS**)
 
- 
+
 
 *Listing 12-13:* arch/x86/include/asm/pgtable_64.h: [*SWP_OFFSET_SHIFT*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64.h?h=v6.0#n219)
 
- 
+
 
 The [SWP_OFFSET_FIRST_BIT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64.h?h=v6.0#n216) value is equal to [\_PAGE_BIT_PROTNONE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_types.h?h=v6.0#n39) plus one,
 
@@ -615,13 +621,13 @@ i.e. indicating that this bit and those below it are preserved in the PTE and su
 
 [SWP_TYPE_BITS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64.h?h=v6.0#n214) value is equal to 5, so that means that the preserved bits and the type value occupy 14 bits, leaving 50 bits for the offset.
 
- 
+
 
 **N O T E** This operation therefore zeroes all of the lower bits. The meanings of any existing bits
 
 are therefore null and void. The defining characteristic of the swap entry is that it is both non-present (typically least significant bit is clear) and non-empty.
 
- 
+
 
 Returning to [\_\_swp_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64.h?h=v6.0#n234) in Listing 12-12, we therefore see that unavail-
 
@@ -633,11 +639,11 @@ The inverse of [swp_entry_to_pte()](https://git.kernel.org/pub/scm/linux/kernel/
 
 swap PTE to a [swp_entry_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n820). We examine this in Listing 12-11.
 
- 
 
 
 
- 
+
+
 
 73 */\**
 
@@ -663,11 +669,11 @@ swap PTE to a [swp_entry_t](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 84 }
 
- 
+
 
 *Listing 12-14:* include/linux/swapops.h: [*pte_to_swp_entry()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n77)
 
- 
+
 
 This starts with a new aspect to swap PTEs—clearing any existing “swap
 
@@ -685,7 +691,7 @@ This preserves information that we wish to maintain at the PTE level and
 
 retain even while the mapping is swapped out.
 
- 
+
 
 26 */\* Clear all flags but only keep swp_entry_t related information \*/*
 
@@ -709,11 +715,11 @@ retain even while the mapping is swapped out.
 
 36 }
 
- 
+
 
 *Listing 12-15:* include/linux/swapops.h: [*pte_swp_clear_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swapops.h?h=v6.0#n27)
 
- 
+
 
 This indicates three possible flags—a “swap exclusive” flag,
 
@@ -737,11 +743,11 @@ Returning to [pte_to_swp_entry()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 flags we now have a value of type [pte_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64_types.h?h=v6.0#n21) containing the raw PTE with lower
 
- 
 
 
 
- 
+
+
 
 bits cleared. We then use the architecture-specific [\_\_pte_to_swp_entry()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/pgtable_64.h?h=v6.0#n238) to
 
@@ -759,11 +765,11 @@ as shown in Listing 12-3, which simply combines the two values into a
 
 [swp_entry_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n820).
 
- 
+
 
 **12.2 Swapping Out**
 
- 
+
 
 Swapping out occurs as part of reclaim (see Chapter 11). The key function
 
@@ -771,25 +777,25 @@ of which is [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 We examine how swapping out is performed in Figure 12-1.
 
- 
+
 
 Reclaim
 
- 
+
 
 If not already in swap cache If swap out writeback complete
 
 [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589)
 
- 
+
 
 If mapped If dirty [\_\_remove_mapping()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1289)
 
- 
+
 
 [add_to_swap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n174) [try_to_unmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1812) [pageout()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1215) [free_unref_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3510)
 
- 
+
 
 1. Add folio to swap 2. Iterate through 3. Swap folio out 4. (After writeback
 
@@ -805,15 +811,15 @@ Assign [swp_entry_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 mark dirty.
 
- 
+
 
 (See Section 12.2.1) (See Section 12.2.2) (See Section 12.2.3) (See Section 12.2.4)
 
- 
+
 
 *Figure 12-1: Swap Out Overview*
 
- 
+
 
 **N O T E** When paged out, the folio will be moved to the head of the appropriate LRU list (re-
 
@@ -825,11 +831,11 @@ ately placed on the inactive tail to be reclaimed next via [*folio_rotate_reclai
 
 called from [*folio_end_writeback()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1599)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1599) See Chapter 11 on reclaim for more details.
 
- 
 
 
 
- 
+
+
 
 While we have examined [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) in detail already, for the pur-
 
@@ -837,7 +843,7 @@ poses of examining how it performs swapping out we will examine only the
 
 parts of it which perform tasks related to this, starting in Listing 12-16.
 
- 
+
 
 1589 **static unsigned int shrink_page_list**(**struct** list_head \*page_list, 1590 **struct** pglist_data \*pgdat, 1591 **struct** scan_control \*sc, 1592 **struct** reclaim_stat \*stat, 1593 **bool** ignore_references) 1594 {
 
@@ -871,11 +877,11 @@ parts of it which perform tasks related to this, starting in Listing 12-16.
 
 . . .
 
- 
+
 
 *Listing 12-16:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Adding to Swap Cache*
 
- 
+
 
 This determines whether the folio is eligible to be swapped out—
 
@@ -883,7 +889,7 @@ whether it is both anonymous and swap-backed, the former checked by
 
 [folio_test_anon()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n656) and the latter by checking for the [PG_swapbacked](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n120) folio flag.
 
- 
+
 
 **N O T E** The [*PG_swapbacked*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n120) flag is set in [*page_add_new_anon_rmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1262) when anonymous mem-
 
@@ -897,7 +903,7 @@ ally be freed on reclaim) see Chapter 8). Therefore the [*PG_swapbacked*](https:
 
 ing characteristic of anonymous memory.
 
- 
+
 
 If it is indeed permitted to be swapped out, then we invoke [add_to_swap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n174)
 
@@ -909,11 +915,11 @@ Next, we consider how swap entries are inserted into the page table on
 
 swap out, which we examine in Listing 12-17.
 
- 
 
 
 
- 
+
+
 
 1822 */\**
 
@@ -931,11 +937,11 @@ swap out, which we examine in Listing 12-17.
 
 1839 **goto activate_locked**; 1840 } 1841 }
 
- 
+
 
 *Listing 12-17:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Setting Up Swap Entries*
 
- 
+
 
 Note that we only perform an action here if the folio is mapped, as de-
 
@@ -967,7 +973,7 @@ Next, we consider how we actually perform the swapping out to disk,
 
 which we examine in Listing 12-18.
 
- 
+
 
 1843 mapping = **folio_mapping**(folio); 1844 **if** (**folio_test_dirty**(folio)) {
 
@@ -975,11 +981,11 @@ which we examine in Listing 12-18.
 
 1886 **switch** (**pageout**(folio, mapping, &plug)) { 1887 **case PAGE_KEEP**: 1888 **goto keep_locked**; 1889 **case PAGE_ACTIVATE**: 1890 **goto activate_locked**; 1891 **case PAGE_SUCCESS**:
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -991,11 +997,11 @@ which we examine in Listing 12-18.
 
 . . .
 
- 
+
 
 *Listing 12-18:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Swapping Out to Disk*
 
- 
+
 
 At this stage, the folio should be marked dirty, either by virtue of the
 
@@ -1053,15 +1059,15 @@ The reclaim logic which causes the freeing of the folio is shown in Listing
 
 12-19.
 
- 
+
 
 1843 **if** (**folio_test_anon**(folio) && !**folio_test_swapbacked**(folio)) {
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -1113,17 +1119,17 @@ The reclaim logic which causes the freeing of the folio is shown in Listing
 
 2048 }
 
- 
+
 
 *Listing 12-19:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Freeing Swap*
 
- 
+
 
 **N O T E** Whatever pages are left in the *page_list* after this function is complete are eventu-
 
 ally placed back on the appropriate LRU via [*move_pages_to_lru()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2323).
 
- 
+
 
 Note that the mapping value here will be set to the result of [folio_mapping()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n799),
 
@@ -1139,11 +1145,11 @@ We explore the swap-relevant parts of [\_\_remove_mapping()](https://git.kernel.
 
 and Section 12.2.4. This function checks that nothing unexpectedly refer-ences the folio, then drops the reference count “freezing” it, before remov-ing it from the swap cache and freeing up relevant resources.
 
- 
 
 
 
- 
+
+
 
 Once this has been done, the folio is unlocked and added to the
 
@@ -1173,7 +1179,7 @@ priate LRU list (see Section 11.2 for more details on LRU lists in general).
 
 Let’s examine each of this stages of swapping out one-by-one.
 
- 
+
 
 ***12.2.1 Adding a Folio to the Swap Cache***
 
@@ -1185,7 +1191,7 @@ in [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds
 
 in Listing 12-20.
 
- 
+
 
 164 */\*\**
 
@@ -1215,11 +1221,11 @@ in Listing 12-20.
 
 191 *\* TODO: this could cause a theoretical memory reclaim* 192 *\* deadlock in the swap out path.*
 
- 
 
 
 
- 
+
+
 
 193 *\*/*
 
@@ -1253,11 +1259,11 @@ in Listing 12-20.
 
 223 }
 
- 
+
 
 *Listing 12-20:* mm/swap_state.c: [*add_to_swap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n174)
 
- 
+
 
 We start by allocating a swap entry using [folio_alloc_swap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_slots.c?h=v6.0#n302), which we
 
@@ -1279,11 +1285,11 @@ At this point it is absolutely critical that the underlying folio be marked
 
 dirty, which we anticipate will be the case upon setting page table swap en-
 
- 
 
 
 
- 
+
+
 
 tries (see Section 12.2.2), however to ensure that this is always the case, we
 
@@ -1301,7 +1307,7 @@ the detail of this is out of scope for the book. We rather focus on the higher
 
 level abstractions which form part of the swap implementation.
 
- 
+
 
 302 **swp_entry_t folio_alloc_swap**(**struct** folio \*folio) 303 {
 
@@ -1337,19 +1343,19 @@ level abstractions which form part of the swap implementation.
 
 349 **return** entry;
 
- 
 
 
 
- 
+
+
 
 350 }
 
- 
+
 
 *Listing 12-21:* mm/swap_slots.c: [*folio_alloc_swap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_slots.c?h=v6.0#n302)
 
- 
+
 
 The [folio_alloc_swap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_slots.c?h=v6.0#n302) function starts by checking a swap slot cache,
 
@@ -1363,13 +1369,13 @@ ther the case where the cache needs refilling or the cache is either disabled
 
 or needs refilling, the [get_swap_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swapfile.c?h=v6.0#n1043) is called to obtain swap entries from available swap files.
 
- 
+
 
 **N O T E** As previously discussed, we will not examine the swap file implementation in detail,
 
 as it rapidly becomes a file system discussion rather than a memory management one.
 
- 
+
 
 Returning to [add_to_swap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n174) (as shown in Listing 12-20), we note that
 
@@ -1377,7 +1383,7 @@ the key logic for adding the newly allocated swap entry (i.e. now tied to a spec
 
 [add_to_swap_cache(), ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n88)as shown in Listing 12-22 (eliding out of scope working set shadow entry tracking and debug logic).
 
- 
+
 
 84 */\**
 
@@ -1403,11 +1409,11 @@ the key logic for adding the newly allocated swap entry (i.e. now tied to a spec
 
 116 **set_page_private**(page + i, entry.val + i); 117 **xas_store**(&xas, page); 118 **xas_next**(&xas); 119 }
 
- 
 
 
 
- 
+
+
 
 120 address_space-\>nrpages += nr; 121 **\_\_mod_node_page_state**(**page_pgdat**(page), **NR_FILE_PAGES**, nr); 122 **\_\_mod_lruvec_page_state**(page, **NR_SWAPCACHE**, nr); 123 **unlock**:
 
@@ -1421,11 +1427,11 @@ the key logic for adding the newly allocated swap entry (i.e. now tied to a spec
 
 130 **ClearPageSwapCache**(page); 131 **page_ref_sub**(page, nr); 132 **return xas_error**(&xas); 133 }
 
- 
+
 
 *Listing 12-22:* mm/swap_state.c: [*add_to_swap_cache()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n88)
 
- 
+
 
 In [add_to_swap_cache()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n88) we can observe that the [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) object
 
@@ -1449,7 +1455,7 @@ ing 12-6), and then construct xarray state to be able to iterate through the
 
 relevant sub-pages contained within the folio.
 
- 
+
 
 **N O T E** In this instance, the only occasion when the folio would be larger than order-0 is if
 
@@ -1459,7 +1465,7 @@ that we obtain the number of sub-pages via [*thp_nr_pages()*](https://git.kernel
 
 compound number of pages, see Chapter 2 for more details on compound folios.
 
- 
+
 
 We pin the folio by incrementing its reference via [page_ref_add()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page_ref.h?h=v6.0#n118), and
 
@@ -1489,17 +1495,17 @@ the number of entries in the swapper address space and also update statis-
 
 tics accordingly.
 
- 
 
 
 
- 
+
+
 
 Finally, if no error arose we simply exit, therwise we clear the folio’s
 
 [PG_swapcache](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n158) flag, unpin it via [page_ref_sub()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page_ref.h?h=v6.0#n130) and return the error.
 
- 
+
 
 ***12.2.2 Setting Page Table Swap Entries***
 
@@ -1507,7 +1513,7 @@ Returning to Figure 12-1, we observe that after adding an entry to the swap cach
 
 [try_to_unmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1812), which we examine in Listing 12-23.
 
- 
+
 
 1801 */\*\**
 
@@ -1527,11 +1533,11 @@ Returning to Figure 12-1, we observe that after adding an entry to the swap cach
 
 1824 **rmap_walk**(folio, &rwc); 1825 }
 
- 
+
 
 *Listing 12-23:* mm/rmap.c: [*try_to_unmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1812)
 
- 
+
 
 The [try_to_unmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1812) function utilises the reverse mapping functionality
 
@@ -1551,11 +1557,11 @@ We pass [enum ttu_flags](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 modifying the operation, we will not examine these in detail.
 
- 
 
 
 
- 
+
+
 
 We examine the swap-specific logic in [try_to_unmap_one()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1476) in Listing
 
@@ -1569,7 +1575,7 @@ tion, lazy free (i.e. MADV_FREE via [madvise()](https://man7.org/linux/man-pages
 
 architecture-specific missing PTE flag handling and debug checks).
 
- 
+
 
 1476 **static bool try_to_unmap_one**(**struct** folio \*folio, **struct** vm_area_struct \*vma, 1477 **unsigned long** address, **void** \*arg) 1478 {
 
@@ -1617,11 +1623,11 @@ architecture-specific missing PTE flag handling and debug checks).
 
 1587 *\* PageAnonExclusive(), we always have to flush.* 1588 *\*/*
 
- 
 
 
 
- 
+
+
 
 1589 **if** (**should_defer_flush**(mm, flags) && !anon_exclusive)
 
@@ -1671,11 +1677,11 @@ pte);
 
 1754 **set_pte_at**(mm, address, pvmw.pte, swp_pte);
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -1699,11 +1705,11 @@ pte);
 
 1789 }
 
- 
+
 
 *Listing 12-24:* mm/rmap.c: [*try_to_unmap_one()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1476) *Swap Logic*
 
- 
+
 
 The [try_to_unmap_one()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n1476) function starts by declaring a
 
@@ -1713,7 +1719,7 @@ while iterating through the page tables mapping the folio, initialised by
 
 [DEFINE_FOLIO_VMA_WALK()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n338) and iterated through via [page_vma_mapped_walk()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_vma_mapped.c?h=v6.0#n151).
 
- 
+
 
 316 **struct** page_vma_mapped_walk { 317 **unsigned long** pfn; 318 **unsigned long** nr_pages; 319 **pgoff_t** pgoff;
 
@@ -1725,11 +1731,11 @@ while iterating through the page tables mapping the folio, initialised by
 
 325 **unsigned int** flags; 326 };
 
- 
+
 
 *Listing 12-25:* include/linux/rmap.h: [*struct page_vma_mapped_walk*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n316)
 
- 
+
 
 The [struct page_vma_mapped_walk](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n316) type encodes state about the currently
 
@@ -1745,11 +1751,11 @@ edge cases and detecting whether the mapping is still valid, returning true if
 
 the iteration can continue, otherwise returning false.
 
- 
+
 
 **N O T E** At this stage, we can safely assume that the [*struct mm_struct*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)*-\>mmap_lock* is held.
 
- 
+
 
 We can therefore safely assume that [struct page_vma_mapped_walk-\>pte](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n316) can
 
@@ -1763,11 +1769,11 @@ book), therefore [TTU_IGNORE_MLOCK](https://git.kernel.org/pub/scm/linux/kernel/
 
 [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html) edge case.
 
- 
 
 
 
- 
+
+
 
 The edge case arises when the [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA) flag [VM_LOCKED](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n282)
 
@@ -1797,13 +1803,13 @@ We determine whether this is an anonymous page which is mapped ex-
 
 clusively by only one process, as this changes how the kernel handles such mappings and is a trait we encode in swapped out folios. We retain this state in anon_exclusive.
 
- 
+
 
 **N O T E** When updating PTEs, it is very important to ensure that the update proceeds in a
 
 predictable order. We therefore always clear the PTE entry (causing accesses to that address that hit the page tables to fault) before setting it to a new value. We must also then ensure that the Transaction Lookaside Buffer (TLB) that caches virtual to physical addresses is appropriately cleared.
 
- 
+
 
 The [should_defer_flush()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n691) function indicates whether both [TTU_BATCH_FLUSH](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n98)
 
@@ -1839,11 +1845,11 @@ We use the oddly-named [swap_duplicate()](https://git.kernel.org/pub/scm/linux/k
 
 reference count, if this fails we restore the original PTE and abort the walk.
 
- 
 
 
 
- 
+
+
 
 Next, if the folio is anonymous-exclusive, we invoke
 
@@ -1875,7 +1881,7 @@ count via [folio_put()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds
 
 mapping has now been removed.
 
- 
+
 
 ***12.2.3 Swapping Out to Disk***
 
@@ -1891,7 +1897,7 @@ have guaranteed all folios to be swapped out will indeed be dirty, therefore
 
 ing out of scope cgroup and non-swap specific logic).
 
- 
+
 
 1211 */\**
 
@@ -1911,11 +1917,11 @@ ing out of scope cgroup and non-swap specific logic).
 
 1264 **folio_set_reclaim**(folio); 1265 res = mapping-\>a_ops-\>**writepage**(&folio-\>page, &wbc); 1266 **if** (res \< 0) 1267 **handle_write_error**(mapping, folio, res);
 
- 
 
 
 
- 
+
+
 
 1268 **if** (res == **AOP_WRITEPAGE_ACTIVATE**) { 1269 **folio_clear_reclaim**(folio); 1270 **return PAGE_ACTIVATE**; 1271 }
 
@@ -1931,11 +1937,11 @@ ing out of scope cgroup and non-swap specific logic).
 
 1282 **return PAGE_CLEAN**; 1283 }
 
- 
+
 
 *Listing 12-26:* mm/vmscan.c: [*pageout()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1215) *Recap*
 
- 
+
 
 The [pageout()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1215) function marks the [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) with the [PG_reclaim](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n119) flag
 
@@ -1953,7 +1959,7 @@ We call the [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/g
 
 ified as a [struct address_space_operations](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n356) object) for writing a single page, writepage() to perform the actual writeback.
 
- 
+
 
 **N O T E** We specify that up to [*SWAP_CLUSTER_MAX*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n214) (hardcoded to 32) base pages should
 
@@ -1963,7 +1969,7 @@ be written at one time—when writing to non-block device (file system-mediated)
 
 11).
 
- 
+
 
 This is where the swap logic comes into play, as the address space pro-
 
@@ -1979,15 +1985,15 @@ writepage callback to [swap_writepage()](https://git.kernel.org/pub/scm/linux/ke
 
 examine in Listing 12-27 (eliding out of scope architecture-specific handling and front-swap logic).
 
- 
+
 
 177 */\**
 
- 
 
 
 
- 
+
+
 
 178 *\* We may have stale swap cache pages in memory: notice* 179 *\* them here and get rid of the unnecessary final write.* 180 *\*/*
 
@@ -2007,11 +2013,11 @@ examine in Listing 12-27 (eliding out of scope architecture-specific handling an
 
 208 }
 
- 
+
 
 *Listing 12-27:* mm/page_io.c: [*swap_writepage()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_io.c?h=v6.0#n181)
 
- 
+
 
 The [swap_writepage()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_io.c?h=v6.0#n181) function starts by trying to free swap cache if there
 
@@ -2031,7 +2037,7 @@ We examine [\_\_swap_writepage()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 bug checks and an irrelevant comment.
 
- 
+
 
 335 **int \_\_swap_writepage**(**struct** page \*page, **struct** writeback_control \*wbc, 336 **bio_end_io_t** end_write_func) 337 {
 
@@ -2055,11 +2061,11 @@ bug checks and an irrelevant comment.
 
 357 bio = **bio_alloc**(sis-\>bdev, 1, 358 **REQ_OP_WRITE** \| **REQ_SWAP** \| **wbc_to_write_flags**(wbc), 359 **GFP_NOIO**); 360 bio-\>bi_iter.bi_sector = **swap_page_sector**(page);
 
- 
 
 
 
- 
+
+
 
 361 bio-\>bi_end_io = end_write_func; 362 **bio_add_page**(bio, page, **thp_size**(page), 0); 363
 
@@ -2071,11 +2077,11 @@ bug checks and an irrelevant comment.
 
 371 }
 
- 
+
 
 *Listing 12-28:* mm/page_io.c: [*\_\_swap_writepage()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_io.c?h=v6.0#n335)
 
- 
+
 
 The logic in [\_\_swap_writepage()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_io.c?h=v6.0#n335) makes reference to the swap file imple-
 
@@ -2107,7 +2113,7 @@ calls [folio_rotate_reclaimable()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 ing the logic contained in Section 12.2.4 immediately upon writeback.
 
- 
+
 
 ***12.2.4 Freeing a Swapped Out Folio***
 
@@ -2135,15 +2141,15 @@ We therefore examine core and swap-specific logic in [\_\_remove_mapping()](http
 
 in Listing 12-29 (eliding out of scope working set, cgroup and non-swap spe-cific logic).
 
- 
+
 
 1285 */\**
 
- 
 
 
 
- 
+
+
 
 1286 *\* Same as remove_mapping, but if the page is removed from the mapping, it*
 
@@ -2193,11 +2199,11 @@ in Listing 12-29 (eliding out of scope working set, cgroup and non-swap spe-cifi
 
 1335 **if** (**folio_test_swapcache**(folio)) { 1336 **swp_entry_t** swap = **folio_swap_entry**(folio);
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -2219,11 +2225,11 @@ in Listing 12-29 (eliding out of scope working set, cgroup and non-swap spe-cifi
 
 1383 }
 
- 
+
 
 *Listing 12-29:* mm/vmscan.c: [*\_\_remove_mapping()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1289) *Swap Logic*
 
- 
+
 
 The [\_\_remove_mapping()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1289) function starts by freezing the reference count
 
@@ -2233,13 +2239,13 @@ We have already determined by this point that the folio is not dirty or
 
 currently in a state of writeback, and thus will have been swapped out to disk.
 
- 
+
 
 **N O T E** We explore folio freezing further in Chapter 11 on reclaim, however broadly it atom-
 
 ically compares and exchanges an expecting reference count with zero, ensuring that we do not race with anything that might pin the folio in place. Unfreezing reverses this operation.
 
- 
+
 
 We explicitly check whether the folio is dirty (and thus not in a state
 
@@ -2257,7 +2263,7 @@ flag, which we examine in Listing 12-30 (eliding out of scope debug checks),
 
 before invoking [put_swap_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swapfile.c?h=v6.0#n1331) to decrement the reference on the swap en-try.
 
- 
+
 
 135 */\**
 
@@ -2267,11 +2273,11 @@ before invoking [put_swap_page()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 142 **struct** address_space \*address_space = **swap_address_space**(entry);
 
- 
 
 
 
- 
+
+
 
 143 **int** i;
 
@@ -2287,11 +2293,11 @@ before invoking [put_swap_page()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 158 **folio_clear_swapcache**(folio); 159 address_space-\>nrpages -= nr; 160 **\_\_node_stat_mod_folio**(folio, **NR_FILE_PAGES**, -nr); 161 **\_\_lruvec_stat_mod_folio**(folio, **NR_SWAPCACHE**, -nr); 162 }
 
- 
+
 
 *Listing 12-30:* mm/swap_state.c: [*\_\_delete_from_swap_cache()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n139)
 
- 
+
 
 The [\_\_delete_from_swap_cache()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n139) looks up the appropriate swapper
 
@@ -2325,7 +2331,7 @@ swap cache is [try_to_free_swap()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 debug checks and power management logic.
 
- 
+
 
 1586 */\**
 
@@ -2341,11 +2347,11 @@ debug checks and power management logic.
 
 1595 **if** (!**folio_test_swapcache**(folio)) 1596 **return** 0; 1597 **if** (**folio_test_writeback**(folio)) 1598 **return** 0; 1599 **if** (**folio_swapped**(folio))
 
- 
 
 
 
- 
+
+
 
 1600 **return** 0;
 
@@ -2355,7 +2361,7 @@ debug checks and power management logic.
 
 1623 }
 
- 
+
 
 *Listing 12-31:* mm/swapfile.c: [*try_to_free_swap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swapfile.c?h=v6.0#n1590)
 
@@ -2367,7 +2373,7 @@ the swapped out folio (as checked by [folio_swapped()](https://git.kernel.org/pu
 
 [delete_from_swap_cache()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n231) which we examine in Listing 12-32.
 
- 
+
 
 225 */\**
 
@@ -2381,7 +2387,7 @@ the swapped out folio (as checked by [folio_swapped()](https://git.kernel.org/pu
 
 240 **put_swap_page**(&folio-\>page, entry); 241 **folio_ref_sub**(folio, **folio_nr_pages**(folio)); 242 }
 
- 
+
 
 *Listing 12-32:* mm/swap_state.c: [*delete_from_swap_cache()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n231)
 
@@ -2401,19 +2407,19 @@ removal from the swap cache, before invoking [put_swap_page()](https://git.kerne
 
 count via [folio_ref_sub()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page_ref.h?h=v6.0#n137)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page_ref.h?h=v6.0#n137)
 
- 
+
 
 **12.3 Swapping In**
 
- 
+
 
 We have examined swapping out, and observed in Section 12.2.2 that we replace the PTE page table entry for the swapped-out mapping with an
 
- 
 
 
 
- 
+
+
 
 architecture-specific encoding of the [swp_entry_t](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n820) describing in which swap
 
@@ -2429,7 +2435,7 @@ ascertain both where in the swap file the page might be swapped out to or
 
 where in the swap cache the page is located.
 
- 
+
 
 **N O T E** The reason for a swap cache is precisely because page faults might occur at any time,
 
@@ -2439,7 +2445,7 @@ ing mechanism that the swapped out page should be looked up in the swap while al
 
 storing the folio in the swap cache in the meantime.
 
- 
+
 
 ***12.3.1 Page Fault on a Swapped Out Page***
 
@@ -2465,7 +2471,7 @@ Merging (KSM) logic, bug checks, userfaultfd handling,a nd architecture-
 
 specific cache flushing logic).
 
- 
+
 
 3710 */\**
 
@@ -2485,11 +2491,11 @@ specific cache flushing logic).
 
 3734 entry = **pte_to_swp_entry**(vmf-\>orig_pte);
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -2497,11 +2503,11 @@ specific cache flushing logic).
 
 3763 page = **lookup_swap_cache**(entry, vma, vmf-\>address); 3764 swapcache = page;
 
- 
+
 
 *Listing 12-33:* mm/memory.c: [*do_swap_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3718) *Preface*
 
- 
+
 
 We start [do_swap_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3718) by initialising local variables and obtaining the
 
@@ -2513,13 +2519,13 @@ We then obtain metadata regarding the swap via [get_swap_device()](https://git.k
 
 menting a reference count on the swap file to ensure that a [swapoff()](https://man7.org/linux/man-pages/man2/swapoff.2.html) cannot be performed beneath us.
 
- 
+
 
 **N O T E** We do not delve too deeply into [*mm/swapfile.c*](https://elixir.bootlin.com/linux/v6.0/source/mm/swapfile.c) implementation details as these
 
 rapidly become the remit of file system logic rather than memory management.
 
- 
+
 
 We then check the swap cache to see whether the page is still located in
 
@@ -2537,7 +2543,7 @@ Otherwise, we must read from disk, the logic for which we examine in
 
 Listing 12-34.
 
- 
+
 
 3766 **if** (!page) {
 
@@ -2553,11 +2559,11 @@ Listing 12-34.
 
 3796 page = **swapin_readahead**(entry, **GFP_HIGHUSER_MOVABLE**,
 
- 
 
 
 
- 
+
+
 
 3797 vmf); 3798 swapcache = page; 3799 }
 
@@ -2581,11 +2587,11 @@ Listing 12-34.
 
 3829 ret \|= **VM_FAULT_RETRY**; 3830 **goto out_release**; 3831 }
 
- 
+
 
 *Listing 12-34:* mm/memory.c: [*do_swap_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3718) *Reading From Disk*
 
- 
+
 
 If the swap device indicates that it is more efficient to perform syn-
 
@@ -2617,11 +2623,11 @@ We examine [swap_readpage()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 perform “swap readahead”, similar to page cache readahead, i.e. reading
 
- 
 
 
 
- 
+
+
 
 additional pages beyond that requested in anticipation of the user needing them in the near future.
 
@@ -2653,13 +2659,13 @@ Finally, if the page was successfully retrieved, we count this as a major
 
 fault, i.e. one which resulted in I/O.
 
- 
+
 
 **N O T E** In the instance that asynchronous I/O has been started in order to retrieve data from
 
 the swap, the [*struct page*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n72) we retrieve will be locked and not [*PG_uptodate*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n103)—that is, allo-cated but not yet read from the swap.
 
- 
+
 
 The last few lines in Listing 12-35 are of critical importance—we try to ac-
 
@@ -2699,15 +2705,15 @@ With the swapped out read from disk, we consider edge cases as shown
 
 in Listing 12-35.
 
- 
+
 
 3833 **if** (swapcache) {
 
- 
 
 
 
- 
+
+
 
 3834 */\**
 
@@ -2765,11 +2771,11 @@ in Listing 12-35.
 
 3904 exclusive = **pte_swp_exclusive**(vmf-\>orig_pte); 3905 **if** (page != swapcache) { 3906 */\** 3907 *\* We have a fresh page that is not exposed to the*
 
- 
 
 
 
- 
+
+
 
 3908 *\* swapcache -\> certainly exclusive.* 3909 *\*/* 3910 exclusive = **true**; 3911 } **else if** (exclusive && **PageWriteback**(page) && 3912 **data_race**(si-\>flags & **SWP_STABLE_WRITES**)) { 3913 */\** 3914 *\* This is tricky: not all swap backends support* 3915 *\* concurrent page modifications while under writeback*
 
@@ -2809,11 +2815,11 @@ in Listing 12-35.
 
 3933 }
 
- 
+
 
 *Listing 12-35:* mm/memory.c: [*do_swap_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3718) *Edge Case Handling*
 
- 
+
 
 Now we have a lock on the page, we first consider cases where the swap
 
@@ -2829,11 +2835,11 @@ flush to the appropriate LRU, we flush it to the appropriate LRU list (see
 
 Sections 11.7.12 on folio batch drain and 11.2 in Chapter 11 for more on this mechanism)—the upshot of this is that drop the reference count as a re-
 
- 
 
 
 
- 
+
+
 
 sult in order to ensure we avoid false negatives when determining whether a
 
@@ -2887,7 +2893,7 @@ page and freeing up the swap and swap cache as appropriate. We examine
 
 this in Listing 12-36.
 
- 
+
 
 3935 */\**
 
@@ -2919,11 +2925,11 @@ this in Listing 12-36.
 
 3954 **if** (!**PageKsm**(page) && (exclusive \|\| **page_count**(page) == 1)) {
 
- 
 
 
 
- 
+
+
 
 3955 **if** (vmf-\>flags & **FAULT_FLAG_WRITE**) { 3956 pte = **maybe_mkwrite**(**pte_mkdirty**(pte), vma); 3957 vmf-\>flags &= ~**FAULT_FLAG_WRITE**; 3958 ret \|= **VM_FAULT_WRITE**; 3959 }
 
@@ -2957,11 +2963,11 @@ this in Listing 12-36.
 
 3997 **if** (vmf-\>flags & **FAULT_FLAG_WRITE**) { 3998 ret \|= **do_wp_page**(vmf); 3999 **if** (ret & **VM_FAULT_ERROR**) 4000 ret &= **VM_FAULT_ERROR**; 4001 **goto out**; 4002 }
 
- 
+
 
 *Listing 12-36:* mm/memory.c: [*do_swap_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3718) *Mapping Page and Freeing Swap*
 
- 
+
 
 We start by freeing the swap entry associated with the underlying swap
 
@@ -2975,15 +2981,15 @@ We determine whether we should via [should_try_to_free_swap()](https://git.kerne
 
 examine in Listing 12-37.
 
- 
+
 
 3638 **static inline bool should_try_to_free_swap**(**struct** page \*page,
 
- 
 
 
 
- 
+
+
 
 3639 **struct** vm_area_struct \*vma, 3640 **unsigned int** fault_flags) 3641 {
 
@@ -2995,11 +3001,11 @@ examine in Listing 12-37.
 
 3653 **return** (fault_flags & **FAULT_FLAG_WRITE**) && !**PageKsm**(page) && 3654 **page_count**(page) == 2; 3655 }
 
- 
+
 
 *Listing 12-37:* mm/memory.c: [*should_try_to_free_swap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3638)
 
- 
+
 
 We start [should_try_to_free_swap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3638) by checking whether the page is
 
@@ -3023,7 +3029,7 @@ sense to free the swap cache entry to drop this in order that the page has an
 
 exclusive mapping.
 
- 
+
 
 **N O T E** We are so careful about exclusive mapping in the instance of a write fault, as we
 
@@ -3031,7 +3037,7 @@ later invoke [*do_wp_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 page being copied if this is not so.
 
- 
+
 
 Returning to the portion of [do_swap_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3718) explored in Listing 12-36, af-
 
@@ -3059,11 +3065,11 @@ check that the containing [struct vm_area_struct](https://git.kernel.org/pub/scm
 
 set, indicating that it can be written to), clear the [FAULT_FLAG_WRITE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n864) fault flag
 
- 
 
 
 
- 
+
+
 
 and set [VM_FAULT_WRITE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n745) in the return value to simply cause the mapping to be made writable.
 
@@ -3099,7 +3105,7 @@ PTE pointing to it installed in place, we have only to examine cleanup and
 
 error cases, which we explore in Listing 12-38.
 
- 
+
 
 3935 **unlock**:
 
@@ -3125,11 +3131,11 @@ error cases, which we explore in Listing 12-38.
 
 3954 }
 
- 
+
 
 *Listing 12-38:* mm/memory.c: [*do_swap_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3718) *Suffix*
 
- 
+
 
 If the swap in operation works correctly, or we exited early, we revoke
 
@@ -3139,11 +3145,11 @@ In the case of an error arising where the mapping has failed, we release
 
 the PTE lock, unlock the page if necessary and drop a reference to the page
 
- 
 
 
 
- 
+
+
 
 if necessary, before doing the same for the swap cache page if it differs and
 
@@ -3163,7 +3169,7 @@ means by which memory is swapped back in after being swapped out, or
 
 simply retrieved from the swap cache if not yet successfully swapped out.
 
- 
+
 
 **N O T E** In the case of a page being retrieved from the swap cache before the write out to disk
 
@@ -3173,7 +3179,7 @@ thing else swapping out via [*swap_free()*](https://git.kernel.org/pub/scm/linux
 
 unnecessarily.
 
- 
+
 
 ***12.3.2 Looking Up a Folio in the Swap Cache***
 
@@ -3183,7 +3189,7 @@ In [do_swap_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/lin
 
 huge page logic).
 
- 
+
 
 319
 
@@ -3211,11 +3217,11 @@ huge page logic).
 
 349 readahead = **TestClearPageReadahead**(page); 350 **if** (vma && vma_ra) { 351 **unsigned long** ra_val; 352 **int** win, hits;
 
- 
 
 
 
- 
+
+
 
 353
 
@@ -3233,11 +3239,11 @@ huge page logic).
 
 371 }
 
- 
+
 
 *Listing 12-39:* mm/swap_state.c: [*lookup_swap_cache()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n325)
 
- 
+
 
 We start by first pinning the swap device via [get_swap_device()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swapfile.c?h=v6.0#n1247)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swapfile.c?h=v6.0#n1247) and if this
 
@@ -3273,11 +3279,11 @@ There are two types of swap readahead algorithms available—cluster
 
 readahead and VMA readahead. The former reads sequential swap slots, and the latter reads sequential virtual pages.
 
- 
 
 
 
- 
+
+
 
 Cluster readahead is less efficient than VMA readahead, as users read
 
@@ -3341,7 +3347,7 @@ cluster readahead algorithm.
 
 Finally, we return the retrieved page, if we located one.
 
- 
+
 
 ***12.3.3 Reading Swapped Out Folios From Disk***
 
@@ -3351,7 +3357,7 @@ When reading a swapped out page directly from the disk, we do so with
 
 working set, delayed account, front swap logic and debug asserts).
 
- 
+
 
 448 **int swap_readpage**(**struct** page \*page, **bool** synchronous, 449 **struct** swap_iocb \*\*plug) 450 {
 
@@ -3365,11 +3371,11 @@ working set, delayed account, front swap logic and debug asserts).
 
 476 **if** (**data_race**(sis-\>flags & **SWP_FS_OPS**)) { 477 **swap_readpage_fs**(page, plug); 478 **goto out**;
 
- 
 
 
 
- 
+
+
 
 479 }
 
@@ -3413,21 +3419,21 @@ working set, delayed account, front swap logic and debug asserts).
 
 520 }
 
- 
+
 
 *Listing 12-40:* mm/page_io.c: [*swap_readpage()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_io.c?h=v6.0#n448)
 
- 
+
 
 Similar to [\_\_swap_writepage()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_io.c?h=v6.0#n335), we won’t delve too deeply into
 
 [swap_readpage()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_io.c?h=v6.0#n448)’s implementation as this leans into file I/O logic rather than memory management somewhat.
 
- 
 
 
 
- 
+
+
 
 We start by checking if [SWP_FS_OPS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n205) is set on the swap device, which indi-
 
@@ -3461,7 +3467,7 @@ When performing readahead as instigated by [do_swap_page()](https://git.kernel.o
 
 [swapin_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n847) function is invoked. we explore this in Listing 12-41.
 
- 
+
 
 835 */\*\**
 
@@ -3475,11 +3481,11 @@ When performing readahead as instigated by [do_swap_page()](https://git.kernel.o
 
 850 **return swap_use_vma_readahead**() ? 851 **swap_vma_readahead**(entry, gfp_mask, vmf) : 852 **swap_cluster_readahead**(entry, gfp_mask, vmf); 853 }
 
- 
+
 
 *Listing 12-41:* mm/swap_state.c: [*swapin_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n847)
 
- 
+
 
 The [swapin_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n847) function uses [swap_use_vma_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n314) (as
 
@@ -3497,15 +3503,15 @@ read it into the swap cache and then read swapped out data from disk into
 
 the page, optionally synchronously. We examine it in Listing 12-42.
 
- 
+
 
 507 */\**
 
- 
 
 
 
- 
+
+
 
 508 *\* Locate a page of swap in physical memory, reserving swap cache space* 509 *\* and reading the disk if it is not already cached.* 510 *\* A failure return means that either the page allocation failed or that* 511 *\* the swap entry is no longer in use.* 512 *\*/*
 
@@ -3519,11 +3525,11 @@ the page, optionally synchronously. We examine it in Listing 12-42.
 
 526 }
 
- 
+
 
 *Listing 12-42:* mm/swap-state.c: [*read_swap_cache_async()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap-state.c?h=v6.0#n513)
 
- 
+
 
 Ultimately the [read_swap_cache_async()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap-state.c?h=v6.0#n513) function wraps
 
@@ -3539,7 +3545,7 @@ We examine [\_\_read_swap_cache_async()](https://git.kernel.org/pub/scm/linux/ke
 
 scope working set and cgroup logic).
 
- 
+
 
 409 **struct** page \***\_\_read_swap_cache_async**(swp_entry_t entry, **gfp_t** gfp_mask, 410 **struct** vm_area_struct \*vma, **unsigned long** addr, 411 **bool** \*new_page_allocated) 412 {
 
@@ -3561,11 +3567,11 @@ scope working set and cgroup logic).
 
 428 **return NULL**;
 
- 
 
 
 
- 
+
+
 
 429 page = **find_get_page**(**swap_address_space**(entry), 430 **swp_offset**(entry)); 431 **put_swap_device**(si); 432 **if** (page) 433 **return** page;
 
@@ -3619,11 +3625,11 @@ scope working set and cgroup logic).
 
 473 **schedule_timeout_uninterruptible**(1); 474 }
 
- 
 
 
 
- 
+
+
 
 475
 
@@ -3657,11 +3663,11 @@ shadow))
 
 505 }
 
- 
+
 
 *Listing 12-43:* mm/swap-state.c: [*\_\_read_swap_cache_async()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap-state.c?h=v6.0#n409)
 
- 
+
 
 In [\_\_read_swap_cache_async()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap-state.c?h=v6.0#n409) we immediately enter into a loop, which is
 
@@ -3691,11 +3697,11 @@ We then allocate a page to add to the swap via [alloc_page_vma()](https://git.ke
 
 ter 2 for more on physical page allocation), returning NULL if we unable to do so.
 
- 
 
 
 
- 
+
+
 
 We invoke the swap file-specific logic in preparation for this entry to be
 
@@ -3735,7 +3741,7 @@ lists) via [lru_cache_add()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 11-88 also in Chapter 11).
 
- 
+
 
 ***12.3.4 Swap Cluster Readahead***
 
@@ -3759,7 +3765,7 @@ Cluster readahead is implemented in [swap_cluster_readhead()](https://git.kernel
 
 examine in Listing **??** (eliding out of scope block plug logic).
 
- 
+
 
 589 */\*\**
 
@@ -3771,11 +3777,11 @@ examine in Listing **??** (eliding out of scope block plug logic).
 
 602 *\* This has been extended to use the NUMA policies from the mm triggering* 603 *\* the readahead.*
 
- 
 
 
 
- 
+
+
 
 604 *\**
 
@@ -3807,11 +3813,11 @@ examine in Listing **??** (eliding out of scope block plug logic).
 
 . . .
 
- 
 
 
 
- 
+
+
 
 655 **lru_add_drain**(); */\* Push any new pages onto the LRU now \*/* 656 **skip**:
 
@@ -3823,11 +3829,11 @@ examine in Listing **??** (eliding out of scope block plug logic).
 
 659 }
 
- 
+
 
 *Listing 12-44:* mm/swap_state.c: [*swap_cluster_readhead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n607)
 
- 
+
 
 The approach in [swap_cluster_readhead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n607) is simple, we use
 
@@ -3879,7 +3885,7 @@ Finally, we make sure that page that triggered the readahead is read in via
 
 We examine [swapin_nr_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n568) in Listing 12-45.
 
- 
+
 
 568 **static unsigned long swapin_nr_pages**(**unsigned long** offset) 569 {
 
@@ -3893,11 +3899,11 @@ We examine [swapin_nr_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 578 hits = **atomic_xchg**(&**swapin_readahead_hits**, 0); 579 pages = **\_\_swapin_nr_pages**(**READ_ONCE**(prev_offset), offset, hits, 580 max_pages, 581 **atomic_read**(&**last_readahead_pages**));
 
- 
 
 
 
- 
+
+
 
 582 **if** (!hits)
 
@@ -3907,11 +3913,11 @@ We examine [swapin_nr_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 587 }
 
- 
+
 
 *Listing 12-45:* mm/swap_state.c: [*swapin_nr_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n568)
 
- 
+
 
 The [swapin_nr_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n568) function is parameterised on a number of static
 
@@ -3921,7 +3927,7 @@ This is set by [swap_setup()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 in Listing 12-46.
 
- 
+
 
 1068 */\**
 
@@ -3941,11 +3947,11 @@ in Listing 12-46.
 
 1084 }
 
- 
+
 
 *Listing 12-46:* mm/swap.c: [*swap_setup()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n1071)
 
- 
+
 
 The [swap_setup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n1071) function sets the power-of-two number of pages to
 
@@ -3959,23 +3965,23 @@ Note that this can also be updated via the sysctl tunable vm.page-cluster
 
 for custom control of cluster readahead.
 
- 
+
 
 **N O T E** We also use this value in VMA readahead to determine the maximum number of
 
 pages to readahead, see [*swap_ra_info()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n709) in Section 12.3.5 to see how this is used.
 
- 
+
 
 Returning to [swapin_nr_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n568) and Listing 12-45, we see that if the user
 
 has set [page_cluster](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n47) to zero, then we return one, indicating that in effect no readahead should take place.
 
- 
 
 
 
- 
+
+
 
 After considering this edge case, we then atomically exchange the
 
@@ -4009,7 +4015,7 @@ Listing 12-47), which does the heavy lifting of determining the number of
 
 pages to readahead.
 
- 
+
 
 528 **static unsigned int \_\_swapin_nr_pages**(**unsigned long** prev_offset, 529 **unsigned long** offset, 530 **int** hits, 531 **int** max_pages, 532 **int** prev_win) 533 {
 
@@ -4045,11 +4051,11 @@ pages to readahead.
 
 557 **if** (pages \> max_pages) 558 pages = max_pages;
 
- 
 
 
 
- 
+
+
 
 559
 
@@ -4059,17 +4065,17 @@ pages to readahead.
 
 566 }
 
- 
+
 
 *Listing 12-47:* mm/swap_state.c: [*\_\_swapin_nr_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n528)
 
- 
+
 
 **N O T E** Swap VMA readahead also uses this function to determine the number of pages to
 
 readahead, see [*swap_ra_info()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n709) in Listing 12-50 and Section **??** to see how this is used.
 
- 
+
 
 The [\_\_swapin_nr_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n528) function, like much of the kernel, is highly heuris-
 
@@ -4099,13 +4105,13 @@ We make sure that we reduce the readahead window by at most half on
 
 each occasion it drops so we do not scale down readahead too quickly.
 
- 
+
 
 **N O T E** We do not consider which swap file (otherwise known as swap type, i.e. the index
 
 of the swap file) these indexes pertain to, so inevitably there is a chance that we will miscalculate here. As this is all intended to be a heuristic in order to improve swap read performance, the decision has been made that keeping this simple trumps such miscalculations.
 
- 
+
 
 ***12.3.5 Swap VMA Readahead***
 
@@ -4113,17 +4119,17 @@ When [swapin_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 determined by [swap_use_vma_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n314) (see Section 12.3.2 for an exploration
 
- 
 
 
 
- 
+
+
 
 of this), the [swap_vma_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n785) function is invoked, which we explore in
 
 Listing 12-48 (eliding out of scope block plugging logic).
 
- 
+
 
 771 */\*\**
 
@@ -4155,11 +4161,11 @@ Listing 12-48 (eliding out of scope block plugging logic).
 
 815 **if** (!page) 816 **continue**; 817 **if** (page_allocated) {
 
- 
 
 
 
- 
+
+
 
 818 **swap_readpage**(page, **false**, &splug); 819 **if** (i != ra_info.offset) { 820 **SetPageReadahead**(page); 821 **count_vm_event**(**SWAP_RA**); 822 } 823 }
 
@@ -4175,17 +4181,17 @@ Listing 12-48 (eliding out of scope block plugging logic).
 
 831 **return read_swap_cache_async**(fentry, gfp_mask, vma, vmf-\>address, 832 ra_info.win == 1, **NULL**); 833 }
 
- 
+
 
 *Listing 12-48:* mm/swap_state.c: [*swap_vma_readahead()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n785)
 
- 
+
 
 We start by establishing a [struct vma_swap_readahead](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n337) state object which we
 
 thread state through the operation. We examine this in Listing 12-49 (as-suming a 64-bit architecture).
 
- 
+
 
 337 **struct** vma_swap_readahead { 338 **unsigned short** win; 339 **unsigned short** offset; 340 **unsigned short** nr_pte;
 
@@ -4197,11 +4203,11 @@ thread state through the operation. We examine this in Listing 12-49 (as-suming 
 
 346 };
 
- 
+
 
 *Listing 12-49:* include/linux/swap.h: [*struct vma_swap_readahead*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n337)
 
- 
+
 
 This keeps track of the window of pages over which reclaim should occur,
 
@@ -4219,17 +4225,17 @@ Otherwise, we iterate through PTEs—skipping those which are not swap
 
 PTEs or are non-swap PTE entries (out of scope for the book, but these are things like migration entries which share the characteristics of swap entries but don’t refer to swap).
 
- 
 
 
 
- 
+
+
 
 **N O T E** We copy the PTE into *pentry* as we do not hold the lock on the PTEs and they may be
 
 unmapped or otherwise modified during the course of the loop.
 
- 
+
 
 We then read the page for the entry via [\_\_read_swap_cache_async()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n409) (see
 
@@ -4271,7 +4277,7 @@ object but also in doing so implements the logic of swap VMA readahead.
 
 We examine this in Listing 12-50 (assuming x86-64 architecture).
 
- 
+
 
 709 **static void swap_ra_info**(**struct** vm_fault \*vmf, 710 **struct** vma_swap_readahead \*ra_info) 711 {
 
@@ -4291,11 +4297,11 @@ We examine this in Listing 12-50 (assuming x86-64 architecture).
 
 732 fpfn = **PFN_DOWN**(faddr); 733 ra_val = **GET_SWAP_RA_VAL**(vma); 734 pfn = **PFN_DOWN**(**SWAP_RA_ADDR**(ra_val)); 735 prev_win = **SWAP_RA_WIN**(ra_val);
 
- 
 
 
 
- 
+
+
 
 736 hits = **SWAP_RA_HITS**(ra_val); 737 ra_info-\>win = win = **\_\_swapin_nr_pages**(pfn, fpfn, hits, 738 max_win, prev_win); 739 **atomic_long_set**(&vma-\>swap_readahead_info, 740 **SWAP_RA_VAL**(faddr, win, 0)); 741
 
@@ -4323,11 +4329,11 @@ We examine this in Listing 12-50 (assuming x86-64 architecture).
 
 769 }
 
- 
+
 
 *Listing 12-50:* mm/swap_state.c: [*swap_ra_info()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n709)
 
- 
+
 
 In [swap_ra_info()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n709) we make use of the [page_cluster](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n47) static variable to deter-
 
@@ -4335,13 +4341,13 @@ mine the maximum number of pages to readahead, as also used for swap
 
 cluster readahead (see Section 12.3.4).
 
- 
+
 
 **N O T E** In swap VMA readahead we limit the window size to a maximum of the power-of-two
 
 value [*SWAP_RA_ORDER_CEILING*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n330), which is hard-coded to five, meaning 32 pages.
 
- 
+
 
 We term this the maximum window over which readahead might occur.
 
@@ -4361,11 +4367,11 @@ are invoked on the fault path and therefore have access to the [struct vm_fault]
 
 object describing the fault (see Chapter 6 for more details on fault handling in general), from which we can obtain the PTE of the faulting address.
 
- 
 
 
 
- 
+
+
 
 We set faddr to the faulting address and both orig_pte and pte to the fault-
 
@@ -4457,11 +4463,11 @@ head range.
 
 We consider three different scenarios:
 
- 
 
 
 
- 
+
+
 
 **Forward Sequential Access** The swap is being faulted in moving forwards
 
@@ -4475,7 +4481,7 @@ wards through sequential pages, so readahead up to and including the faulting pa
 
 tern, so split the difference and readahead pages half of which lie prior to the faulting address, and half of which lie after it.
 
- 
+
 
 Once we have determined start and end virtual PFN values, we can use
 
@@ -4497,17 +4503,17 @@ table to be examined by [swap_vma_readahead()](https://git.kernel.org/pub/scm/li
 
 We examine the key [swap_ra_clamp_pfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n696) function in Listing 12-51.
 
- 
+
 
 696 **static inline void swap_ra_clamp_pfn**(**struct** vm_area_struct \*vma, 697 **unsigned long** faddr, 698 **unsigned long** lpfn, 699 **unsigned long** rpfn, 700 **unsigned long** \*start, 701 **unsigned long** \*end) 702 {
 
 703 \*start = **max3**(lpfn, **PFN_DOWN**(vma-\>vm_start), 704 **PFN_DOWN**(faddr & **PMD_MASK**)); 705 \*end = **min3**(rpfn, **PFN_DOWN**(vma-\>vm_end), 706 **PFN_DOWN**((faddr & **PMD_MASK**) + **PMD_SIZE**)); 707 }
 
- 
+
 
 *Listing 12-51:* mm/swap_state.c: [*swap_ra_clamp_pfn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n696)
 
- 
+
 
 The [swap_ra_clamp_pfn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap_state.c?h=v6.0#n696) function determines start and end virtual PFN val-
 
@@ -4521,17 +4527,17 @@ We determine the latter of these values by applying the [PMD_MASK](https://git.k
 
 faulting address, which masks the high bits of the address which identify
 
- 
 
 
 
- 
+
+
 
 which PMD page table it refers to, and thus constraining the address to a
 
 single PMD entry, which is the PTE page table.
 
- 
+
 
 **N O T E** This might be slightly hard to follow, as visualising how page tables are laid out can
 
@@ -4539,7 +4545,7 @@ get confusing fast, review Chapter 3 on virtual memory layout to observe how the
 
 page tables interact with one another.
 
- 
+
 
 We obtain end by taking the minimum of rpfn, the virtual PFN of the
 
@@ -4563,5 +4569,5 @@ Since we obtain the minimum of these three values, we never fall off the
 
 end of either the VMA or the PTE page table.
 
- 
+
 

@@ -101,7 +101,7 @@ On our example list:
 
 Questions
 
- 
+
 
 1.  Write a function which, given a list of integers representing expenses, removes them from a budget, again represented by an integer.
 2.  Calculate the length of a list using one of the `fold_ `functions.

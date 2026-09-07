@@ -1,20 +1,22 @@
-I/O Memory
-
- 
+![](media/index-299_1.jpg)
 
 I/O Memory
 
- 
+
+
+I/O Memory
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 285/436 Memory-Mapped I/O
 
- 
+Memory-Mapped I/O
+
+
 
 ▶ Same address bus to address memory and I/O device
 
@@ -24,11 +26,11 @@ registers
 
 architectures supported by Linux
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 286/436 Requesting I/O memory
 
- 
+Requesting I/O memory
+
+
 
 ▶ Tells the kernel which driver is using which I/O registers ▶ struct resource \*request_mem_region(unsigned long start,
 
@@ -38,19 +40,19 @@ unsigned long len, char \*name);
 
 purely voluntary.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 287/436 /proc/iomem example - ARM 32 bit (BeagleBone Black, Linux 5.11)
 
- 
+/proc/iomem example - ARM 32 bit (BeagleBone Black, Linux 5.11)
+
+
 
 40300000-4030ffff : 40300000.sram sram@0 48046000-480463ff : 48046000.timer timer@0 44e00c00-44e00cff : 44e00c00.prm prm@c00 48048000-480483ff : 48048000.timer timer@0 44e00d00-44e00dff : 44e00d00.prm prm@d00 4804a000-4804a3ff : 4804a000.timer timer@0 44e00e00-44e00eff : 44e00e00.prm prm@e00 4804c000-4804cfff : 4804c000.gpio gpio@0 44e00f00-44e00fff : 44e00f00.prm prm@f00 48060000-48060fff : 48060000.mmc mmc@0 44e01000-44e010ff : 44e01000.prm prm@1000 4819c000-4819cfff : 4819c000.i2c i2c@0 44e01100-44e011ff : 44e01100.prm prm@1100 481a8000-481a8fff : 481a8000.serial serial@0 44e01200-44e012ff : 44e01200.prm prm@1200 481ac000-481acfff : 481ac000.gpio gpio@0 44e07000-44e07fff : 44e07000.gpio gpio@0 481ae000-481aefff : 481ae000.gpio gpio@0 44e09000-44e0901f : serial 481d8000-481d8fff : 481d8000.mmc mmc@0 44e0b000-44e0bfff : 44e0b000.i2c i2c@0 49000000-4900ffff : 49000000.dma edma3_cc 44e10800-44e10a37 : pinctrl-single 4a100000-4a1007ff : 4a100000.ethernet ethernet@0 44e10f90-44e10fcf : 44e10f90.dma-router dma-router@f90 4a101200-4a1012ff : 4a100000.ethernet ethernet@0 48024000-48024fff : 48024000.serial serial@0 80000000-9fdfffff : System RAM 48042000-480423ff : 48042000.timer timer@0 80008000-80cfffff : Kernel code 48044000-480443ff : 48044000.timer timer@0 80e00000-80f3d807 : Kernel data
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 288/436 Mapping I/O memory in virtual memory
 
- 
+Mapping I/O memory in virtual memory
+
+
 
 ▶ Load/store instructions work with virtual addresses ▶ To access I/O memory, drivers need to have a virtual address that the processor
 
@@ -58,7 +60,7 @@ can handle, because I/O memory is not mapped by default in virtual memory. ▶ T
 
 \#include \<linux/io.h\>
 
- 
+
 
 void \_\_iomem \*ioremap(phys_addr_t phys_addr, unsigned long size);
 
@@ -66,17 +68,17 @@ void iounmap(void \_\_iomem \*addr);
 
 ▶ Caution: check that [ioremap()](https://elixir.bootlin.com/linux/latest/ident/ioremap) doesn’t return a NULL address!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 289/436 ioremap()
 
- 
+ioremap()
+
+
 
 ioremap(0xAFFEBC00, 4096) = 0xCDEFA000
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 290/436 Managed API
+Managed API
 
- 
+
 
 Using [request_mem_region()](https://elixir.bootlin.com/linux/latest/ident/request_mem_region) and [ioremap()](https://elixir.bootlin.com/linux/latest/ident/ioremap) in device drivers is now deprecated. You should use the below ”managed” functions instead, which simplify driver coding and error handling:
 
@@ -92,19 +94,18 @@ Using [request_mem_region()](https://elixir.bootlin.com/linux/latest/ident/reque
 
 [struct platform_device](https://elixir.bootlin.com/linux/latest/ident/platform_device), not a pointer to [struct device](https://elixir.bootlin.com/linux/latest/ident/device):
 
- 
+
 
 base = devm_platform_ioremap_resource(pdev, 0); if (IS_ERR(base))
 
 return PTR_ERR(base);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 291/436
+
 
 Accessing MMIO devices: using accessor functions
 
- 
+
 
 ▶ Directly reading from or writing to addresses returned by [ioremap()](https://elixir.bootlin.com/linux/latest/ident/ioremap) (*pointer*
 
@@ -114,11 +115,11 @@ most needs.
 
 ▶ A few architecture-specific accessor functions also exists.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 292/436 MMIO access functions
 
- 
+MMIO access functions
+
+
 
 ▶ read\[b/w/l/q\] and write\[b/w/l/q\] for access to little-endian devices, includes
 
@@ -138,23 +139,23 @@ conversion, no memory barriers
 
 little-endian devices, without memory barriers ▶ All functions work on a void \_\_iomem \*
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 293/436 MMIO access functions summary
 
- 
+MMIO access functions summary
+
+
 
 Name Device endianness Memory barriers read/write little yes ioread/iowrite little yes ioreadbe/iowritebe big yes \_\_raw_read/\_\_raw_write native no read_relaxed/write_relaxed little no
 
- 
+
 
 More details at <https://docs.kernel.org/driver-api/device-io.html>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 294/436 Ordering
 
- 
+Ordering
+
+
 
 ▶ Reads/writes to MMIO-mapped registers of given device are done in program
 
@@ -176,11 +177,11 @@ optimized by dropping the memory barriers, using the raw or relaxed helpers
 
 ▶ See [Documentation/memory-barriers.txt](https://elixir.bootlin.com/linux/latest/source/Documentation/memory-barriers.txt)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 295/436 /dev/mem
 
- 
+/dev/mem
+
+
 
 ▶ Used to provide user space applications with direct access to physical addresses. ▶ Usage: open /dev/mem and read or write at given offset. What you read or write
 
@@ -192,13 +193,13 @@ is the value at the corresponding physical address. ▶ Used by applications suc
 
 (not appearing in /proc/iomem).
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 296/436 Practical lab - I/O memory and ports
+
+Practical lab - I/O memory and ports
 
 ![](media/index-311_1.png)
 
- 
+
 
 ▶ Add UART devices to the board device tree ▶ Access I/O registers to control the device and
 
@@ -206,8 +207,4 @@ is the value at the corresponding physical address. ▶ Used by applications suc
 
 send first characters to it.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 297/436
-
-![](media/index-312_1.jpg)

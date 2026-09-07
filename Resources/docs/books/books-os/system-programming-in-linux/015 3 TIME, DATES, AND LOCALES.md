@@ -1,3 +1,5 @@
+![](media/index-171_1.jpg)
+
 3 TIME, DATES, AND LOCALES
 
 In this chapter, I introduce the paradigm we’ll employ to design and
@@ -3043,5 +3045,3 @@ that does this. This program will be very easy if you examine the source code in
 6\. Modify the parse_time_adjustment() function from the chapter so that it rejects tokens that contain valid time units as strict substrings.
 
 For example, it should reject *megaday* and *saturday* as day time units and only allow *day* and *days*.
-
-![](media/index-239_1.jpg)

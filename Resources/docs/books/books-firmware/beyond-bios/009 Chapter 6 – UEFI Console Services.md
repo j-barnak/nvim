@@ -1,12 +1,12 @@
 ## **Chapter 6 – UEFI Console Services** 
 
- 
+
 
 Never test for an error condition you don’t know how to handle.
 
 —Steinbach’s Guideline for Systems Programming
 
- 
+
 
 This chapter describes how UEFI extends the traditional boundaries of console sup-
 
@@ -46,13 +46,12 @@ to 16-bit characters. This provides the maximum interoperability with external t
 
 down-converted to a set of ASCII equivalents.
 
- 
+
 
 DOI 10.1515/9781501505690-008
 
-**82** \| Chapter 6 – UEFI Console Services
 
- 
+
 
 UEFI has a variety of system-wide references to consoles. The UEFI System Table contains six console-related entries:
 
@@ -76,7 +75,7 @@ device. This handle must support the UEFI Simple Text Output protocol. ■ StdEr
 
 associated with StandardErrorHandle.
 
- 
+
 
 Other system-wide references to consoles in UEFI are contained within the global var-iable definitions. Some of the pertinent global variable definitions in UEFI are:
 
@@ -104,7 +103,7 @@ error console.
 
 sible console output devices.
 
- 
+
 
 Figure 6.1 illustrates the software layering discussed so far. An UEFI application or
 
@@ -114,23 +113,22 @@ shown in the UEFI System Table to call the interface that supports the appropria
 
 start using the console in question.
 
-Simple Text Input Protocol \| **83**
 
 ![](media/index-102_1.png)
 
- 
+
 
 **Figure 6.1:** Initial Software Layering
 
- 
+
 
 To further describe these interactions, it is necessary to delve a bit deeper into what these text I/O interfaces really look like and what they are effectively responsible for.
 
- 
+
 
 **Simple Text Input Protocol**
 
- 
+
 
 The Simple Text Input Protocol defines the minimum input required to support a spe-cific ConIn device. This interface provides two basic functions for the caller:
 
@@ -154,9 +152,8 @@ character or is zero if the key is not represented by a printable character, suc
 
 the control key or a function key.
 
-**84** \| Chapter 6 – UEFI Console Services
 
- 
+
 
 When reading a key from the ReadKeyStroke() function, an UEFI Input Key is retrieved. In traditional firmware, all PS/2 keys had a hardware specific scan code,
 
@@ -174,39 +171,39 @@ characters have special meaning and are thus defined as supported Unicode con-
 
 trol characters, as described in Table 6.1.
 
- 
+
 
 **Table 6.1:** UEFI-supported Unicode Control Characters
 
- 
+
 
 **Mnemonic Unicode Description**
 
- 
+
 
 Null U+0000 Null character ignored when received.
 
- 
+
 
 BS U+0008 Backspace. Moves cursor left one column. If the cursor is
 
 at the left margin, no action is taken.
 
- 
+
 
 TAB U+0x0009 Tab.
 
- 
+
 
 LF U+000A Linefeed. Moves cursor to the next line.
 
- 
+
 
 CR U+000D Carriage Return. Moves cursor to left margin of the current
 
 line.
 
- 
+
 
 ■ Scan Code - The input stream supports UEFI scan codes in addition to Unicode
 
@@ -216,109 +213,108 @@ should be used. If the UEFI scan code is set to a value other than 0x00, it repr
 
 sents a special key as defined in Table 6.2.
 
- 
+
 
 **Table 6.2:** UEFI-supported Scan Codes
 
- 
+
 
 **UEFI Scan Code** **Description**
 
- 
+
 
 0x00 Null scan code.
 
- 
+
 
 0x01 Move cursor up 1 row.
 
- 
+
 
 0x02 Move cursor down 1 row.
 
- 
+
 
 0x03 Move cursor right 1 column.
 
- 
+
 
 0x04 Move cursor left 1 column.
 
-Simple Text Input Protocol \| **85**
 
- 
+
 
 **UEFI Scan Code** **Description**
 
- 
+
 
 0x05 Home.
 
- 
+
 
 0x06 End.
 
- 
+
 
 0x07 Insert.
 
- 
+
 
 0x08 Delete.
 
- 
+
 
 0x09 Page Up.
 
- 
+
 
 0x0a Page Down.
 
- 
+
 
 0x0b Function 1.
 
- 
+
 
 0x0c Function 2.
 
- 
+
 
 0x0d Function 3.
 
- 
+
 
 0x0e Function 4.
 
- 
+
 
 0x0f Function 5.
 
- 
+
 
 0x10 Function 6.
 
- 
+
 
 0x11 Function 7.
 
- 
+
 
 0x12 Function 8.
 
- 
+
 
 0x13 Function 9.
 
- 
+
 
 0x14 Function 10.
 
- 
+
 
 0x17 Escape.
 
- 
+
 
 The ReadKeyStroke function provides the additional capability to signal an UEFI event when a key has been received. To leverage this capability, one must use either the WaitForEvent or CheckEvent services. The event to pass into these services
 
@@ -328,7 +324,7 @@ is the following:
 
 key to be available.
 
- 
+
 
 The activity being handled by the Simple Text Input protocol is very similar to the INT 16h services that were available in legacy firmware. Some of the primary differences
 
@@ -336,13 +332,12 @@ are that the legacy firmware service returned only the ASCII equivalent 8-bit va
 
 the key that was pressed along with the hardware-specific (such as PS/2) scan codes.
 
-**86** \| Chapter 6 – UEFI Console Services
 
- 
+
 
 **Simple Text Input Ex Protocol**
 
- 
+
 
 The Simple Text Input Ex protocol provides the same functionality that the Simple Text Input protocol produced and adds a series of additional capabilities. This inter-
 
@@ -384,99 +379,98 @@ input device. This data often encompasses information such as whether or not
 
 Caps Lock, Num Lock, or Scroll Lock are active.
 
- 
+
 
 **Table 6.3:** Simple Text Input Ex Keyboard Shift States
 
- 
+
 
 **Key Shift State Mask Value** **Description**
 
- 
+
 
 0x80000000 If high bit is on, then the state value is valid. For devices that are
 
 not capable of producing shift state values, this value will be off.
 
- 
+
 
 0x01 Right Shift key is pressed
 
- 
+
 
 0x02 Left Shift key is pressed
 
- 
+
 
 0x04 Right Control key is pressed
 
- 
+
 
 0x08 Left Control key is pressed
 
- 
+
 
 0x10 Right Alt key is pressed
 
- 
+
 
 0x20 Left Alt key is pressed
 
- 
+
 
 0x40 Right logo key is pressed
 
- 
+
 
 0x80 Left logo key is pressed
 
-Simple Text Output Protocol \| **87**
 
- 
+
 
 **Key Shift State Mask Value** **Description**
 
- 
+
 
 0x100 Menu key is pressed
 
- 
+
 
 0x200 System Request (SysReq) key is pressed
 
- 
+
 
 **Table 6.4:** Simple Text Input Ex Keyboard Toggle States
 
- 
+
 
 **Keyboard Toggle** **Description**
 
 **State Mask Value**
 
- 
+
 
 0x80 If high bit is on, then the state value is valid. For devices that are not capa-
 
 ble of representing toggle state values, this value will be off.
 
- 
+
 
 0x01 Scroll Lock is active
 
- 
+
 
 0x02 Num Lock is active
 
- 
+
 
 0x04 Caps Lock is active
 
- 
+
 
 **Simple Text Output Protocol**
 
- 
+
 
 The Simple Text Output protocol is used to control text-based output devices. It is the
 
@@ -498,9 +492,8 @@ for the given device. Much of this information is used to determine what the cur
 
 one can stipulate whether a cursor should be visible or not.
 
-**88** \| Chapter 6 – UEFI Console Services
 
- 
+
 
 typedef struct {
 
@@ -518,11 +511,11 @@ INT32 CursorRow;
 
 BOOLEAN CursorVisible; } SIMPLE_TEXT_OUTPUT_MODE;
 
- 
+
 
 **Figure 6.2:** Mode Structure for UEFI Simple Text Output Protocol
 
- 
+
 
 The Simple Text Output protocol also has a variety of text output related functions;
 
@@ -538,47 +531,47 @@ is displayed at the current cursor location on the output device(s) and the curs
 
 is advanced according to the rules listed in Table 6.3.
 
- 
+
 
 **Table 6.5:** Cursor Advancement Rules
 
- 
+
 
 **Mnemonic Unicode Description**
 
- 
+
 
 Null U+0000 Ignore the character, and do not move the cursor.
 
- 
+
 
 BS U+0008 If the cursor is not at the left edge of the display, then move the cur-
 
 sor left one column.
 
- 
+
 
 LF U+000A If the cursor is at the bottom of the display, then scroll the display
 
 one row, and do not update the cursor position. Otherwise, move the cursor down one row.
 
- 
+
 
 CR U+000D Move the cursor to the beginning of the current row.
 
- 
+
 
 Other U+XXXX Print the character at the current cursor position and move the cursor
 
 right one column. If this moves the cursor past the right edge of the display, then the line should wrap to the beginning of the next line. This is equivalent to inserting a CR and an LF. Note that if the cursor is at the bottom of the display, and the line wraps, then the display will be scrolled one line.
 
- 
+
 
 By providing an abstraction that allows a console device, such as a video driver, to produce a text interface, this can be compared to legacy firmware support for INT 10h.
 
-The producer of the Simple Text Output interface is responsible for converting the Remote Console Support \| **89**
+The producer of the Simple Text Output interface is responsible for converting the
 
- 
+
 
 Unicode text characters into the appropriate glyphs for that device. In the case where an unrecognized Unicode character has been sent to the OutputString() API, the
 
@@ -602,11 +595,11 @@ rently selected background color. The cursor position is set to (0,0). ■ SetCu
 
 sor position. The upper left corner of the screen is defined as coordinate (0,0).
 
- 
+
 
 **Remote Console Support**
 
- 
+
 
 The previous sections of this chapter described some of the text input and output pro-
 
@@ -638,113 +631,112 @@ ASCII character 0x5B, “\[“. ASCII characters that define the control sequenc
 
 spaces, but spaces are used in Table 6.6 for ease of reading. For additional infor-mation on UEFI terminal support, see the latest *UEFI Specification*.
 
-**90** \| Chapter 6 – UEFI Console Services
 
- 
+
 
 **Table 6.6:** Sample Conversion Table for UEFI Scan Codes to other Terminal Formats
 
- 
+
 
 **EFI** **ANSI X3.64** **PC ANSI** **AT 101/102 Keyboard** **Scan Code** **Description** **Codes** **Codes** **Scan Codes**
 
- 
+
 
 0x00 Null scan code N/A N/A N/A
 
- 
+
 
 0x01 Move cursor up 1 row CSI A ESC \[ A 0xe0, 0x48
 
- 
+
 
 0x02 Move cursor down 1 row CSI B ESC \[ B 0xe0, 0x50
 
- 
+
 
 0x03 Move cursor right 1 column CSI C ESC \[ C 0xe0, 0x4d
 
- 
+
 
 0x04 Move cursor left 1 column CSI D ESC \[ D 0xe0, 0x4b
 
- 
+
 
 0x05 Home CSI H ESC \[ H 0xe0, 0x47
 
- 
+
 
 0x06 End CSI K ESC \[ K 0xe0, 0x4f
 
- 
+
 
 0x07 Insert CSI @ ESC \[ @ 0xe0, 0x52
 
- 
+
 
 0x08 Delete CSI P ESC \[ P 0xe0, 0x53
 
- 
+
 
 0x09 Page Up CSI ? ESC \[ ? 0xe0, 0x49
 
- 
+
 
 0x0a Page Down CSI / ESC \[ / 0xe0, 0x51
 
- 
+
 
 Table 6.7 shows some of the PC ANSI and ANSI X3.64 control sequences for adjusting
 
 display/text display attributes for text displays.
 
- 
+
 
 **Table 6.7:** Example Control Sequences that Can Be Used in Console Drivers
 
- 
+
 
 **PC ANSI** **ANSI X3.64**
 
 **Codes** **Codes** **Description**
 
- 
+
 
 ESC \[ 2 J CSI 2 J Clear Display Screen.
 
- 
+
 
 ESC \[ 0 m CSI 0 m Normal Text.
 
- 
+
 
 ESC \[ 1 m CSI 1 m Bright Text.
 
- 
+
 
 ESC \[ 7 m CSI 7 m Reversed Text.
 
- 
+
 
 ESC \[ 30 m CSI 30 m Black foreground, compliant with ISO Standard 6429.
 
- 
+
 
 ESC \[ 31 m CSI 31 m Red foreground, compliant with ISO Standard 6429.
 
- 
+
 
 ESC \[ 32 m CSI 32 m Green foreground, compliant with ISO Standard 6429.
 
- 
+
 
 ESC \[ 33 m CSI 33 m Yellow foreground, compliant with ISO Standard 6429.
 
- 
 
-ESC \[ 34 m CSI 34 m Blue foreground, compliant with ISO Standard 6429. Remote Console Support \| **91**
 
- 
+ESC \[ 34 m CSI 34 m Blue foreground, compliant with ISO Standard 6429.
+
+
 
 Figure 6.3 illustrates the software layering for a remote serial interface with Text I/O abstractions. The primary difference between this illustration and one that exhibits
 
@@ -756,19 +748,18 @@ layered onto it, and it in turn would establish a set of Text I/O abstractions.
 
 ![](media/index-110_1.png)
 
- 
+
 
 **Figure 6.3:** Remote Console Software Layering
 
 ![](media/index-110_2.png)
 
-**92** \| Chapter 6 – UEFI Console Services
 
- 
+
 
 **Console Splitter**
 
- 
+
 
 The ability to describe a variety of console devices poses interesting new possibilities. In previous generations of firmware, one had a single means by which one could de-
 
@@ -794,19 +785,18 @@ faces, which in turn calls the UEFI System Table console interfaces. These inter
 
 from the application to the platform-configured consoles.
 
-Network Consoles \| **93**
 
 ![](media/index-112_1.png)
 
- 
+
 
 **Figure 6.4:** Software Layering Description of the UEFI Console Splitter
 
- 
+
 
 **Network Consoles**
 
- 
+
 
 UEFI also provides the ability to establish data connections with remote platforms
 
@@ -816,9 +806,8 @@ ously discussed concepts where the hardware interface (for example, serial devic
 
 on top of this hardware abstraction to provide a working software stack.
 
-**94** \| Chapter 6 – UEFI Console Services
 
- 
+
 
 Some network components that UEFI might include are as follows: ■ Network Interface Identifier – This is an optional protocol that is produced by the
 
@@ -836,7 +825,7 @@ network adapter. It additionally provides services to initialize a network inter
 
 face, transmit packets, receive packets, and close a network interface.
 
- 
+
 
 To illustrate what a common network console might look like, you could describe an initial hardware abstraction that talks directly to the network interface controller
 
@@ -856,19 +845,18 @@ seamlessly leverage the console support in a platform. Couple this with console 
 
 platform in a much more robust manner without requiring a lot of specially tuned software to enable it.
 
-Summary \| **95**
 
 ![](media/index-114_1.png)
 
- 
+
 
 **Figure 6.5:** Example of Network Console Software Layering
 
- 
+
 
 **Summary**
 
- 
+
 
 In conclusion, UEFI provides a very robust means of describing the various possible
 

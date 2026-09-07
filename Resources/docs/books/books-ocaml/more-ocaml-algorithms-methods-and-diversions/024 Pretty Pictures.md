@@ -3,7 +3,7 @@ Pretty Pictures
 
 We have not yet explained the structure of the code which put “Hello, World!” on the page. Here it is again:
 
-`1 0 0 1 50 770 cm BT /F0 36 Tf (Hello, World!) Tj ET`
+`1 0 0 1 50 770 cm BT /F0 36 Tf (Hello, World!) Tj ET`
 
 It is a list of operator-operand sequences. Each sequence consists of zero or more operands and one operator. The sequences in our example are:
 
@@ -16,13 +16,13 @@ In this chapter we will introduce a few simple operators for drawing lines and f
 Here is a data type, which forms part of the new Pdfpage module, which encodes these operators. We will extend it with new operators when required.
 
 `type t =`  
-`    Move of float * float`  
-`  | Line of float * float`  
-`  | Close`  
-`  | Stroke`  
-`  | Fill`  
-`  | FillColour of float`  
-`  | StrokeColour of float`
+`    Move of float * float`  
+`  | Line of float * float`  
+`  | Close`  
+`  | Stroke`  
+`  | Fill`  
+`  | FillColour of float`  
+`  | StrokeColour of float`
 
 In order to put these into the PDF document, we will need to convert each set of operands and operator to a string. This is simple:
 
@@ -60,7 +60,7 @@ Here is the result of `graph_string 595.28 841.89 10. `on a page of A4 paper:
 
 Questions
 
- 
+
 
 1.  Write a function which, given a centre point and radius, returns a list of `Move`, `Line`, and `Close` elements which represent a circle. Use a number of lines appropriate to the size of the circle.
 2.  Use the function from the previous question to write a program which outputs a page covered in pseudo-random sized and filled grey circles.

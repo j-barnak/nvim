@@ -4,7 +4,7 @@
 
 In this chapter we introduce recursion, the basic mechanism for looping in Haskell. We start with recursion on integers, then extend the idea to recursion on lists, consider multiple arguments, multiple recursion, and mutual recursion, and conclude with some advice on defining recursive functions.
 
-### **6.1Basic concepts**
+### **6.1 Basic concepts**
 
 As we have seen in previous chapters, many functions can naturally be defined in terms of other functions. For example, a function that returns the *factorial* of a non-negative integer can be defined by using library functions to calculate the product of the integers between one and the given number:
 
@@ -24,17 +24,17 @@ fac n = n * fac (n-1)
 The first equation states that the factorial of zero is one, and is called a *base case*. The second equation states that the factorial of any other number is given by the product of that number and the factorial of its predecessor, and is called a *recursive case*. For example, the following calculation shows how the factorial of three can be computed using this definition:
 
 ``` haskell
-fac 3
-={ applying fac }
-3 * fac 2
-={ applying fac }
-3 * (2 * fac 1)
-={ applying fac }
-3 * (2 * (1 * fac 0))
-={ applying fac }
-3 * (2 * (1 * 1))
-={ applying * }
-6
+  fac 3
+=   { applying fac }
+  3 * fac 2
+=   { applying fac }
+  3 * (2 * fac 1)
+=   { applying fac }
+  3 * (2 * (1 * fac 0))
+=   { applying fac }
+  3 * (2 * (1 * 1))
+=   { applying * }
+  6
 ```
 
 Note that even though the fac function is defined in terms of itself it does not loop forever. In particular, each application of fac decreases the (non-negative) integer argument by one, until it eventually reaches zero at which point the recursion stops and the multiplications are performed. Returning one as the factorial of zero is appropriate because one is the identity for multiplication. That is, 1 \* x = x and x \* 1 = x for any integer x.
@@ -52,52 +52,52 @@ m * n = m + (m * (n-1))
 For example:
 
 ``` haskell
-4 * 3
-={ applying * }
-4 + (4 * 2)
-={ applying * }
-4 + (4 + (4 * 1))
-={ applying * }
-4 + (4 + (4 + (4 * 0)))
-={ applying * }
-4 + (4 + (4 + 0))
-={ applying + }
-12
+  4 * 3
+=   { applying * }
+  4 + (4 * 2)
+=   { applying * }
+  4 + (4 + (4 * 1))
+=   { applying * }
+  4 + (4 + (4 + (4 * 0)))
+=   { applying * }
+  4 + (4 + (4 + 0))
+=   { applying + }
+  12
 ```
 
 That is, the recursive definition for the \* operator formalises the idea that multiplication can be reduced to repeated addition.
 
-### **6.2Recursion on lists**
+### **6.2 Recursion on lists**
 
 Recursion is not restricted to functions on integers, but can also be used to define functions on lists. For example, the library function product used in the preceding section can be defined as follows:
 
 ``` haskell
 product :: Num a => [a] -> a
-product []= 1
+product []     = 1
 product (n:ns) = n * product ns
 ```
 
 The first equation states that the product of the empty list of numbers is one, which is appropriate because one is the identity for multiplication. The second equation states that the product of any non-empty list is given by multiplying the first number and the product of the remaining list. For example:
 
 ``` haskell
-product [2,3,4]
-={ applying product }
-2 * product [3,4]
-={ applying product }
-2 * (3 * product [4])
-={ applying product }
-2 * (3 * (4 * product []))
-={ applying product }
-2 * (3 * (4 * 1))
-={ applying * }
-24
+  product [2,3,4]
+=   { applying product }
+  2 * product [3,4]
+=   { applying product }
+  2 * (3 * product [4])
+=   { applying product }
+  2 * (3 * (4 * product []))
+=   { applying product }
+  2 * (3 * (4 * 1))
+=   { applying * }
+  24
 ```
 
 Recall that lists in Haskell are actually constructed one element at a time using the cons operator. Hence, \[2,3,4\] is just an abbreviation for 2:(3:(4:\[\])). As another simple example of recursion on lists, the library function length can be defined using the same pattern of recursion as product:
 
 ``` haskell
 length :: [a] -> Int
-length []= 0
+length []     = 0
 length (_:xs) = 1 + length xs
 ```
 
@@ -107,48 +107,48 @@ Now let us consider the library function that reverses a list. This function can
 
 ``` haskell
 reverse :: [a] -> [a]
-reverse []= []
+reverse []     = []
 reverse (x:xs) = reverse xs ++ [x]
 ```
 
 That is, the reverse of the empty list is simply the empty list, and the reverse of any non-empty list is given by appending the reverse of its tail and a singleton list comprising the head of the list. For example:
 
 ``` haskell
-reverse [1,2,3]
-={ applying reverse }
-reverse [2,3] ++ [1]
-={ applying reverse }
-(reverse [3] ++ [2]) ++ [1]
-={ applying reverse }
-((reverse [] ++ [3]) ++ [2]) ++ [1]
-={ applying reverse }
-(([] ++ [3]) ++ [2]) ++ [1]
-={ applying ++ }
-[3,2,1]
+  reverse [1,2,3]
+=   { applying reverse }
+  reverse [2,3] ++ [1]
+=   { applying reverse }
+  (reverse [3] ++ [2]) ++ [1]
+=   { applying reverse }
+  ((reverse [] ++ [3]) ++ [2]) ++ [1]
+=   { applying reverse }
+  (([] ++ [3]) ++ [2]) ++ [1]
+=   { applying ++ }
+  [3,2,1]
 ```
 
 In turn, the append operator ++ used in the above definition of reverse can itself be defined using recursion on its first argument:
 
 ``` haskell
 (++) :: [a] -> [a] -> [a]
-[]++ ys = ys
+[]     ++ ys = ys
 (x:xs) ++ ys = x : (xs ++ ys)
 ```
 
 For example:
 
 ``` haskell
-[1,2,3] ++ [4,5]
-={ applying ++ }
-1 : ([2,3] ++ [4,5])
-={ applying ++ }
-1 : (2 : ([3] ++ [4,5]))
-={ applying ++ }
-1 : (2 : (3 : ([] ++ [4,5])))
-={ applying ++ }
-1 : (2 : (3 : [4,5]))
-={ list notation }
-[1,2,3,4,5]
+  [1,2,3] ++ [4,5]
+=   { applying ++ }
+  1 : ([2,3] ++ [4,5])
+=   { applying ++ }
+  1 : (2 : ([3] ++ [4,5]))
+=   { applying ++ }
+  1 : (2 : (3 : ([] ++ [4,5])))
+=   { applying ++ }
+  1 : (2 : (3 : [4,5]))
+=   { list notation }
+  [1,2,3,4,5]
 ```
 
 That is, the recursive definition for ++ formalises the idea that two lists can be appended by copying elements from the first list until it is exhausted, at which point the second list is joined on at the end.
@@ -160,42 +160,42 @@ We conclude this section with two examples of recursion on sorted lists. First o
 That is, inserting a new element into an empty list gives a singleton list, while for a non-empty list the result depends upon the ordering of the new element x and the head of the list y. In particular, if x \<= y then the new element x is simply prepended to the start of the list, otherwise the head y becomes the first element of the resulting list, and we then proceed to insert the new element into the tail of the given list. For example, we have:
 
 ``` haskell
-insert 3 [1,2,4,5]
-={ applying insert }
-1 : insert 3 [2,4,5]
-={ applying insert }
-1 : 2 : insert 3 [4,5]
-={ applying insert }
-1 : 2 : 3 : [4,5]
-={ list notation }
-[1,2,3,4,5]
+  insert 3 [1,2,4,5]
+=   { applying insert }
+  1 : insert 3 [2,4,5]
+=   { applying insert }
+  1 : 2 : insert 3 [4,5]
+=   { applying insert }
+  1 : 2 : 3 : [4,5]
+=   { list notation }
+  [1,2,3,4,5]
 ```
 
 Using insert we can now define a function that implements *insertion sort*, in which the empty list is already sorted, and any non-empty list is sorted by inserting its head into the list that results from sorting its tail:
 
 ``` haskell
 isort :: Ord a => [a] -> [a]
-isort []= []
+isort []     = []
 isort (x:xs) = insert x (isort xs)
 ```
 
 For example:
 
 ``` haskell
-isort [3,2,1,4]
-={ applying isort }
-insert 3 (insert 2 (insert 1 (insert 4 [])))
-={ applying insert }
-insert 3 (insert 2 (insert 1 [4]))
-={ applying insert }
-insert 3 (insert 2 [1,4])
-={ applying insert }
-insert 3 [1,2,4]
-={ applying insert }
-[1,2,3,4]
+  isort [3,2,1,4]
+=   { applying isort }
+  insert 3 (insert 2 (insert 1 (insert 4 [])))
+=   { applying insert }
+  insert 3 (insert 2 (insert 1 [4]))
+=   { applying insert }
+  insert 3 (insert 2 [1,4])
+=   { applying insert }
+  insert 3 [1,2,4]
+=   { applying insert }
+  [1,2,3,4]
 ```
 
-### **6.3Multiple arguments**
+### **6.3 Multiple arguments**
 
 Functions with multiple arguments can also be defined using recursion on more than one argument at the same time. For example, the library function zip that takes two lists and produces a list of pairs is defined as follows:
 
@@ -204,17 +204,17 @@ Functions with multiple arguments can also be defined using recursion on more th
 For example:
 
 ``` haskell
-zip [’a’,’b’,’c’] [1,2,3,4]
-={ applying zip }
-(’a’,1) : zip [’b’,’c’] [2,3,4]
-={ applying zip }
-(’a’,1) : (’b’,2) : zip [’c’] [3,4]
-={ applying zip }
-(’a’,1) : (’b’,2) : (’c’,3) : zip [] [4]
-={ applying zip }
-(’a’,1) : (’b’,2) : (’c’,3) : []
-={ list notation }
-[(’a’,1), (’b’,2), (’c’,3)]
+  zip [’a’,’b’,’c’] [1,2,3,4]
+=   { applying zip }
+  (’a’,1) : zip [’b’,’c’] [2,3,4]
+=   { applying zip }
+  (’a’,1) : (’b’,2) : zip [’c’] [3,4]
+=   { applying zip }
+  (’a’,1) : (’b’,2) : (’c’,3) : zip [] [4]
+=   { applying zip }
+  (’a’,1) : (’b’,2) : (’c’,3) : []
+=   { list notation }
+  [(’a’,1), (’b’,2), (’c’,3)]
 ```
 
 Note that two base cases are required in the definition of zip, because either of the two argument lists may be empty. As another example of recursion on multiple arguments, the library function drop that removes a given number of elements from the start of a list is defined as follows:
@@ -223,7 +223,7 @@ Note that two base cases are required in the definition of zip, because either o
 
 Again, two base cases are required, one for removing zero elements, and one for attempting to remove elements from the empty list.
 
-### **6.4Multiple recursion**
+### **6.4 Multiple recursion**
 
 Functions can also be defined using *multiple recursion*, in which a function is applied more than once in its own definition. For example, recall the Fibonacci sequence 0*,* 1*,* 1*,* 2*,* 3*,* 5*,* 8*,* 13*,...*, in which the first two numbers are 0 and 1, and each subsequent number is given by adding the preceding two numbers in the sequence. A function that calculates the *n*th Fibonacci number for any integer ![image](media/Images/ch6-03.png) can be defined using double recursion as follows:
 
@@ -240,7 +240,7 @@ As another example, in chapter 1 we showed how to implement another well-known m
 
 That is, the empty list is already sorted, and any non-empty list can be sorted by placing its head between the two lists that result from sorting those elements of its tail that are smaller and larger than the head.
 
-### **6.5Mutual recursion**
+### **6.5 Mutual recursion**
 
 Functions can also be defined using *mutual recursion*, in which two or more functions are all defined recursively in terms of each other. For example, consider the library functions even and odd. For efficiency, these functions are normally defined using the remainder after dividing by two. However, for non-negative integers they can also be defined using mutual recursion:
 
@@ -256,17 +256,17 @@ odd n = even (n-1)
 That is, zero is even but not odd, and any other number is even if its predecessor is odd, and odd if its predecessor is even. For example:
 
 ``` haskell
-even 4
-={ applying even }
-odd 3
-={ applying odd }
-even 2
-={ applying even }
-odd 1
-={ applying odd }
-even 0
-={ applying even }
-True
+  even 4
+=   { applying even }
+  odd 3
+=   { applying odd }
+  even 2
+=   { applying even }
+  odd 1
+=   { applying odd }
+  even 0
+=   { applying even }
+  True
 ```
 
 Similarly, functions that select the elements from a list at all even and odd positions (counting from zero) can be defined as follows:
@@ -276,26 +276,26 @@ Similarly, functions that select the elements from a list at all even and odd po
 For example:
 
 ``` haskell
-evens "abcde"
-={ applying evens }
-’a’ : odds "bcde"
-={ applying odds }
-’a’ : evens "cde"
-={ applying evens }
-’a’ : ’c’ : odds "de"
-={ applying odds }
-’a’ : ’c’ : evens "e"
-={ applying evens }
-’a’ : ’c’ : ’e’ : odds []
-={ applying odds }
-’a’ : ’c’ : ’e’ : []
-={ string notation }
-"ace"
+  evens "abcde"
+=   { applying evens }
+  ’a’ : odds "bcde"
+=   { applying odds }
+  ’a’ : evens "cde"
+=   { applying evens }
+  ’a’ : ’c’ : odds "de"
+=   { applying odds }
+  ’a’ : ’c’ : evens "e"
+=   { applying evens }
+  ’a’ : ’c’ : ’e’ : odds []
+=   { applying odds }
+  ’a’ : ’c’ : ’e’ : []
+=   { string notation }
+  "ace"
 ```
 
 Recall that strings in Haskell are actually constructed as lists of characters. Hence, "abcde" is just an abbreviation for \[’a’,’b’,’c’,’d’,’e’\].
 
-### **6.6Advice on recursion**
+### **6.6 Advice on recursion**
 
 Defining recursive functions is like riding a bicycle: it looks easy when someone else is doing it, may seem impossible when you first try to do it yourself, but becomes simple and natural with practice. In this section we offer some advice for defining functions in general, and recursive functions in particular, using a five-step process that we introduce by means of three examples.
 
@@ -318,7 +318,7 @@ that states that product takes a list of integers and produces a single integer.
 For most types of argument, there are a number of standard cases to consider. For lists, the standard cases are the empty list and non-empty lists, so we can write down the following skeleton definition using pattern matching:
 
 ``` haskell
-product []=
+product []     =
 product (n:ns) =
 ```
 
@@ -329,7 +329,7 @@ For non-negative integers, the standard cases are 0 and n, for logical values th
 By definition, the product of zero integers is one, because one is the identity for multiplication. Hence it is straightforward to define the empty list case:
 
 ``` haskell
-product []= 1
+product []     = 1
 product (n:ns) =
 ```
 
@@ -340,7 +340,7 @@ As in this example, the simple cases often become base cases.
 How can we calculate the product of a non-empty list of integers? For this step, it is useful to first consider the ingredients that can be used, such as the function itself (product), the arguments (n and ns), and library functions of relevant types (+, -, \*, and so on.) In this case, we simply multiply the first integer and the product of the remaining list of integers:
 
 ``` haskell
-product []= 1
+product []     = 1
 product (n:ns) = n * product ns
 ```
 
@@ -461,60 +461,60 @@ The type for init is already as general as possible, but the definition itself c
 
 ``` haskell
 init :: [a] -> [a]
-init [_]= []
+init [_]   = []
 init (x:xs) = x : init xs
 ```
 
 Again, this is precisely the definition from the standard prelude.
 
-### **6.7Chapter remarks**
+### **6.7 Chapter remarks**
 
 The recursive definitions presented in this chapter emphasise clarity, but many can be improved in terms of efficiency or generality, as we shall see later on in the book. The five-step process for defining functions is based on \[8\].
 
-### **6.8Exercises**
+### **6.8 Exercises**
 
-1.How does the recursive version of the factorial function behave if applied to a negative argument, such as (-1)? Modify the definition to prohibit negative arguments by adding a guard to the recursive case.
+1\. How does the recursive version of the factorial function behave if applied to a negative argument, such as (-1)? Modify the definition to prohibit negative arguments by adding a guard to the recursive case.
 
-2.Define a recursive function sumdown :: Int -\> Int that returns the sum of the non-negative integers from a given value down to zero. For example, sumdown 3 should return the result 3+2+1+0 = 6.
+2\. Define a recursive function sumdown :: Int -\> Int that returns the sum of the non-negative integers from a given value down to zero. For example, sumdown 3 should return the result 3+2+1+0 = 6.
 
-3.Define the exponentiation operator ^ for non-negative integers using the same pattern of recursion as the multiplication operator \*, and show how the expression 2 ^ 3 is evaluated using your definition.
+3\. Define the exponentiation operator ^ for non-negative integers using the same pattern of recursion as the multiplication operator \*, and show how the expression 2 ^ 3 is evaluated using your definition.
 
-4.Define a recursive function euclid :: Int -\> Int -\> Int that implements *Euclid’s algorithm* for calculating the greatest common divisor of two non-negative integers: if the two numbers are equal, this number is the result; otherwise, the smaller number is subtracted from the larger, and the same process is then repeated. For example:
+4\. Define a recursive function euclid :: Int -\> Int -\> Int that implements *Euclid’s algorithm* for calculating the greatest common divisor of two non-negative integers: if the two numbers are equal, this number is the result; otherwise, the smaller number is subtracted from the larger, and the same process is then repeated. For example:
 
 ``` haskell
 > euclid 6 27
 3
 ```
 
-5.Using the recursive definitions given in this chapter, show how length \[1,2,3\], drop 3 \[1,2,3,4,5\], and init \[1,2,3\] are evaluated.
+5\. Using the recursive definitions given in this chapter, show how length \[1,2,3\], drop 3 \[1,2,3,4,5\], and init \[1,2,3\] are evaluated.
 
-6.Without looking at the definitions from the standard prelude, define the following library functions on lists using recursion.
+6\. Without looking at the definitions from the standard prelude, define the following library functions on lists using recursion.
 
-a.Decide if all logical values in a list are True:
+a\. Decide if all logical values in a list are True:
 
 ``` haskell
 and :: [Bool] -> Bool
 ```
 
-b.Concatenate a list of lists:
+b\. Concatenate a list of lists:
 
 ``` haskell
 concat :: [[a]] -> [a]
 ```
 
-c.Produce a list with n identical elements:
+c\. Produce a list with n identical elements:
 
 ``` haskell
 replicate :: Int -> a -> [a]
 ```
 
-d.Select the nth element of a list:
+d\. Select the nth element of a list:
 
 ``` haskell
 (!!) :: [a] -> Int -> a
 ```
 
-e.Decide if a value is an element of a list:
+e\. Decide if a value is an element of a list:
 
 ``` haskell
 elem :: Eq a => a -> [a] -> Bool
@@ -522,7 +522,7 @@ elem :: Eq a => a -> [a] -> Bool
 
 Note: most of these functions are defined in the prelude using other library functions rather than using explicit recursion, and are generic functions rather than being specific to the type of lists.
 
-7.Define a recursive function merge :: Ord a =\> \[a\] -\> \[a\] -\> \[a\] that merges two sorted lists to give a single sorted list. For example:
+7\. Define a recursive function merge :: Ord a =\> \[a\] -\> \[a\] -\> \[a\] that merges two sorted lists to give a single sorted list. For example:
 
 ``` haskell
 > merge [2,5,6] [1,3,4]
@@ -531,16 +531,16 @@ Note: most of these functions are defined in the prelude using other library fun
 
 Note: your definition should not use other functions on sorted lists such as insert or isort, but should be defined using explicit recursion.
 
-8.Using merge, define a function msort :: Ord a =\> \[a\] -\> \[a\] that implements *merge sort*, in which the empty list and singleton lists are already sorted, and any other list is sorted by merging together the two lists that result from sorting the two halves of the list separately.
+8\. Using merge, define a function msort :: Ord a =\> \[a\] -\> \[a\] that implements *merge sort*, in which the empty list and singleton lists are already sorted, and any other list is sorted by merging together the two lists that result from sorting the two halves of the list separately.
 
 Hint: first define a function halve :: \[a\] -\> (\[a\],\[a\]) that splits a list into two halves whose lengths differ by at most one.
 
-9.Using the five-step process, construct the library functions that:
+9\. Using the five-step process, construct the library functions that:
 
-a.calculate the sum of a list of numbers;
+a\. calculate the sum of a list of numbers;
 
-b.take a given number of elements from the start of a list;
+b\. take a given number of elements from the start of a list;
 
-c.select the last element of a non-empty list.
+c\. select the last element of a non-empty list.
 
 Solutions to exercises 1–4 are given in appendix A.

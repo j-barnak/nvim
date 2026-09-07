@@ -69,7 +69,7 @@ In the questions, you will extract the rest of the statistics from the tree, and
 
 Questions
 
- 
+
 
 1.  In how many cases does X win? How many possible different games are there? How many end in a draw?
 

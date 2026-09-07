@@ -1,20 +1,22 @@
-The input subsystem
-
- 
+![](media/index-266_1.jpg)
 
 The input subsystem
 
- 
+
+
+The input subsystem
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 252/436 What is the input subsystem?
 
- 
+What is the input subsystem?
+
+
 
 ▶ The input subsystem takes care of all the input events coming from the human
 
@@ -40,15 +42,15 @@ various interfaces (most of the time through evdev)
 
 *Android’s InputManager*.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 253/436 Input subsystem diagram
 
- 
+Input subsystem diagram
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 254/436 Input subsystem overview
 
- 
+
+Input subsystem overview
+
+
 
 ▶ Kernel option [CONFIG_INPUT](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_INPUT)
 
@@ -74,11 +76,11 @@ for the drivers
 
 *•* [include/linux/input.h](https://elixir.bootlin.com/linux/latest/source/include/linux/input.h)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 255/436 Input subsystem API 1/3
 
- 
+Input subsystem API 1/3
+
+
 
 An *input device* is described by a very long [struct input_dev](https://elixir.bootlin.com/linux/latest/ident/input_dev) structure, an excerpt is: struct input_dev {
 
@@ -116,11 +118,11 @@ unsigned int code, int value);
 
 Before being used, this structure must be allocated and initialized, typically with: struct input_dev \*devm_input_allocate_device(struct device \*dev);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 256/436 Input subsystem API 2/3
 
- 
+Input subsystem API 2/3
+
+
 
 ▶ Depending on the type of events that will be generated, the input bit fields evbit
 
@@ -136,11 +138,11 @@ set_bit(BTN_0, myinput_dev.keybit);
 
 int input_register_device(struct input_dev \*);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 257/436 Input subsystem API 3/3
 
- 
+Input subsystem API 3/3
+
+
 
 The events are sent by the driver to the event handler using void input_event(struct input_dev \*dev, unsigned int type, unsigned int code, int value)
 
@@ -158,15 +160,15 @@ etc..
 
 After submitting potentially multiple events, the *input* core must be notified by calling:
 
- 
+
 
 void input_sync(struct input_dev \*dev)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 258/436 Example from drivers/hid/usbhid/usbmouse.c
 
- 
+Example from drivers/hid/usbhid/usbmouse.c
+
+
 
 static void usb_mouse_irq(struct urb \*urb)
 
@@ -184,13 +186,12 @@ input_report_key(dev, BTN_LEFT, data\[0\] & 0x01); input_report_key(dev, BTN_RIG
 
 }
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 259/436
+
 
 Polling input devices
 
- 
+
 
 ▶ The input subsystem provides an API to support simple input devices that *do not*
 
@@ -206,11 +207,11 @@ int input_setup_polling(struct input_dev \*dev, void (\*poll_fn)(struct input_de
 
 [input_set_min_poll_interval()](https://elixir.bootlin.com/linux/latest/ident/input_set_min_poll_interval) and [input_set_max_poll_interval()](https://elixir.bootlin.com/linux/latest/ident/input_set_max_poll_interval)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 260/436 *evdev* user space interface
 
- 
+*evdev* user space interface
+
+
 
 ▶ The main user space interface to *input devices* is the **event interface** ▶ Each *input device* is represented as a /dev/input/event\<X\> character device ▶ A user space application can use blocking and non-blocking reads, but also
 
@@ -234,13 +235,12 @@ unsigned int value;
 
 <https://cgit.freedesktop.org/evtest/>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 261/436
+
 
 Practical lab - Expose the Nunchuk to user space
 
- 
+
 
 ▶ Extend the Nunchuk driver to expose the
 
@@ -254,8 +254,4 @@ Nunchuk features to user space applications, as an *input* device.
 
 evtest
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 262/436
-
-![](media/index-277_1.jpg)

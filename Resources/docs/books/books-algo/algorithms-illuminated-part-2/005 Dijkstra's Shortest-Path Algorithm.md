@@ -1,10 +1,10 @@
 ## Chapter 9
 
- 
+
 
 Dijkstra’s Shortest-Path Algorithm
 
- 
+
 
 We’ve arrived at another one of computer science’s greatest hits:
 
@@ -16,7 +16,7 @@ algorithm (Section 9.2), its proof of correctness (Section 9.3), and a
 
 straightforward implementation (Section 9.4). In the next chapter, we’ll see a blazingly fast implementation of the algorithm that takes advantage of the heap data structure.
 
- 
+
 
 9.1 The Single-Source Shortest Path Problem
 
@@ -24,7 +24,7 @@ straightforward implementation (Section 9.4). In the next chapter, we’ll see a
 
 Dijkstra’s algorithm solves the 2 single-source shortest path problem .
 
- 
+
 
 Problem: Single-Source Shortest Paths
 
@@ -32,7 +32,7 @@ Input: A directed graph G = (V, E), a starting vertex s 2 V , and a nonnegative 
 
 Output: dist(s, v) for every vertex v 2 V .
 
- 
+
 
 1 Discovered by Edsger W. Dijkstra in 1956 (“in about twenty minutes,” he said in an interview many years later). Several other researchers independently discovered similar algorithms in the late 1950s.
 
@@ -46,7 +46,7 @@ our terminology in Chapter 8, we’ll stick with “starting vertex.”
 
 9.1 The Single-Source Shortest Path Problem 77
 
- 
+
 
 Recall that the notation dist(s, v) denotes the length of a shortest path from s to v. (If there is no path at all from s to v, then dist(s, v) is +1.) By the length of a path, we mean the sum of the lengths of its edges. For instance, in a graph in which every edge has length 1, the length of a path is just the number of edges in it. A shortest path from a vertex v to a vertex w is one with minimum length (among all v-w paths).
 
@@ -54,7 +54,7 @@ For example, if the graph represents a road network and the
 
 length of each edge represents the expected travel time from one end to the other, the single-source shortest path problem is the problem of computing driving times from an origin (the starting vertex) to all possible destinations.
 
- 
+
 
 Quiz 9.1
 
@@ -78,7 +78,7 @@ Consider the following input to the single-source shortest path problem, with st
 
 ![](media/index-90_4.jpg)
 
- 
+
 
 What are the shortest-path distances to s, v, w, and t, respectively?
 
@@ -104,7 +104,7 @@ d\) 0, 1, 4, 7
 
 78 Dijkstra’s Shortest-Path Algorithm
 
- 
+
 
 9.1.2 Some Assumptions
 
@@ -114,7 +114,7 @@ Our other assumption is significant. The problem statement al-ready spells it ou
 
 applications with negative edge lengths; see also Section 9.3.1.3
 
- 
+
 
 9.1.3 Why Not Breadth-First Search?
 
@@ -134,7 +134,7 @@ But wait, you say; is the general problem really so different from this special 
 
 ![](media/index-91_2.jpg)
 
- 
+
 
 3 In Part 3 we’ll learn about efficient algorithms for the more general single-source shortest path problem in which negative edge lengths are allowed, including the famous Bellman-Ford algorithm.
 
@@ -158,7 +158,7 @@ But wait, you say; is the general problem really so different from this special 
 
 9.1 The Single-Source Shortest Path Problem 79
 
- 
+
 
 Indeed, there’s no fundamental difference between an edge with a positive integral length \` and a path of \` length-1 edges. In principle, you can solve the single-source shortest path problem by expanding edges into paths of length-1 edges and applying breadth-first search to the expanded graph.
 
@@ -170,7 +170,7 @@ The major problem with this reduction is that it blows up the size
 
 of the graph. The blowup is not too bad if all the edge lengths are small integers, but this is not always the case in applications. The length of an edge could even be much bigger than the number of vertices and edges in the original graph! Breadth-first search would run in time linear in the size of the expanded graph, but this is not necessarily close to linear time in the size of the original graph. Dijkstra’s algorithm can be viewed as a slick simulation of breadth-first search on the expanded graph, while working only with the original input graph and running in near-linear time.
 
- 
+
 
 On Reductions
 
@@ -198,13 +198,13 @@ special case?
 
 80 Dijkstra’s Shortest-Path Algorithm
 
- 
+
 
 9.1.4 Solution to Quiz 9.1
 
 Correct answer: (b). No prizes for guessing that the shortest-path distance from s to itself is 0 and from s to v is 1. Vertex w is more interesting. One s-w path is the direct edge (s, w), which has length 4. But using more edges can decrease the total length: The path s ! v ! w has length only 1 + 2 = 3 and is the shortest s-w path. Similarly, each of the two-hop paths from s to t has length 7, while the zigzag path has length only 1 + 2 + 3 = 6.
 
- 
+
 
 9.2 Dijkstra’s Algorithm
 
@@ -236,13 +236,13 @@ equals the true shortest-path distance dist(s, v).
 
 6 ⇤ ⇤ len ( w ) := len ( v) + \` ⇤ ⇤ v w
 
- 
+
 
 4 When all the edges have length 1, it’s equivalent to breadth-first search (as you should check).
 
 9.2 Dijkstra’s Algorithm 81
 
- 
+
 
 The set X contains the vertices that the algorithm has already dealt with. Initially, X contains only the starting vertex (and, of course, len(s) = 0), and the set grows like a mold until it covers all the vertices reachable from s. The algorithm assigns a finite value to the len-value of a vertex at the same time it adds the vertex to X. Each iteration of the main loop augments X by one new vertex, the head of some
 
@@ -258,7 +258,7 @@ and these edges will typically have different Dijkstra scores.
 
 processed not-yet-processed
 
- 
+
 
 ### X 
 
@@ -272,7 +272,7 @@ for (v\*,w\*)
 
 ![](media/index-94_2.jpg)
 
- 
+
 
 the frontier
 
@@ -282,7 +282,7 @@ Figure 9.1: Every iteration of Dijkstra’s algorithm processes one new vertex, 
 
 ![](media/index-94_4.jpg)
 
- 
+
 
 You can associate the Dijkstra score for an edge (v, w) with v 2 X
 
@@ -302,7 +302,7 @@ and w / 2 X with the hypothesis that the shortest path from s to w consists of a
 
 ![](media/index-94_11.jpg)
 
- 
+
 
 from X to V X. While adding ⇤ w to X, the algorithm assigns len ⇤ ( w) to its hypothesized shortest-path distance from s, which is the Dijkstra score ⇤ ⇤ ⇤ len ( v ) + \` v ⇤ w ⇤ of the edge ( v , w ). The magic of
 
@@ -310,7 +310,7 @@ Dijkstra’s algorithm, formalized in Theorem 9.1 below, is that this hypothesis
 
 far looked at only a tiny fraction of the graph.5
 
- 
+
 
 9.2.2 An Example
 
@@ -334,7 +334,7 @@ Let’s try out the Dijkstra algorithm on the example from Quiz 9.1:
 
 ![](media/index-95_4.jpg)
 
- 
+
 
 Initially, the set X contains only s, and len(s) = 0. In the first iteration of the main loop, there are two edges crossing from X to ⇤ V X (and hence eligible to play the role of ⇤ ( v , w )), the edges (s, v)
 
@@ -358,7 +358,7 @@ to ⇤ v, the vertex responsible for ⇤ w’s selection. After the algorithm co
 
 \*9.3 Why Is Dijkstra’s Algorithm Correct? 83
 
- 
+
 
 1 + 6 = 7 and 3 + 3 = 6, respectively, len(t) is set to the lower score of 6. The set X now contains all the vertices, so no edges cross from X to V X and the algorithm halts. The values len(s) = 0, len(v) = 1, len(w) = 3, and len(t) = 6 match the true shortest-path distances
 
@@ -370,7 +370,7 @@ cific example does 6 not imply that it is correct in general! In fact, the Dijks
 
 distances when edges can have negative lengths (Section 9.3.1). You should be initially skeptical of the Dijkstra algorithm and demand a proof that, at least in graphs with nonnegative edge lengths, it correctly solves the single-source shortest path problem.
 
- 
+
 
 \*9.3 Why Is Dijkstra’s Algorithm Correct?
 
@@ -390,7 +390,7 @@ for reductions to problems you already know how to solve. Alas, you cannot reduc
 
 ![](media/index-96_1.jpg)
 
- 
+
 
 There are two paths from s to t: the direct path (which has length 2)
 
@@ -408,7 +408,7 @@ and the two-hop path s ! v ! t (which has length 1 + ( 5) = 4).
 
 ![](media/index-96_6.jpg)
 
- 
+
 
 The latter has the smaller (that is, more negative) length, and is the shortest s-t path.
 
@@ -422,7 +422,7 @@ To force the graph to have nonnegative edge lengths, we could add 5 to every edg
 
 ![](media/index-97_1.jpg)
 
- 
+
 
 The shortest path from s to t has switched, and is now the direct s-t edge (which has length 3, better than the alternative of 6). Running a shortest-path algorithm on the transformed graph would not produce a correct answer for the original graph.
 
@@ -450,11 +450,11 @@ Dijkstra score (9.1) might seem mysterious or even arbitrary—why is it so impo
 
 \*9.3 Why Is Dijkstra’s Algorithm Correct? 85
 
- 
+
 
 Theorem 9.1 (Correctness of Dijkstra) For every directed graph G = (V, E), every starting vertex s, and every choice of nonneg-ative edge lengths, at the conclusion of Dijkstra, len(v) = dist(s, v) for every vertex v 2 V .
 
- 
+
 
 Induction Detour
 
@@ -494,7 +494,7 @@ matically flawed.
 
 86 Dijkstra’s Shortest-Path Algorithm
 
- 
+
 
 Proof of Theorem 9.1
 
@@ -536,7 +536,7 @@ Figure 9.2: Tacking the edge ⇤ ⇤ ⇤ ( v , w ) on at the end of a shortest s
 
 ![](media/index-99_7.jpg)
 
- 
+
 
 Now for the reverse inequality, stating that ⇤ ⇤ dist ( s, w ) len ( w)
 
@@ -554,7 +554,7 @@ y 7 2 X and z / 2 X ).
 
 processed not-yet-processed
 
- 
+
 
 ### X 
 
@@ -564,13 +564,13 @@ processed not-yet-processed
 
 *s* V-X
 
- 
+
 
 *w**\**
 
 ![](media/index-100_2.jpg)
 
- 
+
 
 the frontier
 
@@ -580,7 +580,7 @@ Figure 9.3: Every ⇤ s-w path crosses at least once from X to V X .
 
 ![](media/index-100_4.jpg)
 
- 
+
 
 To argue that the length of 0 ⇤ P is at least len ( w), we consider its
 
@@ -602,13 +602,13 @@ three pieces separately: the initial part of 0 P that travels from s to y, the e
 
 ![](media/index-100_11.jpg)
 
- 
+
 
 length ≥ 0
 
 length ≥ *dist(s,y) = len(y)*
 
- 
+
 
 *w**\**
 
@@ -624,7 +624,7 @@ length = *l**yz*
 
 ![](media/index-101_3.jpg)
 
- 
+
 
 total length ≥ *len(s,y) + l* ≥ *len(s,v**\***) + l* *= len(w**\***)* *yz* *v\*w\**
 
@@ -634,7 +634,7 @@ Combining our length lower bounds for the three parts of 0 P, we have
 
 ![](media/index-101_5.jpg)
 
- 
+
 
 length of P 0 dist(s, y) + \`yz + 0 . (9.2) \|{z} \| {z } \|{z} ⇤ z-w subpath s-y subpath edge ( y, z )
 
@@ -676,11 +676,11 @@ This completes the second part of the inductive step, and we conclude that len(v
 
 For the final nail in the coffin, consider a vertex v that was never added to X. When the algorithm finished, len(v) = +1 and no edges 9.4 Implementation and Running Time 89
 
- 
+
 
 crossed from X to V X. This means no path exists from s to v in the input graph—such a path would have to cross the frontier at some point—and, hence, dist(s, v) = + 1 as well. We conclude that the algorithm halts with len(v) = dist(s, v) for every vertex v, whether or not v was ever added to X. This completes the proof! QE D
 
- 
+
 
 9.4 Implementation and Running Time
 
@@ -704,13 +704,13 @@ d\) O(mn)
 
 (See below for the solution and discussion.)
 
- 
+
 
 Correct answer: (d). A straightforward implementation keeps
 
 track of which vertices are in X by associating a Boolean variable with each vertex. Each iteration, it performs an exhaustive search through all the edges, computes the Dijkstra score for each edge with tail in X and head outside X (in constant time per edge), and returns the crossing edge with the smallest score (or correctly identifies that 90 Dijkstra’s Shortest-Path Algorithm
 
- 
+
 
 no crossing edges exist). After at most n 1 iterations, the Dijkstra algorithm runs out of new vertices to add to its set X. Because the number of iterations is O(n) and each takes time O(m), the overall running time is O(mn).
 
@@ -742,7 +742,7 @@ vertex.
 
 Problems 91
 
- 
+
 
 P An inductive argument proves that Dijkstra’s al-
 
@@ -764,7 +764,7 @@ algorithm runs in O(mn) time, where m and n denote the number of edges and verti
 
 input graph, respectively.
 
- 
+
 
 Test Your Understanding
 
@@ -794,7 +794,7 @@ b\) When all edge lengths are distinct powers of 2.
 
 92 Dijkstra’s Shortest-Path Algorithm
 
- 
+
 
 c\) When all edge lengths are distinct positive integers and the
 
@@ -834,7 +834,7 @@ Problem 9.5 Consider a directed graph G and a starting vertex s. Suppose G has s
 
 Problems 93
 
- 
+
 
 a\) Dijkstra’s algorithm might loop forever.
 
@@ -850,11 +850,11 @@ d\) Dijkstra’s algorithm always halts, and in some cases the shortest-
 
 path distances it computes will all be correct.
 
- 
+
 
 Problem 9.6 Continuing the previous problem, suppose now that the input graph G does contain a negative cycle, and also a path from the starting vertex s to this cycle. Suppose you run Dijkstra’s algorithm on this input. Which of the following statements are true? (Choose all that apply.)
 
- 
+
 
 a\) Dijkstra’s algorithm might loop forever.
 
@@ -870,13 +870,13 @@ d\) Dijkstra’s algorithm always halts, and in some cases the shortest-
 
 path distances it computes will all be correct.
 
- 
+
 
 Challenge Problems
 
 Problem 9.7 (S) Consider a directed graph G = (V, E) with non-negative edge lengths and a starting vertex s. Define the bottleneck of a path to be the maximum length of one of its edges (as opposed to the sum of the lengths of its edges). Show how to modify Dijkstra’s algorithm to compute, for each vertex v 2 V , the smallest bottleneck of any s-v path. Your algorithm should run in O(mn) time, where m and n denote the number of edges and vertices, respectively. 94 Dijkstra’s Shortest-Path Algorithm
 
- 
+
 
 Programming Problems
 

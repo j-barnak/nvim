@@ -1,14 +1,14 @@
 ## Chapter 11
 
- 
+
 
 Search Trees
 
- 
+
 
 A search tree, like a heap, is a data structure for storing an evolving set of objects associated with keys (and possibly lots of other data). It maintains a total ordering over the stored objects, and can support a richer set of operations than a heap, at the expense of increased space and, for some operations, somewhat slower running times. We’ll start with the “what” (that is, supported operations) before proceeding to the “why” (applications) and the “how” (optional implementation details).
 
- 
+
 
 11.1 Sorted Arrays
 
@@ -26,13 +26,13 @@ Min (Max): return a pointer to the object in the data structure with the smalles
 
 Predecessor (Successor): given a pointer to an object in the data structure, return a pointer to the object with
 
- 
+
 
 126
 
 11.1 Sorted Arrays 127
 
- 
+
 
 the next-smallest (respectively, next-largest) key. If the given object has the minimum (respectively, maximum) key, report “none.”
 
@@ -46,11 +46,11 @@ Let’s review how to implement each of these operations, with the
 
 following running example:
 
- 
+
 
 3 6 10 11 17 23 30 36
 
- 
+
 
 • The Search operation uses binary search: First check if the
 
@@ -62,7 +62,7 @@ small). 1 For example, to search the array above for the key 8, binary search wi
 
 number in a phone book. If you haven’t walked through the code of this algorithm before, look it up in your favorite introductory programming book or tutorial. 128 Search Trees
 
- 
+
 
 • Min and Max are easy to implement in O(1) time: Return a
 
@@ -88,7 +88,7 @@ i 2 th and ( i + 1) th positions, the correct answer is i .
 
 Summarizing, here’s the final scorecard for sorted arrays:
 
- 
+
 
 Operation Running time
 
@@ -110,11 +110,11 @@ Rank O(log n)
 
 Table 11.1: Sorted arrays: supported operations and their running times, where n denotes the current number of objects stored in the array.
 
- 
+
 
 2 This description assumes, for simplicity, that there are no duplicate keys. What changes are necessary to accommodate multiple objects with the same key? 11.2 Search Trees: Supported Operations 129
 
- 
+
 
 11.1.2 Unsupported Operations
 
@@ -128,11 +128,11 @@ Delete: for a key k, delete an object with key k from the
 
 data structure, if one exists.3
 
- 
+
 
 These two operations aren’t impossible to implement with a sorted array, but they’re painfully slow—inserting or deleting an element while maintaining the sorted array property requires linear time in the worst case. Is there an alternative data structure that replicates all the functionality of a sorted array, while matching the logarithmic-time performance of a heap for the Insert and Delete operations?
 
- 
+
 
 11.2 Search Trees: Supported Operations
 
@@ -146,7 +146,7 @@ arrays:
 
 operation (which takes a key as input) is different from the one for heaps (which takes a pointer to an object as input). This is because heaps do not support fast search. In a sorted array (as well as in search trees and hash tables), it’s easy to recover a pointer to an object given its key (via Search). 130 Search Trees
 
- 
+
 
 Operation Sorted Array Balanced Search Tree
 
@@ -170,7 +170,7 @@ Delete O(n) O(log n)
 
 Table 11.2: Balanced search trees vs. sorted arrays: supported operations and their running times, where n denotes the current number of objects stored in the data structure.
 
- 
+
 
 An important caveat: The running times in Table 11.2 are achieved by a balanced search tree, which is a more sophisticated version of the
 
@@ -186,7 +186,7 @@ search tree (or a data structure based on one5) is usually
 
 the data structure of choice.6
 
- 
+
 
 4 A preview of Sections 11.3 and 11.4: In general, search tree operations run in time proportional to the height of the tree, meaning the longest path from the tree’s root to one of its leaves. In a binary tree with n nodes, the height can be anywhere from ⇡ log n 1 2 (if the tree is perfectly balanced) to n (if the nodes form a single chain). Balanced search trees do a modest amount of extra work to ensure that the height is always O(log n); this height guarantee then leads to the
 
@@ -198,13 +198,13 @@ C++ Standard Template Library are built on top of balanced search trees. 6 One g
 
 \*11.3 Implementation Details 131
 
- 
+
 
 Remember the principle of parsimony: Choose the simplest data structure that supports all the operations required by your application. If you need to maintain only an ordered representation of a static data set (with no insertions or deletions), use a sorted array instead of a balanced search tree; the latter would be overkill. If your data set is dynamic but you care only about fast minimum (or maximum) operations, use a heap instead of a balanced search tree. These simpler data structures do less than a balanced search tree, but what they do, they do better—faster (by a constant or logarithmic factor) and
 
 with less space (by a constant factor).7
 
- 
+
 
 \*11.3 Implementation Details
 
@@ -228,7 +228,7 @@ keys smaller than that of x.
 
 keys larger than that of x 9 .
 
- 
+
 
 7 Chapter 12 covers hash tables, which do still less; but what they do, they do
 
@@ -238,11 +238,11 @@ even better (constant time, for all practical purposes). 8 We refer to nodes and
 
 keys, change the “smaller than” in the first condition to “smaller than or equal to.” 132 Search Trees
 
- 
+
 
 The search tree property imposes a requirement for every node of a search tree, not just for the root:
 
- 
+
 
 toward the root
 
@@ -252,7 +252,7 @@ toward the root
 
 ![](media/index-145_2.jpg)
 
- 
+
 
 all keys all keys
 
@@ -262,7 +262,7 @@ all keys all keys
 
 ![](media/index-145_4.jpg)
 
- 
+
 
 For example, here’s a search tree containing objects with the keys {1, 2, 3, 4, 5}, and a table listing the destinations of the three pointers at each node:
 
@@ -296,7 +296,7 @@ Figure 11.1: A search tree and its corresponding parent and child pointers.
 
 ![](media/index-145_12.jpg)
 
- 
+
 
 Binary search trees and heaps differ in several ways. Heaps can be thought of as trees, but they are implemented as arrays, with no explicit pointers between objects. A search tree explicitly stores three pointers per object, and hence uses more space (by a constant factor). Heaps don’t need explicit pointers because they always correspond to full binary trees, while binary search trees can have an arbitrary structure.
 
@@ -314,7 +314,7 @@ Search trees have a different purpose than heaps. For this reason, the search tr
 
 ![](media/index-145_18.jpg)
 
- 
+
 
 are optimized for fast minimum computations, and the heap property— that a child’s key is only bigger than its parent’s key—makes the minimum-key object easy to find (it’s the root). Search trees are optimized for—wait for it—search, and the search tree property is defined accordingly. For example, if you are searching for an object with the key 23 in a search tree and the root’s key is 17, you know that the object can reside only in the root’s right subtree, and can discard the objects in the left subtree from further consideration. This should remind you of binary search, as befits a data structure whose raison d’être is to simulate a dynamically changing sorted array.
 
@@ -354,7 +354,7 @@ its root to a leaf.10 Different search trees containing identical sets of object
 
 ![](media/index-146_8.jpg)
 
- 
+
 
 perfectly balanced binary tree ⇡ log n n 1. 2 to \| {z } \| {z } chain, as above (worst-case scenario) (best-case scenario)
 
@@ -368,7 +368,7 @@ of a binary search tree in time proportional to the tree’s height (save
 
 134 Search Trees
 
- 
+
 
 OutputSorted , which runs in time linear in n). For the refinements of binary search trees that are guaranteed to have height O(log n) (see
 
@@ -390,19 +390,19 @@ For example, suppose we search for an object with key 2 in our first binary sear
 
 ![](media/index-147_1.jpg)
 
- 
+
 
 1 5
 
 ![](media/index-147_2.jpg)
 
- 
+
 
 2 4
 
 ![](media/index-147_3.jpg)
 
- 
+
 
 Because the root’s key (3) is too big, the first step traverses the left child pointer. Because the next node’s key is too small (1), the second step traverses the right child pointer, arriving at the desired object. If we search for an object with key 6, the search traverses the root’s right child pointer (as the root’s key is too small). Because the next node’s key (5) is also too small, the search tries to follow another right child pointer, encounters a null pointer, and halts the search (unsuccessfully).
 
@@ -420,7 +420,7 @@ Because the root’s key (3) is too big, the first step traverses the left child
 
 \*11.3 Implementation Details 135
 
- 
+
 
 Search
 
@@ -434,7 +434,7 @@ appropriate (left if k is less than the current node’s key, right if k is bigg
 
 “none” (upon reaching a null pointer).
 
- 
+
 
 The running time is proportional to the number of pointers followed, which is at most the height of the search tree (plus 1, if you count the final null pointer of an unsuccessful search).
 
@@ -506,7 +506,7 @@ repeatedly following left child pointers leads to the object with the minimum ke
 
 136 Search Trees
 
- 
+
 
 Min (Max)
 
@@ -518,17 +518,17 @@ long as possible, until encountering a null pointer.
 
 3\. Return a pointer to the last object visited.
 
- 
+
 
 The running time is proportional to the number of pointers followed, which is O(height).
 
- 
+
 
 11.3.5 Implementing Predecessor in O(height) Time
 
 Next is the Predecessor operation; the implementation of the Successor operation is analogous.
 
- 
+
 
 Predecessor : given a pointer to an object in the data structure, return a pointer to the object with the next-
 
@@ -536,29 +536,29 @@ smallest key. (If the object has the minimum key, report
 
 “none.”)
 
- 
+
 
 Given an object x, where could x’s predecessor reside? Not in x’s right subtree, where all the keys are larger than x’s key (by the search tree property). Our running example
 
- 
+
 
 3
 
 ![](media/index-149_1.jpg)
 
- 
+
 
 1 5
 
 ![](media/index-149_2.jpg)
 
- 
+
 
 2 4
 
 ![](media/index-149_3.jpg)
 
- 
+
 
 illustrates two cases. The predecessor might appear in the left subtree (as for the nodes with keys 3 and 5), or it could be an ancestor farther up in the tree (as for the nodes with keys 2 and 4).
 
@@ -576,7 +576,7 @@ illustrates two cases. The predecessor might appear in the left subtree (as for 
 
 \*11.3 Implementation Details 137
 
- 
+
 
 The general pattern is: If an object x’s left subtree is non-empty,
 
@@ -596,7 +596,7 @@ the root. If the traversal visits consecutive nodes y and z with y a right child
 
 3\. Otherwise, report “none.”
 
- 
+
 
 The running time is proportional to the number of pointers followed, which in all cases is O(height).
 
@@ -612,11 +612,11 @@ A lazy way to implement this operation is to first use the Min opera-tion to out
 
 to x. 12 Right turns can lead only to nodes with larger keys, which cannot be x’s predecessor. The search tree property also implies that neither more distant ancestors nor non-ancestors can be x’s predecessor (as you should check). 138 Search Trees
 
- 
+
 
 invoke the Successor operation to output the rest of the objects in order. A better method is to use what’s called an in-order traversal of the search tree, which recursively processes the root’s left subtree, then the root, and then the root’s right subtree. This idea meshes perfectly with the search tree property, which implies that Output-Sorted should first output the objects in the root’s left subtree in order, followed by the object at the root, followed by the objects in the root’s right subtree in order.
 
- 
+
 
 OutputSorted
 
@@ -630,27 +630,27 @@ subtree.
 
 subtree.
 
- 
+
 
 For a tree containing n objects, the operation performs n recursive calls (one initiated at each node) and does a constant amount of work in each, for a total running time of O(n).
 
- 
+
 
 11.3.7 Implementing Insert in O(height) Time
 
 None of the operations discussed so far modify the given search tree, so they run no risk of screwing up the crucial search tree property. Our next two operations—Insert and Delete—make changes to the tree, and must take care to preserve the search tree property.
 
- 
+
 
 Insert : given a new object x, add x to the data structure.
 
- 
+
 
 The Insert operation piggybacks on Search. An unsuccessful search for an object with key k locates where such an object would have appeared. This is the appropriate place to stick a new object with key k (rewiring the old null pointer). In our running example, the correct location for a new object with key 6 is the spot where our unsuccessful search concluded:
 
 \*11.3 Implementation Details 139
 
- 
+
 
 3 3
 
@@ -660,13 +660,13 @@ The Insert operation piggybacks on Search. An unsuccessful search for an object 
 
 ![](media/index-152_2.jpg)
 
- 
+
 
 2 4 2 4 6
 
 ![](media/index-152_3.jpg)
 
- 
+
 
 What if there is already an object with key k in the tree? If you want to avoid duplicate keys, the insertion can be ignored. Otherwise, the search follows the left child of the existing object with key k, pushing onward until a null pointer is encountered.
 
@@ -700,7 +700,7 @@ its child pointers to null.
 
 ![](media/index-152_11.jpg)
 
- 
+
 
 The operation preserves the search tree property because it places
 
@@ -734,7 +734,7 @@ Delete : for a key k, delete an object with key k from the search tree, if one e
 
 ![](media/index-152_21.jpg)
 
- 
+
 
 The main challenge is to repair a tree after a node removal so that the search tree property is restored.
 
@@ -744,19 +744,19 @@ The first step is to invoke Search to locate an object x with key k. (If there i
 
 ![](media/index-153_1.jpg)
 
- 
+
 
 1 5 1 5
 
 ![](media/index-153_2.jpg)
 
- 
+
 
 delete 2 4 4
 
 ![](media/index-153_3.jpg)
 
- 
+
 
 For every remaining node y, the nodes in y’s subtrees are the same as before, except possibly with x removed; the search tree property continues to hold.
 
@@ -778,19 +778,19 @@ For example, if we delete the node with key 5 from our favorite search tree:
 
 ![](media/index-153_8.jpg)
 
- 
+
 
 1 delete 5 1 4
 
 ![](media/index-153_9.jpg)
 
- 
+
 
 2 4 2
 
 ![](media/index-153_10.jpg)
 
- 
+
 
 By the same reasoning as in the first case, the search property is preserved.
 
@@ -850,7 +850,7 @@ The hard case is when x has two children. Deleting x leaves two nodes without a 
 
 ![](media/index-153_36.jpg)
 
- 
+
 
 The key trick is to reduce the hard case to one of the easy ones.
 
@@ -874,13 +874,13 @@ delete 3 2
 
 ![](media/index-154_2.jpg)
 
- 
+
 
 predecessor 2 4 3 4
 
 ![](media/index-154_3.jpg)
 
- 
+
 
 This crazy idea looks like a bad one, as we’ve now violated the search tree property (with the node with key 3 in the left subtree of the node with key 2). But every violation of the search tree property
 
@@ -894,19 +894,19 @@ involves the node x 16 , which we’re going to delete anyway. Because x now occ
 
 ![](media/index-154_6.jpg)
 
- 
+
 
 1 5 1 5
 
 ![](media/index-154_7.jpg)
 
- 
+
 
 delete 4 3 4
 
 ![](media/index-154_8.jpg)
 
- 
+
 
 15 The successor also works fine, if you prefer.
 
@@ -976,7 +976,7 @@ delete 4 3 4
 
 142 Search Trees
 
- 
+
 
 Delete
 
@@ -996,23 +996,23 @@ priate child pointer of x’s parent to x’s child, and the parent pointer of x
 
 that has the biggest key, and delete x from its new position (where it has at most one child).
 
- 
+
 
 The operation performs a constant amount of work in addition to one Search and one Predecessor operation, so it runs in O(height) time.
 
- 
+
 
 11.3.9 Augmented Search Trees for Select
 
 Finally, the Select operation:
 
- 
+
 
 Select : given a number i, between 1 and the number of objects, return a pointer to the object in the data structure
 
 with the ith-smallest key.
 
- 
+
 
 To get Select to run quickly, we’ll augment the search tree by having each node keep track of information about the structure of the tree
 
@@ -1024,31 +1024,31 @@ time (as you should check).
 
 \*11.3 Implementation Details 143
 
- 
+
 
 *size(3)=5* 3
 
 ![](media/index-156_1.jpg)
 
- 
+
 
 1 *size(1)=2* *size(5)=2* 5
 
 ![](media/index-156_2.jpg)
 
- 
+
 
 *size(2)=1* 2 4 *size(4)=1*
 
 ![](media/index-156_3.jpg)
 
- 
+
 
 we have size(1) = 2, size(2) = 1, size(3) = 5, size(4) = 1, and size(5) = 2.
 
 ![](media/index-156_4.jpg)
 
- 
+
 
 Quiz 11.1
 
@@ -1074,7 +1074,7 @@ d\) There is no general relationship.
 
 (See Section 11.3.10 for the solution and discussion.)
 
- 
+
 
 How is this additional information helpful? Imagine you’re looking
 
@@ -1082,7 +1082,7 @@ for the object with the 17th-smallest key (i.e., i = 17) in a search tree with 1
 
 144 Search Trees
 
- 
+
 
 Select
 
@@ -1100,7 +1100,7 @@ in the left subtree.
 
 smallest key in the right subtree.18
 
- 
+
 
 Because each node of the search tree stores the size of its subtree, each recursive call performs only a constant amount of work. Each recursive call proceeds further downward in the tree, so the total amount of work is O(height).
 
@@ -1108,19 +1108,19 @@ Paying the piper. We still have to pay the piper. We’ve added and exploited me
 
 accurate.19
 
- 
+
 
 11.3.10 Solution to Quiz 11.1
 
 Correct answer: (c). Every node in the subtree rooted at x is either x itself, or a node in x’s left subtree, or a node in x’s right subtree. We therefore have
 
- 
+
 
 size(x) = size(y) + size(z) + 1 . \|{z} \| {z } \| {z } x
 
 nodes in left subtree nodes in right subtree
 
- 
+
 
 18 The structure of the recursion might remind you of our selection algorithms
 
@@ -1132,7 +1132,7 @@ node on the path between the root and the newly inserted object.
 
 \*11.4 Balanced Search Trees 145
 
- 
+
 
 \*11.4 Balanced Search Trees
 
@@ -1160,7 +1160,7 @@ The running time of every binary search tree operation (save Out-putSorted) is p
 
 ![](media/index-158_5.jpg)
 
- 
+
 
 The difference between a logarithmic and a linear running time is huge, so it’s a win to work a little harder in Insert and Delete—still O(height) time, but with a larger constant factor—to guarantee that the tree’s height is always O(log n).
 
@@ -1184,11 +1184,11 @@ and visualization demos that are freely available online.21 To whet
 
 21 Standard textbook treatments include Chapter 13 of Introduction to Algo-rithms (Third Edition), by Thomas H. Cormen, Charles E. Leiserson, Ronald L. Rivest, and Clifford Stein (MIT Press, 2009); and Section 3.3 of Algorithms (Fourth Edition), by Robert Sedgewick and Kevin Wayne (Addison-Wesley, 2011). 146 Search Trees
 
- 
+
 
 your appetite for further study, let’s conclude the chapter with one of the most ubiquitous ideas in balanced search tree implementations.
 
- 
+
 
 11.4.2 Rotations
 
@@ -1222,7 +1222,7 @@ rotate rotate 3 5 2
 
 ![](media/index-159_7.jpg)
 
- 
+
 
 A rotation takes a parent-child pair and reverses their relationship
 
@@ -1286,7 +1286,7 @@ See also the bonus videos at [www.algorithmsilluminated.org](http://www.algorith
 
 \*11.4 Balanced Search Trees 147
 
- 
+
 
 toward the root toward the root
 
@@ -1328,7 +1328,7 @@ Figure 11.2: A left rotation in action.
 
 ![](media/index-160_10.jpg)
 
- 
+
 
 forces us to stick the smallest subtree (A) as x’s left child, and the largest subtree (C) as y’s right child. This leaves one slot for subtree B (x’s right child pointer), and fortunately the search tree property works out: All the subtree’s keys are wedged between those of x and y, and the subtree winds up in y’s left subtree (where it needs to be) and x’s right subtree (ditto).
 
@@ -1338,7 +1338,7 @@ A right rotation is then a left rotation in reverse (Figure 11.3).
 
 ![](media/index-160_12.jpg)
 
- 
+
 
 toward the root
 
@@ -1388,7 +1388,7 @@ Figure 11.3: A right rotation in action.
 
 ![](media/index-160_24.jpg)
 
- 
+
 
 Because a rotation merely rewires a few pointers, it can be imple-
 
@@ -1448,7 +1448,7 @@ The operations that modify the search tree—Insert and Delete— 148 Search Tre
 
 ![](media/index-160_50.jpg)
 
- 
+
 
 are the ones that must employ rotations. Without rotations, such an operation might render the tree a little more unbalanced. Since a single insertion or deletion can wreak only so much havoc, it should be plausible that a small—constant or perhaps logarithmic—number of rotations can correct any newly created imbalance. This is ex-actly what the aforementioned balanced search tree implementations do. The extra work from rotations adds O(log n) overhead to the Insert and Delete operations, leaving their overall running times at O(log n).
 
@@ -1488,7 +1488,7 @@ ported operations above can be implemented in
 
 O(height) time. (For Select and Rank, after Problems 149
 
- 
+
 
 augmenting the tree to maintain subtree sizes
 
@@ -1500,7 +1500,7 @@ in the Insert and Delete operations—still O(height) time, but with a larger co
 
 always O(log n).
 
- 
+
 
 Test Your Understanding
 
@@ -1520,7 +1520,7 @@ d\) Balanced binary search trees are always preferable to sorted
 
 arrays.
 
- 
+
 
 Problem 11.2 You are given a binary tree with n nodes (via a pointer to its root). Each node of the tree has a size field, as in
 
@@ -1536,7 +1536,7 @@ d\) 2 ⇥ ( n )
 
 150 Search Trees
 
- 
+
 
 Programming Problems
 

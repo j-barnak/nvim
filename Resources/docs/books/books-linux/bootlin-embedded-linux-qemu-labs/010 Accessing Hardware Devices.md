@@ -52,9 +52,7 @@ You can also check whether /sys/class/thermal exists and is not empty on your sy
 
 22
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 Next, you can now explore all the buses (virtual or physical) available on your system, by checking the contents of /sys/bus.
 
@@ -72,6 +70,3 @@ Don’t hesitate to spend more time exploring /sys on your system and asking que
 
 That’s all for now!
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 23
-
-Embedded Linux System Development

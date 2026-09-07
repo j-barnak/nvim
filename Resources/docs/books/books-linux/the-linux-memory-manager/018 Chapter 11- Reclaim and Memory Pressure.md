@@ -1,6 +1,12 @@
+
+
+**11**
+
+
+
 **R E C L A I M A N D M E M O R Y P R E S S U R E**
 
- 
+
 
 Memory pressure arises when more memory is re-
 
@@ -41,7 +47,7 @@ taining memory with broadly equal access time to memory contained within
 it, and zones describe contiguous physical memory ranges which are main-
 
 
- 
+
 
 tained as distinct entities largely in order to account for hardware devices capable only of accessing memory within a particular range.
 
@@ -51,11 +57,11 @@ mance of reclaim is shown in Figure 2-12 and Chapter 2, however for conve-
 
 nience we reproduce it here in Figure 11-1.
 
- 
+
 
 Free pages
 
- 
+
 
 If any zone in a node
 
@@ -73,7 +79,7 @@ all nodes indirect reclaim sleeps
 
 Low for that node.
 
- 
+
 
 Minimum
 
@@ -85,11 +91,11 @@ allocated, or OOM.
 
 Time
 
- 
+
 
 *Figure 11-1: Zone Watermarks*
 
- 
+
 
 We examine indirect and direct reclaim separately in Sections 11.4
 
@@ -129,15 +135,15 @@ in fixed arrays before being processed in a batch once each folio batch be-
 
 comes full. We examine this in Section 11.7.
 
- 
 
 
 
- 
+
+
 
 **11.1 Physical Allocation Slow Path**
 
- 
+
 
 When allocating via the “fast path”, i.e. from either the Per-CPU-Pages (see
 
@@ -159,11 +165,11 @@ shown in Listing 2-59 and Section 2.8.2), we must take the “slow”path in
 
 We examine the core of the logic of this function in Figure 11-2.
 
- 
 
 
 
- 
+
+
 
 [*WMARK_LOW*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n351) Disallow combination of [\_\_GFP_ATOMIC](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n138)
 
@@ -171,19 +177,19 @@ allocation failed in and [\_\_GFP_DIRECT_RECLAIM](https://git.kernel.org/pub/scm
 
 [*\_\_alloc_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5513) Warn if so & clear [\_\_GFP_ATOMIC](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n138)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n138)
 
- 
+
 
 Determine allocation flags
 
 via [gfp_to_alloc_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4816).
 
- 
+
 
 Determine preferred zone
 
 via [first_zones_zonelist()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1289).
 
- 
+
 
 If [ALLOC_KSWAPD](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n785) set, perform indirect
 
@@ -205,7 +211,7 @@ this time at [WMARK_MIN](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 No
 
- 
+
 
 Can attempt compaction if water-
 
@@ -215,7 +221,7 @@ marks must be obeyed and order \>
 
 \> 1 & allocation is not movable.
 
- 
+
 
 Yes Try early direct compaction via
 
@@ -281,13 +287,13 @@ order \> [PAGE_ALLOC_COSTLY_ORDER](https://git.kernel.org/pub/scm/linux/kernel/g
 
 Go to Figure 11-3.
 
- 
+
 
 *Figure 11-2:* [*\_\_alloc_pages_slowpath()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) *Core Logic*
 
 
 
- 
+
 
 We will examine the code in detail starting at Listing 11-1 below. When
 
@@ -297,7 +303,7 @@ attempt to retry, possibly invoking the OOM killer. We examine this logic in
 
 Figure 11-3.
 
- 
+
 
 From Figure 11-2 To retry label in Figure 11-2.
 
@@ -357,19 +363,19 @@ No
 
 Go to nopage label (see Figure 11-4).
 
- 
+
 
 *Figure 11-3:* [*\_\_alloc_pages_slowpath()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) *Retry/OOM Logic*
 
- 
+
 
 The logic invoked when no page can be found is shown in Figure 11-4.
 
- 
+
 
 From Figure 11-2 & Figure 11-3
 
- 
+
 
 If [\_\_GFP_NOFAIL](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n220) is set, and di-
 
@@ -399,15 +405,15 @@ Yes
 
 Return page to caller.
 
- 
+
 
 *Figure 11-4:* [*\_\_alloc_pages_slowpath()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) *No Page Logic*
 
- 
 
 
 
- 
+
+
 
 If we reach the slow path allocator function, [\_\_alloc_pages_slowpath()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015),
 
@@ -417,7 +423,7 @@ We examine [\_\_alloc_pages_slowpath()](https://git.kernel.org/pub/scm/linux/ker
 
 some of the out of scope compaction logic, though keeping the general invo-cation for illustration, also eliding out of scope CMA and the majority of out of scope CPU set logic).
 
- 
+
 
 5014 **static inline struct** page \* 5015 **\_\_alloc_pages_slowpath**(**gfp_t** gfp_mask, **unsigned int** order, 5016 **struct** alloc_context \*ac) 5017 {
 
@@ -433,11 +439,11 @@ some of the out of scope compaction logic, though keeping the general invo-catio
 
 5035 **if** (**WARN_ON_ONCE**((gfp_mask & (**\_\_GFP_ATOMIC**\|**\_\_GFP_DIRECT_RECLAIM**)) == 5036 (**\_\_GFP_ATOMIC**\|**\_\_GFP_DIRECT_RECLAIM**))) 5037 gfp_mask &= ~**\_\_GFP_ATOMIC**;
 
- 
+
 
 *Listing 11-1:* mm/page_alloc.c: [*\_\_alloc_pages_slowpath()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) *Preface*
 
- 
+
 
 We record whether we are able to perform direct reclaim in
 
@@ -453,11 +459,11 @@ We perform a sanity check to ensure that direct reclaim is not specified
 
 when an atomic allocation is requested (an atomic allocation is one per-formed in a context when sleep cannot be permitted such as interrupt con-text), as direct reclaim necessarily implies a non-atomic context (for instance, in real-time kernels, it triggers a voluntary context switch).
 
- 
 
 
 
- 
+
+
 
 In this instance the issue is warned about, but the allocation may pro-
 
@@ -469,7 +475,7 @@ After we perform this initial logic we proceed with performing indirect
 
 reclaim if required, a case we examine in Listing 11-2.
 
- 
+
 
 5039 **restart**:
 
@@ -517,11 +523,11 @@ reclaim if required, a case we examine in Listing 11-2.
 
 5086 **goto got_pg**;
 
- 
+
 
 *Listing 11-2:* mm/page_alloc.c: [*\_\_alloc_pages_slowpath()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) *Indirect Reclaim*
 
- 
+
 
 We start by determining the correct allocation flags to apply to this allo-
 
@@ -537,11 +543,11 @@ the remainder of the flags in [gfp_to_alloc_flags()](https://git.kernel.org/pub/
 
 scope).
 
- 
 
 
 
- 
+
+
 
 415 **static inline unsigned int** 416 **gfp_to_alloc_flags**(**gfp_t** gfp_mask) 417 {
 
@@ -583,11 +589,11 @@ scope).
 
 454 **return** alloc_flags; 455 }
 
- 
+
 
 *Listing 11-3:* mm/page_alloc.c: [*gfp_to_alloc_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4816)
 
- 
+
 
 This sets the [ALLOC_WMARK_MIN](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n757) flag, indicating that the zone from which
 
@@ -615,11 +621,11 @@ Finally, if the current thread (represented by the [current](https://git.kernel.
 
 real-time task as checked by [rt_task()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/rt.h?h=v6.0#n16) and is in task context as checked by
 
- 
 
 
 
- 
+
+
 
 [in_task()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/preempt.h?h=v6.0#n121) (i.e. not servicing a non-maskable interrupt or NMI, in a hard inter-
 
@@ -659,7 +665,7 @@ even at minimum watermark level, so must now perform reclaim directly in
 
 order to service it. We examine the direct reclaim logic in Listing 11-4.
 
- 
+
 
 5039 */\**
 
@@ -691,11 +697,11 @@ order to service it. We examine the direct reclaim logic in Listing 11-4.
 
 5145 **if** (alloc_flags & **ALLOC_KSWAPD**) 5146 **wake_all_kswapds**(order, gfp_mask, ac); 5147
 
- 
 
 
 
- 
+
+
 
 5148 reserve_flags = **\_\_gfp_pfmemalloc_flags**(gfp_mask); 5149 **if** (reserve_flags) 5150 alloc_flags = **gfp_to_alloc_flags_cma**(gfp_mask, reserve_flags);
 
@@ -737,21 +743,21 @@ order to service it. We examine the direct reclaim logic in Listing 11-4.
 
 5186 **goto got_pg**;
 
- 
+
 
 *Listing 11-4:* mm/page_alloc.c: [*\_\_alloc_pages_slowpath()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) *Direct Reclaim*
 
- 
+
 
 While compaction is out of scope for the book, we identify the points at
 
 which it would occur during slow-path allocation. Here, we firstly attempt direct compaction, i.e. a blocking form of compaction if and only if direct reclaim is generally permitted and either we have reached a costly order, or the allocation is higher order and the memory being allocated is not mov-
 
- 
 
 
 
- 
+
+
 
 able (this may be the last opportunity to move memory that could be other-
 
@@ -763,7 +769,7 @@ tails of which are out of scope for the book. If the allocation succeeds under
 
 direct compaction, then the page is returned.
 
- 
+
 
 **N O T E** Compaction is the process by which the kernel migrates movable folios in order to
 
@@ -773,7 +779,7 @@ kernel is able to avert higher order fragmentation resulting in an inability to 
 
 memory.
 
- 
+
 
 Next, if [ALLOC_KSWAPD](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n785) is specified, we rewake kswapd for all zones of this
 
@@ -793,7 +799,7 @@ Note that we set alloc_flags to the result of this function via
 
 of this, whether enabled or not, it returns the reserve_flags parameter.
 
- 
+
 
 4872 */\**
 
@@ -809,11 +815,11 @@ of this, whether enabled or not, it returns the reserve_flags parameter.
 
 4892 }
 
- 
+
 
 *Listing 11-5:* mm/page_alloc.c: [*\_\_gfp_pfmemalloc_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4876)
 
- 
+
 
 This determines the circumstances under which emergency memory
 
@@ -821,17 +827,17 @@ reserves can be used—broadly [\_\_GFP_MEMALLOC](https://git.kernel.org/pub/scm
 
 across a thread by setting the [PF_MEMALLOC](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n1713) flag in [struct task_struct-\>flags](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n727))
 
- 
 
 
 
- 
+
+
 
 implies that watermarks can be ignored altogether and all memory in a zone
 
 can be used (as indicated by [ALLOC_NO_WATERMARKS](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n760)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n760)
 
- 
+
 
 **N O T E** Thread-specific allocation flags are often enabled and disabled via *xxx_save()* and
 
@@ -839,7 +845,7 @@ can be used (as indicated by [ALLOC_NO_WATERMARKS](https://git.kernel.org/pub/sc
 
 [*memalloc_noreclaim_save()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/mm.h?h=v6.0#n339) and [*memalloc_noreclaim_restore()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched/mm.h?h=v6.0#n346) respectively.
 
- 
+
 
 In non-interrupt context, [oom_reserves_allowed()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4857)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4857) is used to determine
 
@@ -893,7 +899,7 @@ where we must determine if a retry makes sense or not, which we examine in
 
 Listing 11-6.
 
- 
+
 
 5188 */\* Do not loop if specifically requested \*/* 5189 **if** (gfp_mask & **\_\_GFP_NORETRY**) 5190 **goto nopage**; 5191
 
@@ -903,11 +909,11 @@ Listing 11-6.
 
 5196 **if** (costly_order && !(gfp_mask & **\_\_GFP_RETRY_MAYFAIL**)) 5197 **goto nopage**;
 
- 
 
 
 
- 
+
+
 
 5198
 
@@ -927,11 +933,11 @@ Listing 11-6.
 
 5209 **if** (did_some_progress \> 0 && 5210 **should_compact_retry**(ac, order, alloc_flags, 5211 compact_result, &compact_priority, 5212 &compaction_retries)) 5213 **goto retry**;
 
- 
+
 
 *Listing 11-6:* mm/page_alloc.c: [*\_\_alloc_pages_slowpath()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) *Retry Logic*
 
- 
+
 
 The purpose of this logic is to assess whether it makes sense to retry, and
 
@@ -981,7 +987,7 @@ as shown in Listing 11-7 (eliding tracing hooks and some work queue con-
 
 gestion logic).
 
- 
+
 
 4899 */\**
 
@@ -991,11 +997,11 @@ gestion logic).
 
 4901 *\* for the given allocation request.*
 
- 
 
 
 
- 
+
+
 
 4902 *\**
 
@@ -1039,11 +1045,11 @@ gestion logic).
 
 4943 **for_each_zone_zonelist_nodemask**(zone, z, ac-\>zonelist, 4944 ac-\>highest_zoneidx, ac-\>nodemask) { 4945 **unsigned long** available; 4946 **unsigned long** reclaimable; 4947 **unsigned long** min_wmark = **min_wmark_pages**(zone); 4948 **bool** wmark;
 
- 
 
 
 
- 
+
+
 
 4949
 
@@ -1067,11 +1073,11 @@ gestion logic).
 
 4979 }
 
- 
+
 
 *Listing 11-7:* mm/page_alloc.c: [*should_reclaim_retry()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4910)
 
- 
+
 
 This function is passed a pointer to the [\_\_alloc_pages_slowpath()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015)’s
 
@@ -1125,17 +1131,17 @@ vice requests even under very extreme memory pressure resorting to the out
 
 of memory killer if absolutely necessary.
 
- 
 
 
 
- 
+
+
 
 Finally, if retry is not feasible, we are in a place where we consider an out
 
 of memory condition, which we examine in Listing 11-8.
 
- 
+
 
 5224 */\* Reclaim has failed us, start killing things \*/* 5225 page = **\_\_alloc_pages_may_oom**(gfp_mask, order, ac, &did_some_progress); 5226 **if** (page)
 
@@ -1147,11 +1153,11 @@ of memory condition, which we examine in Listing 11-8.
 
 5235 */\* Retry as long as the OOM killer is making progress \*/* 5236 **if** (did_some_progress) { 5237 no_progress_loops = 0; 5238 **goto retry**; 5239 }
 
- 
+
 
 *Listing 11-8:* mm/page_alloc.c: [*\_\_alloc_pages_slowpath()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) *OOM*
 
- 
+
 
 We perform the actual allocation in this instance via
 
@@ -1179,7 +1185,7 @@ jumping to the no page handling logic are invoked, we end up at the point
 
 of dealing with an allocation failure, a case we examine in Listing 11-9.
 
- 
+
 
 5039 **nopage**:
 
@@ -1195,11 +1201,11 @@ of dealing with an allocation failure, a case we examine in Listing 11-9.
 
 5049 *\* Make sure that \_\_GFP_NOFAIL request doesn't leak out and make sure*
 
- 
 
 
 
- 
+
+
 
 5050 *\* we always retry* 5051 *\*/*
 
@@ -1245,11 +1251,11 @@ of dealing with an allocation failure, a case we examine in Listing 11-9.
 
 5093 }
 
- 
+
 
 *Listing 11-9:* mm/page_alloc.c: [*\_\_alloc_pages_slowpath()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n5015) *Allocation Failure*
 
- 
+
 
 All of the checks are performed when the [\_\_GFP_NOFAIL](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n220) flag is set—in this
 
@@ -1275,15 +1281,15 @@ If this succeeds we return the resultant folio, otherwise we simply uncon-
 
 ditionally retry.
 
- 
 
 
 
- 
+
+
 
 **11.2 LRU Vectors**
 
- 
+
 
 In order to most efficiently make use of memory installed in the system the kernel tries to use as much of it as it can to cache data from disk in memory (see the page cache chapter for more details on the precise details of this).
 
@@ -1295,27 +1301,27 @@ The kernel aspires to implement the Least Recently Used (LRU) cache
 
 replacement policy – conceptually this works as its name suggests – always evicting the least recently used folio. In idealised form:-
 
- 
+
 
 Folio **allocated**
 
- 
+
 
 Folio **touched**
 
- 
+
 
 Folio **evicted**
 
- 
+
 
 Least recently used Most recently used
 
- 
+
 
 *Figure 11-5: Idealised LRU*
 
- 
+
 
 I say aspire to this, as unfortunately this approach is not practical—it
 
@@ -1325,11 +1331,11 @@ Rather than moving folios around in an LRU on each access the ker-
 
 nel in essence samples whether the last folio was accessed on each occa-sion we contemplate reclaim – this is possible because hardware sets the
 
- 
 
 
 
- 
+
+
 
 \_PAGE_ACCESSED page table flag when each base page is accessed. This is also
 
@@ -1415,11 +1421,11 @@ are out of scope for the book), per-node [struct lruvec](https://git.kernel.org/
 
 visualise this in Figure 11-6.
 
- 
 
 
 
- 
+
+
 
 Folio **allocated**
 
@@ -1427,23 +1433,23 @@ Folio **swapped out**
 
 Touched folio **kept**
 
- 
+
 
 **Inactive Anon**
 
- 
+
 
 Folio **deactivated**
 
- 
+
 
 Referenced folio **activated**
 
- 
+
 
 **Active Anon**
 
- 
+
 
 Folio **mapped**
 
@@ -1451,35 +1457,35 @@ Folio **evicted**
 
 Touched folio **kept**
 
- 
+
 
 **Inactive File**
 
- 
+
 
 Folio **deactivated**
 
- 
+
 
 Referenced folio **activated**
 
- 
+
 
 **Active File**
 
- 
+
 
 Touched, executable folio **kept**
 
- 
+
 
 Least recently used Most recently used
 
- 
+
 
 *Figure 11-6: LRU lists*
 
- 
+
 
 This requires some additional explanation – each time a folio reaches
 
@@ -1491,17 +1497,17 @@ check, [folio_check_references()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 thing in Listing 11-70 and Section 11.5.10).
 
- 
+
 
 1433 **static enum** page_references **folio_check_references**(**struct** folio \*folio, 1434 **struct** scan_control \*sc) 1435 {
 
 1436 **int** referenced_ptes, referenced_folio;
 
- 
 
 
 
- 
+
+
 
 1437 **unsigned long** vm_flags; 1438
 
@@ -1529,11 +1535,11 @@ thing in Listing 11-70 and Section 11.5.10).
 
 1487 **return PAGEREF_RECLAIM**; 1488 }
 
- 
+
 
 *Listing 11-10:* mm/vmscan.c: *Simplified [folio_check_references()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1433)*
 
- 
+
 
 Note – We elide a number of edge cases here. We will examine the func-
 
@@ -1555,7 +1561,7 @@ The logic is as follows (again, importantly, we ignore some edge case de-
 
 tails here – see Section 11.5 for a full analysis):-
 
- 
+
 
 1. Determine how many PTEs (or higher page table levels if huge) which
 
@@ -1563,11 +1569,11 @@ map this folio are marked ‘young’ (i.e. whether \_PAGE_ACCESSED is set for
 
 x86-64) via [folio_referenced()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n900), simultaneously clearing this flag ready for the next check.
 
- 
 
 
 
- 
+
+
 
 2. Check and clear the folio’s [PG_referenced](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n102) flag.
 
@@ -1587,7 +1593,7 @@ erence the folio, then we activate the folio. Note that the folio will retain it
 
 for another go-around.
 
- 
+
 
 For the active LRU the logic is different – for anonymous pages we sim-
 
@@ -1601,7 +1607,7 @@ ing read from or written to or a folio being swapped in then it is manually
 
 marked accessed via [folio_mark_accessed()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n441) (more on this function later). Ex-amining how these states vary:-
 
- 
+
 
 Reclaim
 
@@ -1609,21 +1615,21 @@ Evicted Inactive Inactive Active
 
 Unreferenced Referenced Referenced
 
- 
+
 
 folio_mark_accessed() folio_mark_accessed()
 
- 
+
 
 Active
 
 Unreferenced
 
- 
+
 
 *Figure 11-7: Folio active/referenced states*
 
- 
+
 
 Note that solid lines denote folio promotion, dotted lines de-
 
@@ -1631,7 +1637,7 @@ note folio demotion and that [folio_mark_accessed()](https://git.kernel.org/pub/
 
 Examining folio_mark_accessed():-
 
- 
+
 
 431 */\**
 
@@ -1639,11 +1645,11 @@ Examining folio_mark_accessed():-
 
 434 *\* inactive,unreferenced* *-\>* *inactive,referenced* 435 *\* inactive,referenced* *-\>* *active,unreferenced* 436 *\* active,unreferenced* *-\>* *active,referenced*
 
- 
 
 
 
- 
+
+
 
 437 *\**
 
@@ -1681,7 +1687,7 @@ Examining folio_mark_accessed():-
 
 465 **if** (**folio_test_idle**(folio)) 466 **folio_clear_idle**(folio); 467 }
 
- 
+
 
 *Listing 11-11:* mm/swap.c: [*folio_mark_accessed()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n441)
 
@@ -1697,7 +1703,7 @@ Finally, working set activation is noted (though out of scope for the
 
 book), and if the folio was marked idle, we clear that flag.
 
- 
+
 
 ***11.2.1 struct lruvec***
 
@@ -1711,11 +1717,11 @@ lruvec can be obtained via [folio_lruvec()](https://git.kernel.org/pub/scm/linux
 
 is set). This ultimately invokes [mem_cgroup_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/memcontrol.h?h=v6.0#n730) which looks up the node-
 
- 
 
 
 
- 
+
+
 
 specific lruvec (the node having been obtained via [folio_pgdat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n1436) which ul-
 
@@ -1723,7 +1729,7 @@ timately invokes [page_to_nid()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 Examining the data structure:-
 
- 
+
 
 317 **struct** lruvec {
 
@@ -1737,15 +1743,15 @@ Examining the data structure:-
 
 337 };
 
- 
+
 
 *Listing 11-12:* include/linux/mmzone.h: [*struct lruvec*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n317)
 
- 
+
 
 Examining each field individually:-
 
- 
+
 
 • lists\[\] – This contains the head of each of the aforementioned LRU
 
@@ -1769,11 +1775,11 @@ file LRU. This allows the reclaim scan to maintain balance between the
 
 two. Set via [lru_note_cost()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n298) and [lru_note_cost_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n338). See Section 11.5 for details.
 
- 
 
 
 
- 
+
+
 
 • file_cost – Used to track the cost of reclaiming the file LRU over the
 
@@ -1797,7 +1803,7 @@ been evicted then faulted back in. Used as part of the working set logic.
 
 cally retrieved via [lruvec_pgdat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1060)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n1060)
 
- 
+
 
 ***11.2.2 lruvec Operations***
 
@@ -1813,7 +1819,7 @@ Folios are ultimately added to an lruvec by either [lruvec_add_folio()](https://
 
 cial exception of reclaim’s [isolate_lru_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2138), discussed later):-
 
- 
+
 
 97 **static \_\_always_inline**
 
@@ -1827,11 +1833,11 @@ cial exception of reclaim’s [isolate_lru_pages()](https://git.kernel.org/pub/s
 
 102 **update_lru_size**(lruvec, lru, **folio_zonenum**(folio), 103 **folio_nr_pages**(folio)); 104 **if** (lru != **LRU_UNEVICTABLE**) 105 **list_add**(&folio-\>lru, &lruvec-\>lists\[lru\]); 106 }
 
- 
+
 
 *Listing 11-13:* include/linux/mm_inline.h: [*lruvec_add_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n98)
 
- 
+
 
 114 **static \_\_always_inline**
 
@@ -1843,19 +1849,19 @@ cial exception of reclaim’s [isolate_lru_pages()](https://git.kernel.org/pub/s
 
 119 **update_lru_size**(lruvec, lru, **folio_zonenum**(folio), 120 **folio_nr_pages**(folio)); 121 */\* This is not expected to be used on LRU_UNEVICTABLE \*/* 122 **list_add_tail**(&folio-\>lru, &lruvec-\>lists\[lru\]);
 
- 
 
 
 
- 
+
+
 
 123 }
 
- 
+
 
 *Listing 11-14:* include/linux/mm_inline.h: [*lruvec_add_folio_tail()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n115)
 
- 
+
 
 131 **static \_\_always_inline**
 
@@ -1865,17 +1871,17 @@ cial exception of reclaim’s [isolate_lru_pages()](https://git.kernel.org/pub/s
 
 136 **if** (lru != **LRU_UNEVICTABLE**) 137 **list_del**(&folio-\>lru); 138 **update_lru_size**(lruvec, lru, **folio_zonenum**(folio), 139 -**folio_nr_pages**(folio)); 140 }
 
- 
+
 
 *Listing 11-15:* include/linux/mm_inline.h: [*lruvec_del_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n132)
 
- 
+
 
 Each of these use [folio_lru_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n81) to determine which LRU list a particu-
 
 lar folio should be assigned to:-
 
- 
+
 
 74 */\*\**
 
@@ -1905,21 +1911,21 @@ folio), folio);
 
 95 }
 
- 
+
 
 *Listing 11-16:* include/linux/mm_inline.h: [*folio_lru_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n81)
 
- 
+
 
 Everything is predicated on [struct folio](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n256) flags, tested via folio_test_xxx()
 
 (see chapter 2 on physical memory for details on how these function):-
 
- 
 
 
 
- 
+
+
 
 • folio_test_active() – Testing whether the PG_active flag is set – When
 
@@ -1939,7 +1945,7 @@ has its mapping marked unevictable as tested by [folio_evictable()](https://git.
 
 This function determines whether the folio should be placed on a file LRU or not. If the PG_swapbacked folio flag is set, indicating that there is a swap backing cache available for the folio (and thus it could be swapped out) then it is considered anonymous, otherwise it is considered a file mapping and should be placed on a file LRU.
 
- 
+
 
 Note that the [enum lru_list](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n278) type is designed such that you can shift be-
 
@@ -1965,49 +1971,49 @@ Meanwhile, let’s examine the non-folio batch functions which interact
 
 with [lruvec_add_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n98)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n98) [lruvec_add_folio_tail()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n115) and [lruvec_del_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n132)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n132)
 
- 
 
 
 
- 
+
+
 
 Compaction Function
 
- 
+
 
 [isolate_migratepages_block()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/compaction.c?h=v6.0#n788)
 
- 
+
 
 Isolation Functions
 
- 
+
 
 [del_page_from_lru_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n142) [isolate_lru_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n132)
 
- 
+
 
 [lruvec_add_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n98) [lruvec_del_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n132) [folio_isolate_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2254)
 
- 
+
 
 [move_pages_to_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2323) [check_move_unevictable_folios()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4881) [release_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n934) [\_\_page_cache_release()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n80)
 
- 
+
 
 Folio Free Functions
 
 [isolate_lru_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2138)
 
- 
+
 
 Reclaim Functions
 
- 
+
 
 *Figure 11-8: Non-batched LRU functions*
 
- 
+
 
 Note that lruvec_add_folio_tail() is not referenced by a non-batch
 
@@ -2019,7 +2025,7 @@ There are two legacy non-folio functions [add_page_to_lru_list()](https://git.ke
 
 Examining each of the different groups of functions by type:-
 
- 
+
 
 • compaction functions – [isolate_migratepages_block()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/compaction.c?h=v6.0#n788) works similarly to the
 
@@ -2037,11 +2043,11 @@ lruvecs are [move_pages_to_lru()](https://git.kernel.org/pub/scm/linux/kernel/gi
 
 their reference count reaches zero, tested via [put_page_testzero()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n721) they need to be removed from the lruvec if they are on one. This
 
- 
 
 
 
- 
+
+
 
 is achieved via either [release_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n934) or [\_\_page_cache_release()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n80)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n80) This will either occur on the folio batch/pagevec code path (ultimately
 
@@ -2057,7 +2063,7 @@ the required operations. This is achieved via [folio_isolate_lru()](https://git.
 
 [isolate_lru_page() . ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n132)They ultimately invoke [lruvec_del_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n132) to pull the folio from its lruvec.
 
- 
+
 
 Note that the majority of operations discussed above remove folios from
 
@@ -2073,11 +2079,11 @@ The majority of operations where folios are added to lruvecs are per-
 
 formed using folio batches, discussed in Section 11.7.
 
- 
+
 
 **11.3 Direct Reclaim**
 
- 
+
 
 Direct reclaim arises when the minimum watermark is breached for all zones
 
@@ -2095,39 +2101,39 @@ on each invocation of [\_\_alloc_pages_direct_reclaim()](https://git.kernel.org/
 
 We examine the direct reclaim call stack in Figure 11-9.
 
- 
+
 
 [\_\_alloc_pages_direct_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4763) [kswapd()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4469)
 
- 
+
 
 [\_\_perform_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4737) [balance_pgdat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4146)
 
- 
+
 
 [try_to_free_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3801) [kswapd_shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4066)
 
- 
+
 
 [do_try_to_free_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3583)
 
- 
+
 
 [shrink_zones()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3463)
 
- 
+
 
 [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194)
 
- 
+
 
 *Figure 11-9: Direct Reclaim Code Path*
 
- 
 
 
 
- 
+
+
 
 As shown in Figure 11-9, direct reclaim is invoked via the
 
@@ -2139,7 +2145,7 @@ We examine [\_\_alloc_pages_direct_reclaim()](https://git.kernel.org/pub/scm/lin
 
 scope PSI memory pressure tracking).
 
- 
+
 
 4761 */\* The really slow allocator path where we enter direct reclaim \*/* 4762 **static inline struct** page \* 4763 **\_\_alloc_pages_direct_reclaim**(**gfp_t** gfp_mask, **unsigned int** order, 4764 **unsigned int** alloc_flags, **const struct** alloc_context \*ac, 4765 **unsigned long** \*did_some_progress) 4766 {
 
@@ -2175,11 +2181,11 @@ scope PSI memory pressure tracking).
 
 4794 }
 
- 
+
 
 *Listing 11-17:* mm/page_alloc.c: [*\_\_alloc_pages_direct_reclaim()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4763)
 
- 
+
 
 We start [\_\_alloc_pages_direct_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4763) by deferring the actual reclaim
 
@@ -2191,11 +2197,11 @@ this page via [get_page_from_freelist()](https://git.kernel.org/pub/scm/linux/ke
 
 ## Chapter 2).
 
- 
 
 
 
- 
+
+
 
 If this fails, we try to unreserve the reserved high atomic page block. This
 
@@ -2223,7 +2229,7 @@ we now examine this in Listing 11-18 (eliding out of scope CPU set, lockdep
 
 and realtime scheduler logic).
 
- 
+
 
 4735 */\* Perform direct synchronous page reclaim \*/* 4736 **static unsigned long**
 
@@ -2251,11 +2257,11 @@ and realtime scheduler logic).
 
 4759 }
 
- 
+
 
 *Listing 11-18:* mm/page_alloc.c: [*\_\_perform_reclaim()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4737)
 
- 
+
 
 The [\_\_perform_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4737) function ultimately wraps [try_to_free_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3801),
 
@@ -2283,17 +2289,17 @@ It also results in all watermarks being ignored in the process of providing
 
 any allocations reclaim needs as checked by [\_\_gfp_pfmemalloc_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4876)..
 
- 
 
 
 
- 
+
+
 
 We wrap the [try_to_free_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3801) function here, which we examine in List-
 
 ing 11-19 (eliding build bug checks and trace hooks).
 
- 
+
 
 3801 **unsigned long try_to_free_pages**(**struct** zonelist \*zonelist, **int** order, 3802 **gfp_t** gfp_mask, **nodemask_t** \*nodemask) 3803 {
 
@@ -2325,11 +2331,11 @@ ing 11-19 (eliding build bug checks and trace hooks).
 
 3841 **return** nr_reclaimed; 3842 }
 
- 
+
 
 *Listing 11-19:* mm/vmscan.c: [*try_to_free_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3801)
 
- 
+
 
 We start by establishing a [struct scan_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n66) object which we thread
 
@@ -2347,11 +2353,11 @@ We indicate that we may unmap memory and swap when reclaiming, and
 
 whether or not we may write out dirty folios to disk is dictated by whether “laptop mode” is enabled. In this mode, reclaim attempts to avoid writing to
 
- 
 
 
 
- 
+
+
 
 disk as much as possible in order to avoid power-hungry rotational disk spin
 
@@ -2367,7 +2373,7 @@ value determines how much of the LRU vectors should be examined (see
 
 Section 11.2), expressed as a shift value, and defaulting to 12.
 
- 
+
 
 **N O T E** The priority value specifies how much the queue length should be right-shifted, so if
 
@@ -2377,7 +2383,7 @@ to the right. This is equivalent to dividing by *4,096*, meaning we scan one-*4,
 
 the LRU vectors for folios to free. As this reduces, we scan more of the lists.
 
- 
+
 
 We maintain a priority so reclaim does as little work as possible in order
 
@@ -2407,7 +2413,7 @@ ing out of scope delay accounting, cgroup logic, and working set logic and a
 
 statistic update).
 
- 
+
 
 3567 */\**
 
@@ -2435,11 +2441,11 @@ statistic update).
 
 3583 **static unsigned long do_try_to_free_pages**(**struct** zonelist \*zonelist, 3584 **struct** scan_control \*sc)
 
- 
 
 
 
- 
+
+
 
 3585 {
 
@@ -2485,11 +2491,11 @@ statistic update).
 
 3643 *\* We make inactive:active ratio decisions based on the node's* 3644 *\* composition of memory, but a restrictive reclaim_idx or a*
 
- 
 
 
 
- 
+
+
 
 3645 *\* memory.low cgroup setting can exempt large amounts of* 3646 *\* memory from reclaim. Neither of which are very common, so* 3647 *\* instead of doing costly eligibility calculations of the* 3648 *\* entire cgroup subtree up front, we assume the estimates are* 3649 *\* good, and retry with forcible deactivation if that fails.* 3650 *\*/*
 
@@ -2501,11 +2507,11 @@ statistic update).
 
 3670 }
 
- 
+
 
 *Listing 11-20:* mm/vmscan.c: [*do_try_to_free_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3801)
 
- 
+
 
 In [do_try_to_free_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3583) we repeatedly try to free [SWAP_CLUSTER_MAX](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n214) pages
 
@@ -2567,11 +2573,11 @@ rectly indicate that reclaim failed when we are simply aborting it to try com-
 
 paction.
 
- 
 
 
 
- 
+
+
 
 After this, we consider one more case, where we skipped deactivating
 
@@ -2581,7 +2587,7 @@ We examine the key [shrink_zones()](https://git.kernel.org/pub/scm/linux/kernel/
 
 invokes in Listing 11-21 (eliding out of scope cgroup and 32-bit architecture-specific logic).
 
- 
+
 
 3455 */\**
 
@@ -2615,11 +2621,11 @@ invokes in Listing 11-21 (eliding out of scope cgroup and 32-bit architecture-sp
 
 3511 */\** 3512 *\* Shrink each node in the zonelist once. If the*
 
- 
 
 
 
- 
+
+
 
 3513 *\* zonelist is ordered by zone (not the default) then*
 
@@ -2647,11 +2653,11 @@ invokes in Listing 11-21 (eliding out of scope cgroup and 32-bit architecture-sp
 
 3553 }
 
- 
+
 
 *Listing 11-21:* mm/vmscan.c: [*shrink_zones()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3463)
 
- 
+
 
 In [shrink_zones()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3463) we iterate through each zone that we could al-
 
@@ -2697,15 +2703,15 @@ determine whether reclaim throttle should be performed via
 
 this function in Listing 11-74.
 
- 
 
 
 
- 
+
+
 
 **11.4 Indirect Reclaim**
 
- 
+
 
 Indirect reclaim is reclaim that is performed as a background task and is im-plemented using a per-node kernel thread which waits to be woken when the need arises (for instance, when an allocation causes a zone to drop below the
 
@@ -2727,35 +2733,35 @@ We will examine how this kernel thread is initialised and executed in Sec-
 
 tion 11.4.1.
 
- 
+
 
 [\_\_alloc_pages_direct_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4763) [kswapd()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4469)
 
- 
+
 
 [\_\_perform_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4737) [balance_pgdat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4146)
 
- 
+
 
 [try_to_free_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3801) [kswapd_shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4066)
 
- 
+
 
 [do_try_to_free_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3583)
 
- 
+
 
 [shrink_zones()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3463)
 
- 
+
 
 [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194)
 
- 
+
 
 *Figure 11-10: Indirect Reclaim Code Path*
 
- 
+
 
 ***11.4.1 Initialisation***
 
@@ -2763,7 +2769,7 @@ The kernel threads are initialised in [kswapd_init()](https://git.kernel.org/pub
 
 ing 11-22.
 
- 
+
 
 4672 **static int \_\_init kswapd_init**(**void**) 4673 {
 
@@ -2777,15 +2783,15 @@ ing 11-22.
 
 4680 }
 
- 
+
 
 *Listing 11-22:* mm/vmscan.c: [*kswapd_init()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4672)
 
- 
 
 
 
- 
+
+
 
 The [kswapd_init()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4672) function initialises the swap via [swap_setup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n1071) (see Listing
 
@@ -2795,7 +2801,7 @@ which have memory attached, running [kswapd_run()](https://git.kernel.org/pub/sc
 
 examine in Listing 11-23.
 
- 
+
 
 4642 **void kswapd_run**(**int** nid)
 
@@ -2811,11 +2817,11 @@ examine in Listing 11-23.
 
 4656 }
 
- 
+
 
 *Listing 11-23:* mm/vmscan.c: [*kswapd_run()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4642)
 
- 
+
 
 The [kswapd_run()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4642) function causes [kswapd()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4469) to be invoked as a kernel
 
@@ -2839,7 +2845,7 @@ indirect reclaim when a zone drops below the low watermark. We examine
 
 this function in Listing 11-24.
 
- 
+
 
 4796 **static void wake_all_kswapds**(**unsigned int** order, **gfp_t** gfp_mask, 4797 **const struct** alloc_context \*ac) 4798 {
 
@@ -2851,11 +2857,11 @@ this function in Listing 11-24.
 
 4805 ac-\>nodemask) { 4806 **if** (!**managed_zone**(zone)) 4807 **continue**; 4808 **if** (last_pgdat != zone-\>zone_pgdat) {
 
- 
 
 
 
- 
+
+
 
 4809 **wakeup_kswapd**(zone, gfp_mask, order, highest_zoneidx); 4810 last_pgdat = zone-\>zone_pgdat; 4811 }
 
@@ -2863,11 +2869,11 @@ this function in Listing 11-24.
 
 4813 }
 
- 
+
 
 *Listing 11-24:* mm/page_alloc.c: [*wake_all_kswapds()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n4796)
 
- 
+
 
 We iterate through each zone which the allocation could make use of,
 
@@ -2877,7 +2883,7 @@ by the buddy allocator, and calling [wakeup_kswapd()](https://git.kernel.org/pub
 
 We examine this function in Listing 11-25 (eliding out of scope cgroup logic and tracing hooks).
 
- 
+
 
 4555 **void wakeup_kswapd**(**struct** zone \*zone, **gfp_t** gfp_flags, **int** order, 4556 **enum** zone_type highest_zoneidx) 4557 {
 
@@ -2909,11 +2915,11 @@ We examine this function in Listing 11-25 (eliding out of scope cgroup logic and
 
 4590 **if** (!(gfp_flags & **\_\_GFP_DIRECT_RECLAIM**)) 4591 **wakeup_kcompactd**(pgdat, order, highest_zoneidx); 4592 **return**;
 
- 
 
 
 
- 
+
+
 
 4593 }
 
@@ -2921,7 +2927,7 @@ We examine this function in Listing 11-25 (eliding out of scope cgroup logic and
 
 4597 **wake_up_interruptible**(&pgdat-\>kswapd_wait); 4598 }
 
- 
+
 
 *Listing 11-25:* mm/vmscan.c: [*wakeup_kswapd()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4555)
 
@@ -2995,7 +3001,7 @@ Finally, if nothing is preventing indirect reclaim from commencing, we
 
 wake it up.
 
- 
+
 
 ***11.4.2 kswapd Thread***
 
@@ -3007,17 +3013,17 @@ We can see in Figure 11-10 how this triggers reclaim, ultimately invoking the
 
 core reclaim function [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) (see Listing 11-40 in Section 11.5).
 
- 
 
 
 
- 
+
+
 
 We examine the indirect reclaim kernel thread function [kswapd()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4469) in List-
 
 ing 11-26 (eliding out of scope task freezing logic and trace hooks).
 
- 
+
 
 4456 */\**
 
@@ -3051,11 +3057,11 @@ ing 11-26 (eliding out of scope task freezing logic and trace hooks).
 
 4501 alloc_order = reclaim_order = **READ_ONCE**(pgdat-\>kswapd_order);
 
- 
 
 
 
- 
+
+
 
 4502 highest_zoneidx = **kswapd_highest_zoneidx**(pgdat, 4503 highest_zoneidx); 4504
 
@@ -3093,11 +3099,11 @@ ing 11-26 (eliding out of scope task freezing logic and trace hooks).
 
 4546 }
 
- 
+
 
 *Listing 11-26:* mm/vmscan.c: [*kswapd()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4469)
 
- 
+
 
 We start by setting various initial local variables and restricting the
 
@@ -3115,11 +3121,11 @@ all memory reserves. The latter flags this process as the kswapd process, as
 
 checked for by [current_is_kswapd()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n37) in various places.
 
- 
 
 
 
- 
+
+
 
 We then reset various node fields relating to kswapd,
 
@@ -3135,7 +3141,7 @@ order which triggered the kswapd order, and the highest zone index which we
 
 determine via [kswapd_highest_zoneidx()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4364) which we examine in Listing 11-27.
 
- 
+
 
 4357 */\**
 
@@ -3161,11 +3167,11 @@ determine via [kswapd_highest_zoneidx()](https://git.kernel.org/pub/scm/linux/ke
 
 4369 **return** curr_idx == **MAX_NR_ZONES** ? prev_highest_zoneidx : curr_idx; 4370 }
 
- 
+
 
 *Listing 11-27:* mm/vmscan.c: [*kswapd_highest_zoneidx()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4364)
 
- 
+
 
 The key thing to note about [kswapd_highest_zoneidx()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4364) is that, if the
 
@@ -3193,11 +3199,11 @@ cation order, but instead jump directly to invoking [kswapd_try_to_sleep()](http
 
 [kswapd_try_to_sleep()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4372) and Listing 11-28 to see how this is determined).
 
- 
 
 
 
- 
+
+
 
 Finally, if the loop does terminate, we clear the task’s [PF_MEMALLOC](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/sched.h?h=v6.0#n1713) and
 
@@ -3205,7 +3211,7 @@ Finally, if the loop does terminate, we clear the task’s [PF_MEMALLOC](https:/
 
 is about to be terminated.
 
- 
+
 
 ***11.4.3 kswapd Sleeping***
 
@@ -3215,7 +3221,7 @@ do. We wait using [kswapd_try_to_sleep()](https://git.kernel.org/pub/scm/linux/k
 
 (eliding tracing hooks).
 
- 
+
 
 4372 **static void kswapd_try_to_sleep**(**pg_data_t** \*pgdat, **int** alloc_order, **int**
 
@@ -3269,11 +3275,11 @@ reclaim_order,
 
 4408 *\* If woken prematurely then reset kswapd_highest_zoneidx and*
 
- 
 
 
 
- 
+
+
 
 4409 *\* order. The values will either be from a wakeup request or*
 
@@ -3297,11 +3303,11 @@ reclaim_order,
 
 4423 }
 
- 
+
 
 *Listing 11-28:* mm/vmscan.c: [*kswapd_try_to_sleep()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4372) *Short sleep*
 
- 
+
 
 We start [kswapd_try_to_sleep()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4372) by declaring a wait queue en-
 
@@ -3345,11 +3351,11 @@ If so, then this might indicate that we slept prematurely after a failed
 
 higher order reclaim attempt, and therefore we most be careful to not pre-
 
- 
 
 
 
- 
+
+
 
 maturely reduce the order of the folios we attempt to reclaim. We there-
 
@@ -3367,7 +3373,7 @@ again via [prepare_to_wait()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 We then consider a longer sleep, explored in Listing 11-29.
 
- 
+
 
 4425 */\**
 
@@ -3417,21 +3423,21 @@ We then consider a longer sleep, explored in Listing 11-29.
 
 4453 **finish_wait**(&pgdat-\>kswapd_wait, &wait); 4454 }
 
- 
+
 
 *Listing 11-29:* mm/vmscan.c: [*kswapd_try_to_sleep()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4372) *Long Sleep*
 
- 
+
 
 We examine the portion of [kswapd_try_to_sleep()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4372) which considers per-
 
 forming a long-term sleep in Listing 11-29.
 
- 
 
 
 
- 
+
+
 
 We only perform a longer sleep if the prior attempt at a short sleep did
 
@@ -3469,7 +3475,7 @@ ing will have occurred.
 
 We now examine the key [prepare_kswapd_sleep()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4027) function in Listing 11-30.
 
- 
+
 
 4021 */\**
 
@@ -3507,11 +3513,11 @@ We now examine the key [prepare_kswapd_sleep()](https://git.kernel.org/pub/scm/l
 
 4043 **if** (**waitqueue_active**(&pgdat-\>pfmemalloc_wait))
 
- 
 
 
 
- 
+
+
 
 4044 **wake_up_all**(&pgdat-\>pfmemalloc_wait); 4045
 
@@ -3525,7 +3531,7 @@ We now examine the key [prepare_kswapd_sleep()](https://git.kernel.org/pub/scm/l
 
 4056 }
 
- 
+
 
 *Listing 11-30:* mm/vmscan.c: [*prepare_kswapd_sleep()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4027)
 
@@ -3579,7 +3585,7 @@ If the node is not balanced, then we indicate that no sleep should occur
 
 and thus indirect reclaim should commence.
 
- 
+
 
 ***11.4.4 Node Balancing***
 
@@ -3591,11 +3597,11 @@ A node being balanced simply means that at least one of the zones that
 
 could have been allocated from at the requested order (taking into account
 
- 
 
 
 
- 
+
+
 
 the low memory reserve, see Section 2.4.1 for details of this) equals or ex-ceeds the high watermark.
 
@@ -3603,7 +3609,7 @@ This is checked in [pgdat_balanced()](https://git.kernel.org/pub/scm/linux/kerne
 
 (eliding out of scope NUMA balancing logic).
 
- 
+
 
 3972 */\**
 
@@ -3653,21 +3659,21 @@ This is checked in [pgdat_balanced()](https://git.kernel.org/pub/scm/linux/kerne
 
 4009 }
 
- 
+
 
 *Listing 11-31:* mm/vmscan.c: [*pgdat_balanced()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3976)
 
- 
+
 
 The [pgdat_balanced()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3976) function iterates through zones in the node,
 
 bottom-up, checking that at least one zone has free pages equal to or exceed-ing the high watermark.
 
- 
 
 
 
- 
+
+
 
 We skip any that don’t manage any buddy page allocator controlled
 
@@ -3697,7 +3703,7 @@ hooks, lockdep hooks, cgroup, process freezing, working set and buffer head
 
 overrun logic).
 
- 
+
 
 4133 */\**
 
@@ -3741,11 +3747,11 @@ overrun logic).
 
 4168 */\**
 
- 
 
 
 
- 
+
+
 
 4169 *\* Account for the reclaim boost. Note that the zone boost is left in*
 
@@ -3759,11 +3765,11 @@ overrun logic).
 
 4182 boosted = nr_boost_reclaim;
 
- 
+
 
 *Listing 11-32:* mm/vmscan.c: [*balance_pgdat()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4146) *Zone Boost*
 
- 
+
 
 We start [balance_pgdat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4146) by initialising state and setting the
 
@@ -3807,11 +3813,11 @@ This is performed in [steal_suitable_fallback()](https://git.kernel.org/pub/scm/
 
 tion 2.8.6 in Chapter 2). If this occurs, we want to ensure that the fragmenta-tion is remedied as soon as possible, and do so by increasing each watermark
 
- 
 
 
 
- 
+
+
 
 by a set number of pages in [boost_watermark()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2711)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n2711) up to a maximum of a page
 
@@ -3841,7 +3847,7 @@ With this state established, we proceed with performing reclaim as ex-
 
 plored in Listing 11-33.
 
- 
+
 
 4184 **restart**:
 
@@ -3883,11 +3889,11 @@ plored in Listing 11-33.
 
 4234 **if** (!nr_boost_reclaim && balanced) 4235 **goto out**; 4236
 
- 
 
 
 
- 
+
+
 
 4237 */\* Limit the priority of boosting to avoid reclaim writeback*
 
@@ -3945,11 +3951,11 @@ plored in Listing 11-33.
 
 4289 */\* Check if kswapd should be suspending \*/*
 
- 
 
 
 
- 
+
+
 
 . . .
 
@@ -3975,11 +3981,11 @@ plored in Listing 11-33.
 
 4311 **if** (raise_priority \|\| !nr_reclaimed) 4312 sc.priority--; 4313 } **while** (sc.priority \>= 1);
 
- 
+
 
 *Listing 11-33:* mm/vmscan.c: [*balance_pgdat()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4146) *Core Reclaim*
 
- 
+
 
 We start by marking all zones up to and including the highest from which
 
@@ -4027,11 +4033,11 @@ and there is no zone boost to consider, then we have achieved our aim and
 
 exit the loop.
 
- 
 
 
 
- 
+
+
 
 The remainder of the logic in the loop applies whether either the node
 
@@ -4063,13 +4069,13 @@ This aging is ultimately performed by [shrink_active_list()](https://git.kernel.
 
 amine in detail in Listing 11-56 and Section **??**.
 
- 
+
 
 **N O T E** We take extra care to perform background aging of the active anonymous LRU vec-
 
 tor in order that we ensure we maintain sufficient folios in the list such that anony-mous folios get a chance to be referenced before being evicted. Additionally, we are generally less inclined to evict anonymous folios than file-backed (consider cachet rim mode), and additionally thus must ensure consistent aging takes place of anonymous folios.
 
- 
+
 
 Next, as in direct reclaim (see Section 11.3), if we are having trouble
 
@@ -4093,11 +4099,11 @@ Next, we consider those threads currently undergoing direct
 
 reclaim throttling (see Section 11.6.2). These are waiting on the
 
- 
 
 
 
- 
+
+
 
 [struct pglist_data-\>pfmemalloc_wait](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n905) wait queue, so we check to see if there
 
@@ -4157,7 +4163,7 @@ After this loop is complete, we proceed with some housekeeping tasks, as
 
 explored in Listing 11-34.
 
- 
+
 
 4315 **if** (!sc.nr_reclaimed) 4316 pgdat-\>kswapd_failures++; 4317
 
@@ -4177,11 +4183,11 @@ explored in Listing 11-34.
 
 4329 */\* Increments are under the zone lock \*/* 4330 zone = pgdat-\>node_zones + i; 4331 **spin_lock_irqsave**(&zone-\>lock, flags);
 
- 
 
 
 
- 
+
+
 
 4332 zone-\>watermark_boost -= **min**(zone-\>watermark_boost,
 
@@ -4219,11 +4225,11 @@ zone_boosts\[i\]);
 
 4355 }
 
- 
+
 
 *Listing 11-34:* mm/vmscan.c: [*balance_pgdat()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4146) *Post-Reclaim Housekeeping*
 
- 
+
 
 After the main reclaim loop is complete, we perform some final house
 
@@ -4257,11 +4263,11 @@ Equally, we take the time to wake the kcompactd compacting kernel thread
 
 to defragment memory through compaction, as this is more likely to now yield results as an effort at this point. Discussion of this is out of scope for the book.
 
- 
 
 
 
- 
+
+
 
 After considering the boosted case, we invoke [snapshot_refaults()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3556) (see
 
@@ -4281,7 +4287,7 @@ The reclaim is ultimately performed by [kswapd_shrink_node()](https://git.kernel
 
 explore in Listing 11-35.
 
- 
+
 
 4058 */\**
 
@@ -4325,21 +4331,21 @@ explore in Listing 11-35.
 
 4093 *\* can direct reclaim/compact.* 4094 *\*/*
 
- 
 
 
 
- 
+
+
 
 4095 **if** (sc-\>order && sc-\>nr_reclaimed \>= **compact_gap**(sc-\>order)) 4096 sc-\>order = 0; 4097
 
 4098 **return** sc-\>nr_scanned \>= sc-\>nr_to_reclaim; 4099 }
 
- 
+
 
 *Listing 11-35:* mm/vmscan.c: [*kswapd_shrink_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4066)
 
- 
+
 
 The [kswapd_shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4066) function starts with the important task of deter-
 
@@ -4377,49 +4383,49 @@ whether [balance_pgdat()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 33).
 
- 
+
 
 **11.5 The Reclaim Mechanism**
 
- 
+
 
 [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194)
 
- 
+
 
 [shrink_node_memcgs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3136) [shrink_slab()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n964)
 
- 
+
 
 [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2950)
 
- 
+
 
 [shrink_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2663)
 
- 
+
 
 [shrink_active_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509) [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402)
 
- 
+
 
 [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589)
 
- 
+
 
 *Figure 11-11: Core Reclaim Mechanism Code Path*
 
- 
 
 
 
- 
+
+
 
 **N O T E** Some of the functions referenced by Figure 11-11 may be invoked by other code paths,
 
 however the one shown is the typical means by which reclaim operates.
 
- 
+
 
 While the logic surrounding direct reclaim (see Section 11.3) and indi-
 
@@ -4469,7 +4475,7 @@ We start by examining the [struct scan_control](https://git.kernel.org/pub/scm/l
 
 which is threaded through the reclaim code) in Section 11.5.1.
 
- 
+
 
 ***11.5.1 The Scan Control Object***
 
@@ -4483,7 +4489,7 @@ so for clarity we separate its data and flag fields, starting by examining its
 
 data fields in Listing 11-36 (eliding out of scope cgroup fields).
 
- 
+
 
 66 **struct** scan_control {
 
@@ -4509,11 +4515,11 @@ data fields in Listing 11-36 (eliding out of scope cgroup fields).
 
 83 *\* Scan pressure balancing between anon and file LRUs*
 
- 
 
 
 
- 
+
+
 
 84 *\*/*
 
@@ -4553,15 +4559,15 @@ data fields in Listing 11-36 (eliding out of scope cgroup fields).
 
 160 */\* for recording the reclaimed slab by now \*/* 161 **struct** reclaim_state reclaim_state; 162 };
 
- 
+
 
 *Listing 11-36:* mm/vmscan.c: [*struct scan_control*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n66) *Data Fields*
 
- 
+
 
 Examining each of the fields shown in Listing 11-36:
 
- 
+
 
 **nr_to_reclaim** User-defined—Specifies the number of base pages to attempt
 
@@ -4575,11 +4581,11 @@ claim.
 
 of reclaiming anonymous folios as opposed to file-backed folios, as de-termined by working set logic which examines when folios which have previously been reclaimed are rapidly “refaulted”. A detailed discus-
 
- 
 
 
 
- 
+
+
 
 sion of this is out of scope for the book, but both anonymous and file-
 
@@ -4653,11 +4659,11 @@ counts—The number of scanned folios (expressed in base pages) which
 
 are undergoing writeback (have the [PG_writeback](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n116) flag set) at the time of reclaim (and are not marked as immediate, as described in nr.immediate).
 
- 
 
 
 
- 
+
+
 
 **nr.immediate** Set by reclaim—Aggregate of [struct reclaim_state-\>nr_immediate](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmstat.h?h=v6.0#n24)
 
@@ -4687,13 +4693,13 @@ formed by [isolate_lru_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 tor is able to free memory.
 
- 
+
 
 We examine the flag-specific fields of [struct scan_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n66) in Listing 11-
 
 37 (eliding out of scope cgroup, power management and NUMA demotion flags).
 
- 
+
 
 66 **struct** scan_control {
 
@@ -4717,21 +4723,21 @@ We examine the flag-specific fields of [struct scan_control](https://git.kernel.
 
 127 */\* The file pages on the current node are dangerously low \*/* 128 **unsigned int** file_is_tiny:1;
 
- 
 
 
 
- 
+
+
 
 . . .
 
 162 };
 
- 
+
 
 *Listing 11-37:* mm/vmscan.c: [*struct scan_control*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n66) *Flag Fields*
 
- 
+
 
 Each of these use the C bitfield syntax, where the number suffixing the
 
@@ -4739,7 +4745,7 @@ comma delimiter defines the number of bits each field occupies.
 
 Examining each of the fields shown in Listing 11-37:
 
- 
+
 
 **may_deactivate** Set in [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) (see Listing 11-40)— Determines whether
 
@@ -4787,11 +4793,11 @@ file-backed folios should be considered for reclaim in an instance where both de
 
 tion exists where there is a large number of anonymous folios subject to reclaim, deactivation of anonymous folios is prohibited and, even if all file-backed folios were freed, this would not fulfill indirect reclaim, that is, the sum of base pages for file-backed folios subject to reclaim and free file-backed folios is less than the aggregated high watermark across zones in a node. In this instance, we limit scanning to anonymous folios only.
 
- 
 
 
 
- 
+
+
 
 The reclaim process which [struct scan_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n66) governs and which is in-
 
@@ -4799,7 +4805,7 @@ voked by both direct and indirect reclaim begins in [shrink_node()](https://git.
 
 11-40) and proceeds through the code path as shown in Figure 11-11.
 
- 
+
 
 ***11.5.2 A Brief Overview of the Working Set***
 
@@ -4823,15 +4829,15 @@ tive list between a folio being evicted and refaulted, is really critical here. 
 
 examine this concept in Figure 11-12
 
- 
+
 
 Inactive Active
 
- 
+
 
 *Figure 11-12: Refault Distance Example*
 
- 
+
 
 In Figure 11-12, we consider the reclaim of the left-most folio (which sits
 
@@ -4853,11 +4859,11 @@ However this being the case implies that perhaps other folios on the
 
 active list are being kept there longer than necessary, and in any case we should demote folios from the active list to make way for the newly pro-moted one.
 
- 
 
 
 
- 
+
+
 
 If we wrongly demote a folio that goes on to refault, then this mechanism
 
@@ -4889,7 +4895,7 @@ The snapshot is performed by [snapshot_refaults()](https://git.kernel.org/pub/sc
 
 Listing 11-38.
 
- 
+
 
 3555 **static void snapshot_refaults**(**struct** mem_cgroup \*target_memcg, **pg_data_t** \*
 
@@ -4901,11 +4907,11 @@ pgdat)
 
 3560 target_lruvec = **mem_cgroup_lruvec**(target_memcg, pgdat); 3561 refaults = **lruvec_page_state**(target_lruvec, **WORKINGSET_ACTIVATE_ANON**); 3562 target_lruvec-\>refaults\[0\] = refaults; 3563 refaults = **lruvec_page_state**(target_lruvec, **WORKINGSET_ACTIVATE_FILE**); 3564 target_lruvec-\>refaults\[1\] = refaults; 3565 }
 
- 
+
 
 *Listing 11-38:* mm/vmscan.c: [*snapshot_refaults()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3556)
 
- 
+
 
 The [snapshot_refaults()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3556) function updates the [struct lruvec](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n317) (see Section
 
@@ -4921,7 +4927,7 @@ the current file-backed folio refault and activate count (classified under
 
 [WORKINGSET_ACTIVATE_FILE ) ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n188)in [struct lruvec-\>refaults\[1\]](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n317).
 
- 
+
 
 **11.5.2.1 Anonymous and File-Backed Refault Costing**
 
@@ -4941,11 +4947,11 @@ The [workingset_refault()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 curs, notes the presence of this flag and uses it to calculate a relative cost
 
- 
 
 
 
- 
+
+
 
 between anonymous and file-backed folios, stored in [struct lruvec-\>anon_cost](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n317)
 
@@ -4969,7 +4975,7 @@ In addition, if a dirty folio (whether file-backed or an anonymous folio
 
 being swapped out) is successfully paged out to disk, we assume that this implies it was part of the working set and account accordingly.
 
- 
+
 
 298 **void lru_note_cost**(**struct** lruvec \*lruvec, **bool** file, **unsigned int** nr_pages) 299 {
 
@@ -5001,21 +5007,21 @@ being swapped out) is successfully paged out to disk, we assume that this implie
 
 330 **if** (lruvec-\>file_cost + lruvec-\>anon_cost \> lrusize / 4) {
 
- 
 
 
 
- 
+
+
 
 331 lruvec-\>file_cost /= 2; 332 lruvec-\>anon_cost /= 2; 333 }
 
 334 **spin_unlock_irq**(&lruvec-\>lru_lock); 335 } **while** ((lruvec = **parent_lruvec**(lruvec))); 336 }
 
- 
+
 
 *Listing 11-39:* mm/swap.c: [*lru_note_cost()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n298)
 
- 
+
 
 Since we do not consider the cgroup case in the book, we will not exam-
 
@@ -5039,39 +5045,39 @@ This is later set to the [struct scan_control](https://git.kernel.org/pub/scm/li
 
 40 and Section 11.5.3.
 
- 
+
 
 ***11.5.3 Shrinking the Node***
 
- 
+
 
 [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194)
 
- 
+
 
 [shrink_node_memcgs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3136)
 
- 
+
 
 [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2950)
 
- 
+
 
 [shrink_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2663)
 
- 
+
 
 [shrink_active_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509) [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402)
 
- 
+
 
 [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589)
 
- 
+
 
 *Figure 11-13: Reclaim Mechanism: Shrinking the Node Code Path*
 
- 
+
 
 The core reclaim logic, shared between all invocations of reclaim begins in
 
@@ -5083,23 +5089,23 @@ certainly is).
 
 We examine the logic of this function in Figure 11-14.
 
- 
 
 
 
- 
+
+
 
 Reset [struct scan_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n66)
 
 statistics in nr field.
 
- 
+
 
 Force deactivate?
 
 Yes No
 
- 
+
 
 Set file-backed & anonymous Determine whether file-backed
 
@@ -5107,7 +5113,7 @@ pages in active LRU lists and/or anonymous pages are
 
 to both be deactivated. thrashing, if so permit deactivation.
 
- 
+
 
 **Cache Trim Mode**
 
@@ -5115,7 +5121,7 @@ If we are able to reclaim file pages and they aren’t thrashing, enable
 
 “cache trim mode”—this causes only file-backed pages to be reclaimed.
 
- 
+
 
 **Tiny File Mode**
 
@@ -5125,13 +5131,13 @@ ing all file-backed pages wouldn’t stop kswapd—enable “tiny file mode” w
 
 overrides cache trim mode and causes only anonymous pages to be reclaimed.
 
- 
+
 
 Perform reclaim via
 
 [shrink_node_memcgs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n)
 
- 
+
 
 When direct reclaiming, if
 
@@ -5151,7 +5157,7 @@ we writeback immediately.
 
 reclaim until written back.
 
- 
+
 
 If all isolated pages are dirty,
 
@@ -5183,27 +5189,27 @@ Yes
 
 and let direct reclaim throttle. Loop?
 
- 
+
 
 No
 
- 
+
 
 Done.
 
- 
+
 
 *Figure 11-14:* [*shrink_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) *Logic*
 
- 
 
 
 
- 
+
+
 
 We start to examine [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) in Listing 11-40.
 
- 
+
 
 3194 **static void shrink_node**(**pg_data_t** \*pgdat, **struct** scan_control \*sc) 3195 {
 
@@ -5225,11 +5231,11 @@ We start to examine [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/
 
 3219 **spin_lock_irq**(&target_lruvec-\>lru_lock); 3220 sc-\>anon_cost = target_lruvec-\>anon_cost; 3221 sc-\>file_cost = target_lruvec-\>file_cost; 3222 **spin_unlock_irq**(&target_lruvec-\>lru_lock);
 
- 
+
 
 *Listing 11-40:* mm/vmscan.c: [*shrink_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) *Preface*
 
- 
+
 
 We start [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) by establishing some local state, including deter-
 
@@ -5263,17 +5269,17 @@ whether deactivation of anonymous and file-backed folios ought to proceed,
 
 which we explore in Listing 11-41.
 
- 
+
 
 3224 */\**
 
 3225 *\* Target desirable inactive:active list ratios for the anon* 3226 *\* and file LRU lists.*
 
- 
 
 
 
- 
+
+
 
 3227 *\*/*
 
@@ -5293,11 +5299,11 @@ which we explore in Listing 11-41.
 
 3252 sc-\>may_deactivate = **DEACTIVATE_ANON** \| **DEACTIVATE_FILE**;
 
- 
+
 
 *Listing 11-41:* mm/vmscan.c: [*shrink_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) *Active/Inactive Ratio Logic*
 
- 
+
 
 The active/inactive ratio logic portion of [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) (ex-
 
@@ -5323,7 +5329,7 @@ We also do so if the inactive LRU list is considered to be too small, as
 
 checked by [inactive_is_low()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2705), which we examine in Listing 11-42.
 
- 
+
 
 2677 */\**
 
@@ -5333,11 +5339,11 @@ checked by [inactive_is_low()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 2681 *\* The inactive file list should be small enough to leave most memory*
 
- 
 
 
 
- 
+
+
 
 2682 *\* to the established workingset on the scan-resistant active list,* 2683 *\* but large enough to avoid thrashing the aggregate readahead window.* 2684 *\**
 
@@ -5363,11 +5369,11 @@ checked by [inactive_is_low()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 2721 **return** inactive \* inactive_ratio \< active; 2722 }
 
- 
+
 
 *Listing 11-42:* mm/vmscan.c: [*inactive_is_low()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2705)
 
- 
+
 
 We can see in [inactive_is_low()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2705) that we try to maintain a balance between
 
@@ -5375,11 +5381,11 @@ active and inactive lists which is heavily weighted towards the active list in
 
 order that we avoid reclaiming as much as we can, reducing the amount of
 
- 
 
 
 
- 
+
+
 
 work reclaim needs to do and giving folios the maximum chance to avoid reclaim.
 
@@ -5393,7 +5399,7 @@ proceed with further configuration of the [struct scan_control](https://git.kern
 
 executing reclaim, which we explore in Listing 11-43.
 
- 
+
 
 3254 */\**
 
@@ -5425,11 +5431,11 @@ executing reclaim, which we explore in Listing 11-43.
 
 3290
 
- 
 
 
 
- 
+
+
 
 3291 */\**
 
@@ -5439,11 +5445,11 @@ executing reclaim, which we explore in Listing 11-43.
 
 3298 sc-\>file_is_tiny = 3299 file + free \<= total_high_wmark && 3300 !(sc-\>may_deactivate & **DEACTIVATE_ANON**) && 3301 anon \>\> sc-\>priority;
 
- 
+
 
 *Listing 11-43:* mm/vmscan.c: [*shrink_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) *Further Reclaim Configuration*
 
- 
+
 
 Examining the portion of [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) which performs addi-
 
@@ -5511,11 +5517,11 @@ mous folios to be scanned, as set in [get_scan_count()](https://git.kernel.org/p
 
 Section 11.5.4).
 
- 
 
 
 
- 
+
+
 
 With the [struct scan_control](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n66) object set up, we are ready to perform the
 
@@ -5523,7 +5529,7 @@ actual reclaim and tasks after reclaim has been executed, we examine this
 
 portion of [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) in Listing 11-44.
 
- 
+
 
 3304 **shrink_node_memcgs**(pgdat, sc); 3305
 
@@ -5553,11 +5559,11 @@ portion of [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 3352 **if** (sc-\>nr.immediate) 3353 **reclaim_throttle**(pgdat, **VMSCAN_THROTTLE_WRITEBACK**);
 
- 
 
 
 
- 
+
+
 
 3354 }
 
@@ -5595,11 +5601,11 @@ portion of [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 3390 pgdat-\>kswapd_failures = 0; 3391 }
 
- 
+
 
 *Listing 11-44:* mm/vmscan.c: [*shrink_node()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) *Reclaim and Post-processing*
 
- 
+
 
 We perform the actual reclaim via [shrink_node_memcgs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3136) which we examine
 
@@ -5619,11 +5625,11 @@ We then consider indirect reclaim-specific logic, predicated on the
 
 [current_is_kswapd()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/swap.h?h=v6.0#n37) function.
 
- 
 
 
 
- 
+
+
 
 Firstly, we compare the number of pages which are undergoing
 
@@ -5697,11 +5703,11 @@ In the very next predicate we examine whether this is set for the di-
 
 rect reclaim case. We do not do so for indirect reclaim, throttling in this
 
- 
 
 
 
- 
+
+
 
 case only when all of the scanned folios are undergoing writeback as in the
 
@@ -5733,7 +5739,7 @@ to sleep after [MAX_RECLAIM_RETRIES](https://git.kernel.org/pub/scm/linux/kernel
 
 sixteen).
 
- 
+
 
 3076 */\**
 
@@ -5783,11 +5789,11 @@ sixteen).
 
 3103 *\* where always a non-zero amount of pages were scanned.*
 
- 
 
 
 
- 
+
+
 
 3104 *\*/*
 
@@ -5823,11 +5829,11 @@ reclaim_idx)) {
 
 3133 **return** inactive_lru_pages \> pages_for_compaction; 3134 }
 
- 
+
 
 *Listing 11-45:* mm/vmscan.c: [*should_continue_reclaim()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3083)
 
- 
+
 
 The [should_continue_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3083) is only relevant for allocations of higher
 
@@ -5839,11 +5845,11 @@ Even though this is out of scope, it is a key part of how reclaim performs,
 
 so like working set logic, it is important to examine how it interfaces with re-claim, even if we don’t go into the details of how compaction itself proceeds.
 
- 
 
 
 
- 
+
+
 
 The [should_continue_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3083) function returns true if we need to per-
 
@@ -5857,7 +5863,7 @@ We start by determining whether this is reclaim subject to compaction
 
 via [in_reclaim_compaction()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3066) which we examine in Listing 11-46.
 
- 
+
 
 3065 */\* Use reclaim/compaction for costly allocs or under memory pressure \*/* 3066 **static bool in_reclaim_compaction**(**struct** scan_control \*sc) 3067 {
 
@@ -5867,11 +5873,11 @@ via [in_reclaim_compaction()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 3074 }
 
- 
+
 
 *Listing 11-46:* mm/vmscan.c: [*in_reclaim_compaction()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3066)
 
- 
+
 
 The [in_reclaim_compaction()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3066) function checks that firstly compaction is en-
 
@@ -5925,11 +5931,11 @@ require for compaction, then continuing reclaim is worthwhile, otherwise it
 
 is not.
 
- 
 
 
 
- 
+
+
 
 ***11.5.4 Determining Scan Balance***
 
@@ -5945,7 +5951,7 @@ determines the scanning split between file-backed and anonymous folios.
 
 We examine this in Listing 11-47 (eliding out of scope cgroup logic where doing so wouldn’t confuse the logic).
 
- 
+
 
 2731 */\**
 
@@ -5979,11 +5985,11 @@ We examine this in Listing 11-47 (eliding out of scope cgroup logic where doing 
 
 2779 */\**
 
- 
 
 
 
- 
+
+
 
 2780 *\* If the system is almost out of file pages, force-scan anon.* 2781 *\*/*
 
@@ -5997,11 +6003,11 @@ We examine this in Listing 11-47 (eliding out of scope cgroup logic where doing 
 
 2791 **if** (sc-\>cache_trim_mode) { 2792 scan_balance = **SCAN_FILE**; 2793 **goto out**; 2794 }
 
- 
+
 
 *Listing 11-47:* mm/vmscan.c: [*get_scan_count()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2738) *Initialisation & Edge Cases*
 
- 
+
 
 The [get_scan_count()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2738) function maintains a [enum_scan_balance](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2724) value, which
 
@@ -6061,11 +6067,11 @@ If we have reached zero priority and are thus scanning everything, and
 
 swappiness is non-zero, then at this point where we are close to an Out Of
 
- 
 
 
 
- 
+
+
 
 Memory (OOM) condition, we do not adjust the number of pages to scan in
 
@@ -6087,17 +6093,17 @@ to free file folios, and thus return [SCAN_FILE](https://git.kernel.org/pub/scm/
 
 around Listing 11-43 where this is set for details).
 
- 
+
 
 **N O T E** Cache trim mode is a key feature of the page cache—the kernel will happily fill up the
 
 memory with as much on-disk data as is accessed and keep hold of it, however it’ll equally discard it just as quickly. As soon as we reach data that is thrashing or if the inactive file LRU runs low, we attempt to balance reclaim.
 
- 
+
 
 We examine the [SCAN_FRACT](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2726) case in Listing 11-48.
 
- 
+
 
 2796 scan_balance = **SCAN_FRACT**; 2797 */\**
 
@@ -6117,19 +6123,19 @@ We examine the [SCAN_FRACT](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 2823 fraction\[0\] = ap; 2824 fraction\[1\] = fp;
 
- 
 
 
 
- 
+
+
 
 2825 denominator = ap + fp;
 
- 
+
 
 *Listing 11-48:* mm/vmscan.c: [*get_scan_count()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2738) *Fractional Case*
 
- 
+
 
 In the portion of [get_scan_count()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2738) that calculates the division of pages to
 
@@ -6191,7 +6197,7 @@ Therefore, denoting the anonymous page numerator as *ap* as in the
 
 code, and the file-backed page denominator as *f p*:
 
- 
+
 
 *ap* *ST* (200 *−* *S*)*T* = *f p* = *A* *F*
 
@@ -6199,7 +6205,7 @@ The denominator (as named in the code) is equal to the some of the two.
 
 We denote this *D*:
 
- 
+
 
 *D* *ST* (200 *−* *S*)*T* = + *A* *F*
 
@@ -6209,21 +6215,21 @@ the fraction of file-backed pages (denoted as *F r**f* ):
 
 *ST*
 
- 
+
 
 *F r* *A* *a* = *ST* (200 *−* *S*)*T* +
 
 *A* *F*
 
- 
 
 
 
- 
+
+
 
 (200 *−* *S*)*T*
 
- 
+
 
 *F r* *F* *f* = *ST* (200 *−* *S*)*T* +
 
@@ -6233,7 +6239,7 @@ Dividing numerator and denominator by *T* yields:
 
 *S*
 
- 
+
 
 *F r* *A* *a* = *S* 200 *−* *S* +
 
@@ -6241,7 +6247,7 @@ Dividing numerator and denominator by *T* yields:
 
 200 *−* *S*
 
- 
+
 
 *F r* *F* *f* = *S* 200 *−* *S* +
 
@@ -6249,7 +6255,7 @@ Dividing numerator and denominator by *T* yields:
 
 Multiplying numerator and denominator by *AF* simplifies:
 
- 
+
 
 *F r* *SF* (200 *−* *S*)*A* = *a* , *F r* *f* = *SF* + (200 *−* *S* ) *A* *SF* + (200 *−* *S*)*A*
 
@@ -6265,17 +6271,17 @@ express the equations in terms of the [struct scan_control](https://git.kernel.o
 
 *D* *D*
 
- 
+
 
 *F r* (200 *−* *S*)*A* (200 *−* *S*)(2*a* + *f* ) = *f* = *D* *D*
 
- 
+
 
 **N O T E** Having removed the offset-by-1 cases for simplicity, we note that here we can treat
 
 there being no refaults as equivalent to there being an equal number of refaults, that is if *a* and *f* are equal to zero, consider this equivalent to them both being equal to one.
 
- 
+
 
 The fraction of anonymous pages is proportional to swappiness multi-
 
@@ -6289,11 +6295,11 @@ Scanning of anonymous pages is therefore proportional to file-backed
 
 thrashing up to a maximum of two-thirds of the scan, and scanning of file-backed pages is proportional to anonymous thrashing up to a maximum of two-thirds of the scan.
 
- 
 
 
 
- 
+
+
 
 This renders anonymous scanning inversely proportional to anonymous
 
@@ -6329,17 +6335,17 @@ existing file refaults cause an initial dip in the climbing pressure (as this is
 
 proportional to the ratio between the two) and that we’re always capped off.
 
- 
+
 
 Swappiness=0, File Refaults=x
 
 100%
 
- 
+
 
 90%
 
- 
+
 
 Swappiness=60, File Refaults=0
 
@@ -6351,7 +6357,7 @@ Swappiness=60, File Refaults=5
 
 e Swappiness=100, File Refaults=0
 
- 
+
 
 essur 60%
 
@@ -6369,19 +6375,19 @@ ile-Bac
 
 F Swappiness=140, File Refaults=5
 
- 
+
 
 30%
 
- 
+
 
 20%
 
- 
+
 
 10%
 
- 
+
 
 Swappiness=200, File Refaults=x
 
@@ -6391,15 +6397,15 @@ Swappiness=200, File Refaults=x
 
 Anonymous Refaults
 
- 
+
 
 *Figure 11-15: Example File-Backed Reclaim Pressure Split*
 
- 
 
 
 
- 
+
+
 
 Note that Figure 11-15 we see that in the case of 100 swappiness, we al-
 
@@ -6411,19 +6417,19 @@ anonymous refaults significantly outstrip file-backed, i.e. to determine what th
 
 Let’s expand out the equation:
 
- 
+
 
 *F r* (200 *−* *S*)(2*a* + *f* ) = *f* *S* ( *f* + 2 *a* ) + (200 *−* *S* )(2*a* + *f* )
 
 If we assume that *f* is greatly exceeded by *a* then we can eliminate this term:
 
- 
+
 
 *M ax* 2*a*(200 *−* *S*) ( *F r* *f* ) = 2 *aS* + 2 *a* (200 *−* *S*)
 
 Eliminating *a* and expanding this out leaves us with:
 
- 
+
 
 *M ax* 200 *−* *S* ( *F r* *f* ) = 200 *−* *S/*2
 
@@ -6431,17 +6437,17 @@ Which we can observe in Figure 11-15.
 
 We consider the equivalent anonymous LRU case in Figure 11-16.
 
- 
+
 
 Swappiness=200, Anon Refaults=x
 
 100%
 
- 
+
 
 90%
 
- 
+
 
 Swappiness=140, Anon Refaults=0
 
@@ -6453,7 +6459,7 @@ Swappiness=140, Anon Refaults=5
 
 e Swappiness=100, Anon Refaults=0
 
- 
+
 
 essur 60% Pr Swappiness=100, Anon Refaults=5
 
@@ -6471,15 +6477,15 @@ Anon Swappiness=60, Anon Refaults=5
 
 30%
 
- 
+
 
 20%
 
- 
+
 
 10%
 
- 
+
 
 Swappiness=0, Anon Refaults=x
 
@@ -6491,11 +6497,11 @@ File-Backed Refaults
 
 *Figure 11-16: Example Anonymous Reclaim Pressure Split*
 
- 
 
 
 
- 
+
+
 
 In Figure 11-16 we observe that the same pattern emerges, only with
 
@@ -6535,7 +6541,7 @@ Now that we’ve determined how to proceed, we return to
 
 this to the nr output array.
 
- 
+
 
 2826 **out**:
 
@@ -6555,11 +6561,11 @@ this to the nr output array.
 
 2903 **switch** (scan_balance) { 2904 **case SCAN_EQUAL**: 2905 */\* Scan lists relative to size \*/* 2906 **break**; 2907 **case SCAN_FRACT**: 2908 */\** 2909 *\* Scan types proportional to swappiness and* 2910 *\* their relative recent reclaim efficiency.* 2911 *\* Make sure we don't miss the last page on* 2912 *\* the offlined memory cgroups because of a* 2913 *\* round-off error.* 2914 *\*/* 2915 scan = **mem_cgroup_online**(memcg) ? 2916 **div64_u64**(scan \* fraction\[file\], denominator) :
 
- 
 
 
 
- 
+
+
 
 2917 **DIV64_U64_ROUND_UP**(scan \* fraction\[file\], 2918 denominator); 2919 **break**; 2920 **case SCAN_FILE**: 2921 **case SCAN_ANON**: 2922 */\* Scan one type exclusively \*/* 2923 **if** ((scan_balance == **SCAN_FILE**) != file) 2924 scan = 0; 2925 **break**; 2926 **default**:
 
@@ -6571,11 +6577,11 @@ this to the nr output array.
 
 2933 }
 
- 
+
 
 *Listing 11-49:* mm/vmscan.c: [*get_scan_count()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2738) *Calculating Scan Balance*
 
- 
+
 
 The portion of [get_scan_count()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2738) that we examine in Listing 11-49 popu-
 
@@ -6615,43 +6621,43 @@ With this function explored, we are ready to see it put to use in
 
 [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) which we examine in Listing 11-51 and Section 11.5.5.
 
- 
 
 
 
- 
+
+
 
 ***11.5.5 Shrinking LRU Vectors***
 
- 
+
 
 [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194)
 
- 
+
 
 [shrink_node_memcgs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3136)
 
- 
+
 
 [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2950)
 
- 
+
 
 [shrink_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2663)
 
- 
+
 
 [shrink_active_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509) [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402)
 
- 
+
 
 [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589)
 
- 
+
 
 *Figure 11-17: Reclaim Mechanism: Shrinking LRU Vectors Code Path*
 
- 
+
 
 Looking at Figure 11-17, we can see that after [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) (see Listing 11-40
 
@@ -6661,7 +6667,7 @@ examine in Listing 11-50 (eliding out of scope cgroup and real-time schedul-
 
 ing logic).
 
- 
+
 
 3136 **static void shrink_node_memcgs**(pg_data_t \*pgdat, **struct** scan_control \*sc) 3137 {
 
@@ -6675,11 +6681,11 @@ ing logic).
 
 3192 }
 
- 
+
 
 *Listing 11-50:* mm/vmscan.c: [*shrink_node_memcgs()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3136)
 
- 
+
 
 The majority of the [shrink_node_memcgs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3136) function is concerned with
 
@@ -6691,27 +6697,27 @@ node configured by the specified [struct scan_control](https://git.kernel.org/pu
 
 ine in Listing 11-51.
 
- 
+
 
 **N O T E** We also invoke [*shrink_slab()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n964) which causes slab memory to free up unused cache
 
 memory. However, discussion of this is entirely out of the scope of the book.
 
- 
+
 
 We examine the logic of [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) in Figure 11-18.
 
- 
 
 
 
- 
+
+
 
 Determine target scan split between
 
 LRU vectors via [get_scan_count()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2738)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2738)
 
- 
+
 
 If direct reclaiming and at default
 
@@ -6723,7 +6729,7 @@ priority ([DEF_PRIORITY](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 and reclaims pages up to the target.
 
- 
+
 
 We are done if target inactive anony-
 
@@ -6733,7 +6739,7 @@ pages were scanned (we ignore the
 
 active anonymous page target).
 
- 
+
 
 Yes
 
@@ -6747,23 +6753,23 @@ from each LRU vec-
 
 tor via [shrink_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2663)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2663)
 
- 
+
 
 Yes
 
 Adjusted mode?
 
- 
+
 
 No
 
- 
+
 
 No
 
 Reclaimed nr_to_reclaim?
 
- 
+
 
 Yes
 
@@ -6803,15 +6809,15 @@ vectors (the lesser-scanned lists). lists—minus the number of pages
 
 already scanned, capped to zero.
 
- 
+
 
 *Figure 11-18:* [*shrink_lruvec()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) *Logic*
 
- 
 
 
 
- 
+
+
 
 **N O T E** In Figure 11-18 when we refer to greater-scanned and lesser-scanned, we mean as
 
@@ -6823,13 +6829,13 @@ which has fewer pages to scan that is considered greater-scanned, and the one wh
 
 has more pages to scan that is considered lesser-scanned.
 
- 
+
 
 We examine [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) starting in Listing 11-51 (eliding out of scope
 
 cgroup, real-time scheduling and block plugging logic).
 
- 
+
 
 2950 **static void shrink_lruvec**(**struct** lruvec \*lruvec, **struct** scan_control \*sc) 2951 {
 
@@ -6867,11 +6873,11 @@ cgroup, real-time scheduling and block plugging logic).
 
 2977 scan_adjusted = (!**cgroup_reclaim**(sc) && !**current_is_kswapd**() && 2978 sc-\>priority == **DEF_PRIORITY**);
 
- 
+
 
 *Listing 11-51:* mm/vmscan.c: [*shrink_lruvec()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) *Preface*
 
- 
+
 
 The beginning of [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) shown in Listing 11-51 starts by invok-
 
@@ -6885,11 +6891,11 @@ These values are then copied into the target array so we can modify the
 
 nr array as we proceed but retain the original targets.
 
- 
 
 
 
- 
+
+
 
 We then determine whether we are direct reclaiming and we are at the
 
@@ -6913,7 +6919,7 @@ Having established state and determined whether adjusted scan mode is
 
 required, we then start the core reclaim loop as shown in Listing 11-52.
 
- 
+
 
 2981 **while** (nr\[**LRU_INACTIVE_ANON**\] \|\| nr\[**LRU_ACTIVE_FILE**\] \|\| 2982 nr\[**LRU_INACTIVE_FILE**\]) { 2983 **unsigned long** nr_anon, nr_file, percentage; 2984 **unsigned long** nr_scanned; 2985
 
@@ -6925,11 +6931,11 @@ required, we then start the core reclaim loop as shown in Listing 11-52.
 
 2998 **if** (nr_reclaimed \< nr_to_reclaim \|\| scan_adjusted) 2999 **continue**;
 
- 
+
 
 *Listing 11-52:* mm/vmscan.c: [*shrink_lruvec()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) *Main Reclaim Loop*
 
- 
+
 
 We loop while inactive anonymous, active file-backed and inactive file-
 
@@ -6943,11 +6949,11 @@ The actual reclaim is performed via [shrink_list()](https://git.kernel.org/pub/s
 
 later in Listing 11-55, which returns the number of actually reclaimed pages which we accumulate into nr_reclaimed.
 
- 
 
 
 
- 
+
+
 
 After this initial pass of reclaim has been performed, we check to see if
 
@@ -6961,7 +6967,7 @@ With this done we perform post-reclaim logic as explored in Listing 11-
 
 53.
 
- 
+
 
 3001 */\**
 
@@ -7011,11 +7017,11 @@ With this done we perform post-reclaim logic as explored in Listing 11-
 
 3039 *\*/*
 
- 
 
 
 
- 
+
+
 
 3040 lru = (lru == **LRU_FILE**) ? **LRU_BASE** : **LRU_FILE**; 3041 nr_scanned = targets\[lru\] - nr\[lru\]; 3042 nr\[lru\] = targets\[lru\] \* (100 - percentage) / 100; 3043 nr\[lru\] -= **min**(nr\[lru\], nr_scanned); 3044
 
@@ -7023,11 +7029,11 @@ With this done we perform post-reclaim logic as explored in Listing 11-
 
 3050 scan_adjusted = **true**; 3051 }
 
- 
+
 
 *Listing 11-53:* mm/vmscan.c: [*shrink_lruvec()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) *Reclaim Loop Post-Processing*
 
- 
+
 
 The portion of [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) we examine in Listing 11-54 is concerned
 
@@ -7069,11 +7075,11 @@ tion of file-backed or anonymous pages is always equal to the complement of the 
 
 already truncated the scan count by the reclaim priority). See Section 11.5.4 for more details.
 
- 
 
 
 
- 
+
+
 
 To recover proportionality, we apply the same logic here—we know what
 
@@ -7105,13 +7111,13 @@ evenly.
 
 We start with page reclaim targets as shown in Table 11-1.
 
- 
+
 
 Table 11-1: Proportionality Example Part 1
 
 LRU Target Scan Target% Anonymous Inactive 64 10% Anonymous Active 64 10% File-backed Inactive 256 40% File-backed Active 256 40%
 
- 
+
 
 Note that this implies an 80%/20% split in favour of file-backed pages. After a single loop through each LRU vector, assuming all pages are re-
 
@@ -7121,13 +7127,13 @@ However, this has not resulted in a proportional scan at all, in fact we
 
 have simply scanned all lists evenly, as shown in Table 11-2.
 
- 
+
 
 Table 11-2: Proportionality Example Part 2
 
 LRU Remaining Scan Scanned Scanned% Scanned/Target% Anonymous Inactive 32 32 25% 50% Anonymous Active 32 32 25% 50% File-backed Inactive 224 32 25% 12.5% File-backed Active 224 32 25% 12.5%
 
- 
+
 
 Table 11-2 perfectly demonstrates the issue. We have hit our reclaim tar-
 
@@ -7151,11 +7157,11 @@ pages, that is, those with the greater number of pages remaining to be
 
 scanned, becomes apparent.
 
- 
 
 
 
- 
+
+
 
 We have 448 file-backed pages which we can scan, and only 64 anony-
 
@@ -7173,13 +7179,13 @@ Assuming we successfully scan in these proportions, we are left with the
 
 final aggregate results as shown in Table 11-3.
 
- 
+
 
 Table 11-3: Proportionality Example Part 3
 
 LRU Scanned Scanned% Scanned/Target% Anonymous Inactive 32 10% 50% Anonymous Active 32 10% 50% File-backed Inactive 128 40% 50% File-backed Active 128 40% 50%
 
- 
+
 
 We can see in Table 11-3 the final scan counts for each LRU vector, the
 
@@ -7189,19 +7195,19 @@ We will have scanned (and potentially reclaimed) 320 pages, which is two
 
 and half times the target number to reclaim, but we will have maintained the required proportions.
 
- 
+
 
 **N O T E** We hit 50% of the [*get_scan_count()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2738) (see Listing 11-47) targets, but in indirect re-
 
 claim or direct reclaim below the default priority level, we do not intend to hit these targets, rather at or above the requested number of pages to reclaim.
 
- 
+
 
 With this logic complete or on early exit as discussed, we perform post-
 
 loop logic as shown in Listing 11-54.
 
- 
+
 
 3053 sc-\>nr_reclaimed += nr_reclaimed; 3054
 
@@ -7211,21 +7217,21 @@ loop logic as shown in Listing 11-54.
 
 3059 **if** (**can_age_anon_pages**(**lruvec_pgdat**(lruvec), sc) && 3060 **inactive_is_low**(lruvec, **LRU_INACTIVE_ANON**)) 3061 **shrink_active_list**(**SWAP_CLUSTER_MAX**, lruvec, 3062 sc, **LRU_ACTIVE_ANON**); 3063 }
 
- 
+
 
 *Listing 11-54:* mm/vmscan.c: [*shrink_lruvec()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) *Suffix*
 
- 
+
 
 At the end of [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2946) as shown in Listing 11-54, we perform a
 
 direct check as to whether we can age anonymous pages, that is whether
 
- 
 
 
 
- 
+
+
 
 [can_age_anon_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2939) returns true. Other than in the case of NUMA demo-
 
@@ -7241,7 +7247,7 @@ If so, then we shrink the active list via [shrink_active_list()](https://git.ker
 
 11-56 and Section 11.5.7).
 
- 
+
 
 **N O T E** Having noted in Section 11.4.4 on indirect reclaim about consistent aging of active
 
@@ -7253,39 +7259,39 @@ indicate anonymous active folios should not be reclaimed (for instance in cache 
 
 mode). See Section 11.5.7 for more.
 
- 
+
 
 ***11.5.6 Shrinking an Individual LRU List***
 
- 
+
 
 [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194)
 
- 
+
 
 [shrink_node_memcgs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3136)
 
- 
+
 
 [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2950)
 
- 
+
 
 [shrink_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2663)
 
- 
+
 
 [shrink_active_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509) [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402)
 
- 
+
 
 [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589)
 
- 
+
 
 *Figure 11-19: Reclaim Mechanism: Shrinking an Individual LRU List Code Path*
 
- 
+
 
 We are now at the level of granularity of an individual LRU vector, whether
 
@@ -7295,7 +7301,7 @@ file-backed or anonymous, inactive or active, which is shrunk by the
 
 in [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2950) (see Listing 11-51), as discussed in Section 11.5.5.
 
- 
+
 
 2663 **static unsigned long shrink_list**(**enum** lru_list lru, **unsigned long** nr_to_scan, 2664 **struct** lruvec \*lruvec, **struct** scan_control \*
 
@@ -7307,21 +7313,21 @@ sc)
 
 2670 sc-\>skipped_deactivate = 1; 2671 **return** 0; 2672 }
 
- 
 
 
 
- 
+
+
 
 2673
 
 2674 **return shrink_inactive_list**(nr_to_scan, lruvec, sc, lru); 2675 }
 
- 
+
 
 *Listing 11-55:* mm/vmscan.c: [*shrink_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2663)
 
- 
+
 
 The [shrink_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2663) function is rather straightforward—if the LRU is an ac-
 
@@ -7351,21 +7357,21 @@ other words reclaim via [shrink_inactive_list()](https://git.kernel.org/pub/scm/
 
 explore in Section 11.5.9.
 
- 
+
 
 ***11.5.7 Shrinking the Active List***
 
- 
+
 
 Indirect Reclaim
 
 [balance_pgdat()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n4146) [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194)
 
- 
+
 
 [age_active_anon()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3926) [shrink_node_memcgs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3136)
 
- 
+
 
 If anon. pages
 
@@ -7377,27 +7383,27 @@ If anon. pages inactive is low inactive is low If may deactivate
 
 pages
 
- 
+
 
 [shrink_active_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509) [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402)
 
- 
+
 
 [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589)
 
- 
+
 
 *Figure 11-20: Reclaim Mechanism: Shrinking the Active List Code Path*
 
- 
+
 
 As described in Section 11.2, and in more detail in Section 11.5.9 there is an active LRU list and an inactive LRU list. Folios typically start in the inactive list, then on reclaim they are checked to see if they’ve been touched since we last checked (via the hardware-implemented but software resettable accessed page table flag). If so, then they are marked referenced and when encoun-tered again, if accessed once more, promoted to the active list.
 
- 
 
 
 
- 
+
+
 
 Demotion from the active list typically occurs when either thrashing is
 
@@ -7437,7 +7443,7 @@ statistical updates, realtime kernel scheduling logic, buffer head handling,
 
 cgroup handling, and tracing hooks).
 
- 
+
 
 2492 */\**
 
@@ -7463,11 +7469,11 @@ cgroup handling, and tracing hooks).
 
 2514 **unsigned long** nr_taken; 2515 **unsigned long** nr_scanned; 2516 **unsigned long** vm_flags; 2517 **LIST_HEAD**(l_hold); */\* The folios which were snipped off \*/* 2518 **LIST_HEAD**(l_active); 2519 **LIST_HEAD**(l_inactive);
 
- 
 
 
 
- 
+
+
 
 2520 **unsigned** nr_deactivate, nr_activate; 2521 **unsigned** nr_rotated = 0; 2522 **int** file = **is_file_lru**(lru); 2523 **struct** pglist_data \*pgdat = **lruvec_pgdat**(lruvec); 2524
 
@@ -7517,11 +7523,11 @@ cgroup handling, and tracing hooks).
 
 2579 **folio_clear_active**(folio); */\* we are de-activating \*/*
 
- 
 
 
 
- 
+
+
 
 2580 **folio_set_workingset**(folio); 2581 **list_add**(&folio-\>lru, &l_inactive); 2582 }
 
@@ -7547,11 +7553,11 @@ cgroup handling, and tracing hooks).
 
 2604 }
 
- 
+
 
 *Listing 11-56:* mm/vmscan.c: [*shrink_active_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509)
 
- 
+
 
 The [shrink_active_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509) function maintains three lists—l_hold which con-
 
@@ -7575,13 +7581,13 @@ is, when cgroups aren’t in effect, a per-node one which contains each indi-
 
 vidual LRU vector. See Section 11.2.1 for more on this data structure.
 
- 
+
 
 **N O T E** The [*struct lruvec-\>lru_lock*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n317) lock is very heavily contended, so the kernel goes to
 
 great lengths to try to minimise the time over which this lock is held.
 
- 
+
 
 With the LRU lock acquired, we isolated LRU folios from the list and
 
@@ -7607,11 +7613,11 @@ We iterate through the list backwards as does reclaim itself, by looking at
 
 the tail of the list and obtaining that folio via [lru_to_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n232).
 
- 
 
 
 
- 
+
+
 
 Each folio that was added to the isolated folio list will have its
 
@@ -7657,13 +7663,13 @@ we then submit to [free_unref_page_list()](https://git.kernel.org/pub/scm/linux/
 
 cator (see Chapter 2 for details on the physical memory allocator).
 
- 
+
 
 **N O T E** Importantly, we see that folios are simply taken from the active list into the inactive
 
 one without prejudice (aside from the [*VM_EXEC*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n268) edge case), there is no decision making performed—once the active list is to be cleared down, those folios are placed into the inactive one and subject to potential reclaim.
 
- 
+
 
 ***11.5.8 Isolating LRU Folios***
 
@@ -7675,17 +7681,17 @@ examine starting in Listing 11-57 (eliding out of scope data prefetch logic, tra
 
 This function assumes that the [struct lruvec-\>lru_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n317) is held.
 
- 
+
 
 2117 */\**
 
 2118 *\* Isolating page from the lruvec to fill in @dst list by nr_to_scan times.*
 
- 
 
 
 
- 
+
+
 
 2119 *\**
 
@@ -7711,11 +7717,11 @@ This function assumes that the [struct lruvec-\>lru_lock](https://git.kernel.org
 
 2152 scan = 0;
 
- 
+
 
 *Listing 11-57:* mm/vmscan.c: [*isolate_lru_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2138) *Preface*
 
- 
+
 
 We start [isolate_lru_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2138) by establishing local variables, including the
 
@@ -7735,15 +7741,15 @@ With this done, we loop over folios contained in this list, as explored in
 
 Listing 11-58.
 
- 
+
 
 2153 **while** (scan \< nr_to_scan && !**list_empty**(src)) { 2154 **struct** list_head \*move_to = src; 2155 **struct** folio \*folio; 2156
 
- 
 
 
 
- 
+
+
 
 2157 folio = **lru_to_folio**(src);
 
@@ -7795,15 +7801,15 @@ Listing 11-58.
 
 2201 **list_move**(&folio-\>lru, move_to); 2202 }
 
- 
+
 
 *Listing 11-58:* mm/vmscan.c: [*isolate_lru_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2138) *Main Loop*
 
- 
 
 
 
- 
+
+
 
 In the portion of [isolate_lru_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2138) explored in Listing 11-58 we iter-
 
@@ -7811,7 +7817,7 @@ ate over folios in the input LRU vector, extracting the tail item in the list vi
 
 [lru_to_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n232).
 
- 
+
 
 **N O T E** As a reminder—folios are added to LRU linked lists at the head of the list, and read
 
@@ -7819,7 +7825,7 @@ ate over folios in the input LRU vector, extracting the tail item in the list vi
 
 list as we isolate this is in line with how these lists are expected to function.
 
- 
+
 
 We have not yet extracted the folio from the LRU list, and go about this
 
@@ -7859,13 +7865,13 @@ LRU, i.e. the [PG_lru](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/
 
 input list via [list_move()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/list.h?h=v6.0#n215).
 
- 
+
 
 **N O T E** These list operations are safe as it is assumed within this function that we hold the
 
 [*struct lruvec-\>lru_lock*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n317).
 
- 
+
 
 Equally if we are unable to unmap the folio, as determined by
 
@@ -7895,7 +7901,7 @@ caller-specified destination list.
 
 We examine what we do after this loop in Listing 11-59.
 
- 
+
 
 2204 */\**
 
@@ -7903,11 +7909,11 @@ We examine what we do after this loop in Listing 11-59.
 
 2206 *\* this disrupts the LRU order when reclaiming for lower zones but*
 
- 
 
 
 
- 
+
+
 
 2207 *\* we cannot splice to the tail. If we did then the SWAP_CLUSTER_MAX*
 
@@ -7933,11 +7939,11 @@ We examine what we do after this loop in Listing 11-59.
 
 2229 }
 
- 
+
 
 *Listing 11-59:* mm/vmscan.c: [*isolate_lru_pages()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2138) *Suffix*
 
- 
+
 
 The portion of [isolate_lru_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2138) examined in Listing 11-59 first places
 
@@ -7957,7 +7963,7 @@ to be put back to whichever list they ought to be on. This is performed by
 
 This function also assumes that [struct lruvec-\>lru_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n317) is held.
 
- 
+
 
 2317 */\**
 
@@ -7981,11 +7987,11 @@ This function also assumes that [struct lruvec-\>lru_lock](https://git.kernel.or
 
 2333 **list_del**(&folio-\>lru); 2334 **if** (**unlikely**(!**folio_evictable**(folio))) { 2335 **spin_unlock_irq**(&lruvec-\>lru_lock);
 
- 
 
 
 
- 
+
+
 
 2336 **folio_putback_lru**(folio); 2337 **spin_lock_irq**(&lruvec-\>lru_lock); 2338 **continue**; 2339 }
 
@@ -8037,11 +8043,11 @@ This function also assumes that [struct lruvec-\>lru_lock](https://git.kernel.or
 
 2385 }
 
- 
+
 
 *Listing 11-60:* mm/vmscan.c: [*move_pages_to_lru()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2323)
 
- 
+
 
 The [move_pages_to_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2323) function iterates through the list from the tail,
 
@@ -8049,11 +8055,11 @@ extracting the folio in each instance via [lru_to_folio()](https://git.kernel.or
 
 from the input list via [list_del()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/list.h?h=v6.0#n146)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/list.h?h=v6.0#n146)
 
- 
 
 
 
- 
+
+
 
 As in [shrink_active_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509) we check to ensure the folio is not [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html)ed
 
@@ -8085,39 +8091,39 @@ Finally, we place all of the folios to be freed on the input list for the caller
 
 to free (done this way for efficiency), before returning the count of base pages of folios moved.
 
- 
+
 
 ***11.5.9 Shrinking the Inactive List***
 
- 
+
 
 [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194)
 
- 
+
 
 [shrink_node_memcgs()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3136)
 
- 
+
 
 [shrink_lruvec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2950)
 
- 
+
 
 [shrink_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2663)
 
- 
+
 
 [shrink_active_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509) [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402)
 
- 
+
 
 [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589)
 
- 
+
 
 *Figure 11-21: Reclaim Mechanism: Shrinking the Inactive List*
 
- 
+
 
 Shrinking the inactive LRU list is where actual reclaim is performed within the kernel, and all of the remainder of the reclaim logic is simply designed to control how this proceeds.
 
@@ -8125,17 +8131,17 @@ This occurs in [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/ker
 
 (eliding out of scope cgroup logic, statistical updates and trace hooks).
 
- 
+
 
 2401 **static unsigned long**
 
 2402 **shrink_inactive_list**(**unsigned long** nr_to_scan, **struct** lruvec \*lruvec,
 
- 
 
 
 
- 
+
+
 
 2403 **struct** scan_control \*sc, **enum** lru_list lru) 2404 {
 
@@ -8179,11 +8185,11 @@ This occurs in [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/ker
 
 2461 **free_unref_page_list**(&page_list);
 
- 
 
 
 
- 
+
+
 
 2462
 
@@ -8201,11 +8207,11 @@ This occurs in [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/ker
 
 2489 **return** nr_reclaimed; 2490 }
 
- 
+
 
 *Listing 11-61:* mm/vmscan.c: [*shrink_inactive_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402)
 
- 
+
 
 We start [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402) by initialising a number of local variables
 
@@ -8221,7 +8227,7 @@ termine whether this is necessary via [too_many_isolated()](https://git.kernel.o
 
 in Listing 11-62 (eliding out of scope cgroup logic).
 
- 
+
 
 2273 */\**
 
@@ -8237,11 +8243,11 @@ in Listing 11-62 (eliding out of scope cgroup logic).
 
 2280 **static int too_many_isolated**(**struct** pglist_data \*pgdat, **int** file,
 
- 
 
 
 
- 
+
+
 
 2281 **struct** scan_control \*sc) 2282 {
 
@@ -8285,11 +8291,11 @@ in Listing 11-62 (eliding out of scope cgroup logic).
 
 2315 }
 
- 
+
 
 *Listing 11-62:* mm/vmscan.c: [*too_many_isolated()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2280)
 
- 
+
 
 The [too_many_isolated()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2280) function only considers direct reclaim cases, as
 
@@ -8303,7 +8309,7 @@ number of inactive pages, then we indicate that there are too many isolated
 
 pages.
 
- 
+
 
 **N O T E** In the case of [*GFP_NOIO*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n336) or [*GFP_NOFS*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/gfp_types.h?h=v6.0#n337) allocations where I/O or filesystem access are not
 
@@ -8311,17 +8317,17 @@ permitted in the failing allocation which triggered reclaim, we allow isolated p
 
 grow all the way to the size of the number of inactive ones to avoid deadlock.
 
- 
+
 
 If we determine that we do not have too many isolated pages we wake any
 
 threads that were throttled on this via [wake_throttle_isolated()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n73)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/internal.h?h=v6.0#n73)
 
- 
 
 
 
- 
+
+
 
 Returning to [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402) and Listing 11-61, we see that in
 
@@ -8387,11 +8393,11 @@ We examine the logic of the key [shrink_page_list()](https://git.kernel.org/pub/
 
 22.
 
- 
 
 
 
- 
+
+
 
 No
 
@@ -8421,7 +8427,7 @@ mark for immediate writeback.
 
 Yes
 
- 
+
 
 Yes
 
@@ -8439,7 +8445,7 @@ via [folio_check_references()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 No is complete.
 
- 
+
 
 Accessed since last check? [PG_referenced](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n102) prev. set/refs\>1? Yes
 
@@ -8451,7 +8457,7 @@ No
 
 No Set [PG_referenced](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n102) flag. [VM_EXEC](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n268) file folio? To keep
 
- 
+
 
 Yes
 
@@ -8489,13 +8495,13 @@ Lazy-free? is false, we can’t page out/swap out.
 
 Yes
 
- 
+
 
 Yes Yes No kswapd Only can Yes
 
 Freeze? page out file folios, Can page out?
 
- 
+
 
 Remove from No only if previously File page out? No To keep To keep flagged [PG_reclaim](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n119) , and Yes [PAGE_KEEP](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1202) No Fails saturated with dirty [pageout()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1215) Set [PG_reclaim](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n119) folios [(](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n686) [PGDAT_DIRTY](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n686) set).
 
@@ -8507,21 +8513,21 @@ No
 
 To Yes No free pages Lock folio?
 
- 
+
 
 *Figure 11-22:* [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Main Loop Logic*
 
- 
 
 
 
- 
+
+
 
 We examine [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) in Listing 11-63 (eliding out of scope real-
 
 time scheduling hooks, cgroup logic, debug asserts, huge page logic, NUMA demotion, statistical updates, buffer head freeing and hot plugging sup-port).
 
- 
+
 
 1589 **static unsigned int shrink_page_list**(**struct** list_head \*page_list, 1590 **struct** pglist_data \*pgdat, 1591 **struct** scan_control \*sc, 1592 **struct** reclaim_stat \*stat, 1593 **bool** ignore_references) 1594 {
 
@@ -8557,21 +8563,21 @@ time scheduling hooks, cgroup logic, debug asserts, huge page logic, NUMA demoti
 
 1633 **if** (!sc-\>may_unmap && **folio_mapped**(folio)) 1634 **goto keep_locked**;
 
- 
+
 
 *Listing 11-63:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Preface & Loop Start*
 
- 
+
 
 We start by initialising local state, including the lists ret_pages which are
 
 the folios we will return in page_list for the caller to place into their appro-priate LRU list should we not reclaim them and free_pages for those folios we
 
- 
 
 
 
- 
+
+
 
 were able to reclaim and thus are ready to be freed, which we bulk free at the
 
@@ -8581,7 +8587,7 @@ Within the loop we read a folio from the tail of the input list of isolated
 
 folios via [lru_to_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n232) and delete the folio from the input list via [list_del()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/list.h?h=v6.0#n146)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/list.h?h=v6.0#n146)
 
- 
+
 
 **N O T E** We later append (that is splice) the empty input list at the end of the iteration with
 
@@ -8589,7 +8595,7 @@ folios that were not reclaimed that need to be returned to the caller to put bac
 
 appropriate LRUs.
 
- 
+
 
 On each iteration we optimistically try to lock the folio—we don’t want to
 
@@ -8617,7 +8623,7 @@ After ensuring that we can proceed, we examine writeback folios, which
 
 we examine in Listing 11-64.
 
- 
+
 
 1636 */\**
 
@@ -8645,11 +8651,11 @@ we examine in Listing 11-64.
 
 1703 **if** (**current_is_kswapd**() && 1704 **folio_test_reclaim**(folio) &&
 
- 
 
 
 
- 
+
+
 
 1705 **test_bit**(**PGDAT_WRITEBACK**, &pgdat-\>flags)) { 1706 stat-\>nr_immediate += nr_pages; 1707 **goto activate_locked**;
 
@@ -8667,11 +8673,11 @@ we examine in Listing 11-64.
 
 1738 } 1739 }
 
- 
+
 
 *Listing 11-64:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Writeback Handling*
 
- 
+
 
 We start the portion of [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) explored in Listing 11-64 by
 
@@ -8687,13 +8693,13 @@ When a folio is under writeback and we want to reclaim it, we typically
 
 set the [PG_reclaim](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n119)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/page-flags.h?h=v6.0#n119) this is seen in the branch starting at line 1710.
 
- 
+
 
 **N O T E** The source is unfortunately cropped rather awkwardly here—
 
 [*writeback_throttling_sane()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n453) is a cgroup-specific check, which if cgroups are not enabled returns *true*. Therefore from the purpose of what is in scope here in the book, view this as an *else* branch.
 
- 
+
 
 This is what we do in the majority of cases, as when writeback completes,
 
@@ -8703,11 +8709,11 @@ this flag and invokes [folio_rotate_reclaimable()](https://git.kernel.org/pub/sc
 
 tion 11.7.7)).
 
- 
 
 
 
- 
+
+
 
 This function places the folio at the tail of the inactive LRU, so it will be
 
@@ -8757,17 +8763,17 @@ whether folios have been utilised, that is referenced by user space, which we
 
 examine in Listing 11-65.
 
- 
+
 
 1741 **if** (!ignore_references) 1742 references = **folio_check_references**(folio, sc); 1743
 
 1744 **switch** (references) { 1745 **case PAGEREF_ACTIVATE**: 1746 **goto activate_locked**; 1747 **case PAGEREF_KEEP**: 1748 stat-\>nr_ref_keep += nr_pages; 1749 **goto keep_locked**; 1750 **case PAGEREF_RECLAIM**: 1751 **case PAGEREF_RECLAIM_CLEAN**: 1752 ; */\* try to reclaim the folio below \*/* 1753 }
 
- 
+
 
 *Listing 11-65:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Reference Handling*
 
- 
+
 
 The portion of [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) explored in Listing 11-65 we note that
 
@@ -8785,11 +8791,11 @@ This function returns an [enum page_references](https://git.kernel.org/pub/scm/l
 
 proceed, with [PAGEREF_RECLAIM](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1427) indicating we can proceed with reclaim,
 
- 
 
 
 
- 
+
+
 
 [PAGEREF_RECLAIM_CLEAN](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1428) indicating that we can proceed with reclaim but not
 
@@ -8809,7 +8815,7 @@ Again, see Section 11.5.10 for a detailed exploration of what folio refer-
 
 ences entail and how they are determined.
 
- 
+
 
 1766 */\**
 
@@ -8849,19 +8855,19 @@ ences entail and how they are determined.
 
 1839 **goto activate_locked**; 1840 }
 
- 
 
 
 
- 
+
+
 
 1841 }
 
- 
+
 
 *Listing 11-66:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Add to Swap & Mappings*
 
- 
+
 
 Importantly, we start the portion of [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) explored in Listing
 
@@ -8949,15 +8955,15 @@ it out of the way of reclaim.
 
 With this complete, we examine dirty folio handling in Listing 11-67.
 
- 
+
 
 1843 mapping = **folio_mapping**(folio);
 
- 
 
 
 
- 
+
+
 
 1844 **if** (**folio_test_dirty**(folio)) { 1845 */\** 1846 *\* Only kswapd can writeback filesystem folios* 1847 *\* to avoid risk of stack overflow. But avoid* 1848 *\* injecting inefficient single-folio I/O into* 1849 *\* flusher writeback as much as possible: only* 1850 *\* write folios when we've encountered many* 1851 *\* dirty folios, and when we've already scanned*
 
@@ -8983,11 +8989,11 @@ With this complete, we examine dirty folio handling in Listing 11-67.
 
 1894 **if** (**folio_test_writeback**(folio)) 1895 **goto keep**; 1896 **if** (**folio_test_dirty**(folio)) 1897 **goto keep**;
 
- 
 
 
 
- 
+
+
 
 1898
 
@@ -8997,11 +9003,11 @@ With this complete, we examine dirty folio handling in Listing 11-67.
 
 1901 *\* ahead and try to reclaim the folio.* 1902 *\*/* 1903 **if** (!**folio_trylock**(folio)) 1904 **goto keep**; 1905 **if** (**folio_test_dirty**(folio) \|\| 1906 **folio_test_writeback**(folio)) 1907 **goto keep_locked**; 1908 mapping = **folio_mapping**(folio); 1909 **fallthrough**; 1910 **case PAGE_CLEAN**: 1911 ; */\* try to free the folio below \*/* 1912 } 1913 }
 
- 
+
 
 *Listing 11-67:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Dirty Folio Handling*
 
- 
+
 
 The portion of [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) examined in Listing 11-67 handles dirty
 
@@ -9059,11 +9065,11 @@ associated with the allocation which triggered reclaim (see Section 2.6 in
 
 not proceed so we also rotate the folio in these cases.
 
- 
 
 
 
- 
+
+
 
 We invoke [try_to_unmap_flush_dirty()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n630) to ensure the TLB is flushed as nec-
 
@@ -9115,7 +9121,7 @@ cerned with handling the lazy-free case and removal of the folio from its
 
 owning mapping. We explore this in Listing 11-68.
 
- 
+
 
 1959 **if** (**folio_test_anon**(folio) && !**folio_test_swapbacked**(folio)) { 1960 */\* follow \_\_remove_mapping for reference \*/* 1961 **if** (!**folio_ref_freeze**(folio, 1)) 1962 **goto keep_locked**; 1963 */\** 1964 *\* The folio has only one reference left, which is*
 
@@ -9129,11 +9135,11 @@ owning mapping. We explore this in Listing 11-68.
 
 1973 } **else if** (!mapping \|\| !**\_\_remove_mapping**(mapping, folio, **true**,
 
- 
 
 
 
- 
+
+
 
 1974 sc-\>target_mem_cgroup
 
@@ -9141,11 +9147,11 @@ owning mapping. We explore this in Listing 11-68.
 
 1975 **goto keep_locked**;
 
- 
+
 
 *Listing 11-68:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Lazy Free and Mapping Removal*
 
- 
+
 
 In the portion of [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) explored in Listing 11-68, we first
 
@@ -9177,7 +9183,7 @@ folio.
 
 Next we examine the final part of [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) in Listing 11-69.
 
- 
+
 
 1978 **folio_unlock**(folio);
 
@@ -9213,11 +9219,11 @@ Next we examine the final part of [shrink_page_list()](https://git.kernel.org/pu
 
 2017 **keep_locked**:
 
- 
 
 
 
- 
+
+
 
 2018 **folio_unlock**(folio); 2019 **keep**:
 
@@ -9239,11 +9245,11 @@ Next we examine the final part of [shrink_page_list()](https://git.kernel.org/pu
 
 2047 **return** nr_reclaimed; 2048 }
 
- 
+
 
 *Listing 11-69:* mm/vmscan.c: [*shrink_page_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) *Suffix*
 
- 
+
 
 The portion of [shrink_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1589) explored in Listing 11-69 firstly handles
 
@@ -9285,11 +9291,11 @@ See Section 7.1 in Chapter 7 for more details on how folios are freed and
 
 the TLB is maintained within the kernel.
 
- 
 
 
 
- 
+
+
 
 We then go ahead and free successfully reclaimed folios on the free_list
 
@@ -9307,7 +9313,7 @@ Finally, we return the number of base pages we reclaimed during the op-
 
 eration.
 
- 
+
 
 ***11.5.10 Reclaim Folio Reference Checking***
 
@@ -9341,7 +9347,7 @@ around folio references is [folio_check_references()](https://git.kernel.org/pub
 
 ing 11-70.
 
- 
+
 
 1433 **static enum** page_references **folio_check_references**(**struct** folio \*folio, 1434 **struct** scan_control \*sc) 1435 {
 
@@ -9365,11 +9371,11 @@ ing 11-70.
 
 1450 */\* rmap lock contention: rotate \*/* 1451 **if** (referenced_ptes == -1)
 
- 
 
 
 
- 
+
+
 
 1452 **return PAGEREF_KEEP**; 1453
 
@@ -9407,21 +9413,21 @@ ing 11-70.
 
 1489 **return PAGEREF_RECLAIM**; 1490 }
 
- 
+
 
 *Listing 11-70:* mm/vmscan.c: [*folio_check_references()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1433)
 
- 
+
 
 The [folio_check_references()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1433) function first uses [folio_referenced()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/rmap.c?h=v6.0#n900) to walk
 
 the reverse-mapping of the folio and first detect all [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA) objects which map the folio, before walking each of their page tables until we reach the PTE level at which point we check for the accessed page table flag, and atomically clear it at the same time.
 
- 
 
 
 
- 
+
+
 
 Each VMA is examined by this reverse mapping functionality using the
 
@@ -9483,13 +9489,13 @@ reference check and simply indicate that we should activate it right away as
 
 indicated by [PAGEREF_ACTIVATE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1429)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1429)
 
- 
+
 
 **N O T E** The kernel makes a special effort to quickly activate executable code mappings, as
 
 reclaiming these can be costly in terms of latency of executing code.
 
- 
+
 
 If the folio was referenced but not previously, we rotate it to the back of
 
@@ -9507,7 +9513,7 @@ Otherwise, we return [PAGEREF_RECLAIM](https://git.kernel.org/pub/scm/linux/kern
 
 able for reclaim.
 
- 
+
 
 ***11.5.11 Reclaim Page Out***
 
@@ -9515,15 +9521,15 @@ When we need to write back dirty folios to disk, whether swap-backed folios
 
 in the swap cache being written out to the swap on disk or dirty file-backed
 
- 
 
 
 
- 
+
+
 
 folios, we do this via [pageout()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1215), which we examine in Listing 11-71 (eliding out of scope buffer handling, trace hooks and statistical updates).
 
- 
+
 
 1211 */\**
 
@@ -9561,11 +9567,11 @@ folios, we do this via [pageout()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 1264 **folio_set_reclaim**(folio); 1265 res = mapping-\>a_ops-\>**writepage**(&folio-\>page, &wbc);
 
- 
 
 
 
- 
+
+
 
 1266 **if** (res \< 0) 1267 **handle_write_error**(mapping, folio, res); 1268 **if** (res == **AOP_WRITEPAGE_ACTIVATE**) { 1269 **folio_clear_reclaim**(folio); 1270 **return PAGE_ACTIVATE**; 1271 }
 
@@ -9581,11 +9587,11 @@ folios, we do this via [pageout()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 1282 **return PAGE_CLEAN**; 1283 }
 
- 
+
 
 *Listing 11-71:* mm/vmscan.c: [*pageout()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1215)
 
- 
+
 
 We start [pageout()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1215) by performing the checking whether the associated
 
@@ -9593,7 +9599,7 @@ page cache (or swap) entry is freeable, via [is_page_cache_freeable](https://git
 
 examine in Listing 11-72.
 
- 
+
 
 1039 **static inline int is_page_cache_freeable**(**struct** folio \*folio) 1040 {
 
@@ -9603,11 +9609,11 @@ examine in Listing 11-72.
 
 1046 **return folio_ref_count**(folio) -**folio_test_private**(folio) == 1047 1 + **folio_nr_pages**(folio); 1048 }
 
- 
+
 
 *Listing 11-72:* mm/vmscan.c: [*is_page_cache_freeable*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1039)
 
- 
+
 
 [is_page_cache_freeable](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1039) importantly ensures that we do not attempt to re-
 
@@ -9635,11 +9641,11 @@ Finally we are ready to proceed with writeback. We start by invoking
 
 [folio_clear_dirty_for_io()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2826), which checks to ensure that we can writeback
 
- 
 
 
 
- 
+
+
 
 and resets the dirty flag, marking the folio clean (and associated mappings, though in this instance mappings should be cleared).
 
@@ -9673,7 +9679,7 @@ See Section 12.2.4 in Chapter 12 for a detailed swap-specific analysis of
 
 this logic.
 
- 
+
 
 ***11.5.12 Reclaim Mapping Removal***
 
@@ -9687,19 +9693,19 @@ ject describing the page cache entry (see Chapter 9 for more on the page
 
 cache), for an anonymous folio this will be the [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) object describing the swapper address space describing the swap cache which con-tains the folio, or NULL if there is no such entry (that is, the folio is not in the swap cache).
 
- 
+
 
 **N O T E** Mapping is a poor name for what this entity represents, that is the aggregate ab-
 
 straction which the folio finds itself a part of. It is easily confused with a folio’s ref-erences (the number of times it has been accessed since we last checked) or whether it’s mapped (determined by folio map counts).
 
- 
+
 
 For those instances where there is a mapping, reclaim invokes
 
 [\_\_remove_mapping() , ](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1289)which we examine in Listing 11-73 (eliding bug checks, some larger comments, out of scope working set and cgroup logic, and map-ping shrinking logic).
 
- 
+
 
 1289 **static int \_\_remove_mapping**(**struct** address_space \*mapping, **struct** folio \*folio
 
@@ -9711,11 +9717,11 @@ For those instances where there is a mapping, reclaim invokes
 
 . . .
 
- 
 
 
 
- 
+
+
 
 1298 **if** (!**folio_test_swapcache**(folio)) 1299 **spin_lock**(&mapping-\>host-\>i_lock); 1300 **xa_lock_irq**(&mapping-\>i_pages);
 
@@ -9759,11 +9765,11 @@ For those instances where there is a mapping, reclaim invokes
 
 1383 }
 
- 
+
 
 *Listing 11-73:* mm/vmscan.c: [*\_\_remove_mapping()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1289)
 
- 
+
 
 The [\_\_remove_mapping()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1289) function starts by acquiring the appropriate locks
 
@@ -9773,11 +9779,11 @@ After this we perform a vital reference count check—we must avoid re-
 
 claiming folios which are pinned by kernel tasks, and at this stage we expect
 
- 
 
 
 
- 
+
+
 
 the page cache or swap cache to hold a reference in addition to the isolation we have applied to the folio pages.
 
@@ -9807,11 +9813,11 @@ in its [struct address_space_operations](https://git.kernel.org/pub/scm/linux/ke
 
 We then return indicating the operation succeeded.
 
- 
+
 
 **11.6 Reclaim Throttling**
 
- 
+
 
 ***11.6.1 General Reclaim Throttling***
 
@@ -9823,19 +9829,19 @@ Listing 11-75.
 
 We examine the callers of this function in Figure 11-23.
 
- 
+
 
 Direct Reclaim
 
 [shrink_zones()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3463)
 
- 
+
 
 Reclaim Mechanism Reclaim Mechanism Writeback
 
 [consider_reclaim_throttle()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3425) [shrink_node()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3194) [shrink_inactive_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2402) [do_writepages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page-writeback.c?h=v6.0#n2457)
 
- 
+
 
 If no progress If writeback needed If too many Sync-all write cannot alloc or congested folios isolated
 
@@ -9849,11 +9855,11 @@ folios isolated
 
 Compaction
 
- 
+
 
 *Figure 11-23: Callers of* [*reclaim_throttle()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1104)
 
- 
+
 
 In the case of direct reclaim, we have specific direct reclaim throt-
 
@@ -9865,17 +9871,17 @@ Additionally, we consider the case where direct reclaim is stuck making
 
 no progress, where it would be appropriate to simply sleep for a while. This
 
- 
 
 
 
- 
+
+
 
 is invoked by [shrink_zones()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3463) (see Listing 11-21 and Section 11.3), which in
 
 turn calls [consider_reclaim_throttle()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3425) which we examine in Listing 11-74.
 
- 
+
 
 3425 **static void consider_reclaim_throttle**(pg_data_t \*pgdat, **struct** scan_control \*
 
@@ -9915,11 +9921,11 @@ sc)
 
 3450 */\* Throttle if making no progress at high prioities. \*/* 3451 **if** (sc-\>priority == 1 && !sc-\>nr_reclaimed) 3452 **reclaim_throttle**(pgdat, **VMSCAN_THROTTLE_NOPROGRESS**); 3453 }
 
- 
+
 
 *Listing 11-74:* mm/vmscan.c: [*consider_reclaim_throttle()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3425)
 
- 
+
 
 The reclaim throttle mechanism operates using the
 
@@ -9927,7 +9933,7 @@ The reclaim throttle mechanism operates using the
 
 each category of reclaim throttling.
 
- 
+
 
 **N O T E** As mentioned elsewhere in the book wait queues are a means within the kernel for
 
@@ -9937,7 +9943,7 @@ reclaim throttling, we establish a wait queue entry when the throttling occurs, 
 
 sleep, however we expose the wait queues so that the threads can be woken up.
 
- 
+
 
 The [consider_reclaim_throttle()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3425) function shown in Listing 11-74 is in-
 
@@ -9945,11 +9951,11 @@ voked by [shrink_zones()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 which an allocation could be made.
 
- 
 
 
 
- 
+
+
 
 In this function, we are concerned with the determining whether direct
 
@@ -9969,7 +9975,7 @@ We examine the [reclaim_throttle()](https://git.kernel.org/pub/scm/linux/kernel/
 
 time kernel scheduling logic and trace hooks).
 
- 
+
 
 1104 **void reclaim_throttle**(**pg_data_t** \*pgdat, **enum** vmscan_throttle_state reason) 1105 {
 
@@ -10013,11 +10019,11 @@ time kernel scheduling logic and trace hooks).
 
 1135 **if** (**atomic_inc_return**(&pgdat-\>nr_writeback_throttled) == 1) { 1136 **WRITE_ONCE**(pgdat-\>nr_reclaim_start,
 
- 
 
 
 
- 
+
+
 
 1137 **node_page_state**(pgdat, **NR_THROTTLED_WRITTEN**)); 1138 }
 
@@ -10055,15 +10061,15 @@ time kernel scheduling logic and trace hooks).
 
 1171 }
 
- 
+
 
 *Listing 11-75:* mm/vmscan.c: [*reclaim_throttle()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1104)
 
- 
+
 
 In [reclaim_throttle()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1104) we handle four different cases:
 
- 
+
 
 [**VMSCAN_THROTTLE_WRITEBACK**](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n288) Folios under writeback saturated reclaim and still
 
@@ -10079,11 +10085,11 @@ are sleeping having isolated batches of folios (see Section 11.5.8 for more on f
 
 11-74) when direct reclaim has made no progress.
 
- 
 
 
 
- 
+
+
 
 [**VMSCAN_THROTTLE_CONGESTED**](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n291) Folios marked for writeback and immediate re-
 
@@ -10091,7 +10097,7 @@ claim have cycled through the list without being written back (and thus reclaime
 
 a chance to be written back. See Section 11.5.3 for more on how this arises.
 
- 
+
 
 The [reclaim_throttle()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1104) function shown in Listing 11-75 starts by skipping
 
@@ -10127,7 +10133,7 @@ Finally, in the [VMSCAN_THROTTLE_WRITEBACK](https://git.kernel.org/pub/scm/linux
 
 We examine [skip_throttle_noprogress()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1071) in Listing 11-76.
 
- 
+
 
 1071 **static bool skip_throttle_noprogress**(**pg_data_t** \*pgdat) 1072 {
 
@@ -10147,11 +10153,11 @@ We examine [skip_throttle_noprogress()](https://git.kernel.org/pub/scm/linux/ker
 
 1088 **for** (i = 0; i \< **MAX_NR_ZONES**; i++) { 1089 **struct** zone \*zone = pgdat-\>node_zones + i; 1090
 
- 
 
 
 
- 
+
+
 
 1091 **if** (!**managed_zone**(zone)) 1092 **continue**; 1093
 
@@ -10163,11 +10169,11 @@ We examine [skip_throttle_noprogress()](https://git.kernel.org/pub/scm/linux/ker
 
 1102 }
 
- 
+
 
 *Listing 11-76:* mm/vmscan.c: [*skip_throttle_noprogress()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1071)
 
- 
+
 
 In [skip_throttle_noprogress()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1071) we start by indicating that we should skip
 
@@ -10193,7 +10199,7 @@ All of these kind of consideration are heuristics based on real workloads
 
 and tweak reclaim behaviour accordingly.
 
- 
+
 
 ***11.6.2 Direct Reclaim Throttling***
 
@@ -10217,7 +10223,7 @@ reclaim if so.
 
 This is performed by [throttle_direct_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3721)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3721) as shown in Listing 11-77.
 
- 
+
 
 3712 */\**
 
@@ -10229,11 +10235,11 @@ This is performed by [throttle_direct_reclaim()](https://git.kernel.org/pub/scm/
 
 3719 *\* happens, the page allocator should not consider triggering the OOM killer.*
 
- 
 
 
 
- 
+
+
 
 3720 *\*/*
 
@@ -10295,11 +10301,11 @@ This is performed by [throttle_direct_reclaim()](https://git.kernel.org/pub/scm/
 
 3759 **for_each_zone_zonelist_nodemask**(zone, z, zonelist, 3760 **gfp_zone**(gfp_mask), nodemask) { 3761 **if** (zone_idx(zone) \> **ZONE_NORMAL**) 3762 **continue**; 3763
 
- 
 
 
 
- 
+
+
 
 3764 */\* Throttle based on the first usable node \*/* 3765 pgdat = zone-\>zone_pgdat; 3766 **if** (**allow_direct_reclaim**(pgdat)) 3767 **goto out**; 3768 **break**;
 
@@ -10315,11 +10321,11 @@ This is performed by [throttle_direct_reclaim()](https://git.kernel.org/pub/scm/
 
 3773 **goto out**;
 
- 
+
 
 *Listing 11-77:* mm/vmscan.c: [*throttle_direct_reclaim()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3721) *Initial Checks*
 
- 
+
 
 The purpose of [throttle_direct_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3721) is to consider a scenario where
 
@@ -10387,15 +10393,15 @@ to throttle at all as are unable to assess these zones.
 
 We examine the throttling logic in Listing 11-78.
 
- 
+
 
 3775 */\* Account for the throttling \*/*
 
- 
 
 
 
- 
+
+
 
 3776 **count_vm_event**(**PGSCAN_DIRECT_THROTTLE**); 3777
 
@@ -10425,11 +10431,11 @@ We examine the throttling logic in Listing 11-78.
 
 3799 }
 
- 
+
 
 *Listing 11-78:* mm/vmscan.c: [*throttle_direct_reclaim()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3721) *Throttling*
 
- 
+
 
 The portion of [throttle_direct_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3721) which we examine in Listing 11-
 
@@ -10459,11 +10465,11 @@ We are waiting on [struct pglist_data](https://git.kernel.org/pub/scm/linux/kern
 
 specifically used to control throttling of direct reclaim.
 
- 
 
 
 
- 
+
+
 
 This wait queue is woken up when indirect reclaim has made
 
@@ -10481,7 +10487,7 @@ prevent races that might leave direct reclaim stalled.
 
 We examine [allow_direct_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3672) in Listing 11-79.
 
- 
+
 
 3672 **static bool allow_direct_reclaim**(pg_data_t \*pgdat) 3673 {
 
@@ -10519,17 +10525,17 @@ We examine [allow_direct_reclaim()](https://git.kernel.org/pub/scm/linux/kernel/
 
 3708
 
- 
 
 
 
- 
+
+
 
 3709 **return** wmark_ok;
 
 3710 }
 
- 
+
 
 *Listing 11-79:* mm/vmscan.c: [*allow_direct_reclaim()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n3672)
 
@@ -10571,11 +10577,11 @@ ensure that indirect swap is woken and we also reset it to ensure that it re-
 
 claims from [ZONE_NORMAL](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mmzone.h?h=v6.0#n442) or below to ensure we obtain pages that contribute to memory reserves across allocatable zones.
 
- 
+
 
 **11.7 Folio Batches**
 
- 
+
 
 As each lruvec possesses a heavily-contended lru_lock, it is often more ef-ficient to perform lruvec operations in batches over which the lock is held rather than acquiring/releasing the lock one folio at a time. Note that we do not batch compound folios.
 
@@ -10583,7 +10589,7 @@ These batches are represented by [struct folio_batch](https://git.kernel.org/pub
 
 identical to the legacy [struct pagevec](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagevec.h?h=v6.0#n22) objects):-
 
- 
+
 
 74 */\*\**
 
@@ -10593,11 +10599,11 @@ identical to the legacy [struct pagevec](https://git.kernel.org/pub/scm/linux/ke
 
 79 *\* significant (eg delete_from_page_cache_batch()). Some users of the*
 
- 
 
 
 
- 
+
+
 
 80 *\* folio_batch store "exceptional" entries in it which can be removed*
 
@@ -10615,11 +10621,11 @@ identical to the legacy [struct pagevec](https://git.kernel.org/pub/scm/linux/ke
 
 87 };
 
- 
+
 
 *Listing 11-80:* include/linux/pagevec.h: [*struct folio_batch*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagevec.h?h=v6.0#n83)
 
- 
+
 
 There are a maximum of [PAGEVEC_SIZE](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagevec.h?h=v6.0#n15) entries in each batch (this is hard-
 
@@ -10631,7 +10637,7 @@ lines per batch).
 
 Examining each field:-
 
- 
+
 
 • nr – Indicates the number of folios present in the batch.
 
@@ -10641,7 +10647,7 @@ initiated – this is when folios in the batch are placed back, or drained, back
 
 • folios – An array of PAGEVEC_SIZE folios.
 
- 
+
 
 While folio batches can be used independently, core ones are maintained
 
@@ -10649,7 +10655,7 @@ in a series of per-CPU global objects, separated by the operation which is to
 
 be performed on folios contained in each batch:-
 
- 
+
 
 ***11.7.1 CPU Folio Batches***
 
@@ -10657,7 +10663,7 @@ Each of the remaining folio batches are declared in [struct cpu_fbatches](https:
 
 instantiated in [cpu_fbatches](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n72)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n72)
 
- 
+
 
 58 */\**
 
@@ -10691,25 +10697,25 @@ instantiated in [cpu_fbatches](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 73 .lock = **INIT_LOCAL_LOCK**(lock),
 
- 
 
 
 
- 
+
+
 
 74 };
 
- 
+
 
 *Listing 11-81:* mm/swap.c: [*struct cpu_fbatches*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n62) *and [cpu_fbatches](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n72)*
 
- 
+
 
 These maintain a local lock while being access which disables preemp-
 
 tion while the lock is held.
 
- 
+
 
 ***11.7.2 LRU Rotation***
 
@@ -10721,7 +10727,7 @@ data is written back to disk, see Chapter 10 for more on writeback). This re-qui
 
 in a local [struct lru_rotate](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n50) object and instantiated as [lru_rotate](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n54):-
 
- 
+
 
 49 */\* Protecting only lru_rotate.fbatch which requires disabling interrupts \*/* 50 **struct** lru_rotate {
 
@@ -10729,23 +10735,23 @@ in a local [struct lru_rotate](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 54 **static DEFINE_PER_CPU**(**struct** lru_rotate, lru_rotate) = { 55 .lock = **INIT_LOCAL_LOCK**(lock), 56 };
 
- 
+
 
 *Listing 11-82:* mm/swap.c: [*struct lru_rotate*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n50) *and [lru_rotate](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n54)*
 
- 
+
 
 These maintain a local lock while being accessed, which will disable pre-
 
 emption and mask interrupts while the lock is held.
 
- 
+
 
 ***11.7.3 mlock***
 
 Finally, there is a separate [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html) folio list for folios which have been mlocked, i.e. made unevictable:-
 
- 
+
 
 31 **struct** mlock_pvec {
 
@@ -10755,21 +10761,21 @@ Finally, there is a separate [mlock()](https://man7.org/linux/man-pages/man2/mlo
 
 36 **static DEFINE_PER_CPU**(**struct** mlock_pvec, mlock_pvec) = { 37 .lock = **INIT_LOCAL_LOCK**(lock), 38 };
 
- 
+
 
 *Listing 11-83:* mm/mlock.c: [*struct mlock_pvec*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n31) *and [mlock_pvec](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n36)*
 
- 
+
 
 This maintains a local lock while being access which disables preemption
 
 while the lock is held.
 
- 
 
 
 
- 
+
+
 
 Note that this folio batch is maintained separately from the rest – while
 
@@ -10777,7 +10783,7 @@ the folios on it are batched, they do not use the same call back mechanisms
 
 described below.
 
- 
+
 
 ***11.7.4 Folio Operations***
 
@@ -10787,31 +10793,31 @@ at lruvec operations. These are implemented as callback functions which
 
 perform the actual operation required. Let’s examine them now:-
 
- 
+
 
 [lru_deactivate_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n576)
 
- 
+
 
 [folio_activate_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n344)
 
- 
+
 
 [lru_lazyfree_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n592) [lru_move_tail_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n266)
 
- 
+
 
 [lruvec_add_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n98) [lruvec_del_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n132) [lruvec_add_folio_tail()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n115)
 
- 
+
 
 [lru_add_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n192) [lru_deactivate_file_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n535)
 
- 
+
 
 *Figure 11-24:* *lruvec* *folio batch drain callbacks*
 
- 
+
 
 These are the functions which actually add and remove folios from
 
@@ -10825,7 +10831,7 @@ The [folio_batch_move_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 batch:-
 
- 
+
 
 232 **static void folio_batch_move_lru**(**struct** folio_batch \*fbatch, **move_fn_t move_fn**
 
@@ -10847,11 +10853,11 @@ batch:-
 
 242 **if** (**move_fn** != **lru_add_fn** && !**folio_test_clear_lru**(folio)) 243 **continue**;
 
- 
 
 
 
- 
+
+
 
 244
 
@@ -10865,13 +10871,13 @@ batch:-
 
 252 **unlock_page_lruvec_irqrestore**(lruvec, flags); 253 **folios_put**(fbatch-\>folios, **folio_batch_count**(fbatch)); 254 **folio_batch_init**(fbatch); 255 }
 
- 
+
 
 *Listing 11-84:* mm/swap.c: [*folio_batch_move_lru()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n232)
 
 The logic is as follows:-
 
- 
+
 
 1. For each entry in the folio batch (the count taken from the nr field, ac-
 
@@ -10909,21 +10915,21 @@ the folio operation, using [folios_put()](https://git.kernel.org/pub/scm/linux/k
 
 and also sets percpu_pvec_drained to false. Note that a local lock will have been acquired before invoking this so it is safe to modify the batch.
 
- 
+
 
 [folio_batch_move_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n232) is only directly invoked by functions which perform
 
 drain. Otherwise, [folio_batch_add_and_move()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n257) is used which adds to a batch and if either the batch is full, or an edge case condition occurs, it drains the batch via folio_batch_move_lru():-
 
- 
+
 
 257 **static void folio_batch_add_and_move**(**struct** folio_batch \*fbatch, 258 **struct** folio \*folio, move_fn_t move_fn)
 
- 
 
 
 
- 
+
+
 
 259 {
 
@@ -10931,11 +10937,11 @@ drain. Otherwise, [folio_batch_add_and_move()](https://git.kernel.org/pub/scm/li
 
 263 **folio_batch_move_lru**(fbatch, move_fn); 264 }
 
- 
+
 
 *Listing 11-85:* mm/swap.c: [*folio_batch_add_and_move()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n257)
 
- 
+
 
 The edge cases in which we always perform drain are – pages being com-
 
@@ -10951,7 +10957,7 @@ number of still-available slots in the batch. This is, of course, invoked with
 
 any local locks applicable to the batch held:-
 
- 
+
 
 116 */\*\**
 
@@ -10967,27 +10973,27 @@ any local locks applicable to the batch held:-
 
 129 fbatch-\>folios\[fbatch-\>nr++\] = folio; 130 **return fbatch_space**(fbatch); 131 }
 
- 
+
 
 *Listing 11-86:* include/linux/pagevec.h: [*folio_batch_add()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagevec.h?h=v6.0#n126)
 
- 
+
 
 This determines how much folio batch space is available via
 
 [fbatch_space()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagevec.h?h=v6.0#n111):-
 
- 
+
 
 111 **static inline unsigned int fbatch_space**(**struct** folio_batch \*fbatch) 112 {
 
 113 **return PAGEVEC_SIZE**- fbatch-\>nr; 114 }
 
- 
+
 
 *Listing 11-87:* include/linux/pagevec.h: [*fbatch_space()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagevec.h?h=v6.0#n111)
 
- 
+
 
 This simply subtracts the current folio count in the batch from the folio
 
@@ -10999,45 +11005,45 @@ Examining each function which invokes [folio_batch_add_and_move()](https://git.k
 
 are all the functions which manipulate folios in batches other than draining
 
- 
 
 
 
- 
+
+
 
 them, i.e. the usual means by which all user space folios are manipulated in lruvecs:-
 
- 
+
 
 [deactivate_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n687) [mark_page_lazyfree()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n710) [deactivate_file_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n664)
 
- 
+
 
 [lru_deactivate_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n576) [lru_lazyfree_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n592) [lru_deactivate_file_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n535)
 
- 
+
 
 [folio_batch_add_and_move()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n257)
 
- 
+
 
 [folio_activate_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n344) [lru_add_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n192) [lru_move_tail_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n266)
 
- 
+
 
 [folio_activate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n388) [folio_add_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n479) [folio_rotate_reclaimable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n283)
 
- 
+
 
 *Figure 11-25: Non-drain folio batch operations*
 
- 
+
 
 All of these other than [folio_add_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n479) move folios between lists
 
 [(mark_page_lazyfree()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n710) simply moves a folio to the inactive list), whereas folio_add_lru() is uniquely the means by which folios are first added to an LRU. Let’s examine this first:-
 
- 
+
 
 ***11.7.5 Adding Folios to a Batch***
 
@@ -11045,7 +11051,7 @@ We add folios to a batch using [folio_add_lru()](https://git.kernel.org/pub/scm/
 
 11-88.
 
- 
+
 
 470 */\*\**
 
@@ -11065,21 +11071,21 @@ We add folios to a batch using [folio_add_lru()](https://git.kernel.org/pub/scm/
 
 483 **VM_BUG_ON_FOLIO**(**folio_test_active**(folio) && 484 **folio_test_unevictable**(folio), folio); 485 **VM_BUG_ON_FOLIO**(**folio_test_lru**(folio), folio);
 
- 
 
 
 
- 
+
+
 
 486
 
 487 **folio_get**(folio); 488 **local_lock**(&cpu_fbatches.lock); 489 fbatch = **this_cpu_ptr**(&cpu_fbatches.lru_add); 490 **folio_batch_add_and_move**(fbatch, folio, **lru_add_fn**); 491 **local_unlock**(&cpu_fbatches.lock); 492 }
 
- 
+
 
 *Listing 11-88:* mm/swap.c: [*folio_add_lru()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n479)
 
- 
+
 
 The logic here is straightforward – after making some sanity assertions,
 
@@ -11113,53 +11119,53 @@ voke certain functions which have also been excluded for brevity. The intent
 
 has been to highlight the core callers only.
 
- 
 
 
 
- 
+
+
 
 Fork Functions
 
- 
+
 
 [dup_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n580)
 
- 
+
 
 [copy_page_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1272)
 
- 
+
 
 [copy_p4d_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1216)
 
- 
+
 
 [copy_pud_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1179)
 
 Page Fault Functions
 
- 
+
 
 [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129) [copy_pmd_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1142)
 
- 
+
 
 [wp_page_copy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3090) [\_\_handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5157) [copy_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n1018)
 
- 
+
 
 [do_wp_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3360) [handle_pte_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4860) [copy_present_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n942)
 
- 
+
 
 [do_swap_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3718) [do_anonymous_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4031) [copy_present_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n905)
 
- 
+
 
 [lru_cache_add_inactive_or_unevictable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n503)
 
- 
+
 
 Used by swap, THP, FUSE,
 
@@ -11171,11 +11177,11 @@ Reclaim Functions
 
 [shmem_getpage()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/shmem.c?h=v6.0#n147) [shmem_getpage_gfp()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/shmem.c?h=v6.0#n1834) [folio_add_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n479) [shrink_active_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2509)
 
- 
+
 
 [shmem_read_mapping_page_gfp()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/shmem.c?h=v6.0#n4264) [shmem_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/shmem.c?h=v6.0#n3956) [folio_putback_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n1420) [move_pages_to_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2323)
 
- 
+
 
 Used by THP, DAMON,
 
@@ -11183,19 +11189,19 @@ Used by THP, DAMON,
 
 madvise, cgroup, migrate
 
- 
+
 
 [reclaim_page_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/vmscan.c?h=v6.0#n2606)
 
- 
+
 
 *Figure 11-26: Anonymous Folio Invocations of* [*folio_add_lru()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n479)
 
- 
+
 
 Key:
 
- 
+
 
 Denotes the key functions which ultimately trigger a folio being
 
@@ -11203,11 +11209,11 @@ Denotes the key functions which ultimately trigger a folio being
 
 added to an LRU.
 
- 
+
 
 • Denotes folio_add_lru() .
 
- 
+
 
 Denotes a function that has specific file system and in some cases
 
@@ -11215,43 +11221,43 @@ Denotes a function that has specific file system and in some cases
 
 shmem or secretmem callers which we elide for brevity.
 
- 
 
 
 
- 
+
+
 
 Page Fault Functions
 
- 
+
 
 [handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5129)
 
- 
+
 
 [\_\_handle_mm_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n5157) [do_wp_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3360)
 
- 
+
 
 [handle_pte_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4860) [wp_page_copy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n3090)
 
- 
+
 
 [do_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4617)
 
- 
+
 
 [do_read_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4509) [do_cow_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4535) [do_shared_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4574)
 
- 
+
 
 [finish_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4345)
 
- 
+
 
 [do_set_pte()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/memory.c?h=v6.0#n4290)
 
- 
+
 
 [lru_cache_add_inactive_or_unevictable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n503)
 
@@ -11259,59 +11265,59 @@ File Map Functions
 
 [lru_cache_add()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n85) [read_mapping_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n759)
 
- 
+
 
 [add_to_page_cache_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n91) [folio_add_lru()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n479) [read_cache_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3548)
 
- 
+
 
 [readahead_expand()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n781) [filemap_add_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n926) [do_read_cache_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3472)
 
- 
+
 
 [ra_alloc_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n528) [\_\_filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1914) [filemap_create_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2573)
 
- 
+
 
 [page_cache_ra_order()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n490) [do_sync_mmap_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2968) [pagecache_get_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/folio-compat.c?h=v6.0#n99) [filemap_get_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2660)
 
- 
+
 
 [ondemand_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n556) [page_cache_sync_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n675) [filemap_lock_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n544) [filemap_read()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2626)
 
- 
+
 
 [page_cache_async_ra()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/readahead.c?h=v6.0#n703) [page_cache_sync_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1210) [filemap_get_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n526) [generic_file_read_iter()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2756)
 
- 
+
 
 [filemap_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n2534) [do_async_mmap_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3037) [filemap_fault()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n3084)
 
- 
+
 
 [page_cache_async_readahead()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/pagemap.h?h=v6.0#n1233)
 
- 
+
 
 Readahead functions File Map Functions
 
- 
+
 
 *Figure 11-27: File-Backed Folio Invocations of* [*folio_add_lru()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n479)
 
- 
+
 
 Examining [lru_add_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n192):-
 
- 
+
 
 192 **static void lru_add_fn**(**struct** lruvec \*lruvec, **struct** folio \*folio)
 
- 
 
 
 
- 
+
+
 
 193 {
 
@@ -11359,25 +11365,25 @@ Examining [lru_add_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 228 **lruvec_add_folio**(lruvec, folio); 229 **trace_mm_lru_insertion**(folio); 230 }
 
- 
+
 
 *Listing 11-89:* mm/swap.c: [*lru_add_fn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n192)
 
- 
+
 
 The logic is as follows:-
 
- 
+
 
 1. Test and clear the PG_unevictable folio flag via
 
 folio_test_clear_unevictable(). This is done as the folio may have been unevictable before but has become evictable (its PG_mlocked flag has been cleared and/or its mapping has had its unevictable status cleared).
 
- 
 
 
 
- 
+
+
 
 2. Asserts that the folio is not on an LRU already via folio_test_lru(), as if
 
@@ -11395,13 +11401,13 @@ PG_unevictable folio flag reset the mlock_count and update statistics.
 
 [lruvec_add_folio() .](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n98)
 
- 
+
 
 ***11.7.6 Folio Activation***
 
 Examining [folio_activate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n369):-
 
- 
+
 
 369 **static void folio_activate**(**struct** folio \*folio) 370 {
 
@@ -11413,11 +11419,11 @@ Examining [folio_activate()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 381 }
 
- 
+
 
 *Listing 11-90:* mm/swap.c: [*folio_activate()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n369)
 
- 
+
 
 This function is called when a folio needs to be proactively activated,
 
@@ -11435,7 +11441,7 @@ Examining [folio_activate_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/
 
 drained:-
 
- 
+
 
 344 **static void folio_activate_fn**(**struct** lruvec \*lruvec, **struct** folio \*folio) 345 {
 
@@ -11445,11 +11451,11 @@ drained:-
 
 349 **lruvec_del_folio**(lruvec, folio); 350 **folio_set_active**(folio); 351 **lruvec_add_folio**(lruvec, folio);
 
- 
 
 
 
- 
+
+
 
 352 **trace_mm_lru_activate**(folio); 353
 
@@ -11457,11 +11463,11 @@ drained:-
 
 358 }
 
- 
+
 
 *Listing 11-91:* mm/swap.c: [*folio_activate_fn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n344)
 
- 
+
 
 We start by checking again whether the folio is active and evictable, this
 
@@ -11485,13 +11491,13 @@ inactive/referenced, active/unreferenced states (see figure 11-7 and listing 11-
 
 11).
 
- 
+
 
 ***11.7.7 Folio Rotation***
 
 We examine [folio_rotate_reclaimable()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n283) in Listing 11-92.
 
- 
+
 
 276 */\**
 
@@ -11507,15 +11513,15 @@ We examine [folio_rotate_reclaimable()](https://git.kernel.org/pub/scm/linux/ker
 
 296 }
 
- 
 
 
 
- 
+
+
 
 *Listing 11-92:* mm/swap.c: [*folio_rotate_reclaimable()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n283)
 
- 
+
 
 This function is called in [folio_end_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1599) when writeback is about
 
@@ -11527,7 +11533,7 @@ folio has also been marked with the reclaim flag, i.e. it is currently subject t
 
 reclaim and thus about to be evicted:-
 
- 
+
 
 1599 **void folio_end_writeback**(**struct** folio \*folio) 1600 {
 
@@ -11541,11 +11547,11 @@ reclaim and thus about to be evicted:-
 
 1627 }
 
- 
+
 
 *Listing 11-93:* mm/filemap.c: *Excerpt of [folio_end_writeback()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/filemap.c?h=v6.0#n1599)*
 
- 
+
 
 The folio may not currently be present at the end of the inactive list (i.e.
 
@@ -11573,25 +11579,25 @@ add the folio to the activation batch under a local lock.
 
 Examining [lru_move_tail_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n266)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n266)
 
- 
+
 
 266 **static void lru_move_tail_fn**(**struct** lruvec \*lruvec, **struct** folio \*folio) 267 {
 
 268 **if** (!**folio_test_unevictable**(folio)) { 269 **lruvec_del_folio**(lruvec, folio); 270 **folio_clear_active**(folio); 271 **lruvec_add_folio_tail**(lruvec, folio); 272 **\_\_count_vm_events**(**PGROTATED**, **folio_nr_pages**(folio)); 273 }
 
- 
 
 
 
- 
+
+
 
 274 }
 
- 
+
 
 *Listing 11-94:* mm/swap.c: [*lru_move_tail_fn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n266)
 
- 
+
 
 We reassert the unevictable test to ensure that the folio hasn’t since been
 
@@ -11599,13 +11605,13 @@ made unevictable, remove the folio from its current LRU, deactivate it and
 
 add it to the tail of the inactive LRU list as shown in listing 11-14.
 
- 
+
 
 ***11.7.8 Folio Deactivation***
 
 Examining [deactivate_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n687)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n687)
 
- 
+
 
 679 */\**
 
@@ -11633,11 +11639,11 @@ Examining [deactivate_page()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 701 }
 
- 
+
 
 *Listing 11-95:* mm/swap.c: [*deactivate_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n687)
 
- 
+
 
 This asserts that the folio is on an LRU, active and evictable, then per-
 
@@ -11649,17 +11655,17 @@ perform batch population (and draining with [lru_deactivate_fn()](https://git.ke
 
 Examining lru_deactivate_fn():-
 
- 
+
 
 576 **static void lru_deactivate_fn**(**struct** lruvec \*lruvec, **struct** folio \*folio) 577 {
 
 578 **if** (**folio_test_active**(folio) && !**folio_test_unevictable**(folio)) {
 
- 
 
 
 
- 
+
+
 
 579 **long** nr_pages = **folio_nr_pages**(folio);
 
@@ -11673,11 +11679,11 @@ Examining lru_deactivate_fn():-
 
 590 }
 
- 
+
 
 *Listing 11-96:* mm/swap.c: [*lru_deactivate_fn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n576)
 
- 
+
 
 This asserts that the folio is still active, and is not unevictable. The LRU
 
@@ -11693,13 +11699,13 @@ function [madvise_cold_or_pageout_pte_range()](https://git.kernel.org/pub/scm/li
 
 MADV_PAGEOUT madvise options are used.
 
- 
+
 
 ***11.7.9 File Folio Deactivation***
 
 Examining [deactivate_file_folio()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n664)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n664)
 
- 
+
 
 654 */\*\**
 
@@ -11725,19 +11731,19 @@ Examining [deactivate_file_folio()](https://git.kernel.org/pub/scm/linux/kernel/
 
 672 **folio_get**(folio); 673 **local_lock**(&cpu_fbatches.lock); 674 fbatch = **this_cpu_ptr**(&cpu_fbatches.lru_deactivate_file);
 
- 
 
 
 
- 
+
+
 
 675 **folio_batch_add_and_move**(fbatch, folio, lru_deactivate_file_fn); 676 **local_unlock**(&cpu_fbatches.lock); 677 }
 
- 
+
 
 *Listing 11-97:* mm/swap.c: [*deactivate_file_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n664)
 
- 
+
 
 Note that we do not make assertions about the state of the fo-
 
@@ -11747,7 +11753,7 @@ lio here other than ensuring it is is evictable, unlike other LRU op-erations, w
 
 Examining [lru_deactivate_file_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n535)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n535)
 
- 
+
 
 514 */\**
 
@@ -11775,11 +11781,11 @@ Examining [lru_deactivate_file_fn()](https://git.kernel.org/pub/scm/linux/kernel
 
 547 **lruvec_del_folio**(lruvec, folio); 548 **folio_clear_active**(folio); 549 **folio_clear_referenced**(folio); 550
 
- 
 
 
 
- 
+
+
 
 551 **if** (**folio_test_writeback**(folio) \|\| **folio_test_dirty**(folio)) { 552 */\**
 
@@ -11801,11 +11807,11 @@ Examining [lru_deactivate_file_fn()](https://git.kernel.org/pub/scm/linux/kernel
 
 574 }
 
- 
+
 
 *Listing 11-98:* mm/swap.c: [*lru_deactivate_file_fn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n535)
 
- 
+
 
 This function is fairly meaty, taking into account the fact that file-backed
 
@@ -11837,21 +11843,21 @@ The only function which invokes [deactivate_file_folio()](https://git.kernel.org
 
 its mappings invalidated including those on folio batches.
 
- 
+
 
 ***11.7.10 Folio Lazy Free***
 
 Examining [mark_page_lazyfree()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n710)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n710)
 
- 
+
 
 703 */\*\**
 
- 
 
 
 
- 
+
+
 
 704 *\* mark_page_lazyfree - make an anon page lazyfree* 705 *\* @page: page to deactivate* 706 *\**
 
@@ -11867,11 +11873,11 @@ Examining [mark_page_lazyfree()](https://git.kernel.org/pub/scm/linux/kernel/git
 
 725 }
 
- 
+
 
 *Listing 11-99:* mm/swap.c: [*mark_page_lazyfree()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n710)
 
- 
+
 
 This performs a great number of tests, ensuring that the folio in question
 
@@ -11891,7 +11897,7 @@ and [madvise_free_pte_range()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 Examining [lru_lazyfree_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n592):-
 
- 
+
 
 592 **static void lru_lazyfree_fn**(**struct** lruvec \*lruvec, **struct** folio \*folio) 593 {
 
@@ -11899,11 +11905,11 @@ Examining [lru_lazyfree_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 598 **lruvec_del_folio**(lruvec, folio); 599 **folio_clear_active**(folio); 600 **folio_clear_referenced**(folio); 601 */\**
 
- 
 
 
 
- 
+
+
 
 602 *\* Lazyfree folios are clean anonymous folios. They have* 603 *\* the swapbacked flag cleared, to distinguish them from*
 
@@ -11919,11 +11925,11 @@ Examining [lru_lazyfree_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 613 }
 
- 
+
 
 *Listing 11-100:* mm/swap.c: [*lru_lazyfree_fn()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n592)
 
- 
+
 
 This reasserts, under lruvec lock, that the folio is anonymous, swap-
 
@@ -11943,7 +11949,7 @@ The lazy free folios are checked explicitly in reclaim in [shrink_page_list()](h
 
 (see Listing 11-63).
 
- 
+
 
 ***11.7.11 mlock Folio Batch***
 
@@ -11973,7 +11979,7 @@ folio batch is drained, either when the batch is full or a drain is triggered
 
 directly:-
 
- 
+
 
 61 **static struct** lruvec \***\_\_mlock_page**(**struct** page \*page, **struct** lruvec \*lruvec)
 
@@ -11989,11 +11995,11 @@ directly:-
 
 67 lruvec = **folio_lruvec_relock_irq**(**page_folio**(page), lruvec);
 
- 
 
 
 
- 
+
+
 
 68
 
@@ -12023,15 +12029,15 @@ directly:-
 
 101 }
 
- 
+
 
 *Listing 11-101:* mm/mlock.c: [*\_\_mlock_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n61)
 
- 
+
 
 The logic is:-
 
- 
+
 
 1. Assert that the folio is on an LRU and atomically mark it non-LRU,
 
@@ -12045,11 +12051,11 @@ not already locked, via [folio_lruvec_relock_irq()](https://git.kernel.org/pub/s
 
 both the PG_mlocked folio lock as well as the unevictable flag in the folio mapping field (see the section on mlock() for more details on this). At this stage, the folio should at least be flagged as mlocked, so we do not expect this to be the case. We then exit early.
 
- 
 
 
 
- 
+
+
 
 (a) We handle an edge case here – if the PG_mlocked flag has been cleared
 
@@ -12073,13 +12079,13 @@ clear its active folio flag and mark it unevictable, setting the mlock_count cou
 
 virtual unevictable LRU list.
 
- 
+
 
 [\_\_mlock_new_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n103) is invoked for newly allocated folios and thus is signifi-
 
 cantly simpler:-
 
- 
+
 
 103 **static struct** lruvec \***\_\_mlock_new_page**(**struct** page \*page, **struct** lruvec \*
 
@@ -12105,11 +12111,11 @@ lruvec)
 
 120 }
 
- 
+
 
 *Listing 11-102:* mm/mlock.c: [*\_\_mlock_new_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n103)
 
- 
+
 
 Finally, [\_\_munlock_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n122) performs the same operations as [\_\_mlock_page()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n61)
 
@@ -12121,17 +12127,17 @@ mlock() operations. The central drain function invokes the specific drain
 
 function is [mlock_pagevec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n186)[:-](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n186)
 
- 
+
 
 179 */\**
 
 180 *\* mlock_pagevec() is derived from pagevec_lru_move_fn():*
 
- 
 
 
 
- 
+
+
 
 181 *\* perhaps that can make use of such page pointer flags in future,* 182 *\* but for now just keep it for mlock. We could use three separate* 183 *\* pagevecs instead, but one feels better (munlocking a full pagevec* 184 *\* does not need to drain mlocking pagevecs first).* 185 *\*/*
 
@@ -12153,11 +12159,11 @@ function is [mlock_pagevec()](https://git.kernel.org/pub/scm/linux/kernel/git/to
 
 208 **unlock_page_lruvec_irq**(lruvec); 209 **release_pages**(pvec-\>pages, pvec-\>nr); 210 **pagevec_reinit**(pvec); 211 }
 
- 
+
 
 *Listing 11-103:* mm/mlock.c: [*mlock_pagevec()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n186)
 
- 
+
 
 The lower two bits of each folio in the folio batch are used to indi-
 
@@ -12177,17 +12183,17 @@ The functions which ultimately invoke mlock_pagevec() when the folio
 
 batch is full are as follows:-
 
- 
+
 
 239 */\*\**
 
 240 *\* mlock_folio - mlock a folio already on (or temporarily off) LRU* 241 *\* @folio: folio to be mlocked.* 242 *\*/*
 
- 
 
 
 
- 
+
+
 
 243 **void mlock_folio**(**struct** folio \*folio) 244 {
 
@@ -12209,11 +12215,11 @@ batch is full are as follows:-
 
 257 **folio_get**(folio); 258 **if** (!**pagevec_add**(pvec, **mlock_lru**(&folio-\>page)) \|\| 259 **folio_test_large**(folio) \|\| **lru_cache_disabled**()) 260 **mlock_pagevec**(pvec); 261 **local_unlock**(&mlock_pvec.lock); 262 }
 
- 
+
 
 *Listing 11-104:* mm/mlock.c: [*mlock_folio()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n243)
 
- 
+
 
 264 */\*\**
 
@@ -12233,19 +12239,19 @@ batch is full are as follows:-
 
 280 **if** (!**pagevec_add**(pvec, **mlock_new**(page)) \|\| 281 **PageHead**(page) \|\| **lru_cache_disabled**()) 282 **mlock_pagevec**(pvec); 283 **local_unlock**(&mlock_pvec.lock); 284 }
 
- 
+
 
 *Listing 11-105:* mm/mlock.c: [*mlock_new_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n268)
 
- 
+
 
 286 */\*\**
 
- 
 
 
 
- 
+
+
 
 287 *\* munlock_page - munlock a page* 288 *\* @page: page to be munlocked, either a normal page or a THP head.* 289 *\*/*
 
@@ -12263,11 +12269,11 @@ batch is full are as follows:-
 
 302 **if** (!**pagevec_add**(pvec, page) \|\| 303 **PageHead**(page) \|\| **lru_cache_disabled**()) 304 **mlock_pagevec**(pvec); 305 **local_unlock**(&mlock_pvec.lock); 306 }
 
- 
+
 
 *Listing 11-106:* mm/mlock.c: [*munlock_page()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n290)
 
- 
+
 
 Each of these functions perform similar operations – they acquire the
 
@@ -12287,7 +12293,7 @@ each folio in the folio batch should have applied to it – [mlock_lru()](https:
 
 LRU_PAGE and [mlock_new()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n174) to assign LRU_NEW.
 
- 
+
 
 ***11.7.12 Folio Batch Drain***
 
@@ -12301,17 +12307,17 @@ The key function for performing per-CPU global drain is
 
 [lru_add_drain_cpu()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n620) (it assumes preemption has been disabled, typically via a local lock being applied):-
 
- 
+
 
 615 */\**
 
 616 *\* Drain pages out of the cpu's folio_batch.*
 
- 
 
 
 
- 
+
+
 
 617 *\* Either "cpu" is the current CPU, and preemption has already been* 618 *\* disabled; or "cpu" is being hot-unplugged, and is already dead.* 619 *\*/*
 
@@ -12347,11 +12353,11 @@ The key function for performing per-CPU global drain is
 
 651 **folio_activate_drain**(cpu); 652 }
 
- 
+
 
 *Listing 11-107:* mm/swap.c: [*lru_add_drain_cpu()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n620)
 
- 
+
 
 Note that [data_race()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/compiler.h?h=v6.0#n196) is used to denote that a data race is expected and
 
@@ -12361,7 +12367,7 @@ scope for this section).
 
 This invokes folio_batch_move_lru() for each callback in turn:-
 
- 
+
 
 **Folio addition** via [lru_add_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n192)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n192)
 
@@ -12371,17 +12377,17 @@ This invokes folio_batch_move_lru() for each callback in turn:-
 
 **Folio deactivation** via [lru_deactivate_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n576)[.](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n576)
 
- 
 
 
 
- 
+
+
 
 **Folio lazy free** via [lru_lazyfree_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n592).
 
 **Folio activation** via [folio_activate_drain()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n361) and [folio_activate_fn()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n344).
 
- 
+
 
 [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html) folios are drained separately in [mlock_page_drain_local()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n213) and
 
@@ -12389,7 +12395,7 @@ This invokes folio_batch_move_lru() for each callback in turn:-
 
 ing the [mlock_pvec](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n31) local lock in the local case, and explicitly checking that the CPU is offline and thus no lock required in the remote one:-
 
- 
+
 
 213 **void mlock_page_drain_local**(**void**) 214 {
 
@@ -12397,11 +12403,11 @@ ing the [mlock_pvec](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 217 **local_lock**(&mlock_pvec.lock); 218 pvec = **this_cpu_ptr**(&mlock_pvec.vec); 219 **if** (**pagevec_count**(pvec)) 220 **mlock_pagevec**(pvec); 221 **local_unlock**(&mlock_pvec.lock); 222 }
 
- 
+
 
 *Listing 11-108:* mm/mlock.c: [*mlock_page_drain_local()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n213)
 
- 
+
 
 224 **void mlock_page_drain_remote**(**int** cpu) 225 {
 
@@ -12409,17 +12415,17 @@ ing the [mlock_pvec](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/li
 
 228 **WARN_ON_ONCE**(**cpu_online**(cpu)); 229 pvec = &**per_cpu**(mlock_pvec.vec, cpu); 230 **if** (**pagevec_count**(pvec)) 231 **mlock_pagevec**(pvec); 232 }
 
- 
+
 
 *Listing 11-109:* mm/mlock.c: [*mlock_page_drain_remote()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n224)
 
- 
+
 
 Both of these invoke [mlock_pagevec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n186) as described in section 11.7.11. Both the core folio and the mlock batch drain functions are invoked
 
 from a number of call sites:-
 
- 
+
 
 727 **void lru_add_drain**(**void**)
 
@@ -12427,21 +12433,21 @@ from a number of call sites:-
 
 729 **local_lock**(&cpu_fbatches.lock); 730 **lru_add_drain_cpu**(smp_processor_id()); 731 **local_unlock**(&cpu_fbatches.lock); 732 **mlock_page_drain_local**(); 733 }
 
- 
+
 
 *Listing 11-110:* mm/swap.c: [*lru_add_drain()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n727)
 
- 
+
 
 This is the key drain function. It applies a local lock before invoking
 
 [lru_add_drain_cpu()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n620) then invoking [mlock_page_drain_local()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mlock.c?h=v6.0#n213) to take care of mlock folios.
 
- 
 
 
 
- 
+
+
 
 The function [lru_add_and_bh_lrus_drain()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n741) does the same thing only it also
 
@@ -12449,7 +12455,7 @@ invokes invalidation of buffer head LRU lists via [invalidate_bh_lrus_cpu()](htt
 
 This is out of scope for this section:-
 
- 
+
 
 735 */\**
 
@@ -12459,11 +12465,11 @@ This is out of scope for this section:-
 
 743 **local_lock**(&cpu_fbatches.lock); 744 **lru_add_drain_cpu**(smp_processor_id()); 745 **local_unlock**(&cpu_fbatches.lock); 746 **invalidate_bh_lrus_cpu**(); 747 **mlock_page_drain_local**(); 748 }
 
- 
+
 
 *Listing 11-111:* mm/swap.c: [*lru_add_and_bh_lrus_drain()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n741)
 
- 
+
 
 This function is invoked by [lru_add_drain_per_cpu()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n763)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n763) which is invoked in
 
@@ -12473,17 +12479,17 @@ Finally, there is [lru_add_drain_cpu_zone()](https://git.kernel.org/pub/scm/linu
 
 in [compact_zone()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/compaction.c?h=v6.0#n2292) (see the compaction chapter for more details on this):-
 
- 
+
 
 750 **void lru_add_drain_cpu_zone**(**struct** zone \*zone) 751 {
 
 752 **local_lock**(&cpu_fbatches.lock); 753 **lru_add_drain_cpu**(smp_processor_id()); 754 **drain_local_pages**(zone); 755 **local_unlock**(&cpu_fbatches.lock); 756 **mlock_page_drain_local**(); 757 }
 
- 
+
 
 *Listing 11-112:* mm/swap.c: [*lru_add_drain_cpu_zone()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n750)
 
- 
+
 
 The key difference here is the invocation of [drain_local_pages()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/page_alloc.c?h=v6.0#n3222) which
 
@@ -12499,17 +12505,17 @@ Examining this function, stripping out the careful synchronisation ma-
 
 chinery for clarity:-
 
- 
+
 
 783 */\**
 
 784 *\* Doesn't need any cpu hotplug locking because we do rely on per-cpu* 785 *\* kworkers being shut down before our page_alloc_cpu_dead callback is* 786 *\* executed on the offlined cpu.* 787 *\* Calling this function with cpu hotplug locks held can actually lead*
 
- 
 
 
 
- 
+
+
 
 788 *\* to obscure indirect dependencies via WQ context.* 789 *\*/*
 
@@ -12531,7 +12537,7 @@ chinery for clarity:-
 
 879 }
 
- 
+
 
 *Listing 11-113:* mm/swap.c: [*\_\_lru_add_drain_all()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n790)
 
@@ -12545,7 +12551,7 @@ This function determines whether to perform a drain via
 
 [cpu_needs_drain()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n768):-
 
- 
+
 
 768 **static bool cpu_needs_drain**(**unsigned int** cpu) 769 {
 
@@ -12557,17 +12563,17 @@ This function determines whether to perform a drain via
 
 775 **folio_batch_count**(&fbatches-\>lru_deactivate_file) \|\| 776 **folio_batch_count**(&fbatches-\>lru_deactivate) \|\| 777 **folio_batch_count**(&fbatches-\>lru_lazyfree) \|\| 778 **folio_batch_count**(&fbatches-\>activate) \|\| 779 **need_mlock_page_drain**(cpu) \|\| 780 **has_bh_in_lru**(cpu, **NULL**); 781 }
 
- 
+
 
 *Listing 11-114:* mm/swap.c: [*cpu_needs_drain()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n768)
 
- 
+
 
 \*. Work queues are out of scope for this book, but are a highly documented part of the kernel.
 
 
 
- 
+
 
 This checks to see if any batch has available folios to flush, as well as
 
@@ -12595,7 +12601,7 @@ cally increments lru_disable_count. Use of this pair allows for the systematic
 
 disabling/re-enabling of folio batches. Examining lru_cache_disable():-
 
- 
+
 
 894 */\**
 
@@ -12625,15 +12631,15 @@ disabling/re-enabling of folio batches. Examining lru_cache_disable():-
 
 924 }
 
- 
+
 
 *Listing 11-115:* mm/swap.c: [*lru_cache_disable()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/swap.c?h=v6.0#n902)
 
- 
 
 
 
- 
+
+
 
 Putting the synchronisation work to one side, we can see that the
 
@@ -12649,12 +12655,5 @@ on folio migration (in [do_migrate_pages()](https://git.kernel.org/pub/scm/linux
 
 [mbind()](https://man7.org/linux/man-pages/man2/mbind.2.html) (in [do_mbind()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1240)[).](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n1240)
 
- 
 
 
-
- 
-
-**12**
-
- 

@@ -24,9 +24,7 @@ When you begin to program in Rust, it’s likely that you will want to continue 
 
  A grep clone
 
-**1**
 
-**2**
 
 CHAPTER 1
 
@@ -78,7 +76,6 @@ Rust has won the “most loved programming language” award in Stack Overflow�
 
 ***Advocating for Rust at work***
 
-**3**
 
  Mozilla uses Rust to enhance the Firefox web browser, which contains 15 million lines of code. Mozilla’s first two Rust-in-Firefox projects, its MP4 metadata parser and text encoder/decoder, led to overall performance and stability improvements.
 
@@ -132,10 +129,8 @@ See “HTTP code syntax highlighting server written in Rust,” [https://github.
 
 12 See “Chrome OS KVM—A component written in [Rust,” https://news.ycombinator.com/item?id=15346557](https://news.ycombinator.com/item?id=15346557).
 
-**4**
 
 
-***Introducing Rust***
 
 \> coworkers that no other language was right for job, which I believe
 
@@ -181,9 +176,7 @@ NOTE
 
 To install Rust, use the official installers provided at <https://rustup.rs/>.
 
-***A taste of the language***
 
-**5**
 
 ***1.3.1***
 
@@ -243,10 +236,8 @@ Created binary (application) \`hellò package
 
 Compiling hello v0.1.0 (/tmp/hello)
 
-**6**
 
 
-***Introducing Rust***
 
 Finished dev \[unoptimized + debuginfo\] target(s) in 0.26s
 
@@ -290,9 +281,7 @@ hello
 
 │ └── main.rs
 
-***A taste of the language***
 
-**7**
 
 ├── target
 
@@ -406,10 +395,8 @@ Listing 1.1
 
 **region for read-only access.**
 
-**8**
 
 
-***Introducing Rust***
 
 10
 
@@ -469,7 +456,6 @@ We looked at a few “Hello, world!” examples in section 1.3, so let’s try s
 
 ***What does Rust look and feel like?***
 
-**9**
 
  *Common control flow mechanisms* —This includes for loops and the continue keyword.
 
@@ -605,10 +591,8 @@ Example of Rust code showing some basic processing of CSV data
 
 Listing 1.2 might be confusing to some readers, especially those who have never seen Rust before. Here are some brief notes before moving on:
 
-**10**
 
 
-***Introducing Rust***
 
  On line 17, the fields variable is annotated with the type Vec\<\_\>. Vec is shorthand for \_vector\_, a collection type that can expand dynamically. The underscore (\_) instructs Rust to infer the type of the elements.
 
@@ -662,7 +646,6 @@ dbg: " Invalid,data" -\> \["Invalid", "data"\]
 
 ***What is Rust?***
 
-**11**
 
 You probably noticed the distracting lines starting with dbg:. We can eliminate these by compiling a *release build* using cargo’s --release flag. This conditional compilation functionality is provided by the cfg!(debug_assertions) { … } block within lines 22–24
 
@@ -708,10 +691,8 @@ Rust’s distinguishing feature as a professional community is its willingness t
 
 <http://mng.bz/xm7B> for more information.
 
-**12**
 
 
-***Introducing Rust***
 
 **Python**
 
@@ -767,9 +748,7 @@ Rust programs are free from
 
  *Dangling pointers*—Live references to data that has become invalid over the course of the program (see listing 1.3)
 
-***What is Rust?***
 
-**13**
 
  *Data races*—The inability to determine how a program will behave from run to run because external factors change (see listing 1.4)
 
@@ -859,10 +838,8 @@ Compiling ch1-cereals v0.1.0 (/rust-in-action/code/ch1/ch1-cereals) error\[E0382
 
 11 \|
 
-**14**
 
 
-***Introducing Rust***
 
 12 \| println!("{:?}", grains);
 
@@ -934,9 +911,7 @@ note: function requires argument type to outlivè'static\`
 
 --\> src/main.rs:6:5
 
-***What is Rust?***
 
-**15**
 
 \|
 
@@ -1036,10 +1011,8 @@ Attempting to modify an iterator while iterating over it
 
 4 \];
 
-**16**
 
 
-***Introducing Rust***
 
 5
 
@@ -1119,9 +1092,7 @@ Because they know their program won’t implode, they become much more willing t
 
 When given a choice, Rust prefers the option that is easiest for the developer. Many of its more subtle features are productivity boosts. But programmer productivity is a difficult concept to demonstrate through an example in a book. Let’s start with something
 
-***What is Rust?***
 
-**17**
 
 that can snag beginners—using assignment (=) within an expression that should use an equality (==) test:
 
@@ -1193,10 +1164,8 @@ When there is no other meaningful return value, expressions return (). As the fo
 
 14 The name *unit* reveals some of Rust’s heritage as a descendant of the ML family of programming languages that includes OCaml and F#. The term stems from mathematics. Theoretically, a unit type only has a single value. Compare this with Boolean types that have two values, true or false, or strings that have an infinite number of valid values.
 
-**18**
 
 
-***Introducing Rust***
 
 Rust has many ergonomic features. It offers generics, sophisticated data types, pattern matching, and closures.15 Those who have worked with other ahead-of-time compilation languages are likely to appreciate Rust’s build system and its comprehensive package manager: cargo.
 
@@ -1232,7 +1201,6 @@ Listing 1.7 also demonstrates multiple ways to create integers. Each form provid
 
 ***Rust’s big features***
 
-**19**
 
 Listing 1.7
 
@@ -1308,10 +1276,8 @@ The Rust community prefers a bigger language with a compiler that does more, rat
 
  *Cache-friendly data structures are provided by default.* Arrays usually hold data within Rust programs rather than deeply nested tree structures that are created by pointers. This is referred to as *data-oriented programming*.
 
-**20**
 
 
-***Introducing Rust***
 
  *The availability of a modern package manager (cargo) makes it trivial to benefit from tens* *of thousands of open source packages.* C and C++ have much less consistency here, and building large projects with many dependencies is typically difficult.
 
@@ -1363,7 +1329,6 @@ Rust is slower at compiling code than its peer languages. It has a complex compi
 
 ***TLS security case studies***
 
-**21**
 
 multiple modules, these can be exceedingly large units to compile. Although this enables whole-of-crate optimization, it requires whole-of-crate compilation as well.
 
@@ -1405,10 +1370,8 @@ Heartbleed, officially designated as CVE-2014-0160,16 was caused by re-using a b
 
 16 See “CVE-2014-0160 Detail,” <https://nvd.nist.gov/vuln/detail/CVE-2014-0160>.
 
-**22**
 
 
-***Introducing Rust***
 
 Why does this situation occur? Programmers hunt for performance. Buffers are reused to minimize how often memory applications ask for memory from the OS.
 
@@ -1490,7 +1453,6 @@ The goto fail; bug, officially designated as CVE-2014-1266,17 was caused by prog
 
 ***Where does Rust fit best?***
 
-**23**
 
 **Unconditional goto skips SSLHashSHA1.final()**
 
@@ -1568,10 +1530,8 @@ Although it was designed as a systems programming language, Rust is a general-pu
 
 Rust offers three main advantages for programmers creating command-line utilities: minimal startup time, low memory use, and easy deployment. Programs start their work quickly because Rust does not need to initialize an interpreter (Python, Ruby, etc.) or virtual machine (Java, C#, etc.).
 
-**24**
 
 
-***Introducing Rust***
 
 As a bare metal language, Rust produces memory-efficient programs.19 As you’ll see throughout the book, many types are zero-sized. That is, these only exist as hints to the compiler and take up no memory at all in the running program.
 
@@ -1607,9 +1567,7 @@ C has occupied the domain of microcontrollers for decades. Yet, the Internet of 
 
 21 See “Rewriting the heart of our sync engine,” <http://mng.bz/Vdv5>.
 
-***Where does Rust fit best?***
 
-**25**
 
 secure as possible from the outset. Rust can play an important role here by adding a layer of safety without imposing runtime costs.
 
@@ -1653,10 +1611,8 @@ Both platforms provide the ability for native applications to run on them. This 
 
 23 See “Of tantivy’s indexing,” [https://fulmicoton.com/posts/behold-tantivy-part2/.](https://fulmicoton.com/posts/behold-tantivy-part2/)
 
-**26**
 
 
-***Introducing Rust***
 
 ***1.10.9***
 
@@ -1700,7 +1656,6 @@ When you interact with members of the Rust community, you’ll soon encounter a 
 
 ***Summary***
 
-**27**
 
  *Blazingly fast*—Rust is a fast programming language. You’ll be able to write programs that match or exceed the performance of its peer languages, but you will have more safety guarantees.
 

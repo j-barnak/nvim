@@ -1,34 +1,35 @@
-Last slides
-
- 
+![](media/index-448_1.jpg)
 
 Last slides
 
- 
+
+
+Last slides
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 434/436 Last slide
 
- 
+Last slide
+
+
 
 Thank you!
 
- 
+
 
 And may the Source be with you
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 435/436
+
 
 Rights to copy
 
- 
+
 
 © Copyright 2004-2025, Bootlin
 
@@ -56,12 +57,8 @@ under a license identical to this one.
 
 Your fair use and other rights are in no way affected by the above.
 
- 
+
 
 **Document sources:** <https://github.com/bootlin/training-materials/>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 436/436
-
-![](media/index-451_1.jpg)

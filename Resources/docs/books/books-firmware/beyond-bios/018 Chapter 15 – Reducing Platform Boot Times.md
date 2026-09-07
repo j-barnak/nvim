@@ -1,12 +1,12 @@
 ## **Chapter 15 – Reducing Platform Boot Times** 
 
- 
+
 
 All problems are either kernel or BIOS problems depending on which context you are running in!
 
 —Rothman’s Axiom
 
- 
+
 
 This chapter presents a series of methods that should enable a BIOS engineer to opti-
 
@@ -30,7 +30,7 @@ duction firmware.
 
 ■ Establish viable next steps.
 
- 
+
 
 This chapter focuses on specific aspects of a platform’s pre-O/S boot behavior and leverages concepts that are based on the UEFI firmware architecture.
 
@@ -40,43 +40,42 @@ cess. The following flow diagrams, Figures 15.1, 15.2, and 15.3, illustrate the 
 
 point where the BIOS hands-off to the target O/S:
 
- 
+
 
 DOI 10.1515/9781501505690-017
 
-**238** \| Chapter 15 – Reducing Platform Boot Times
 
- 
+
 
 Reset Vector
 
- 
+
 
 Flush cache and jump into main initialization
 
 routine in the ROM.
 
- 
+
 
 Switch to protected mode
 
- 
+
 
 Transition to a non-paged flat-model protected mode
 
- 
+
 
 Initialize MTRRs for BSP
 
- 
+
 
 Set cache states for various memory ranges to a known state.
 
- 
+
 
 Microcode Patch Update
 
- 
+
 
 Execute Microcode Patch Update for all of the present CPUs.
 
@@ -84,11 +83,11 @@ Execute Microcode Patch Update for all of the present CPUs.
 
 controlled configuration systems)
 
- 
+
 
 Initialize No-Eviction Mode (NEM)
 
- 
+
 
 Prior to the discovery of memory on the platform, a data area will
 
@@ -96,11 +95,11 @@ be established within the CPU cache so that a stack-based
 
 programming language can be used early in the initialization.
 
- 
+
 
 Various early BSP/AP interactions
 
- 
+
 
 A series of standard steps which contain some fixed delay events such as:
 
@@ -110,21 +109,20 @@ Send Start-up IPI (SIPI) to all Aps
 
 Collect BIST data from the APs
 
- 
+
 
 Hand-off to PEI entry point
 
- 
+
 
 **Figure 15.1:** SEC Phase
 
-Proof of Concept \| **239**
 
- 
+
 
 **Dashed Boxes or lines** Hand-off from SEC to PEI Core **are informational.**
 
- 
+
 
 Establish use of “memory”
 
@@ -134,7 +132,7 @@ memory (e.g. CPU cache). This includes the presence of PEI
 
 services such as memory, PEI module interfaces, and security.
 
- 
+
 
 PEI Dispatcher
 
@@ -144,7 +142,7 @@ prerequisites and proceed through other modules which have more complex dependen
 
 is exhausted when there are no further modules that need dispatching and there are no newly discovered modules.
 
- 
+
 
 CPU PEIM
 
@@ -154,7 +152,7 @@ Some of these functions are the CPU Cache interface (Set/
 
 Reset), and CPU Frequency Select Interface.
 
- 
+
 
 Miscellaneous Platform PEIM
 
@@ -186,7 +184,7 @@ mode so that subsequent modules can potentially have
 
 boot mode based behavior.
 
- 
+
 
 Memory Initialization PEIM
 
@@ -196,7 +194,7 @@ phases. In this case, some optimizations are enabled for performance such as eli
 
 during S3 resume or re-programming captured memory reference code state in S3 resume mode.
 
- 
+
 
 Are we in an
 
@@ -204,7 +202,7 @@ No
 
 S3 Boot mode?
 
- 
+
 
 Yes
 
@@ -222,23 +220,22 @@ Executes the S3 Boot Script to re-establish hardware
 
 programming in a very low-overhead manner.
 
- 
+
 
 O/S Resume Vector Hand-off to DXE entry point
 
- 
+
 
 **Figure 15.2:** PEI Phase
 
-**240** \| Chapter 15 – Reducing Platform Boot Times
 
- 
+
 
 **Dashed Boxes or lines** Hand-off from PEI to DXE Core
 
 **are informational.**
 
- 
+
 
 Establish DXE infrastructure
 
@@ -248,7 +245,7 @@ resources described by the prior PEI phase of operations. This includes DXE core
 
 callable interfaces, event services, and the eventual launch of the DXE dispatcher.
 
- 
+
 
 DXE Dispatcher
 
@@ -272,7 +269,7 @@ the BDS, CPU, Timer, etc.
 
 scheduled drivers and continue to do so until there are no more scheduled drivers.
 
- 
+
 
 Discovered Components
 
@@ -292,7 +289,7 @@ as network drivers, I/O drivers dispatch from them.
 
 or platform specific drivers.
 
- 
+
 
 Yes
 
@@ -312,7 +309,7 @@ discovered FVs.
 
 No
 
- 
+
 
 Hand-off to the Boot Target
 
@@ -322,7 +319,7 @@ Yes Load new boot option
 
 boot options to try?
 
- 
+
 
 Platform Policy
 
@@ -332,29 +329,29 @@ will have some built-in boot behavior that is
 
 specific to the manufacturer of that platform.
 
- 
+
 
 **Figure 15.3:** DXE and BDS Phase
 
- 
+
 
 Given the above information, the remainder of the chapter focuses on the important
 
 elements when considering how to best optimize some of the aforementioned behav-ior so a platform meets both its technical and marketing requirements yet achieves an optimal boot speed.
 
- 
+
 
 **Proof of Concept**
 
- 
+
 
 In the proof of concept for this chapter, the overall performance numbers used are
 
 measured in microseconds and the total boot time is described in seconds. Total boot time is measured as the time between the CPU first having power applied and the
 
-transferring of control to the boot target (which is typically the OS). This chapter does Marketing Requirements \| **241**
+transferring of control to the boot target (which is typically the OS). This chapter does
 
- 
+
 
 not focus on the specifics of the hardware design itself since the steps that are de-scribed are intended to be platform-agnostic. However, for those who absolutely must
 
@@ -366,7 +363,7 @@ know from what type of platform some of the numbers are derived, they are:
 
 ■ Western Digital† 80-GB Scorpio Blue 5400-RPM drive (normal configuration) ■ Intel® Solid State Drive X25-E (Intel® X25E SSD) (in optimized configuration)
 
- 
+
 
 It should also be noted that this proof of concept was intended to emulate real-world
 
@@ -376,27 +373,27 @@ taken for this effort should be easily portable to other designs and should larg
 
 Figure 15.4 shows the performance numbers achieved while maintaining all of the various platform/marketing requirements for this particular system.
 
- 
+
 
 SEC Phase Duration : 26342 (us) SEC Phase Duration : 26419 (us) PEI Phase Duration : 1230905 (us) PEI Phase Duration : 763315 (us) DXE Phase Duration : 998234 (us) DXE Phase Duration : 443021 (us) BDS Phase Duration : 7396050 (us) BDS Phase Duration : 766778 (us) Total Duration : **9.651531 (s)** Total Duration : **1.999533 (s)**
 
 **Normal Boot** **Optimized Boot**
 
- 
+
 
 **Figure 15.4:** Performance Measurement Results (Before/After)
 
- 
+
 
 The next several sections detail the various decisions that were made for this proof of
 
 concept and how they improved the boot performance.
 
- 
+
 
 **Marketing Requirements**
 
- 
+
 
 Admittedly, marketing requirements are not the first thing that comes to mind when
 
@@ -410,17 +407,17 @@ decisions that ultimately affect performance characteristics of the system. Sinc
 
 not provide a vast array of code optimization “tricks.” Unless there is a serious set of implementation bugs in a given codebase, the majority of boot speed improvements
 
-are achieved from following the guidelines provided in this section. Not to worry **242** \| Chapter 15 – Reducing Platform Boot Times
+are achieved from following the guidelines provided in this section. Not to worry
 
- 
+
 
 though, there are codebase independent “tricks” included that provide additional help.
 
- 
+
 
 **What Are the Design Goals?**
 
- 
+
 
 How does the user need to use the platform? Is it a “closed box” system? Is it a tradi-tional desktop? Is it a server? How the platform is thought of ultimately affects what
 
@@ -428,11 +425,11 @@ the user expects. Making conscious design choices to either enable or limit some
 
 these expectations is where the platform policy can greatly affect the resulting per-formance characteristics.
 
- 
+
 
 **Platform Policy**
 
- 
+
 
 One of the first considerations when looking at a BIOS and the corresponding require-ments is whether or not an engineer can limit the number of variables associated with what the user can do “to” the system. For instance, it might be reasonable to presume
 
@@ -442,11 +439,11 @@ This is where a designer enters the zone of platform policy. Even though a plat-
 
 decision needs to be made for how and when these components are used. A good general performance optimization statement would be:
 
- 
+
 
 “If you can put off doing something in BIOS that the OS can do—then put it off!”
 
- 
+
 
 Since a user can connect anything from a record player to a RAID chassis via USB, the user might think that they would be able to boot from a USB-connected device if phys-ically possible. Though this is physically possible, it is within the purview of the plat-
 
@@ -458,23 +455,22 @@ USB media and to not support the user interrupting the boot process. This means 
 
 ture to get keystrokes and this resulted in a savings of nearly 0.5 second in boot time.
 
- 
+
 
 **Note** Even though 0.5 second of boot time was saved by eliminating late BIOS USB initiali-
 
 zation, upon launching the platform OS, the OS was able to interact with plugged-in USB devices without a problem.
 
- 
+
 
 Platform policy ultimately affects how an engineer responds to the remaining ques-tions.
 
-Marketing Requirements \| **243**
 
- 
+
 
 **What Are the Supported OS Targets?**
 
- 
+
 
 Understanding the requirements of a particular platform-supported OS greatly affects
 
@@ -486,17 +482,17 @@ the codebase to save roughly 400 ms of boot time by avoiding the reading of some
 
 the target operating systems.
 
- 
+
 
 **Note** Changes in the BIOS codebase that avoided the unnecessary creation of certain ta-
 
 bles saved roughly 400 ms in the boot time.
 
- 
+
 
 **Do We Have to Support Legacy Operating Systems?**
 
- 
+
 
 The main consideration was whether a particular OS target was UEFI-compliant or not. If all the OS targets were UEFI-compliant, then the platform could have saved roughly 0.5 second in the underlying initialization of the video option ROM. In this
 
@@ -512,11 +508,11 @@ pliant OS, the BDS could analyze the target BOOT#### variable to determine if th
 
 this case at least has the option to avoid some of the overhead associated with the legacy compatibility support infrastructure.
 
- 
+
 
 **Do We Have to Support Legacy Option ROMs?**
 
- 
+
 
 Whether or not to launch a legacy option ROM depends on several possible variables: ■ Does the motherboard have any devices built in that have a legacy option ROM?
 
@@ -528,9 +524,8 @@ option ROM?
 
 sociated with that option ROM?
 
-**244** \| Chapter 15 – Reducing Platform Boot Times
 
- 
+
 
 One reason why launching legacy option ROMs is fraught with peril for boot perfor-mance is that there are no rules associated with what a legacy option ROM will do
 
@@ -548,11 +543,11 @@ which the BIOS had a native UEFI driver, there was no need to launch an option R
 
 associated with this trick and others are in the section “Additional Details.”
 
- 
+
 
 **Are We Required to Display an OEM Splash Screen?**
 
- 
+
 
 This is often a crucial element for many platforms, especially from a marketing point
 
@@ -570,11 +565,11 @@ One could leverage the UEFI event services to take advantage of the marketing-
 
 driven delay to accomplish other things, which effectively parallelizes some of the initialization.
 
- 
+
 
 **What Type of Boot Media Is Supported?**
 
- 
+
 
 In the proof of concept platform description, one element was a bit unusual. There was a performance and a standard configuration associated with the drive attached
 
@@ -582,9 +577,9 @@ to the system. Though it may not be obvious, the choice of boot media can be a s
 
 onds (or much more) to spin up. The characteristics of the boot media are very im-portant since, regardless of whatever else you might do to optimize the boot process,
 
-the platform still has to read from the boot media and there are some inherent tasks Marketing Requirements \| **245**
+the platform still has to read from the boot media and there are some inherent tasks
 
- 
+
 
 associated with doing that. Spin-up delays are one of those tasks that are unavoidable in today’s rotating magnetic media.
 
@@ -592,11 +587,11 @@ For the proof of concept, the boot media of choice was one which incurs no spin-
 
 up penalty; thus a solid state drive (SSD) was chosen. This saved about two seconds from the boot time.
 
- 
+
 
 **What Is the BIOS Recovery/Update Strategy?**
 
- 
+
 
 How a platform handles a BIOS update or recovery can affect the performance of a platform. Since this task may be accomplished in many ways, this may inevitably be one of those mechanisms that has significant platform variability. There are a few
 
@@ -608,17 +603,17 @@ gle and reboots the platform with the USB dongle connected. ■ A user receives 
 
 form to launch the BIOS update utility contained within that special file.
 
- 
+
 
 These user scenarios usually resolve into the BIOS, during the initialization caused by the reboot, reading the update/recovery file from a particular location. Where that
 
 update/recovery file is stored and when it is processed is really what affects perfor-mance.
 
- 
+
 
 **When Processing Things Early**
 
- 
+
 
 Frequently during recovery one cannot presume that the target OS is working. For a reasonable platform design, someone would need to design a means by which to up-
 
@@ -632,19 +627,19 @@ recovery content. The act of always probing is typically a time-consuming effort
 
 There is definitely the option of having a platform-specific action, which is easy and quick to probe that “turns on” the recovery mode. How to turn on the recovery
 
-mode (if such a concept exists for the platform) is very platform-specific. Examples of this are holding down a particular key (maybe associated with a GPIO), flipping a **246** \| Chapter 15 – Reducing Platform Boot Times
+mode (if such a concept exists for the platform) is very platform-specific. Examples of this are holding down a particular key (maybe associated with a GPIO), flipping a
 
- 
+
 
 switch (equivalent of moving a jumper), which can be probed for, and so on. These methods are highly preferable since they allow a platform to run without much bur-
 
 den (no extensive probing for update/recovery.)
 
- 
+
 
 **Is There a Need for Pre-OS User Interaction?**
 
- 
+
 
 Normally the overall goal is to boot the target OS as quickly as possible and the only
 
@@ -668,11 +663,11 @@ If it is deemed unnecessary to interact with the BIOS, there is very little reas
 
 (except as noted in prior sections) for the BIOS to probe for a hot key. This only takes time from a platform boot without being a useful feature of the platform.
 
- 
+
 
 **Additional Details**
 
- 
+
 
 When it comes time to address some codebase issues, the marketing requirements
 
@@ -680,17 +675,17 @@ clearly define the problem space an engineer has to design around. With that inf
 
 can use.
 
- 
+
 
 **Adjusting the BIOS to Avoid Unnecessary Drivers**
 
- 
+
 
 It is useful to understand the details of how we avoided executing some of the extra
 
-drivers in our platform. It is also useful to reference the appropriate sections in the Additional Details \| **247**
+drivers in our platform. It is also useful to reference the appropriate sections in the
 
- 
+
 
 UEFI specification to better understand some of the underlying parts that cannot, for conciseness, be covered in this chapter.
 
@@ -706,11 +701,11 @@ At its simplest, the BDS phase is the means by which the BIOS completes any requ
 
 plex, you can add a series of platform-specific, extensive, value-added hardware ini-tializations that are not required for launching the boot target.
 
- 
+
 
 **What Is the Boot Target?**
 
- 
+
 
 The boot target is defined by something known as an EFI device path (see UEFI spec-ification). This device path is a binary description of where the required boot target is
 
@@ -718,15 +713,15 @@ physically located. This gives the BIOS sufficient information to understand wha
 
 Below is an example of just such a boot target:
 
- 
+
 
 Acpi(PNP0A03,0)/Pci(1F\|1)/Ata(Primary,Master)/HD(Part3,Si g00110011)/’’\EFI\Boot’’/’’OSLoader.efi’’
 
- 
+
 
 **Steps Taken in a Normal and Optimized Boot**
 
- 
+
 
 Figure 15.5 indicates that between the non-optimized boot and an optimized boot, there are no design differences from a UEFI architecture point of view. In addition,
 
@@ -734,9 +729,8 @@ Figure 15.6 shows how significantly the behavior of the platform might be in eac
 
 *not* mean that one has to violate any of the design specifications.
 
-**248** \| Chapter 15 – Reducing Platform Boot Times
 
- 
+
 
 SEC Phase SEC Phase
 
@@ -744,7 +738,7 @@ Pre-memory early initialization, microcode Pre-memory early initialization, micr
 
 patching, and MTRR programming. patching, and MTRR programming.
 
- 
+
 
 PEI Phase
 
@@ -758,17 +752,17 @@ initialization, microcode patching, and MTRR programming.
 
 patching, and MTRR programming.
 
- 
+
 
 Yes Are we in an Are we in an Yes S3 Boot mode? S3 Boot mode?
 
- 
+
 
 O/S Resume Vector O/S Resume Vector
 
 No No
 
- 
+
 
 DXE + BDS Phase DXE + BDS Phase
 
@@ -778,47 +772,47 @@ Dispatch all drivers encountered. Dispatch only the **minimal**drivers required 
 
 boot the target.
 
- 
+
 
 **Non-Optimized Boot** **Optimized Boot**
 
- 
+
 
 **Figure 15.5:** Architectural Boot Flow Comparison
 
 ![](media/index-267_1.png)
 
- 
+
 
 **Figure 15.6:** Functional Boot Flow Comparison
 
- 
+
 
 **Loading a Boot Target**
 
- 
+
 
 The logic associated with the BDS optimization focuses solely on the minimal behav-
 
 ior associated with initializing the platform and launching the OS loader. When cus-tomizing the platform BDS, you can avoid calling routines that attempt to connect all
 
-drivers to all devices recursively, such as BdsConnectAll(), and instead only Additional Details \| **249**
+drivers to all devices recursively, such as BdsConnectAll(), and instead only
 
- 
+
 
 connect the devices directly associated with the boot target. Figure 15.7 illustrates an example of that logic.
 
 ![](media/index-268_1.png)
 
- 
+
 
 **Figure 15.7:** Deconstructing the BDS launch of the Boot Target
 
- 
+
 
 **Organizing the Flash Effectively**
 
- 
+
 
 In a BIOS that complies with the PI specification, there is a flash component concept known as an firmware volume (FV). This is typically an accumulation of BIOS drivers.
 
@@ -830,37 +824,37 @@ one is when a driver is connected to a device. Platform policy could dictate tha
 
 not needed, the USB-related drivers could be segregated to a specific FV, and material associated with that FV would not be dispatched.
 
- 
+
 
 **Minimize the Files Needed**
 
- 
+
 
 Since one of the slowest I/O resources in a platform is normally the flash part on which the BIOS is stored, it is a very prudent idea to minimize the amount of space
 
-that a BIOS occupies. The less space a BIOS occupies, the shorter the time is for rou-tines within the BIOS to read content into faster areas of the platform (such as **250** \| Chapter 15 – Reducing Platform Boot Times
+that a BIOS occupies. The less space a BIOS occupies, the shorter the time is for rou-tines within the BIOS to read content into faster areas of the platform (such as
 
- 
+
 
 memory). This can be done by minimizing the drivers that are required by the plat-form, and pruning can typically be accomplished by a proper study of the marketing
 
 requirements.
 
- 
+
 
 **Summary**
 
- 
+
 
 Ultimately, the level of performance optimization that is achievable is largely subject to the requirements of the platform. Given sufficient probing, there are almost always methods to achieve boot speed gains using some of the techniques highlighted in this
 
 chapter. Here are some of the highlights of items to focus on and areas within each BIOS codebase that deserve further investigation.
 
- 
+
 
 **The Primary Adjustments**
 
- 
+
 
 Based on various conditions in a platform, the boot behavior can be adjusted to speed up the boot process. Much of this occurs in the BDS, but some areas of optimization
 
@@ -902,13 +896,12 @@ ous subcomponents.
 
 boot option.
 
-Summary \| **251**
 
- 
+
 
 **Suggested Next Steps**
 
- 
+
 
 Some common procedures can be applied to all platforms:
 
@@ -942,6 +935,6 @@ up in an earlier stage of the boot logic to mitigate some of this slow-down and 
 
 optimization may be very reasonable.
 
- 
+
 
 First focus optimization work on the components that the BIOS spends the most time on. Usually more optimization results can be achieved in these components.

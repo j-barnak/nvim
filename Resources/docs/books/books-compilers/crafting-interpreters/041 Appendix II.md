@@ -41,20 +41,22 @@ abstract class Expr {
 
 Variable assignment is introduced in “Statements and State”.
 
-      static class Assign extends Expr {
-        Assign(Token name, Expr value) {
-          this.name = name;
-          this.value = value;
-        }
+```
+  static class Assign extends Expr {
+    Assign(Token name, Expr value) {
+      this.name = name;
+      this.value = value;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitAssignExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitAssignExpr(this);
+    }
 
-        final Token name;
-        final Expr value;
-      }
+    final Token name;
+    final Expr value;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -62,22 +64,24 @@ Variable assignment is introduced in “Statements and State”.
 
 Binary operators are introduced in “Representing Code”.
 
-      static class Binary extends Expr {
-        Binary(Expr left, Token operator, Expr right) {
-          this.left = left;
-          this.operator = operator;
-          this.right = right;
-        }
+```
+  static class Binary extends Expr {
+    Binary(Expr left, Token operator, Expr right) {
+      this.left = left;
+      this.operator = operator;
+      this.right = right;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitBinaryExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitBinaryExpr(this);
+    }
 
-        final Expr left;
-        final Token operator;
-        final Expr right;
-      }
+    final Expr left;
+    final Token operator;
+    final Expr right;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -85,22 +89,24 @@ Binary operators are introduced in “Representing Code”.
 
 Function call expressions are introduced in “Functions”.
 
-      static class Call extends Expr {
-        Call(Expr callee, Token paren, List<Expr> arguments) {
-          this.callee = callee;
-          this.paren = paren;
-          this.arguments = arguments;
-        }
+```
+  static class Call extends Expr {
+    Call(Expr callee, Token paren, List<Expr> arguments) {
+      this.callee = callee;
+      this.paren = paren;
+      this.arguments = arguments;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitCallExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitCallExpr(this);
+    }
 
-        final Expr callee;
-        final Token paren;
-        final List<Expr> arguments;
-      }
+    final Expr callee;
+    final Token paren;
+    final List<Expr> arguments;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -108,20 +114,22 @@ Function call expressions are introduced in “Functions”.
 
 Property access, or “get” expressions are introduced in “Classes”.
 
-      static class Get extends Expr {
-        Get(Expr object, Token name) {
-          this.object = object;
-          this.name = name;
-        }
+```
+  static class Get extends Expr {
+    Get(Expr object, Token name) {
+      this.object = object;
+      this.name = name;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitGetExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitGetExpr(this);
+    }
 
-        final Expr object;
-        final Token name;
-      }
+    final Expr object;
+    final Token name;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -129,18 +137,20 @@ Property access, or “get” expressions are introduced in “Classes”.
 
 Using parentheses to group expressions is introduced in “Representing Code”.
 
-      static class Grouping extends Expr {
-        Grouping(Expr expression) {
-          this.expression = expression;
-        }
+```
+  static class Grouping extends Expr {
+    Grouping(Expr expression) {
+      this.expression = expression;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitGroupingExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitGroupingExpr(this);
+    }
 
-        final Expr expression;
-      }
+    final Expr expression;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -148,18 +158,20 @@ Using parentheses to group expressions is introduced in “Representing Code”.
 
 Literal value expressions are introduced in “Representing Code”.
 
-      static class Literal extends Expr {
-        Literal(Object value) {
-          this.value = value;
-        }
+```
+  static class Literal extends Expr {
+    Literal(Object value) {
+      this.value = value;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitLiteralExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitLiteralExpr(this);
+    }
 
-        final Object value;
-      }
+    final Object value;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -167,22 +179,24 @@ Literal value expressions are introduced in “Representing Code”.
 
 The logical `and` and `or` operators are introduced in “Control Flow”.
 
-      static class Logical extends Expr {
-        Logical(Expr left, Token operator, Expr right) {
-          this.left = left;
-          this.operator = operator;
-          this.right = right;
-        }
+```
+  static class Logical extends Expr {
+    Logical(Expr left, Token operator, Expr right) {
+      this.left = left;
+      this.operator = operator;
+      this.right = right;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitLogicalExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitLogicalExpr(this);
+    }
 
-        final Expr left;
-        final Token operator;
-        final Expr right;
-      }
+    final Expr left;
+    final Token operator;
+    final Expr right;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -190,22 +204,24 @@ The logical `and` and `or` operators are introduced in “Control Flow”.
 
 Property assignment, or “set” expressions are introduced in “Classes”.
 
-      static class Set extends Expr {
-        Set(Expr object, Token name, Expr value) {
-          this.object = object;
-          this.name = name;
-          this.value = value;
-        }
+```
+  static class Set extends Expr {
+    Set(Expr object, Token name, Expr value) {
+      this.object = object;
+      this.name = name;
+      this.value = value;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitSetExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitSetExpr(this);
+    }
 
-        final Expr object;
-        final Token name;
-        final Expr value;
-      }
+    final Expr object;
+    final Token name;
+    final Expr value;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -213,20 +229,22 @@ Property assignment, or “set” expressions are introduced in “Classes”.
 
 The `super` expression is introduced in “Inheritance”.
 
-      static class Super extends Expr {
-        Super(Token keyword, Token method) {
-          this.keyword = keyword;
-          this.method = method;
-        }
+```
+  static class Super extends Expr {
+    Super(Token keyword, Token method) {
+      this.keyword = keyword;
+      this.method = method;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitSuperExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitSuperExpr(this);
+    }
 
-        final Token keyword;
-        final Token method;
-      }
+    final Token keyword;
+    final Token method;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -234,18 +252,20 @@ The `super` expression is introduced in “Inheritance”.
 
 The `this` expression is introduced in “Classes”.
 
-      static class This extends Expr {
-        This(Token keyword) {
-          this.keyword = keyword;
-        }
+```
+  static class This extends Expr {
+    This(Token keyword) {
+      this.keyword = keyword;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitThisExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitThisExpr(this);
+    }
 
-        final Token keyword;
-      }
+    final Token keyword;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -253,20 +273,22 @@ The `this` expression is introduced in “Classes”.
 
 Unary operators are introduced in “Representing Code”.
 
-      static class Unary extends Expr {
-        Unary(Token operator, Expr right) {
-          this.operator = operator;
-          this.right = right;
-        }
+```
+  static class Unary extends Expr {
+    Unary(Token operator, Expr right) {
+      this.operator = operator;
+      this.right = right;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitUnaryExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitUnaryExpr(this);
+    }
 
-        final Token operator;
-        final Expr right;
-      }
+    final Token operator;
+    final Expr right;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -274,18 +296,20 @@ Unary operators are introduced in “Representing Code”.
 
 Variable access expressions are introduced in “Statements and State”.
 
-      static class Variable extends Expr {
-        Variable(Token name) {
-          this.name = name;
-        }
+```
+  static class Variable extends Expr {
+    Variable(Token name) {
+      this.name = name;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitVariableExpr(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitVariableExpr(this);
+    }
 
-        final Token name;
-      }
+    final Token name;
+  }
+```
 
 *lox/Expr.java*, nest inside class *Expr*
 
@@ -323,18 +347,20 @@ abstract class Stmt {
 
 The curly-braced block statement that defines a local scope is introduced in “Statements and State”.
 
-      static class Block extends Stmt {
-        Block(List<Stmt> statements) {
-          this.statements = statements;
-        }
+```
+  static class Block extends Stmt {
+    Block(List<Stmt> statements) {
+      this.statements = statements;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitBlockStmt(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitBlockStmt(this);
+    }
 
-        final List<Stmt> statements;
-      }
+    final List<Stmt> statements;
+  }
+```
 
 *lox/Stmt.java*, nest inside class *Stmt*
 
@@ -342,24 +368,26 @@ The curly-braced block statement that defines a local scope is introduced in “
 
 Class declarations are introduced in, unsurprisingly, “Classes”.
 
-      static class Class extends Stmt {
-        Class(Token name,
-              Expr.Variable superclass,
-              List<Stmt.Function> methods) {
-          this.name = name;
-          this.superclass = superclass;
-          this.methods = methods;
-        }
+```
+  static class Class extends Stmt {
+    Class(Token name,
+          Expr.Variable superclass,
+          List<Stmt.Function> methods) {
+      this.name = name;
+      this.superclass = superclass;
+      this.methods = methods;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitClassStmt(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitClassStmt(this);
+    }
 
-        final Token name;
-        final Expr.Variable superclass;
-        final List<Stmt.Function> methods;
-      }
+    final Token name;
+    final Expr.Variable superclass;
+    final List<Stmt.Function> methods;
+  }
+```
 
 *lox/Stmt.java*, nest inside class *Stmt*
 
@@ -367,18 +395,20 @@ Class declarations are introduced in, unsurprisingly, “Classes”.
 
 The expression statement is introduced in “Statements and State”.
 
-      static class Expression extends Stmt {
-        Expression(Expr expression) {
-          this.expression = expression;
-        }
+```
+  static class Expression extends Stmt {
+    Expression(Expr expression) {
+      this.expression = expression;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitExpressionStmt(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitExpressionStmt(this);
+    }
 
-        final Expr expression;
-      }
+    final Expr expression;
+  }
+```
 
 *lox/Stmt.java*, nest inside class *Stmt*
 
@@ -386,22 +416,24 @@ The expression statement is introduced in “Statements and State”.
 
 Function declarations are introduced in, you guessed it, “Functions”.
 
-      static class Function extends Stmt {
-        Function(Token name, List<Token> params, List<Stmt> body) {
-          this.name = name;
-          this.params = params;
-          this.body = body;
-        }
+```
+  static class Function extends Stmt {
+    Function(Token name, List<Token> params, List<Stmt> body) {
+      this.name = name;
+      this.params = params;
+      this.body = body;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitFunctionStmt(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitFunctionStmt(this);
+    }
 
-        final Token name;
-        final List<Token> params;
-        final List<Stmt> body;
-      }
+    final Token name;
+    final List<Token> params;
+    final List<Stmt> body;
+  }
+```
 
 *lox/Stmt.java*, nest inside class *Stmt*
 
@@ -409,22 +441,24 @@ Function declarations are introduced in, you guessed it, “Functions”.
 
 The `if` statement is introduced in “Control Flow”.
 
-      static class If extends Stmt {
-        If(Expr condition, Stmt thenBranch, Stmt elseBranch) {
-          this.condition = condition;
-          this.thenBranch = thenBranch;
-          this.elseBranch = elseBranch;
-        }
+```
+  static class If extends Stmt {
+    If(Expr condition, Stmt thenBranch, Stmt elseBranch) {
+      this.condition = condition;
+      this.thenBranch = thenBranch;
+      this.elseBranch = elseBranch;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitIfStmt(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitIfStmt(this);
+    }
 
-        final Expr condition;
-        final Stmt thenBranch;
-        final Stmt elseBranch;
-      }
+    final Expr condition;
+    final Stmt thenBranch;
+    final Stmt elseBranch;
+  }
+```
 
 *lox/Stmt.java*, nest inside class *Stmt*
 
@@ -432,18 +466,20 @@ The `if` statement is introduced in “Control Flow”.
 
 The `print` statement is introduced in “Statements and State”.
 
-      static class Print extends Stmt {
-        Print(Expr expression) {
-          this.expression = expression;
-        }
+```
+  static class Print extends Stmt {
+    Print(Expr expression) {
+      this.expression = expression;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitPrintStmt(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitPrintStmt(this);
+    }
 
-        final Expr expression;
-      }
+    final Expr expression;
+  }
+```
 
 *lox/Stmt.java*, nest inside class *Stmt*
 
@@ -451,20 +487,22 @@ The `print` statement is introduced in “Statements and State”.
 
 You need a function to return from, so `return` statements are introduced in “Functions”.
 
-      static class Return extends Stmt {
-        Return(Token keyword, Expr value) {
-          this.keyword = keyword;
-          this.value = value;
-        }
+```
+  static class Return extends Stmt {
+    Return(Token keyword, Expr value) {
+      this.keyword = keyword;
+      this.value = value;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitReturnStmt(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitReturnStmt(this);
+    }
 
-        final Token keyword;
-        final Expr value;
-      }
+    final Token keyword;
+    final Expr value;
+  }
+```
 
 *lox/Stmt.java*, nest inside class *Stmt*
 
@@ -472,20 +510,22 @@ You need a function to return from, so `return` statements are introduced in “
 
 Variable declarations are introduced in “Statements and State”.
 
-      static class Var extends Stmt {
-        Var(Token name, Expr initializer) {
-          this.name = name;
-          this.initializer = initializer;
-        }
+```
+  static class Var extends Stmt {
+    Var(Token name, Expr initializer) {
+      this.name = name;
+      this.initializer = initializer;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitVarStmt(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitVarStmt(this);
+    }
 
-        final Token name;
-        final Expr initializer;
-      }
+    final Token name;
+    final Expr initializer;
+  }
+```
 
 *lox/Stmt.java*, nest inside class *Stmt*
 
@@ -493,19 +533,21 @@ Variable declarations are introduced in “Statements and State”.
 
 The `while` statement is introduced in “Control Flow”.
 
-      static class While extends Stmt {
-        While(Expr condition, Stmt body) {
-          this.condition = condition;
-          this.body = body;
-        }
+```
+  static class While extends Stmt {
+    While(Expr condition, Stmt body) {
+      this.condition = condition;
+      this.body = body;
+    }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
-          return visitor.visitWhileStmt(this);
-        }
+    @Override
+    <R> R accept(Visitor<R> visitor) {
+      return visitor.visitWhileStmt(this);
+    }
 
-        final Expr condition;
-        final Stmt body;
-      }
+    final Expr condition;
+    final Stmt body;
+  }
+```
 
 *lox/Stmt.java*, nest inside class *Stmt*

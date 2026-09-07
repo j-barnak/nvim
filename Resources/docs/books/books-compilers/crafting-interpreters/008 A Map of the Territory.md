@@ -18,7 +18,7 @@ Engineers have been building programming languages since the Dark Ages of comput
 
 Though the area explored by language designers is vast, the trails they’ve carved through it are few. Not every language takes the exact same path—some take a shortcut or two—but otherwise they are reassuringly similar, from Rear Admiral Grace Hopper’s first COBOL compiler all the way to some hot, new, transpile-to-JavaScript language whose “documentation” consists entirely of a single, poorly edited README in a Git repository somewhere.
 
-There are certainly dead ends, sad little cul-de-sacs of CS papers with zero citations and now-forgotten optimizations that only made sense when memory was measured in individual bytes.
+> There are certainly dead ends, sad little cul-de-sacs of CS papers with zero citations and now-forgotten optimizations that only made sense when memory was measured in individual bytes.
 
 I visualize the network of paths an implementation may choose as climbing a mountain. You start off at the bottom with the program as raw source text, literally just a string of characters. Each phase analyzes the program and transforms it to some higher-level representation where the semantics—what the author wants the computer to do—become more apparent.
 
@@ -36,7 +36,7 @@ The first step is **scanning**, also known as **lexing**, or (if you’re trying
 
 A **scanner** (or **lexer**) takes in the linear stream of characters and chunks them together into a series of something more akin to “words”. In programming languages, each of these words is called a **token**. Some tokens are single characters, like `(` and `,`. Others may be several characters long, like numbers (`123`), string literals (`"hi!"`), and identifiers (`min`).
 
-“Lexical” comes from the Greek root “lex”, meaning “word”.
+> “Lexical” comes from the Greek root “lex”, meaning “word”.
 
 Some characters in a source file don’t actually mean anything. Whitespace is often insignificant, and comments, by definition, are ignored by the language. The scanner usually discards these, leaving a clean sequence of meaningful tokens.
 
@@ -64,7 +64,7 @@ The first bit of analysis that most languages do is called **binding** or **reso
 
 If the language is statically typed, this is when we type check. Once we know where `a` and `b` are declared, we can also figure out their types. Then if those types don’t support being added to each other, we report a **type error**.
 
-The language we’ll build in this book is dynamically typed, so it will do its type checking later, at runtime.
+> The language we’ll build in this book is dynamically typed, so it will do its type checking later, at runtime.
 
 Take a deep breath. We have attained the summit of the mountain and a sweeping view of the user’s program. All this semantic insight that is visible to us from analysis needs to be stored somewhere. There are a few places we can squirrel it away:
 
@@ -82,13 +82,13 @@ You can think of the compiler as a pipeline where each stage’s job is to organ
 
 In the middle, the code may be stored in some **intermediate representation** (**IR**) that isn’t tightly tied to either the source or destination forms (hence “intermediate”). Instead, the IR acts as an interface between these two languages.
 
-There are a few well-established styles of IRs out there. Hit your search engine of choice and look for “control flow graph”, “static single-assignment”, “continuation-passing style”, and “three-address code”.
+> There are a few well-established styles of IRs out there. Hit your search engine of choice and look for “control flow graph”, “static single-assignment”, “continuation-passing style”, and “three-address code”.
 
 This lets you support multiple source languages and target platforms with less effort. Say you want to implement Pascal, C, and Fortran compilers, and you want to target x86, ARM, and, I dunno, SPARC. Normally, that means you’re signing up to write *nine* full compilers: Pascal→x86, C→ARM, and every other combination.
 
 A shared intermediate representation reduces that dramatically. You write *one* front end for each source language that produces the IR. Then *one* back end for each target architecture. Now you can mix and match those to get every combination.
 
-If you’ve ever wondered how [GCC](https://en.wikipedia.org/wiki/GNU_Compiler_Collection) supports so many crazy languages and architectures, like Modula-3 on Motorola 68k, now you know. Language front ends target one of a handful of IRs, mainly [GIMPLE](https://gcc.gnu.org/onlinedocs/gccint/GIMPLE.html) and [RTL](https://gcc.gnu.org/onlinedocs/gccint/RTL.html). Target back ends like the one for 68k then take those IRs and produce native code.
+> If you’ve ever wondered how [GCC](https://en.wikipedia.org/wiki/GNU_Compiler_Collection) supports so many crazy languages and architectures, like Modula-3 on Motorola 68k, now you know. Language front ends target one of a handful of IRs, mainly [GIMPLE](https://gcc.gnu.org/onlinedocs/gccint/GIMPLE.html) and [RTL](https://gcc.gnu.org/onlinedocs/gccint/RTL.html). Target back ends like the one for 68k then take those IRs and produce native code.
 
 There’s another big reason we might want to transform the code into a form that makes the semantics more apparent . . . 
 
@@ -112,7 +112,7 @@ Optimization is a huge part of the programming language business. Many language 
 
 We’re mostly going to hop over that rathole in this book. Many successful languages have surprisingly few compile-time optimizations. For example, Lua and CPython generate relatively unoptimized code, and focus most of their performance effort on the runtime.
 
-If you can’t resist poking your foot into that hole, some keywords to get you started are “constant propagation”, “common subexpression elimination”, “loop invariant code motion”, “global value numbering”, “strength reduction”, “scalar replacement of aggregates”, “dead code elimination”, and “loop unrolling”.
+> If you can’t resist poking your foot into that hole, some keywords to get you started are “constant propagation”, “common subexpression elimination”, “loop invariant code motion”, “global value numbering”, “strength reduction”, “scalar replacement of aggregates”, “dead code elimination”, and “loop unrolling”.
 
 ### 2.1.6 Code generation
 
@@ -124,7 +124,7 @@ We have a decision to make. Do we generate instructions for a real CPU or a virt
 
 Speaking the chip’s language also means your compiler is tied to a specific architecture. If your compiler targets [x86](https://en.wikipedia.org/wiki/X86) machine code, it’s not going to run on an [ARM](https://en.wikipedia.org/wiki/ARM_architecture) device. All the way back in the ’60s, during the Cambrian explosion of computer architectures, that lack of portability was a real obstacle.
 
-For example, the [AAD](http://www.felixcloutier.com/x86/AAD.html) (“ASCII Adjust AX Before Division”) instruction lets you perform division, which sounds useful. Except that instruction takes, as operands, two binary-coded decimal digits packed into a single 16-bit register. When was the last time *you* needed BCD on a 16-bit machine?
+> For example, the [AAD](http://www.felixcloutier.com/x86/AAD.html) (“ASCII Adjust AX Before Division”) instruction lets you perform division, which sounds useful. Except that instruction takes, as operands, two binary-coded decimal digits packed into a single 16-bit register. When was the last time *you* needed BCD on a 16-bit machine?
 
 To get around that, hackers like Martin Richards and Niklaus Wirth, of BCPL and Pascal fame, respectively, made their compilers produce *virtual* machine code. Instead of instructions for some real chip, they produced code for a hypothetical, idealized machine. Wirth called this **p-code** for *portable*, but today, we generally call it **bytecode** because each instruction is often a single byte long.
 
@@ -134,15 +134,15 @@ These synthetic instructions are designed to map a little more closely to the la
 
 If your compiler produces bytecode, your work isn’t over once that’s done. Since there is no chip that speaks that bytecode, it’s your job to translate. Again, you have two options. You can write a little mini-compiler for each target architecture that converts the bytecode to native code for that machine. You still have to do work for each chip you support, but this last stage is pretty simple and you get to reuse the rest of the compiler pipeline across all of the machines you support. You’re basically using your bytecode as an intermediate representation.
 
-The basic principle here is that the farther down the pipeline you push the architecture-specific work, the more of the earlier phases you can share across architectures.
-
-There is a tension, though. Many optimizations, like register allocation and instruction selection, work best when they know the strengths and capabilities of a specific chip. Figuring out which parts of your compiler can be shared and which should be target-specific is an art.
+> The basic principle here is that the farther down the pipeline you push the architecture-specific work, the more of the earlier phases you can share across architectures.
+>
+> There is a tension, though. Many optimizations, like register allocation and instruction selection, work best when they know the strengths and capabilities of a specific chip. Figuring out which parts of your compiler can be shared and which should be target-specific is an art.
 
 Or you can write a **virtual machine** (**VM**), a program that emulates a hypothetical chip supporting your virtual architecture at runtime. Running bytecode in a VM is slower than translating it to native code ahead of time because every instruction must be simulated at runtime each time it executes. In return, you get simplicity and portability. Implement your VM in, say, C, and you can run your language on any platform that has a C compiler. This is how the second interpreter we build in this book works.
 
-The term “virtual machine” also refers to a different kind of abstraction. A **system virtual machine** emulates an entire hardware platform and operating system in software. This is how you can play Windows games on your Linux machine, and how cloud providers give customers the user experience of controlling their own “server” without needing to physically allocate separate computers for each user.
-
-The kind of VMs we’ll talk about in this book are **language virtual machines** or **process virtual machines** if you want to be unambiguous.
+> The term “virtual machine” also refers to a different kind of abstraction. A **system virtual machine** emulates an entire hardware platform and operating system in software. This is how you can play Windows games on your Linux machine, and how cloud providers give customers the user experience of controlling their own “server” without needing to physically allocate separate computers for each user.
+>
+> The kind of VMs we’ll talk about in this book are **language virtual machines** or **process virtual machines** if you want to be unambiguous.
 
 ### 2.1.8 Runtime
 
@@ -160,7 +160,7 @@ That’s the long path covering every possible phase you might implement. Many l
 
 Some simple compilers interleave parsing, analysis, and code generation so that they produce output code directly in the parser, without ever allocating any syntax trees or other IRs. These **single-pass compilers** restrict the design of the language. You have no intermediate data structures to store global information about the program, and you don’t revisit any previously parsed part of the code. That means as soon as you see some expression, you need to know enough to correctly compile it.
 
-[**Syntax-directed translation**](https://en.wikipedia.org/wiki/Syntax-directed_translation) is a structured technique for building these all-at-once compilers. You associate an *action* with each piece of the grammar, usually one that generates output code. Then, whenever the parser matches that chunk of syntax, it executes the action, building up the target code one rule at a time.
+> [**Syntax-directed translation**](https://en.wikipedia.org/wiki/Syntax-directed_translation) is a structured technique for building these all-at-once compilers. You associate an *action* with each piece of the grammar, usually one that generates output code. Then, whenever the parser matches that chunk of syntax, it executes the action, building up the target code one rule at a time.
 
 Pascal and C were designed around this limitation. At the time, memory was so precious that a compiler might not even be able to hold an entire *source file* in memory, much less the whole program. This is why Pascal’s grammar requires type declarations to appear first in a block. It’s why in C you can’t call a function above the code that defines it unless you have an explicit forward declaration that tells the compiler what it needs to know to generate code for a call to the later function.
 
@@ -170,7 +170,7 @@ Some programming languages begin executing code right after parsing it to an AST
 
 This implementation style is common for student projects and little languages, but is not widely used for general-purpose languages since it tends to be slow. Some people use “interpreter” to mean only these kinds of implementations, but others define that word more generally, so I’ll use the inarguably explicit **tree-walk interpreter** to refer to these. Our first interpreter rolls this way.
 
-A notable exception is early versions of Ruby, which were tree walkers. At 1.9, the canonical implementation of Ruby switched from the original MRI (Matz’s Ruby Interpreter) to Koichi Sasada’s YARV (Yet Another Ruby VM). YARV is a bytecode virtual machine.
+> A notable exception is early versions of Ruby, which were tree walkers. At 1.9, the canonical implementation of Ruby switched from the original MRI (Matz’s Ruby Interpreter) to Koichi Sasada’s YARV (Yet Another Ruby VM). YARV is a bytecode virtual machine.
 
 ### 2.2.3 Transpilers
 
@@ -180,17 +180,17 @@ You write a front end for your language. Then, in the back end, instead of doing
 
 They used to call this a **source-to-source compiler** or a **transcompiler**. After the rise of languages that compile to JavaScript in order to run in the browser, they’ve affected the hipster sobriquet **transpiler**.
 
-The first transcompiler, XLT86, translated 8080 assembly into 8086 assembly. That might seem straightforward, but keep in mind the 8080 was an 8-bit chip and the 8086 a 16-bit chip that could use each register as a pair of 8-bit ones. XLT86 did data flow analysis to track register usage in the source program and then efficiently map it to the register set of the 8086.
-
-It was written by Gary Kildall, a tragic hero of computer science if there ever was one. One of the first people to recognize the promise of microcomputers, he created PL/M and CP/M, the first high-level language and OS for them.
-
-He was a sea captain, business owner, licensed pilot, and motorcyclist. A TV host with the Kris Kristofferson-esque look sported by dashing bearded dudes in the ’80s. He took on Bill Gates and, like many, lost, before meeting his end in a biker bar under mysterious circumstances. He died too young, but sure as hell lived before he did.
+> The first transcompiler, XLT86, translated 8080 assembly into 8086 assembly. That might seem straightforward, but keep in mind the 8080 was an 8-bit chip and the 8086 a 16-bit chip that could use each register as a pair of 8-bit ones. XLT86 did data flow analysis to track register usage in the source program and then efficiently map it to the register set of the 8086.
+>
+> It was written by Gary Kildall, a tragic hero of computer science if there ever was one. One of the first people to recognize the promise of microcomputers, he created PL/M and CP/M, the first high-level language and OS for them.
+>
+> He was a sea captain, business owner, licensed pilot, and motorcyclist. A TV host with the Kris Kristofferson-esque look sported by dashing bearded dudes in the ’80s. He took on Bill Gates and, like many, lost, before meeting his end in a biker bar under mysterious circumstances. He died too young, but sure as hell lived before he did.
 
 While the first transcompiler translated one assembly language to another, today, most transpilers work on higher-level languages. After the viral spread of UNIX to machines various and sundry, there began a long tradition of compilers that produced C as their output language. C compilers were available everywhere UNIX was and produced efficient code, so targeting C was a good way to get your language running on a lot of architectures.
 
 Web browsers are the “machines” of today, and their “machine code” is JavaScript, so these days it seems [almost every language out there](https://github.com/jashkenas/coffeescript/wiki/list-of-languages-that-compile-to-js) has a compiler that targets JS since that’s the main way to get your code running in a browser.
 
-JS used to be the *only* way to execute code in a browser. Thanks to [WebAssembly](https://github.com/webassembly/), compilers now have a second, lower-level language they can target that runs on the web.
+> JS used to be the *only* way to execute code in a browser. Thanks to [WebAssembly](https://github.com/webassembly/), compilers now have a second, lower-level language they can target that runs on the web.
 
 The front end—scanner and parser—of a transpiler looks like other compilers. Then, if the source language is only a simple syntactic skin over the target language, it may skip analysis entirely and go straight to outputting the analogous syntax in the destination language.
 
@@ -206,7 +206,7 @@ You can do the same thing that the HotSpot Java Virtual Machine (JVM), Microsoft
 
 The most sophisticated JITs insert profiling hooks into the generated code to see which regions are most performance critical and what kind of data is flowing through them. Then, over time, they will automatically recompile those hot spots with more advanced optimizations.
 
-This is, of course, exactly where the HotSpot JVM gets its name.
+> This is, of course, exactly where the HotSpot JVM gets its name.
 
 ## 2.3 Compilers and Interpreters
 
@@ -216,9 +216,9 @@ It turns out this is like asking the difference between a fruit and a vegetable.
 
 ![A Venn diagram of edible plants](media/image/a-map-of-the-territory/plants.png)
 
-Peanuts (which are not even nuts) and cereals like wheat are actually fruit, but I got this drawing wrong. What can I say, I’m a software engineer, not a botanist. I should probably erase the little peanut guy, but he’s so cute that I can’t bear to.
-
-Now *pine nuts*, on the other hand, are plant-based foods that are neither fruits nor vegetables. At least as far as I can tell.
+> Peanuts (which are not even nuts) and cereals like wheat are actually fruit, but I got this drawing wrong. What can I say, I’m a software engineer, not a botanist. I should probably erase the little peanut guy, but he’s so cute that I can’t bear to.
+>
+> Now *pine nuts*, on the other hand, are plant-based foods that are neither fruits nor vegetables. At least as far as I can tell.
 
 So, back to languages:
 
@@ -236,9 +236,9 @@ But what of CPython? When you run your Python program using it, the code is pars
 
 The answer is that it is both. CPython *is* an interpreter, and it *has* a compiler. In practice, most scripting languages work this way, as you can see:
 
-The [Go tool](https://golang.org/) is even more of a horticultural curiosity. If you run `go build`, it compiles your Go source code to machine code and stops. If you type `go run`, it does that, then immediately executes the generated executable.
-
-So `go` *is* a compiler (you can use it as a tool to compile code without running it), *is* an interpreter (you can invoke it to immediately run a program from source), and also *has* a compiler (when you use it as an interpreter, it is still compiling internally).
+> The [Go tool](https://golang.org/) is even more of a horticultural curiosity. If you run `go build`, it compiles your Go source code to machine code and stops. If you type `go run`, it does that, then immediately executes the generated executable.
+>
+> So `go` *is* a compiler (you can use it as a tool to compile code without running it), *is* an interpreter (you can invoke it to immediately run a program from source), and also *has* a compiler (when you use it as an interpreter, it is still compiling internally).
 
 ![A Venn diagram of compilers and interpreters](media/image/a-map-of-the-territory/venn.png)
 
@@ -252,7 +252,7 @@ This map should serve you well as you explore the territory beyond the guided pa
 
 But, for now, it’s time for our own journey to begin. Tighten your bootlaces, cinch up your pack, and come along. From here on out, all you need to focus on is the path in front of you.
 
-Henceforth, I promise to tone down the whole mountain metaphor thing.
+> Henceforth, I promise to tone down the whole mountain metaphor thing.
 
 ## Challenges
 

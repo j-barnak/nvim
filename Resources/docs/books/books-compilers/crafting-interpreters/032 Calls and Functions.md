@@ -8,7 +8,7 @@
 
 This chapter is a beast. I try to break features into bite-sized pieces, but sometimes you gotta swallow the whole meal. Our next task is functions. We could start with only function declarations, but that’s not very useful when you can’t call them. We could do calls, but there’s nothing to call. And all of the runtime support needed in the VM to support both of those isn’t very rewarding if it isn’t hooked up to anything you can see. So we’re going to do it all. It’s a lot, but we’ll feel good when we’re done.
 
-Eating—consumption—is a weird metaphor for a creative act. But most of the biological processes that produce “output” are a little less, ahem, decorous.
+> Eating—consumption—is a weird metaphor for a creative act. But most of the biological processes that produce “output” are a little less, ahem, decorous.
 
 ## 24.1 Function Objects
 
@@ -40,7 +40,7 @@ struct ObjString {
 
 Functions are first class in Lox, so they need to be actual Lox objects. Thus ObjFunction has the same Obj header that all object types share. The `arity` field stores the number of parameters the function expects. Then, in addition to the chunk, we store the function’s name. That will be handy for reporting readable runtime errors.
 
-Humans don’t seem to find numeric bytecode offsets particularly illuminating in crash dumps.
+> Humans don’t seem to find numeric bytecode offsets particularly illuminating in crash dumps.
 
 This is the first time the “object” module has needed to reference Chunk, so we get an include.
 
@@ -131,7 +131,7 @@ When we’re done with a function object, we must return the bits it borrowed ba
 
 This switch case is responsible for freeing the ObjFunction itself as well as any other memory it owns. Functions own their chunk, so we call Chunk’s destructor-like function.
 
-We don’t need to explicitly free the function’s name because it’s an ObjString. That means we can let the garbage collector manage its lifetime for us. Or, at least, we’ll be able to once we implement a garbage collector.
+> We don’t need to explicitly free the function’s name because it’s an ObjString. That means we can let the garbage collector manage its lifetime for us. Or, at least, we’ll be able to once we implement a garbage collector.
 
 Lox lets you print any object, and functions are first-class objects, so we need to handle them too.
 
@@ -203,7 +203,7 @@ Right now, our compiler assumes it is always compiling to one single chunk. With
 
 That’s fine for code inside function bodies, but what about code that isn’t? The “top level” of a Lox program is also imperative code and we need a chunk to compile that into. We can simplify the compiler and VM by placing that top-level code inside an automatically defined function too. That way, the compiler is always within some kind of function body, and the VM always runs code by invoking a function. It’s as if the entire program is wrapped inside an implicit `main()` function.
 
-One semantic corner where that analogy breaks down is global variables. They have special scoping rules different from local variables, so in that way, the top level of a script isn’t like a function body.
+> One semantic corner where that analogy breaks down is global variables. They have special scoping rules different from local variables, so in that way, the top level of a script isn’t like a function body.
 
 Before we get to user-defined functions, then, let’s do the reorganization to support that implicit top-level function. It starts with the Compiler struct. Instead of pointing directly to a Chunk that the compiler writes to, it instead has a reference to the function object being built.
 
@@ -235,7 +235,7 @@ typedef enum {
 
 Every place in the compiler that was writing to the Chunk now needs to go through that `function` pointer. Fortunately, many chapters ago, we encapsulated access to the chunk in the `currentChunk()` function. We only need to fix that and the rest of the compiler is happy.
 
-It’s almost like I had a crystal ball that could see into the future and knew we’d need to change the code later. But, really, it’s because I wrote all the code for the book before any of the text.
+> It’s almost like I had a crystal ball that could see into the future and knew we’d need to change the code later. But, really, it’s because I wrote all the code for the book before any of the text.
 
 ```
 Compiler* current = NULL;
@@ -303,11 +303,11 @@ Then we allocate a new function object to compile into.
 
 *compiler.c*, in *initCompiler*()
 
-I know, it looks dumb to null the `function` field only to immediately assign it a value a few lines later. More garbage collection-related paranoia.
+> I know, it looks dumb to null the `function` field only to immediately assign it a value a few lines later. More garbage collection-related paranoia.
 
 Creating an ObjFunction in the compiler might seem a little strange. A function object is the *runtime* representation of a function, but here we are creating it at compile time. The way to think of it is that a function is similar to a string or number literal. It forms a bridge between the compile time and runtime worlds. When we get to function *declarations*, those really *are* literals—they are a notation that produces values of a built-in type. So the compiler creates function objects during compilation. Then, at runtime, they are simply invoked.
 
-We can create functions at compile time because they contain only data available at compile time. The function’s code, name, and arity are all fixed. When we add closures in the next chapter, which capture variables at runtime, the story gets more complex.
+> We can create functions at compile time because they contain only data available at compile time. The function’s code, name, and arity are all fixed. When we add closures in the next chapter, which capture variables at runtime, the story gets more complex.
 
 Here is another strange piece of code:
 
@@ -414,7 +414,7 @@ static void printFunction(ObjFunction* function) {
 
 There’s no way for a *user* to get a reference to the top-level function and try to print it, but our `DEBUG_TRACE_EXECUTION` diagnostic code that prints the entire stack can and does.
 
-It is no fun if the diagnostic code we use to find bugs itself causes the VM to segfault!
+> It is no fun if the diagnostic code we use to find bugs itself causes the VM to segfault!
 
 Bumping up a level to `compile()`, we adjust its signature.
 
@@ -477,13 +477,13 @@ The compiler allocates stack slots for local variables. How should that work whe
 
 One option would be to keep them totally separate. Each function would get its own dedicated set of slots in the VM stack that it would own forever, even when the function isn’t being called. Each local variable in the entire program would have a bit of memory in the VM that it keeps to itself.
 
-It’s basically what you’d get if you declared every local variable in a C program using `static`.
+> It’s basically what you’d get if you declared every local variable in a C program using `static`.
 
 Believe it or not, early programming language implementations worked this way. The first Fortran compilers statically allocated memory for each variable. The obvious problem is that it’s really inefficient. Most functions are not in the middle of being called at any point in time, so sitting on unused memory for them is wasteful.
 
 The more fundamental problem, though, is recursion. With recursion, you can be “in” multiple calls to the same function at the same time. Each needs its own memory for its local variables. In jlox, we solved this by dynamically allocating memory for an environment each time a function was called or a block entered. In clox, we don’t want that kind of performance cost on every function call.
 
-Fortran avoided this problem by disallowing recursion entirely. Recursion was considered an advanced, esoteric feature at the time.
+> Fortran avoided this problem by disallowing recursion entirely. Recursion was considered an advanced, esoteric feature at the time.
 
 Instead, our solution lies somewhere between Fortran’s static allocation and jlox’s dynamic approach. The value stack in the VM works on the observation that local variables and temporaries behave in a last-in first-out fashion. Fortunately for us, that’s still true even when you add function calls into the mix. Here’s an example:
 
@@ -510,7 +510,7 @@ As execution flows through the two calls, every local variable obeys the princip
 
 Ideally, we still determine *where* on the stack each variable will go at compile time. That keeps the bytecode instructions for working with variables simple and fast. In the above example, we could imagine doing so in a straightforward way, but that doesn’t always work out. Consider:
 
-I say “imagine” because the compiler can’t actually figure this out. Because functions are first class in Lox, we can’t determine which functions call which others at compile time.
+> I say “imagine” because the compiler can’t actually figure this out. Because functions are first class in Lox, we can’t determine which functions call which others at compile time.
 
 ```
 fun first() {
@@ -550,7 +550,7 @@ The VM needs to return back to the chunk where the function was called from and 
 
 Again, thanks to recursion, there may be multiple return addresses for a single function, so this is a property of each *invocation* and not the function itself.
 
-The authors of early Fortran compilers had a clever trick for implementing return addresses. Since they *didn’t* support recursion, any given function needed only a single return address at any point in time. So when a function was called at runtime, the program would *modify its own code* to change a jump instruction at the end of the function to jump back to its caller. Sometimes the line between genius and madness is hair thin.
+> The authors of early Fortran compilers had a clever trick for implementing return addresses. Since they *didn’t* support recursion, any given function needed only a single return address at any point in time. So when a function was called at runtime, the program would *modify its own code* to change a jump instruction at the end of the function to jump back to its caller. Sometimes the line between genius and madness is hair thin.
 
 ### 24.3.3 The call stack
 
@@ -582,7 +582,7 @@ I also stuffed a pointer to the function being called in here. We’ll use that 
 
 Each time a function is called, we create one of these structs. We could dynamically allocate them on the heap, but that’s slow. Function calls are a core operation, so they need to be as fast as possible. Fortunately, we can make the same observation we made for variables: function calls have stack semantics. If `first()` calls `second()`, the call to `second()` will complete before `first()` does.
 
-Many Lisp implementations dynamically allocate stack frames because it simplifies implementing [continuations](https://en.wikipedia.org/wiki/Continuation). If your language supports continuations, then function calls do *not* always have stack semantics.
+> Many Lisp implementations dynamically allocate stack frames because it simplifies implementing [continuations](https://en.wikipedia.org/wiki/Continuation). If your language supports continuations, then function calls do *not* always have stack semantics.
 
 So over in the VM, we create an array of these CallFrame structs up front and treat it as a stack, like we do with the value array.
 
@@ -622,7 +622,7 @@ typedef struct {
 
 We also redefine the value stack’s size in terms of that to make sure we have plenty of stack slots even in very deep call trees. When the VM starts up, the CallFrame stack is empty.
 
-It is still possible to overflow the stack if enough function calls use enough temporaries in addition to locals. A robust implementation would guard against this, but I’m trying to keep things simple.
+> It is still possible to overflow the stack if enough function calls use enough temporaries in addition to locals. A robust implementation would guard against this, but I’m trying to keep things simple.
 
 ```
   vm.stackTop = vm.stack;
@@ -683,7 +683,7 @@ static InterpretResult run() {
 
 First, we store the current topmost CallFrame in a local variable inside the main bytecode execution function. Then we replace the bytecode access macros with versions that access `ip` through that variable.
 
-We could access the current frame by going through the CallFrame array every time, but that’s verbose. More importantly, storing the frame in a local variable encourages the C compiler to keep that pointer in a register. That speeds up access to the frame’s `ip`. There’s no *guarantee* that the compiler will do this, but there’s a good chance it will.
+> We could access the current frame by going through the CallFrame array every time, but that’s verbose. More importantly, storing the frame in a local variable encourages the C compiler to keep that pointer in a register. That speeds up access to the frame’s `ip`. There’s no *guarantee* that the compiler will do this, but there’s a good chance it will.
 
 Now onto each instruction that needs a little tender loving care.
 
@@ -860,7 +860,7 @@ Assuming we did all of that correctly, we got clox back to a runnable state. Fir
 
 Before we can do call expressions, we need something to call, so we’ll do function declarations first. The fun starts with a keyword.
 
-Yes, I am going to make a dumb joke about the `fun` keyword every time it comes up.
+> Yes, I am going to make a dumb joke about the `fun` keyword every time it comes up.
 
 ```
 static void declaration() {
@@ -939,7 +939,7 @@ static void function(FunctionType type) {
 
 *compiler.c*, add after *block*()
 
-This `beginScope()` doesn’t have a corresponding `endScope()` call. Because we end Compiler completely when we reach the end of the function body, there’s no need to close the lingering outermost scope.
+> This `beginScope()` doesn’t have a corresponding `endScope()` call. Because we end Compiler completely when we reach the end of the function body, there’s no need to close the lingering outermost scope.
 
 For now, we won’t worry about parameters. We parse an empty pair of parentheses followed by the body. The body starts with a left curly brace, which we parse here. Then we call our existing `block()` function, which knows how to compile the rest of a block including the closing brace.
 
@@ -947,7 +947,7 @@ For now, we won’t worry about parameters. We parse an empty pair of parenthese
 
 The interesting parts are the compiler stuff at the top and bottom. The Compiler struct stores data like which slots are owned by which local variables, how many blocks of nesting we’re currently in, etc. All of that is specific to a single function. But now the front end needs to handle compiling multiple functions nested within each other.
 
-Remember that the compiler treats top-level code as the body of an implicit function, so as soon as we add *any* function declarations, we’re in a world of nested functions.
+> Remember that the compiler treats top-level code as the body of an implicit function, so as soon as we add *any* function declarations, we’re in a world of nested functions.
 
 The trick for managing that is to create a separate Compiler for each function being compiled. When we start compiling a function declaration, we create a new Compiler on the C stack and initialize it. `initCompiler()` sets that Compiler to be the current one. Then, as we compile the body, all of the functions that emit bytecode write to the chunk owned by the new Compiler’s function.
 
@@ -1006,7 +1006,7 @@ Then when a Compiler finishes, it pops itself off the stack by restoring the pre
 
 Note that we don’t even need to dynamically allocate the Compiler structs. Each is stored as a local variable in the C stack—either in `compile()` or `function()`. The linked list of Compilers threads through the C stack. The reason we can get an unbounded number of them is because our compiler uses recursive descent, so `function()` ends up calling itself recursively when you have nested function declarations.
 
-Using the native stack for Compiler structs does mean our compiler has a practical limit on how deeply nested function declarations can be. Go too far and you could overflow the C stack. If we want the compiler to be more robust against pathological or even malicious code—a real concern for tools like JavaScript VMs—it would be good to have our compiler artificially limit the amount of function nesting it permits.
+> Using the native stack for Compiler structs does mean our compiler has a practical limit on how deeply nested function declarations can be. Go too far and you could overflow the C stack. If we want the compiler to be more robust against pathological or even malicious code—a real concern for tools like JavaScript VMs—it would be good to have our compiler artificially limit the amount of function nesting it permits.
 
 ### 24.4.2 Function parameters
 
@@ -1070,7 +1070,7 @@ print areWeHavingItYet;
 
 We just can’t do anything useful with them.
 
-We can print them! I guess that’s not very useful, though.
+> We can print them! I guess that’s not very useful, though.
 
 ## 24.5 Function Calls
 
@@ -1187,7 +1187,7 @@ Do you notice how the argument slots that the caller sets up and the parameter s
 
 The top of the caller’s stack contains the function being called followed by the arguments in order. We know the caller doesn’t have any other slots above those in use because any temporaries needed when evaluating argument expressions have been discarded by now. The bottom of the callee’s stack overlaps so that the parameter slots exactly line up with where the argument values already live.
 
-Different bytecode VMs and real CPU architectures have different *calling conventions*, which is the specific mechanism they use to pass arguments, store the return address, etc. The mechanism I use here is based on Lua’s clean, fast virtual machine.
+> Different bytecode VMs and real CPU architectures have different *calling conventions*, which is the specific mechanism they use to pass arguments, store the return address, etc. The mechanism I use here is based on Lua’s clean, fast virtual machine.
 
 This means that we don’t need to do *any* work to “bind an argument to a parameter”. There’s no copying values between slots or across environments. The arguments are already exactly where they need to be. It’s hard to beat that for performance.
 
@@ -1251,7 +1251,7 @@ static bool callValue(Value callee, int argCount) {
 
 *vm.c*, add after *peek*()
 
-Using a `switch` statement to check a single type is overkill now, but will make sense when we add cases to handle other callable types.
+> Using a `switch` statement to check a single type is overkill now, but will make sense when we add cases to handle other callable types.
 
 There’s more going on here than just initializing a new CallFrame. Because Lox is dynamically typed, there’s nothing to prevent a user from writing bad code like:
 
@@ -1392,13 +1392,13 @@ The classic tool to aid debugging runtime failures is a **stack trace**—a prin
 
 *vm.c*, in *runtimeError*(), replace 4 lines
 
-The `- 1` is because the IP is already sitting on the next instruction to be executed but we want the stack trace to point to the previous failed instruction.
+> The `- 1` is because the IP is already sitting on the next instruction to be executed but we want the stack trace to point to the previous failed instruction.
 
 After printing the error message itself, we walk the call stack from top (the most recently called function) to bottom (the top-level code). For each frame, we find the line number that corresponds to the current `ip` inside that frame’s function. Then we print that line number along with the function name.
 
-There is some disagreement on which order stack frames should be shown in a trace. Most put the innermost function as the first line and work their way towards the bottom of the stack. Python prints them out in the opposite order. So reading from top to bottom tells you how your program got to where it is, and the last line is where the error actually occurred.
-
-There’s a logic to that style. It ensures you can always see the innermost function even if the stack trace is too long to fit on one screen. On the other hand, the “[inverted pyramid](https://en.wikipedia.org/wiki/Inverted_pyramid_(journalism))” from journalism tells us we should put the most important information *first* in a block of text. In a stack trace, that’s the function where the error actually occurred. Most other language implementations do that.
+> There is some disagreement on which order stack frames should be shown in a trace. Most put the innermost function as the first line and work their way towards the bottom of the stack. Python prints them out in the opposite order. So reading from top to bottom tells you how your program got to where it is, and the last line is where the error actually occurred.
+>
+> There’s a logic to that style. It ensures you can always see the innermost function even if the stack trace is too long to fit on one screen. On the other hand, the “[inverted pyramid](https://en.wikipedia.org/wiki/Inverted_pyramid_(journalism))” from journalism tells us we should put the most important information *first* in a block of text. In a stack trace, that’s the function where the error actually occurred. Most other language implementations do that.
 
 For example, if you run this broken program:
 
@@ -1535,7 +1535,7 @@ We’re not totally done, though. The new `return` statement gives us a new comp
 return "What?!";
 ```
 
-Allowing `return` at the top level isn’t the worst idea in the world. It would give you a natural way to terminate a script early. You could maybe even use a returned number to indicate the process’s exit code.
+> Allowing `return` at the top level isn’t the worst idea in the world. It would give you a natural way to terminate a script early. You could maybe even use a returned number to indicate the process’s exit code.
 
 We’ve specified that it’s a compile error to have a `return` statement outside of any function, which we implement like so:
 
@@ -1752,7 +1752,7 @@ It takes a pointer to a C function and the name it will be known as in Lox. We w
 
 You’re probably wondering why we push and pop the name and function on the stack. That looks weird, right? This is the kind of stuff you have to worry about when garbage collection gets involved. Both `copyString()` and `newNative()` dynamically allocate memory. That means once we have a GC, they can potentially trigger a collection. If that happens, we need to ensure the collector knows we’re not done with the name and ObjFunction so that it doesn’t free them out from under us. Storing them on the value stack accomplishes that.
 
-Don’t worry if you didn’t follow all that. It will make a lot more sense once we get around to implementing the GC.
+> Don’t worry if you didn’t follow all that. It will make a lot more sense once we get around to implementing the GC.
 
 It feels silly, but after all of that work, we’re going to add only one little native function.
 
@@ -1811,7 +1811,7 @@ print clock() - start;
 
 We can write a really inefficient recursive Fibonacci function. Even better, we can measure just *how* inefficient it is. This is, of course, not the smartest way to calculate a Fibonacci number. But it is a good way to stress test a language implementation’s support for function calls. On my machine, running this in clox is about five times faster than in jlox. That’s quite an improvement.
 
-It’s a little slower than a comparable Ruby program run in Ruby 2.4.3p205, and about 3x faster than one run in Python 3.7.3. And we still have a lot of simple optimizations we can do in our VM.
+> It’s a little slower than a comparable Ruby program run in Ruby 2.4.3p205, and about 3x faster than one run in Python 3.7.3. And we still have a lot of simple optimizations we can do in our VM.
 
 ## Challenges
 

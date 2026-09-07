@@ -22,9 +22,7 @@ In this section, we’ll implement an OS kernel. The OS kernel performs several 
 
 We won’t be able to cover much of that in this chapter, but we will get off the ground. We’ll fledge, so let’s call the system we’re building *FledgeOS*.
 
-**365**
 
-**366**
 
 CHAPTER 11
 
@@ -102,7 +100,6 @@ Each of these tools performs an important role:
 
 ***A fledgling operating system (FledgeOS)***
 
-**367**
 
 cargo-binutils rather than installing binutils via another route prevents any potential version mismatches.
 
@@ -146,10 +143,8 @@ Creates a bootable disk image from a Rust kernel
 
 ...
 
-**368**
 
 
-***Kernel***
 
  *The llvm-tools-preview toolchain component*—The LLVM tools are a set of auxiliary utilities for working with LLVM. On Linux and macOS, you can use the following commands to check that these are accessible to rustc:
 
@@ -225,9 +220,7 @@ format=raw,file=target/fledge/debug/bootimage-fledgeos.bin
 
 ![](media/index-395_1.png)
 
-***Fledgeos-0: Getting something working***
 
-**369**
 
 Figure 11.1
 
@@ -257,10 +250,8 @@ Execute the bootloader in a virtual environment, which, in turn, runs the kernel
 
 Thankfully, the bootimage crate does all of this for us. With all of that fully automated, we’re able to focus on the interesting pieces.
 
-**370**
 
 
-***Kernel***
 
 ***11.2.2***
 
@@ -352,9 +343,7 @@ Cargo.toml
 
 **See listing 11.3.**
 
-***Fledgeos-0: Getting something working***
 
-**371**
 
 └── src
 
@@ -432,10 +421,8 @@ The following listing shows our kernel target’s definition. It is available fr
 
 ch11-fledgeos-0/fledge.json.
 
-**372**
 
 
-***Kernel***
 
 Listing 11.2
 
@@ -521,9 +508,7 @@ Creating an OS kernel that paints a block of color
 
 5 use core::intrinsics;
 
-***Fledgeos-0: Getting something working***
 
-**373**
 
 6 use core::panic::PanicInfo;
 
@@ -603,10 +588,8 @@ Therefore, this implies that we must use the nightly compiler toolchain and expl
 
 Symbol names are strings within the compiled binary. For multiple libraries to coexist at runtime, it’s important that these names do not collide. Ordinarily, Rust avoids this by creating symbols via a process called *name mangling*. We need
 
-**374**
 
 
-***Kernel***
 
 to disable this from occurring in our program; otherwise, the boot process may fail.
 
@@ -642,9 +625,7 @@ Focusing on panic handling for FledgeOS
 
 2 \#\![no_main\]
 
-***Fledgeos-0: Getting something working***
 
-**375**
 
 3 \#\![feature(core_intrinsics)\]
 
@@ -724,10 +705,8 @@ character: u8,
 
 **(approximately) an extension of ASCII.**
 
-**376**
 
 
-***Kernel***
 
 ***(continued)***
 
@@ -783,7 +762,6 @@ Here is a short explanation of the two new methods:
 
 ***fledgeos-1: Avoiding a busy loop***
 
-**377**
 
 The following listing shows another way to write framebuffer.offset(1).write\_
 
@@ -835,10 +813,8 @@ Before proceeding, FledgeOS needs to address one major shortcoming: it is extrem
 
 The halt instruction, referred to as HLT in the technical literature, notifies the CPU that there’s no more work to be done. The CPU resumes operating when an
 
-**378**
 
 
-***Kernel***
 
 interrupt triggers new action. As listing 11.9 shows, making use of the x84_64 crate allows us to issue instructions directly to the CPU. The listing, an excerpt of listing 11.10, makes use of the x86_64 crate to access the hlt instruction. It is passed to the CPU during the main loop of \_start() to prevent excessive power consumption.
 
@@ -924,7 +900,6 @@ Project source code for fledgeos-1
 
 ***fledgeos-2: Custom exception handling***
 
-**379**
 
 18 pub extern "C" fn \_start() -\> ! {
 
@@ -984,10 +959,8 @@ Minimalist exception-handling personality routine
 
 20 pub extern "C" fn eh_personality() { }
 
-**380**
 
 
-***Kernel***
 
 NOTE
 
@@ -1079,7 +1052,6 @@ Source code for fledgeos-2
 
 ***fledgeos-3: Text output***
 
-**381**
 
 ***11.5***
 
@@ -1131,10 +1103,8 @@ Representing related numeric constants as an enum
 
 **single byte to represent the values**
 
-**382**
 
 
-***Kernel***
 
 17 Red = 0x4, BrightRed = 0xC,
 
@@ -1192,9 +1162,7 @@ Definition and methods for **Cursor**
 
 30
 
-***fledgeos-3: Text output***
 
-**383**
 
 31 impl Cursor {
 
@@ -1300,10 +1268,8 @@ fledgeos-3 continues to build on fledgeos-0, fledgeos-1, and fledgeos-2. Its src
 
 main.rs. To compile the project, repeat the instructions in section 11.2.1, replacing references to fledgeos-0 with fledgeos-3.
 
-**384**
 
 
-***Kernel***
 
 Listing 11.16
 
@@ -1413,7 +1379,6 @@ FledgeOS now prints text to the screen
 
 ***fledgeos-4: Custom panic handling***
 
-**385**
 
 54 \#\[no_mangle\]
 
@@ -1501,10 +1466,8 @@ The output shown by figure 11.3 is produced by listing 11.17. panic() now goes t
 
 ![](media/index-412_1.png)
 
-**386**
 
 
-***Kernel***
 
 Figure 11.3
 
@@ -1568,9 +1531,7 @@ Clearing the screen and printing the message
 
 Implementing core::fmt::Write involves calling one method: write_str(). The trait defines several others, but the compiler can autogenerate these once an implementation of write_str() is available. The implementation in the following listing
 
-***fledgeos-4: Custom panic handling***
 
-**387**
 
 reuses the print() method and converts the UTF-8 encoded &str into &\[u8\] with the to_bytes() method. The code for this listing is in ch11/ch11-fledgeos-4/src/main.rs.
 
@@ -1664,10 +1625,8 @@ Full code listing of FledgeOS with complete panic handling
 
 32 impl Cursor {
 
-**388**
 
 
-***Kernel***
 
 33 fn color(&self) -\> u8 {
 
@@ -1773,9 +1732,7 @@ Full code listing of FledgeOS with complete panic handling
 
 ***Summary***
 
-**389**
 
-***Summary***
 
  Writing a program that is intended to run without an operating system can feel like programming in a barren desert. Functionality that you take for granted, such as dynamic memory or multithreading, is not available to you.
 

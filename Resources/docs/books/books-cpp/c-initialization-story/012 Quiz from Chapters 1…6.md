@@ -18,7 +18,7 @@ std::string s { "Hello World" };
 
 std::string other = s;
 
- 
+
 
 1. A constructor is called for s. Then, as assignment operation is called for other.
 
@@ -34,13 +34,13 @@ std::string other = s;
 
 3. Yes, though a special data member called self_return.
 
- 
+
 
 109
 
 Quiz from Chapters 1…6 110
 
- 
+
 
 **4. Can you mix delegating constructors with data member initialization,** **like in the constructor** **Type(int a, int b)****?**
 
@@ -100,7 +100,7 @@ an initializer is provided.
 
 Quiz from Chapters 1…6 111
 
- 
+
 
 **7. What are types of** **y** **and** **z** **variables declared below?**
 
@@ -110,7 +110,7 @@ Quiz from Chapters 1…6 111
 
 **auto** z = y;
 
- 
+
 
 1. y is const int& and z is int
 
@@ -132,7 +132,7 @@ std::vector\<**int**\> vec {1, 2, 3, 4, 5}; **for** (**auto** elem : vec)
 
 elem = 10;
 
- 
+
 
 1. The code doesn’t compile, elem cannot be bound to vec.
 
@@ -151,47 +151,3 @@ of 10.
 3. Compiles when expr is const int&.
 
 Please write down your answers and check them in Appendix B.
-
-**8. Non-Static Data Member**
-
- 
-
-**Initialization**
-
-You’ve learned a lot of techniques related to constructors! You can initialize data members in various constructors, delegate them to reuse code, and inherit them from base classes. Yet, we can still improve on assigning default values for data members. I mentioned this feature in the first chapter, where we gave default values for aggregates. We can do the same for classes. And in this chapter, we’ll look at the full syntax and options related to this feature.
-
-Please have a look at the example below:
-
-**Ex 8.1. NSDMI Basics. Run** [**@Compiler Explorer**](https://godbolt.org/z/dc88fd3Y1) **class DataPacket** {
-
-std::string data\_;
-
-**size_t** checkSum\_ { 0 };
-
-**size_t** serverId\_ { 0 };
-
-**public**:
-
-DataPacket() = **default**;
-
-DataPacket(**const** std::string& data, **size_t** serverId)
-
-: data\_{data}, checkSum\_{calcCheckSum(data)}, serverId\_{serverId}
-
-{ }
-
-// getters and setters...
-
-};
-
-As you can see, the data members have their default values set at the point of declaration. There’s no need to assign default values inside constructors. This feature is much better than a default constructor because it combines declaration and initialization code. This way, it’s harder to leave data members uninitialized!
-
-Let’s explore this handy feature of Modern C++ in detail.
-
- 
-
-**How it works**
-
-This section shows how the compiler “expands” the code to initialize data members.
-
-112

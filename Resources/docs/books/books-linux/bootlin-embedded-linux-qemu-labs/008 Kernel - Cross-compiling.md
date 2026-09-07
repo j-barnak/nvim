@@ -50,9 +50,7 @@ Also, don’t forget to either:
 
 ... \<target\>
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 15
 
-Embedded Linux System Development
 
 **Linux kernel configuration**
 
@@ -114,6 +112,3 @@ Restart the board to make sure that booting the kernel is now automated.
 
 16
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
-
-Embedded Linux System Development

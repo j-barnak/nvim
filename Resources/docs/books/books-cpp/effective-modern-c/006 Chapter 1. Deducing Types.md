@@ -42,7 +42,6 @@ T is deduced to be int, but *ParamType* is deduced to be const int&.
 
 It’s natural to expect that the type deduced for T is the same as the type of the argument passed to the function, i.e., that T is the type of *expr*. In the above example, that’s the case: x is an int, and T is deduced to be int. But it doesn’t always work that way. The type deduced for T is dependent not just on the type of *expr*, but also on the form of *ParamType*. There are three cases:
 
-**10 \| Item 1**
 
 • *ParamType* is a pointer or reference type, but not a universal reference. (Univer‐
 
@@ -88,7 +87,6 @@ f(rx); // T is *const int*,
 
 // param's type is *const int&*
 
-**Item 1 \| 11**
 
 In the second and third calls, notice that because cx and rx designate const values, T
 
@@ -120,7 +118,6 @@ int x = 27; // as before
 
 const int \*px = &x; // px is a ptr to x as a const int
 
-**12 \| Item 1**
 
 f(&x); // T is *int*, param's type is *int\**
 
@@ -168,7 +165,6 @@ f(27); // 27 is rvalue, so T is *int*,
 
 // param's type is therefore *int&&*
 
-**Item 1 \| 13**
 
 Item 24 explains exactly why these examples play out the way they do. The key point here is that the type deduction rules for universal reference parameters are different from those for parameters that are lvalue references or rvalue references. In particular, when universal references are in use, type deduction distinguishes between lvalue arguments and rvalue arguments. That never happens for non-universal references.
 
@@ -204,7 +200,7 @@ f(rx); // T's and param's types are still both int
 
 Note that even though cx and rx represent const values, param isn’t const. That makes sense. param is an object that’s completely independent of cx and rx—a *copy* of cx or rx. The fact that cx and rx can’t be modified says nothing about whether param can be. That’s why *expr*’s constness (and volatileness, if any) is ignored when deducing a type for param: just because *expr* can’t be modified doesn’t mean that a copy of it can’t be.
 
-It’s important to recognize that const (and volatile) is ignored only for by-value parameters. As we’ve seen, for parameters that are references-to- or pointers-to-const, the constness of *expr* is preserved during type deduction. But consider the **14 \| Item 1**
+It’s important to recognize that const (and volatile) is ignored only for by-value parameters. As we’ve seen, for parameters that are references-to- or pointers-to-const, the constness of *expr* is preserved during type deduction. But consider the
 
 case where *expr* is a const pointer to a const object, and *expr* is passed to a by-value param:
 
@@ -238,7 +234,6 @@ template\<typename T\>
 
 void f(T param); // template with by-value parameter
 
-**Item 1 \| 15**
 
 f(name); // what types are deduced for T and param?
 
@@ -280,7 +275,6 @@ constexpr std::size_t arraySize(**T (&)\[N\]**) noexcept // below on
 
 { // constexpr
 
-**16 \| Item 1**
 
 return **N**; // and
 
@@ -332,7 +326,6 @@ f2(someFunc); // param deduced as ref-to-func;
 
 This rarely makes any difference in practice, but if you’re going to know about array-to-pointer decay, you might as well know about function-to-pointer decay, too.
 
-**Item 1 \| 17**
 
 So there you have it: the auto-related rules for template type deduction. I remarked at the outset that they’re pretty straightforward, and for the most part, they are. The special treatment accorded lvalues when deducing types for universal references muddies the water a bit, however, and the decay-to-pointer rules for arrays and functions stirs up even greater turbidity. Sometimes you simply want to grab your compilers and demand, “Tell me what type you’re deducing!” When that happens, turn to
 
@@ -364,7 +357,6 @@ and this general call:
 
 f( ***expr***); // call f with some expression In the call to f, compilers use *expr* to deduce types for T and *ParamType*.
 
-**18 \| Item 1**
 
 When a variable is declared using auto, auto plays the role of T in the template, and the type specifier for the variable acts as *ParamType*. This is easier to show than to describe, so consider this example:
 
@@ -414,7 +406,6 @@ of *ParamType*, the type specifier for param in the general function template. I
 
 • Case 2: The type specifier is a universal reference.
 
-**Item 2 \| 19**
 
 • Case 3: The type specifier is neither a pointer nor a reference.
 
@@ -460,7 +451,6 @@ void someFunc(int, double); // someFunc is a function;
 
 // void ( *&* )(int, double)
 
-**20 \| Item 2**
 
 As you can see, auto type deduction works like template type deduction. They’re essentially two sides of the same coin.
 
@@ -504,7 +494,6 @@ auto x5 = { 1, 2, **3.0** }; // error! can't deduce T for
 
 // std::initializer_list\<T\>
 
-**Item 2 \| 21**
 
 As the comment indicates, type deduction will fail in this case, but it’s important to recognize that there are actually two kinds of type deduction taking place. One kind stems from the use of auto: x5’s type has to be deduced. Because x5’s initializer is in braces, x5 must be deduced to be a std::initializer_list. But std::initial izer_list is a template. Instantiations are std::initializer_list\<T\> for some type T, and that means that T’s type must also be deduced. Such deduction falls under the purview of the second kind of type deduction occurring here: template type deduction. In this example, that deduction fails, because the values in the braced initializer don’t have a single type.
 
@@ -536,7 +525,7 @@ f(**{ 11, 23, 9 }**); // T deduced as int, and initList's
 
 So the only real difference between auto and template type deduction is that auto *assumes* that a braced initializer represents a std::initializer_list, but template type deduction doesn’t.
 
-You might wonder why auto type deduction has a special rule for braced initializers, but template type deduction does not. I wonder this myself. Alas, I have not been able to find a convincing explanation. But the rule is the rule, and this means you must remember that if you declare a variable using auto and you initialize it with a braced initializer, the deduced type will always be std::initializer_list. It’s especially important to bear this in mind if you embrace the philosophy of uniform initialization—of enclosing initializing values in braces as a matter of course. A classic mistake **22 \| Item 2**
+You might wonder why auto type deduction has a special rule for braced initializers, but template type deduction does not. I wonder this myself. Alas, I have not been able to find a convincing explanation. But the rule is the rule, and this means you must remember that if you declare a variable using auto and you initialize it with a braced initializer, the deduced type will always be std::initializer_list. It’s especially important to bear this in mind if you embrace the philosophy of uniform initialization—of enclosing initializing values in braces as a matter of course. A classic mistake
 
 in C++11 programming is accidentally declaring a std::initializer_list variable when you mean to declare something else. This pitfall is one of the reasons some developers put braces around their initializers only when they have to. (When you have to is discussed in Item 7.)
 
@@ -578,7 +567,7 @@ resetV(**{ 1, 2, 3 }**); // error! can't deduce type
 
 **Item 3: Understand decltype.**
 
-decltype is an odd creature. Given a name or an expression, decltype tells you the name’s or the expression’s type. Typically, what it tells you is exactly what you’d **Item 2 \| 23**
+decltype is an odd creature. Given a name or an expression, decltype tells you the name’s or the expression’s type. Typically, what it tells you is exactly what you’d
 
 predict. Occasionally however, it provides results that leave you scratching your head and turning to reference works or online Q&A sites for revelation.
 
@@ -624,7 +613,7 @@ See? No surprises.
 
 In C++11, perhaps the primary use for decltype is declaring function templates where the function’s return type depends on its parameter types. For example, suppose we’d like to write a function that takes a container that supports indexing via square brackets (i.e., the use of “\[\]”) plus an index, then authenticates the user before returning the result of the indexing operation. The return type of the function should be the same as the type returned by the indexing operation.
 
-operator\[\] on a container of objects of type T typically returns a T&. This is the case for std::deque, for example, and it’s almost always the case for std::vector. For std::vector\<bool\>, however, operator\[\] does not return a bool&. Instead, it returns a brand new object. The whys and hows of this situation are explored in **24 \| Item 3**
+operator\[\] on a container of objects of type T typically returns a T&. This is the case for std::deque, for example, and it’s almost always the case for std::vector. For std::vector\<bool\>, however, operator\[\] does not return a bool&. Instead, it returns a brand new object. The whys and hows of this situation are explored in
 
 Item 6, but what’s important here is that the type returned by a container’s opera tor\[\] depends on the container.
 
@@ -666,7 +655,6 @@ authenticateUser();
 
 Item 2 explains that for functions with an auto return type specification, compilers employ template type deduction. In this case, that’s problematic. As we’ve discussed, operator\[\] for most containers-of-T returns a T& , but Item 1 explains that during
 
-**Item 3 \| 25**
 
 template type deduction, the reference-ness of an initializing expression is ignored.
 
@@ -710,7 +698,6 @@ const Widget& cw = w;
 
 **auto** myWidget1 = cw; // auto type deduction:
 
-**26 \| Item 3**
 
 // myWidget1's type is *Widget* **decltype(auto)** myWidget2 = cw; // decltype type deduction:
 
@@ -746,7 +733,6 @@ template\<typename Container, typename Index\> // c is now a
 
 decltype(auto) authAndAccess(Container**&&** c, // universal Index i); // reference
 
-**Item 3 \| 27**
 
 In this template, we don’t know what type of container we’re operating on, and that means we’re equally ignorant of the type of index objects it uses. Employing pass-by-value for objects of an unknown type generally risks the performance hit of unneces‐
 
@@ -786,7 +772,7 @@ The other issue that’s likely to be nagging at you is my remark at the beginni
 
 To *fully* understand decltype’s behavior, you’ll have to familiarize yourself with a few special cases. Most of these are too obscure to warrant discussion in a book like this, but looking at one lends insight into decltype as well as its use.
 
-Applying decltype to a name yields the declared type for that name. Names are lvalue expressions, but that doesn’t affect decltype’s behavior. For lvalue expressions more complicated than names, however, decltype ensures that the type reported is **28 \| Item 3**
+Applying decltype to a name yields the declared type for that name. Names are lvalue expressions, but that doesn’t affect decltype’s behavior. For lvalue expressions more complicated than names, however, decltype ensures that the type reported is
 
 always an lvalue reference. That is, if an lvalue expression other than a name has type T, decltype reports that type as T&. This seldom has any impact, because the type of most lvalue expressions inherently includes an lvalue reference qualifier. Functions returning lvalues, for example, always return lvalue references.
 
@@ -830,7 +816,6 @@ Seemingly insignificant details in the expression whose type is being deduced ca
 
 At the same time, don’t lose sight of the bigger picture. Sure, decltype (both alone and in conjunction with auto) may occasionally yield type-deduction surprises, but that’s not the normal situation. Normally, decltype produces the type you expect.
 
-**Item 3 \| 29**
 
 This is especially true when decltype is applied to names, because in that case, decltype does just what it sounds like: it reports that name’s declared type.
 
@@ -864,7 +849,6 @@ For this to work, your code must be in a more or less compilable state, because 
 
 For simple types like int, information from IDEs is generally fine. As we’ll see soon, however, when more complicated types are involved, the information displayed by IDEs may not be particularly helpful.
 
-**30 \| Item 3**
 
 **Compiler Diagnostics**
 
@@ -900,7 +884,6 @@ Formatting differences aside, all the compilers I’ve tested produce error mess
 
 The printf approach to displaying type information (not that I’m recommending you use printf) can’t be employed until runtime, but it offers full control over the formatting of the output. The challenge is to create a textual representation of the type you care about that is suitable for display. “No sweat,” you’re thinking, “it’s typeid and std::type_info::name to the rescue.” In our continuing quest to see the types deduced for x and y, you may figure we can write this:
 
-**Item 4 \| 31**
 
 std::cout \<\< **typeid(x).name()** \<\< '\n'; // display types for std::cout \<\< **typeid(y).name()** \<\< '\n'; // x and y This approach relies on the fact that invoking typeid on an object such as x or y yields a std::type_info object, and std::type_info has a member function, name, that produces a C-style string (i.e., a const char\*) representation of the name of the type.
 
@@ -938,7 +921,6 @@ void f(const T& param)
 
 using std::cout;
 
-**32 \| Item 4**
 
 cout \<\< "T = " \<\< **typeid(T).name()** \<\< '\n'; // show T
 
@@ -976,7 +958,6 @@ std::\_Simple_types\<std::\_Wrap_alloc\<std::\_Vec_base_types\<Widget, std::allo
 
 The same IDE editor shows param’s type as:
 
-**Item 4 \| 33**
 
 const std::\_Simple_types\<...\>::value_type \*const & That’s less intimidating than the type for T, but the “...” in the middle is confusing until you realize that it’s the IDE editor’s way of saying “I’m omitting all that stuff that’s part of T’s type.” With any luck, your development environment does a better job on code like this.
 
@@ -1024,7 +1005,6 @@ type_id_with_cvr takes a type argument (the type about which we want information
 
 “with_cvr” in the template name). The result is a boost::typeindex::type_index object, whose pretty_name member function produces a std::string containing a human-friendly representation of the type.
 
-**34 \| Item 4**
 
 With this implementation for f, consider again the call that yields incorrect type information for param when typeid is used:
 
@@ -1059,5 +1039,3 @@ Such near-uniformity is nice, but it’s important to remember that IDE editors,
 • Deduced types can often be seen using IDE editors, compiler error messages, and the Boost TypeIndex library.
 
 • The results of some tools may be neither helpful nor accurate, so an understanding of C++’s type deduction rules remains essential.
-
-**Item 4 \| 35**

@@ -1,12 +1,12 @@
 **Third party libraries and applications**
 
- 
 
- 
+
+
 
 *Objective: Learn how to leverage existing libraries and applications: how to* *configure, compile and install them*
 
- 
+
 
 To illustrate how to use existing libraries and applications, we will extend the small root filesystem built in the *A tiny embedded system* lab to add the *ALSA* libraries and tools to run basic sound support tests, and the *libgpiod* library and executables to manage GPIOs. *ALSA* stands for *Advanced Linux Sound Architecture*, and is the Linux audio subsystem.
 
@@ -16,7 +16,7 @@ We’ll see that manually re-using existing libraries is quite tedious, so that 
 
 We’re going to integrate the *alsa-utils*, *libgpiod* and *ipcalc* executables. In our case, the dependency chain for *alsa-utils* is quite simple, it only depends on the *alsa-lib* library. *libgpiod* and *ipcalc* are standalone and don’t have any dependency.
 
- 
+
 
 Of course, all these libraries rely on the C library, which is not mentioned here, because it is already part of the root filesystem built in the *A tiny embedded system* lab. You might wonder how to figure out this dependency tree by yourself. Basically, there are several ways, that can be combined:
 
@@ -40,7 +40,7 @@ headers, documentation and other files needed for the compilation. This *staging
 
 libraries, after stripping, configuration files needed at runtime, etc. This target space will take a lot less space than the *staging* space, and it will contain only the files that are really needed to make the system work on the target.
 
-40 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license To sum up, the *staging* space will contain everything that’s needed for compilation, while the *target* space will contain only what’s needed for execution.
+To sum up, the *staging* space will contain everything that’s needed for compilation, while the *target* space will contain only what’s needed for execution.
 
 Create the \$HOME/embedded-linux-bbb-labs/thirdparty directory, and inside, create two directories: staging and target.
 
@@ -94,7 +94,7 @@ If you look at the config.log file, you can see that the configure script compil
 
 Obviously, it cannot work in our case, and the scripts exits. The job of the configure script is to test the configuration of the system. To do so, it tries to compile and run a few sample applications to test if this
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 41 library is available, if this compiler option is supported, etc. But in our case, running the test examples is definitely not possible.
+library is available, if this compiler option is supported, etc. But in our case, running the test examples is definitely not possible.
 
 We need to tell the configure script that we are cross-compiling, and this can be done using the--build and--host options, as described in the help of the configure script:
 
@@ -150,7 +150,7 @@ linked against the library. To do so, you pass the-lLIBNAME option to the compil
 
 To know what’s the *SONAME* of a library, you can use:
 
-42 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license \$ arm-linux-readelf -d libasound.so.2.0.0
+\$ arm-linux-readelf -d libasound.so.2.0.0
 
 and look at the (SONAME) line. You’ll also see that this library needs the C library, because of the (NEEDED) line on libc.so.0.
 
@@ -196,7 +196,6 @@ Finally, let’s install the library in the *target* space:
 
 since libasound.so.2 is the *SONAME* of the library and libasound.so.2.0.0 is the real binary:
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 43
 
 • \$ cp -a staging/usr/lib/libasound.so.2\* target/usr/lib
 
@@ -260,7 +259,7 @@ checking for snd_ctl_open in -lasound... no
 
 configure: error: No linkable libasound was found.
 
-44 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license The configure script tries to compile an application against *libasound* (as can be seen from the-lasound option): *alsa-utils* uses *alsa-lib*, so the configure script wants to make sure this library is already installed. Unfortunately, the ld linker doesn’t find it. So, let’s tell the linker where to look for libraries using the-L option followed by the directory where our libraries are (in staging/usr/lib). This-L option can be passed to the linker by using the LDFLAGS at configure time, as told by the help text of the configure script:
+The configure script tries to compile an application against *libasound* (as can be seen from the-lasound option): *alsa-utils* uses *alsa-lib*, so the configure script wants to make sure this library is already installed. Unfortunately, the ld linker doesn’t find it. So, let’s tell the linker where to look for libraries using the-L option followed by the directory where our libraries are (in staging/usr/lib). This-L option can be passed to the linker by using the LDFLAGS at configure time, as told by the help text of the configure script:
 
 LDFLAGS linker flags, e.g. -L\<lib dir\> if you have libraries in a
 
@@ -326,7 +325,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \| \| \|-- arecordmidi
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 45 \| \| \|-- aseqdump
+\| \| \|-- aseqdump
 
 \| \| \|-- aseqnet
 
@@ -434,9 +433,9 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \| \| \| \|-- aconnect.1
 
- 
 
-46 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license \| \| \| \|-- alsabat.1
+
+\| \| \| \|-- alsabat.1
 
 \| \| \| \|-- alsactl.1
 
@@ -528,7 +527,7 @@ Now, let’s make the installation in the *staging* space:
 
 Then, let’s manually install only the necessary files in the *target* space. We are only interested in speaker-test:
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 47 \$ cd ..
+\$ cd ..
 
 \$ cp -a staging/usr/bin/speaker-test target/usr/bin/
 
@@ -590,11 +589,11 @@ And finally, only manually install and strip the files needed at runtime in the 
 
 \$ cp -a staging/usr/bin/gpio\* target/usr/bin/
 
- 
 
-48 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license \$ arm-linux-strip target/usr/bin/gpio\*
 
- 
+\$ arm-linux-strip target/usr/bin/gpio\*
+
+
 
 **Testing libgpiod**
 
@@ -654,7 +653,7 @@ In the main lab directory, then let’s check out the sources through git:
 
 To cross-compile with *Meson*, we need to create a *cross file*. Let’s create the ../cross-file.txt file with the below contents:
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 49 \[binaries\]
+\[binaries\]
 
 c = 'arm-linux-gcc'
 
@@ -722,8 +721,6 @@ Then strip the binaries in /lib:
 
 And check the final size:
 
-50 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license \$ ls -l target/lib/
+\$ ls -l target/lib/
 
- 
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 51

@@ -31,26 +31,26 @@ This yields `[100; 200; 500]`. But we cannot re-use `divide `to write the functi
 
 The type of the function reflects this:
 
-`         OCaml  `  
-`  `  
-`# let divide ~x ~y = x / y;;  `  
-`val divide : x:int -> y:int -> int = <fun> `
+`         OCaml  `  
+`  `  
+`# let divide ~x ~y = x / y;;  `  
+`val divide : x:int -> y:int -> int = <fun> `
 
 Now we may apply the arguments in either order:
 
-`         OCaml  `  
-`  `  
-`# let f = divide ~x:10000 in [f 100; f 50; f 20];;  `  
-`- : int list = [100; 200; 500]  `  
-`# let f = divide ~y:10000 in [f 100000; f 10000; f 1000];;  `  
-`- : int list = [10; 1; 0] `
+`         OCaml  `  
+`  `  
+`# let f = divide ~x:10000 in [f 100; f 50; f 20];;  `  
+`- : int list = [100; 200; 500]  `  
+`# let f = divide ~y:10000 in [f 100000; f 10000; f 1000];;  `  
+`- : int list = [10; 1; 0] `
 
 We can in fact, omit the labels if we are applying arguments in order:
 
-`         OCaml  `  
-`  `  
-`# let f = divide 10000 in [f 100; f 50; f 20];;  `  
-`- : int list = [100; 200; 500] `
+`         OCaml  `  
+`  `  
+`# let f = divide 10000 in [f 100; f 50; f 20];;  `  
+`- : int list = [100; 200; 500] `
 
 Optional arguments
 
@@ -68,12 +68,12 @@ There are two problems, though. Existing code using the function will not compil
 
 Notice the question mark appears also in the type. Notice also that in the recursive call to `split `we can write `~chunksize `instead of `~chunksize:chunksize `as usual. Now our `split `function can be called with or without this optional argument:
 
-`         OCaml  `  
-`  `  
-`# split [1; 2; 3];;  `  
-`- : int list list = [[1]; [2]; [3]]  `  
-`# split ~chunksize:3 [1; 2; 3; 4; 5; 6; 7];;  `  
-`- : int list list = [[1; 2; 3]; [4; 5; 6]; [7]] `
+`         OCaml  `  
+`  `  
+`# split [1; 2; 3];;  `  
+`- : int list list = [[1]; [2]; [3]]  `  
+`# split ~chunksize:3 [1; 2; 3; 4; 5; 6; 7];;  `  
+`- : int list list = [[1; 2; 3]; [4; 5; 6]; [7]] `
 
 In fact, if we do not give a default value to the optional argument in the definition of `split`, we have access to its actual implementation – as a value of the option type, either `None `or `Some`, and we can match on it:
 
@@ -85,24 +85,24 @@ Labels in the Standard Library
 
 The Standard Library contains three labelled versions of other modules: ListLabels, ArrayLabels and StringLabels. For example, we can write:
 
-`         OCaml  `  
-`  `  
-`# ListLabels.map ~f:(fun x -> x * 2) [1; 2; 3];;  `  
-`- : int list = [2; 4; 6] `
+`         OCaml  `  
+`  `  
+`# ListLabels.map ~f:(fun x -> x * 2) [1; 2; 3];;  `  
+`- : int list = [2; 4; 6] `
 
 If we wish to use the labelled modules by default, the module StdLabels contains these labelled modules under their original names so, by writing “`open StdLabels`”, `List.map`, `Array.blit `etc. will now be labelled:
 
-`         OCaml  `  
-`  `  
-`# open StdLabels;;  `  
-`# List.map ~f:(fun x -> x * 2) [1; 2; 3];;  `  
-`- : int list = [2; 4; 6] `
+`         OCaml  `  
+`  `  
+`# open StdLabels;;  `  
+`# List.map ~f:(fun x -> x * 2) [1; 2; 3];;  `  
+`- : int list = [2; 4; 6] `
 
 These modules do not label all arguments. Typically they just do so for arguments which are functions, and when there are multiple arguments of the same type which may be confused. For example, `ArrayLabels.sub `of type α array → pos:int → len:int → α array introduces labels to disambiguate the position and length arguments, but does not label in the input array.
 
 Questions
 
- 
+
 
 1.  The function `ArrayLabels.make `is not labelled, having type int → α → α array. When might this cause confusion? Write a labelled version to correct this problem.
 

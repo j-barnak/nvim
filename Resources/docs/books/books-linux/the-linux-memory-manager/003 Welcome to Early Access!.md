@@ -1,18 +1,18 @@
 The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes
 
- 
+
 
 **N O S TA R C H P R E S S**
 
- 
+
 
 **E A R LY A C C E S S P R O G R A M :**
 
- 
+
 
 **F E E D B A C K W E L C O M E !**
 
- 
+
 
 The Early Access program lets you read significant portions of an
 

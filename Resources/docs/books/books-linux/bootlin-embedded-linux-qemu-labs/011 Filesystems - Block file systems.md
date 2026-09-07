@@ -52,9 +52,7 @@ You can now unmount the partition and free the loop device:
 
 24
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
-Embedded Linux System Development
 
 \$ sudo umount /mnt/data
 
@@ -110,6 +108,3 @@ controller to the system memory at the address 0x61000000.
 
 Type =\> reset in U-Boot to reboot the board and make sure that your system still boots fine.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 25
-
-Embedded Linux System Development

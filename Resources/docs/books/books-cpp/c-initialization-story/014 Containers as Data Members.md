@@ -2,7 +2,7 @@
 
 CarInfo, DataPacket, and Product types used relatively simple data members like integers, doubles, or strings. While std::string is, in fact, a container (of characters), we tend to use it as an elementary type. In this section, I’d like to discuss more complex data members like arrays, vectors, or maps. First, we’ll try to understand the syntax and ways of initializing them, and then you’ll learn about std::initializer_list.
 
- 
+
 
 **The basics**
 
@@ -74,7 +74,7 @@ std::cout \<\< "s.names\[9\]: " \<\< s.names\[9\] \<\< '\n';
 
 std::cout \<\< "s.mapping\[**\\"**one**\\"**\]: " \<\< s.mapping\["one"\] \<\< '\n'; }
 
- 
+
 
 Here are the options from the example:
 
@@ -106,7 +106,7 @@ constructor. This time, the braces {} would also call the “size” constructor
 
 ¹<https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#es23-prefer-the--initializer-syntax> Containers as Data Members 134
 
- 
+
 
 • mapping is std::map, and we can also use a handy constructor to pass all pairs of key
 
@@ -158,19 +158,19 @@ std::cout \<\< "s.names\[9\]: " \<\< s.names\[9\] \<\< '\n';
 
 std::cout \<\< "s.mapping\[**\\"**one**\\"**\]: " \<\< s.mapping\["one"\] \<\< '\n'; }
 
- 
+
 
 In most cases, the NSDMI syntax is convenient and allows us to initialize all container-like members where we declare them. As we discussed in the section on NSDMI and direct
 
 Containers as Data Members 135
 
- 
+
 
 initialization, we have to use, for example, a copy initialization to call the vector’s constructor using parens (). There’s no need to duplicate the code in a constructor, and the S structure can preserve its aggregate status (thus, we can leverage aggregate initialization).
 
 Since C++11, all standard containers can take a list of values into a constructor. For example, before C++11, for std::vector, you’d had to use push_back calls to populate a container with different values. How does the new Standard achieve this? See in the next section.
 
- 
+
 
 **Using** **std::initializer** **list**
 
@@ -178,7 +178,7 @@ With the idea of list initialization, there also came support to pass such a lis
 
 The Standard shows the following example [decl.init.list](https://timsong-cpp.github.io/cppwp/n4868/dcl.init.list#5)²:
 
- 
+
 
 **struct** **X** {
 
@@ -192,17 +192,17 @@ The initialization will be implemented in a way roughly equivalent to this:
 
 **const** **double** \_\_a\[3\] = {**double**{1}, **double**{2}, **double**{3}}; X x(std::initializer_list\<**double**\>(\_\_a, \_\_a+3));
 
- 
+
 
 In other words, the compiler creates a const array and then passes you a proxy object that looks like a regular C++ container with iterators, begin(), end(), and even the size() function. Here’s a basic example that illustrates the usage of this type:
 
- 
+
 
 ²<https://timsong-cpp.github.io/cppwp/n4868/dcl.init.list#5>
 
 Containers as Data Members 136
 
- 
+
 
 **Ex 9.3. A function taking** **initializer_list****. Run** [**@Compiler Explorer**](https://godbolt.org/z/h4fY3KanK)
 
@@ -296,7 +296,7 @@ compiler should warn about such usage. See a demo [@Compiler Explorer⁴](https:
 
 ⁴<https://godbolt.org/z/bonveWf4a> Containers as Data Members 138
 
- 
+
 
 All in all, we can make the following conclusion:
 
@@ -304,7 +304,7 @@ All in all, we can make the following conclusion:
 
 std::initializer_list is a “view” type; it references some implementation—dependent and a local array of const values. Use it mainly for passing into functions when you need a variable number of arguments of the same type. If you try to return such lists and pass them around, then you risk lifetime issues. Use with care.
 
- 
+
 
 **Constructors taking** **std::initializer_list**
 
@@ -364,7 +364,7 @@ X w ( 3 );
 
 std::cout \<\< "w.count = " \<\< w.count \<\< '\n'; }
 
- 
+
 
 The X class defines three constructors, and one of them takes initializer_list. If we run the program, you’ll see the following output:
 
@@ -386,7 +386,7 @@ w.count = 3
 
 As you can see, writing X x; invokes a default constructor. Similarly, if you write X x{};, the compiler won’t call a constructor with the empty initializer list. But in other cases, the list constructor is “greedy” and will take precedence over the regular constructor taking one argument. To call the exact constructor, you need to use direct initialization with parens ().
 
- 
+
 
 **Example implementation**
 
@@ -450,7 +450,7 @@ The Package class holds all objects that we pass through the AddProduct() member
 
 Containers as Data Members 141
 
- 
+
 
 **Ex 9.5. The Package class demo. Run** [**@Compiler Explorer**](https://godbolt.org/z/djKhxc731)
 
@@ -612,7 +612,7 @@ addProduct(elem);
 
 The example above shows just a part of implementing the Package class. I created a new member function, addProducts, which takes initializer_list and calls addProduct to perform the main job. The constructor is also updated to call the new function and doesn’t duplicate code.
 
- 
+
 
 **The cost of copying elements**
 
@@ -704,7 +704,7 @@ std::vector\<std::string\> words { "Hello", "World" };
 
 In the above case, two temporary string objects are created from string literals and then copied into the container.
 
- 
+
 
 **Some inconvenience - non-copyable types**
 
@@ -740,7 +740,7 @@ See the working code at [Compiler Explorer](https://godbolt.org/z/E7h4vzYP4)⁵
 
 Containers as Data Members 147
 
- 
+
 
 **More options (advanced)**
 
@@ -760,7 +760,7 @@ addProduct(first);
 
 pack.addProducts({"pencil", 12.0}, Product{"pen", 10}); //pack.addProducts({"pencil", 12.0}, 10); // error, 10 is not a Product
 
- 
+
 
 I don’t want to go into full details, as it’s outside the scope of the book, but here are the core features that enable such code:
 
@@ -784,7 +784,7 @@ We can similarly write a function for unique_ptr:
 
 Containers as Data Members 148
 
- 
+
 
 **Ex 9.10. Initialization from a list of unique pointers. Run** [**@Compiler Explorer**](https://godbolt.org/z/dx5zaj5PY)
 
@@ -824,7 +824,7 @@ Turner’s talk from C++Now 2018, [“Initializer Lists are Broken — Let’s F
 
 article by Andrzej Krzemieński about [The cost of](https://akrzemi1.wordpress.com/2016/07/07/the-cost-of-stdinitializer_list/) [std::initializer_list](https://akrzemi1.wordpress.com/2016/07/07/the-cost-of-stdinitializer_list/)[⁹](https://akrzemi1.wordpress.com/2016/07/07/the-cost-of-stdinitializer_list/).
 
- 
+
 
 **Summary**
 
@@ -840,6 +840,6 @@ In this chapter, we discussed having various containers as data members. If we u
 
 Containers as Data Members 149
 
- 
+
 
 The initializer_list type is only a view of an internal array of const objects. For simple types, initializer_list has some benefits, but you must be aware of the extra copy when passing things around. Additionally, if you have a constructor taking the list, then it will be “greedy” and takes priority over other non-default constructors.

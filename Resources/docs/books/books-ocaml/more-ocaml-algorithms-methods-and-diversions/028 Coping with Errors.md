@@ -12,10 +12,10 @@ Syntax error
 
 This error occurs when OCaml finds that the program text contains things which are not valid words (such as `if`, `let `etc.) or other basic parts of the language, or when they exist in invalid combinations – this is known as syntax. Check carefully and try again.
 
-`        OCaml`  
+`        OCaml`  
   
 `#1 +``;;`  
-`Error: syntax error`
+`Error: syntax error`
 
 OCaml has underlined where it thinks the error is. Since this error occurs for a wide range of different mistakes and problems, the underlining may not pinpoint the exact position of your mistake.
 
@@ -23,10 +23,10 @@ Unbound value …
 
 This error occurs when you have mentioned a name which has not been defined (technically “bound to a value”). This might happen if you have mistyped the name.
 
-`        OCaml`  
+`        OCaml`  
   
 `# ``x` `+ 1;;`  
-`Error: Unbound value x`
+`Error: Unbound value x`
 
 In our example `x `is not defined, so it has been underlined.
 
@@ -34,11 +34,11 @@ This expression has type … but an expression was expected of type …
 
 You will see this error very frequently. It occurs when the expression’s syntax is correct (i.e. it is made up of valid words and constructs), and OCaml has moved on to type-checking the expression prior to evaluation. If there is a problem with type-checking, OCaml shows you where a mismatch between the expected and actual type occurred.
 
-`        OCaml`  
+`        OCaml`  
   
 `# 1 + ``true``;;`  
-`Error: This expression has type bool but an expression was expected of type`  
-`         ``int`
+`Error: This expression has type bool but an expression was expected of type`  
+`         ``int`
 
 In this example, OCaml is looking for an integer on the right hand side of the `+ `operator, and finds something of type bool instead.
 
@@ -48,12 +48,12 @@ This function is applied to too many arguments
 
 Exactly what it says. The function name is underlined.
 
-`        OCaml`  
+`        OCaml`  
   
 `# let f x = x + 1;;`  
-`val f : int -> int = <fun>`  
+`val f : int -> int = <fun>`  
 `# ``f` `x y;;`  
-`Error: This function is applied to too many arguments;`  
+`Error: This function is applied to too many arguments;`  
 `maybe you forgot a ``‘;'`
 
 The phrase “maybe you forgot a ‘;’ ” applies to imperative programs where accidently missing out a ‘;’ between successive function applications might commonly lead to this error.
@@ -62,12 +62,12 @@ Unbound constructor …
 
 This occurs when a constructor name is used which is not defined.
 
-`        OCaml`  
+`        OCaml`  
   
 `# type t = Roof | Wall | Floor;;`  
 `type t = Roof | Wall | Floor`  
 `# ``Window``;;`  
-`Error: Unbound constructor Window`
+`Error: Unbound constructor Window`
 
 OCaml knows it is a constructor name because it has an initial capital letter.
 
@@ -75,13 +75,13 @@ The constructor … expects … argument(s), but is applied here to … argum
 
 This error occurs when the wrong kind of data is given to a constructor for a type. It is just another type error, but we get a specialized message.
 
-`        OCaml`  
+`        OCaml`  
   
 `# type p = A of int | B of bool;;`  
 `type p = A of int | B of bool`  
 `# A;;`  
-`Error: The constructor A expects 1 argument(s),`  
-`       ``but is applied here to 0 argument(s)`
+`Error: The constructor A expects 1 argument(s),`  
+`       ``but is applied here to 0 argument(s)`
 
 RUN-TIME ERRORS
 
@@ -91,10 +91,10 @@ Stack overflow during evaluation (looping recursion?)
 
 This occurs if the function builds up a working expression which is too big. This might occur if the function is never going to stop because of a programming error, or if the argument is just too big.
 
-`        OCaml`  
+`        OCaml`  
   
 `# let rec f x = 1 + f (x + 1);;`  
-`val f : int -> int = <fun>`  
+`val f : int -> int = <fun>`  
 `# f 0;;`  
 `Stack overflow during evaluation (looping recursion?).`
 
@@ -108,10 +108,10 @@ This occurs when a pattern match cannot find anything to match against. You woul
 
 then using the function with `1 `as an argument would produce:
 
-`        OCaml`  
+`        OCaml`  
   
 `# f 1;;`  
-`Exception: Match_failure ("//toplevel//", 1, 10).`
+`Exception: Match_failure ("//toplevel//", 1, 10).`
 
 In this example, the match failure occurred in the top level (i.e. the interactive OCaml we are using), at line one, character ten.
 
@@ -119,12 +119,12 @@ Exception: …
 
 This is printed if an un-handled exception reaches OCaml.
 
-`        OCaml`  
+`        OCaml`  
   
 `# exception Exp of string;;`  
 `exception Exp of string`  
 `# raise (Exp "Failed");;`  
-`Exception: Exp "Failed".`
+`Exception: Exp "Failed".`
 
 This can occur for built-in exceptions like `Division_by_Zero `or `Not_found `or ones the user has defined like `Exp `above.
 
@@ -136,13 +136,13 @@ This pattern-matching is not exhaustive
 
 This warning is printed when OCaml has determined that you have missed out one or more cases in a pattern match. This could result in a `Match_failure `exception being raised at run-time.
 
-`        OCaml`  
+`        OCaml`  
   
 `# let f x = ``match x with 0 -> 1``;;`  
-`Warning 8: this pattern-matching is not exhaustive.`  
+`Warning 8: this pattern-matching is not exhaustive.`  
 `Here is an example of a value that is not matched:`  
 `1`  
-`val f : int -> int = <fun>`
+`val f : int -> int = <fun>`
 
 Helpfully, it is able to generate an example of something the pattern match does not cover, so this should give you a hint about what has been missed out. You may ignore the warning if you are sure that, for other reasons, this case can never occur.
 
@@ -150,11 +150,11 @@ This match case is unused
 
 This occurs when two parts of the pattern match cover the same case. In this situation, the second one could never be reached, so it is almost certain the programmer has made a mistake.
 
-`        OCaml`  
+`        OCaml`  
   
 `# let f x = match x with _ -> 1 | ``0` `-> 0;;`  
-`Warning 11: this match case is unused.`  
-`val f : int -> int = <fun>`
+`Warning 11: this match case is unused.`  
+`val f : int -> int = <fun>`
 
 In this case, the first case matches everything, so the second cannot ever match.
 
@@ -162,17 +162,17 @@ This expression should have type unit
 
 Sometimes when writing imperative programs, we ignore the result of some side-effect-producing function. However, this can indicate a mistake.
 
-`        OCaml`  
+`        OCaml`  
   
 `# ``f 1``; 2;;`  
-`Warning 10: this expression should have type unit.`  
-`- : int = 2`
+`Warning 10: this expression should have type unit.`  
+`- : int = 2`
 
 It is better to use the built-in `ignore `function in these cases, to avoid this warning:
 
-`        OCaml`  
+`        OCaml`  
   
 `# ``ignore (f 1)``; 2;;`  
-`- : int = 2`
+`- : int = 2`
 
 The ignore function has type α → unit. It has no side-effect.

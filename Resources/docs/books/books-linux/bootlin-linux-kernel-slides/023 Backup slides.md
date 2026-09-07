@@ -1,30 +1,31 @@
-Backup slides
-
- 
+![](media/index-451_1.jpg)
 
 Backup slides
 
- 
+
+
+Backup slides
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 1/16
+
 
 Backup slides
 
- 
+
 
 mmap
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 2/16 mmap
 
- 
+mmap
+
+
 
 ▶ Possibility to have parts of the virtual address space of a program mapped to the
 
@@ -40,11 +41,11 @@ contents of a file
 
 *•* pmap \<pid\>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 3/16 /proc/\<pid\>/maps
 
- 
+/proc/\<pid\>/maps
+
+
 
 start-end perm offset major:minor inode mapped file name
 
@@ -56,15 +57,15 @@ start-end perm offset major:minor inode mapped file name
 
 7f451da4f000-7f451dc3f000 r-xp 00000000 08:01 1549 /usr/bin/Xorg 7f451de3e000-7f451de41000 r--p 001ef000 08:01 1549 /usr/bin/Xorg 7f451de41000-7f451de4c000 rw-p 001f2000 08:01 1549 /usr/bin/Xorg ...
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 4/16 mmap overview
 
- 
+mmap overview
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 5/16 How to Implement mmap - User space
 
- 
+
+How to Implement mmap - User space
+
+
 
 ▶ Open the device file
 
@@ -78,11 +79,11 @@ void \*start, /\* Often 0, preferred starting address \*/ size_t length, /\* Len
 
 ▶ You get a virtual address you can write to or read from.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 6/16 How to Implement mmap - Kernel space
 
- 
+How to Implement mmap - Kernel space
+
+
 
 ▶ Character driver: implement an mmap file operation and add it to the driver file
 
@@ -100,11 +101,11 @@ struct file \*, /\* Open file structure \*/ struct vm_area_struct \* /\* Kernel 
 
 of most of the job.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 7/16 remap_pfn_range()
 
- 
+remap_pfn_range()
+
+
 
 ▶ *pfn*: page frame number
 
@@ -114,7 +115,7 @@ the page size).
 
 \#include \<linux/mm.h\>
 
- 
+
 
 int remap_pfn_range(
 
@@ -132,11 +133,11 @@ unsigned long size, /\* Mapping size \*/
 
 pgprot_t prot /\* Page permissions \*/ );
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 8/16 Simple mmap implementation
 
- 
+Simple mmap implementation
+
+
 
 static int acme_mmap
 
@@ -146,13 +147,13 @@ static int acme_mmap
 
 size = vma-\>vm_end - vma-\>vm_start;
 
- 
+
 
 if (size \> ACME_SIZE)
 
 return-EINVAL;
 
- 
+
 
 if (remap_pfn_range(vma,
 
@@ -166,15 +167,15 @@ vma-\>vm_page_prot))
 
 return-EAGAIN;
 
- 
+
 
 return 0;
 
 }
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 9/16 devmem2
+devmem2
 
- 
+
 
 ▶ [https://bootlin.com/pub/mirror/devmem2.c,](https://bootlin.com/pub/mirror/devmem2.c) by Jan-Derk Bakker ▶ Very useful tool to directly peek (read) or poke (write) I/O addresses mapped in
 
@@ -192,11 +193,11 @@ devmem2 0x000c0004 h (reading) devmem2 0x000c0008 w 0xffffffff (writing)
 
 *•* devmem is now available in BusyBox, making it even easier to use.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 10/16 mmap summary
 
- 
+mmap summary
+
+
 
 ▶ The device driver is loaded. It defines an mmap file operation. ▶ A user space process calls the mmap system call. ▶ The mmap file operation is called.
 
@@ -210,21 +211,20 @@ into physical ones.
 
 ▶ Direct access to the hardware without any expensive read or write system calls
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 11/16
+
 
 Backup slides
 
- 
+
 
 Useful general-purpose kernel APIs
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 12/16 Memory/string utilities
 
- 
+Memory/string utilities
+
+
 
 ▶ In [include/linux/string.h](https://elixir.bootlin.com/linux/latest/source/include/linux/string.h)
 
@@ -246,13 +246,12 @@ and variants
 
 *•* Other string functions: [sprintf()](https://elixir.bootlin.com/linux/latest/ident/sprintf), [sscanf()](https://elixir.bootlin.com/linux/latest/ident/sscanf)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 13/16
+
 
 Linked lists
 
- 
+
 
 ▶ Convenient linked-list facility in [include/linux/list.h](https://elixir.bootlin.com/linux/latest/source/include/linux/list.h)
 
@@ -282,11 +281,11 @@ embedded in a structure.
 
 *•* Iterate over the list: list_for_each\_\*() family of macros
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 14/16 Linked lists examples 1/2
 
- 
+Linked lists examples 1/2
+
+
 
 From [include/soc/at91/atmel_tcb.h](https://elixir.bootlin.com/linux/latest/source/include/soc/at91/atmel_tcb.h) /\*
 
@@ -304,13 +303,12 @@ struct list_head node;
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 15/16
+
 
 Linked lists examples 2/2
 
- 
+
 
 From [drivers/misc/atmel_tclib.c](https://elixir.bootlin.com/linux/latest/source/drivers/misc/atmel_tclib.c)
 
@@ -346,6 +344,4 @@ list_for_each_entry(tc, &tc_list, node) {
 
 }
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 16/16

@@ -4,411 +4,411 @@
 
 *Preface*
 
-**Part IBasic Concepts**
+**Part I Basic Concepts**
 
-**1Introduction**
+**1 Introduction**
 
-1.1Functions
+1.1 Functions
 
-1.2Functional programming
+1.2 Functional programming
 
-1.3Features of Haskell
+1.3 Features of Haskell
 
-1.4Historical background
+1.4 Historical background
 
-1.5A taste of Haskell
+1.5 A taste of Haskell
 
-1.6Chapter remarks
+1.6 Chapter remarks
 
-1.7Exercises
+1.7 Exercises
 
-**2First steps**
+**2 First steps**
 
-2.1Glasgow Haskell Compiler
+2.1 Glasgow Haskell Compiler
 
-2.2Installing and starting
+2.2 Installing and starting
 
-2.3Standard prelude
+2.3 Standard prelude
 
-2.4Function application
+2.4 Function application
 
-2.5Haskell scripts
+2.5 Haskell scripts
 
-2.6Chapter remarks
+2.6 Chapter remarks
 
-2.7Exercises
+2.7 Exercises
 
-**3Types and classes**
+**3 Types and classes**
 
-3.1Basic concepts
+3.1 Basic concepts
 
-3.2Basic types
+3.2 Basic types
 
-3.3List types
+3.3 List types
 
-3.4Tuple types
+3.4 Tuple types
 
-3.5Function types
+3.5 Function types
 
-3.6Curried functions
+3.6 Curried functions
 
-3.7Polymorphic types
+3.7 Polymorphic types
 
-3.8Overloaded types
+3.8 Overloaded types
 
-3.9Basic classes
+3.9 Basic classes
 
-3.10Chapter remarks
+3.10 Chapter remarks
 
-3.11Exercises
+3.11 Exercises
 
-**4Defining functions**
+**4 Defining functions**
 
-4.1New from old
+4.1 New from old
 
-4.2Conditional expressions
+4.2 Conditional expressions
 
-4.3Guarded equations
+4.3 Guarded equations
 
-4.4Pattern matching
+4.4 Pattern matching
 
-4.5Lambda expressions
+4.5 Lambda expressions
 
-4.6Operator sections
+4.6 Operator sections
 
-4.7Chapter remarks
+4.7 Chapter remarks
 
-4.8Exercises
+4.8 Exercises
 
-**5List comprehensions**
+**5 List comprehensions**
 
-5.1Basic concepts
+5.1 Basic concepts
 
-5.2Guards
+5.2 Guards
 
-5.3The zip function
+5.3 The zip function
 
-5.4String comprehensions
+5.4 String comprehensions
 
-5.5The Caesar cipher
+5.5 The Caesar cipher
 
-5.6Chapter remarks
+5.6 Chapter remarks
 
-5.7Exercises
+5.7 Exercises
 
-**6Recursive functions**
+**6 Recursive functions**
 
-6.1Basic concepts
+6.1 Basic concepts
 
-6.2Recursion on lists
+6.2 Recursion on lists
 
-6.3Multiple arguments
+6.3 Multiple arguments
 
-6.4Multiple recursion
+6.4 Multiple recursion
 
-6.5Mutual recursion
+6.5 Mutual recursion
 
-6.6Advice on recursion
+6.6 Advice on recursion
 
-6.7Chapter remarks
+6.7 Chapter remarks
 
-6.8Exercises
+6.8 Exercises
 
-**7Higher-order functions**
+**7 Higher-order functions**
 
-7.1Basic concepts
+7.1 Basic concepts
 
-7.2Processing lists
+7.2 Processing lists
 
-7.3The foldr function
+7.3 The foldr function
 
-7.4The foldl function
+7.4 The foldl function
 
-7.5The composition operator
+7.5 The composition operator
 
-7.6Binary string transmitter
+7.6 Binary string transmitter
 
-7.7Voting algorithms
+7.7 Voting algorithms
 
-7.8Chapter remarks
+7.8 Chapter remarks
 
-7.9Exercises
+7.9 Exercises
 
-**8Declaring types and classes**
+**8 Declaring types and classes**
 
-8.1Type declarations
+8.1 Type declarations
 
-8.2Data declarations
+8.2 Data declarations
 
-8.3Newtype declarations
+8.3 Newtype declarations
 
-8.4Recursive types
+8.4 Recursive types
 
-8.5Class and instance declarations
+8.5 Class and instance declarations
 
-8.6Tautology checker
+8.6 Tautology checker
 
-8.7Abstract machine
+8.7 Abstract machine
 
-8.8Chapter remarks
+8.8 Chapter remarks
 
-8.9Exercises
+8.9 Exercises
 
-**9The countdown problem**
+**9 The countdown problem**
 
-9.1Introduction
+9.1 Introduction
 
-9.2Arithmetic operators
+9.2 Arithmetic operators
 
-9.3Numeric expressions
+9.3 Numeric expressions
 
-9.4Combinatorial functions
+9.4 Combinatorial functions
 
-9.5Formalising the problem
+9.5 Formalising the problem
 
-9.6Brute force solution
+9.6 Brute force solution
 
-9.7Performance testing
+9.7 Performance testing
 
-9.8Combining generation and evaluation
+9.8 Combining generation and evaluation
 
-9.9Exploiting algebraic properties
+9.9 Exploiting algebraic properties
 
-9.10Chapter remarks
+9.10 Chapter remarks
 
-9.11Exercises
+9.11 Exercises
 
-**Part IIGoing Further**
+**Part II Going Further**
 
-**10Interactive programming**
+**10 Interactive programming**
 
-10.1The problem
+10.1 The problem
 
-10.2The solution
+10.2 The solution
 
-10.3Basic actions
+10.3 Basic actions
 
-10.4Sequencing
+10.4 Sequencing
 
-10.5Derived primitives
+10.5 Derived primitives
 
-10.6Hangman
+10.6 Hangman
 
-10.7Nim
+10.7 Nim
 
-10.8Life
+10.8 Life
 
-10.9Chapter remarks
+10.9 Chapter remarks
 
-10.10Exercises
+10.10 Exercises
 
-**11Unbeatable tic-tac-toe**
+**11 Unbeatable tic-tac-toe**
 
-11.1Introduction
+11.1 Introduction
 
-11.2Basic declarations
+11.2 Basic declarations
 
-11.3Grid utilities
+11.3 Grid utilities
 
-11.4Displaying a grid
+11.4 Displaying a grid
 
-11.5Making a move
+11.5 Making a move
 
-11.6Reading a number
+11.6 Reading a number
 
-11.7Human vs human
+11.7 Human vs human
 
-11.8Game trees
+11.8 Game trees
 
-11.9Pruning the tree
+11.9 Pruning the tree
 
-11.10Minimax algorithm
+11.10 Minimax algorithm
 
-11.11Human vs computer
+11.11 Human vs computer
 
-11.12Chapter remarks
+11.12 Chapter remarks
 
-11.13Exercises
+11.13 Exercises
 
-**12Monads and more**
+**12 Monads and more**
 
-12.1Functors
+12.1 Functors
 
-12.2Applicatives
+12.2 Applicatives
 
-12.3Monads
+12.3 Monads
 
-12.4Chapter remarks
+12.4 Chapter remarks
 
-12.5Exercises
+12.5 Exercises
 
-**13Monadic parsing**
+**13 Monadic parsing**
 
-13.1What is a parser?
+13.1 What is a parser?
 
-13.2Parsers as functions
+13.2 Parsers as functions
 
-13.3Basic definitions
+13.3 Basic definitions
 
-13.4Sequencing parsers
+13.4 Sequencing parsers
 
-13.5Making choices
+13.5 Making choices
 
-13.6Derived primitives
+13.6 Derived primitives
 
-13.7Handling spacing
+13.7 Handling spacing
 
-13.8Arithmetic expressions
+13.8 Arithmetic expressions
 
-13.9Calculator
+13.9 Calculator
 
-13.10Chapter remarks
+13.10 Chapter remarks
 
-13.11Exercises
+13.11 Exercises
 
-**14Foldables and friends**
+**14 Foldables and friends**
 
-14.1Monoids
+14.1 Monoids
 
-14.2Foldables
+14.2 Foldables
 
-14.3Traversables
+14.3 Traversables
 
-14.4Chapter remarks
+14.4 Chapter remarks
 
-14.5Exercises
+14.5 Exercises
 
-**15Lazy evaluation**
+**15 Lazy evaluation**
 
-15.1Introduction
+15.1 Introduction
 
-15.2Evaluation strategies
+15.2 Evaluation strategies
 
-15.3Termination
+15.3 Termination
 
-15.4Number of reductions
+15.4 Number of reductions
 
-15.5Infinite structures
+15.5 Infinite structures
 
-15.6Modular programming
+15.6 Modular programming
 
-15.7Strict application
+15.7 Strict application
 
-15.8Chapter remarks
+15.8 Chapter remarks
 
-15.9Exercises
+15.9 Exercises
 
-**16Reasoning about programs**
+**16 Reasoning about programs**
 
-16.1Equational reasoning
+16.1 Equational reasoning
 
-16.2Reasoning about Haskell
+16.2 Reasoning about Haskell
 
-16.3Simple examples
+16.3 Simple examples
 
-16.4Induction on numbers
+16.4 Induction on numbers
 
-16.5Induction on lists
+16.5 Induction on lists
 
-16.6Making append vanish
+16.6 Making append vanish
 
-16.7Compiler correctness
+16.7 Compiler correctness
 
-16.8Chapter remarks
+16.8 Chapter remarks
 
-16.9Exercises
+16.9 Exercises
 
-**17Calculating compilers**
+**17 Calculating compilers**
 
-17.1Introduction
+17.1 Introduction
 
-17.2Syntax and semantics
+17.2 Syntax and semantics
 
-17.3Adding a stack
+17.3 Adding a stack
 
-17.4Adding a continuation
+17.4 Adding a continuation
 
-17.5Defunctionalising
+17.5 Defunctionalising
 
-17.6Combining the steps
+17.6 Combining the steps
 
-17.7Chapter remarks
+17.7 Chapter remarks
 
-17.8Exercises
+17.8 Exercises
 
-**Appendix ASelected solutions**
+**Appendix A Selected solutions**
 
-A.1Introduction
+A.1 Introduction
 
-A.2First steps
+A.2 First steps
 
-A.3Types and classes
+A.3 Types and classes
 
-A.4Defining functions
+A.4 Defining functions
 
-A.5List comprehensions
+A.5 List comprehensions
 
-A.6Recursive functions
+A.6 Recursive functions
 
-A.7Higher-order functions
+A.7 Higher-order functions
 
-A.8Declaring types and classes
+A.8 Declaring types and classes
 
-A.9The countdown problem
+A.9 The countdown problem
 
-A.10Interactive programming
+A.10 Interactive programming
 
-A.11Unbeatable tic-tac-toe
+A.11 Unbeatable tic-tac-toe
 
-A.12Monads and more
+A.12 Monads and more
 
-A.13Monadic parsing
+A.13 Monadic parsing
 
-A.14Foldables and friends
+A.14 Foldables and friends
 
-A.15Lazy evaluation
+A.15 Lazy evaluation
 
-A.16Reasoning about programs
+A.16 Reasoning about programs
 
-A.17Calculating compilers
+A.17 Calculating compilers
 
-**Appendix BStandard prelude**
+**Appendix B Standard prelude**
 
-B.1Basic classes
+B.1 Basic classes
 
-B.2Booleans
+B.2 Booleans
 
-B.3Characters
+B.3 Characters
 
-B.4Strings
+B.4 Strings
 
-B.5Numbers
+B.5 Numbers
 
-B.6Tuples
+B.6 Tuples
 
-B.7Maybe
+B.7 Maybe
 
-B.8Lists
+B.8 Lists
 
-B.9Functions
+B.9 Functions
 
-B.10Input/output
+B.10 Input/output
 
-B.11Functors
+B.11 Functors
 
-B.12Applicatives
+B.12 Applicatives
 
-B.13Monads
+B.13 Monads
 
-B.14Alternatives
+B.14 Alternatives
 
-B.15MonadPlus
+B.15 MonadPlus
 
-B.16Monoids
+B.16 Monoids
 
-B.17Foldables
+B.17 Foldables
 
-B.18Traversables
+B.18 Traversables
 
 *Bibliography*
 

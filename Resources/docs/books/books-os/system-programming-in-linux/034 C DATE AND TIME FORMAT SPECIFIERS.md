@@ -1,3 +1,5 @@
+![](media/index-1233_1.jpg)
+
 C DATE AND TIME FORMAT SPECIFIERS
 
 The examples listed in Table C-1 are based on the date of January 19, 2038, at 03:14:07 UTC, the time at which the 32-bit Unix time

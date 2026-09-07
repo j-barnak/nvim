@@ -4,7 +4,7 @@
 
 Since C++11, we can write shorter code thanks to automatic type inference with auto or decltype keywords. Rather than specifying the full type for a new object, we can ask the compiler to deduce its type. In this chapter, we’ll discuss how “type deduction” affects initialization. We’ll also learn about the “AAA” rule - Almost Always Auto.
 
- 
+
 
 **Deduction with** **auto**
 
@@ -20,13 +20,13 @@ Since C++11, you can ask the compiler to deduce the correct type:
 
 **auto** startIT = pairs.cbegin();
 
- 
+
 
 89
 
 Type Deduction and Initialization 90
 
- 
+
 
 Type deduction is also a lifesaver for cases with maps:
 
@@ -38,7 +38,7 @@ cout \<\< elem.first \<\< ", " \<\< &elem.first \<\< '\n';
 
 cout \<\< m.begin()-\>first \<\< ", " \<\< &m.begin()-\>first \<\< '\n'; cout \<\< next(m.begin())-\>first \<\< ", " \<\< &next(m.begin())-\>first \<\< '\n';
 
- 
+
 
 Do you see the problem here? If you run the program, you’ll see the following addresses:
 
@@ -70,7 +70,7 @@ Let’s now see the core principles for auto.
 
 ¹You can store lambda into wrappers like std::function or convert that into a function pointer (for capture-less lambdas). Type Deduction and Initialization 91
 
- 
+
 
 **Rules for** **auto** **type deduction**
 
@@ -82,7 +82,7 @@ We can summarize the rules for auto in the following list of five cases:
 
 // special cases from string literal and nullptr: **auto** str = "hello world"; // str is const char\* **auto** p = **nullptr**; // p is std::nullptr_t
 
- 
+
 
 **2. If the initializer is an expression with a type that is not a reference, the type of** **the variable is deduced to be the type of the expression, with top-level** **cv-qualifiers removed:**
 
@@ -104,7 +104,7 @@ Type Deduction and Initialization 92
 
 **auto** b = num; // b is int **auto** b2 = cnum; // b2 is int, const removed **auto** b3 = pNum; // b3 is const int\* **auto** b4 = pCnum; // b4 is const int\*, const removed
 
- 
+
 
 **3. If the initializer is an expression with a type that is a reference, the type of the** **variable is deduced to be the type of the referred-to object, with top-level** **cv-qualifiers and references removed:**
 
@@ -120,7 +120,7 @@ Type Deduction and Initialization 92
 
 **auto** d2 = rnum; // d2 is int, ref removed **auto** d3 = crnum; // d3 is int, const and ref removed
 
- 
+
 
 **4. If the initializer is a braced-init-list, the type of the variable is deduced to be a** **std::initializer_list** **of the appropriate type:**
 
@@ -134,7 +134,7 @@ The copy initialization syntax generates the same results as direct initializati
 
 **auto** z = { 42 }; // z is initializer_list\<int\>!
 
- 
+
 
 **5. If the initializer is a lambda expression, the type of the variable is deduced to** **be a unique, unnamed function type:**
 
@@ -142,7 +142,7 @@ Type Deduction and Initialization 93
 
 **auto** magic = \[\](){}; // magic has type unique, unnamed function type
 
- 
+
 
 **Adding type specifiers**
 
@@ -166,7 +166,7 @@ The above example shows a basic use of auto&& (also called universal or forwardi
 
 reference²). In the case of str or rstr, the deduced type is a reference to std::string. In a case where the initializer is a constant, the resulting reference will also be const; see w and rw. There’s also an interesting property that auto&& can bind to rvalue references (“temporaries”):
 
- 
+
 
 ²See more about universal references in this amazing article by Scott Meyers: https://isocpp.org/blog/2012/11/universal—
 
@@ -178,7 +178,7 @@ Type Deduction and Initialization 94
 
 The line with str2 generates a compiler error, while the other two lines are fine. The main difference is that str3 is a constant object. auto&& is more flexible. It’s an essential part of the range-based for loop so that it can work with containers that are constant or not.
 
- 
+
 
 **Another view on the deduction**
 
@@ -208,7 +208,7 @@ Type Deduction and Initialization 95
 
 **template** \<**typename T**\> foo_ux(T&& num) { }; foo_ux(42);
 
- 
+
 
 **3. The type specifier is neither a pointer nor a reference.**
 
@@ -218,7 +218,7 @@ Type Deduction and Initialization 95
 
 Let’s meet the second keyword from C++11, decltype.
 
- 
+
 
 **Deduction with** **decltype**
 
@@ -240,7 +240,7 @@ In short, if the argument for decltype is not an unparenthesized variable or unp
 
 1. if the value category of expression is xvalue, then decltype yields T&&, Type Deduction and Initialization 96
 
- 
+
 
 2. if the value category of expression is lvalue, then decltype yields T&,
 
@@ -264,19 +264,19 @@ One handy use case for decltype is declaring a proper return type for a function
 
 In the above line, decltype is used to get the return type of a member function from the Object class. Note that it’s not possible to use auto in that context.
 
- 
+
 
 **Printing type info**
 
 With some extra machinery³, we can run an experiment and show the types of our variables:
 
- 
+
 
 ³Using GCC’s \_\_PRETTY_FUNCTION\_\_ based on https://stackoverflow.com/questions/281818/unmangling-the-result-of-std—
 
 type-infoname. Solutions based on typeid() might not work, as they don’t convey CV qualifiers as decltype() does. Type Deduction and Initialization 97
 
- 
+
 
 **Ex 6.2. Printing type info. Run** [**@Compiler Explorer**](https://godbolt.org/z/YdvoKWMhe)
 
@@ -298,7 +298,7 @@ std::cout \<\< str \<\< typeName\<T\>();
 
 ((std::cout \<\< ", " \<\< typeName\<Ts\>()), ...); // fold expression, C++17 }
 
- 
+
 
 The code uses \_\_PRETTY_FUNCTION\_\_ compile-time string. It slices it in predefined places to extract the template parameter typename. Later this function is applied on the variadic pack inside typeNames() and the names are printed via std::cout.
 
@@ -344,7 +344,7 @@ Type Deduction and Initialization 98
 
 typeNames\<**decltype**(u), **decltype**(refu)\>("**\n**u and refu: "); }
 
- 
+
 
 The output:
 
@@ -356,7 +356,7 @@ The program shows the type names from three groups of auto use cases. By using d
 
 Thanks to auto we can declare variables and there’s no need to spell their long type names. But in C++17 we also got another cool addition. Let’s meet structured bindings.
 
- 
+
 
 **Structured bindings in C++17**
 
@@ -372,7 +372,7 @@ names⁴.
 
 Such syntax is called a *structured binding expression*.
 
- 
+
 
 **The Syntax**
 
@@ -446,7 +446,7 @@ You can also add \[\[attribute\]\] to structured bindings:
 
 \[\[maybe_unused\]\] **auto**& \[a, b, c, ...\] = expression;
 
- 
+
 
 **Binding**
 
@@ -484,7 +484,7 @@ x and y refer to Point::x and Point::y from the Point structure.
 
 The class doesn’t have to be POD, but the number of identifiers must equal to the number of non-static data members. The members must also be accessible from the given context.
 
- 
+
 
 **Expressive Code With Structured Bindings**
 
@@ -548,7 +548,7 @@ Initially structured bindings had some limitations in C++17. For example you cou
 
 Type Deduction and Initialization 103
 
- 
+
 
 **Lifetime extension, references, and loops**
 
@@ -592,7 +592,7 @@ to our two functions. See the code [@Compiler Explorerer⁵](https://godbolt.org
 
 ⁵<https://godbolt.org/z/qEKoMe6aj> Type Deduction and Initialization 104
 
- 
+
 
 On the other hand, if you try writing: void fooVec(vector\<int\>& vec) { }, then the compiler will report an error about binding a non-const lvalue reference of type vector\<int\>& to an rvalue of type std::vector\<int\>.
 
@@ -630,13 +630,13 @@ std::cout \<\< i;
 
 ![](media/index-119_1.png)
 
- 
+
 
 This section specifically stressed the C++20 version, as in C++23, a range-based for loop will be much safer with temporary objects! In short, all temporary objects in the range-expression part will extend their lifetime. See those accepted
 
 proposals: [P2644⁶](https://wg21.link/P2644) and [P2012](https://wg21.link/P2012)⁷ for more information.
 
- 
+
 
 ⁶<https://wg21.link/P2644>
 
@@ -644,7 +644,7 @@ proposals: [P2644⁶](https://wg21.link/P2644) and [P2012](https://wg21.link/P20
 
 Type Deduction and Initialization 105
 
- 
+
 
 **Almost Always Auto**
 
@@ -668,7 +668,7 @@ Ideally you can also put const to indicate that an object won’t change:
 
 The term was popularlized by Herb Sutter [in GotW-94 post](https://herbsutter.com/2013/08/12/gotw-94-solution-aaa-style-almost-always-auto/)⁸, [GotW 93⁹](https://herbsutter.com/2013/06/13/gotw-93-solution-auto-variables-part-2/) and [GotW 92¹⁰](https://herbsutter.com/2013/06/07/gotw-92-solution-auto-variables-part-1/):
 
- 
+
 
 ⁸<https://herbsutter.com/2013/08/12/gotw-94-solution-aaa-style-almost-always-auto/>
 
@@ -678,11 +678,11 @@ The term was popularlized by Herb Sutter [in GotW-94 post](https://herbsutter.co
 
 Type Deduction and Initialization 106
 
- 
+
 
 **Guideline:** Remember that preferring auto variables is motivated primarily by correctness, performance, maintainability, and robustness—and only lastly about typing convenience.
 
- 
+
 
 Here are some of the key benefits of using AAA in C++:
 
@@ -720,7 +720,7 @@ While the AAA style has some benefits there’s are some complains:
 
 Type Deduction and Initialization 107
 
- 
+
 
 • One potential downside of using automatic style in C++ is that it can make code less
 
@@ -738,7 +738,7 @@ additionally copy when getter_with_reference returns a reference to some interna
 
 a value type to a reference, it can introduce some unwanted effects in tha code that only uses auto val = func().
 
- 
+
 
 **Summary**
 
@@ -760,7 +760,7 @@ Complete Guide (2nd Edition)” or articles: [Class template argument deduction]
 
 Type Deduction and Initialization 108
 
- 
+
 
 In one section, we also looked at AAA, which stands for Almost Always Auto - a convention to declare all variables starting with auto. We looked at the benefits of this approach and also some caveats.
 
@@ -768,10 +768,10 @@ At the end of the chapter, I’d like to bring a good quote from the: Google C++
 
 [type deduction](https://google.github.io/styleguide/cppguide.html#Type_deduction)¹³:
 
- 
+
 
 The fundamental rule is: use type deduction only to make the code clearer or safer, and do not use it merely to avoid the inconvenience of writing an explicit type. When judging whether the code is clearer, keep in mind that your readers are not necessarily on your team, or familiar with your project, so types that you and your reviewer experience as unnecessary clutter will very often provide useful information to others. For example, you can assume that the return type of make_unique\<Foo\>() is obvious, but the return type of MyWidgetFactory() probably isn’t.
 
- 
+
 
 ¹³<https://google.github.io/styleguide/cppguide.html#Type_deduction>

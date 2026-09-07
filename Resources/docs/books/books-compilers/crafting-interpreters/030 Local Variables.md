@@ -11,11 +11,11 @@
 
 The last chapter introduced variables to clox, but only of the global variety. In this chapter, we’ll extend that to support blocks, block scope, and local variables. In jlox, we managed to pack all of that and globals into one chapter. For clox, that’s two chapters worth of work partially because, frankly, everything takes more effort in C.
 
-There’s probably some dumb “think globally, act locally” joke here, but I’m struggling to find it.
+> There’s probably some dumb “think globally, act locally” joke here, but I’m struggling to find it.
 
 But an even more important reason is that our approach to local variables will be quite different from how we implemented globals. Global variables are late bound in Lox. “Late” in this context means “resolved after compile time”. That’s good for keeping the compiler simple, but not great for performance. Local variables are one of the most-used parts of a language. If locals are slow, *everything* is slow. So we want a strategy for local variables that’s as efficient as possible.
 
-Function parameters are also heavily used. They work like local variables too, so we’ll use the same implementation technique for them.
+> Function parameters are also heavily used. They work like local variables too, so we’ll use the same implementation technique for them.
 
 Fortunately, lexical scoping is here to help us. As the name implies, lexical scope means we can resolve a local variable just by looking at the text of the program—locals are *not* late bound. Any processing work we do in the compiler is work we *don’t* have to do at runtime, so our implementation of local variables will lean heavily on the compiler.
 
@@ -29,9 +29,9 @@ We do need to be careful, though. The VM expects the stack to behave like, well,
 
 Conveniently, the design of Lox is in harmony with these constraints. New locals are always created by declaration statements. Statements don’t nest inside expressions, so there are never any temporaries on the stack when a statement begins executing. Blocks are strictly nested. When a block ends, it always takes the innermost, most recently declared locals with it. Since those are also the locals that came into scope last, they should be on top of the stack where we need them.
 
-This alignment obviously isn’t coincidental. I designed Lox to be amenable to single-pass compilation to stack-based bytecode. But I didn’t have to tweak the language too much to fit in those restrictions. Most of its design should feel pretty natural.
-
-This is in large part because the history of languages is deeply tied to single-pass compilation and—to a lesser degree—stack-based architectures. Lox’s block scoping follows a tradition stretching back to BCPL. As programmers, our intuition of what’s “normal” in a language is informed even today by the hardware limitations of yesteryear.
+> This alignment obviously isn’t coincidental. I designed Lox to be amenable to single-pass compilation to stack-based bytecode. But I didn’t have to tweak the language too much to fit in those restrictions. Most of its design should feel pretty natural.
+>
+> This is in large part because the history of languages is deeply tied to single-pass compilation and—to a lesser degree—stack-based architectures. Lox’s block scoping follows a tradition stretching back to BCPL. As programmers, our intuition of what’s “normal” in a language is informed even today by the hardware limitations of yesteryear.
 
 Step through this example program and watch how the local variables come in and go out of scope:
 
@@ -41,7 +41,7 @@ See how they fit a stack perfectly? It seems that the stack will work for storin
 
 We’ll take advantage of this by using these stack offsets as operands for the bytecode instructions that read and store local variables. This makes working with locals deliciously fast—as simple as indexing into an array.
 
-In this chapter, locals start at the bottom of the VM’s stack array and are indexed from there. When we add functions, that scheme gets a little more complex. Each function needs its own region of the stack for its parameters and local variables. But, as we’ll see, that doesn’t add as much complexity as you might expect.
+> In this chapter, locals start at the bottom of the VM’s stack array and are indexed from there. When we add functions, that scheme gets a little more complex. Each function needs its own region of the stack for its parameters and local variables. But, as we’ll see, that doesn’t add as much complexity as you might expect.
 
 There’s a lot of state we need to track in the compiler to make this whole thing go, so let’s get started there. In jlox, we used a linked chain of “environment” HashMaps to track which local variables were currently in scope. That’s sort of the classic, schoolbook way of representing lexical scope. For clox, as usual, we’re going a little closer to the metal. All of the state lives in a new struct.
 
@@ -65,7 +65,7 @@ Parser parser;
 
 We have a simple, flat array of all locals that are in scope during each point in the compilation process. They are ordered in the array in the order that their declarations appear in the code. Since the instruction operand we’ll use to encode a local is a single byte, our VM has a hard limit on the number of locals that can be in scope at once. That means we can also give the locals array a fixed size.
 
-We’re writing a single-pass compiler, so it’s not like we have *too* many other options for how to order them in the array.
+> We’re writing a single-pass compiler, so it’s not like we have *too* many other options for how to order them in the array.
 
 ```
 #define DEBUG_TRACE_EXECUTION
@@ -108,7 +108,7 @@ We store the name of the variable. When we’re resolving an identifier, we comp
 
 This is a very different representation from what we had in jlox, but it still lets us answer all of the same questions our compiler needs to ask of the lexical environment. The next step is figuring out how the compiler *gets* at this state. If we were principled engineers, we’d give each function in the front end a parameter that accepts a pointer to a Compiler. We’d create a Compiler at the beginning and carefully thread it through each function call . . . but that would mean a lot of boring changes to the code we already wrote, so here’s a global variable instead:
 
-In particular, if we ever want to use our compiler in a multi-threaded application, possibly with multiple compilers running in parallel, then using a global variable is a *bad* idea.
+> In particular, if we ever want to use our compiler in a multi-threaded application, possibly with multiple compilers running in parallel, then using a global variable is a *bad* idea.
 
 ```
 Parser parser;
@@ -167,9 +167,9 @@ statement      → exprStmt
 block          → "{" declaration* "}" ;
 ```
 
-When you think about it, “block” is a weird name. Used metaphorically, “block” usually means a small indivisible unit, but for some reason, the Algol 60 committee decided to use it to refer to a *compound* structure—a series of statements. It could be worse, I suppose. Algol 58 called `begin` and `end` “statement parentheses”.
-
-![A cinder block.](media/image/local-variables/block.png)
+> When you think about it, “block” is a weird name. Used metaphorically, “block” usually means a small indivisible unit, but for some reason, the Algol 60 committee decided to use it to refer to a *compound* structure—a series of statements. It could be worse, I suppose. Algol 58 called `begin` and `end` “statement parentheses”.
+>
+> ![A cinder block.](media/image/local-variables/block.png)
 
 Blocks are a kind of statement, so the rule for them goes in the `statement` production. The corresponding code to compile one looks like this:
 
@@ -193,7 +193,7 @@ Blocks are a kind of statement, so the rule for them goes in the `statement` pro
 
 After parsing the initial curly brace, we use this helper function to compile the rest of the block:
 
-This function will come in handy later for compiling function bodies.
+> This function will come in handy later for compiling function bodies.
 
 ```
 static void block() {
@@ -280,7 +280,7 @@ Wait, what? Yup. That’s it. There is no code to create a local variable at run
 
 ![Walking through the bytecode execution showing that each initializer's result ends up in the local's slot.](media/image/local-variables/local-slots.png)
 
-The code on the left compiles to the sequence of instructions on the right.
+> The code on the left compiles to the sequence of instructions on the right.
 
 OK, so what’s “declaring” about? Here’s what that does:
 
@@ -311,9 +311,9 @@ static void addLocal(Token name) {
 
 This initializes the next available Local in the compiler’s array of variables. It stores the variable’s name and the depth of the scope that owns the variable.
 
-Worried about the lifetime of the string for the variable’s name? The Local directly stores a copy of the Token struct for the identifier. Tokens store a pointer to the first character of their lexeme and the lexeme’s length. That pointer points into the original source string for the script or REPL entry being compiled.
-
-As long as that string stays around during the entire compilation process—which it must since, you know, we’re compiling it—then all of the tokens pointing into it are fine.
+> Worried about the lifetime of the string for the variable’s name? The Local directly stores a copy of the Token struct for the identifier. Tokens store a pointer to the first character of their lexeme and the lexeme’s length. That pointer points into the original source string for the script or REPL entry being compiled.
+>
+> As long as that string stays around during the entire compilation process—which it must since, you know, we’re compiling it—then all of the tokens pointing into it are fine.
 
 Our implementation is fine for a correct Lox program, but what about invalid code? Let’s aim to be robust. The first error to handle is not really the user’s fault, but more a limitation of the VM. The instructions to work with local variables refer to them by slot index. That index is stored in a single-byte operand, which means the VM only supports up to 256 local variables in scope at one time.
 
@@ -338,23 +338,27 @@ static void addLocal(Token name) {
 
 The next case is trickier. Consider:
 
-    {
-      var a = "first";
-      var a = "second";
-    }
+```
+{
+  var a = "first";
+  var a = "second";
+}
+```
 
 At the top level, Lox allows redeclaring a variable with the same name as a previous declaration because that’s useful for the REPL. But inside a local scope, that’s a pretty weird thing to do. It’s likely to be a mistake, and many languages, including our own Lox, enshrine that assumption by making this an error.
 
-Interestingly, the Rust programming language *does* allow this, and idiomatic code relies on it.
+> Interestingly, the Rust programming language *does* allow this, and idiomatic code relies on it.
 
 Note that the above program is different from this one:
 
-    {
-      var a = "outer";
-      {
-        var a = "inner";
-      }
-    }
+```
+{
+  var a = "outer";
+  {
+    var a = "inner";
+  }
+}
+```
 
 It’s OK to have two variables with the same name in *different* scopes, even when the scopes overlap such that both are visible at the same time. That’s shadowing, and Lox does allow that. It’s only an error to have two variables with the same name in the *same* local scope.
 
@@ -384,7 +388,7 @@ We detect that error like so:
 
 *compiler.c*, in *declareVariable*()
 
-Don’t worry about that odd `depth != -1` part yet. We’ll get to what that’s about later.
+> Don’t worry about that odd `depth != -1` part yet. We’ll get to what that’s about later.
 
 Local variables are appended to the array when they’re declared, which means the current scope is always at the end of the array. When we declare a new variable, we start at the end and work backward, looking for an existing variable with the same name. If we find one in the current scope, we report the error. Otherwise, if we reach the beginning of the array or a variable owned by another scope, then we know we’ve checked all of the existing variables in the scope.
 
@@ -401,7 +405,7 @@ static bool identifiersEqual(Token* a, Token* b) {
 
 Since we know the lengths of both lexemes, we check that first. That will fail quickly for many non-equal strings. If the lengths are the same, we check the characters using `memcmp()`. To get to `memcmp()`, we need an include.
 
-It would be a nice little optimization if we could check their hashes, but tokens aren’t full LoxStrings, so we haven’t calculated their hashes yet.
+> It would be a nice little optimization if we could check their hashes, but tokens aren’t full LoxStrings, so we haven’t calculated their hashes yet.
 
 ```
 #include <stdlib.h>
@@ -442,7 +446,7 @@ When we pop a scope, we walk backward through the local array looking for any va
 
 There is a runtime component to this too. Local variables occupy slots on the stack. When a local variable goes out of scope, that slot is no longer needed and should be freed. So, for each variable that we discard, we also emit an `OP_POP` instruction to pop it from the stack.
 
-When multiple local variables go out of scope at once, you get a series of `OP_POP` instructions that get interpreted one at a time. A simple optimization you could add to your Lox implementation is a specialized `OP_POPN` instruction that takes an operand for the number of slots to pop and pops them all at once.
+> When multiple local variables go out of scope at once, you get a series of `OP_POP` instructions that get interpreted one at a time. A simple optimization you could add to your Lox implementation is a specialized `OP_POPN` instruction that takes an operand for the number of slots to pop and pops them all at once.
 
 ## 22.4 Using Locals
 
@@ -572,7 +576,7 @@ And its implementation:
 
 It takes a single-byte operand for the stack slot where the local lives. It loads the value from that index and then pushes it on top of the stack where later instructions can find it.
 
-It seems redundant to push the local’s value onto the stack since it’s already on the stack lower down somewhere. The problem is that the other bytecode instructions only look for data at the *top* of the stack. This is the core aspect that makes our bytecode instruction set *stack*-based. Register-based bytecode instruction sets avoid this stack juggling at the cost of having larger instructions with more operands.
+> It seems redundant to push the local’s value onto the stack since it’s already on the stack lower down somewhere. The problem is that the other bytecode instructions only look for data at the *top* of the stack. This is the core aspect that makes our bytecode instruction set *stack*-based. Register-based bytecode instruction sets avoid this stack juggling at the cost of having larger instructions with more operands.
 
 Next is assignment:
 
@@ -633,7 +637,7 @@ Our disassembler is incomplete without support for these two new instructions.
 
 The compiler compiles local variables to direct slot access. The local variable’s name never leaves the compiler to make it into the chunk at all. That’s great for performance, but not so great for introspection. When we disassemble these instructions, we can’t show the variable’s name like we could with globals. Instead, we just show the slot number.
 
-Erasing local variable names in the compiler is a real issue if we ever want to implement a debugger for our VM. When users step through code, they expect to see the values of local variables organized by their names. To support that, we’d need to output some additional information that tracks the name of each local variable at each stack slot.
+> Erasing local variable names in the compiler is a real issue if we ever want to implement a debugger for our VM. When users step through code, they expect to see the values of local variables organized by their names. To support that, we’d need to output some additional information that tracks the name of each local variable at each stack slot.
 
 ```
 static int byteInstruction(const char* name, Chunk* chunk,
@@ -650,16 +654,18 @@ static int byteInstruction(const char* name, Chunk* chunk,
 
 We already sunk some time into handling a couple of weird edge cases around scopes. We made sure shadowing works correctly. We report an error if two variables in the same local scope have the same name. For reasons that aren’t entirely clear to me, variable scoping seems to have a lot of these wrinkles. I’ve never seen a language where it feels completely elegant.
 
-No, not even Scheme.
+> No, not even Scheme.
 
 We’ve got one more edge case to deal with before we end this chapter. Recall this strange beastie we first met in jlox’s implementation of variable resolution:
 
-    {
-      var a = "outer";
-      {
-        var a = a;
-      }
-    }
+```
+{
+  var a = "outer";
+  {
+    var a = a;
+  }
+}
+```
 
 We slayed it then by splitting a variable’s declaration into two phases, and we’ll do that again here:
 
@@ -737,7 +743,7 @@ That’s it for this chapter! We added blocks, local variables, and real, honest
 
 You’ll notice that almost all of the code we wrote is in the compiler. Over in the runtime, it’s just two little instructions. You’ll see this as a continuing trend in clox compared to jlox. One of the biggest hammers in the optimizer’s toolbox is pulling work forward into the compiler so that you don’t have to do it at runtime. In this chapter, that meant resolving exactly which stack slot every local variable occupies. That way, at runtime, no lookup or resolution needs to happen.
 
-You can look at static types as an extreme example of this trend. A statically typed language takes all of the type analysis and type error handling and sorts it all out during compilation. Then the runtime doesn’t have to waste any time checking that values have the proper type for their operation. In fact, in some statically typed languages like C, you don’t even *know* the type at runtime. The compiler completely erases any representation of a value’s type leaving just the bare bits.
+> You can look at static types as an extreme example of this trend. A statically typed language takes all of the type analysis and type error handling and sorts it all out during compilation. Then the runtime doesn’t have to waste any time checking that values have the proper type for their operation. In fact, in some statically typed languages like C, you don’t even *know* the type at runtime. The compiler completely erases any representation of a value’s type leaving just the bare bits.
 
 ## Challenges
 

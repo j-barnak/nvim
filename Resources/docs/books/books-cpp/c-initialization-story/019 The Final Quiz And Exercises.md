@@ -34,13 +34,13 @@ Congratulations on completing the whole book! Now you can check your knowledge a
 
 2. No, inline variables must be constant.
 
- 
+
 
 238
 
 The Final Quiz And Exercises 239
 
- 
+
 
 **5. What’s the output of the following code:**
 
@@ -100,7 +100,7 @@ destructor.
 
 The Final Quiz And Exercises 240
 
- 
+
 
 **8. What happens when you compile this code?**
 
@@ -124,7 +124,7 @@ members in the Point class.
 
 **struct User** { std::string name = "unknown"; **unsigned** age { 0 }; }; User u { "John", 101 };
 
- 
+
 
 1. Yes, the code compiles in C++11 mode
 
@@ -154,13 +154,13 @@ constructor.
 
 The Final Quiz And Exercises 241
 
- 
+
 
 **11. Assume you have a** **std::map\<string, int\> m;****. Select the single true** **statement about the following loop:**
 
 **for** (**const** pair\<string, **int**\>& elem : m)
 
- 
+
 
 1. The loop properly iterates over the map, creating no extra copies.
 
@@ -180,7 +180,7 @@ The Final Quiz And Exercises 241
 
 std::optional\<std::complex\<**double**\>\> opt1{std::complex\<**double**\>{0, 1}}; std::optional\<std::complex\<**double**\>\> opt2{std::in_place_t, 0, 1};
 
- 
+
 
 1. opt1 is initialized less efficiently, as we have to create a temporary object, opt2 doesn’t
 
@@ -204,7 +204,7 @@ pattern is only safe from C++11.
 
 The Final Quiz And Exercises 242
 
- 
+
 
 **15. Does the following statement compile?**
 
@@ -212,7 +212,7 @@ std::vector\<std::unique_ptr\<**int**\>\> ints {
 
 std::make_unique\<**int**\>(1), std::make_unique\<**int**\>(2) };
 
- 
+
 
 1. No, it doesn’t compile, as we have an initializer_list of non-copyable types
 
@@ -224,13 +224,13 @@ std::make_unique\<**int**\>(1), std::make_unique\<**int**\>(2) };
 
 Please write down your answers and check them in Appendix B.
 
- 
+
 
 **Exercises**
 
 Check your skills with four coding exercises.
 
- 
+
 
 **Exercise 1: NSDMI**
 
@@ -274,7 +274,7 @@ When you run the code, you’ll see that the test fail:
 
 ![](media/index-258_1.png)
 
- 
+
 
 Your task is to improve the code so that tests pass:
 
@@ -284,7 +284,7 @@ The Final Quiz And Exercises 244
 
 ![](media/index-259_1.png)
 
- 
+
 
 **Exercise 2: NSDMI**
 
@@ -404,13 +404,13 @@ Start from the following runnable code sample [@Wandbox³](https://wandbox.org/p
 
 ![](media/index-261_1.png)
 
- 
+
 
 **The starting point for the exercise, Click “Clone & Edit” to start the example**
 
 ³<https://wandbox.org/permlink/GuGzTWKF8irN2YLz> The Final Quiz And Exercises 247
 
- 
+
 
 **Exercise 4: Fix the code**
 
@@ -442,28 +442,6 @@ TEST(computeTotal, empty) { ... } // fails... TEST(computeTotal, several) { ... 
 
 Here’s the starting code example [@Compiler Explorer⁴](https://godbolt.org/z/54dh8eh3h).
 
- 
+
 
 ⁴<https://godbolt.org/z/54dh8eh3h>
-
-**Appendix A - Rules for Special**
-
- 
-
-**Member Function Generation**
-
-In the chapters about constructors and the destructor, we discussed when a compiler implicitly generates a given special member for a class type. In this appendix, you’ll see a handy summary of the rules and guidelines for most common use cases.
-
- 
-
-**The diagram**
-
-A C++ expert Howard Hinnant, a few years ago created a diagram⁵ with the rules:
-
-![](media/index-263_1.png)
-
- 
-
-⁵diagram redrawn, with permission of Howard Hinnant.
-
-248

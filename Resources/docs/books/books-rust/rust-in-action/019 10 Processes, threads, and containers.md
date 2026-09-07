@@ -24,11 +24,9 @@ core. Because accessing data from memory and I/O take a long time, threads reque
 
 Concurrency, or doing multiple things at the same time, is difficult to introduce into a computer program. Employing concurrency effectively involves both new concepts and new syntax.
 
-**328**
 
 ***Anonymous functions***
 
-**329**
 
 The aim of this chapter is to give you the confidence to explore more advanced material. You will have a solid understanding of the different tools that are available to you as an applications programmer. This chapter exposes you to the standard library and the well engineered crates crossbeam and rayon. It will enable you to use them, though it won’t give you sufficient background to be able to implement your own concurrency crates. The chapter follows the following structure:
 
@@ -66,7 +64,6 @@ Unlike regular functions, lambda functions cannot be defined in global scope.
 
 The following listing gets around this by defining one within its main(). It defines two
 
-**330**
 
 CHAPTER 10
 
@@ -128,9 +125,7 @@ thread::spawn(move \|\| {
 
 Why is move required? Closures spawned in subthreads can potentially outlive their calling scope. As Rust will always ensure that accessing the data is valid, it requires
 
-***Spawning threads***
 
-**331**
 
 ownership to move to the closure itself. Here are some guidelines for using captures while you gain an understanding of how these work:
 
@@ -194,10 +189,8 @@ In practice, *join* means wait for the other thread to finish. The join() functi
 
 In ideal settings, adding a second thread doubles the work we can do in the same amount of time. Each thread can gets its work done independently. Reality is not ideal, unfortunately. This has created a myth that threads are slow to create and bulky
 
-**332**
 
 
-***Processes, threads, and containers***
 
 to maintain. This section aims to dispel that myth. When used as intended, threads perform very well.
 
@@ -265,9 +258,7 @@ If you’ve had any exposure to the field before, you may have heard that thread
 
 Every thread requires its own memory, and by implication, we’ll eventually exhaust our system’s memory. Before that terminal point, though, thread creation begins to trigger slowdowns in other areas. As the number of threads to schedule increases, the OS scheduler’s work increases. When there are many threads to schedule, deciding which thread to schedule next takes more time.
 
-***Spawning threads***
 
-**333**
 
 ***10.2.4***
 
@@ -339,10 +330,8 @@ Second, CPU-intensive multithreading doesn’t scale well past the number of phy
 
 1 It’s also possible to use both: sleep for the bulk of the time and a spin loop towards the end.
 
-**334**
 
 
-***Processes, threads, and containers***
 
 500
 
@@ -480,9 +469,7 @@ Figure 10.3
 
 Comparing the time taken to wait for 20m using the sleep strategy (circles) versus the spin lock strategy (plus symbols). This chart shows the differences that occur as the number of threads exceeds the number of CPU cores (6).
 
-***Spawning threads***
 
-**335**
 
 ***10.2.5***
 
@@ -562,10 +549,8 @@ Using a spin loop waiting strategy
 
 11 let pause = time::Duration::from_millis(20);
 
-**336**
 
 
-***Processes, threads, and containers***
 
 12 while start.elapsed() \< pause {
 
@@ -633,9 +618,7 @@ Using a spin loop waiting strategy
 
 2
 
-***Spawning threads***
 
-**337**
 
 3 fn main() {
 
@@ -705,10 +688,8 @@ This error is saying that taking a reference isn’t valid here. That’s becaus
 
 Astute readers know that there is actually a simpler way to get around this problem than what was used in listing 10.5. As the following listing shows, simply remove the ampersand.
 
-**338**
 
 
-***Processes, threads, and containers***
 
 Listing 10.9
 
@@ -776,9 +757,7 @@ Emphasizing the needless creation of **time::Duration** instances 9 let handle =
 
 We want to be able to write something like the following listing. The source for this listing is ch10/ch10-sharedpause-broken/src/main.rs.
 
-***Spawning threads***
 
-**339**
 
 Listing 10.12
 
@@ -874,10 +853,8 @@ note: function requires argument type to outlivè'static\`
 
 --\> src/main.rs:8:19
 
-**340**
 
 
-***Processes, threads, and containers***
 
 \|
 
@@ -953,7 +930,6 @@ Closures and functions have different internal representations. Closures are ano
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**341**
 
 and std::ops::FnMut. Those structs are invisible in source code but contain any variables from the closure’s environment that are used inside it.
 
@@ -1023,10 +999,8 @@ Using this approach, everyone will have visually similar yet completely distinct
 
 Our application creates parallax lines. It does this by using the characters within the Base 16 alphabet as opcodes for a LOGO-like language.
 
-**342**
 
 
-***Processes, threads, and containers***
 
 ***10.4.1***
 
@@ -1118,7 +1092,6 @@ Generates an SVG file
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**343**
 
 Figure 10.4
 
@@ -1162,10 +1135,8 @@ The **main()** function of render-hex
 
 176 }
 
-**344**
 
 
-***Processes, threads, and containers***
 
 INPUT PARSING
 
@@ -1279,7 +1250,6 @@ The Artist struct maintains the state of the diagram. Conceptually, the Artist i
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**345**
 
 To move, Artist implements several methods of the render-hex project, two of which are highlighted in the following listing. Rust’s match expressions are used to suc-cinctly refer to and modify internal state. You’ll find the source for this listing in ch10-render-hex/src/main.rs.
 
@@ -1377,10 +1347,8 @@ Focusing on the **convert()** function
 
 148 };
 
-**346**
 
 
-***Processes, threads, and containers***
 
 149 let line = Command::Line(
 
@@ -1456,7 +1424,6 @@ The standard project structure, which you can compare against the following snip
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**347**
 
 ch10-render-hex/
 
@@ -1572,10 +1539,8 @@ Source code for render-hex
 
 **each drawn line.**
 
-**348**
 
 
-***Processes, threads, and containers***
 
 29 \#\[derive(Debug, Clone, Copy)\]
 
@@ -1729,7 +1694,6 @@ Source code for render-hex
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**349**
 
 84
 
@@ -1883,10 +1847,8 @@ Source code for render-hex
 
 138 path_data.push(start_at_home);
 
-**350**
 
 
-***Processes, threads, and containers***
 
 139
 
@@ -1996,7 +1958,6 @@ Source code for render-hex
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**351**
 
 194 fn main() {
 
@@ -2070,10 +2031,8 @@ Implementing **parse()** with imperative programming constructs 113 fn parse(inp
 
 129 }
 
-**352**
 
 
-***Processes, threads, and containers***
 
 Listing 10.20
 
@@ -2131,7 +2090,6 @@ Adding rayon v1 to dependencies
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**353**
 
 Ensure that the \[dependencies\] section of your project’s Cargo.toml matches the following listing. You’ll find the source for this listing in ch10-render-hex-parallel-iterator/Cargo.toml.
 
@@ -2207,10 +2165,8 @@ Using rayon’s par_iter() here is a “cheat mode” available to all Rust prog
 
 Sometimes, we don’t have a tidy iterator that we want to apply a function to. Another pattern to consider is the *task queue*. This allows tasks to originate anywhere and for the task processing code to be separated from task creation code. A fleet of worker threads can then pick tasks once these have finished their current one.
 
-**354**
 
 
-***Processes, threads, and containers***
 
 There are many approaches to modeling a task queue. We could create a Vec\<Task\> and Vec\<Result\> and share references to these across threads. To prevent each thread from overwriting each other, we would need a data protection strategy.
 
@@ -2238,7 +2194,6 @@ The standard library provides a channels implementation, but we’ll make use of
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**355**
 
 The channels-intro project (listings 10.23 and 10.24) provides a quick example.
 
@@ -2324,10 +2279,8 @@ Creating a channel that receives **i32** messages
 
 8 fn main() {
 
-**356**
 
 
-***Processes, threads, and containers***
 
 9 let (tx, rx) = unbounded();
 
@@ -2397,7 +2350,6 @@ When executed, channels-complex produces three lines of output. Here is a sessio
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**357**
 
 Compiling ch10-channels-intro v0.1.0 (/ch10/ch10-channels-complex) Finished dev \[unoptimized + debuginfo\] target(s) in 0.34s
 
@@ -2499,10 +2451,8 @@ Sending messages to and from a spawned thread
 
 20
 
-**358**
 
 
-***Processes, threads, and containers***
 
 21 thread::spawn(move \|\| loop {
 
@@ -2600,7 +2550,6 @@ Partial code for the channel-based task queue for render-hex
 
 ***Procedurally generated avatars from a multithreaded parser and code generator***
 
-**359**
 
 99 enum Work {
 
@@ -2794,10 +2743,8 @@ Partial code for the channel-based task queue for render-hex
 
 153 }
 
-**360**
 
 
-***Processes, threads, and containers***
 
 When independent threads are introduced, the order in which tasks are completed becomes non-deterministic. Listing 10.28 includes some additional complexity to handle this.
 
@@ -2847,9 +2794,7 @@ Isolated tasks cannot access each other’s data without permission. Independent
 
 Isolated tasks cannot cause another task to crash. A failure in one task should not cascade into other systems. If a process induces a kernel panic, all processes are shut down. By conducting work in virtual machines, tasks can proceed even when other tasks are unstable.
 
-***Concurrency and task virtualization***
 
-**361**
 
 Isolation is a continuum. Complete isolation is impractical. It implies that input and output is impossible. Moreover, isolation is often implemented in software. Running extra software implies taking on extra runtime overhead.
 
@@ -2895,10 +2840,8 @@ b
 
 Parallelism, which is multiple threads executing on multiple CPUs at the same time
 
-**362**
 
 
-***Processes, threads, and containers***
 
 ***(continued)***
 
@@ -2934,9 +2877,7 @@ Why is the CPU constantly switching tasks? Because it has so much time available
 
 Programs often need to access data from memory, disk, or the network. Because waiting for data is incredibly slow, there’s often sufficient time to do something else in the meantime.
 
-***Concurrency and task virtualization***
 
-**363**
 
 ***10.5.3***
 
@@ -2972,10 +2913,8 @@ to rely on.
 
 Using freestanding binaries can involve significant limitations, though. Without an OS, applications no longer have virtual memory or multithreading. All of those concerns become your application’s concerns. To reach a middle ground, it is possible to compile a *unikernel*. A unikernel is a minimal OS paired with a single application. The compilation process strips out everything from the OS that isn’t used by the application that’s being deployed.
 
-**364**
 
 
-***Processes, threads, and containers***
 
 ***Summary***
 

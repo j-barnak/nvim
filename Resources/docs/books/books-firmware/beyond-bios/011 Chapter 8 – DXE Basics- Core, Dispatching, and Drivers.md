@@ -1,16 +1,16 @@
 ## **Chapter 8 – DXE Basics: Core, Dispatching, and** 
 
- 
+
 
 **Drivers**
 
- 
+
 
 I do not fear computers. I fear the lack of them.
 
 —Isaac Asimov
 
- 
+
 
 This chapter describes the makeup of the Driver Execution Environment (DXE) and
 
@@ -20,7 +20,7 @@ fundamental concepts of how information is handed off between phases of the plat
 
 they do deviate from what is commonly referred to as POST tables in legacy firmware.
 
- 
+
 
 The DXE phase contains an implementation of UEFI that is compliant with the PI (Platform Initialization) *Specification*. As a result, both the DXE Core and DXE drivers
 
@@ -36,7 +36,7 @@ the DXE phase through a list of position-independent data structures called Hand
 
 ■ DXE Drivers
 
- 
+
 
 The DXE Core produces a set of Boot Services, Runtime Services, and DXE Services. The DXE Dispatcher is responsible for discovering and executing DXE drivers in the
 
@@ -50,13 +50,12 @@ is, when the BDS phase starts. Only the runtime services provided by the DXE Cor
 
 runtime environment. The result of DXE is the presentation of a fully formed UEFI interface.
 
- 
+
 
 DOI 10.1515/9781501505690-010
 
-**112** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
 
- 
+
 
 Figure 8.1 shows the phases that a platform with UEFI compatible firmware goes through on a cold boot. This chapter covers the following:
 
@@ -68,17 +67,17 @@ Figure 8.1 shows the phases that a platform with UEFI compatible firmware goes t
 
 ![](media/index-131_1.png)
 
- 
+
 
 **Figure 8.1:** Platform Boot Phases
 
 ![](media/index-131_2.png)
 
- 
+
 
 **DXE Core**
 
- 
+
 
 The DXE Core is designed to be completely portable with no processor, chipset, or platform dependencies. This portability is accomplished by incorporating several fea-
 
@@ -104,9 +103,8 @@ processor’s physical address space.
 
 form-specific information. Instead, the DXE Core is abstracted from the system
 
-DXE Core \| **113**
 
- 
+
 
 hardware through a set of architectural protocol interfaces. These architectural
 
@@ -114,17 +112,17 @@ protocol interfaces are produced by a set of DXE drivers that are invoked by the
 
 DXE Dispatcher.
 
- 
+
 
 Below is an illustration showing how data is handed off between the PEI and DXE phases.
 
 ![](media/index-132_1.png)
 
- 
+
 
 **Figure 8.2:** Early Initialization Illustrating a Handoff between PEI and DXE
 
- 
+
 
 The DXE Core produces the EFI System Table and its associated set of EFI Boot Ser-
 
@@ -138,9 +136,9 @@ driver image. DXE drivers utilize a PE/COFF image format, so the DXE Dispatcher 
 
 The DXE Core must also maintain a handle database. A handle database is a list of one or more handles, and a handle is a list of one or more unique protocol GUIDs.
 
-A protocol is a software abstraction for a set of services. Some protocols abstract I/O **114** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
+A protocol is a software abstraction for a set of services. Some protocols abstract I/O
 
- 
+
 
 devices, and other protocols abstract a common set of system services. A protocol typ-ically contains a set of APIs and some number of data fields. Every protocol is named
 
@@ -148,11 +146,11 @@ by a GUID, and the DXE Core produces services that allow protocols to be registe
 
 in the handle database. As the DXE Dispatcher executes DXE drivers, additional pro-tocols are added to the handle database including the DXE Architectural Protocols that are used to abstract the DXE Core from platform-specific details.
 
- 
+
 
 **Hand-Off Block (HOB) List**
 
- 
+
 
 The HOB list contains all the information that the DXE Core requires to produce its memory-based services. The HOB list contains information on the boot mode, the pro-
 
@@ -182,17 +180,16 @@ DXE Core.
 
 ![](media/index-133_1.png)
 
- 
+
 
 **Figure 8.3:** HOB List
 
-DXE Core \| **115**
 
- 
+
 
 **DXE Architectural Protocols**
 
- 
+
 
 The DXE Core is abstracted from the platform hardware through a set of DXE Archi-
 
@@ -216,13 +213,12 @@ ure and then produces the EFI System Table, EFI Boot Services Table, and the EFI
 
 ![](media/index-134_1.png)
 
- 
+
 
 **Figure 8.4:** DXE Architectural Protocols
 
-**116** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
 
- 
+
 
 Figure 8.4 shows all the major components present in the DXE phase. The EFI Boot Services Table and DXE Services Table shown on the left are allocated from UEFI boot
 
@@ -240,7 +236,7 @@ transition the runtime services from physical mode to virtual mode under the dir
 
 The following is a brief summary of the DXE Architectural Protocols:
 
- 
+
 
 ■ Security Architectural Protocol: Allows the DXE Core to authenticate files stored
 
@@ -290,9 +286,8 @@ vironment variables.
 
 DXE Core to manage a 64-bit monotonic counter.
 
-DXE Core \| **117**
 
- 
+
 
 ■ Reset Architectural Protocol: Provides the services required to reset or shutdown
 
@@ -308,11 +303,11 @@ the current time and date as well as the time and date of an optional wakeup
 
 timer.
 
- 
+
 
 **EFI System Table**
 
- 
+
 
 The DXE Core produces the EFI System Table, which is consumed by every DXE driver
 
@@ -322,11 +317,11 @@ loaded DXE driver. Figure 8.5 shows the various components that are available th
 
 ![](media/index-136_1.png)
 
- 
+
 
 **Figure 8.5:** EFI System Table and Related Components
 
- 
+
 
 The DXE Core produces the EFI Boot Services, EFI Runtime Services, and DXE Services
 
@@ -334,9 +329,9 @@ with the aid of the DXE Architectural Protocols. The EFI System Table provides a
 
 bles. The EFI Configuration Tables are an extensible list of tables that describe the configuration of the platform including pointers to tables such as DXE Services, the
 
-HOB list, ACPI, System Management BIOS (SMBIOS), and the SAL System Table. This **118** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
+HOB list, ACPI, System Management BIOS (SMBIOS), and the SAL System Table. This
 
- 
+
 
 list may be expanded in the future as new table types are defined. Also, through the use of the Protocol Handle Services in the EFI Boot Services Table, any executable
 
@@ -352,11 +347,11 @@ able in the OS runtime environment. You also have the option of converting all o
 
 virtual address space. This address space conversion may only be performed once.
 
- 
+
 
 **EFI Boot Services Table**
 
- 
+
 
 The following is a brief summary of the services that are available through the EFI
 
@@ -410,19 +405,18 @@ devices in the platform. These services are used by the BDS phase to either con-
 
 nect all drivers to all devices, or to connect only the minimum number of drivers
 
-DXE Core \| **119**
 
- 
+
 
 to devices required to establish the consoles and boot an OS. The minimal con-
 
 nect strategy is how a fast boot mechanism is provided.
 
- 
+
 
 **EFI Runtime Services Table**
 
- 
+
 
 The following is a brief summary of the services that are available through the EFI Runtime Services Table:
 
@@ -458,11 +452,11 @@ virtual conversion has been performed, these services cannot be called again.
 
 These services depend on the Runtime Architectural Protocol.
 
- 
+
 
 **DXE Services Table**
 
- 
+
 
 The following is a brief summary of the services that are available through the DXE
 
@@ -480,13 +474,12 @@ processor’s Global Coherency Domain (GCD).
 
 dispatched by the DXE Dispatcher.
 
-**120** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
 
- 
+
 
 **Global Coherency Domain Services**
 
- 
+
 
 The Global Coherency Domain (GCD) Services are used to manage the memory and I/O resources visible to the boot processor. These resources are managed in two dif-
 
@@ -496,7 +489,7 @@ ferent maps:
 
 ■ GCD I/O space map
 
- 
+
 
 If memory or I/O resources are added, removed, allocated, or freed, then the GCD memory space map and GCD I/O space map are updated. GCD Services are also pro-
 
@@ -510,11 +503,11 @@ so the management of I/O resources may not be required. However, since system me
 
 DXE environment, the management of memory resources is always required.
 
- 
+
 
 **GCD Memory Resources**
 
- 
+
 
 The Global Coherency Domain (GCD) Services used to manage memory resources in-
 
@@ -530,13 +523,13 @@ clude the following:
 
 ■ SetMemorySpaceAttributes()
 
- 
+
 
 The GCD Services used to retrieve the GCD memory space map include the following: ■ GetMemorySpaceDescriptor()
 
 ■ GetMemorySpaceMap()
 
- 
+
 
 The GCD memory space map is initialized from the HOB list that is passed to the entry
 
@@ -548,9 +541,8 @@ memory space map is designed to describe the memory address space with as many a
 
 a byte boundary. Additional HOB types describe the location of system memory, the
 
-Global Coherency Domain Services \| **121**
 
- 
+
 
 location memory mapped I/O, the location of firmware devices, the location of firm-ware volumes, the location of reserved regions, and the location of system memory
 
@@ -562,7 +554,7 @@ map provides the DXE Core with the information required to initialize the memory
 
 FreePool(), and GetMemoryMap().
 
- 
+
 
 A memory region described by the GCD memory space map can be in one of several different states:
 
@@ -574,7 +566,7 @@ A memory region described by the GCD memory space map can be in one of several d
 
 ■ Reserved memory
 
- 
+
 
 These memory regions can be allocated and freed by DXE drivers executing in the DXE
 
@@ -584,21 +576,20 @@ in the GCD memory space map. The transitions are labeled with the GCD Service th
 
 similar memory regions that are adjacent to each other into a single memory descriptor, which reduces the number of entries in the GCD memory space map.
 
-**122** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
 
 ![](media/index-141_1.png)
 
- 
+
 
 **Figure 8.6:** GCD Memory State Transitions
 
 ![](media/index-141_2.png)
 
- 
+
 
 **GCD I/O Resources**
 
- 
+
 
 The Global Coherency Domain (GCD) Services used to manage I/O resources include the following:
 
@@ -610,7 +601,7 @@ The Global Coherency Domain (GCD) Services used to manage I/O resources include 
 
 ■ RemoveIoSpace()
 
- 
+
 
 The GCD Services used to retrieve the GCD I/O space map include the following:
 
@@ -618,7 +609,7 @@ The GCD Services used to retrieve the GCD I/O space map include the following:
 
 ■ GetIoSpaceMap()
 
- 
+
 
 The GCD I/O space map is initialized from the HOB list that is passed to the entry point
 
@@ -628,9 +619,8 @@ space map. Any I/O regions outside this initial region are not available to any 
 
 signed to describe the I/O address space with as many as 64 address lines. Each re-gion in the GCD I/O space map can begin and end on a byte boundary.
 
-DXE Dispatcher \| **123**
 
- 
+
 
 An I/O region described by the GCD I/O space map can be in several different states. These include nonexistent I/O, I/O, and reserved I/O. These I/O regions can be
 
@@ -642,15 +632,15 @@ cent to each other into a single I/O descriptor, which reduces the number of ent
 
 ![](media/index-142_1.png)
 
- 
+
 
 **Figure 8.7:** GCD I/O State Transitions
 
- 
+
 
 **DXE Dispatcher**
 
- 
+
 
 After the DXE Core is initialized, control is handed to the DXE Dispatcher. The DXE Dispatcher is responsible for loading and invoking DXE drivers found in firmware vol-
 
@@ -660,9 +650,9 @@ they are, the DXE Dispatcher searches them for drivers as well.
 
 When a new firmware volume is discovered, a search is made for its a priori file.
 
-The a priori file has a fixed file name and contains the list of DXE drivers that should be loaded and executed first. There can be at most one a priori file per firmware vol-ume, although it is acceptable to have no a priori file at all. Once the DXE drivers from **124** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
+The a priori file has a fixed file name and contains the list of DXE drivers that should be loaded and executed first. There can be at most one a priori file per firmware vol-ume, although it is acceptable to have no a priori file at all. Once the DXE drivers from
 
- 
+
 
 the a priori file have been loaded and executed, the dependency expressions of the remaining DXE drivers in the firmware volumes are evaluated to determine the order
 
@@ -688,17 +678,16 @@ between the Dispatcher, its launched drivers, and the BDS.
 
 ![](media/index-143_1.png)
 
- 
+
 
 **Figure 8.8:** The Handshake between the Dispatcher and Other Components
 
-DXE Dispatcher \| **125**
 
- 
+
 
 **The** ***a priori*** **File**
 
- 
+
 
 The a priori file is a special file that may be present in a firmware volume. The rule is
 
@@ -726,11 +715,11 @@ this ordering, and none of the DXE drivers would require dependency expressions.
 
 this method might actually conserve firmware space. The main purpose of the a priori file is to provide a greater degree of flexibility in the firmware design of a platform.
 
- 
+
 
 **Dependency Grammar**
 
- 
+
 
 A DXE driver is stored in a firmware volume as a file with one or more sections. One of the sections must be a PE/COFF image. If a DXE driver has a dependency expres-
 
@@ -744,65 +733,61 @@ erands.
 
 Dependency expressions stored in dependency sections are designed to be small
 
-to conserve space. In addition, they are designed to be simple and quick to evaluate to reduce execution overhead. These two goals are met by designing a small, stack-**126** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
-
- 
-
-based instruction set to encode the dependency expressions. The DXE Dispatcher must implement an interpreter for this instruction set to evaluate dependency expres-
+to conserve space. In addition, they are designed to be simple and quick to evaluate to reduce execution overhead. These two goals are met by designing a small, stack-based instruction set to encode the dependency expressions. The DXE Dispatcher must implement an interpreter for this instruction set to evaluate dependency expres-
 
 sions. Table 8.1 gives a summary of the supported opcodes in the dependency expres-
 
 sion instruction set.
 
- 
+
 
 **Table 8.1:** Supported Opcodes in the Dependency Expression Instruction Set
 
- 
+
 
 **Opcode** **Description**
 
- 
+
 
 0x00 BEFORE \<File Name GUID\>
 
- 
+
 
 0x01 AFTER \<File Name GUID\>
 
- 
+
 
 0x02 PUSH \<Protocol GUID\>
 
- 
+
 
 0x03 AND
 
- 
+
 
 0x04 OR
 
- 
+
 
 0x05 NOT
 
- 
+
 
 0x06 TRUE
 
- 
+
 
 0x07 FALSE
 
- 
+
 
 0x08 END
 
- 
+
 
 0x09 SOR
 
- 
+
 
 Because multiple dependency expressions may evaluate to TRUE at the same time, the order in which the DXE drivers are loaded and executed may vary between boots
 
@@ -810,17 +795,17 @@ and between platforms even though the contents of their firmware volumes are ide
 
 platform when dependency expressions are used.
 
- 
+
 
 **DXE Drivers**
 
- 
+
 
 DXE drivers have two subclasses:
 
 ■ DXE drivers that execute very early in the DXE phase ■ DXE drivers that comply with the UEFI Driver Model
 
- 
+
 
 The execution order of the first subclass, the early DXE drivers, depends on the pres-
 
@@ -828,9 +813,8 @@ ence and contents of an a priori file and the evaluation of dependency expressio
 
 tion code. They also typically produce the DXE Architectural Protocols that are re-quired for the DXE Core to produce its full complement of EFI Boot Services and EFI
 
-Boot Device Selection (BDS) Phase \| **127**
 
- 
+
 
 Runtime Services. To support the fastest possible boot time, as much initialization as possible should be deferred to the second subclass of DXE drivers, those that comply
 
@@ -856,11 +840,11 @@ until all of the DXE Architectural Protocols are registered. If the DXE Dispatch
 
 cols have been registered, then a fatal error has occurred and the system will be halted.
 
- 
+
 
 **Boot Device Selection (BDS) Phase**
 
- 
+
 
 The Boot Device Selection (BDS) Architectural Protocol executes during the BDS phase. The BDS Architectural Protocol is discovered in the DXE phase, and it is exe-
 
@@ -880,13 +864,13 @@ umes have been processed and all the DXE drivers whose dependency expression
 
 have evaluated to TRUE have been loaded and executed.
 
- 
+
 
 The BDS Architectural Protocol locates and loads various applications that execute in
 
-the pre-boot services environment. Such applications might represent a traditional OS boot loader or extended services that might run instead of or prior to loading the **128** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
+the pre-boot services environment. Such applications might represent a traditional OS boot loader or extended services that might run instead of or prior to loading the
 
- 
+
 
 final OS. Such extended pre-boot services might include setup configuration, ex-tended diagnostics, flash update support, OEM services, or the OS boot code.
 
@@ -894,7 +878,7 @@ Vendors such as IBVs, OEMs, and ISVs may choose to use a reference implemen-
 
 tation, develop their own implementation based on the reference, or develop an im-plementation from scratch.
 
- 
+
 
 The BDS phase performs a well-defined set of tasks. The user interface and user inter-action that occurs on different boots and different platforms may vary, but the boot
 
@@ -914,7 +898,7 @@ vironment variables.
 
 der environment variables.
 
- 
+
 
 If the BDS phase is unable to connect a console device, load a driver, or boot a boot selection, it is required to reinvoke the DXE Dispatcher. This invocation is required
 
@@ -926,11 +910,11 @@ is returned to the BDS phase. If the BDS phase is unable to make any additional 
 
 tion of that console device or boot selection fails. When a failure occurs, the BDS phase moves on to the next console device, driver load, or boot selection.
 
- 
+
 
 **Console Devices**
 
- 
+
 
 Console devices are abstracted through the Simple Text Output and Simple Input Pro-tocols. Any device that produces one or both of these protocols may be used as a con-
 
@@ -948,9 +932,8 @@ text-based display that produces the Simple Text Output Protocol can be simu-
 
 lated on top of a GOP display by using BLT operations to send Unicode glyphs
 
-Boot Device Selection (BDS) Phase \| **129**
 
- 
+
 
 into the frame buffer. GOP is also the means by which graphics is typically ren-
 
@@ -974,11 +957,11 @@ could use HTTP, so standard Internet browsers could be used to manage a UEFI-
 
 based platform.
 
- 
+
 
 **Boot Devices**
 
- 
+
 
 Several types of boot devices are supported in UEFI:
 
@@ -992,17 +975,17 @@ system
 
 cally produce the Load File Protocol.
 
- 
+
 
 A UEFI implementation may also choose to include legacy compatibility drivers. These drivers provide the services required to boot a traditional OS, and the BDS
 
 phase could then also support booting a traditional OS.
 
- 
+
 
 **Boot Services Terminate**
 
- 
+
 
 The BDS phase is terminated when an OS loader is executed and an OS is successfully
 
@@ -1012,13 +995,12 @@ BootServices() to terminate the BDS phase. Once this call is made, all of the bo
 
 entered.
 
-**130** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
 
- 
+
 
 **Summary**
 
- 
+
 
 In conclusion, the DXE phase encompasses the establishing of the entire infrastruc-ture necessary for UEFI compliant components to operate. This includes the estab-
 

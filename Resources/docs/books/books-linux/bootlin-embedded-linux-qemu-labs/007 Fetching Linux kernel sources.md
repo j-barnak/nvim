@@ -42,9 +42,7 @@ The Linux kernel repository from Linus Torvalds contains all the main releases o
 
 We will add this separate repository as another *remote* to be able to use the stable releases: git remote add stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux git fetch stable
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 13
 
-Embedded Linux System Development
 
 As this still represents many git objects to download (2.4 GiB when 6.9 was the latest version), if you are using an already downloaded git tree, your instructor will probably have fetched the *stable* branch ahead of time for you too. You can check by running:
 
@@ -56,6 +54,3 @@ Now, let’s continue the lectures. This will leave time for the commands that y
 
 14
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
-
-Embedded Linux System Development

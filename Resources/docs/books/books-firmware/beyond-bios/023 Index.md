@@ -1,6 +1,6 @@
 **Index**
 
- 
+
 
 ACPI 3, 60, 67, 68, 69, 78, 105, 108, 117, 179, – optimized 13, 38, 241, 247, 255
 
@@ -36,7 +36,7 @@ BIOS 271, 278, 283, 286
 
 – evolution vi, 3, 12, 21, 48, 67, 75, 107, 160 Dependency Expression 113, 124, 128, 138, Block I/0 Protocol 36, 107, 129, 147 214 Boolean Expression 276 Device Drivers 25, 31, 144, 154, 254, 271 Boot Device Handle 22, 32, 57, 140, 155 – Devices 161, 257 Device Path Protocol 25, 34, 43, 56, 143 – Firmware 198, 203, 209, 253 Distributed Management Task Force (DMTF) – flow 2, 10, 157, 167, 195, 211, 248, 264 271, 285 – Loader 26, 48, 125, 184, 255 Driver Binding Protocol 24, 31, 39, 52, 127 – manager 26, 38, 48, 76, 169, 183 Driver Execution Environment (DXE) viii, 111, – mode 196, 203, 215, 223 211 – network booting 175, 193 – components 107, 121, 221 – performance 237, 241, 244, 247, 250 – core 111, 127, 179 – boot media 193, 244 – dispatcher 112, 116, 119, 128 – marketing requirements 237, 243, 246 – drivers 3, 97, 106, 112, 124, 136, 203, 222 **302** \| Index
 
- 
+
 
 – Foundation 102, 133, 138, 210 Hand-Off Block (HOB) 114 – handoff with Pre-EFI Initialization (PEI) 214 Handle 16, 32, 40, 56, 83, 113, 135, 208, 234, – initial program load (IPL) 218, 253, 258, 270, 289
 
@@ -78,7 +78,7 @@ Original Equipment Manufacturers (OEMs) 31
 
 Index \| **303**
 
- 
+
 
 OS Kernel 55, 60, 186, 272 Preboot eXecution Environment (PXE) BIOS OS Loader 10, 21, 55, 61, 74, 82, 166, 179, 193
 
@@ -116,7 +116,7 @@ COFF) 32, 160, 222 54, 157 – Driver Execution Environment (DXE) drivers
 
 **304** \| Index
 
- 
+
 
 Tablet 97 Unified Extensible Firmware Interface (UEFI)
 
@@ -148,7 +148,7 @@ UEFI runtime services table 16, 69 Variable architectural 96, 116, 138 UEFI Secu
 
 Index \| **305**
 
- 
+
 
 Variable Write 117, 138 Web Services Management Protocol 285 – architectural protocols (APs) 3, 101, 114, Windows Hardware Error Architecture (WHEA)
 

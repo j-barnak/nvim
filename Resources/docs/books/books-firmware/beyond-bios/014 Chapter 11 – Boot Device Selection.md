@@ -1,12 +1,12 @@
 ## **Chapter 11 – Boot Device Selection** 
 
- 
+
 
 I just invent, then wait until man comes around to needing what I invented.
 
 —R. Buckminster Fuller
 
- 
+
 
 UEFI has over time evolved a very basic paradigm for establishing a firmware policy
 
@@ -22,11 +22,11 @@ In fact, the differences between what is known as the boot manager in earlier fi
 
 trate. Figure 11.1 shows the software flow in an early firmware design environment, and Figure 11.2 shows one that is PI-compatible.
 
- 
+
 
 **Exposed**
 
- 
+
 
 **Vectpr** **Interface** **OS-Absent** **Reset** **Runtime**
 
@@ -42,13 +42,13 @@ trate. Figure 11.1 shows the software flow in an early firmware design environme
 
 **Board** **Service** **Transient OS** **Init** **Driver** **Boot Loader**
 
- 
+
 
 **Boot Manager** **OS-Present** **App**
 
 ![](media/index-202_1.png)
 
- 
+
 
 **Boot Loader** **Final OS** **?** **Final OS**
 
@@ -76,13 +76,13 @@ trate. Figure 11.1 shows the software flow in an early firmware design environme
 
 ![](media/index-202_7.png)
 
- 
+
 
 **Figure 11.1:** Earlier Firmware Designs with a Boot Manager Component
 
 ![](media/index-202_8.png)
 
- 
+
 
 DOI 10.1515/9781501505690-013
 
@@ -96,15 +96,14 @@ DOI 10.1515/9781501505690-013
 
 ![](media/index-202_13.png)
 
-**184** \| Chapter 11 – Boot Device Selection
 
 ![](media/index-203_1.png)
 
- 
+
 
 **Figure 11.2:** PI-based Solution with a BDS Component
 
- 
+
 
 As you can see from comparing the two figures, there is much overlap. The BDS phase subsumes the direction described in this chapter and is further explained in Chapter 8.
 
@@ -124,7 +123,7 @@ failed the first time the driver was loaded. Another example would be booting to
 
 process.
 
- 
+
 
 The boot sequence for UEFI consists of the following: ■ The platform firmware reads the boot order list from a globally defined NVRAM
 
@@ -134,9 +133,8 @@ mation about what is to be booted. Each NVRAM variable defines a Unicode name
 
 for the boot option that can be displayed to a user.
 
-Firmware Boot Manager \| **185**
 
- 
+
 
 ■ The variable also contains a pointer to the hardware device and to a file on that
 
@@ -146,7 +144,7 @@ hardware device that contains the UEFI image to be loaded.
 
 other configuration-specific directories.
 
- 
+
 
 The NVRAM can also contain load options that are passed directly to the UEFI image.
 
@@ -156,11 +154,11 @@ variable to set the platform firmware boot policy. This information could be use
 
 loader.
 
- 
+
 
 **Firmware Boot Manager**
 
- 
+
 
 The boot manager is a component in the UEFI firmware that determines which UEFI
 
@@ -192,9 +190,9 @@ order. The second is BootOrder that orders the Boot#### load options variables i
 
 For example, to add a new boot option, a new Boot#### variable would be
 
-added. Then the option number of the new Boot#### variable would be added to the BootOrder ordered list and the BootOrder variable would be rewritten. To **186** \| Chapter 11 – Boot Device Selection
+added. Then the option number of the new Boot#### variable would be added to the BootOrder ordered list and the BootOrder variable would be rewritten. To
 
- 
+
 
 change boot option on an existing Boot####, only the Boot#### variable would need to be rewritten. A similar operation would be done to add, remove, or modify
 
@@ -240,9 +238,8 @@ ery method is explained in the section “Default Behavior for Boot Option Varia
 
 PLE_FILE_SYSTEM is handled by the LOAD_FILE_PROTOCOL for the target device path and does not need to be handled by the boot manager.
 
-Firmware Boot Manager \| **187**
 
- 
+
 
 The boot manager must also support booting from a short-form device path that starts with the first element being a hard drive media device path. The boot manager
 
@@ -258,7 +255,7 @@ be used. If more than one device matches the hard drive device path, the boot ma
 
 the signatures on hard drives to guarantee deterministic boot behavior.
 
- 
+
 
 Each load option variable contains an EFI_LOAD_OPTION descriptor that is a byte-packed buffer of variable-length fields. Since some of the fields are of variable length,
 
@@ -276,7 +273,7 @@ EFI_DEVICE_PATH FilePathList\[\];
 
 UINT8 OptionalData\[\];
 
- 
+
 
 ■ *Attributes* - The attributes for this load option entry. All unused bits must be zero
 
@@ -310,9 +307,8 @@ to be aligned on a natural boundary. This data structure may have to be copied
 
 to an aligned natural boundary before it is used.
 
-**188** \| Chapter 11 – Boot Device Selection
 
- 
+
 
 ■ *OptionalData* - The remaining bytes in the load option descriptor are a binary data
 
@@ -324,11 +320,11 @@ be computed by subtracting the starting offset of OptionalData from total size i
 
 bytes of the EFI_LOAD_OPTION.
 
- 
+
 
 **Related Definitions**
 
- 
+
 
 The load option attributes are defined by the values below.
 
@@ -340,7 +336,7 @@ The load option attributes are defined by the values below.
 
 \#define LOAD_OPTION_ACTIVE 0x00000001 \#define LOAD_OPTION_FORCE_RECONNECT 0x00000002
 
- 
+
 
 Calling SetVariable() creates a load option. The size of the load option is the
 
@@ -356,11 +352,11 @@ drivers in the system will be disconnected and reconnected after the last Driver
 
 ecution of the UEFI Boot Manager.
 
- 
+
 
 **Globally-Defined Variables**
 
- 
+
 
 This section defines a set of variables that have architecturally defined meanings. In
 
@@ -372,9 +368,9 @@ have this attribute will be lost when power is removed from the system and the s
 
 ute of BS are only available before ExitBootServices() is called. This means
 
-that these environment variables can only be retrieved or modified in the preboot en-vironment. They are not visible to an operating system. Environment variables with Globally-Defined Variables \| **189**
+that these environment variables can only be retrieved or modified in the preboot en-vironment. They are not visible to an operating system. Environment variables with
 
- 
+
 
 an attribute of RT are available before and after ExitBootServices() is called. Environment variables of this type can be retrieved and modified in the preboot envi-
 
@@ -382,97 +378,96 @@ ronment, and from an operating system. All architecturally defined variables use
 
 EFI_GLOBAL_VARIABLE VendorGuid:
 
- 
+
 
 \#define EFI_GLOBAL_VARIABLE \\
 
 {8BE4DF61-93CA-11d2-AA0D-00E098032B8C}
 
- 
+
 
 To prevent name collisions with possible future globally defined variables, other in-
 
 ternal firmware data variables that are not defined here must be saved with a unique VendorGuid other than EFI_GLOBAL_VARIABLE. Table 11.1 lists the global variables.
 
- 
+
 
 **Table 11. 1:** Global Variables
 
- 
+
 
 **Variable Name** **Attribute Description**
 
- 
+
 
 LangCodes BS, RT The language codes that the firmware supports.
 
- 
+
 
 Lang NV, BS, RT The language code that the system is configured for.
 
- 
+
 
 Timeout NV, BS, RT The firmwares boot manager’s timeout, in seconds,
 
 before initiating the default boot selection.
 
- 
+
 
 ConIn NV, BS, RT The device path of the default input console.
 
- 
+
 
 ConOut NV, BS, RT The device path of the default output console.
 
- 
+
 
 ErrOut NV, BS, RT The device path of the default error output device.
 
- 
+
 
 ConInDev BS, RT The device path of all possible console input devices.
 
- 
+
 
 ConOutDev BS, RT The device path of all possible console output de-
 
 vices.
 
- 
+
 
 ErrOutDev BS, RT The device path of all possible error output devices.
 
- 
+
 
 Boot#### NV, BS, RT A boot load option, where \#### is a printed hex
 
 value. No 0x or h is included in the hex value.
 
- 
+
 
 BootOrder NV, BS, RT The ordered boot option load list.
 
- 
+
 
 BootNext NV, BS, RT The boot option for the next boot only.
 
- 
+
 
 BootCurrent BS, RT The boot option that was selected for the current boot.
 
- 
+
 
 Driver#### NV, BS, RT A driver load option, where \#### is a printed hex
 
 value.
 
- 
+
 
 DriverOrder NV, BS, RT The ordered driver load option list.
 
-**190** \| Chapter 11 – Boot Device Selection
 
- 
+
 
 The LangCodes variable contains an array of 3-character (8-bit ASCII characters) ISO-639-2 language codes that the firmware can support. At initialization time the
 
@@ -524,9 +519,8 @@ iable before transferring control to the preselected boot option.
 
 The BootCurrent variable is a single UINT16 that defines the Boot#### op-tion that was selected on the current boot.
 
-Boot Mechanisms \| **191**
 
- 
+
 
 Each Driver#### variable contains an EFI_LOAD_OPTION. Each load option variable is appended with a unique number, for example Driver0001,
 
@@ -538,11 +532,11 @@ the second logical driver load option, and so on. The DriverOrder list is used b
 
 explicitly load.
 
- 
+
 
 **Default Behavior for Boot Option Variables**
 
- 
+
 
 The default state of globally defined variables is firmware vendor specific. However, the boot options require a standard default behavior in the exceptional case that valid boot options are not present on a platform. The default behavior must be invoked any
 
@@ -562,11 +556,11 @@ nance utility. If this is an operating system setup program it is then responsib
 
 ware may also decide to recover or set to a known set of boot options.
 
- 
+
 
 **Boot Mechanisms**
 
- 
+
 
 UEFI can boot from a device using the SIMPLE_FILE_SYSTEM protocol or the
 
@@ -576,13 +570,12 @@ must materialize a file system protocol for that device to be bootable. If a dev
 
 PLE_FILE_SYSTEM protocol first. If that fails, then the LOAD_FILE protocol will be used.
 
-**192** \| Chapter 11 – Boot Device Selection
 
- 
+
 
 **Boot via Simple File Protocol**
 
- 
+
 
 When booting via the SIMPLE_FILE_SYSTEM protocol, the FilePath parameter will start
 
@@ -594,7 +587,7 @@ The format of the file system specified by UEFI is contained in the UEFI specifi
 
 stands the UEFI file system, any file system can be abstracted with the SIM-PLE_FILE_SYSTEM protocol interface.
 
- 
+
 
 **Removable Media Boot Behavior**
 
@@ -610,39 +603,39 @@ adding a default file name in the form \EFI\BOOT\BOOT{*machine type short-**name
 
 ture. Each file only contains one UEFI image type, and a system may support booting from one or more images types. Table 11.2 lists the UEFI image types.
 
- 
+
 
 **Table 11.2:** UEFI Image Types
 
- 
+
 
 **Architecture** **File name convention** **PE Executable machine type\***
 
- 
+
 
 IA-32 BOOTIA32.EFI 0x14c
 
- 
+
 
 x64 BOOTx64.EFI 0x8664
 
- 
+
 
 Itanium® architecture BOOTIA64.EFI 0x200
 
- 
+
 
 ARM† architecture BOOTARM.EFI 0x01c2
 
- 
+
 
 Note: The PE Executable machine type is contained in the machine field of the COFF
 
 file header as defined in the Microsoft Portable Executable and Common Object File Format Specification, Revision 6.0.
 
-A media may support multiple architectures by simply having a \EFI\BOOT\\ BOOT{*machine type short-name*}.EFI file of each possible machine type. Boot Mechanisms \| **193**
+A media may support multiple architectures by simply having a \EFI\BOOT\\ BOOT{*machine type short-name*}.EFI file of each possible machine type.
 
- 
+
 
 **Non-removable Media Boot Behavior**
 
@@ -656,11 +649,11 @@ The platform policy will leverage the BOOT#### variables referenced by the BootO
 
 tain the FilePath data for the boot target and are what typically are used for the boot process to occur.
 
- 
+
 
 **Boot via LOAD_FILE Protocol**
 
- 
+
 
 When booting via the LOAD_FILE protocol, the FilePath is a device path that points to a device that “speaks” the LOAD_FILE protocol. The image is loaded directly from
 
@@ -674,7 +667,7 @@ The LOAD_FILE protocol is used for devices that do not directly support file sys
 
 tems. Network devices commonly boot in this model where the image is materialized without the need of a file system.
 
- 
+
 
 **Network Booting**
 
@@ -684,7 +677,7 @@ PXE specifies UDP, DHCP, and TFTP network protocols that a booting platform can 
 
 that are used to implement PXE. These interfaces are contained in the PXE_BASE_CODE protocol defined in the UEFI specification.
 
- 
+
 
 **Future Boot Media**
 
@@ -696,13 +689,12 @@ implementation of the UEFI platform services may change, but the interface will 
 
 boot media so that it can make the transition from UEFI boot services to operating system control of the boot media.
 
-**194** \| Chapter 11 – Boot Device Selection
 
- 
+
 
 **Summary**
 
- 
+
 
 In conclusion, this chapter indicates the mechanism by which a UEFI compliant sys-tem determines what the boot target(s) is and in what order such execution would
 

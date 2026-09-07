@@ -206,9 +206,7 @@ application-level protocol 254
 
 queues 358–360
 
-**419**
 
-**420**
 
 INDEX
 
@@ -535,7 +533,6 @@ chunks() option 219
 std::fmt::Display 99–102
 
 
-**421**
 
 computer architecture 206
 
@@ -861,7 +858,6 @@ CPU emulation 158–173
 
 dynamic dispatch 256
 
-**422**
 
 
 dynamic memory allocation
@@ -1183,7 +1179,6 @@ format 214–216
 overview 48–49
 
 
-**423**
 
 flow control *(continued)*
 
@@ -1503,7 +1498,6 @@ higher-order programming 9
 
 software interrupts 395
 
-**424**
 
 
 .into() method 318
@@ -1821,7 +1815,6 @@ LIFO (Last In, First Out) 188
 mem::transmute 157
 
 
-**425**
 
 memory
 
@@ -2145,7 +2138,6 @@ epochs 318–319
 
 required 119–122
 
-**426**
 
 
 ownership *(continued)*
@@ -2463,7 +2455,6 @@ Rc\<RefCell\<T\>\> 132–133, 185
 response.text() method 255
 
 
-**427**
 
 response variable 255
 
@@ -2791,7 +2782,6 @@ Heartbleed 21–22
 
 407
 
-**428**
 
 
 signals 407–408
@@ -3117,7 +3107,6 @@ std::net::AddrParseError 271
 target_endian attribute 227
 
 
-**429**
 
 target_env attribute 227
 
@@ -3449,7 +3438,6 @@ common behavior 306
 
 type safety 110
 
-**430**
 
 
 U

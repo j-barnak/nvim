@@ -1,34 +1,35 @@
+![](media/index-109_1.jpg)
+
 Describing hardware devices
 
- 
+
 
 Describing hardware
 
- 
+
 
 devices
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 109/436
+
 
 Describing hardware devices
 
- 
+
 
 Discoverable hardware: USB and PCI
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 110/436 Discoverable hardware
 
- 
+Discoverable hardware
+
+
 
 ▶ Some busses have built-in hardware discoverability mechanisms ▶ Most common busses: USB and PCI ▶ Hardware devices can be enumerated, and their characteristics retrieved with just
 
@@ -42,21 +43,20 @@ a driver or the bus controller
 
 other characteristics of the device: device class, device sub-class, etc.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 111/436
+
 
 Describing hardware devices
 
- 
+
 
 Describing non-discoverable hardware
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 112/436 Describing non-discoverable hardware
 
- 
+Describing non-discoverable hardware
+
+
 
 1\. Directly in the ▶ Using compiled data structures, typically in C
 
@@ -66,13 +66,12 @@ Describing non-discoverable hardware
 
 which motivated the move to another solution.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 113/436
+
 
 Describing non-discoverable hardware
 
- 
+
 
 ▶ On *x86* systems, but also on a subset of ARM64
 
@@ -80,11 +79,11 @@ platforms
 
 2\. Using **ACPI** tables ▶ Tables provided by the firmware
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 113/436 Describing non-discoverable hardware
 
- 
+Describing non-discoverable hardware
+
+
 
 ▶ Originates from **OpenFirmware**, defined by Sun, used
 
@@ -102,13 +101,12 @@ architectures that run Linux: ARC, ARM64, RISC-V, ARM32, PowerPC, Xtensa, MIPS, 
 
 to a new board, or when connecting additional peripherals
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 113/436
+
 
 Device Tree: from source to blob
 
- 
+
 
 ▶ A tree data structure describing the hardware is written
 
@@ -134,17 +132,17 @@ loaded into memory.
 
 *•* fdt\_ APIs
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 114/436 dtc example
 
- 
+dtc example
+
+
 
 \$ cat foo.dts
 
 /dts-v1/;
 
- 
+
 
 / {
 
@@ -160,17 +158,17 @@ demo = \<1\>, \<2\>, \<3\>;
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 115/436 dtc example
 
- 
+dtc example
+
+
 
 \$ cat foo.dts
 
 /dts-v1/;
 
- 
+
 
 / {
 
@@ -186,7 +184,7 @@ demo = \<1\>, \<2\>, \<3\>;
 
 };
 
- 
+
 
 \$ dtc -I dts -O dtb -o foo.dtb foo.dts
 
@@ -196,15 +194,15 @@ demo = \<1\>, \<2\>, \<3\>;
 
 -rw-r--r-- 1 thomas thomas 102 ... foo.dts
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 115/436 dtc example
 
- 
+dtc example
+
+
 
 \$ cat foo.dts \$ dtc -I dtb -O dts foo.dtb /dts-v1/; /dts-v1/;
 
- 
+
 
 / { / {
 
@@ -226,13 +224,12 @@ webinar = "great"; bootlin { demo = \<1\>, \<2\>, \<3\>; webinar = "great";
 
 -rw-r--r-- 1 thomas thomas 102 ... foo.dts
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 115/436
+
 
 Where are Device Tree Sources located?
 
- 
+
 
 ▶ Even though they are OS-agnostic, **no central and OS-neutral** place to host
 
@@ -250,11 +247,11 @@ for Device Tree Source files
 
 *•* U-Boot, Barebox, TF-A
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 116/436 Device Tree base syntax
 
- 
+Device Tree base syntax
+
+
 
 ▶ Tree of **nodes**
 
@@ -274,13 +271,12 @@ nodes
 
 semantic validation
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 117/436
+
 
 DT overall structure: simplified example
 
- 
+
 
 / {
 
@@ -312,11 +308,11 @@ i2c0: i2c@40012000 { ... };
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 118/436 DT overall structure: simplified example
 
- 
+DT overall structure: simplified example
+
+
 
 / {
 
@@ -360,13 +356,12 @@ ocp { ... };
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 118/436
+
 
 DT overall structure: simplified example
 
- 
+
 
 / {
 
@@ -418,9 +413,9 @@ i2c0: i2c@40012000 { ... };
 
 };
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 118/436 DT overall structure: simplified example
+DT overall structure: simplified example
 
- 
+
 
 / {
 
@@ -468,11 +463,10 @@ i2c0: i2c@40012000 { ... };
 
 };
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 118/436
 
 DT overall structure: simplified example
 
- 
+
 
 / {
 
@@ -526,9 +520,9 @@ reg = \<0x50\>;
 
 };
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 118/436 Device Tree inheritance
+Device Tree inheritance
 
- 
+
 
 ▶ Device Tree files are not monolithic, they can be split in several files, including
 
@@ -546,17 +540,16 @@ each other.
 
 the included file, according to the order of the \#include directives. ▶ Allows an including file to **override** values specified by an included file. ▶ Uses the C pre-processor \#include directive
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 119/436
+
 
 Device Tree inheritance example
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 120/436 Inheritance and labels
 
- 
+Inheritance and labels
+
+
 
 Doing:
 
@@ -580,7 +573,7 @@ status = "disabled";
 
 };
 
- 
+
 
 board.dts
 
@@ -600,13 +593,12 @@ status = "okay";
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 121/436
+
 
 Inheritance and labels
 
- 
+
 
 Doing: Is exactly equivalent to: soc.dtsi soc.dtsi / { / {
 
@@ -622,7 +614,7 @@ compatible = "ti,am3352-uart", "ti,omap3-uart"; compatible = "ti,am3352-uart", "
 
 }; };
 
- 
+
 
 board.dts board.dts \#include "soc.dtsi" \#include "soc.dtsi" / { &uart0 {
 
@@ -638,17 +630,16 @@ status = "okay";
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 121/436 DT inheritance in Bone Black support
 
- 
+DT inheritance in Bone Black support
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 122/436
+
+
 
 Device Tree design principles
 
- 
+
 
 ▶ **Describe hardware** (how the hardware is), not configuration (how I choose to
 
@@ -676,9 +667,9 @@ rest of the system: IRQ lines, DMA channels, clocks, reset lines, etc.
 
 ▶ Like all beautiful design principles, these principles are sometimes violated.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 123/436 The properties
+
+The properties
 
 Device tree properties can:
 
@@ -708,9 +699,9 @@ Device tree properties can:
 
 ▶ Some of them are deprecated, watch out the bindings!
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 124/436 The compatible property
+The compatible property
 
- 
+
 
 ▶ Is a list of strings
 
@@ -728,9 +719,9 @@ Device tree properties can:
 
 devices
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 125/436 compatible property and Linux kernel drivers
+compatible property and Linux kernel drivers
 
- 
+
 
 ▶ Linux identifies as **platform devices**:
 
@@ -748,13 +739,12 @@ strings it supports
 
 given driver, the device is *bound* to that driver.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 126/436
+
 
 Matching with drivers in Linux: platform driver
 
- 
+
 
 [drivers/i2c/busses/i2c-omap.c](https://elixir.bootlin.com/linux/latest/source/drivers/i2c/busses/i2c-omap.c)
 
@@ -804,11 +794,11 @@ static struct platform_driver omap_i2c_driver = {
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 127/436 Matching with drivers in Linux: I2C driver
 
- 
+Matching with drivers in Linux: I2C driver
+
+
 
 [sound/soc/codecs/cs42l51.c](https://elixir.bootlin.com/linux/latest/source/sound/soc/codecs/cs42l51.c)
 
@@ -822,7 +812,7 @@ const struct of_device_id cs42l51_of_match\[\] = {
 
 MODULE_DEVICE_TABLE(of, cs42l51_of_match);
 
- 
+
 
 [sound/soc/codecs/cs42l51-i2c.c](https://elixir.bootlin.com/linux/latest/source/sound/soc/codecs/cs42l51-i2c.c)
 
@@ -846,27 +836,27 @@ static struct i2c_driver cs42l51_i2c_driver = {
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 128/436 reg property
 
- 
+reg property
+
+
 
 ▶ Most important property after compatible ▶ **Memory-mapped** devices: base physical address and size of the memory-mapped
 
 registers. Can have several entries for multiple register areas.
 
- 
+
 
 sai4: sai@50027000 {
 
 reg = \<0x50027000 0x4\>, \<0x500273f0 0x10\>; };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 129/436 reg property
 
- 
+reg property
+
+
 
 ▶ Most important property after compatible ▶ **Memory-mapped** devices: base physical address and size of the memory-mapped
 
@@ -888,11 +878,11 @@ reg = \<0x4a\>;
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 129/436 reg property
 
- 
+reg property
+
+
 
 ▶ Most important property after compatible ▶ **Memory-mapped** devices: base physical address and size of the memory-mapped
 
@@ -914,11 +904,11 @@ reg = \<1\>;
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 129/436 reg property
 
- 
+reg property
+
+
 
 ▶ Most important property after compatible ▶ **Memory-mapped** devices: base physical address and size of the memory-mapped
 
@@ -926,15 +916,15 @@ registers. Can have several entries for multiple register areas. ▶ **I2C** dev
 
 ▶ The unit address must be the address of the first reg entry.
 
- 
+
 
 sai4: sai@50027000 {
 
 reg = \<0x50027000 0x4\>, \<0x500273f0 0x10\>; };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 129/436 cells property
+
+cells property
 
 ▶ Property numbers shall fit into 32-bit containers called cells ▶ The compiler does not maintain information about the number of entries, the OS
 
@@ -954,9 +944,9 @@ reg = \<0x50027000\>, \<0x4 0x500273f0 0x10\>;
 
 reg = \<0x50027000 0x4 0x500273f0 0x10\>;
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 130/436 cells property
+
+cells property
 
 ▶ Property numbers shall fit into 32-bit containers called cells ▶ The compiler does not maintain information about the number of entries, the OS
 
@@ -976,7 +966,7 @@ module@a0000 {
 
 \#size-cells = \<1\>;
 
- 
+
 
 serial@1000 {
 
@@ -986,9 +976,9 @@ reg = \<0x1000 0x10\>, \<0x2000 0x10\>;
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 130/436 cells property
+
+cells property
 
 ▶ Property numbers shall fit into 32-bit containers called cells ▶ The compiler does not maintain information about the number of entries, the OS
 
@@ -1008,7 +998,7 @@ spi@300000 {
 
 \#size-cells = \<0\>;
 
- 
+
 
 flash@1 {
 
@@ -1018,9 +1008,9 @@ reg = \<1\>;
 
 };
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 130/436 Status property
+Status property
 
- 
+
 
 ▶ The status property indicates if the device is really in use or not
 
@@ -1032,13 +1022,12 @@ status = "disabled";
 
 ▶ Enabled on a per-device basis in the board .dts
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 131/436
+
 
 Resources: interrupts, clocks, DMA, reset lines, ...
 
- 
+
 
 intc: interrupt-controller@a0021000 {
 
@@ -1048,7 +1037,7 @@ compatible = "arm,cortex-a7-gic"; \#interrupt-cells = \<3\>;
 
 by multiple hardware blocks };
 
- 
+
 
 *•* Clock controllers reg = \<0x50000000 0x1000\>; \#clock-cells = \<1\>; *•* *•* rcc: rcc@50000000 { Interrupt lines compatible = "st,stm32mp1-rcc", "syscon";
 
@@ -1074,9 +1063,9 @@ dmas = \<&dmamux1 61 0x400 0x05\>, \<&dmamux1 62 0x400 0x05\>;
 
 };
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 132/436 Generic suffixes
+Generic suffixes
 
- 
+
 
 ▶ xxx-gpios
 
@@ -1086,7 +1075,7 @@ dmas = \<&dmamux1 61 0x400 0x05\>, \<&dmamux1 62 0x400 0x05\>;
 
 *•* Sometimes naming items is relevant *•* Allows drivers to perform lookups by name rather than ID *•* The order of definition of each item still matters *•* Examples: gpio-names, clock-names, reset-names
 
- 
+
 
 uart0@4000c000 {
 
@@ -1098,13 +1087,12 @@ dma-names = "tx", "rx";
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 133/436
+
 
 How to validate Device Tree content? 1/2
 
- 
+
 
 ▶ compatible properties enforce a specific programming model ▶ OS expect a specific set of properties in each node
 
@@ -1116,11 +1104,11 @@ How to validate Device Tree content? 1/2
 
 *•* How do I avoid losing half a day on a typo? *•* Looking at drivers to understand the DT structure tends to make it OS-specific
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 134/436 How to validate Device Tree content? 2/2
 
- 
+How to validate Device Tree content? 2/2
+
+
 
 ▶ **Device Tree Specifications** *→* base Device Tree
 
@@ -1146,13 +1134,12 @@ Generic properties: reg or \#address-cells Consumer bindings: interrupts, clocks
 
 sources [Documentation/devicetree/bindings/](https://elixir.bootlin.com/linux/latest/source/Documentation/devicetree/bindings/)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 135/436
+
 
 Device Tree bindings
 
- 
+
 
 ▶ Bindings are improved as part of the Linux kernel contribution process ▶ They are carefully reviewed by DT binding maintainers and can only be merged
 
@@ -1164,15 +1151,15 @@ once approved by them
 
 the same time!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 136/436 Device Tree binding: legacy style
 
- 
+Device Tree binding: legacy style
+
+
 
 [Documentation/devicetree/bindings/i2c/i2c-omap.txt](https://elixir.bootlin.com/linux/latest/source/Documentation/devicetree/bindings/i2c/i2c-omap.txt)
 
- 
+
 
 I2C for OMAP platforms Examples :-Required properties : i2c1: i2c@0 {
 
@@ -1212,11 +1199,11 @@ blob so that, all the required data will be used from device tree dts
 
 file.
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 137/436 Device Tree binding: YAML style
+Device Tree binding: YAML style
 
 [Documentation/devicetree/bindings/i2c/ti,omap4-i2c.yaml](https://elixir.bootlin.com/linux/latest/source/Documentation/devicetree/bindings/i2c/ti,omap4-i2c.yaml)
 
- 
+
 
 \# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) interrupts: additionalProperties: false %YAML 1.2 maxItems: 1
 
@@ -1270,9 +1257,9 @@ reg: - reg interrupts = \<GIC_SPI 200 IRQ_TYPE_LEVEL_HIGH\>;
 
 maxItems: 1 - interrupts };
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 138/436 Validating Device Trees
+Validating Device Trees
 
- 
+
 
 ▶ dtc only does syntactic validation ▶ YAML bindings allow to do semantic validation ▶ Linux kernel make rules:
 
@@ -1296,9 +1283,8 @@ devices.yaml dtbs_check
 
 *•* Can be used with both dt_binding_check and dtbs_check
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 139/436
+
 
 Bindings syntax: base structure
 
@@ -1330,9 +1316,9 @@ prop-b: *•* names followed by a colon ’:’ and a new line
 
 ▶ Every indentation level is 2 spaces ▶ An empty line between property definitions
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 140/436 Bindings syntax: types
+Bindings syntax: types
 
- 
+
 
 ▶ Properties must be typed, either with the
 
@@ -1358,13 +1344,12 @@ pin-x-not-wired: \# pin-x-not-wired; *•* Boolean properties require no value t
 
 reset-gpios: true \# reset-gpios = \<&gpio SOC_SPEC_IDX\>; property name suffix, eg:-hz,-ohms,-us
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 141/436
+
 
 Bindings syntax: child nodes
 
- 
+
 
 ▶ From a yaml-schema perspective, children
 
@@ -1384,11 +1369,11 @@ define it under another top-level keyword,
 
 patternProperties and use pattern-matching regexes for the naming
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 142/436 Bindings syntax: expressing constraints
 
- 
+Bindings syntax: expressing constraints
+
+
 
 Besides defining precisely the different properties and their type, the content of the property values must also be constrained.
 
@@ -1398,13 +1383,12 @@ readable by humans
 
 ▶ We try to maximize the constraints to minimize human errors ▶ One new line per constraint
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 143/436
+
 
 Bindings syntax: numerical constraints
 
- 
+
 
 properties:
 
@@ -1440,11 +1424,11 @@ minItems: 1
 
 maxItems: 2
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 144/436 Bindings syntax: lists and dictionaries
 
- 
+Bindings syntax: lists and dictionaries
+
+
 
 properties: ▶ Expressing several possible property values \# This is a very common compatible definition
 
@@ -1484,11 +1468,10 @@ maxItems: 2 *•* AND using allOf items:
 
 maximum: 5
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 145/436
 
 Bindings syntax: referencing other bindings
 
- 
+
 
 \# All properties/constraints defined in generic-controller.yaml It is possible to write ”common” constraints in ▶
 
@@ -1508,11 +1491,11 @@ type: object
 
 \$ref: common-child-constraints.yaml referencing another YAML file
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 146/436 Bindings syntax: altering on presence of properties
 
- 
+Bindings syntax: altering on presence of properties
+
+
 
 properties: ▶ Sometimes more dynamic descriptions are
 
@@ -1546,13 +1529,12 @@ const: compat1 Typical case: a compatible implies tweaking then:
 
 properties: a constraint prop-c: false
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 147/436
+
 
 Bindings syntax: enforcing correct properties only
 
- 
+
 
 allOf: ▶ YAML files list properties and add constraints
 
@@ -1582,11 +1564,11 @@ required: *•* unevaluatedProperties prevents any
 
 \# generic-file.yaml will be allowed (through allOf or \$ref) to be used unevaluatedProperties: false
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 148/436 Bindings syntax: validating your own bindings
 
- 
+Bindings syntax: validating your own bindings
+
+
 
 properties:
 
@@ -1612,13 +1594,12 @@ prop-a;
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 149/436
+
 
 References
 
- 
+
 
 ▶ Device Tree 101 webinar, Thomas Petazzoni
 
@@ -1652,9 +1633,9 @@ Video: <https://youtu.be/a9CZ1Uk3OYQ>
 
 [example-schema.yaml](https://elixir.bootlin.com/linux/latest/source/Documentation/devicetree/bindings/example-schema.yaml)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 150/436 Practical lab - Describing hardware devices
+Practical lab - Describing hardware devices
 
- 
+
 
 ▶ Browse and update Device Trees. ▶ Use GPIO LEDs. ▶ Modify the Device Tree to enable an I2C
 
@@ -1668,8 +1649,4 @@ controller and describe an I2C device.
 
 description.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 151/436
-
-![](media/index-166_1.jpg)

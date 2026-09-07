@@ -1,12 +1,12 @@
 **Filesystems - Block file systems**
 
- 
 
- 
+
+
 
 *Objective: configure and boot an embedded Linux system relying on block* *storage*
 
- 
+
 
 After this lab, you will be able to:
 
@@ -58,7 +58,6 @@ Using the mkfs.ext4 create a journaled file system on the third partition of the
 
 9 Basic configuration options for these filesystems will be sufficient. No need for things like extended attributes.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 37
 
 •-E nodiscard disables bad block discarding. While this should be a useful option for cards with bad
 
@@ -110,9 +109,9 @@ Insert the SD card back in the board and reset it. You should now be able to loa
 
 =\> load mmc 0:1 0x82000000 am335x-boneblack-custom.dtb
 
- 
 
-38 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license =\> bootz 0x81000000 - 0x82000000
+
+=\> bootz 0x81000000 - 0x82000000
 
 You are now ready to modify bootcmd to boot the board from SD card. But first, save the settings for booting from tftp:
 
@@ -126,6 +125,4 @@ Now, reset the board to check that it boots in the same way from the SD card.
 
 Now, the whole system (bootloader, kernel and filesystems) is stored on the SD card. That’s very useful for product demos, for example. You can switch demos by switching SD cards, and the system depends on nothing else. In particular, no networking is necessary.
 
- 
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 39

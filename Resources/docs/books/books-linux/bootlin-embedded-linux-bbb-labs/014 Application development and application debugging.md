@@ -1,16 +1,16 @@
 **Application development and applica-**
 
- 
 
- 
+
+
 
 **tion debugging**
 
- 
+
 
 *Objective: compile an application against a Buildroot build space and debug* *it remotely.*
 
- 
+
 
 **Setup**
 
@@ -54,7 +54,7 @@ about the list of libraries needed to build an application against 11 *libmpdcli
 
 right paths to find .pc files and their sysroot, but here there is an open issue with Buildroot 2024.02 which forced us to set PKG_CONFIG_PATH to make it point to where the .pc files are found.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 63 \$ export PKG_CONFIG_PATH=\$HOME/embedded-linux-bbb-labs/integration/buildroot/output/host/\\
+\$ export PKG_CONFIG_PATH=\$HOME/embedded-linux-bbb-labs/integration/buildroot/output/host/\\
 
 arm-buildroot-linux-gnueabihf/sysroot/usr/lib/pkgconfig
 
@@ -118,7 +118,6 @@ You should now be able to use the new client, driving the server through the fol
 
 • Joystick right: next song
 
-64 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 • Z (big) button: pause / play
 
@@ -158,7 +157,7 @@ Then, use gdb as usual to set breakpoints, look at the source code, run the appl
 
 In our case, we’ll just start the program, press the C button to quit to cause the the segmentation fault:
 
- 
+
 
 (gdb) continue
 
@@ -174,7 +173,6 @@ Once you found it, don’t fix it yet. We are going to make further experiments 
 
 By default systemd disables generating core files, so we need to re-enable the generation of core files by running on the target:
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 65
 
 • echo core.%p \> /proc/sys/kernel/core_pattern , which will replace the \|/bin/false that was set
 
@@ -206,7 +204,7 @@ The first thing to do is install VS Code. This package is only available as a *s
 
 \$ sudo snap install --classic code
 
- 
+
 
 **Preparing the target for debugging with VSCode**
 
@@ -230,7 +228,7 @@ command. By default, this creates two files in ~/.ssh/: id_rsa (private key) and
 
 Then, you can test that SSH works without a password:
 
-66 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license ssh root@192.168.0.100
+ssh root@192.168.0.100
 
 If you face trouble, you can check the Dropbear logs on the target:
 
@@ -262,7 +260,7 @@ Copy this snippet and paste it in a new gdbserver.service file onto the target f
 
 systemctl daemon-reload && systemctl enable --now gdbserver
 
- 
+
 
 **Compiling and debugging the program from VS Code**
 
@@ -296,13 +294,12 @@ The first thing to do is to make sure that some needed extensions are installed.
 
 Those extensions should appear on top of the ”Recommended” section.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 67
 
 ![](media/index-68_1.png)
 
 Then open the .env file and if needed, update the TARGET_IP variable to make it match the IP address of the target.
 
- 
+
 
 You are now ready to build and debug your application. Start by clicking on the nunchuk-mpd-client.c file in the left column to open it in VS Code. Build it thanks to the tasks configured in VSCode: bring the Command Palette by typing Ctrl+Shift+P, then type ”Run Build Task”, then Enter.
 
@@ -312,21 +309,21 @@ You can start debugging the program by clicking on the Run and Debug tab, and th
 
 ![](media/index-68_2.png)
 
- 
+
 
 In the debug console, you should see that debugging has started:
 
 ![](media/index-68_3.png)
 
- 
 
-68 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license *Note: VSCode will automatically rebuild and redeploy the application each time you start a debugging session.*
+
+*Note: VSCode will automatically rebuild and redeploy the application each time you start a debugging session.*
 
 Then, start using the Nunchuk to control playback, and when you try to quit with the C button, VS Code should now see the segmentation fault:
 
 ![](media/index-69_1.png)
 
- 
+
 
 You can then look at variables, the call stack, browse the code...
 
@@ -356,7 +353,7 @@ This is interactive, but hard to analyze. You can also run perf record for about
 
 This was a very brief start at practising with perf, which offers many more possibilities than we could see here.
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 69 **What to remember**
+**What to remember**
 
 During this lab, we learned that...
 
@@ -424,10 +421,8 @@ NUNCHUK_MPD_CLIENT_DEPENDENCIES = host-pkgconf libmpdclient
 
 All you have to do now is to enable the nunchuk-mpd-client package in Buildroot’s configuration, run make, update the root filesystem and check on the target that /usr/bin/nunchuk-mpd-client exists and runs fine.
 
-70 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license All this was pretty straightforward, wasn’t it? *Meson* rocks!
+All this was pretty straightforward, wasn’t it? *Meson* rocks!
 
 Congratulations, you’ve reached the end of all our labs. Try to look back, and see how much experience you’ve gained in these last days.
 
- 
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 71

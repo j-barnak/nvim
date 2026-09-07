@@ -4,7 +4,7 @@
 
 Across the book, you’ve seen a lot of cases for intuitively simple structures with all public data members. Such types, along with arrays, are called *Aggregates*. In this chapter, we’ll look at some C++20 changes and new ways to initialize such objects.
 
- 
+
 
 **Aggregates in C++20**
 
@@ -12,7 +12,7 @@ To sum up, as of C++20, here’s the definition of an *aggregate type* from the 
 
 [dcl.init.aggr¹](https://timsong-cpp.github.io/cppwp/n4868/dcl.init.aggr#:initialization,aggregate).
 
- 
+
 
 An aggregate is an array or a class type with:
 
@@ -24,11 +24,11 @@ An aggregate is an array or a class type with:
 
 • no virtual, private, or protected base classes
 
- 
+
 
 Here are some examples of aggregates:
 
- 
+
 
 ¹<https://timsong-cpp.github.io/cppwp/n4868/dcl.init.aggr#:initialization,aggregate>
 
@@ -36,7 +36,7 @@ Here are some examples of aggregates:
 
 Aggregates and Designated Initializers in C++20 200
 
- 
+
 
 **Ex 12.1. Aggregate classes, several examples. Run** [**@Compiler Explorer**](https://godbolt.org/z/5oz47o8z5)
 
@@ -78,13 +78,13 @@ std::array params {Param{"val", 10}, Param{"name", 42}};
 
 std::cout \<\< "params\[0\].name " \<\< params\[0\].name \<\< '\n'; }
 
- 
+
 
 In C++20, in some limited cases, you can also use parens X(args...) to initialize an aggregate. Here’s a short example with major use cases and limitations:
 
 Aggregates and Designated Initializers in C++20 201
 
- 
+
 
 **Ex 12.2. Initialization with round parens in C++20. Run** [**@Compiler Explorer**](https://godbolt.org/z/fo6TKnYTo)
 
@@ -120,7 +120,7 @@ PointExt pt5 ( Point(4, 5), 6); // need to be explicit
 
 **int** arrX\[10\] (1, 2, 3, 4); // rest is 0 }
 
- 
+
 
 Here are some basic rules about the new way of initialization:
 
@@ -138,7 +138,7 @@ with parens, and you must be explicit about subobjects.
 
 Such improvement helps, especially in a generic template code where you want to work with various types of objects. For example, the following code wasn’t possible until C++20: Aggregates and Designated Initializers in C++20 202
 
- 
+
 
 **Ex 12.2. Aggregates and parens for** **make_unique****. Run** [**@Compiler Explorer**](https://godbolt.org/z/f1E856cYd) **struct Point** { **int** x; **int** y; };
 
@@ -146,7 +146,7 @@ Such improvement helps, especially in a generic template code where you want to 
 
 **auto** ptr = std::make_unique\<Point\>(10, 20); }
 
- 
+
 
 make_unique takes a variable number of arguments and passes them to a constructor. This function uses parens to call the constructor. Since our aggregate has no user-declared constructors, then such syntax generates errors. With the C++20 change, the code works fine now.
 
@@ -170,7 +170,7 @@ If you like to know more, I highly recommend reading [C++20’s parenthesized ag
 
 Doumler: [Lightning Talk - Direct Aggregate Initialisation](https://www.youtube.com/watch?v=1_2e8r4zXJg) ³.
 
- 
+
 
 **The basics of Designated Initializers**
 
@@ -180,7 +180,7 @@ The C++20 Standard also gives us another handy way to initialize data members. T
 
 ³<https://www.youtube.com/watch?v=1_2e8r4zXJg> Aggregates and Designated Initializers in C++20 203
 
- 
+
 
 As of C++20, to initialize an aggregate object, you can write the following:
 
@@ -212,7 +212,7 @@ Date inFutureOld { 2050, 4, 10 };
 
 In the case of the Date class, it might be unclear what the order of days/month or month/days is. With designated initializers (inFutureCpp20), it’s very easy to see the order of data members.
 
- 
+
 
 **Rules**
 
@@ -226,7 +226,7 @@ aggregate types,
 
 with parens (), Aggregates and Designated Initializers in C++20 204
 
- 
+
 
 • designators can only refer to non-static data members,
 
@@ -262,7 +262,7 @@ Date d { .mode = 10 }; // error, mode is static! Date d { .day = 1, .year = 2010
 
 The code above illustrates several cases where designated initializers won’t work: static data member, use out-of-order initialization, or a mix. In all cases, the compiler generates an error.
 
- 
+
 
 **Advantages of designated initialization**
 
@@ -282,7 +282,7 @@ this feature, so it’s a natural step to enable it in all compilers.
 
 Aggregates and Designated Initializers in C++20 205
 
- 
+
 
 **Examples**
 
@@ -332,11 +332,11 @@ Print({.name\_ = "tv", .inStock\_ {true }, .price\_{100.0}});
 
 Print({.name\_ = "car", .price\_{2000.0}}); }
 
- 
+
 
 It’s also interesting that we can use designated initialization inside another designated Aggregates and Designated Initializers in C++20 206
 
- 
+
 
 initialization. For example:
 
@@ -414,7 +414,7 @@ Team {
 
 Thanks to designated initializers, we can create large objects and still be able to assign values in a readable form. Such GameSession from the above demo might be handy for some unit test scenarios.
 
- 
+
 
 **Summary**
 

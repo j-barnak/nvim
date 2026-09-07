@@ -4,7 +4,7 @@
 
 In this chapter we illustrate the concepts introduced so far by developing an interactive program that plays the game of tic-tac-toe. We start by implementing a version that allows two human players to compete against each other, and then develop a computer player that uses game trees and the minimax algorithm to ensure that it is unbeatable, that is, always wins or draws.
 
-### **11.1Introduction**
+### **11.1 Introduction**
 
 Tic-tac-toe, also known as noughts and crosses, is a game that is traditionally played on a 3 × 3 grid, which is initially empty:
 
@@ -20,7 +20,7 @@ If the grid becomes fully occupied without either player having won, then the ga
 
 By playing in a perfect manner, that is, always making the best possible move at each turn, a player can always force a draw, independent of whether they go first or second in the game. In the remainder of this chapter we show how to implement a perfect tic-tac-toe player in Haskell.
 
-### **11.2Basic declarations**
+### **11.2 Basic declarations**
 
 We begin by importing standard libraries that provide functions on characters, lists and input/output actions that will be used in our implementation:
 
@@ -58,7 +58,7 @@ next B = B
 next X = O
 ```
 
-### **11.3Grid utilities**
+### **11.3 Grid utilities**
 
 We make use of a number of utilities on tic-tac-toe grids. First of all, we define the empty grid by replicating the blank player value to create an empty row, and then replicating this row to create an empty grid:
 
@@ -79,10 +79,10 @@ The idea of applying concat to flatten a grid into a single list prior to proces
 ``` haskell
 turn :: Grid -> Player
 turn g = if os <= xs then O else X
-where
-os = length (filter (== O) ps)
-xs = length (filter (== X) ps)
-ps = concat g
+         where
+           os = length (filter (== O) ps)
+           xs = length (filter (== X) ps)
+           ps = concat g
 ```
 
 Note that turn empty = O means that we are assuming player O goes first, which in our final implementation will be the human player.
@@ -112,7 +112,7 @@ won :: Grid -> Bool
 won g = wins O g || wins X g
 ```
 
-### **11.4Displaying a grid**
+### **11.4 Displaying a grid**
 
 For the purposes of displaying a tic-tac-toe grid on the screen, we seek to define a function with the following example behaviour:
 
@@ -123,8 +123,8 @@ This behaviour can readily be achieved using function composition:
 ``` haskell
 putGrid :: Grid -> IO ()
 putGrid =
-putStrLn . unlines . concat . interleave bar . map showRow
-where bar = [replicate ((size*4)-1) ’-’]
+  putStrLn . unlines . concat . interleave bar . map showRow
+  where bar = [replicate ((size*4)-1) ’-’]
 ```
 
 That is, we convert each row to a list of strings using showRow, insert a horizontal bar between each row using interleave, flatten the resulting nested list structure using concat, join all the strings together with a newline character at the each of each line using the library function unlines :: \[String\] -\> String, and finally, display the resulting string on the screen using putStrLn.
@@ -141,7 +141,7 @@ The two remaining functions simply convert a player value to a list of strings, 
 
 ![image](media/Images/ch11-12.png)
 
-### **11.5Making a move**
+### **11.5 Making a move**
 
 To identify where a player wishes to make a move during the game, we index each position in the grid by a natural number, starting from zero in the top-left corner and proceeding along each row in turn:
 
@@ -159,8 +159,8 @@ We now define a function that applies a move to a grid. In order to take account
 ``` haskell
 move:: Grid -> Int -> Player -> [Grid]
 move g i p =
-if valid g i then [chop size (xs ++ [p] ++ ys)] else []
-where (xs,B:ys) = splitAt i (concat g)
+  if valid g i then [chop size (xs ++ [p] ++ ys)] else []
+  where (xs,B:ys) = splitAt i (concat g)
 ```
 
 That is, if the move is valid we split the list of player values in the grid at the index where the move is being made, replace the blank player value with the given player, and then reform the grid once again. The library function splitAt breaks a list into two parts at a given index, and the auxiliary function chop breaks a list into maximal segments of a given length:
@@ -171,7 +171,7 @@ chop n [] = []
 chop n xs = take n xs : chop n (drop n xs)
 ```
 
-### **11.6Reading a number**
+### **11.6 Reading a number**
 
 To read a grid index from a human player, we define a function getNat that displays a prompt and reads a natural number from the keyboard. It is defined in a similar manner to the function getDigit for the nim game in chapter 10, except that it reads a natural number rather than a single digit:
 
@@ -179,7 +179,7 @@ To read a grid index from a human player, we define a function getNat that displ
 
 The function isDigit :: Char -\> Bool used above is provided in the library Data.Char, and decides if a character is a numeric digit.
 
-### **11.7Human vs human**
+### **11.7 Human vs human**
 
 We now have the necessary machinery to implement tic-tac-toe for two human players. We define an action that implements the game using two mutually recursive functions that take the current grid and player as arguments:
 
@@ -193,9 +193,9 @@ The first function simply displays the grid and invokes the second:
 ``` haskell
 run :: Grid -> Player -> IO ()
 run g p = do cls
-goto (1,1)
-putGrid g
-run’ g p
+          goto (1,1)
+          putGrid g
+          run’ g p
 ```
 
 (The screen utilities cls and goto were defined for the game of life in chapter 10.) In turn, the second function uses a series of guards to decide if the game is finished, and if not prompts the player for a move. If the move is invalid we display an error message and reprompt the player, otherwise we invoke the first function with the updated board and the next player:
@@ -211,7 +211,7 @@ prompt p = "Player " ++ show p ++ ", enter your move: "
 
 You may like to try the game out with a friend now! As with all the extended examples, the code is available from the website for the book.
 
-### **11.8Game trees**
+### **11.8 Game trees**
 
 We now show how to develop a computer player for tic-tac-toe, based on the use of *game trees*. The basic idea is to build a tree structure that captures all possible ways in which the game can proceed from the current grid, and then use this tree to decide on the best next move to make.
 
@@ -246,13 +246,13 @@ In turn, the function moves that returns the list of valid moves is defined by f
 
 ![image](media/Images/ch11-07.png)
 
-### **11.9Pruning the tree**
+### **11.9 Pruning the tree**
 
 As one may imagine, game trees can potentially become very large. For this reason, it is sometimes necessary to prune game trees to a particular depth, in order to limit the amount of time and memory that it takes to build the tree. To this end, we define a function that prunes a tree to a given depth:
 
 ``` haskell
 prune :: Int -> Tree a -> Tree a
-prune 0 (Node x _)= Node x []
+prune 0 (Node x _)  = Node x []
 prune n (Node x ts) = Node x [prune (n-1) t | t <- ts]
 ```
 
@@ -265,7 +265,7 @@ depth :: Int
 depth = 9
 ```
 
-### **11.10Minimax algorithm**
+### **11.10 Minimax algorithm**
 
 Once we have produced a game tree, the *minimax algorithm* can then be used to determine the best next move. The algorithm starts by labelling every node in the tree with a player value in the following manner:
 
@@ -290,13 +290,13 @@ Putting all the components together, we can now define a function that returns t
 
 That is, we first build the game tree up to the specified depth, then apply the minimax algorithm to label the tree, and finally select a grid whose player label is the same as that of the root node. There is always at least one ‘best move’, because selecting the minimum or maximum value from a non-empty (finite) list always results in a value that occurs in the list. If there is more than one best move, the above definition simply selects the first of these.
 
-### **11.11Human vs computer**
+### **11.11 Human vs computer**
 
 It is now straightforward to modify our earlier tic-tac-toe program so that the computer takes on the role of one of the players. As with the countdown program in chapter 9, we use the GHC compiler to increase performance, and define the program using a top-level action called main:
 
 ``` haskell
 main :: IO ()
-main = do hSetBuffering stdout NoBufferingplay empty O
+main = do hSetBuffering stdout NoBuffering         play empty O
 ```
 
 The function hSetBuffering is provided in the library System.IO, and is used above to turn output buffering off, which is by default turned on in GHC. As previously, the game itself is implemented using two mutually recursive functions, except that player X is now the computer player:
@@ -322,26 +322,26 @@ Player O, enter your move:
 
 On a reasonable modern machine, the computer should take around one second to make its first move, with subsequent moves becoming progressively faster as the size of the game tree reduces. Note that because the computer always chooses the first move from the list of best moves, it may not always take the quickest route to a win, but it is guaranteed to be unbeatable!
 
-### **11.12Chapter remarks**
+### **11.12 Chapter remarks**
 
 For tic-tac-toe grids of size 3 × 3, it is feasible to generate the entire game tree. For larger grids, in addition to limiting the maximum depth of the tree, it may also be useful to reduce the size of the tree using *alpha-beta pruning* \[16\], which avoids generating parts of the game tree that have no possibility of leading to the best next move under the minimax algorithm.
 
-### **11.13Exercises**
+### **11.13 Exercises**
 
-1.Using the function gametree, verify that there are 549,946 nodes in the complete game tree for a 3×3 tic-tac-toe game starting from the empty grid, and that the maximum depth of this tree is 9.
+1\. Using the function gametree, verify that there are 549,946 nodes in the complete game tree for a 3×3 tic-tac-toe game starting from the empty grid, and that the maximum depth of this tree is 9.
 
-2.Our tic-tac-toe program always chooses the first move from the list of best moves. Modify the final program to choose a random move from the list of best moves, using the function randomRIO :: (Int,Int) -\> IO Int from System.Random to generate a random integer in the given range.
+2\. Our tic-tac-toe program always chooses the first move from the list of best moves. Modify the final program to choose a random move from the list of best moves, using the function randomRIO :: (Int,Int) -\> IO Int from System.Random to generate a random integer in the given range.
 
-3.Alternatively, modify the final program to choose a move that attempts to take the quickest route to a win, by calculating the depths of resulting game trees and selecting a move that results in a tree with the smallest depth.
+3\. Alternatively, modify the final program to choose a move that attempts to take the quickest route to a win, by calculating the depths of resulting game trees and selecting a move that results in a tree with the smallest depth.
 
-4.Modify the final program to:
+4\. Modify the final program to:
 
-a.let the user decide if they wish to play first or second;
+a\. let the user decide if they wish to play first or second;
 
-b.allow the length of a winning line to also be changed;
+b\. allow the length of a winning line to also be changed;
 
-c.generate the game tree once, rather than for each move;
+c\. generate the game tree once, rather than for each move;
 
-d.reduce the size of game tree using alpha-beta pruning.
+d\. reduce the size of game tree using alpha-beta pruning.
 
 Solutions to exercises 1 and 2 are given in appendix A.

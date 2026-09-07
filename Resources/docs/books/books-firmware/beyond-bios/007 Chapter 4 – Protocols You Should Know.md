@@ -1,14 +1,14 @@
 ## **Chapter 4 – Protocols You Should Know** 
 
- 
 
- 
+
+
 
 Common sense ain’t common.
 
 —Will Rogers
 
- 
+
 
 This chapter describes protocols that everyone who is working with the Unified Exten-
 
@@ -24,39 +24,39 @@ putString() function of the SIMPLE_TEXT_OUTPUT_INTERFACE protocol, and the appli
 
 using the WaitForEvent() service with the *WaitForKey* event in the SIM-PLE_INPUT_INTERFACE protocol. Once a key is pressed, the application exits.
 
- 
+
 
 /\*++
 
- 
+
 
 Module Name:
 
 helloworld.c
 
- 
+
 
 Abstract:
 
 This is a simple module to display behavior of a basic UEFI application.
 
- 
+
 
 Author:
 
 Waldo
 
- 
+
 
 Revision History
 
 --\*/
 
- 
+
 
 \#include "efi.h"
 
- 
+
 
 EFI_STATUS
 
@@ -72,13 +72,12 @@ IN EFI_SYSTEM_TABLE \*SystemTable
 
 UINTN Index;
 
- 
+
 
 DOI 10.1515/9781501505690-006
 
-**54** \| Chapter 4 – Protocols You Should Know
 
- 
+
 
 //
 
@@ -86,7 +85,7 @@ DOI 10.1515/9781501505690-006
 
 //
 
- 
+
 
 SystemTable-\>ConOut-\>OutputString (
 
@@ -94,7 +93,7 @@ SystemTable-\>ConOut,
 
 L"Hello application started\n\r");
 
- 
+
 
 //
 
@@ -102,7 +101,7 @@ L"Hello application started\n\r");
 
 //
 
- 
+
 
 SystemTable-\>ConOut-\>OutputString (
 
@@ -110,7 +109,7 @@ SystemTable-\>ConOut,
 
 L"\n\r\n\r\n\rHit any key to exit\n\r");
 
- 
+
 
 SystemTable-\>BootServices-\>WaitForEvent (
 
@@ -120,13 +119,13 @@ SystemTable-\>BootServices-\>WaitForEvent (
 
 &Index);
 
- 
+
 
 SystemTable-\>ConOut-\>OutputString (
 
 SystemTable-\>ConOut,L"\n\r\n\r");
 
- 
+
 
 //
 
@@ -134,13 +133,13 @@ SystemTable-\>ConOut,L"\n\r\n\r");
 
 //
 
- 
+
 
 return EFI_SUCCESS;
 
 }
 
- 
+
 
 To execute an UEFI application, type the program’s name at the UEFI Shell command line. The following examples show how to run the test application described above
 
@@ -148,27 +147,26 @@ from the UEFI Shell. The application waits for the user to press a key before re
 
 to the UEFI Shell prompt. It is assumed that hello.efi is in the search path of the UEFI Shell environment.
 
- 
+
 
 **Example**
 
 Shell\> hello
 
- 
+
 
 Hello application started
 
- 
+
 
 Hit any key to exit this image
 
-EFI OS Loaders \| **55**
 
- 
+
 
 **EFI OS Loaders**
 
- 
+
 
 This section discusses the special considerations that are required when writing an OS loader. An *OS loader* is a special type of UEFI application responsible for transi-
 
@@ -230,7 +228,7 @@ nel has taken control of the system, the OS kernel may only call UEFI Runtime
 
 Services.
 
- 
+
 
 A complete listing of a sample application for an OS loader can be found below. The code fragments in the following sections do not perform any error checking. Also, the OS loader sample application makes use of several UEFI Library functions to simplify
 
@@ -240,27 +238,27 @@ The output shown below starts by printing out the device path and the file path
 
 of the OS loader itself. It also shows where in memory the OS loader resides and how
 
-many bytes it is using. Next, it loads the file OSKERNEL.BIN into memory. The file **56** \| Chapter 4 – Protocols You Should Know
+many bytes it is using. Next, it loads the file OSKERNEL.BIN into memory. The file
 
- 
+
 
 OSKERNEL.BIN is retrieved from the same directory as the image of the OS loader sample of Figure 4.1.
 
- 
+
 
 **OPERATING SYSTEM**
 
- 
+
 
 **Legacy OS LOADER** **EFI OS LOADER** **EFI API** **EFI API** **EFI API**
 
- 
+
 
 **Framework** **Me** **RUNTIME** **Ti** **Boot** **EFI 1.10 or** **SERVICES** **mo** **Compatibility** **EFI BOOT SERVICES** **EFI**
 
 ![](media/index-75_1.png)
 
- 
+
 
 **(OTHER)** **ry** **m** **Devices** **Framework** **Driver** **er** **Driver** **Protocols +** **Drivers** **Handlers**
 
@@ -270,15 +268,15 @@ OSKERNEL.BIN is retrieved from the same directory as the image of the OS loader 
 
 **INTERFACES**
 
- 
+
 
 **REQUIRED** **OTHER** **FROM** **PLATFORM HARDWARE** **EFI SYSTEM** **OS PARTITION** **Motherboard** **PARTITION** **Option** **Option** **SPECS** **ROM/FLASH** **Option** **EFI 1.10** **ROM** **ROM** **Drivers** **EFI 1.10** **ROM** **Drivers** **EFI 1.10** **EFI OS** **Drivers** **Loader**
 
- 
+
 
 **Figure 4.1:** EFI Loader in System Diagram
 
- 
+
 
 The next section of the output shows the first block of several block devices. The first one is the first block of the floppy drive with a FAT12 file system. The second one is
 
@@ -290,11 +288,11 @@ The final step shows the pointers to all the system configuration tables, the sy
 
 tem’s current memory map, and a list of all the system’s environment variables. The very last step shown is the OS loader calling ExitBootServices().
 
- 
+
 
 **Device Path and Image Information of the OS Loader**
 
- 
+
 
 The following code fragment shows the steps that are required to get the device path and file path to the OS loader itself. The first call to HandleProtocol() gets
 
@@ -304,9 +302,8 @@ the DEVICE_PATH_PROTOCOL interface to the device handle of the OS loader im-age.
 
 and other image information to the OS loader itself.
 
-Accessing Files in the Device Path of the OS Loader \| **57**
 
- 
+
 
 BS-\>HandleProtocol(
 
@@ -318,7 +315,7 @@ LoadedImage
 
 );
 
- 
+
 
 BS-\>HandleProtocol(
 
@@ -330,7 +327,7 @@ LoadedImage-\>DeviceHandle,
 
 );
 
- 
+
 
 Print (
 
@@ -340,7 +337,7 @@ DevicePathToStr (DevicePath)
 
 );
 
- 
+
 
 Print (
 
@@ -350,7 +347,7 @@ DevicePathToStr (LoadedImage-\>FilePath)
 
 );
 
- 
+
 
 Print (
 
@@ -360,7 +357,7 @@ LoadedImage-\>ImageBase
 
 );
 
- 
+
 
 Print (
 
@@ -370,11 +367,11 @@ LoadedImage-\>ImageSize
 
 );
 
- 
+
 
 **Accessing Files in the Device Path of the OS Loader**
 
- 
+
 
 The previous section shows how to retrieve the device path and the image path of the OS loader image. The following code fragment shows how to use this information to
 
@@ -384,9 +381,8 @@ TEM_PROTOCOL interface to the device handle retrieved in the previous section.
 
 Then, the disk volume can be opened so file access calls can be made. The end result is that the variable *CurDir* is a file handle to the same partition in which the OS loader resides.
 
-**58** \| Chapter 4 – Protocols You Should Know
 
- 
+
 
 BS-\>HandleProtocol(
 
@@ -398,7 +394,7 @@ LoadedImage-\>DeviceHandle,
 
 );
 
- 
+
 
 Vol-\>OpenVolume (
 
@@ -408,11 +404,11 @@ Vol,
 
 );
 
- 
+
 
 CurDir = RootFs;
 
- 
+
 
 The next step is to build a file path to OSKERNEL.BIN that exists in the same direc-tory as the OS loader image. Once the path is built, the file handle *CurDir* can be
 
@@ -420,17 +416,17 @@ used to call Open(), Close(), Read(), and Write() on the OSKERNEL.BIN file. The 
 
 allocated buffer, and closes the file.
 
- 
+
 
 StrCpy(FileName,DevicePathToStr(LoadedImage-\>FilePath));
 
 for(i=StrLen(FileName);i\>=0 && FileName\[i\]!='\\\\';i--);
 
- 
+
 
 FileName\[i\] = 0;
 
- 
+
 
 StrCat(FileName,L"\\\OSKERNEL.BIN");
 
@@ -440,29 +436,28 @@ Size = 0x00100000;
 
 BS-\>AllocatePool(EfiLoaderData, Size, &OsKernelBuffer);
 
- 
+
 
 FileHandle-\>Read(FileHandle, &Size,
 
 OsKernelBuffer);
 
- 
+
 
 FileHandle-\>Close(FileHandle);
 
- 
+
 
 **Finding the OS Partition**
 
- 
+
 
 The UEFI sample environment materializes a BLOCK_IO_PROTOCOL instance for every partition that is found in a system. An OS loader can search for OS partitions by looking at all the BLOCK_IO devices. The following code fragment uses LibLo-
 
 cateHandle() to get a list of BLOCK_IO device handles. These handles are then
 
-Finding the OS Partition \| **59**
 
- 
+
 
 used to retrieve the first block from each one of these BLOCK_IO devices. The HandleProtocol() API is used to get the DEVICE_PATH_PROTOCOL and
 
@@ -476,11 +471,11 @@ tem driver using the UEFI API ReadBlocks() function to load additional data from
 
 that partition.
 
- 
+
 
 NoHandles = 0;
 
- 
+
 
 HandleBuffer = NULL;
 
@@ -510,7 +505,7 @@ HandleBuffer\[i\],
 
 Block = AllocatePool (BlkIo-\>BlockSize);
 
- 
+
 
 MediaId = BlkIo-\>MediaId;
 
@@ -536,17 +531,16 @@ L"\nBlock \#0 of device
 
 DumpHex(0,0,BlkIo-\>BlockSize,Block);
 
- 
+
 
 }
 
-**60** \| Chapter 4 – Protocols You Should Know
 
- 
+
 
 **Getting the Current System Configuration**
 
- 
+
 
 The system configuration is available through the *SystemTable* data structure that is passed into the OS loader. The operating system loader is an UEFI application that
 
@@ -558,7 +552,7 @@ are loaded, respectively) and access to industry standard tables like ACPI, SMBI
 
 the appropriate specifications.
 
- 
+
 
 LibGetSystemConfigurationTable(
 
@@ -584,7 +578,7 @@ LibGetSystemConfigurationTable(
 
 );
 
- 
+
 
 Print(
 
@@ -594,7 +588,7 @@ L" ACPI Table is at address :
 
 );
 
- 
+
 
 Print(
 
@@ -612,7 +606,7 @@ L" Sal System Table is at address :
 
 );
 
- 
+
 
 Print(
 
@@ -622,13 +616,12 @@ L" MPS Table is at address :
 
 );
 
-Getting the Current Memory Map \| **61**
 
- 
+
 
 **Getting the Current Memory Map**
 
- 
+
 
 One UEFI Library function can retrieve the memory map maintained by the UEFI en-vironment. While the loader is running, the memory has been managed by the plat-
 
@@ -648,7 +641,7 @@ BootServices() is called, the memory map may be modified. In general, the OS
 
 loader should retrieve the memory map just before calling ExitBootServices(). If ExitBootServices() fails because the *MapKey* does not match, then the OS loader must get a new copy of the memory map and try again.
 
- 
+
 
 MemoryMap = LibMemoryMap(
 
@@ -662,7 +655,7 @@ MemoryMap = LibMemoryMap(
 
 );
 
- 
+
 
 Print(
 
@@ -670,7 +663,7 @@ L"Memory Descriptor List:\n\n"
 
 );
 
- 
+
 
 Print(
 
@@ -686,17 +679,17 @@ L" ========== ================
 
 ================ ================\n");
 
- 
+
 
 MemoryMapEntry = MemoryMap;
 
- 
+
 
 for(i=0;i\<NoEntries;i++) {
 
-Print(L" %s %lX %lX %lX\n", **62** \| Chapter 4 – Protocols You Should Know
+Print(L" %s %lX %lX %lX\n",
 
- 
+
 
 OsLoaderMemoryTypeDesc\[MemoryMapEntry-
 
@@ -726,25 +719,25 @@ DescriptorSize
 
 }
 
- 
+
 
 **Getting Environment Variables**
 
- 
+
 
 The following code fragment shows how to extract all the environment variables maintained by the UEFI environment. It uses the GetNextVariableName() API
 
 to walk the entire list.
 
- 
+
 
 VariableName\[0\] = 0x0000;
 
- 
+
 
 VendorGuid = NullGuid;
 
- 
+
 
 Print(
 
@@ -786,9 +779,8 @@ VariableName,
 
 );
 
-Summary \| **63**
 
- 
+
 
 Print(
 
@@ -802,11 +794,11 @@ L"%.-35g %.-20s
 
 } while (Status == EFI_SUCCESS);
 
- 
+
 
 **Transitioning to an OS Kernel**
 
- 
+
 
 A single call to ExitBootServices() terminates all the UEFI Boot Services that
 
@@ -822,16 +814,14 @@ prior to calling ExitBootServices(). In this case, the OS kernel would be re-spo
 
 tem.
 
- 
+
 
 **Summary**
 
- 
+
 
 This chapter has provided an overview of some common protocols and their demon-
 
 stration via a sample operating system loader application. Given that UEFI has been primarily designed as an operating system loader environment, this is a key chapter
 
 for demonstrating the usage and capability of the UEFI service set.
-
-**64** \| Chapter 4 – Protocols You Should Know

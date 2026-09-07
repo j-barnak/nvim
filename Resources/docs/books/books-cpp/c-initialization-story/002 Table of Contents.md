@@ -6,7 +6,7 @@ A Guide Through All Initialization Options and Related
 
 C++ Areas
 
- 
+
 
 Bartłomiej Filipek
 
@@ -16,7 +16,7 @@ This version was published on 2022-12-23
 
 ![](media/index-2_1.png)
 
- 
+
 
 This is a [Leanpub](https://leanpub.com/) book. Leanpub empowers authors and publishers with the Lean
 

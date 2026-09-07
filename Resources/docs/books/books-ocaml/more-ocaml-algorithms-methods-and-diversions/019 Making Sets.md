@@ -3,7 +3,7 @@ Making Sets
 
 In this chapter, we will look at various naive and sophisticated data structures for storing sets. We will look at their theoretical performance characteristics and time them against one another on various sorts of data to learn about their performance in practice. Along the way, we will learn about some of OCaml’s more advanced modular abstraction mechanisms. For each set representation, we will give the following five functions:
 
- 
+
 
 - `set_of_list `which builds a set from a list (which may contain duplicates). The empty set is built with `set_of_list []`;
 - `list_of_set `which returns, in no particular order, a list of the elements in the set;
@@ -19,7 +19,7 @@ Figure 11.1 exhibits these five functions by representing sets using the built-i
 
 > ![](media/images/00200.jpg)
 
- 
+
 
 > Figure 11.1:
 
@@ -43,7 +43,7 @@ Since we wish to build several of these set implementations, and benchmark them,
 
 > ![](media/images/00283.jpg)
 
- 
+
 
 > Figure 11.2:
 
@@ -52,13 +52,13 @@ Since we wish to build several of these set implementations, and benchmark them,
 The general syntactic form is:
 
 `module `module name `:`  
-`  sig`  
-`    `contents of .mli file  
-`  end`  
+`  sig`  
+`    `contents of .mli file  
+`  end`  
 `=`  
-`  struct`  
-`    `contents of .ml file  
-`  end`
+`  struct`  
+`    `contents of .ml file  
+`  end`
 
 When this code is pasted into the top level, or loaded in some other way, a new module SetList is available, with functions like `SetList.size `available through the given interface.
 
@@ -72,14 +72,14 @@ Performance
 
 Each use of the set data type is different – sometimes there is an initial phase of insertions, followed by millions of membership tests with no insertions. Sometimes insertions and membership tests are equally likely. Some functions may not be required at all. We shall consider two benchmarks for insertion:
 
- 
+
 
 - the insertion of the integers 1…50000 in a randomized order; and
 - the insertion, in order, of the 50000 integers 1…50000.
 
 Then, we will, for each of these “ordered” and “unordered” cases:
 
- 
+
 
 - perform 50000 membership tests in the range of numbers 1…100000, so that half are present and half not;
 - calculate the number of elements in the set;
@@ -101,7 +101,7 @@ Just like the representation of sets, there are multiple representations of sets
 
 We can see that when the items in the set are added in numerical or reverse-numerical order, this data structure is equivalent to, and has no better performance, than a simple list. The data type is the usual one for binary trees:
 
-`type 'a t = Lf | Br of 'a t * 'a * 'a t`
+`type 'a t = Lf | Br of 'a t * 'a * 'a t`
 
 The SetTree module is shown in Figure 11.3.
 
@@ -109,7 +109,7 @@ The SetTree module is shown in Figure 11.3.
 
 > ![](media/images/00241.jpg)
 
- 
+
 
 > Figure 11.3:
 
@@ -127,7 +127,7 @@ We have seen that binary search trees are only useful if they are reasonably clo
 
 A Red-Black tree is an ordinary binary tree with one addition: each node is either Red or Black. Leaf nodes are considered Black. The balance is ensured by every operation which alters the tree (in our case, just `insert`) so that the following remains true:
 
- 
+
 
 - the children of each Red node are Black; and
 - each path from root to leaf contains an equal number of Black nodes.
@@ -140,7 +140,7 @@ Here are the types for representing a Red-Black tree – we have just added a ne
 
 `type colour = R | B`  
   
-`type 'a t = Lf | Br of colour * 'a t * 'a * 'a t`
+`type 'a t = Lf | Br of colour * 'a t * 'a * 'a t`
 
 The `list_of_set`, `size`, and `member `functions are simple to alter: they just ignore the colour field. The `insert` function, however, must be modified to preserve the Red-Black properties.
 
@@ -162,7 +162,7 @@ Note that we wrap it in a function to set the root of the tree to Black – bala
 
 > ![](media/images/00269.jpg)
 
- 
+
 
 > Figure 11.4:
 
@@ -184,7 +184,7 @@ The OCaml Standard Library provides a hash table implementation in the module Ha
 
 > ![](media/images/00175.jpg)
 
- 
+
 
 > Figure 11.5:
 
@@ -198,7 +198,7 @@ The benchmarking programs may be found in the online resources.
 
 Questions
 
- 
+
 
 1.  Compare our set representations with regard to the amount of memory required to create and store them. You can use the functions from the Gc module in OCaml’s Standard Library to find out how many words of memory have been allocated before and after allocating a large set in each set representation.
 

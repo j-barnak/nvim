@@ -1,12 +1,12 @@
 **Building a cross-compiling toolchain**
 
- 
 
- 
+
+
 
 *Objective: Learn how to compile your own cross-compiling toolchain for the* *musl C library*
 
- 
+
 
 After this lab, you will be able to:
 
@@ -42,7 +42,7 @@ As we are not building Crosstool-ng from a release archive but from a git reposi
 
 \$ ./bootstrap
 
- 
+
 
 We can then either install Crosstool-ng globally on the system, or keep it locally in its download direc-
 
@@ -54,15 +54,15 @@ tory. We’ll choose the latter solution. As documented at [https://crosstool-ng
 
 \$ make
 
- 
+
 
 Then you can get Crosstool-ng help by running
 
 \$ ./ct-ng help
 
- 
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 5 **Configure the toolchain to produce**
+
+**Configure the toolchain to produce**
 
 A single installation of Crosstool-ng allows to produce as many toolchains as you want, for different archi-tectures, with different C libraries and different versions of the various components.
 
@@ -126,7 +126,7 @@ Explore the different other available options by traveling through the menus and
 
 Nothing is simpler:
 
-6 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license \$ ./ct-ng build
+\$ ./ct-ng build
 
 The toolchain will be installed by default in \$HOME/x-tools/. That’s something you could have changed in Crosstool-ng’s configuration.
 
@@ -170,6 +170,4 @@ Hello world!
 
 To save about 9 GB of storage space, do a ./ct-ng clean in the Crosstool-NG source directory. This will remove the source code of the different toolchain components, as well as all the generated files that are now useless since the toolchain has been installed in \$HOME/x-tools.
 
- 
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 7

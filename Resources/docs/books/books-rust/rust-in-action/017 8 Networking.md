@@ -16,9 +16,7 @@ You’ll also learn lots of Rust in this chapter, most of it related to advanced
 
 Networking is a difficult subject to cover in a single chapter. Each layer is a fractal of complexity. Networking experts will hopefully overlook my lack of depth in treating such a diverse topic.
 
-**251**
 
-**252**
 
 CHAPTER 8
 
@@ -88,7 +86,6 @@ Networking is comprised of layers. If you’re new to the field, don’t be inti
 
 ***All of networking in seven paragraphs***
 
-**253**
 
 **How computers talk to each other**
 
@@ -478,10 +475,8 @@ Figure 8.2
 
 Several layers of networking protocols involved with delivering content over the internet. The figure compares some common models, including the seven-layer OSI model and the four-layer TCP/IP model.
 
-**254**
 
 
-***Networking***
 
 unaware of what’s happening above them, and higher levels are agnostic to what’s happening below them. Lower levels receive a stream of bytes and pass it on. Higher levels don’t care how messages are sent; they just want them sent.
 
@@ -523,7 +518,6 @@ ch8-simple/
 
 ***Generating an HTTP GET request with reqwest***
 
-**255**
 
 The following listing shows the metadata for listing 8.2. The source code for this listing is in ch8/ch8-simple/Cargo.toml.
 
@@ -599,10 +593,8 @@ For example
 
  *Knowing when to close the connection.* HTTP has rules for telling each of the parties when the connection ends. This isn’t available to us when manually making requests. Instead, we keep the connection open for as long as possible and hope that the server will close.
 
-**256**
 
 
-***Networking***
 
  *Converting the byte stream to content.* Rules for translating the message body from
 
@@ -646,9 +638,7 @@ Trait objects are *dynamically-sized types*, which means that these are always s
 
 Adding dyn keyword is strongly encouraged.
 
-***Trait objects***
 
-**257**
 
 ***8.3.3***
 
@@ -708,10 +698,8 @@ The following listing shows the metadata for our fantasy role-playing game. The 
 
 2 Naming is hard.
 
-**258**
 
 
-***Networking***
 
 Listing 8.3
 
@@ -823,9 +811,7 @@ Using the trait object **&dyn Enchanter**
 
 38
 
-***Trait objects***
 
-**259**
 
 39 impl Enchanter for Dwarf {
 
@@ -921,10 +907,8 @@ Although these both have something to do with random number generators, they’r
 
 When used as a function argument and in similar places, the form &dyn Rng is a reference to something that implements the Rng trait, whereas &ThreadRng is a reference to a value of ThreadRng. With time, the distinction between traits and types becomes easier to grasp. Here’s some common use cases for trait objects:
 
-**260**
 
 
-***Networking***
 
 ***(continued)***
 
@@ -986,9 +970,7 @@ request with std::net::TcpStream. The source for this listing is in ch8/ch8-stdl
 
 main.rs.
 
-***TCP***
 
-**261**
 
 Listing 8.6
 
@@ -1086,10 +1068,8 @@ Port numbers are purely virtual. They are simply u16 values. Port numbers allow 
 
 So far, we’ve provided the hostname www.rustinaction.com to Rust. But to send messages over the internet, the IP (internet protocol) address is required. TCP knows nothing about domain names. To convert a domain name to an IP address, we rely on the Domain Name System (DNS) and its process called *domain name resolution*.
 
-**262**
 
 
-***Networking***
 
 We’re able to resolve names by asking a server, which can recursively ask other servers. DNS requests can be made over TCP, including encryption with TLS, but are also sent over UDP (User Datagram Protocol). We’ll use DNS here because it’s more useful for learning purposes.
 
@@ -1161,9 +1141,7 @@ names that need to be case-
 
 insensitive.
 
-***TCP***
 
-**263**
 
 Table 8.1
 
@@ -1337,10 +1315,8 @@ sent over the internet from other
 
 transport protocols.
 
-**264**
 
 
-***Networking***
 
 Table 8.1
 
@@ -1460,9 +1436,7 @@ We’re now in a position where we can meaningfully inspect the code. It has the
 
 After that, we need to accept the response from the server, decode the incoming bytes, and print the result. Error handling remains relatively ugly, with many calls to unwrap() and expect(). We’ll address that problem shortly in section 8.5. The end process is a command-line application that’s quite simple.
 
-***TCP***
 
-**265**
 
 Running our resolve application involves little ceremony. Given a domain name, it provides an IP address:
 
@@ -1544,10 +1518,8 @@ Replace the contents of src/main.rs with listing 8.9. It is available from ch8/
 
 ch8-resolve/src/main.rs.
 
-**266**
 
 
-***Networking***
 
 The following snippet provides a view of how the files of the project and the listings are interlinked:
 
@@ -1657,9 +1629,7 @@ A command-line utility to resolve IP addresses from hostnames
 
 29
 
-***TCP***
 
-**267**
 
 30 let mut request_as_bytes: Vec\<u8\> =
 
@@ -1801,10 +1771,8 @@ Listing 8.9 includes some business logic that deserves explaining. Lines 30–33
 
 33 vec\![0; 512\];
 
-**268**
 
 
-***Networking***
 
 Each form creates a subtly different outcome:
 
@@ -1854,9 +1822,7 @@ When a function incorporates Result types from two upstream crates, the ? operat
 
 code. This section discusses some of those challenges as well as strategies for managing them.
 
-***Ergonomic error handling for libraries***
 
-**269**
 
 ***8.5.1***
 
@@ -1934,10 +1900,8 @@ A function that attempts to return multiple **Result** types
 
 To compile listing 8.11, enter the ch8/misc directory and use rustc. This produces quite a stern, yet helpful, error message:
 
-**270**
 
 
-***Networking***
 
 **\$ rustc multierror.rs**
 
@@ -2045,9 +2009,7 @@ Looking at listing 8.11 again, we can see the try! macro in action as ?: **File:
 
 **to std::io::Error, so the program fails to compile.**
 
-***Ergonomic error handling for libraries***
 
-**271**
 
 9
 
@@ -2119,10 +2081,8 @@ Using a trait object in a return value
 
 Wrapping trait objects in Box is necessary because their size (in bytes on the stack) is unknown at compile time. In the case of listing 8.12, the trait object might originate from either File::open() or "::1".parse(). What actually happens depends on the circumstances encountered at runtime. A Box has a known size on the stack. Its raison d’être is to point to things that don’t, such as trait objects.
 
-**272**
 
 
-***Networking***
 
 ***8.5.2***
 
@@ -2180,9 +2140,7 @@ This code fails because "".parse::\<Ipv6Addr\>() does not return a std::io::Erro
 
 What we want to end up with is code that looks a little more like the following listing.
 
-***Ergonomic error handling for libraries***
 
-**273**
 
 Listing 8.13
 
@@ -2268,10 +2226,8 @@ IMPLEMENT STD::FMT::DISPLAY
 
 We’ll cheat slightly and implement Display by simply using Debug. We know that this is available to us because errors must define Debug. Here’s the updated code:
 
-**274**
 
 
-***Networking***
 
 use std::fmt;
 
@@ -2363,9 +2319,7 @@ let \_localhost = "::1"
 
 .parse::\<Ipv6Addr\>()?
 
-***Ergonomic error handling for libraries***
 
-**275**
 
 .maybe_convert_to(UpstreamError);
 
@@ -2441,10 +2395,8 @@ Wrapping upstream errors in our own type
 
 19 impl error::Error for UpstreamError { }
 
-**276**
 
 
-***Networking***
 
 20
 
@@ -2516,7 +2468,6 @@ Implementing **std::convert::From** for our wrapper error type 1 use std::io;
 
 ***MAC addresses***
 
-**277**
 
 4 use std::fs::File;
 
@@ -2600,10 +2551,8 @@ This is a reasonable approach when writing a main() function, but it isn’t rec
 
 Several pages ago in listing 8.9, you implemented a DNS resolver. That enabled conversions from a host name such as www.rustinaction.com to an IP address. Now we have an IP address to connect to.
 
-**278**
 
 
-***Networking***
 
 The internet protocol enables devices to contact each other via their IP addresses.
 
@@ -2661,9 +2610,7 @@ Manufacturers use a prefix assigned by the IEEE Registration Authority and a sch
 
  *Locally administered (or local) addresses allow devices to create their own MAC addresses* *without registration.* When setting a device’s MAC address yourself in software, you should make sure that your address is set to the local form.
 
-***MAC addresses***
 
-**279**
 
 MAC addresses have two modes: *unicast* and *multicast*. The transmission behavior for these forms is identical. The distinction is made when a device makes a decision about whether to accept a frame. A *frame* is a term used by the Ethernet protocol for a byte slice at this level. Analogies to frame include a packet, wrapper, and envelope. Figure 8.4
 
@@ -2743,10 +2690,8 @@ Unicast addresses are intended to transport information between two points that 
 
 When we begin talking about raw TCP in section 8.8, we’ll create a virtual hardware device in listing 8.22. To convince anything to talk to us, we need to learn how to assign our virtual device a MAC address. The macgen project in listing 8.17 generates
 
-**280**
 
 
-***Networking***
 
 the MAC addresses for us. The following listing shows the metadata for that project.
 
@@ -2866,7 +2811,6 @@ Creating macgen, a MAC address generator
 
 ***Implementing state machines with Rust’s enums***
 
-**281**
 
 36 }
 
@@ -2944,10 +2888,8 @@ break;
 
 }
 
-**282**
 
 
-***Networking***
 
 \_ =\> state,
 
@@ -3031,7 +2973,6 @@ It also avoids changing your hardware settings, which could affect its ability t
 
 ***“Raw” HTTP***
 
-**283**
 
 When successful, ip prints no output. To confirm that our tap-rust device was added, we can use the ip tuntap list subcommand as in the following snippet. When executed, you should see the tap-rust device in the list of devices in the output: **\$ ip tuntap list**
 
@@ -3097,10 +3038,8 @@ and converts between MAC address types (defined by the smoltcp crate) and our ow
 
  *dns.rs (listing 8.23)*—Performs DNS resolution, which converts a domain name to an IP address.
 
-**284**
 
 
-***Networking***
 
 NOTE
 
@@ -3170,9 +3109,7 @@ Check that your project’s Cargo.toml matches listing 8.19.
 
 Within the src directory, listing 8.20 becomes main.rs, listing 8.21 becomes ethernet.rs, listing 8.22 becomes http.rs, and listing 8.23 becomes dns.rs.
 
-***“Raw” HTTP***
 
-**285**
 
 The following listing shows the metadata for mget. You’ll find its source code in the ch8/ch8-mget/Cargo.toml file.
 
@@ -3304,10 +3241,8 @@ mget command-line parsing and overall coordination
 
 23 let tap_text = app.value_of("tap-device").unwrap(); 24
 
-**286**
 
 
-***Networking***
 
 25 let url = Url::parse(url_text)
 
@@ -3425,9 +3360,7 @@ Ethernet type conversion and MAC address generation
 
 10
 
-***“Raw” HTTP***
 
-**287**
 
 11 impl Display for MacAddress {
 
@@ -3543,10 +3476,8 @@ Manually creating an HTTP request using TCP primitives
 
 21 pub enum UpstreamError {
 
-**288**
 
 
-***Networking***
 
 22 Network(smoltcp::Error),
 
@@ -3652,9 +3583,7 @@ Manually creating an HTTP request using TCP primitives
 
 76 let mut sockets = SocketSet::new(vec\![\]);
 
-***“Raw” HTTP***
 
-**289**
 
 77 let tcp_handle = sockets.add(tcp_socket);
 
@@ -3760,10 +3689,8 @@ Manually creating an HTTP request using TCP primitives
 
 131 }
 
-**290**
 
 
-***Networking***
 
 132
 
@@ -3873,9 +3800,7 @@ Creating DNS queries to translate domain names to IP addresses
 
 45
 
-***“Raw” HTTP***
 
-**291**
 
 46 let dns_server_address =
 
@@ -4033,10 +3958,8 @@ Creating DNS queries to translate domain names to IP addresses
 
 100
 
-**292**
 
 
-***Networking***
 
 101 for answer in response.answers() {
 

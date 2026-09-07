@@ -1,3 +1,5 @@
+![](media/index-784_1.jpg)
+
 12 INTRODUCTION TO INTERPROCESS
 
 COMMUNICATION
@@ -2615,5 +2617,3 @@ the free space in the memory object—if shmalloc() cannot find
 enough memory for a request, let it fail. You can use ftruncate() to
 
 help with this problem.
-
-![](media/index-842_1.jpg)

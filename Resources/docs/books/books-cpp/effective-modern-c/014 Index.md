@@ -326,7 +326,6 @@ via construction vs. assignment, 288-290
 
 condition variables
 
-**304 \| Index**
 
 CRTP (Curiously Recurring Template Pattern),
 
@@ -520,7 +519,6 @@ non-dependent type, 64
 
 copy of an object, 4
 
-**Index \| 305**
 
 NRVO (named return value optimization),
 
@@ -716,7 +714,6 @@ weak memory consistency, 274
 
 std::tuples and, 71-73
 
-**306 \| Index**
 
 underlying type for, 69-71
 
@@ -912,7 +909,6 @@ Widget::Impl, 150-153
 
 func_for_x, 19
 
-**Index \| 307**
 
 fwd, 207
 
@@ -1104,7 +1100,6 @@ Widget::Widget, 3, 52-55, 109, 112, 115, setup, 96
 
 Widget::~Widget, 112, 148, 151
 
-**308 \| Index**
 
 widgetFactory, 201
 
@@ -1292,7 +1287,6 @@ universal references and, 180
 
 interruptible threads, definition of, 256
 
-**Index \| 309**
 
 **J**
 
@@ -1478,7 +1472,6 @@ readability and, 232-236
 
 unbound arguments, treatment of, 238
 
-**310 \| Index**
 
 **N**
 
@@ -1670,7 +1663,6 @@ scalability of, 171
 
 definition of, 253
 
-**Index \| 311**
 
 for std::thread objects, 269
 
@@ -1868,7 +1860,6 @@ RVO (see return value optimization)
 
 247-248
 
-**312 \| Index**
 
 launch policy and timeout-based loops, 247
 
@@ -2066,7 +2057,6 @@ timeout-based loops and, 247
 
 vs. std::unique_ptr deleters, 155
 
-**Index \| 313**
 
 efficiency of, 125, 133
 
@@ -2264,7 +2254,6 @@ system threads, 242
 
 vs. tasks, 241-245
 
-**314 \| Index**
 
 thread_local variables, 247
 
@@ -2431,5 +2420,3 @@ Zolman, Leor, xiii, xiv
 type deduction and, 165
 
 Zuse, Konrad, 195
-
-**Index \| 315**

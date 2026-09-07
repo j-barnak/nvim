@@ -1,6 +1,12 @@
+
+
+**5**
+
+
+
 **M E M O R Y M A P P I N G**
 
- 
+
 
 As explored in Chapter 3 on Virtual Memory, a key ca-
 
@@ -15,17 +21,17 @@ ping, a topic we explore in detail here.
 Examining the layout of a process in memory as shown in Figure 5-1.
 
 
- 
+
 
 Stack
 
- 
+
 
 Program break
 
 Heap
 
- 
+
 
 .bss
 
@@ -39,7 +45,7 @@ Virtual
 
 address
 
- 
+
 
 *Figure 5-1: Simplified ELF image layout in memory*
 
@@ -65,7 +71,7 @@ The two main functions that a programmer will be familiar with for allo-
 
 cating from the heap are [malloc()](https://man7.org/linux/man-pages/man2/malloc.2.html) and [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html), and more so the former of the two.
 
- 
+
 
 ***5.0.1 Program break***
 
@@ -77,13 +83,13 @@ userland allocation requests which is typically used for smaller allocations,
 
 with larger ones deferred to [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html)[.](https://man7.org/linux/man-pages/man2/mmap.2.html)
 
- 
+
 
 \*. Although it may manipulated at runtime via Variable Length Arrays (VLAs) or the use of [alloca()](https://man7.org/linux/man-pages/man2/alloca.2.html) functions like .
 
 
 
- 
+
 
 The program break is typically manipulated by the standard C library
 
@@ -101,7 +107,7 @@ gram break and adjusts VMAs to mark the new heap as valid. We examine it
 
 in Listing 5-1.
 
- 
+
 
 153 **SYSCALL_DEFINE1**(brk, **unsigned long**, brk) 154 {
 
@@ -149,11 +155,11 @@ in Listing 5-1.
 
 201 */\**
 
- 
 
 
 
- 
+
+
 
 202 *\* Always allow shrinking brk.* 203 *\* \_\_do_munmap() may downgrade mmap_lock to read.* 204 *\*/*
 
@@ -199,19 +205,19 @@ in Listing 5-1.
 
 246 **mmap_write_unlock**(mm); 247 **return** origbrk;
 
- 
 
 
 
- 
+
+
 
 248 }
 
- 
+
 
 *Listing 5-1:* mm/mmap.c: *syscall: [brk()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n153)*
 
- 
+
 
 We acquire a write lock from the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)-\>mmap_lock semaphore
 
@@ -231,7 +237,7 @@ After these preliminary checks are complete we are able to perform the ac-
 
 tual operation:
 
- 
+
 
 • If the caller is attempting to shrink the program break, this always suc-
 
@@ -247,7 +253,7 @@ first VMA which follows or contains this address (if any) and check whether we l
 
 [do_brk_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2973) which we examine in detail below.
 
- 
+
 
 After a successful program break adjustment has been performed we
 
@@ -265,7 +271,7 @@ The core function which does the heavy lifting of page break extension is
 
 [do_brk_flags()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2973) as shown in Listing 5-2.
 
- 
+
 
 2968 */\**
 
@@ -281,11 +287,11 @@ flags, **struct** list_head \*uf)
 
 2980 **unsigned long** mapped_addr; 2981
 
- 
 
 
 
- 
+
+
 
 2982 */\* Until we need other flags, refuse anything except VM_EXEC. \*/*
 
@@ -323,11 +329,11 @@ flags, **struct** list_head \*uf)
 
 3024 **vma_set_anonymous**(vma); 3025 vma-\>vm_start = addr; 3026 vma-\>vm_end = addr + len; 3027 vma-\>vm_pgoff = pgoff; 3028 vma-\>vm_flags = flags;
 
- 
 
 
 
- 
+
+
 
 3029 vma-\>vm_page_prot = **vm_get_page_prot**(flags); 3030 **vma_link**(mm, vma, prev, rb_link, rb_parent); 3031 **out**:
 
@@ -335,7 +341,7 @@ flags, **struct** list_head \*uf)
 
 3039 }
 
- 
+
 
 *Listing 5-2:* mm/mmap.c: [*do_brk_flags()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2973)
 
@@ -367,7 +373,7 @@ cutable heap, be set to VM_EXEC but this would be unusual!).
 
 We then perform the following steps:
 
- 
+
 
 1. Confirm that the memory we wish to expand the page break into is valid
 
@@ -393,11 +399,11 @@ space limit RLIMIT_AS and the data limit RLIMIT_DATA via [may_expand_vm()](https
 
 exceeded.
 
- 
 
 
 
- 
+
+
 
 6. Check to ensure we have sufficient memory and our mem-
 
@@ -415,7 +421,7 @@ ing it anonymous via [vma_set_anonymous()](https://git.kernel.org/pub/scm/linux/
 
 ing it to surrounding VMAs via [vma_link()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n645).
 
- 
+
 
 Whether merged or not, we update mmap statistics and set the VMA’s
 
@@ -439,7 +445,7 @@ In the vast majority of cases a user need not concern themselves with any
 
 kernel memory interfaces at all. However there are cases where a file needs to be memory-mapped, or more fine-grained control is required over the mapping, which is where mmap() comes into play:
 
- 
+
 
 ***5.0.2 mmap()***
 
@@ -447,13 +453,13 @@ kernel memory interfaces at all. However there are cases where a file needs to b
 
 examining the userland interface itself in Listing 5.0.2.
 
- 
+
 
 **void** \***mmap**(**void** \*addr, **size_t** length, **int** prot, **int** flags,
 
 **int** fd, **off_t** offset);
 
- 
+
 
 The function maps memory into the virtual address space as defined by
 
@@ -461,7 +467,7 @@ these parameters, returning either the page-aligned virtual address of the mappe
 
 Examining each of the parameters:
 
- 
+
 
 • addr – This is either NULL if the returned address is of no importance
 
@@ -469,11 +475,11 @@ Examining each of the parameters:
 
 If the MAP_FIXED flag is set then mapping at this address is a hard require-ment (and the function will return an error if it cannot map here). Oth-erwise it is a hint which the kernel will make a best effort to fulfil, but may not be able to.
 
- 
 
 
 
- 
+
+
 
 All memory mapped by the kernel will be page-aligned, so if a hint ad-dress is specified which is not, the kernel will page-align it. If MAP_FIXED is specified and the address is not page-aligned, an error will occur.
 
@@ -503,7 +509,7 @@ erwise it specifies the file descriptor of the file to be mapped. This file desc
 
 the offset within the file, in bytes, from which to start the mapping. It must be page-aligned, or an-EINVAL error will be returned. The offset can be outside of the size of the file at the time it is mapped, as the file size might change in future rendering the mapping valid. However if the file is accessed at a time when the offset is invalid a page fault will arise.
 
- 
+
 
 ***5.0.3 mmap map flags***
 
@@ -519,7 +525,7 @@ and MAP_SYNC) (note that [\_calc_vm_trans()](https://git.kernel.org/pub/scm/linu
 
 termining if a flag is set) as shown in Listing 5-3.
 
- 
+
 
 146 */\**
 
@@ -527,7 +533,7 @@ termining if a flag is set) as shown in Listing 5-3.
 
 149 **static inline unsigned long** 150 **calc_vm_flag_bits**(**unsigned long** flags) 151 {
 
- 
+
 
 \*. While it might seem somewhat pointless, PROT_NONE can be be useful reserving virtual memory MAP_FIXED ranges that are later overwritten using (see below for more details on this) or for im-
 
@@ -537,23 +543,23 @@ can be placed at the end of valid memory ranges to protect against access of buf
 
 otherwise out of range memory accesses to mitigate exploits or buggy code.
 
- 
 
 
 
- 
+
+
 
 152 **return \_calc_vm_trans**(flags, **MAP_GROWSDOWN**, **VM_GROWSDOWN** ) \| 153 **\_calc_vm_trans**(flags, **MAP_LOCKED**, **VM_LOCKED** ) \| 154 **\_calc_vm_trans**(flags, **MAP_SYNC**, **VM_SYNC** ) \| 155 **arch_calc_vm_flag_bits**(flags); 156 }
 
- 
+
 
 *Listing 5-3:* include/linux/mman.h: [*calc_vm_flag_bits()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mman.h?h=v6.0#n150)
 
- 
+
 
 Examining each of the possible flags that can be passed in the flags field:
 
- 
+
 
 • MAP_PRIVATE – Mutually exclusive with MAP_SHARED. Indicates that a Copy
 
@@ -585,11 +591,11 @@ kernel’s GUP functionality (see section 8.1.2). This invokes the
 
 [mm_populate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2660) function (and [\_\_mm_populate()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/gup.c?h=v6.0#n1652) in turn). Note that this fault-ing in is best effort, if an error occurs during faulting it is ignored, there-
 
- 
 
 
 
- 
+
+
 
 fore it is possible that memory mapped this way may still result in page faults.
 
@@ -629,17 +635,17 @@ If this flag is specified, then MAP_POPULATE is implied (as checked in
 
 [do_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1369)). Since this function ignores any errors which occur when
 
- 
+
 
 \*. For architectures which grow program stacks upwards, they maintain this gap above the stack, [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html) however this is not relevant to the discussion as an [’d](https://man7.org/linux/man-pages/man2/mmap.2.html) stack can only grow downwards. The
 
 gap is enforced in both directions regardless of architecture.
 
- 
 
 
 
- 
+
+
 
 faulting in memory this does not guarantee that further page faults will not occur.
 
@@ -695,13 +701,13 @@ This flag is mapped to [VM_SYNC](https://git.kernel.org/pub/scm/linux/kernel/git
 
 roed for security reasons. However, on no-MMU systems alone and only if CONFIG_MMAP_ALLOWED_UNINITIALIZED is set then uninitialised anonymous mappings permitted when the MMAP_UNINITIALIZED flag is set. This is only used on embedded devices due to the huge security hole this introduces, and is in any case limited in practice to those devices which do not possess an MMU so on modern architectures such as x86-64 this will simply not be permitted.
 
- 
+
 
 \*. Except for hugetlb but this is out of scope for this discussion.
 
 
 
- 
+
 
 • MAP_32BIT – Only implemented for the x86 architecture. Indicates that
 
@@ -729,7 +735,7 @@ haviour of, if MAP_POPULATE is also set, cancelling the MAP_POPULATE opera-tion.
 
 • MAP_EXECUTABLE – Deprecated and ignored.
 
- 
+
 
 ***5.0.4 mmap kernel implementation***
 
@@ -737,7 +743,7 @@ The mmap() system call implementation is architecture-specific. We examine
 
 the x86-64 version in Listing 5-4.
 
- 
+
 
 86 **SYSCALL_DEFINE6**(mmap, **unsigned long**, addr, **unsigned long**, len,
 
@@ -757,7 +763,7 @@ the x86-64 version in Listing 5-4.
 
 94 }
 
- 
+
 
 *Listing 5-4:* arch/x86/kernel/sys_x86_64.c: [*syscall:mmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/sys_x86_64.c?h=v6.0#n86)
 
@@ -767,21 +773,21 @@ mmap() function, only the offset is expressed in pages, not bytes\* (excluding
 
 out of scope huge page handling) as shown in Listing 5-5.
 
- 
+
 
 1548 **unsigned long ksys_mmap_pgoff**(**unsigned long** addr, **unsigned long** len, 1549 **unsigned long** prot, **unsigned long** flags,
 
- 
+
 
 \*. This is utilised by the [mmap2()](https://man7.org/linux/man-pages/man2/mmap2.2.html) system call which permits the avoidance of overflow for systems off_t whose is 32-bits and who need to be able to offset further. This system call is aliased to
 
 [mmap_pgoff()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1593) which calls ksys_mmap_pgoff() directly.
 
- 
 
 
 
- 
+
+
 
 1550 **unsigned long** fd, **unsigned long** pgoff) 1551 {
 
@@ -805,11 +811,11 @@ out of scope huge page handling) as shown in Listing 5-5.
 
 1591 }
 
- 
+
 
 *Listing 5-5:* mm/mmap.c: [*ksys_mmap_pgoff()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1548)
 
- 
+
 
 This is essentially pass-through to [vm_mmap_pgoff()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n539), obtaining the
 
@@ -819,7 +825,7 @@ via [fget()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/
 
 as shown in Listing 5-6.
 
- 
+
 
 539 **unsigned long vm_mmap_pgoff**(**struct** file \*file, **unsigned long** addr, 540 **unsigned long** len, **unsigned long** prot, 541 **unsigned long** flag, **unsigned long** pgoff) 542 {
 
@@ -839,15 +845,15 @@ as shown in Listing 5-6.
 
 560 }
 
- 
 
 
 
- 
+
+
 
 *Listing 5-6:* mm/util.c: [*vm_mmap_pgoff()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n539)
 
- 
+
 
 This starts by invoking [security_mmap_file()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/security/security.c?h=v6.0#n1589) to provide a security hook
 
@@ -865,7 +871,7 @@ ultimately calls [\_\_mm_populate()](https://git.kernel.org/pub/scm/linux/kernel
 
 We examine the key [do_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1369) function starting in Listing 5-7.
 
- 
+
 
 1366 */\**
 
@@ -895,11 +901,11 @@ We examine the key [do_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 1393 */\* force arch specific MAP_FIXED handling in get_unmapped_area \*/* 1394 **if** (flags & **MAP_FIXED_NOREPLACE**) 1395 flags \|= **MAP_FIXED**;
 
- 
+
 
 *Listing 5-7:* mm/mmap.c: [*do_mmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1369) *parameter filtering*
 
- 
+
 
 We start with some simple initialisation and filtering of parameters. If
 
@@ -909,11 +915,11 @@ PROT_EXEC, as it does on some architectures (or otherwise specified via the
 
 process’s [personality()](https://man7.org/linux/man-pages/man2/personality.2.html)[).](https://man7.org/linux/man-pages/man2/personality.2.html)
 
- 
 
 
 
- 
+
+
 
 Finally, we ensure MAP_FIXED is always set if MAP_FIXED_NOREPLACE is to ensure
 
@@ -921,7 +927,7 @@ architecture-specific logic run in [get_unmapped_area()](https://git.kernel.org/
 
 We examine the next part of the function in Listing 5-8.
 
- 
+
 
 1397 **if** (!(flags & **MAP_FIXED**)) 1398 addr = **round_hint_to_min**(addr); 1399
 
@@ -955,15 +961,15 @@ We examine the next part of the function in Listing 5-8.
 
 1442 **if** (**mlock_future_check**(mm, vm_flags, len)) 1443 **return**-**EAGAIN**;
 
- 
+
 
 *Listing 5-8:* mm/mmap.c: [*do_mmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1369) *initial checks and setup*
 
- 
 
 
 
- 
+
+
 
 We start by ensuring that any specified hint address passed as addr (i.e.
 
@@ -973,7 +979,7 @@ greater than the minimum permitted by [mmap_min_addr](https://git.kernel.org/pub
 
 as shown in Listing 5-9.
 
- 
+
 
 1304 */\**
 
@@ -985,11 +991,11 @@ as shown in Listing 5-9.
 
 1315 }
 
- 
+
 
 *Listing 5-9:* mm/mmap.c: [*round_hint_to_min()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1308)
 
- 
+
 
 We then ensure that both the len and pgoff parameters are checked to
 
@@ -1041,15 +1047,15 @@ user limit to be exceeded (again, unless the thread possesses the CAP_IPC_LOCK
 
 [capability).](https://man7.org/linux/man-pages/man7/capabilities.7.html)
 
- 
+
 
 \*. Capabilities are a fine-grained means of assigning permissions on a per-thread basis.
 
- 
 
 
 
- 
+
+
 
 Once these checks are complete, we go ahead and check the flags field
 
@@ -1057,7 +1063,7 @@ is valid and adjust VMA flags as necessary. There is separate logic for both fil
 
 shown in Listing 5-10.
 
- 
+
 
 1445 **if** (file) {
 
@@ -1089,11 +1095,11 @@ mmap_supported_flags;
 
 1482 vm_flags \|= **VM_SHARED** \| **VM_MAYSHARE**; 1483 **if** (!(file-\>f_mode & **FMODE_WRITE**)) 1484 vm_flags &= ~(**VM_MAYWRITE** \| **VM_SHARED**); 1485 **fallthrough**;
 
- 
 
 
 
- 
+
+
 
 1486 **case MAP_PRIVATE**: 1487 **if** (!(file-\>f_mode & **FMODE_READ**)) 1488 **return**-**EACCES**; 1489 **if** (**path_noexec**(&file-\>f_path)) { 1490 **if** (vm_flags & **VM_EXEC**) 1491 **return**-**EPERM**; 1492 vm_flags &= ~**VM_MAYEXEC**; 1493 } 1494
 
@@ -1103,17 +1109,17 @@ mmap_supported_flags;
 
 1502 **return**-**EINVAL**; 1503 }
 
- 
+
 
 *Listing 5-10:* mm/mmap.c: [*do_mmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1369) *file-backed flag checks*
 
- 
+
 
 We start by checking the size of the mapped file is reasonable via
 
 [file_mmap_ok()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1353) as shown in Listing 5-11.
 
- 
+
 
 1353 **static inline bool file_mmap_ok**(**struct** file \*file, **struct** inode \*inode, 1354 **unsigned long** pgoff, **unsigned long** len) 1355 {
 
@@ -1125,11 +1131,11 @@ We start by checking the size of the mapped file is reasonable via
 
 1364 }
 
- 
+
 
 *Listing 5-11:* mm/mmap.c: [*file_mmap_ok()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1353)
 
- 
+
 
 This checks that the length of the mapping (the len parameter) is less
 
@@ -1151,11 +1157,11 @@ bit systems this is not a concern. This logic was added in commit
 
 [be83bbf80682: mmap: introduce sane default mmap limits](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=be83bbf80682).
 
- 
 
 
 
- 
+
+
 
 After this check is performed, we establish a mask of accepted map-
 
@@ -1173,7 +1179,7 @@ The type of mapping is masked by [MAP_TYPE](https://git.kernel.org/pub/scm/linux
 
 MAP_SHARED and MAP_SHARED_VALIDATE and we process these flags as follows:
 
- 
+
 
 • MAP_SHARED – For legacy reasons, when this flag is specified, we permit
 
@@ -1201,23 +1207,23 @@ We then perform an absolutely key check – if the [struct file_operations](http
 
 handler in [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940)-\>f_op-\>mmap is not specified (somethign that most be provided by the filesystem), then memory-mapping this file is simply not supported so we must error out.
 
- 
 
 
 
- 
+
+
 
 Finally, if this memory would be mapped as a stack (implied by
 
 [VM_GROWSDOWN](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n277)\* ), then we error out, as mapping memory file-backed and a stack simply makes no sense.
 
- 
+
 
 Having examined the file-backed logic, let’s consider the far simpler
 
 anonymous mapping logic in LIsting 5-12
 
- 
+
 
 1504 } **else** {
 
@@ -1227,7 +1233,7 @@ anonymous mapping logic in LIsting 5-12
 
 1524 }
 
- 
+
 
 *Listing 5-12:* mm/mmap.c: [*do_mmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1369) *anonymous flag checks*
 
@@ -1261,7 +1267,7 @@ Note that MAP_SHARED_VALIDATE is not a valid flag for anonymous mappings.
 
 Examining the final part of [do_mmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1369) in Listing 5-13.
 
- 
+
 
 \*. Some architectures may specify the VM_GROWSUP flag to indicate a stack which grows upward,
 
@@ -1269,7 +1275,7 @@ however we do not consider such architectures here.
 
 
 
- 
+
 
 1526 */\**
 
@@ -1287,11 +1293,11 @@ however we do not consider such architectures here.
 
 1546 }
 
- 
+
 
 *Listing 5-13:* mm/mmap.c: [*do_mmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1369) *shared mapping logic*
 
- 
+
 
 We start by handling the MAP_NORESERVE case. If the overcommit mode
 
@@ -1309,7 +1315,7 @@ locked (which would already have been populated), MAP_POPULATE is specified but 
 
 We start examining [mmap_region()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1681) in Listing 5-14.
 
- 
+
 
 1681 **unsigned long mmap_region**(**struct** file \*file, **unsigned long** addr, 1682 **unsigned long** len, vm_flags_t vm_flags, **unsigned long** pgoff, 1683 **struct** list_head \*uf) 1684 {
 
@@ -1319,11 +1325,11 @@ We start examining [mmap_region()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 1691 */\* Check against address space limit. \*/* 1692 **if** (!**may_expand_vm**(mm, vm_flags, len \>\> **PAGE_SHIFT**)) { 1693 **unsigned long** nr_pages;
 
- 
 
 
 
- 
+
+
 
 1694
 
@@ -1357,11 +1363,11 @@ We start examining [mmap_region()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 1725 **goto** out;
 
- 
+
 
 *Listing 5-14:* mm/mmap.c: [*mmap_region()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1681) *initialisation and early exit*
 
- 
+
 
 We start by checking the address space limit via [may_expand_vm()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n3252)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n3252) which
 
@@ -1387,11 +1393,11 @@ where the newly inserted VMA should be referenced from (i.e. a pointer
 
 to its parent’s left or right node field).
 
- 
 
 
 
- 
+
+
 
 See section 5.0.6 below for a detailed examination of how memory is un-
 
@@ -1405,7 +1411,7 @@ We examine the code which allocates and initialises a new VMA in List-
 
 ing 5-15.
 
- 
+
 
 */\**
 
@@ -1421,7 +1427,7 @@ error = -**ENOMEM**;
 
 }
 
- 
+
 
 vma-\>vm_start = addr;
 
@@ -1431,7 +1437,7 @@ vma-\>vm_flags = vm_flags;
 
 vma-\>vm_page_prot = **vm_get_page_prot**(vm_flags); vma-\>vm_pgoff = pgoff;
 
- 
+
 
 **if** (file) {
 
@@ -1443,13 +1449,13 @@ error = **mapping_map_writable**(file-\>f_mapping); **if** (error)
 
 }
 
- 
+
 
 vma-\>vm_file = **get_file**(file); error = **call_mmap**(file, vma); **if** (error)
 
 **goto unmap_and_free_vma**;
 
- 
+
 
 */\* Can addr have changed??*
 
@@ -1459,15 +1465,15 @@ vma-\>vm_file = **get_file**(file); error = **call_mmap**(file, vma); **if** (er
 
 **WARN_ON_ONCE**(addr != vma-\>vm_start);
 
- 
+
 
 addr = vma-\>vm_start;
 
- 
 
 
 
- 
+
+
 
 */\* If vm_flags changed after call_mmap(), we should try merge vma again*
 
@@ -1509,7 +1515,7 @@ vm_flags = vma-\>vm_flags;
 
 }
 
- 
+
 
 vm_flags = vma-\>vm_flags;
 
@@ -1527,7 +1533,7 @@ error = **shmem_zero_setup**(vma);
 
 }
 
- 
+
 
 */\* Allow architectures to sanity-check the vm_flags \*/* **if** (!**arch_validate_flags**(vma-\>vm_flags)) {
 
@@ -1543,15 +1549,15 @@ error = -**EINVAL**;
 
 }
 
- 
+
 
 **vma_link**(mm, vma, prev, rb_link, rb_parent);
 
- 
+
 
 *Listing 5-15:* mm/mmap.c: [*mmap_region()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1681) *VMA allocation and initialisation*
 
- 
+
 
 We allocate and initialise a new VMA via [vm_area_alloc()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n455) (for more de-
 
@@ -1559,11 +1565,11 @@ tails on this see section 4.4.2), before assigning the VMA’s vm_start, vm_end,
 
 vm_flags and vm_pgoff with input parameters.
 
- 
 
 
 
- 
+
+
 
 The protection flags applicable to the VMA are determined via the
 
@@ -1605,7 +1611,7 @@ specified both MAP_ANONYMOUS and MAP_SHARED), special handling is required, as t
 
 in [shmem_zero_setup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/shmem.c?h=v6.0#n4226) as shown in Listing 5-16.
 
- 
+
 
 4222 */\*\**
 
@@ -1631,11 +1637,11 @@ in [shmem_zero_setup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds
 
 4237 file = **shmem_kernel_file_setup**("dev/zero", size, vma-\>vm_flags); 4238 **if** (**IS_ERR**(file)) 4239 **return PTR_ERR**(file); 4240
 
- 
 
 
 
- 
+
+
 
 4241 **if** (vma-\>vm_file) 4242 **fput**(vma-\>vm_file); 4243 vma-\>vm_file = file; 4244 vma-\>vm_ops = &shmem_vm_ops; 4245
 
@@ -1643,7 +1649,7 @@ in [shmem_zero_setup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds
 
 4247 }
 
- 
+
 
 *Listing 5-16:* mm/shmem.c: [*shmem_zero_setup()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/shmem.c?h=v6.0#n4226)
 
@@ -1677,7 +1683,7 @@ Finally, let’s examine [mmap_region()](https://git.kernel.org/pub/scm/linux/ke
 
 Listing 5-17.
 
- 
+
 
 1806
 
@@ -1697,13 +1703,13 @@ Listing 5-17.
 
 1834 */\**
 
- 
+
 
 \*. Note that ‘shmem’ implements the RAM-based file systems, most notable of which is tmpfs.
 
 
 
- 
+
 
 1835 *\* New (or expanded) vma always get soft dirty status.* 1836 *\* Otherwise user-space soft-dirty page tracker won't* 1837 *\* be able to distinguish situation when vma area unmapped,* 1838 *\* then new mapped in-place (which must be aimed as* 1839 *\* a completely new data area).* 1840 *\*/*
 
@@ -1729,11 +1735,11 @@ Listing 5-17.
 
 1861 }
 
- 
+
 
 *Listing 5-17:* mm/mmap.c: [*mmap_region()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1681) *error handling and shared logic*
 
- 
+
 
 Each of the error handling cases effectively undo existing actions as ex-
 
@@ -1763,15 +1769,15 @@ determine the protection bits for the PTE entries used to map in this map-
 
 ping are set by [vma_set_page_prot()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n90) as shown in Listing 5-18.
 
- 
+
 
 89 */\* Update vma-\>vm_page_prot to reflect vma-\>vm_flags. \*/*
 
- 
 
 
 
- 
+
+
 
 90 **void vma_set_page_prot**(**struct** vm_area_struct \*vma)
 
@@ -1797,11 +1803,11 @@ ping are set by [vma_set_page_prot()](https://git.kernel.org/pub/scm/linux/kerne
 
 101 **WRITE_ONCE**(vma-\>vm_page_prot, vm_page_prot); 102 }
 
- 
+
 
 *Listing 5-18:* mm/mmap.c: [*vma_set_page_prot()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n90)
 
- 
+
 
 This establishes page protection flags as determined by
 
@@ -1829,7 +1835,7 @@ but doubles up usefully here for write notify shared ones).
 
 Examining [vma_wants_writenotify()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1630) as shown in Listing 5-19.
 
- 
+
 
 1624 */\**
 
@@ -1849,11 +1855,11 @@ Examining [vma_wants_writenotify()](https://git.kernel.org/pub/scm/linux/kernel/
 
 1639 */\* The backer wishes to know when pages are first written to? \*/* 1640 **if** (vm_ops && (vm_ops-\>**page_mkwrite** \|\| vm_ops-\>**pfn_mkwrite**)) 1641 **return** 1;
 
- 
 
 
 
- 
+
+
 
 1642
 
@@ -1877,7 +1883,7 @@ Examining [vma_wants_writenotify()](https://git.kernel.org/pub/scm/linux/kernel/
 
 1660 */\* Can the mapping track the dirty pages? \*/* 1661 **return** vma-\>vm_file && vma-\>vm_file-\>f_mapping && 1662 **mapping_can_writeback**(vma-\>vm_file-\>f_mapping); 1663 }
 
- 
+
 
 *Listing 5-19:* mm/mmap.c: [*vma_wants_writenotify()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1630)
 
@@ -1903,7 +1909,7 @@ Finally, if the mapping is file-backed and the mapping’s associated
 
 [struct file](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) object is capable of writeback (see the page cache chapter for more on this), we assume write notification is required.
 
- 
+
 
 ***5.0.5 Choosing where to map***
 
@@ -1911,11 +1917,11 @@ In order to determine which unmapped area in which to place a new map-
 
 ping the function function [get_unmapped_area()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2209) is invoked in Listing 5-20.
 
- 
 
 
 
- 
+
+
 
 2208 **unsigned long**
 
@@ -1955,21 +1961,21 @@ ping the function function [get_unmapped_area()](https://git.kernel.org/pub/scm/
 
 2246 error = **security_mmap_addr**(addr); 2247 **return** error ? error : addr; 2248 }
 
- 
+
 
 *Listing 5-20:* mm/mmap.c: [*get_unmapped_area()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2209)
 
- 
+
 
 This function either returns a virtual address to place a mapping target-
 
 ing address addr (which will be equal to zero should no specific address hint
 
- 
 
 
 
- 
+
+
 
 be provided), of size len bytes, at a page offset within the mapping of pgoff,
 
@@ -1979,7 +1985,7 @@ An architecture-specific check is performed via [arch_mmap_check()](https://git.
 
 ever for x86-64 this is a no-op. After checking to ensure that the specified length is sane, we determine which function to use:
 
- 
+
 
 • If file-backed and the [struct file-\>f_op](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n940) (of type [struct file_operations](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n2093))
 
@@ -1993,7 +1999,7 @@ shared mapping), the shmem\*-specific function [shmem_get_unmapped_area()](https
 
 specified in the [struct mm_struct-\>get_unmapped_area](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) field.
 
- 
+
 
 The general unmapped area handler is determined early in a process’s
 
@@ -2005,7 +2011,7 @@ termined by [mmap_is_legacy()](https://git.kernel.org/pub/scm/linux/kernel/git/t
 
 Examining [mmap_is_legacy()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/mmap.c?h=v6.0#n62) as shown in Listing 5-21.
 
- 
+
 
 62 **static int mmap_is_legacy**(**void**) 63 {
 
@@ -2013,7 +2019,7 @@ Examining [mmap_is_legacy()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 67 **return sysctl_legacy_va_layout**; 68 }
 
- 
+
 
 *Listing 5-21:* arch/x86/mm/mmap.c: [*mmap_is_legacy()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/mmap.c?h=v6.0#n62)
 
@@ -2029,19 +2035,19 @@ cases, [arch_get_unmapped_area_topdown()](https://git.kernel.org/pub/scm/linux/k
 
 5-22.
 
- 
+
 
 160 **unsigned long**
 
 161 **arch_get_unmapped_area_topdown**(**struct** file \*filp, **const unsigned long** addr0, 162 **const unsigned long** len, **const unsigned long** pgoff,
 
- 
+
 
 \*. shmem is the filesystem which underlies tmpfs and ramfs.
 
 
 
- 
+
 
 163 **const unsigned long** flags) 164 {
 
@@ -2093,11 +2099,11 @@ cases, [arch_get_unmapped_area_topdown()](https://git.kernel.org/pub/scm/linux/k
 
 209 info.align_mask = 0;
 
- 
 
 
 
- 
+
+
 
 210 info.align_offset = pgoff \<\< **PAGE_SHIFT**; 211 **if** (filp) {
 
@@ -2115,13 +2121,13 @@ cases, [arch_get_unmapped_area_topdown()](https://git.kernel.org/pub/scm/linux/k
 
 227 **return arch_get_unmapped_area**(filp, addr0, len, pgoff, flags); 228 }
 
- 
+
 
 *Listing 5-22:* *x86-64-specific* *arch/x86/kernel/sys_x86_64.c**: x86-64-specific*
 
 [*arch_get_unmapped_area_topdown()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/sys_x86_64.c?h=v6.0#n161)
 
- 
+
 
 We start by performing a basic sanity check – if the length exceeds the
 
@@ -2155,17 +2161,17 @@ This mmap_base parameter is determined by [arch_pick_mmap_layout()](https://git.
 
 invoked by [setup_new_exec()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/fs/exec.c?h=v6.0#n1433) when a process is initially executed. The
 
- 
 
 
 
- 
+
+
 
 [arch_pick_mmap_base()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/mmap.c?h=v6.0#n118) function is called to obtain this base, which ultimately
 
 invokes [mmap_base()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/mmap.c?h=v6.0#n82) as shown in Listing 5-23.
 
- 
+
 
 82 **static unsigned long mmap_base**(**unsigned long** rnd, **unsigned long** task_size,
 
@@ -2209,11 +2215,11 @@ invokes [mmap_base()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/l
 
 105 **return PAGE_ALIGN**(task_size - gap - rnd); 106 }
 
- 
+
 
 *Listing 5-23:* arch/x86/mm/mmap.c: *x86-64 [mmap_base()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/mm/mmap.c?h=v6.0#n82)*
 
- 
+
 
 This establishes a gap below the top of the maximum virtual address
 
@@ -2251,11 +2257,11 @@ which for x86-64 defaults to 28 bits (256 MiB), but which can also be ad-
 
 justed via the vm.mmap_rnd_bits tunable.
 
- 
 
 
 
- 
+
+
 
 With this value set, an [struct vm_unmapped_area_info](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2677) object is populated
 
@@ -2267,7 +2273,7 @@ are considering here), [unmapped_area_topdown()](https://git.kernel.org/pub/scm/
 
 an align mask check that is not relevant to x86-64) as shown in Listing 5-24.
 
- 
+
 
 1966 **static unsigned long unmapped_area_topdown**(**struct** vm_unmapped_area_info \*info) 1967 {
 
@@ -2291,11 +2297,11 @@ an align mask check that is not relevant to x86-64) as shown in Listing 5-24.
 
 2003 */\* Visit right subtree if it looks promising \*/* 2004 gap_start = vma-\>vm_prev ? **vm_end_gap**(vma-\>vm_prev) : 0; 2005 **if** (gap_start \<= high_limit && vma-\>vm_rb.rb_right) { 2006 **struct** vm_area_struct \*right = 2007 **rb_entry**(vma-\>vm_rb.rb_right, 2008 **struct** vm_area_struct, vm_rb); 2009 **if** (right-\>rb_subtree_gap \>= length) { 2010 vma = right; 2011 **continue**;
 
- 
 
 
 
- 
+
+
 
 2012 } 2013 }
 
@@ -2327,21 +2333,21 @@ an align mask check that is not relevant to x86-64) as shown in Listing 5-24.
 
 . . .
 
- 
 
 
 
- 
+
+
 
 2060 **VM_BUG_ON**(gap_end \< info-\>low_limit); 2061 **VM_BUG_ON**(gap_end \< gap_start); 2062 **return** gap_end;
 
 2063 }
 
- 
+
 
 *Listing 5-24:* mm/mmap.c: [*unmapped_area_topdown()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1966)
 
- 
+
 
 Firstly it’s worth examining the comment referenced by the code from
 
@@ -2349,7 +2355,7 @@ the bottom-up version of the function, [unmapped_area()](https://git.kernel.org/
 
 5-25.
 
- 
+
 
 1865 */\**
 
@@ -2357,11 +2363,11 @@ the bottom-up version of the function, [unmapped_area()](https://git.kernel.org/
 
 1869 *\* - gap_end* *= vma-\>vm_start* *\>= info-\>low_limit* *+ length;* 1870 *\* - gap_end - gap_start \>= length* 1871 *\*/*
 
- 
+
 
 *Listing 5-25:* mm/mmap.c: [*unmapped_area()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1863) *comment*
 
- 
+
 
 So it’s important to remember that rather than looking for an address
 
@@ -2401,11 +2407,11 @@ As we are looking for the largest possible value, we start by always travers-
 
 ing the right node (as a balanced search tree, this will always result in VMAs
 
- 
 
 
 
- 
+
+
 
 at higher addresses) if there is sufficient subtree gap until we reach a node
 
@@ -2463,31 +2469,31 @@ ultimately does not contain a sufficient gap and the order in which nodes
 
 will be traversed as shown in Figure 5-2.
 
- 
+
 
 6
 
- 
+
 
 8 4
 
- 
+
 
 9 7 5 1
 
- 
+
 
 2
 
- 
+
 
 3
 
- 
+
 
 *Figure 5-2: VMA tree gap traversal example*
 
- 
+
 
 As you can see, the algorithm implemented in [unmapped_area_topdown()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1966)
 
@@ -2495,11 +2501,11 @@ results in a traversal from ‘rightmost’ node (i.e. the one with the largest 
 
 dress) to the leftmost (i.e. the one with the smallest address).
 
- 
 
 
 
- 
+
+
 
 ***5.0.6 Unmapping memory***
 
@@ -2509,17 +2515,17 @@ by [munmap()](https://man7.org/linux/man-pages/man2/munmap.2.html) which accepts
 
 pages. This is implemented in the munmap system call as shown in LIsting 5-26.
 
- 
+
 
 2881 **SYSCALL_DEFINE2**(**munmap**, **unsigned long**, addr, **size_t**, len) 2882 {
 
 2883 addr = **untagged_addr**(addr); 2884 **return \_\_vm_munmap**(addr, len, **true**); 2885 }
 
- 
+
 
 *Listing 5-26:* mm/mmap.c: [*munmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2881) *system call*
 
- 
+
 
 This defers the unmapping operation to [\_\_vm_munmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2850)\* which acquires a
 
@@ -2527,7 +2533,7 @@ write lock on [struct mm_struct-\>mmap_lock](https://git.kernel.org/pub/scm/linu
 
 5-27.
 
- 
+
 
 2850 **static int \_\_vm_munmap**(**unsigned long** start, **size_t** len, **bool** downgrade) 2851 {
 
@@ -2559,23 +2565,23 @@ write lock on [struct mm_struct-\>mmap_lock](https://git.kernel.org/pub/scm/linu
 
 2873 }
 
- 
+
 
 *Listing 5-27:* mm/mmap.c: [*\_\_vm_munmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2850)
 
- 
+
 
 Examining [\_\_do_munmap()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2754) as shown in Listing 5-28.
 
- 
+
 
 \*. The untagged_addr() invocation is only relevant to specific architectures which tag virtual addresses for specific purposes and is out of scope here.
 
- 
 
 
 
- 
+
+
 
 2754 **int \_\_do_munmap**(**struct** mm_struct \*mm, **unsigned long** start, **size_t** len, 2755 **struct** list_head \*uf, **bool** downgrade) 2756 {
 
@@ -2625,11 +2631,11 @@ start)
 
 2797 **return**-**ENOMEM**; 2798
 
- 
 
 
 
- 
+
+
 
 2799 error = **\_\_split_vma**(mm, vma, start, 0); 2800 **if** (error) 2801 **return** error; 2802 prev = vma; 2803 }
 
@@ -2653,11 +2659,11 @@ start)
 
 2841 **return** downgrade ? 1 : 0; 2842 }
 
- 
+
 
 *Listing 5-28:* mm/mmap.c: [*\_\_do_munmap()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2754)
 
- 
+
 
 We start by checking that the start value is both page-aligned (via
 
@@ -2677,19 +2683,19 @@ free hand as to the address range they’ve specified – there might be multipl
 
 tion the range might overlap VMAs as shown in Figure 5-3.
 
- 
 
 
 
- 
+
+
 
 start start + len
 
- 
+
 
 *Figure 5-3: munmap() VMA cases*
 
- 
+
 
 We deal with the overlapping VMAs using [\_\_split_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2676) (see section 5.1.4
 
@@ -2723,7 +2729,7 @@ examine shortly).
 
 Examining [detach_vmas_to_be_unmapped()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2633) as shown in Listing 5-29.
 
- 
+
 
 2628 */\**
 
@@ -2743,11 +2749,11 @@ Examining [detach_vmas_to_be_unmapped()](https://git.kernel.org/pub/scm/linux/ke
 
 2642 **vma_rb_erase**(vma, &mm-\>mm_rb); 2643 **if** (vma-\>vm_flags & **VM_LOCKED**) 2644 mm-\>locked_vm -= **vma_pages**(vma); 2645 mm-\>map_count--; 2646 tail_vma = vma; 2647 vma = vma-\>vm_next; 2648 } **while** (vma && vma-\>vm_start \< end); 2649 \*insertion_point = vma; 2650 **if** (vma) {
 
- 
 
 
 
- 
+
+
 
 2651 vma-\>vm_prev = prev; 2652 **vma_gap_update**(vma); 2653 } **else**
 
@@ -2767,11 +2773,11 @@ Examining [detach_vmas_to_be_unmapped()](https://git.kernel.org/pub/scm/linux/ke
 
 2670 }
 
- 
+
 
 *Listing 5-29:* mm/mmap.c: [*detach_vmas_to_be_unmapped()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2633)
 
- 
+
 
 We start by determining the ‘insertion point’, i.e. the pointer which we
 
@@ -2803,11 +2809,11 @@ Finally, we determine whether we can downgrade from a write to a read
 
 lock on the [struct mm_struct-\>mmap_lock](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486) semaphore – if the immediately pro-ceeding VMA is a stack that grows down the preceding one is a stack which grows up, we do not downgrade as stacks can alter their vm_start (if a down-wards growing stack) or vm_end (if an upward growing stack) which could
 
- 
 
 
 
- 
+
+
 
 cause inadvertent accesses to TLB cache entries not yet invalidated for the
 
@@ -2815,7 +2821,7 @@ removed range.
 
 Finally, examining [remove_vma_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2589) as shown in Listing 5-30.
 
- 
+
 
 2583 */\**
 
@@ -2837,11 +2843,11 @@ Finally, examining [remove_vma_list()](https://git.kernel.org/pub/scm/linux/kern
 
 2605 }
 
- 
+
 
 *Listing 5-30:* mm/mmap.c: [*remove_vma_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2589)
 
- 
+
 
 We start by updating the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n486)-\>hiwater_vm statistic (as we
 
@@ -2867,7 +2873,7 @@ cess address space via [validate_mm()](https://git.kernel.org/pub/scm/linux/kern
 
 Examining [remove_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n137) as shown in Listing 5-31.
 
- 
+
 
 134 */\**
 
@@ -2877,11 +2883,11 @@ Examining [remove_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 139 **struct** vm_area_struct \*next = vma-\>vm_next;
 
- 
 
 
 
- 
+
+
 
 140
 
@@ -2891,7 +2897,7 @@ Examining [remove_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 
 149 }
 
- 
+
 
 *Listing 5-31:* mm/mmap.c: [*remove_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n137)
 
@@ -2903,11 +2909,11 @@ tion to be invoked when a VMA is removed, this is called. Equally, if a
 
 freed via [vm_area_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n484) (see listing 5-45).
 
- 
+
 
 **5.1 VMA merge and split**
 
- 
+
 
 ***5.1.1 VMA merge***
 
@@ -2923,7 +2929,7 @@ performed by [vma_merge()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 semaphore held), whose primary\* parameters are:
 
- 
+
 
 • mm – The mm_struct associated with the process.
 
@@ -2941,25 +2947,25 @@ dress which sits above the range but is not a part of it).
 
 • vm_flags – The VMA flags of the region being merged.
 
- 
+
 
 There are eight possible cases in which a merge can occur (where prev,
 
 area and next are the previous, adjacent and next VMAs respectively):
 
- 
+
 
 1. New mapping, merge both – prev-\>vm_end is equal to addr, end is equal to
 
 next-\>vm_start and both are mergeable.
 
- 
+
 
 \*. There are further parameters which we will examine when we look at the function in detail.
 
 
 
- 
+
 
 2. New mapping, merge previous – prev-\>vm_end is equal to addr and prev is
 
@@ -2989,51 +2995,51 @@ prev-\>vm_end, end is equal to area-\>vm_end and only prev is mergeable.
 
 next-\>vm_start and only next is mergeable.
 
- 
+
 
 We visualise this in Figure 5-4.
 
- 
 
 
 
- 
+
+
 
 **1. New mapping** merge both
 
- 
+
 
 **2. New mapping** merge previous
 
- 
+
 
 **3. New mapping** merge next
 
- 
+
 
 **4. Adjust mapping** merge next, shrink previous
 
- 
+
 
 **5. Adjust mapping** merge previous, shrink current
 
- 
+
 
 **6. Adjust mapping** merge both
 
- 
+
 
 **7. Adjust mapping** merge previous
 
- 
+
 
 **8. Adjust mapping** merge next
 
- 
+
 
 *Figure 5-4:* [*vma_merge()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1122) *merge cases*
 
- 
+
 
 These cases are each explicitly referenced in the code numbered as
 
@@ -3043,11 +3049,11 @@ VMA merging is performed by [vma_merge()](https://git.kernel.org/pub/scm/linux/k
 
 faultfd, it is invoked from:
 
- 
 
 
 
- 
+
+
 
 • [mmap_region()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1681) – When memory is first mapped via [mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html) then we attempt
 
@@ -3081,7 +3087,7 @@ NUMA memory policy (for more on NUMA as a whole, see the NUMA
 
 chapter). Given this is the case, when the [mbind()](https://man7.org/linux/man-pages/man2/mbind.2.html) system call is invoked we must, similar to the other VMA adjustment cases, check whether we can merge the adjusted region with adjacent VMAs, or otherwise me must split it (cases 4 - 8).
 
- 
+
 
 An important subtlety to note here for functions which adjust a mapping
 
@@ -3099,15 +3105,15 @@ Now we have examined each of the merge cases, let’s examine the
 
 [vma_merge()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1122) function itself as shown in Listing 5-32.
 
- 
+
 
 1122 **struct** vm_area_struct \***vma_merge**(**struct** mm_struct \*mm, 1123 **struct** vm_area_struct \*prev, **unsigned long** addr, 1124 **unsigned long** end, **unsigned long** vm_flags, 1125 **struct** anon_vma \*anon_vma, **struct** file \*file, 1126 **pgoff_t** pgoff, **struct** mempolicy \*policy, 1127 **struct** vm_userfaultfd_ctx vm_userfaultfd_ctx, 1128 **struct** anon_vma_name \*anon_name) 1129 {
 
- 
 
 
 
- 
+
+
 
 1130 **pgoff_t** pglen = (end - addr) \>\> **PAGE_SHIFT**; 1131 **struct** vm_area_struct \*area, \*next; 1132 **int** err;
 
@@ -3143,21 +3149,21 @@ anon_name) &&
 
 1168 **is_mergeable_anon_vma**(prev-\>anon_vma, 1169 next-\>anon_vma, **NULL**)) { 1170 */\* cases 1, 6 \*/* 1171 err = **\_\_vma_adjust**(prev, prev-\>vm_start, 1172 next-\>vm_end, prev-\>vm_pgoff, **NULL**, 1173 prev); 1174 } **else** */\* cases 2, 5, 7 \*/* 1175 err = **\_\_vma_adjust**(prev, prev-\>vm_start,
 
- 
 
 
 
- 
+
+
 
 1176 end, prev-\>vm_pgoff, **NULL**, prev); 1177 **if** (err)
 
 1178 **return NULL**; 1179 **khugepaged_enter_vma**(prev, vm_flags); 1180 **return** prev; 1181 }
 
- 
+
 
 *Listing 5-32:* mm/mmap.c: [*vma_merge()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1122) *preface and predecessor merge*
 
- 
+
 
 Note that the callers of this function will hold a
 
@@ -3167,7 +3173,7 @@ antee that the address range specified by addr and end will fulfil one of the
 
 following criteria:
 
- 
+
 
 • addr-end will span a hole, i.e. unmapped memory (if mergeable, this will
 
@@ -3181,7 +3187,7 @@ be one of cases 1 - 3).
 
 this will be one of cases 5 - 8).
 
- 
+
 
 We obtain the VMA after prev using [vma_next()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n532). If prev is NULL (mean-
 
@@ -3237,11 +3243,11 @@ Finally, the heavy lifting of the merge is deferred to [\_\_vma_adjust()](https:
 
 will examine this function shortly as well as how it is parameterised.
 
- 
 
 
 
- 
+
+
 
 If an error occurs when adjusting, we return NULL to indicate no merge
 
@@ -3251,7 +3257,7 @@ Let’s examine the cases where we cannot merge with prev as shown in
 
 Listing 5-33.
 
- 
+
 
 1183 */\**
 
@@ -3271,11 +3277,11 @@ Listing 5-33.
 
 1211 }
 
- 
+
 
 *Listing 5-33:* mm/mmap.c: [*vma_merge()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1122) *successor merge only*
 
- 
+
 
 We start by checking whether we can merge with next at all as above (only
 
@@ -3289,17 +3295,17 @@ Otherwise, in case 3 we will already have assigned area to next and in case
 
 8 we will eliminate area and adjust next to envelop it so in both instances we return next.
 
- 
 
 
 
- 
+
+
 
 In both cases we again perform the heavy lifting in [\_\_vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699)[,](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) which
 
 we examine in section 5.1.3.
 
- 
+
 
 ***5.1.2 Mergeability***
 
@@ -3313,7 +3319,7 @@ when checking whether a candidate VMA can be merged before next as
 
 shown in Listing 5-34.
 
- 
+
 
 1055 */\**
 
@@ -3335,11 +3341,11 @@ anon_name) &&
 
 1077 }
 
- 
+
 
 *Listing 5-34:* mm/mmap.c: [*can_vma_merge_after()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1063)
 
- 
+
 
 This defers the heavy lifting to the helper functions [is_mergeable_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n989)
 
@@ -3355,17 +3361,17 @@ as vma).
 
 need only check equality as shown in Listing 5-35.
 
- 
+
 
 1029 */\**
 
 1030 *\* Return true if we can merge this (vm_flags,anon_vma,file,vm_pgoff)* 1031 *\* in front of (at a lower virtual address and file offset than) the vma.*
 
- 
 
 
 
- 
+
+
 
 1032 *\**
 
@@ -3397,17 +3403,17 @@ anon_name) &&
 
 1053 }
 
- 
+
 
 *Listing 5-35:* mm/mmap.c: [*can_vma_merge_before()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1041)
 
- 
+
 
 The mergeability of a VMA is fundamentally determined by the predi-
 
 cate function [is_mergeable_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n989) as shown in Listing 5-36.
 
- 
+
 
 985 */\**
 
@@ -3429,21 +3435,21 @@ cate function [is_mergeable_vma()](https://git.kernel.org/pub/scm/linux/kernel/g
 
 1002 **if** ((vma-\>vm_flags ^ vm_flags) & ~**VM_SOFTDIRTY**)
 
- 
 
 
 
- 
+
+
 
 1003 **return** 0; 1004 **if** (vma-\>vm_file != file) 1005 **return** 0; 1006 **if** (vma-\>vm_ops && vma-\>vm_ops-\>close) 1007 **return** 0; 1008 **if** (!**is_mergeable_vm_userfaultfd_ctx**(vma, vm_userfaultfd_ctx)) 1009 **return** 0; 1010 **if** (!**anon_vma_name_eq**(**anon_vma_name**(vma), anon_name)) 1011 **return** 0; 1012 **return** 1;
 
 1013 }
 
- 
+
 
 *Listing 5-36:* mm/mmap.c: [*is_mergeable_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n989)
 
- 
+
 
 Note that this check is essentially determining whether two VMAs are
 
@@ -3457,7 +3463,7 @@ Examining each of these criteria (other than out of scope userfaultfd
 
 handling):
 
- 
+
 
 1. vm_flags must be equal, excluding VM_SOFTDIRTY which, as the comment
 
@@ -3479,7 +3485,7 @@ This function, if specified, is invoked in [remove_vma()](https://git.kernel.org
 
 region serves a specific purpose, e.g. stack, heap (shown in square brack-ets in /proc/\$pid/maps and /proc/\$pid/smaps). Naturally, anonymous VMAs are not mergeable with one another if the names differ.
 
- 
+
 
 Finally, we have specific handling to ensure that reverse-mapping
 
@@ -3489,17 +3495,17 @@ alent, via [is_mergeable_anon_vma()](https://git.kernel.org/pub/scm/linux/kernel
 
 in the reverse mapping section 7.0.11.
 
- 
+
 
 ***5.1.3 VMA adjust***
 
 The [\_\_vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) function is parameterised as shown in Table 5-1.
 
- 
 
 
 
- 
+
+
 
 Table 5-1: [\_\_vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) parameters
 
@@ -3513,11 +3519,11 @@ pgoff prev-\>vm_pgoff *⋆* prev-\>vm_pgoff *⋆* insert NULL expand prev next p
 
 *⋆* next-\>vm_pgoff - (end - addr) \>\> PAGE_SHIFT
 
- 
+
 
 Examining each parameter:
 
- 
+
 
 • vma – The VMA which will be adjusted to become the newly merged
 
@@ -3539,7 +3545,7 @@ merged VMA’s vm_end).
 
 obtain the newly merged VMA.
 
- 
+
 
 The [\_\_vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) function is huge, so let’s look at it piece-by-piece (elid-
 
@@ -3551,7 +3557,7 @@ the cases where we are not inserting a VMA (i.e. merge cases). Let’s start by 
 
 in Listing 5-37.
 
- 
+
 
 692 */\**
 
@@ -3561,11 +3567,11 @@ in Listing 5-37.
 
 703 **struct** mm_struct \*mm = vma-\>vm_mm; 704 **struct** vm_area_struct \*next = vma-\>vm_next, \*orig_vma = vma; 705 **struct** address_space \*mapping = **NULL**; 706 **struct** rb_root_cached \*root = **NULL**; 707 **struct** anon_vma \*anon_vma = **NULL**;
 
- 
 
 
 
- 
+
+
 
 708 **struct** file \*file = vma-\>vm_file; 709 **bool** start_changed = **false**, end_changed = **false**; 710 **long** adjust_next = 0; 711 **int** remove_next = 0;
 
@@ -3593,11 +3599,11 @@ in Listing 5-37.
 
 753 */\**
 
- 
 
 
 
- 
+
+
 
 754 *\* If next doesn't have anon_vma, import from vma*
 
@@ -3607,11 +3613,11 @@ in Listing 5-37.
 
 760 } **else if** (end \> next-\>vm_start) { 761 */\** 762 *\* vma expands, overlapping part of the next:* 763 *\* mprotect case 5 shifting the boundary up.* 764 *\*/* 765 adjust_next = (end - next-\>vm_start); 766 exporter = next; 767 importer = vma; 768 **VM_WARN_ON**(expand != importer); 769 } **else if** (end \< vma-\>vm_end) { 770 */\** 771 *\* vma shrinks, and !insert tells it's not* 772 *\* split_vma inserting another: so it must be* 773 *\* mprotect case 4 shifting the boundary down.* 774 *\*/* 775 adjust_next = -(vma-\>vm_end - end); 776 exporter = vma; 777 importer = next; 778 **VM_WARN_ON**(expand != importer); 779 }
 
- 
+
 
 *Listing 5-37:* mm/mmap.c: [*\_\_vma_adjust()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) *initialisation*
 
- 
+
 
 Within this function we declare the following local variables (frustrat-
 
@@ -3619,7 +3625,7 @@ ingly next is declared here and differs from [vma_merge()](https://git.kernel.or
 
 descriptions below next refers to [\_\_vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699)’s next:
 
- 
+
 
 • next – The VMA immediately after vma (importantly, note that this is not
 
@@ -3635,11 +3641,11 @@ ducing this value in case 4 and increasing it in case 5), as well equiva-lently 
 
 moved (case 8).
 
- 
 
 
 
- 
+
+
 
 This is rather intricate and confusing, not helped by the fact that next
 
@@ -3661,7 +3667,7 @@ adjust_next and remove_next (note that in case 8 vma and next are swapped. we
 
 show the post-swap state). We examine this in table 5-2.
 
- 
+
 
 Table 5-2: [\_\_vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) internal variables (relative to [vma_merge()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1122)[)](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n1122)
 
@@ -3671,7 +3677,7 @@ Variable Case
 
 vma prev next prev next *∗* *Internal* next next next-\>vm_next next area area *∗* adjust_next 0 0 *∗∗ †* remove_next 1 0 2 1 3 start prev-\>vm_start addr prev-\>vm_start addr end next-\>vm_end end next-\>vm_end addr end next-\>vm_end area-\>vm_end next-\>vm_end *‡* expand prev next prev next exporter next NULL prev area area area *††* importer prev NULL next prev next
 
- 
+
 
 Note that the references to next within the table refer to next as declared
 
@@ -3679,7 +3685,7 @@ in [vma_merge()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.
 
 Key:
 
- 
+
 
 • *∗* – case 8 – Indicates that the vma (originally area) and next (originally
 
@@ -3699,7 +3705,7 @@ end to area-\>vm_end and the second sets it to next-\>vm_end.
 
 • *††* – case 6 – If area has no anon_vma field, then exporter is set to next.
 
- 
+
 
 The purpose of the code above is to initialise these values in the case
 
@@ -3711,17 +3717,17 @@ The exporter and importer variables are used to handle an edge case as
 
 shown in Listing 5-38.
 
- 
+
 
 781 */\**
 
 782 *\* Easily overlooked: when mprotect shifts the boundary,*
 
- 
 
 
 
- 
+
+
 
 783 *\* make sure the expanding vma has anon_vma set if the* 784 *\* shrinking vma had, to cover any anon pages imported.* 785 *\*/*
 
@@ -3731,11 +3737,11 @@ shown in Listing 5-38.
 
 794 }
 
- 
+
 
 *Listing 5-38:* mm/mmap.c: [*\_\_vma_adjust()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) *importer/exporter*
 
- 
+
 
 This ensures that the [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) object state is propagated from a
 
@@ -3747,7 +3753,7 @@ Now we have established the initial status of the VMA adjustment, it’s
 
 time to perform the heavy lifting as shown in Listing 5-39.
 
- 
+
 
 795 **again**:
 
@@ -3771,11 +3777,11 @@ time to perform the heavy lifting as shown in Listing 5-39.
 
 822 **VM_WARN_ON**(adjust_next && next-\>anon_vma && 823 anon_vma != next-\>anon_vma); 824 **anon_vma_lock_write**(anon_vma); 825 **anon_vma_interval_tree_pre_update_vma**(vma); 826 **if** (adjust_next)
 
- 
 
 
 
- 
+
+
 
 827 **anon_vma_interval_tree_pre_update_vma**(next); 828 }
 
@@ -3799,7 +3805,7 @@ time to perform the heavy lifting as shown in Listing 5-39.
 
 852 **if** (adjust_next) 853 **vma_interval_tree_insert**(next, root); 854 **vma_interval_tree_insert**(vma, root); 855 **flush_dcache_mmap_unlock**(mapping); 856 }
 
- 
+
 
 *Listing 5-39:* mm/mmap.c: [*\_\_vma_adjust()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) *VMA update*
 
@@ -3809,7 +3815,7 @@ multiple passes to merge both the previous and next VMAs.
 
 Let’s examine what is happening here:
 
- 
+
 
 • If vma is file-backed, we place the file’s [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) page cache
 
@@ -3827,11 +3833,11 @@ This is necessary, as these are keyed on vm_start which is about to
 
 change. The [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) object tracks anonymous mappings, and
 
- 
 
 
 
- 
+
+
 
 thus, prior to adjustment, we remove all entries in the anon_vma interval
 
@@ -3859,7 +3865,7 @@ ting next-\>vm_start and next-\>vm_pgoff.
 
 the VMA too) into the page cache [struct address_space](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/fs.h?h=v6.0#n424) object’s i_mmap interval tree.
 
- 
+
 
 Note the sporadic \*dcache\*() functions are for architectures which re-
 
@@ -3869,7 +3875,7 @@ Once this process is complete, we handle VMA removal or (non-merge)
 
 insertion as shown in Listing 5-40.
 
- 
+
 
 858 **if** (remove_next) { 859 */\**
 
@@ -3879,13 +3885,13 @@ insertion as shown in Listing 5-40.
 
 866 */\** 867 *\* vma is not before next if they've been* 868 *\* swapped.* 869 *\**
 
- 
+
 
 \*. Note that this function is generated via the [INTERVAL_TREE_DEFINE()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/interval_tree_generic.h?h=v6.0#n28) macro in [mm/interval_tree.c](https://elixir.bootlin.com/linux/v6.0/source/mm/interval_tree.c)[.](https://elixir.bootlin.com/linux/v6.0/source/mm/interval_tree.c)
 
 
 
- 
+
 
 870 *\* pre-swap() next-\>vm_start was reduced so* 871 *\* tell validate_mm_rb to ignore pre-swap()* 872 *\* "next" (which is stored in post-swap()* 873 *\* "vma").* 874 *\*/* 875 **\_\_vma_unlink**(mm, next, vma); 876 **if** (file) 877 **\_\_remove_shared_vm_struct**(next, file, mapping); 878 } **else if** (insert) { 879 */\**
 
@@ -3913,7 +3919,7 @@ insertion as shown in Listing 5-40.
 
 909 }
 
- 
+
 
 *Listing 5-40:* mm/mmap.c: [*\_\_vma_adjust()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) *VMA removal/insertion*
 
@@ -3921,11 +3927,11 @@ We use [\_\_vma_unlink()](https://git.kernel.org/pub/scm/linux/kernel/git/torval
 
 shown in Listing 5-41.
 
- 
+
 
 682 **static \_\_always_inline void \_\_vma_unlink**(**struct** mm_struct \*mm, 683 **struct** vm_area_struct \*vma,
 
- 
+
 
 \*. Note that the special case handling for remove_next equal to 3 (i.e. case 8 with the swapped
 
@@ -3935,17 +3941,17 @@ CONFIG_DEBUG_VM_RB is specified.
 
 
 
- 
+
 
 684 **struct** vm_area_struct \*ignore) 685 {
 
 686 **vma_rb_erase_ignore**(vma, &mm-\>mm_rb, ignore); 687 **\_\_vma_unlink_list**(mm, vma); 688 */\* Kill the cache \*/* 689 **vmacache_invalidate**(mm); 690 }
 
- 
+
 
 *Listing 5-41:* mm/mmap.c: [*\_\_vma_unlink()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n682)
 
- 
+
 
 The [vma_rb_erase_ignore()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n432) invocation ultimately performs the removal
 
@@ -3955,7 +3961,7 @@ validates the current VMA cache and [\_\_vma_unlink_list()](https://git.kernel.o
 
 from the linked list as shown in Listing 5-42.
 
- 
+
 
 293 **void \_\_vma_unlink_list**(**struct** mm_struct \*mm, **struct** vm_area_struct \*vma) 294 {
 
@@ -3969,17 +3975,17 @@ from the linked list as shown in Listing 5-42.
 
 304 next-\>vm_prev = prev; 305 }
 
- 
+
 
 *Listing 5-42:* mm/util.c: [*\_\_vma_unlink_list()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n293)
 
- 
+
 
 This handles the case where either vm_next or vm_prev is NULL correctly. If the VMA is file-mapped, the VMA is removed from the interval tree via
 
 [\_\_remove_shared_vm_struct()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n107) as shown in Listing 7-82.
 
- 
+
 
 104 */\**
 
@@ -3991,15 +3997,15 @@ This handles the case where either vm_next or vm_prev is NULL correctly. If the 
 
 113 **flush_dcache_mmap_lock**(mapping); 114 **vma_interval_tree_remove**(vma, &mapping-\>i_mmap); 115 **flush_dcache_mmap_unlock**(mapping); 116 }
 
- 
+
 
 *Listing 5-43:* mm/mmap.c: [*\_\_remove_shared_vm_struct()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n107)
 
- 
 
 
 
- 
+
+
 
 The \*dcache\*() operations are for architectures which require manual
 
@@ -4051,7 +4057,7 @@ sure that the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git
 
 44.
 
- 
+
 
 911 **if** (remove_next) {
 
@@ -4063,15 +4069,15 @@ sure that the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git
 
 926 **if** (remove_next != 3) { 927 */\** 928 *\* If "next" was removed and vma-\>vm_end was* 929 *\* expanded (up) over it, in turn* 930 *\* "next-\>vm_prev-\>vm_end" changed and the* 931 *\* "vma-\>vm_next" gap must be updated.*
 
- 
+
 
 \*. This functionality is largely used as part of cache maintenance for architectures which re-memfd quire it but is also used for write sealing of objects created via [memfd_create()](https://man7.org/linux/man-pages/man2/memfd_create.2.html) .
 
- 
 
 
 
- 
+
+
 
 932 *\*/* 933 next = vma-\>vm_next; 934 } **else** {
 
@@ -4109,11 +4115,11 @@ sure that the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git
 
 980 **validate_mm**(mm);
 
- 
 
 
 
- 
+
+
 
 981
 
@@ -4121,13 +4127,13 @@ sure that the [struct mm_struct](https://git.kernel.org/pub/scm/linux/kernel/git
 
 983 }
 
- 
+
 
 *Listing 5-44:* mm/mmap.c: [*\_\_vma_adjust()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) *VMA post-removal housekeeping and VMA*
 
 *validation*
 
- 
+
 
 We start by merging the (now unlinked) next VMA’s [struct anon_vma](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/rmap.h?h=v6.0#n31) ob-
 
@@ -4143,17 +4149,17 @@ mented via [(](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.gi
 
 tually freed via [vm_area_free()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n484) as shown in Listing 5-45.
 
- 
+
 
 484 **void vm_area_free**(**struct** vm_area_struct \*vma) 485 {
 
 486 **free_anon_vma_name**(vma); 487 **kmem_cache_free**(vm_area_cachep, vma); 488 }
 
- 
+
 
 *Listing 5-45:* kernel/fork.c: [*vm_area_free()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n484)
 
- 
+
 
 This frees up any existent anonymous VMA name via [free_anon_vma_name()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_inline.h?h=v6.0#n192)
 
@@ -4185,31 +4191,31 @@ newly merged prev and area VMAs with next on the next iteration, which we
 
 examine in Figure 5-5.
 
- 
 
 
 
- 
+
+
 
 Iteration 1
 
- 
+
 
 prev area next
 
- 
+
 
 Iteration 2
 
- 
+
 
 next
 
- 
+
 
 *Figure 5-5: Case 6 iterations*
 
- 
+
 
 After updating the VMA gap (a previously discussed internal implemen-
 
@@ -4223,7 +4229,7 @@ It’s important to note that in the above we do not actually adjust the
 
 position of the VMA within the red/black tree (other than the case where we remove or insert a VMA of course). This is because any such change of bounds by its nature does not change the ordering, only the gap between VMAs which we do account for.
 
- 
+
 
 ***5.1.4 VMA split***
 
@@ -4231,7 +4237,7 @@ We have now examined how VMAs are merged together, however we also have to exami
 
 Eliding out of scope userfaultfd, it is invoked from:
 
- 
+
 
 • [mbind_range()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mempolicy.c?h=v6.0#n785) – When changing the NUMA policy over an address range
 
@@ -4257,17 +4263,17 @@ Note that we invoke the internal [\_\_split_vma()](https://git.kernel.org/pub/sc
 
 [\_\_split_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2676) function.
 
- 
 
 
 
- 
+
+
 
 One means of doing this is via the wrapper function [split_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2740), which
 
 the first 3 cases above call as shown in Listing 5-46.
 
- 
+
 
 2736 */\**
 
@@ -4279,11 +4285,11 @@ the first 3 cases above call as shown in Listing 5-46.
 
 2746 **return \_\_split_vma**(mm, vma, addr, new_below); 2747 }
 
- 
+
 
 *Listing 5-46:* mm/mmap.c: [*split_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2740)
 
- 
+
 
 While the heavy lifting is deferred to [\_\_split_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2676), this usefully adds a
 
@@ -4293,7 +4299,7 @@ exceed this limit.
 
 Examining [\_\_split_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2676) as shown in Listing 5-47.
 
- 
+
 
 2672 */\**
 
@@ -4323,11 +4329,11 @@ Examining [\_\_split_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 2695 new-\>vm_start = addr; 2696 new-\>vm_pgoff += ((addr - vma-\>vm_start) \>\> **PAGE_SHIFT**); 2697 }
 
- 
 
 
 
- 
+
+
 
 2698
 
@@ -4367,11 +4373,11 @@ Examining [\_\_split_vma()](https://git.kernel.org/pub/scm/linux/kernel/git/torv
 
 2734 }
 
- 
+
 
 *Listing 5-47:* mm/mmap.c: [*\_\_split_vma()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n2676)
 
- 
+
 
 This begins by checking whether the [struct vm_area_struct](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm_types.h?h=v6.0#n403) (VMA)’s
 
@@ -4381,15 +4387,15 @@ Next we duplicate the VMA, which will form the splitcopy of the VMA
 
 caused by the split in [vm_area_dup()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n465) as shown in Listing 5-48.
 
- 
+
 
 465 **struct** vm_area_struct \***vm_area_dup**(**struct** vm_area_struct \*orig)
 
- 
 
 
 
- 
+
+
 
 466 {
 
@@ -4413,7 +4419,7 @@ caused by the split in [vm_area_dup()](https://git.kernel.org/pub/scm/linux/kern
 
 482 }
 
- 
+
 
 *Listing 5-48:* kernel/fork.c: [*vm_area_dup()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/fork.c?h=v6.0#n465)
 
@@ -4433,23 +4439,23 @@ The new_below parameter determines whether the new, duplicated VMA
 
 starts at addr or ends at it, as shown in Figure 5-6.
 
- 
+
 
 vma-\>vm_start addr vma-\>vm_end
 
- 
+
 
 !new_below
 
 Post-split new vma
 
- 
+
 
 new_below
 
 new Post-split vma
 
- 
+
 
 *Figure 5-6: Split VMA cases*
 
@@ -4469,27 +4475,27 @@ back if one is specified (i.e. a non-anonymous mapping which wishes to be
 
 notified of this).
 
- 
 
 
 
- 
+
+
 
 Once this housekeeping is done, we are ready to perform the actual split.
 
 This is done via [vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2581) as shown in Listing 5-49.
 
- 
+
 
 2581 **static inline int vma_adjust**(**struct** vm_area_struct \*vma, **unsigned long** start, 2582 **unsigned long** end, **pgoff_t** pgoff, **struct** vm_area_struct \*insert) 2583 {
 
 2584 **return \_\_vma_adjust**(vma, start, end, pgoff, insert, **NULL**); 2585 }
 
- 
+
 
 *Listing 5-49:* include/linux/mm.h: [*vma_adjust()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/mm.h?h=v6.0#n2581)
 
- 
+
 
 Which ultimately invokes [\_\_vma_adjust()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n699) as described in section 5.1.3 de-
 
@@ -4501,7 +4507,7 @@ bounds, invokes [\_\_insert_vm_struct()](https://git.kernel.org/pub/scm/linux/ke
 
 shown in Listing 5-50.
 
- 
+
 
 666 */\**
 
@@ -4525,11 +4531,11 @@ vma)
 
 680 }
 
- 
+
 
 *Listing 5-50:* mm/mmap.c: [*\_\_insert_vm_struct()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n670)
 
- 
+
 
 This uses [find_vma_links()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n488) to find the VMA prior to the one we are in-
 
@@ -4539,7 +4545,7 @@ the link in [\_\_vma_link()](https://git.kernel.org/pub/scm/linux/kernel/git/tor
 
 Examining [\_\_vma_link()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n637) as shown in Listing 5-51.
 
- 
+
 
 636 **static void**
 
@@ -4547,19 +4553,19 @@ Examining [\_\_vma_link()](https://git.kernel.org/pub/scm/linux/kernel/git/torva
 
 641 **\_\_vma_link_list**(mm, vma, prev);
 
- 
 
 
 
- 
+
+
 
 642 **\_\_vma_link_rb**(mm, vma, rb_link, rb_parent); 643 }
 
- 
+
 
 *Listing 5-51:* mm/mmap.c: [*\_\_vma_link()*](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/mmap.c?h=v6.0#n637)
 
- 
+
 
 This links the new VMA into the linked list via [\_\_vma_link_list()](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/mm/util.c?h=v6.0#n275) and the
 
@@ -4571,5 +4577,5 @@ of splitting is the same, the only variable factor is whether we place the
 
 newly duplicated split VMA above or below the specified address.
 
- 
+
 

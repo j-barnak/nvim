@@ -1,3 +1,5 @@
+![](media/index-51_1.jpg)
+
 1 CORE CONCEPTS
 
 This first chapter presents the big picture of system programming and
@@ -2669,5 +2671,3 @@ program. There might be more than one needed for some of these.
 5\. What command can be used to print the creation date of a file?
 
 (Hint: This information is part of a file’s status.)
-
-![](media/index-118_1.jpg)

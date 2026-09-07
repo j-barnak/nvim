@@ -10,9 +10,9 @@ Our little VM can represent three types of values right now: numbers, Booleans, 
 
 Strings, unfortunately, are not so petite. There’s no maximum length for a string. Even if we were to artificially cap it at some contrived limit like 255 characters, that’s still too much memory to spend on every single value.
 
-UCSD Pascal, one of the first implementations of Pascal, had this exact limit. Instead of using a terminating null byte to indicate the end of the string like C, Pascal strings started with a length value. Since UCSD used only a single byte to store the length, strings couldn’t be any longer than 255 characters.
-
-![The Pascal string 'hello' with a length byte of 5 preceding it.](media/image/strings/pstring.png)
+> UCSD Pascal, one of the first implementations of Pascal, had this exact limit. Instead of using a terminating null byte to indicate the end of the string like C, Pascal strings started with a length value. Since UCSD used only a single byte to store the length, strings couldn’t be any longer than 255 characters.
+>
+> ![The Pascal string 'hello' with a length byte of 5 preceding it.](media/image/strings/pstring.png)
 
 We need a way to support values whose sizes vary, sometimes greatly. This is exactly what dynamic allocation on the heap is designed for. We can allocate as many bytes as we need. We get back a pointer that we’ll use to keep track of the value as it flows through the VM.
 
@@ -26,7 +26,7 @@ If the object is larger, its data lives on the heap. Then the Value’s payload 
 
 We’ll call this common representation “Obj”. Each Lox value whose state lives on the heap is an Obj. We can thus use a single new ValueType case to refer to all heap-allocated types.
 
-“Obj” is short for “object”, natch.
+> “Obj” is short for “object”, natch.
 
 ```
   VAL_NUMBER,
@@ -112,7 +112,7 @@ This takes a bare Obj pointer and wraps it in a full Value.
 
 Every heap-allocated value is an Obj, but Objs are not all the same. For strings, we need the array of characters. When we get to instances, they will need their data fields. A function object will need its chunk of bytecode. How do we handle different payloads and sizes? We can’t use another union like we did for Value since the sizes are all over the place.
 
-No, I don’t know how to pronounce “objs” either. Feels like there should be a vowel in there somewhere.
+> No, I don’t know how to pronounce “objs” either. Feels like there should be a vowel in there somewhere.
 
 Instead, we’ll use another technique. It’s been around for ages, to the point that the C specification carves out specific support for it, but I don’t know that it has a canonical name. It’s an example of [*type punning*](https://en.wikipedia.org/wiki/Type_punning), but that term is too broad. In the absence of any better ideas, I’ll call it **struct inheritance**, because it relies on structs and roughly follows how single-inheritance of state works in object-oriented languages.
 
@@ -232,11 +232,11 @@ Because ObjString is an Obj, it also needs the state all Objs share. It accompli
 
 Note how the first bytes of ObjString exactly line up with Obj. This is not a coincidence—C mandates it. This is designed to enable a clever pattern: You can take a pointer to a struct and safely convert it to a pointer to its first field and back.
 
-The key part of the spec is:
-
-> § 6.7.2.1 13
+> The key part of the spec is:
 >
-> Within a structure object, the non-bit-field members and the units in which bit-fields reside have addresses that increase in the order in which they are declared. A pointer to a structure object, suitably converted, points to its initial member (or if that member is a bit-field, then to the unit in which it resides), and vice versa. There may be unnamed padding within a structure object, but not at its beginning.
+> > § 6.7.2.1 13
+> >
+> > Within a structure object, the non-bit-field members and the units in which bit-fields reside have addresses that increase in the order in which they are declared. A pointer to a structure object, suitably converted, points to its initial member (or if that member is a bit-field, then to the unit in which it resides), and vice versa. There may be unnamed padding within a structure object, but not at its beginning.
 
 Given an `ObjString*`, you can safely cast it to `Obj*` and then access the `type` field from it. Every ObjString “is” an Obj in the OOP sense of “is”. When we later add other object types, each struct will have an Obj as its first field. Any code that wants to work with all objects can treat them as base `Obj*` and ignore any other fields that may happen to follow.
 
@@ -334,7 +334,7 @@ static void string() {
 
 This takes the string’s characters directly from the lexeme. The `+ 1` and `- 2` parts trim the leading and trailing quotation marks. It then creates a string object, wraps it in a Value, and stuffs it into the constant table.
 
-If Lox supported string escape sequences like `\n`, we’d translate those here. Since it doesn’t, we can take the characters as they are.
+> If Lox supported string escape sequences like `\n`, we’d translate those here. Since it doesn’t, we can take the characters as they are.
 
 To create the string, we use `copyString()`, which is declared in `object.h`.
 
@@ -408,9 +408,9 @@ First, we allocate a new array on the heap, just big enough for the string’s c
 
 Once we have the array, we copy over the characters from the lexeme and terminate it.
 
-We need to terminate the string ourselves because the lexeme points at a range of characters inside the monolithic source string and isn’t terminated.
-
-Since ObjString stores the length explicitly, we *could* leave the character array unterminated, but slapping a terminator on the end costs us only a byte and lets us pass the character array to C standard library functions that expect a terminated string.
+> We need to terminate the string ourselves because the lexeme points at a range of characters inside the monolithic source string and isn’t terminated.
+>
+> Since ObjString stores the length explicitly, we *could* leave the character array unterminated, but slapping a terminator on the end costs us only a byte and lets us pass the character array to C standard library functions that expect a terminated string.
 
 You might wonder why the ObjString can’t just point back to the original characters in the source string. Some ObjStrings will be created dynamically at runtime as a result of string operations like concatenation. Those strings obviously need to dynamically allocate memory for the characters, which means the string needs to *free* that memory when it’s no longer needed.
 
@@ -452,7 +452,7 @@ static ObjString* allocateString(char* chars, int length) {
 
 Like the previous macro, this exists mainly to avoid the need to redundantly cast a `void*` back to the desired type. The actual functionality is here:
 
-I admit this chapter has a sea of helper functions and macros to wade through. I try to keep the code nicely factored, but that leads to a scattering of tiny functions. They will pay off when we reuse them later.
+> I admit this chapter has a sea of helper functions and macros to wade through. I try to keep the code nicely factored, but that leads to a scattering of tiny functions. They will pay off when we reuse them later.
 
 ```
 #define ALLOCATE_OBJ(type, objectType) \
@@ -477,9 +477,9 @@ It allocates an object of the given size on the heap. Note that the size is *not
 
 Then it initializes the Obj state—right now, that’s just the type tag. This function returns to `allocateString()`, which finishes initializing the ObjString fields. *Voilà*, we can compile and execute string literals.
 
-![A viola.](media/image/strings/viola.png)
-
-Don’t get “voilà” confused with “viola”. One means “there it is” and the other is a string instrument, the middle child between a violin and a cello. Yes, I did spend two hours drawing a viola just to mention that.
+> ![A viola.](media/image/strings/viola.png)
+>
+> Don’t get “voilà” confused with “viola”. One means “there it is” and the other is a string instrument, the middle child between a violin and a cello. Yes, I did spend two hours drawing a viola just to mention that.
 
 ## 19.4 Operations on Strings
 
@@ -531,7 +531,7 @@ void printObject(Value value) {
 
 We have only a single object type now, but this function will sprout additional switch cases in later chapters. For string objects, it simply prints the character array as a C string.
 
-I told you terminating the string would come in handy.
+> I told you terminating the string would come in handy.
 
 The equality operators also need to gracefully handle strings. Consider:
 
@@ -630,9 +630,9 @@ The only interesting operation we support on strings is `+`. If you use that ope
 
 If both operands are strings, it concatenates. If they’re both numbers, it adds them. Any other combination of operand types is a runtime error.
 
-This is more conservative than most languages. In other languages, if one operand is a string, the other can be any type and it will be implicitly converted to a string before concatenating the two.
-
-I think that’s a fine feature, but would require writing tedious “convert to string” code for each type, so I left it out of Lox.
+> This is more conservative than most languages. In other languages, if one operand is a string, the other can be any type and it will be implicitly converted to a string before concatenating the two.
+>
+> I think that’s a fine feature, but would require writing tedious “convert to string” code for each type, so I left it out of Lox.
 
 To concatenate strings, we define a new function.
 
@@ -729,9 +729,9 @@ Behold this innocuous-seeming expression:
 
 When the compiler chews through this, it allocates an ObjString for each of those three string literals and stores them in the chunk’s constant table and generates this bytecode:
 
-Here’s what the stack looks like after each instruction:
-
-![The state of the stack at each instruction.](media/image/strings/stack.png)
+> Here’s what the stack looks like after each instruction:
+>
+> ![The state of the stack at each instruction.](media/image/strings/stack.png)
 
     0000    OP_CONSTANT         0 "st"
     0002    OP_CONSTANT         1 "ri"
@@ -748,11 +748,11 @@ Of course, it’s perfectly fine for the *Lox program* to forget about intermedi
 
 The full solution is a garbage collector that reclaims unused memory while the program is running. We’ve got some other stuff to get in place before we’re ready to tackle that project. Until then, we are living on borrowed time. The longer we wait to add the collector, the harder it is to do.
 
-I’ve seen a number of people implement large swathes of their language before trying to start on the GC. For the kind of toy programs you typically run while a language is being developed, you actually don’t run out of memory before reaching the end of the program, so this gets you surprisingly far.
-
-But that underestimates how *hard* it is to add a garbage collector later. The collector *must* ensure it can find every bit of memory that *is* still being used so that it doesn’t collect live data. There are hundreds of places a language implementation can squirrel away a reference to some object. If you don’t find all of them, you get nightmarish bugs.
-
-I’ve seen language implementations die because it was too hard to get the GC in later. If your language needs GC, get it working as soon as you can. It’s a crosscutting concern that touches the entire codebase.
+> I’ve seen a number of people implement large swathes of their language before trying to start on the GC. For the kind of toy programs you typically run while a language is being developed, you actually don’t run out of memory before reaching the end of the program, so this gets you surprisingly far.
+>
+> But that underestimates how *hard* it is to add a garbage collector later. The collector *must* ensure it can find every bit of memory that *is* still being used so that it doesn’t collect live data. There are hundreds of places a language implementation can squirrel away a reference to some object. If you don’t find all of them, you get nightmarish bugs.
+>
+> I’ve seen language implementations die because it was too hard to get the GC in later. If your language needs GC, get it working as soon as you can. It’s a crosscutting concern that touches the entire codebase.
 
 Today, we should at least do the bare minimum: avoid *leaking* memory by making sure the VM can still find every allocated object even if the Lox program itself no longer references them. There are many sophisticated techniques that advanced memory managers use to allocate and track memory for objects. We’re going to take the simplest practical approach.
 
@@ -926,7 +926,7 @@ We aren’t only freeing the Obj itself. Since some object types also allocate o
 
 It’s a tiny wrapper around `reallocate()` that “resizes” an allocation down to zero bytes.
 
-Using `reallocate()` to free memory might seem pointless. Why not just call `free()`? Later, this will help the VM track how much memory is still being used. If all allocation and freeing goes through `reallocate()`, it’s easy to keep a running count of the number of bytes of allocated memory.
+> Using `reallocate()` to free memory might seem pointless. Why not just call `free()`? Later, this will help the VM track how much memory is still being used. If all allocation and freeing goes through `reallocate()`, it’s easy to keep a running count of the number of bytes of allocated memory.
 
 As usual, we need an include to wire everything together.
 
@@ -982,7 +982,7 @@ There are two facets to a string encoding:
 
 - **What is a single “character” in a string?** How many different values are there and what do they represent? The first widely adopted standard answer to this was [ASCII](https://en.wikipedia.org/wiki/ASCII). It gave you 127 different character values and specified what they were. It was great . . . if you only ever cared about English. While it has weird, mostly forgotten characters like “record separator” and “synchronous idle”, it doesn’t have a single umlaut, acute, or grave. It can’t represent “jalapeño”, “naïve”, “Gruyère”, or “Mötley Crüe”.
 
-  It goes without saying that a language that does not let one discuss Gruyère or Mötley Crüe is a language not worth using.
+  > It goes without saying that a language that does not let one discuss Gruyère or Mötley Crüe is a language not worth using.
 
   Next came [Unicode](https://en.wikipedia.org/wiki/Unicode). Initially, it supported 16,384 different characters (**code points**), which fit nicely in 16 bits with a couple of bits to spare. Later that grew and grew, and now there are well over 100,000 different code points including such vital instruments of human communication as 💩 (Unicode Character ‘PILE OF POO’, `U+1F4A9`).
 
@@ -996,7 +996,7 @@ There are two facets to a string encoding:
 
 Choosing a character representation and encoding involves fundamental trade-offs. Like many things in engineering, there’s no perfect solution:
 
-An example of how difficult this problem is comes from Python. The achingly long transition from Python 2 to 3 is painful mostly because of its changes around string encoding.
+> An example of how difficult this problem is comes from Python. The achingly long transition from Python 2 to 3 is painful mostly because of its changes around string encoding.
 
 - ASCII is memory efficient and fast, but it kicks non-Latin languages to the side.
 

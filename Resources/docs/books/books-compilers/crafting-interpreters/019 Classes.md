@@ -10,13 +10,13 @@ We’re eleven chapters in, and the interpreter sitting on your machine is nearl
 
 If this were the ’80s, we’d stop here. But today, many popular languages support “object-oriented programming”. Adding that to Lox will give users a familiar set of tools for writing larger programs. Even if you personally don’t like OOP, this chapter and the next will help you understand how others design and build object systems.
 
-If you *really* hate classes, though, you can skip these two chapters. They are fairly isolated from the rest of the book. Personally, I find it’s good to learn more about the things I dislike. Things look simple at a distance, but as I get closer, details emerge and I gain a more nuanced perspective.
+> If you *really* hate classes, though, you can skip these two chapters. They are fairly isolated from the rest of the book. Personally, I find it’s good to learn more about the things I dislike. Things look simple at a distance, but as I get closer, details emerge and I gain a more nuanced perspective.
 
 ## 12.1 OOP and Classes
 
 There are three broad paths to object-oriented programming: classes, [prototypes](http://gameprogrammingpatterns.com/prototype.html), and [multimethods](https://en.wikipedia.org/wiki/Multiple_dispatch). Classes came first and are the most popular style. With the rise of JavaScript (and to a lesser extent [Lua](https://www.lua.org/pil/13.4.1.html)), prototypes are more widely known than they used to be. I’ll talk more about those later. For Lox, we’re taking the, ahem, classic approach.
 
-Multimethods are the approach you’re least likely to be familiar with. I’d love to talk more about them—I designed [a hobby language](http://magpie-lang.org/) around them once and they are *super rad*—but there are only so many pages I can fit in. If you’d like to learn more, take a look at [CLOS](https://en.wikipedia.org/wiki/Common_Lisp_Object_System) (the object system in Common Lisp), [Dylan](https://opendylan.org/), [Julia](https://julialang.org/), or [Raku](https://docs.raku.org/language/functions#Multi-dispatch).
+> Multimethods are the approach you’re least likely to be familiar with. I’d love to talk more about them—I designed [a hobby language](http://magpie-lang.org/) around them once and they are *super rad*—but there are only so many pages I can fit in. If you’d like to learn more, take a look at [CLOS](https://en.wikipedia.org/wiki/Common_Lisp_Object_System) (the object system in Common Lisp), [Dylan](https://opendylan.org/), [Julia](https://julialang.org/), or [Raku](https://docs.raku.org/language/functions#Multi-dispatch).
 
 Since you’ve written about a thousand lines of Java code with me already, I’m assuming you don’t need a detailed introduction to object orientation. The main goal is to bundle data with the code that acts on it. Users do that by declaring a *class* that:
 
@@ -28,9 +28,9 @@ Since you’ve written about a thousand lines of Java code with me already, I’
 
 That’s about as minimal as it gets. Most object-oriented languages, all the way back to Simula, also do inheritance to reuse behavior across classes. We’ll add that in the next chapter. Even kicking that out, we still have a lot to get through. This is a big chapter and everything doesn’t quite come together until we have all of the above pieces, so gather your stamina.
 
-![The relationships between classes, methods, instances, constructors, and fields.](media/image/classes/circle.png)
-
-It’s like the circle of life, *sans* Sir Elton John.
+> ![The relationships between classes, methods, instances, constructors, and fields.](media/image/classes/circle.png)
+>
+> It’s like the circle of life, *sans* Sir Elton John.
 
 ## 12.2 Class Declarations
 
@@ -54,7 +54,7 @@ parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
 
 In plain English, a class declaration is the `class` keyword, followed by the class’s name, then a curly-braced body. Inside that body is a list of method declarations. Unlike function declarations, methods don’t have a leading `fun` keyword. Each method is a name, parameter list, and body. Here’s an example:
 
-Not that I’m trying to say methods aren’t fun or anything.
+> Not that I’m trying to say methods aren’t fun or anything.
 
 ```
 class Breakfast {
@@ -86,7 +86,7 @@ Over in our AST generator, the `classDecl` grammar rule gets its own statement n
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 It stores the class’s name and the methods inside its body. Methods are represented by the existing Stmt.Function class that we use for function declaration AST nodes. That gives us all the bits of state that we need for a method: name, parameter list, and body.
 
@@ -108,19 +108,21 @@ A class can appear anywhere a named declaration is allowed, triggered by the lea
 
 That calls out to:
 
-      private Stmt classDeclaration() {
-        Token name = consume(IDENTIFIER, "Expect class name.");
-        consume(LEFT_BRACE, "Expect '{' before class body.");
+```
+  private Stmt classDeclaration() {
+    Token name = consume(IDENTIFIER, "Expect class name.");
+    consume(LEFT_BRACE, "Expect '{' before class body.");
 
-        List<Stmt.Function> methods = new ArrayList<>();
-        while (!check(RIGHT_BRACE) && !isAtEnd()) {
-          methods.add(function("method"));
-        }
+    List<Stmt.Function> methods = new ArrayList<>();
+    while (!check(RIGHT_BRACE) && !isAtEnd()) {
+      methods.add(function("method"));
+    }
 
-        consume(RIGHT_BRACE, "Expect '}' after class body.");
+    consume(RIGHT_BRACE, "Expect '}' after class body.");
 
-        return new Stmt.Class(name, methods);
-      }
+    return new Stmt.Class(name, methods);
+  }
+```
 
 *lox/Parser.java*, add after *declaration*()
 
@@ -130,12 +132,14 @@ Like we do in any open-ended loop in the parser, we also check for hitting the e
 
 We wrap the name and list of methods into a Stmt.Class node and we’re done. Previously, we would jump straight into the interpreter, but now we need to plumb the node through the resolver first.
 
-      @Override
-      public Void visitClassStmt(Stmt.Class stmt) {
-        declare(stmt.name);
-        define(stmt.name);
-        return null;
-      }
+```
+  @Override
+  public Void visitClassStmt(Stmt.Class stmt) {
+    declare(stmt.name);
+    define(stmt.name);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitBlockStmt*()
 
@@ -143,13 +147,15 @@ We aren’t going to worry about resolving the methods themselves yet, so for no
 
 Now we interpret the class declaration.
 
-      @Override
-      public Void visitClassStmt(Stmt.Class stmt) {
-        environment.define(stmt.name.lexeme, null);
-        LoxClass klass = new LoxClass(stmt.name.lexeme);
-        environment.assign(stmt.name, klass);
-        return null;
-      }
+```
+  @Override
+  public Void visitClassStmt(Stmt.Class stmt) {
+    environment.define(stmt.name.lexeme, null);
+    LoxClass klass = new LoxClass(stmt.name.lexeme);
+    environment.assign(stmt.name, klass);
+    return null;
+  }
+```
 
 *lox/Interpreter.java*, add after *visitBlockStmt*()
 
@@ -197,7 +203,7 @@ We have classes, but they don’t do anything yet. Lox doesn’t have “static�
 
 While some syntax and semantics are fairly standard across OOP languages, the way you create new instances isn’t. Ruby, following Smalltalk, creates instances by calling a method on the class object itself, a recursively graceful approach. Some, like C++ and Java, have a `new` keyword dedicated to birthing a new object. Python has you “call” the class itself like a function. (JavaScript, ever weird, sort of does both.)
 
-In Smalltalk, even *classes* are created by calling methods on an existing object, usually the desired superclass. It’s sort of a turtles-all-the-way-down thing. It ultimately bottoms out on a few magical classes like Object and Metaclass that the runtime conjures into being *ex nihilo*.
+> In Smalltalk, even *classes* are created by calling methods on an existing object, usually the desired superclass. It’s sort of a turtles-all-the-way-down thing. It ultimately bottoms out on a few magical classes like Object and Metaclass that the runtime conjures into being *ex nihilo*.
 
 I took a minimal approach with Lox. We already have class objects, and we already have function calls, so we’ll use call expressions on class objects to create new instances. It’s as if a class is a factory function that generates instances of itself. This feels elegant to me, and also spares us the need to introduce syntax like `new`. Therefore, we can skip past the front end straight into the runtime.
 
@@ -226,17 +232,19 @@ class LoxClass implements LoxCallable {
 
 Implementing that interface requires two methods.
 
-      @Override
-      public Object call(Interpreter interpreter,
-                         List<Object> arguments) {
-        LoxInstance instance = new LoxInstance(this);
-        return instance;
-      }
+```
+  @Override
+  public Object call(Interpreter interpreter,
+                     List<Object> arguments) {
+    LoxInstance instance = new LoxInstance(this);
+    return instance;
+  }
 
-      @Override
-      public int arity() {
-        return 0;
-      }
+  @Override
+  public int arity() {
+    return 0;
+  }
+```
 
 *lox/LoxClass.java*, add after *toString*()
 
@@ -282,9 +290,9 @@ We have instances, so we should make them useful. We’re at a fork in the road.
 
 Lox follows JavaScript and Python in how it handles state. Every instance is an open collection of named values. Methods on the instance’s class can access and modify properties, but so can outside code. Properties are accessed using a `.` syntax.
 
-Allowing code outside of the class to directly modify an object’s fields goes against the object-oriented credo that a class *encapsulates* state. Some languages take a more principled stance. In Smalltalk, fields are accessed using simple identifiers—essentially, variables that are only in scope inside a class’s methods. Ruby uses `@` followed by a name to access a field in an object. That syntax is only meaningful inside a method and always accesses state on the current object.
-
-Lox, for better or worse, isn’t quite so pious about its OOP faith.
+> Allowing code outside of the class to directly modify an object’s fields goes against the object-oriented credo that a class *encapsulates* state. Some languages take a more principled stance. In Smalltalk, fields are accessed using simple identifiers—essentially, variables that are only in scope inside a class’s methods. Ruby uses `@` followed by a name to access a field in an object. That syntax is only meaningful inside a method and always accesses state on the current object.
+>
+> Lox, for better or worse, isn’t quite so pious about its OOP faith.
 
 ```
 someObject.someProperty
@@ -316,7 +324,7 @@ The syntax tree node is:
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 Following the grammar, the new parsing code goes in our existing `call()` method.
 
@@ -348,28 +356,32 @@ The outer `while` loop there corresponds to the `*` in the grammar rule. We zip 
 
 Instances of the new Expr.Get node feed into the resolver.
 
-      @Override
-      public Void visitGetExpr(Expr.Get expr) {
-        resolve(expr.object);
-        return null;
-      }
+```
+  @Override
+  public Void visitGetExpr(Expr.Get expr) {
+    resolve(expr.object);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitCallExpr*()
 
 OK, not much to that. Since properties are looked up dynamically, they don’t get resolved. During resolution, we recurse only into the expression to the left of the dot. The actual property access happens in the interpreter.
 
-You can literally see that property dispatch in Lox is dynamic since we don’t process the property name during the static resolution pass.
+> You can literally see that property dispatch in Lox is dynamic since we don’t process the property name during the static resolution pass.
 
-      @Override
-      public Object visitGetExpr(Expr.Get expr) {
-        Object object = evaluate(expr.object);
-        if (object instanceof LoxInstance) {
-          return ((LoxInstance) object).get(expr.name);
-        }
+```
+  @Override
+  public Object visitGetExpr(Expr.Get expr) {
+    Object object = evaluate(expr.object);
+    if (object instanceof LoxInstance) {
+      return ((LoxInstance) object).get(expr.name);
+    }
 
-        throw new RuntimeError(expr.name,
-            "Only instances have properties.");
-      }
+    throw new RuntimeError(expr.name,
+        "Only instances have properties.");
+  }
+```
 
 *lox/Interpreter.java*, add after *visitCallExpr*()
 
@@ -393,20 +405,22 @@ If the object is a LoxInstance, then we ask it to look up the property. It must 
 
 Each key in the map is a property name and the corresponding value is the property’s value. To look up a property on an instance:
 
-      Object get(Token name) {
-        if (fields.containsKey(name.lexeme)) {
-          return fields.get(name.lexeme);
-        }
+```
+  Object get(Token name) {
+    if (fields.containsKey(name.lexeme)) {
+      return fields.get(name.lexeme);
+    }
 
-        throw new RuntimeError(name,
-            "Undefined property '" + name.lexeme + "'.");
-      }
+    throw new RuntimeError(name,
+        "Undefined property '" + name.lexeme + "'.");
+  }
+```
 
 *lox/LoxInstance.java*, add after *LoxInstance*()
 
-Doing a hash table lookup for every field access is fast enough for many language implementations, but not ideal. High performance VMs for languages like JavaScript use sophisticated optimizations like “[hidden classes](http://richardartoul.github.io/jekyll/update/2015/04/26/hidden-classes.html)” to avoid that overhead.
-
-Paradoxically, many of the optimizations invented to make dynamic languages fast rest on the observation that—even in those languages—most code is fairly static in terms of the types of objects it works with and their fields.
+> Doing a hash table lookup for every field access is fast enough for many language implementations, but not ideal. High performance VMs for languages like JavaScript use sophisticated optimizations like “[hidden classes](http://richardartoul.github.io/jekyll/update/2015/04/26/hidden-classes.html)” to avoid that overhead.
+>
+> Paradoxically, many of the optimizations invented to make dynamic languages fast rest on the observation that—even in those languages—most code is fairly static in terms of the types of objects it works with and their fields.
 
 An interesting edge case we need to handle is what happens if the instance doesn’t *have* a property with the given name. We could silently return some dummy value like `nil`, but my experience with languages like JavaScript is that this behavior masks bugs more often than it does anything useful. Instead, we’ll make it a runtime error.
 
@@ -414,7 +428,7 @@ So the first thing we do is see if the instance actually has a field with the gi
 
 Note how I switched from talking about “properties” to “fields”. There is a subtle difference between the two. Fields are named bits of state stored directly in an instance. Properties are the named, uh, *things*, that a get expression may return. Every field is a property, but as we’ll see later, not every property is a field.
 
-Ooh, foreshadowing. Spooky!
+> Ooh, foreshadowing. Spooky!
 
 In theory, we can now read properties on objects. But since there’s no way to actually stuff any state into an instance, there are no fields to access. Before we can test out reading, we must support writing.
 
@@ -455,7 +469,7 @@ Just as we have two separate AST nodes for variable access and variable assignme
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 In case you don’t remember, the way we handle assignment in the parser is a little funny. We can’t easily tell that a series of tokens is the left-hand side of an assignment until we reach the `=`. Now that our assignment grammar rule has `call` on the left side, which can expand to arbitrarily large expressions, that final `=` may be many tokens away from the point where we need to know we’re parsing an assignment.
 
@@ -481,12 +495,14 @@ We add another clause to that transformation to handle turning an Expr.Get expre
 
 That’s parsing our syntax. We push that node through into the resolver.
 
-      @Override
-      public Void visitSetExpr(Expr.Set expr) {
-        resolve(expr.value);
-        resolve(expr.object);
-        return null;
-      }
+```
+  @Override
+  public Void visitSetExpr(Expr.Set expr) {
+    resolve(expr.value);
+    resolve(expr.object);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitLogicalExpr*()
 
@@ -494,37 +510,41 @@ Again, like Expr.Get, the property itself is dynamically evaluated, so there’s
 
 That leads us to the interpreter.
 
-      @Override
-      public Object visitSetExpr(Expr.Set expr) {
-        Object object = evaluate(expr.object);
+```
+  @Override
+  public Object visitSetExpr(Expr.Set expr) {
+    Object object = evaluate(expr.object);
 
-        if (!(object instanceof LoxInstance)) {
-          throw new RuntimeError(expr.name,
-                                 "Only instances have fields.");
-        }
+    if (!(object instanceof LoxInstance)) {
+      throw new RuntimeError(expr.name,
+                             "Only instances have fields.");
+    }
 
-        Object value = evaluate(expr.value);
-        ((LoxInstance)object).set(expr.name, value);
-        return value;
-      }
+    Object value = evaluate(expr.value);
+    ((LoxInstance)object).set(expr.name, value);
+    return value;
+  }
+```
 
 *lox/Interpreter.java*, add after *visitLogicalExpr*()
 
 We evaluate the object whose property is being set and check to see if it’s a LoxInstance. If not, that’s a runtime error. Otherwise, we evaluate the value being set and store it on the instance. That relies on a new method in LoxInstance.
 
-This is another semantic edge case. There are three distinct operations:
+> This is another semantic edge case. There are three distinct operations:
+>
+> 1.  Evaluate the object.
+>
+> 2.  Raise a runtime error if it’s not an instance of a class.
+>
+> 3.  Evaluate the value.
+>
+> The order that those are performed in could be user visible, which means we need to carefully specify it and ensure our implementations do these in the same order.
 
-1.  Evaluate the object.
-
-2.  Raise a runtime error if it’s not an instance of a class.
-
-3.  Evaluate the value.
-
-The order that those are performed in could be user visible, which means we need to carefully specify it and ensure our implementations do these in the same order.
-
-      void set(Token name, Object value) {
-        fields.put(name.lexeme, value);
-      }
+```
+  void set(Token name, Object value) {
+    fields.put(name.lexeme, value);
+  }
+```
 
 *lox/LoxInstance.java*, add after *get*()
 
@@ -580,21 +600,21 @@ breakfast(eggs, sausage);
 
 And it does the same thing. Likewise, since the `.` and the `()` in a method call *are* two separate expressions, it seems you should be able to hoist the *lookup* part into a variable and then call it later. We need to think carefully about what the *thing* you get when you look up a method is, and how it behaves, even in weird cases like:
 
-A motivating use for this is callbacks. Often, you want to pass a callback whose body simply invokes a method on some object. Being able to look up the method and pass it directly saves you the chore of manually declaring a function to wrap it. Compare this:
-
-```
-fun callback(a, b, c) {
-  object.method(a, b, c);
-}
-
-takeCallback(callback);
-```
-
-With this:
-
-```
-takeCallback(object.method);
-```
+> A motivating use for this is callbacks. Often, you want to pass a callback whose body simply invokes a method on some object. Being able to look up the method and pass it directly saves you the chore of manually declaring a function to wrap it. Compare this:
+>
+> ```
+> fun callback(a, b, c) {
+>   object.method(a, b, c);
+> }
+>
+> takeCallback(callback);
+> ```
+>
+> With this:
+>
+> ```
+> takeCallback(object.method);
+> ```
 
 ```
 class Person {
@@ -637,7 +657,7 @@ Equivalent code in Lua and JavaScript would print “Bill”. Those languages do
 
 Lox, though, has real class syntax so we do know which callable things are methods and which are functions. Thus, like Python, C#, and others, we will have methods “bind” `this` to the original instance when the method is first grabbed. Python calls these **bound methods**.
 
-I know, imaginative name, right?
+> I know, imaginative name, right?
 
 In practice, that’s usually what you want. If you take a reference to a method on some object so you can use it as a callback later, you want to remember the instance it belonged to, even if that callback happens to be stored in a field on some other object.
 
@@ -660,7 +680,7 @@ OK, that’s a lot of semantics to load into your head. Forget about the edge ca
 
 *lox/Resolver.java*, in *visitClassStmt*()
 
-Storing the function type in a local variable is pointless right now, but we’ll expand this code before too long and it will make more sense.
+> Storing the function type in a local variable is pointless right now, but we’ll expand this code before too long and it will make more sense.
 
 We iterate through the methods in the class body and call the `resolveFunction()` method we wrote for handling function declarations already. The only difference is that we pass in a new FunctionType enum value.
 
@@ -753,15 +773,17 @@ When looking up a property on an instance, if we don’t find a matching field, 
 
 The method is looked up using this:
 
-Looking for a field first implies that fields shadow methods, a subtle but important semantic point.
+> Looking for a field first implies that fields shadow methods, a subtle but important semantic point.
 
-      LoxFunction findMethod(String name) {
-        if (methods.containsKey(name)) {
-          return methods.get(name);
-        }
+```
+  LoxFunction findMethod(String name) {
+    if (methods.containsKey(name)) {
+      return methods.get(name);
+    }
 
-        return null;
-      }
+    return null;
+  }
+```
 
 *lox/LoxClass.java*, add after *LoxClass*()
 
@@ -777,7 +799,7 @@ class Bacon {
 Bacon().eat(); // Prints "Crunch crunch crunch!".
 ```
 
-Apologies if you prefer chewy bacon over crunchy. Feel free to adjust the script to your taste.
+> Apologies if you prefer chewy bacon over crunchy. Feel free to adjust the script to your taste.
 
 ## 12.6 This
 
@@ -785,7 +807,7 @@ We can define both behavior and state on objects, but they aren’t tied togethe
 
 To get at that instance, it needs a name. Smalltalk, Ruby, and Swift use “self”. Simula, C++, Java, and others use “this”. Python uses “self” by convention, but you can technically call it whatever you like.
 
-“I” would have been a great choice, but using “i” for loop variables predates OOP and goes all the way back to Fortran. We are victims of the incidental choices of our forebears.
+> “I” would have been a great choice, but using “i” for loop variables predates OOP and goes all the way back to Fortran. We are victims of the incidental choices of our forebears.
 
 For Lox, since we generally hew to Java-ish style, we’ll go with “this”. Inside a method body, a `this` expression evaluates to the instance that the method was called on. Or, more specifically, since methods are accessed and then invoked as two steps, it will refer to the object that the method was *accessed* from.
 
@@ -872,7 +894,7 @@ Let’s code it up. The first step is adding new syntax for `this`.
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 Parsing is simple since it’s a single token which our lexer already recognizes as a reserved word.
 
@@ -893,11 +915,13 @@ Parsing is simple since it’s a single token which our lexer already recognizes
 
 You can start to see how `this` works like a variable when we get to the resolver.
 
-      @Override
-      public Void visitThisExpr(Expr.This expr) {
-        resolveLocal(expr, expr.keyword);
-        return null;
-      }
+```
+  @Override
+  public Void visitThisExpr(Expr.This expr) {
+    resolveLocal(expr, expr.keyword);
+    return null;
+  }
+```
 
 *lox/Resolver.java*, add after *visitSetExpr*()
 
@@ -955,11 +979,13 @@ The resolver has a new *scope* for `this`, so the interpreter needs to create a 
 
 Note the new call to `bind()`. That looks like so:
 
-      LoxFunction bind(LoxInstance instance) {
-        Environment environment = new Environment(closure);
-        environment.define("this", instance);
-        return new LoxFunction(declaration, environment);
-      }
+```
+  LoxFunction bind(LoxInstance instance) {
+    Environment environment = new Environment(closure);
+    environment.define("this", instance);
+    return new LoxFunction(declaration, environment);
+  }
+```
 
 *lox/LoxFunction.java*, add after *LoxFunction*()
 
@@ -969,10 +995,12 @@ We declare “this” as a variable in that environment and bind it to the given
 
 The remaining task is interpreting those `this` expressions. Similar to the resolver, it is the same as interpreting a variable expression.
 
-      @Override
-      public Object visitThisExpr(Expr.This expr) {
-        return lookUpVariable(expr.keyword, expr);
-      }
+```
+  @Override
+  public Object visitThisExpr(Expr.This expr) {
+    return lookUpVariable(expr.keyword, expr);
+  }
+```
 
 *lox/Interpreter.java*, add after *visitSetExpr*()
 
@@ -1082,13 +1110,13 @@ We can do almost everything with classes now, and as we near the end of the chap
 
 For that, we need constructors. I find them one of the trickiest parts of a language to design, and if you peer closely at most other languages, you’ll see cracks around object construction where the seams of the design don’t quite fit together perfectly. Maybe there’s something intrinsically messy about the moment of birth.
 
-A few examples: In Java, even though final fields must be initialized, it is still possible to read one *before* it has been. Exceptions—a huge, complex feature—were added to C++ mainly as a way to emit errors from constructors.
+> A few examples: In Java, even though final fields must be initialized, it is still possible to read one *before* it has been. Exceptions—a huge, complex feature—were added to C++ mainly as a way to emit errors from constructors.
 
 “Constructing” an object is actually a pair of operations:
 
 1.  The runtime *allocates* the memory required for a fresh instance. In most languages, this operation is at a fundamental level beneath what user code is able to access.
 
-    C++’s “[placement new](https://en.wikipedia.org/wiki/Placement_syntax)” is a rare example where the bowels of allocation are laid bare for the programmer to prod.
+    > C++’s “[placement new](https://en.wikipedia.org/wiki/Placement_syntax)” is a rare example where the bowels of allocation are laid bare for the programmer to prod.
 
 2.  Then, a user-provided chunk of code is called which *initializes* the unformed object.
 
@@ -1159,7 +1187,7 @@ Can you “re-initialize” an object by directly calling its `init()` method? I
 
 However—and I generally dislike compromising to satisfy the implementation—it will make clox’s implementation of constructors much easier if we say that `init()` methods always return `this`, even when directly called. In order to keep jlox compatible with that, we add a little special case code in LoxFunction.
 
-Maybe “dislike” is too strong a claim. It’s reasonable to have the constraints and resources of your implementation affect the design of the language. There are only so many hours in the day, and if a cut corner here or there lets you get more features to users in less time, it may very well be a net win for their happiness and productivity. The trick is figuring out *which* corners to cut that won’t cause your users and future self to curse your shortsightedness.
+> Maybe “dislike” is too strong a claim. It’s reasonable to have the constraints and resources of your implementation affect the design of the language. There are only so many hours in the day, and if a cut corner here or there lets you get more features to users in less time, it may very well be a net win for their happiness and productivity. The trick is figuring out *which* corners to cut that won’t cause your users and future self to curse your shortsightedness.
 
 ```
       return returnValue.value;
@@ -1392,7 +1420,7 @@ That’s where the name **[prototypes](https://en.wikipedia.org/wiki/Prototype-b
 
 Prototypes were an academic curiosity for a long time, a fascinating one that generated interesting research but didn’t make a dent in the larger world of programming. That is, until Brendan Eich crammed prototypes into JavaScript, which then promptly took over the world. Many (many) words have been written about prototypes in JavaScript. Whether that shows that prototypes are brilliant or confusing—or both\!—is an open question.
 
-Including [more than a handful](http://gameprogrammingpatterns.com/prototype.html) by yours truly.
+> Including [more than a handful](http://gameprogrammingpatterns.com/prototype.html) by yours truly.
 
 I won’t get into whether or not I think prototypes are a good idea for a language. I’ve made languages that are [prototypal](http://finch.stuffwithstuff.com/) and [class-based](http://wren.io/), and my opinions of both are complex. What I want to discuss is the role of *simplicity* in a language.
 

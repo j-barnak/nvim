@@ -113,9 +113,9 @@ Lox doesn’t have field declarations, so anything before the closing brace at t
 
 The tricky part with compiling a class declaration is that a class may declare any number of methods. Somehow the runtime needs to look up and bind all of them. That would be a lot to pack into a single `OP_CLASS` instruction. Instead, the bytecode we generate for a class declaration will split the process into a *series* of instructions. The compiler already emits an `OP_CLASS` instruction that creates a new empty ObjClass object. Then it emits instructions to store the class in a variable with its name.
 
-We did something similar for closures. The `OP_CLOSURE` instruction needs to know the type and index for each captured upvalue. We encoded that using a series of pseudo-instructions following the main `OP_CLOSURE` instruction—basically a variable number of operands. The VM processes all of those extra bytes immediately when interpreting the `OP_CLOSURE` instruction.
-
-Here our approach is a little different because from the VM’s perspective, each instruction to define a method is a separate stand-alone operation. Either approach would work. A variable-sized pseudo-instruction is possibly marginally faster, but class declarations are rarely in hot loops, so it doesn’t matter much.
+> We did something similar for closures. The `OP_CLOSURE` instruction needs to know the type and index for each captured upvalue. We encoded that using a series of pseudo-instructions following the main `OP_CLOSURE` instruction—basically a variable number of operands. The VM processes all of those extra bytes immediately when interpreting the `OP_CLOSURE` instruction.
+>
+> Here our approach is a little different because from the VM’s perspective, each instruction to define a method is a separate stand-alone operation. Either approach would work. A variable-sized pseudo-instruction is possibly marginally faster, but class declarations are rarely in hot loops, so it doesn’t matter much.
 
 Now, for each method declaration, we emit a new `OP_METHOD` instruction that adds a single method to that class. When all of the `OP_METHOD` instructions have executed, we’re left with a fully formed class. While the user sees a class declaration as a single atomic operation, the VM implements it as a series of mutations.
 
@@ -160,7 +160,7 @@ We use the same `function()` helper that we wrote for compiling function declara
 
 Last is the class to bind the method to. Where can the VM find that? Unfortunately, by the time we reach the `OP_METHOD` instruction, we don’t know where it is. It could be on the stack, if the user declared the class in a local scope. But a top-level class declaration ends up with the ObjClass in the global variable table.
 
-If Lox supported declaring classes only at the top level, the VM could assume that any class could be found by looking it up directly from the global variable table. Alas, because we support local classes, we need to handle that case too.
+> If Lox supported declaring classes only at the top level, the VM could assume that any class could be found by looking it up directly from the global variable table. Alas, because we support local classes, we need to handle that case too.
 
 Fear not. The compiler does know the *name* of the class. We can capture it right after we consume its token.
 
@@ -196,7 +196,7 @@ And we know that no other declaration with that name could possibly shadow the c
 
 Right before compiling the class body, we call `namedVariable()`. That helper function generates code to load a variable with the given name onto the stack. Then we compile the methods.
 
-The preceding call to `defineVariable()` pops the class, so it seems silly to call `namedVariable()` to load it right back onto the stack. Why not simply leave it on the stack in the first place? We could, but in the next chapter we will insert code between these two calls to support inheritance. At that point, it will be simpler if the class isn’t sitting around on the stack.
+> The preceding call to `defineVariable()` pops the class, so it seems silly to call `namedVariable()` to load it right back onto the stack. Why not simply leave it on the stack in the first place? We could, but in the next chapter we will insert code between these two calls to support inheritance. At that point, it will be simpler if the class isn’t sitting around on the stack.
 
 This means that when we execute each `OP_METHOD` instruction, the stack has the method’s closure on top with the class right under it. Once we’ve reached the end of the methods, we no longer need the class and tell the VM to pop it off the stack.
 
@@ -300,9 +300,9 @@ The method closure is on top of the stack, above the class it will be bound to. 
 
 Note that we don’t do any runtime type checking on the closure or class object. That `AS_CLASS()` call is safe because the compiler itself generated the code that causes the class to be in that stack slot. The VM trusts its own compiler.
 
-The VM trusts that the instructions it executes are valid because the *only* way to get code to the bytecode interpreter is by going through clox’s own compiler. Many bytecode VMs, like the JVM and CPython, support executing bytecode that has been compiled separately. That leads to a different security story. Maliciously crafted bytecode could crash the VM or worse.
-
-To prevent that, the JVM does a bytecode verification pass before it executes any loaded code. CPython says it’s up to the user to ensure any bytecode they run is safe.
+> The VM trusts that the instructions it executes are valid because the *only* way to get code to the bytecode interpreter is by going through clox’s own compiler. Many bytecode VMs, like the JVM and CPython, support executing bytecode that has been compiled separately. That leads to a different security story. Maliciously crafted bytecode could crash the VM or worse.
+>
+> To prevent that, the JVM does a bytecode verification pass before it executes any loaded code. CPython says it’s up to the user to ensure any bytecode they run is safe.
 
 After the series of `OP_METHOD` instructions is done and the `OP_POP` has popped the class, we will have a class with a nicely populated method table, ready to start doing things. The next step is pulling those methods back out and using them.
 
@@ -347,7 +347,7 @@ Our bytecode VM has a more complex architecture for storing state. Local variabl
 
 When the user executes a method access, we’ll find the closure for that method and wrap it in a new “bound method” object that tracks the instance that the method was accessed from. This bound object can be called later like a function. When invoked, the VM will do some shenanigans to wire up `this` to point to the receiver inside the method’s body.
 
-I took the name “bound method” from CPython. Python behaves similar to Lox here, and I used its implementation for inspiration.
+> I took the name “bound method” from CPython. Python behaves similar to Lox here, and I used its implementation for inspiration.
 
 Here’s the new object type:
 
@@ -492,7 +492,7 @@ The bound method has a couple of references, but it doesn’t *own* them, so it 
 
 This ensures that a handle to a method keeps the receiver around in memory so that `this` can still find the object when you invoke the handle later. We also trace the method closure.
 
-Tracing the method closure isn’t really necessary. The receiver is an ObjInstance, which has a pointer to its ObjClass, which has a table for all of the methods. But it feels dubious to me in some vague way to have ObjBoundMethod rely on that.
+> Tracing the method closure isn’t really necessary. The receiver is an ObjInstance, which has a pointer to its ObjClass, which has a table for all of the methods. But it feels dubious to me in some vague way to have ObjBoundMethod rely on that.
 
 The last operation all objects support is printing.
 
@@ -514,7 +514,7 @@ The last operation all objects support is printing.
 
 A bound method prints exactly the same way as a function. From the user’s perspective, a bound method *is* a function. It’s an object they can call. We don’t expose that the VM implements bound methods using a different object type.
 
-![A party hat.](media/image/methods-and-initializers/party-hat.png)
+> ![A party hat.](media/image/methods-and-initializers/party-hat.png)
 
 Put on your party hat because we just reached a little milestone. ObjBoundMethod is the very last runtime type to add to clox. You’ve written your last `IS_` and `AS_` macros. We’re only a few chapters from the end of the book, and we’re getting close to a complete VM.
 
@@ -593,7 +593,7 @@ That’s a lot of machinery under the hood, but from the user’s perspective, t
 
 Users can declare methods on classes, access them on instances, and get bound methods onto the stack. They just can’t *do* anything useful with those bound method objects. The operation we’re missing is calling them. Calls are implemented in `callValue()`, so we add a case there for the new object type.
 
-A bound method *is* a first-class value, so they can store it in variables, pass it to functions, and otherwise do “value”-y stuff with it.
+> A bound method *is* a first-class value, so they can store it in variables, pass it to functions, and otherwise do “value”-y stuff with it.
 
 ```
     switch (OBJ_TYPE(callee)) {
@@ -645,7 +645,7 @@ The reason bound methods need to keep hold of the receiver is so that it can be 
 
 *compiler.c*, replace 1 line
 
-The underscore at the end of the name of the parser function is because `this` is a reserved word in C++ and we support compiling clox as C++.
+> The underscore at the end of the name of the parser function is because `this` is a reserved word in C++ and we support compiling clox as C++.
 
 When the parser encounters a `this` in prefix position, it dispatches to a new parser function.
 
@@ -878,7 +878,7 @@ With that, `this` outside of a class is correctly forbidden. Now our methods rea
 
 The reason object-oriented languages tie state and behavior together—one of the core tenets of the paradigm—is to ensure that objects are always in a valid, meaningful state. When the only way to touch an object’s state is through its methods, the methods can make sure nothing goes awry. But that presumes the object is *already* in a proper state. What about when it’s first created?
 
-Of course, Lox does let outside code directly access and modify an instance’s fields without going through its methods. This is unlike Ruby and Smalltalk, which completely encapsulate state inside objects. Our toy scripting language, alas, isn’t so principled.
+> Of course, Lox does let outside code directly access and modify an instance’s fields without going through its methods. This is unlike Ruby and Smalltalk, which completely encapsulate state inside objects. Our toy scripting language, alas, isn’t so principled.
 
 Object-oriented languages ensure that brand new objects are properly set up through constructors, which both produce a new instance and initialize its state. In Lox, the runtime allocates new raw instances, and a class may declare an initializer to set up any fields. Initializers work mostly like normal methods, with a few tweaks:
 
@@ -888,17 +888,17 @@ Object-oriented languages ensure that brand new objects are properly set up thro
 
 3.  In fact, an initializer is *prohibited* from returning any value at all since the value would never be seen anyway.
 
-It’s as if the initializer is implicitly wrapped in a bundle of code like this:
-
-```
-fun create(klass) {
-  var obj = newInstance(klass);
-  obj.init();
-  return obj;
-}
-```
-
-Note how the value returned by `init()` is discarded.
+> It’s as if the initializer is implicitly wrapped in a bundle of code like this:
+>
+> ```
+> fun create(klass) {
+>   var obj = newInstance(klass);
+>   obj.init();
+>   return obj;
+> }
+> ```
+>
+> Note how the value returned by `init()` is discarded.
 
 Now that we support methods, to add initializers, we merely need to implement those three special rules. We’ll go in order.
 
@@ -1152,7 +1152,7 @@ maker.brew();
 
 Pretty fancy for a C program that would fit on an old floppy disk.
 
-I acknowledge that “floppy disk” may no longer be a useful size reference for current generations of programmers. Maybe I should have said “a few tweets” or something.
+> I acknowledge that “floppy disk” may no longer be a useful size reference for current generations of programmers. Maybe I should have said “a few tweets” or something.
 
 ## 28.5 Optimized Invocations
 
@@ -1168,11 +1168,11 @@ Since we can recognize this pair of operations at compile time, we have the oppo
 
 We start in the function that compiles dotted property expressions.
 
-If you spend enough time watching your bytecode VM run, you’ll notice it often executes the same series of bytecode instructions one after the other. A classic optimization technique is to define a new single instruction called a **superinstruction** that fuses those into a single instruction with the same behavior as the entire sequence.
-
-One of the largest performance drains in a bytecode interpreter is the overhead of decoding and dispatching each instruction. Fusing several instructions into one eliminates some of that.
-
-The challenge is determining *which* instruction sequences are common enough to benefit from this optimization. Every new superinstruction claims an opcode for its own use and there are only so many of those to go around. Add too many, and you’ll need a larger encoding for opcodes, which then increases code size and makes decoding *all* instructions slower.
+> If you spend enough time watching your bytecode VM run, you’ll notice it often executes the same series of bytecode instructions one after the other. A classic optimization technique is to define a new single instruction called a **superinstruction** that fuses those into a single instruction with the same behavior as the entire sequence.
+>
+> One of the largest performance drains in a bytecode interpreter is the overhead of decoding and dispatching each instruction. Fusing several instructions into one eliminates some of that.
+>
+> The challenge is determining *which* instruction sequences are common enough to benefit from this optimization. Every new superinstruction claims an opcode for its own use and there are only so many of those to go around. Add too many, and you’ll need a larger encoding for opcodes, which then increases code size and makes decoding *all* instructions slower.
 
 ```
   if (canAssign && match(TOKEN_EQUAL)) {
@@ -1312,7 +1312,7 @@ That does assume the object *is* an instance. As with `OP_GET_PROPERTY` instruct
 
 That’s a runtime error, so we report that and bail out. Otherwise, we get the instance’s class and jump over to this other new utility function:
 
-As you can guess by now, we split this code into a separate function because we’re going to reuse it later—in this case for `super` calls.
+> As you can guess by now, we split this code into a separate function because we’re going to reuse it later—in this case for `super` calls.
 
 ```
 static bool invokeFromClass(ObjClass* klass, ObjString* name,
@@ -1332,11 +1332,11 @@ This function combines the logic of how the VM implements `OP_GET_PROPERTY` and 
 
 Otherwise, we take the method’s closure and push a call to it onto the CallFrame stack. We don’t need to heap allocate and initialize an ObjBoundMethod. In fact, we don’t even need to juggle anything on the stack. The receiver and method arguments are already right where they need to be.
 
-This is a key reason *why* we use stack slot zero to store the receiver—it’s how the caller already organizes the stack for a method call. An efficient calling convention is an important part of a bytecode VM’s performance story.
+> This is a key reason *why* we use stack slot zero to store the receiver—it’s how the caller already organizes the stack for a method call. An efficient calling convention is an important part of a bytecode VM’s performance story.
 
 If you fire up the VM and run a little program that calls methods now, you should see the exact same behavior as before. But, if we did our job right, the *performance* should be much improved. I wrote a little microbenchmark that does a batch of 10,000 method calls. Then it tests how many of these batches it can execute in 10 seconds. On my computer, without the new `OP_INVOKE` instruction, it got through 1,089 batches. With this new optimization, it finished 8,324 batches in the same time. That’s *7.6 times faster*, which is a huge improvement when it comes to programming language optimization.
 
-We shouldn’t pat ourselves on the back *too* firmly. This performance improvement is relative to our own unoptimized method call implementation which was quite slow. Doing a heap allocation for every single method call isn’t going to win any races.
+> We shouldn’t pat ourselves on the back *too* firmly. This performance improvement is relative to our own unoptimized method call implementation which was quite slow. Doing a heap allocation for every single method call isn’t going to win any races.
 
 ![Bar chart comparing the two benchmark results.](media/image/methods-and-initializers/benchmark.png)
 
@@ -1361,9 +1361,9 @@ oops.field();
 
 The last line looks like a method call. The compiler thinks that it is and dutifully emits an `OP_INVOKE` instruction for it. However, it’s not. What is actually happening is a *field* access that returns a function which then gets called. Right now, instead of executing that correctly, our VM reports a runtime error when it can’t find a method named “field”.
 
-There are cases where users may be satisfied when a program sometimes returns the wrong answer in return for running significantly faster or with a better bound on the performance. These are the field of [**Monte Carlo algorithms**](https://en.wikipedia.org/wiki/Monte_Carlo_algorithm). For some use cases, this is a good trade-off.
-
-The important part, though, is that the user is *choosing* to apply one of these algorithms. We language implementers can’t unilaterally decide to sacrifice their program’s correctness.
+> There are cases where users may be satisfied when a program sometimes returns the wrong answer in return for running significantly faster or with a better bound on the performance. These are the field of [**Monte Carlo algorithms**](https://en.wikipedia.org/wiki/Monte_Carlo_algorithm). For some use cases, this is a good trade-off.
+>
+> The important part, though, is that the user is *choosing* to apply one of these algorithms. We language implementers can’t unilaterally decide to sacrifice their program’s correctness.
 
 Earlier, when we implemented `OP_GET_PROPERTY`, we handled both field and method accesses. To squash this new bug, we need to do the same thing for `OP_INVOKE`.
 
@@ -1391,7 +1391,7 @@ Then we try to call that field’s value like the callable that it hopefully is.
 
 That’s all it takes to make our optimization fully safe. We do sacrifice a little performance, unfortunately. But that’s the price you have to pay sometimes. You occasionally get frustrated by optimizations you *could* do if only the language wouldn’t allow some annoying corner case. But, as language implementers, we have to play the game we’re given.
 
-As language *designers*, our role is very different. If we do control the language itself, we may sometimes choose to restrict or change the language in ways that enable optimizations. Users want expressive languages, but they also want fast implementations. Sometimes it is good language design to sacrifice a little power if you can give them perf in return.
+> As language *designers*, our role is very different. If we do control the language itself, we may sometimes choose to restrict or change the language in ways that enable optimizations. Users want expressive languages, but they also want fast implementations. Sometimes it is good language design to sacrifice a little power if you can give them perf in return.
 
 The code we wrote here follows a typical pattern in optimization:
 
@@ -1433,9 +1433,9 @@ Programmers are naturally conservative with their time and cautious about what l
 
 One natural approach is *simplicity*. The fewer concepts and features your language has, the less total volume of stuff there is to learn. This is one of the reasons minimal scripting languages often find success even though they aren’t as powerful as the big industrial languages—they are easier to get started with, and once they are in someone’s brain, the user wants to keep using them.
 
-In particular, this is a big advantage of dynamically typed languages. A static language requires you to learn *two* languages—the runtime semantics and the static type system—before you can get to the point where you are making the computer do stuff. Dynamic languages require you to learn only the former.
-
-Eventually, programs get big enough that the value of static analysis pays for the effort to learn that second static language, but the value proposition isn’t as obvious at the outset.
+> In particular, this is a big advantage of dynamically typed languages. A static language requires you to learn *two* languages—the runtime semantics and the static type system—before you can get to the point where you are making the computer do stuff. Dynamic languages require you to learn only the former.
+>
+> Eventually, programs get big enough that the value of static analysis pays for the effort to learn that second static language, but the value proposition isn’t as obvious at the outset.
 
 The problem with simplicity is that simply cutting features often sacrifices power and expressiveness. There is an art to finding features that punch above their weight, but often minimal languages simply do less.
 
@@ -1449,7 +1449,7 @@ So you do need to provide some compelling differences. Some things your language
 
 I think of this balancing act in terms of a **novelty budget**, or as Steve Klabnik calls it, a “[strangeness budget](https://words.steveklabnik.com/the-language-strangeness-budget)”. Users have a low threshold for the total amount of new stuff they are willing to accept to learn a new language. Exceed that, and they won’t show up.
 
-A related concept in psychology is [**idiosyncrasy credit**](https://en.wikipedia.org/wiki/Idiosyncrasy_credit), the idea that other people in society grant you a finite amount of deviations from social norms. You earn credit by fitting in and doing in-group things, which you can then spend on oddball activities that might otherwise raise eyebrows. In other words, demonstrating that you are “one of the good ones” gives you license to raise your freak flag, but only so far.
+> A related concept in psychology is [**idiosyncrasy credit**](https://en.wikipedia.org/wiki/Idiosyncrasy_credit), the idea that other people in society grant you a finite amount of deviations from social norms. You earn credit by fitting in and doing in-group things, which you can then spend on oddball activities that might otherwise raise eyebrows. In other words, demonstrating that you are “one of the good ones” gives you license to raise your freak flag, but only so far.
 
 Anytime you add something new to your language that other languages don’t have, or anytime your language does something other languages do in a different way, you spend some of that budget. That’s OK—you *need* to spend it to make your language compelling. But your goal is to spend it *wisely*. For each feature or difference, ask yourself how much compelling power it adds to your language and then evaluate critically whether it pays its way. Is the change so valuable that it is worth blowing some of your novelty budget?
 

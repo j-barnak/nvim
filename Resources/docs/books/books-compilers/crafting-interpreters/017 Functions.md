@@ -8,7 +8,7 @@
 
 This chapter marks the culmination of a lot of hard work. The previous chapters add useful functionality in their own right, but each also supplies a piece of a puzzle. We’ll take those pieces—expressions, statements, variables, control flow, and lexical scope—add a couple more, and assemble them all into support for real user-defined functions and function calls.
 
-![A lambda puzzle.](media/image/functions/lambda.png)
+> ![A lambda puzzle.](media/image/functions/lambda.png)
 
 ## 10.1 Function Calls
 
@@ -20,7 +20,7 @@ average(1, 2);
 
 But the name of the function being called isn’t actually part of the call syntax. The thing being called—the **callee**—can be any expression that evaluates to a function. (Well, it does have to be a pretty *high precedence* expression, but parentheses take care of that.) For example:
 
-The name *is* part of the call syntax in Pascal. You can call only named functions or functions stored directly in variables.
+> The name *is* part of the call syntax in Pascal. You can call only named functions or functions stored directly in variables.
 
 ```
 getCallback()();
@@ -37,9 +37,9 @@ call           → primary ( "(" arguments? ")" )* ;
 
 This rule matches a primary expression followed by zero or more function calls. If there are no parentheses, this parses a bare primary expression. Otherwise, each call is recognized by a pair of parentheses with an optional list of arguments inside. The argument list grammar is:
 
-The rule uses `*` to allow matching a series of calls like `fn(1)(2)(3)`. Code like that isn’t common in C-style languages, but it is in the family of languages derived from ML. There, the normal way of defining a function that takes multiple arguments is as a series of nested functions. Each function takes one argument and returns a new function. That function consumes the next argument, returns yet another function, and so on. Eventually, once all of the arguments are consumed, the last function completes the operation.
-
-This style, called **currying**, after Haskell Curry (the same guy whose first name graces that *other* well-known functional language), is baked directly into the language syntax so it’s not as weird looking as it would be here.
+> The rule uses `*` to allow matching a series of calls like `fn(1)(2)(3)`. Code like that isn’t common in C-style languages, but it is in the family of languages derived from ML. There, the normal way of defining a function that takes multiple arguments is as a series of nested functions. Each function takes one argument and returns a new function. That function consumes the next argument, returns yet another function, and so on. Eventually, once all of the arguments are consumed, the last function completes the operation.
+>
+> This style, called **currying**, after Haskell Curry (the same guy whose first name graces that *other* well-known functional language), is baked directly into the language syntax so it’s not as weird looking as it would be here.
 
 ```
 arguments      → expression ( "," expression )* ;
@@ -65,7 +65,7 @@ Over in our syntax tree generator, we add a new node.
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 It stores the callee expression and a list of expressions for the arguments. It also stores the token for the closing parenthesis. We’ll use that token’s location when we report a runtime error caused by a function call.
 
@@ -88,41 +88,45 @@ Crack open the parser. Where `unary()` used to jump straight to `primary()`, cha
 
 Its definition is:
 
-      private Expr call() {
-        Expr expr = primary();
+```
+  private Expr call() {
+    Expr expr = primary();
 
-        while (true) {
-          if (match(LEFT_PAREN)) {
-            expr = finishCall(expr);
-          } else {
-            break;
-          }
-        }
-
-        return expr;
+    while (true) {
+      if (match(LEFT_PAREN)) {
+        expr = finishCall(expr);
+      } else {
+        break;
       }
+    }
+
+    return expr;
+  }
+```
 
 *lox/Parser.java*, add after *unary*()
 
 The code here doesn’t quite line up with the grammar rules. I moved a few things around to make the code cleaner—one of the luxuries we have with a handwritten parser. But it’s roughly similar to how we parse infix operators. First, we parse a primary expression, the “left operand” to the call. Then, each time we see a `(`, we call `finishCall()` to parse the call expression using the previously parsed expression as the callee. The returned expression becomes the new `expr` and we loop to see if the result is itself called.
 
-This code would be simpler as `while (match(LEFT_PAREN))` instead of the silly `while (true)` and `break`. Don’t worry, it will make sense when we expand the parser later to handle properties on objects.
+> This code would be simpler as `while (match(LEFT_PAREN))` instead of the silly `while (true)` and `break`. Don’t worry, it will make sense when we expand the parser later to handle properties on objects.
 
 The code to parse the argument list is in this helper:
 
-      private Expr finishCall(Expr callee) {
-        List<Expr> arguments = new ArrayList<>();
-        if (!check(RIGHT_PAREN)) {
-          do {
-            arguments.add(expression());
-          } while (match(COMMA));
-        }
+```
+  private Expr finishCall(Expr callee) {
+    List<Expr> arguments = new ArrayList<>();
+    if (!check(RIGHT_PAREN)) {
+      do {
+        arguments.add(expression());
+      } while (match(COMMA));
+    }
 
-        Token paren = consume(RIGHT_PAREN,
-                              "Expect ')' after arguments.");
+    Token paren = consume(RIGHT_PAREN,
+                          "Expect ')' after arguments.");
 
-        return new Expr.Call(callee, paren, arguments);
-      }
+    return new Expr.Call(callee, paren, arguments);
+  }
+```
 
 *lox/Parser.java*, add after *unary*()
 
@@ -136,7 +140,7 @@ Right now, the loop where we parse arguments has no bound. If you want to call a
 
 Other languages have various approaches. The C standard says a conforming implementation has to support *at least* 127 arguments to a function, but doesn’t say there’s any upper limit. The Java specification says a method can accept *no more than* 255 arguments.
 
-The limit is 25*4* arguments if the method is an instance method. That’s because `this`—the receiver of the method—works like an argument that is implicitly passed to the method, so it claims one of the slots.
+> The limit is 25*4* arguments if the method is an instance method. That’s because `this`—the receiver of the method—works like an argument that is implicitly passed to the method, so it claims one of the slots.
 
 Our Java interpreter for Lox doesn’t really need a limit, but having a maximum number of arguments will simplify our bytecode interpreter in Part III. We want our two interpreters to be compatible with each other, even in weird corner cases like this, so we’ll add the same limit to jlox.
 
@@ -174,28 +178,30 @@ import java.util.List;
 
 As always, interpretation starts with a new visit method for our new call expression node.
 
-      @Override
-      public Object visitCallExpr(Expr.Call expr) {
-        Object callee = evaluate(expr.callee);
+```
+  @Override
+  public Object visitCallExpr(Expr.Call expr) {
+    Object callee = evaluate(expr.callee);
 
-        List<Object> arguments = new ArrayList<>();
-        for (Expr argument : expr.arguments) {
-          arguments.add(evaluate(argument));
-        }
+    List<Object> arguments = new ArrayList<>();
+    for (Expr argument : expr.arguments) {
+      arguments.add(evaluate(argument));
+    }
 
-        LoxCallable function = (LoxCallable)callee;
-        return function.call(this, arguments);
-      }
+    LoxCallable function = (LoxCallable)callee;
+    return function.call(this, arguments);
+  }
+```
 
 *lox/Interpreter.java*, add after *visitBinaryExpr*()
 
 First, we evaluate the expression for the callee. Typically, this expression is just an identifier that looks up the function by its name, but it could be anything. Then we evaluate each of the argument expressions in order and store the resulting values in a list.
 
-This is another one of those subtle semantic choices. Since argument expressions may have side effects, the order they are evaluated could be user visible. Even so, some languages like Scheme and C don’t specify an order. This gives compilers freedom to reorder them for efficiency, but means users may be unpleasantly surprised if arguments aren’t evaluated in the order they expect.
+> This is another one of those subtle semantic choices. Since argument expressions may have side effects, the order they are evaluated could be user visible. Even so, some languages like Scheme and C don’t specify an order. This gives compilers freedom to reorder them for efficiency, but means users may be unpleasantly surprised if arguments aren’t evaluated in the order they expect.
 
 Once we’ve got the callee and the arguments ready, all that remains is to perform the call. We do that by casting the callee to a LoxCallable and then invoking a `call()` method on it. The Java representation of any Lox object that can be called like a function will implement this interface. That includes user-defined functions, naturally, but also class objects since classes are “called” to construct new instances. We’ll also use it for one more purpose shortly.
 
-I stuck “Lox” before the name to distinguish it from the Java standard library’s own Callable interface. Alas, all the good simple names are already taken.
+> I stuck “Lox” before the name to distinguish it from the Java standard library’s own Callable interface. Alas, all the good simple names are already taken.
 
 There isn’t too much to this new interface.
 
@@ -305,19 +311,19 @@ We can theoretically call functions, but we have no functions to call yet. Befor
 
 Sometimes these are called **primitives**, **external functions**, or **foreign functions**. Since these functions can be called while the user’s program is running, they form part of the implementation’s runtime. A lot of programming language books gloss over these because they aren’t conceptually interesting. They’re mostly grunt work.
 
-Curiously, two names for these functions—“native” and “foreign”—are antonyms. Maybe it depends on the perspective of the person choosing the term. If you think of yourself as “living” within the runtime’s implementation (in our case, Java) then functions written in that are “native”. But if you have the mindset of a *user* of your language, then the runtime is implemented in some other “foreign” language.
-
-Or it may be that “native” refers to the machine code language of the underlying hardware. In Java, “native” methods are ones implemented in C or C++ and compiled to native machine code.
-
-![All a matter of perspective.](media/image/functions/foreign.png)
+> Curiously, two names for these functions—“native” and “foreign”—are antonyms. Maybe it depends on the perspective of the person choosing the term. If you think of yourself as “living” within the runtime’s implementation (in our case, Java) then functions written in that are “native”. But if you have the mindset of a *user* of your language, then the runtime is implemented in some other “foreign” language.
+>
+> Or it may be that “native” refers to the machine code language of the underlying hardware. In Java, “native” methods are ones implemented in C or C++ and compiled to native machine code.
+>
+> ![All a matter of perspective.](media/image/functions/foreign.png)
 
 But when it comes to making your language actually good at doing useful stuff, the native functions your implementation provides are key. They provide access to the fundamental services that all programs are defined in terms of. If you don’t provide native functions to access the file system, a user’s going to have a hell of a time writing a program that reads and displays a file.
 
-A classic native function almost every language provides is one to print text to stdout. In Lox, I made `print` a built-in statement so that we could get stuff on screen in the chapters before this one.
-
-Once we have functions, we could simplify the language by tearing out the old print syntax and replacing it with a native function. But that would mean that examples early in the book wouldn’t run on the interpreter from later chapters and vice versa. So, for the book, I’ll leave it alone.
-
-If you’re building an interpreter for your *own* language, though, you may want to consider it.
+> A classic native function almost every language provides is one to print text to stdout. In Lox, I made `print` a built-in statement so that we could get stuff on screen in the chapters before this one.
+>
+> Once we have functions, we could simplify the language by tearing out the old print syntax and replacing it with a native function. But that would mean that examples early in the book wouldn’t run on the interpreter from later chapters and vice versa. So, for the book, I’ll leave it alone.
+>
+> If you’re building an interpreter for your *own* language, though, you may want to consider it.
 
 Many languages also allow users to provide their own native functions. The mechanism for doing so is called a **foreign function interface** (**FFI**), **native extension**, **native interface**, or something along those lines. These are nice because they free the language implementer from providing access to every single capability the underlying platform supports. We won’t define an FFI for jlox, but we will add one native function to give you an idea of what it looks like.
 
@@ -381,9 +387,9 @@ When we instantiate an Interpreter, we stuff the native function in that global 
 
 This defines a variable named “clock”. Its value is a Java anonymous class that implements LoxCallable. The `clock()` function takes no arguments, so its arity is zero. The implementation of `call()` calls the corresponding Java function and converts the result to a double value in seconds.
 
-In Lox, functions and variables occupy the same namespace. In Common Lisp, the two live in their own worlds. A function and variable with the same name don’t collide. If you call the name, it looks up the function. If you refer to it, it looks up the variable. This does require jumping through some hoops when you do want to refer to a function as a first-class value.
-
-Richard P. Gabriel and Kent Pitman coined the terms “Lisp-1” to refer to languages like Scheme that put functions and variables in the same namespace, and “Lisp-2” for languages like Common Lisp that partition them. Despite being totally opaque, those names have since stuck. Lox is a Lisp-1.
+> In Lox, functions and variables occupy the same namespace. In Common Lisp, the two live in their own worlds. A function and variable with the same name don’t collide. If you call the name, it looks up the function. If you refer to it, it looks up the variable. This does require jumping through some hoops when you do want to refer to a function as a first-class value.
+>
+> Richard P. Gabriel and Kent Pitman coined the terms “Lisp-1” to refer to languages like Scheme that put functions and variables in the same namespace, and “Lisp-2” for languages like Common Lisp that partition them. Despite being totally opaque, those names have since stuck. Lox is a Lisp-1.
 
 If we wanted to add other native functions—reading input from the user, working with files, etc.—we could add them each as their own anonymous class that implements LoxCallable. But for the book, this one is really all we need.
 
@@ -393,15 +399,15 @@ Let’s get ourselves out of the function-defining business and let our users ta
 
 We finally get to add a new production to the `declaration` rule we introduced back when we added variables. Function declarations, like variables, bind a new name. That means they are allowed only in places where a declaration is permitted.
 
-A named function declaration isn’t really a single primitive operation. It’s syntactic sugar for two distinct steps: (1) creating a new function object, and (2) binding a new variable to it. If Lox had syntax for anonymous functions, we wouldn’t need function declaration statements. You could just do:
-
-```
-var add = fun (a, b) {
-  print a + b;
-};
-```
-
-However, since named functions are the common case, I went ahead and gave Lox nice syntax for them.
+> A named function declaration isn’t really a single primitive operation. It’s syntactic sugar for two distinct steps: (1) creating a new function object, and (2) binding a new variable to it. If Lox had syntax for anonymous functions, we wouldn’t need function declaration statements. You could just do:
+>
+> ```
+> var add = fun (a, b) {
+>   print a + b;
+> };
+> ```
+>
+> However, since named functions are the common case, I went ahead and gave Lox nice syntax for them.
 
 ```
 declaration    → funDecl
@@ -418,7 +424,7 @@ function       → IDENTIFIER "(" parameters? ")" block ;
 
 The main `funDecl` rule uses a separate helper rule `function`. A function *declaration statement* is the `fun` keyword followed by the actual function-y stuff. When we get to classes, we’ll reuse that `function` rule for declaring methods. Those look similar to function declarations, but aren’t preceded by `fun`.
 
-Methods are too classy to have fun.
+> Methods are too classy to have fun.
 
 The function itself is a name followed by the parenthesized parameter list and the body. The body is always a braced block, using the same grammar rule that block statements use. The parameter list uses this rule:
 
@@ -443,7 +449,7 @@ It’s like the earlier `arguments` rule, except that each parameter is an ident
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 A function node has a name, a list of parameters (their names), and then the body. We store the body as the list of statements contained inside the curly braces.
 
@@ -465,9 +471,11 @@ Over in the parser, we weave in the new declaration.
 
 Like other statements, a function is recognized by the leading keyword. When we encounter `fun`, we call `function`. That corresponds to the `function` grammar rule since we already matched and consumed the `fun` keyword. We’ll build the method up a piece at a time, starting with this:
 
-      private Stmt.Function function(String kind) {
-        Token name = consume(IDENTIFIER, "Expect " + kind + " name.");
-      }
+```
+  private Stmt.Function function(String kind) {
+    Token name = consume(IDENTIFIER, "Expect " + kind + " name.");
+  }
+```
 
 *lox/Parser.java*, add after *expressionStatement*()
 
@@ -548,24 +556,26 @@ class LoxFunction implements LoxCallable {
 
 We implement the `call()` of LoxCallable like so:
 
-      @Override
-      public Object call(Interpreter interpreter,
-                         List<Object> arguments) {
-        Environment environment = new Environment(interpreter.globals);
-        for (int i = 0; i < declaration.params.size(); i++) {
-          environment.define(declaration.params.get(i).lexeme,
-              arguments.get(i));
-        }
+```
+  @Override
+  public Object call(Interpreter interpreter,
+                     List<Object> arguments) {
+    Environment environment = new Environment(interpreter.globals);
+    for (int i = 0; i < declaration.params.size(); i++) {
+      environment.define(declaration.params.get(i).lexeme,
+          arguments.get(i));
+    }
 
-        interpreter.executeBlock(declaration.body, environment);
-        return null;
-      }
+    interpreter.executeBlock(declaration.body, environment);
+    return null;
+  }
+```
 
 *lox/LoxFunction.java*, add after *LoxFunction*()
 
 This handful of lines of code is one of the most fundamental, powerful pieces of our interpreter. As we saw in the chapter on statements and state, managing name environments is a core part of a language implementation. Functions are deeply tied to that.
 
-We’ll dig even deeper into environments in the next chapter.
+> We’ll dig even deeper into environments in the next chapter.
 
 Parameters are core to functions, especially the fact that a function *encapsulates* its parameters—no other code outside of the function can see them. This means each function gets its own environment where it stores those variables.
 
@@ -612,19 +622,23 @@ Mechanically, the code is pretty simple. Walk a couple of lists. Bind some new v
 
 Done? OK. Note when we bind the parameters, we assume the parameter and argument lists have the same length. This is safe because `visitCallExpr()` checks the arity before calling `call()`. It relies on the function reporting its arity to do that.
 
-      @Override
-      public int arity() {
-        return declaration.params.size();
-      }
+```
+  @Override
+  public int arity() {
+    return declaration.params.size();
+  }
+```
 
 *lox/LoxFunction.java*, add after *LoxFunction*()
 
 That’s most of our object representation. While we’re in here, we may as well implement `toString()`.
 
-      @Override
-      public String toString() {
-        return "<fn " + declaration.name.lexeme + ">";
-      }
+```
+  @Override
+  public String toString() {
+    return "<fn " + declaration.name.lexeme + ">";
+  }
+```
 
 *lox/LoxFunction.java*, add after *LoxFunction*()
 
@@ -642,12 +656,14 @@ print add; // "<fn add>".
 
 We’ll come back and refine LoxFunction soon, but that’s enough to get started. Now we can visit a function declaration.
 
-      @Override
-      public Void visitFunctionStmt(Stmt.Function stmt) {
-        LoxFunction function = new LoxFunction(stmt);
-        environment.define(stmt.name.lexeme, function);
-        return null;
-      }
+```
+  @Override
+  public Void visitFunctionStmt(Stmt.Function stmt) {
+    LoxFunction function = new LoxFunction(stmt);
+    environment.define(stmt.name.lexeme, function);
+    return null;
+  }
+```
 
 *lox/Interpreter.java*, add after *visitExpressionStmt*()
 
@@ -671,7 +687,7 @@ I don’t know about you, but that looks like an honest-to-God programming langu
 
 We can get data into functions by passing parameters, but we’ve got no way to get results back *out*. If Lox were an expression-oriented language like Ruby or Scheme, the body would be an expression whose value is implicitly the function’s result. But in Lox, the body of a function is a list of statements which don’t produce values, so we need dedicated syntax for emitting a result. In other words, `return` statements. I’m sure you can guess the grammar already.
 
-The Hotel California of data.
+> The Hotel California of data.
 
 ```
 statement      → exprStmt
@@ -720,7 +736,7 @@ Over in our AST generator, we add a new node.
 
 *tool/GenerateAst.java*, in *main*()
 
-The generated code for the new node is in Appendix II.
+> The generated code for the new node is in Appendix II.
 
 It keeps the `return` keyword token so we can use its location for error reporting, and the value being returned, if any. We parse it like other statements, first by recognizing the initial keyword.
 
@@ -740,16 +756,18 @@ It keeps the `return` keyword token so we can use its location for error reporti
 
 That branches out to:
 
-      private Stmt returnStatement() {
-        Token keyword = previous();
-        Expr value = null;
-        if (!check(SEMICOLON)) {
-          value = expression();
-        }
+```
+  private Stmt returnStatement() {
+    Token keyword = previous();
+    Expr value = null;
+    if (!check(SEMICOLON)) {
+      value = expression();
+    }
 
-        consume(SEMICOLON, "Expect ';' after return value.");
-        return new Stmt.Return(keyword, value);
-      }
+    consume(SEMICOLON, "Expect ';' after return value.");
+    return new Stmt.Return(keyword, value);
+  }
+```
 
 *lox/Parser.java*, add after *printStatement*()
 
@@ -788,13 +806,15 @@ We need to get from the top of the stack all the way back to `call()`. I don’t
 
 The visit method for our new AST node looks like this:
 
-      @Override
-      public Void visitReturnStmt(Stmt.Return stmt) {
-        Object value = null;
-        if (stmt.value != null) value = evaluate(stmt.value);
+```
+  @Override
+  public Void visitReturnStmt(Stmt.Return stmt) {
+    Object value = null;
+    if (stmt.value != null) value = evaluate(stmt.value);
 
-        throw new Return(value);
-      }
+    throw new Return(value);
+  }
+```
 
 *lox/Interpreter.java*, add after *visitPrintStmt*()
 
@@ -817,7 +837,7 @@ class Return extends RuntimeException {
 
 This class wraps the return value with the accoutrements Java requires for a runtime exception class. The weird super constructor call with those `null` and `false` arguments disables some JVM machinery that we don’t need. Since we’re using our exception class for control flow and not actual error handling, we don’t need overhead like stack traces.
 
-For the record, I’m not generally a fan of using exceptions for control flow. But inside a heavily recursive tree-walk interpreter, it’s the way to go. Since our own syntax tree evaluation is so heavily tied to the Java call stack, we’re pressed to do some heavyweight call stack manipulation occasionally, and exceptions are a handy tool for that.
+> For the record, I’m not generally a fan of using exceptions for control flow. But inside a heavily recursive tree-walk interpreter, it’s the way to go. Since our own syntax tree evaluation is so heavily tied to the Java call stack, we’re pressed to do some heavyweight call stack manipulation occasionally, and exceptions are a handy tool for that.
 
 We want this to unwind all the way to where the function call began, the `call()` method in LoxFunction.
 
@@ -857,9 +877,9 @@ for (var i = 0; i < 20; i = i + 1) {
 
 This tiny program exercises almost every language feature we have spent the past several chapters implementing—expressions, arithmetic, branching, looping, variables, functions, function calls, parameter binding, and returns.
 
-You might notice this is pretty slow. Obviously, recursion isn’t the most efficient way to calculate Fibonacci numbers, but as a microbenchmark, it does a good job of stress testing how fast our interpreter implements function calls.
-
-As you can see, the answer is “not very fast”. That’s OK. Our C interpreter will be faster.
+> You might notice this is pretty slow. Obviously, recursion isn’t the most efficient way to calculate Fibonacci numbers, but as a microbenchmark, it does a good job of stress testing how fast our interpreter implements function calls.
+>
+> As you can see, the answer is “not very fast”. That’s OK. Our C interpreter will be faster.
 
 ## 10.6 Local Functions and Closures
 
@@ -907,7 +927,7 @@ So at the point where the function is declared, we can see `i`. But when we retu
 
 This data structure is called a **closure** because it “closes over” and holds on to the surrounding variables where the function is declared. Closures have been around since the early Lisp days, and language hackers have come up with all manner of ways to implement them. For jlox, we’ll do the simplest thing that works. In LoxFunction, we add a field to store an environment.
 
-“Closure” is yet another term coined by Peter J. Landin. I assume before he came along that computer scientists communicated with each other using only primitive grunts and pawing hand gestures.
+> “Closure” is yet another term coined by Peter J. Landin. I assume before he came along that computer scientists communicated with each other using only primitive grunts and pawing hand gestures.
 
 ```
   private final Stmt.Function declaration;

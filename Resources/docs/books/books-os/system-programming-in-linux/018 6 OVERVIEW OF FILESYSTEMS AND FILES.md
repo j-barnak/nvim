@@ -1,3 +1,5 @@
+![](media/index-366_1.jpg)
+
 6 OVERVIEW OF FILESYSTEMS AND
 
 FILES
@@ -3245,5 +3247,3 @@ outlined in “Designing an Enhanced spl_stat Command” on page
 same data for a filesystem when given its device file pathname as an
 
 argument, for example, df /dev/sda1.
-
-![](media/index-443_1.jpg)

@@ -1,28 +1,29 @@
+![](media/index-49_1.jpg)
+
 Linux Kernel Usage
 
- 
 
 
- 
+
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 49/436
 
 
- 
+
+
+
 
 Kernel configuration
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 50/436 Kernel configuration
 
- 
+Kernel configuration
+
+
 
 ▶ The kernel contains thousands of device drivers, filesystem drivers, network
 
@@ -42,13 +43,12 @@ you want your kernel to be compiled
 
 filesystems, real-time, etc.). Such generic options are available in all architectures.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 51/436
+
 
 Kernel configuration and build system
 
- 
+
 
 ▶ The kernel configuration and build system is based on multiple Makefiles
 
@@ -70,11 +70,11 @@ compilation, installation, etc.).
 
 *•* make \<target\>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 52/436 Specifying the target architecture
 
- 
+Specifying the target architecture
+
+
 
 First, specify the architecture for the kernel to build
 
@@ -86,13 +86,12 @@ for the host architecture (x86 in our case, native kernel compiling) ▶ The ker
 
 *•* Use the configuration options for the target architecture. *•* Compile the kernel with source code and headers for the target architecture.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 53/436
+
 
 Choosing a compiler
 
- 
+
 
 The compiler invoked by the kernel Makefile is \$(CROSS_COMPILE)gcc
 
@@ -116,11 +115,11 @@ Set LLVM to 1 to compile your kernel with Clang.
 
 See our [LLVM tools for the Linux kernel](https://bootlin.com/pub/conferences/2022/lee/opdenacker-llvm-tools-for-linux-kernel/opdenacker-llvm-tools-for-linux-kernel.pdf) presentation.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 54/436 Specifying ARCH and CROSS_COMPILE
 
- 
+Specifying ARCH and CROSS_COMPILE
+
+
 
 There are actually two ways of defining ARCH and CROSS_COMPILE:
 
@@ -142,13 +141,12 @@ settings in a file that you source every time you start working on the project, 
 
 also the <https://direnv.net/> project.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 55/436
+
 
 Initial configuration
 
- 
+
 
 Difficult to find which kernel configuration will work with your hardware and root filesystem. Start with one that works!
 
@@ -170,11 +168,11 @@ current .config!)
 
 On ARM 32-bit, there is usually one default configuration per CPU family On ARM 64-bit, there is only one big default configuration to customize
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 56/436 Create your own default configuration
 
- 
+Create your own default configuration
+
+
 
 ▶ Use a tool such as make menuconfig to make changes to the configuration ▶ Saving your changes will overwrite your .config (not tracked by Git) ▶ When happy with it, create your own default configuration file:
 
@@ -200,13 +198,12 @@ specific commands. E.g. make linux-menuconfig and
 
 make linux-update-defconfig in Buildroot.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 57/436
+
 
 Built-in or module?
 
- 
+
 
 ▶ The **kernel image** is a **single file**, resulting from the linking of all object files that
 
@@ -232,11 +229,11 @@ to a filesystem is mandatory to use modules
 
 is available
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 58/436 Kernel option types
 
- 
+Kernel option types
+
+
 
 There are different types of options, defined in Kconfig files:
 
@@ -256,9 +253,8 @@ Example: [CONFIG_LOCALVERSION=-no-network](https://elixir.bootlin.com/linux/late
 
 Useful to distinguish between two kernels built from different options
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 59/436
+
 
 Kernel option dependencies
 
@@ -292,15 +288,15 @@ help
 
 This enables support for the SPI controller present on the Atheros AR71XX/AR724X/AR913X SoCs.
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 60/436 Kernel configuration details
+Kernel configuration details
 
- 
+
 
 \#
 
 \# CD-ROM/DVD Filesystems
 
- 
+
 
 ▶ \# The configuration is stored in the .config file at CONFIG_ISO9660_FS=m
 
@@ -326,15 +322,14 @@ CONFIG_FAT_DEFAULT_CODEPAGE=437
 
 \# CONFIG_EXFAT_FS is not set
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 61/436
+
 
 xconfig
 
 ![](media/index-62_1.png)
 
- 
+
 
 make xconfig
 
@@ -354,11 +349,11 @@ parameters (\[Ctrl\] + \[f\])
 
 qtbase5-dev on Ubuntu 22.04
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 62/436 menuconfig
 
- 
+menuconfig
+
+
 
 make menuconfig
 
@@ -384,13 +379,12 @@ libncurses-dev
 
 (now also has the number shortcuts)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 63/436
+
 
 Kernel configuration options
 
- 
+
 
 You can switch from one tool to another, they all load/save the same .config file, and show the same set of options
 
@@ -414,11 +408,11 @@ CONFIG_UDF_FS=y
 
 Values in resulting .config file Parameter values as displayed by xconfig Parameter values as displayed by menuconfig
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 64/436 make oldconfig
 
- 
+make oldconfig
+
+
 
 make oldconfig
 
@@ -428,13 +422,12 @@ for new parameters.
 
 If you edit a .config file by hand, it’s useful to run make oldconfig afterwards, to set values to new parameters that could have appeared because of dependency changes.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 65/436
+
 
 Undoing configuration changes
 
- 
+
 
 A frequent problem:
 
@@ -446,22 +439,20 @@ previous configuration:
 
 ▶ All the configuration tools keep this .config.old backup copy.
 
- 
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 66/436
 
 
- 
+
+
+
 
 Compiling and installing the kernel
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 67/436
+
 
 Kernel compilation
 
- 
+
 
 make Tests on Linux 5.11 on arm
 
@@ -483,11 +474,11 @@ use the ccache compiler cache:
 
 export CROSS_COMPILE="ccache arm-linux-" Command: make -j8 Total time: 67 s
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 68/436 Kernel compilation results
 
- 
+Kernel compilation results
+
+
 
 ▶ arch/\<arch\>/boot/Image, uncompressed kernel image that can be booted ▶ arch/\<arch\>/boot/\*Image\*, compressed kernel images that can also be booted
 
@@ -499,13 +490,12 @@ etc.
 
 debugging purposes but generally not used for booting purposes
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 69/436
+
 
 Kernel installation: native case
 
- 
+
 
 ▶ sudo make install
 
@@ -529,11 +519,11 @@ Kernel configuration for this version
 
 to make the new kernel available at the next boot.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 70/436 Kernel installation: embedded case
 
- 
+Kernel installation: embedded case
+
+
 
 ▶ make install is rarely used in embedded development, as the kernel image is a
 
@@ -551,13 +541,12 @@ done through scripts in build systems.
 
 arch/\<arch\>/boot/install.sh
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 71/436
+
 
 Module installation: native case
 
- 
+
 
 ▶ sudo make modules_install
 
@@ -585,17 +574,16 @@ Tells which module a given symbol belongs to (related to module dependencies).
 
 List of built-in modules of the kernel.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 72/436 Module alias: *modules.alias*
 
- 
+Module alias: *modules.alias*
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 73/436
+
+
 
 Module installation: embedded case
 
- 
+
 
 ▶ In embedded development, you can’t directly use make modules_install as it
 
@@ -607,13 +595,13 @@ filesystem (no need to be root):
 
 make INSTALL_MOD_PATH=\<dir\>/ modules_install
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 74/436 Kernel cleanup targets
+
+Kernel cleanup targets
 
 ![](media/index-75_1.png)
 
- 
+
 
 ▶ From make help:
 
@@ -625,34 +613,31 @@ enough build support to build external modules
 
 mrproper - Remove all generated files + config + various backup files distclean - mrproper + remove editor backup and patch files
 
- 
+
 
 ▶ If you are in a git tree, remove all files not tracked (and ignored) by git:
 
 git clean -fdx
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 75/436
+
 
 Kernel building overview
 
- 
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 76/436
 
 
- 
+
+
+
 
 Booting the kernel
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 77/436
+
 
 Hardware description
 
- 
+
 
 ▶ Many embedded architectures have a lot of non-discoverable hardware (serial,
 
@@ -668,11 +653,11 @@ kernel:
 
 initialization hooks to run on the current board.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 78/436 Booting with U-Boot
 
- 
+Booting with U-Boot
+
+
 
 ▶ On ARM32, U-Boot can boot zImage (bootz command) ▶ On ARM64 or RISC-V, it boots the Image file (booti command) ▶ In addition to the kernel image, U-Boot should also pass a DTB to the kernel. ▶ The typical boot process is therefore:
 
@@ -680,11 +665,11 @@ initialization hooks to run on the current board.
 
 The-in the middle indicates no *initramfs*
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 79/436 Kernel command line
 
- 
+Kernel command line
+
+
 
 ▶ In addition to the compile time configuration, the kernel behavior can be adjusted
 
@@ -694,11 +679,11 @@ with no recompilation using the **kernel command line** ▶ The kernel command l
 
 [admin-guide/kernel-parameters](https://www.kernel.org/doc/html/latest/admin-guide/kernel-parameters.html) in kernel documentation.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 80/436 Passing the kernel command line
 
- 
+Passing the kernel command line
+
+
 
 ▶ U-Boot carries the Linux kernel command line string in
 
@@ -730,13 +715,12 @@ configuration time in [CONFIG_CMDLINE](https://elixir.bootlin.com/linux/latest/K
 
 The kernel will concatenate both strings
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 81/436
+
 
 Kernel log
 
- 
+
 
 ▶ The kernel keeps its messages in a circular buffer in memory
 
@@ -760,9 +744,9 @@ loglevel= allows to filter messages displayed on the console based on priority i
 
 echo "\<n\>Debug info" \> /dev/kmsg
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 82/436 Practical lab - Kernel compiling and booting
+Practical lab - Kernel compiling and booting
 
- 
+
 
 1st lab: board and bootloader setup:
 
@@ -784,20 +768,19 @@ workstation, accessed by the board through
 
 NFS
 
- 
-
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 83/436
 
 
- 
+
+
+
 
 Using kernel modules
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 84/436 Advantages of modules
 
- 
+Advantages of modules
+
+
 
 ▶ Modules make it easy to develop drivers without
 
@@ -821,13 +804,12 @@ the system. No particular protection. That’s why only the root user can load a
 
 modules, or to disable module support entirely.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 85/436
+
 
 Module utilities: extracting information
 
- 
+
 
 \<module_name\>: name of the module file without the trailing .ko
 
@@ -839,11 +821,11 @@ Gets information about a module without loading it: parameters, license,
 
 description and dependencies.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 86/436 Module utilities: loading
 
- 
+Module utilities: loading
+
+
 
 ▶ sudo insmod \<module_path\>.ko
 
@@ -867,13 +849,12 @@ Displays the list of loaded modules
 
 Compare its output with the contents of /proc/modules!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 87/436
+
 
 Understanding module loading issues
 
- 
+
 
 ▶ When loading a module fails, insmod often doesn’t give you enough details! ▶ Details are often available in the kernel log. ▶ Example:
 
@@ -885,11 +866,11 @@ insmod: error inserting './intr_monitor.ko': -1 Device or resource busy
 
 \[17549774.552000\] Failed to register handler for irq channel 2
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 88/436 Module utilities: removals
 
- 
+Module utilities: removals
+
+
 
 ▶ sudo rmmod \<module_name\>
 
@@ -903,11 +884,11 @@ processes opening a device file)
 
 Tries to remove the given top module and all its no longer needed dependencies
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 89/436 Passing parameters to modules
 
- 
+Passing parameters to modules
+
+
 
 ▶ Find available parameters:
 
@@ -933,11 +914,11 @@ USB storage device (useful for rotating devices).
 
 *•* 0 is the *module parameter value*
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 90/436 Check module parameter values
 
- 
+Check module parameter values
+
+
 
 How to find/edit the current values for the parameters of a loaded module?
 
@@ -949,8 +930,4 @@ How to find/edit the current values for the parameters of a loaded module?
 
 echo 0 \> /sys/module/usb_storage/parameters/delay_use
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 91/436
-
-![](media/index-92_1.jpg)

@@ -14,6 +14,4 @@ This document is released under the terms of the [Creative Commons CC BY-SA 3.0 
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-2 © 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license

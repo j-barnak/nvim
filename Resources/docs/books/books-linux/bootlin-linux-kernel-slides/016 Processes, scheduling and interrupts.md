@@ -1,34 +1,35 @@
+![](media/index-319_1.jpg)
+
 Processes, scheduling and interrupts
 
- 
+
 
 Processes, scheduling
 
- 
+
 
 and interrupts
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 305/436
+
 
 Processes, scheduling and interrupts
 
- 
+
 
 Processes and scheduling
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 306/436 Process, thread?
 
- 
+Process, thread?
+
+
 
 ▶ Confusion about the terms *process*, *thread* and *task* ▶ In UNIX, a process is created using fork() and is composed of
 
@@ -40,13 +41,12 @@ pthread_create()
 
 *•* They run in the same address space as the initial thread of the process *•* They start executing a function passed as argument to pthread_create()
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 307/436
+
 
 Process, thread: kernel point of view
 
- 
+
 
 ▶ In kernel space, each thread running in the system is represented by a structure of
 
@@ -58,11 +58,11 @@ of a process and all additional threads created dynamically using
 
 pthread_create()
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 308/436 Relation between execution mode, address space and context
 
- 
+Relation between execution mode, address space and context
+
+
 
 ▶ When speaking about *process* and *thread*, these concepts need to be clarified:
 
@@ -80,45 +80,42 @@ The *process context* can be seen as the content of the registers associated to 
 
 The *interrupt context* replaces the *process context* when the interrupt handler is executed.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 309/436
+
 
 A thread life
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 310/436 Execution of system calls
 
- 
+Execution of system calls
+
+
 
 The execution of system calls takes place in the context of the thread requesting them.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 311/436
+
 
 Processes, scheduling and interrupts
 
- 
+
 
 Sleeping
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 312/436 Sleeping
 
- 
+Sleeping
+
+
 
 Sleeping is needed when a process (user space or kernel space) is waiting for data.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 313/436
+
 
 How to sleep with a wait queue 1/3
 
- 
+
 
 ▶ Must declare a wait queue, which will be used to store the list of threads waiting
 
@@ -146,9 +143,9 @@ init_waitqueue_head(&dev-\>smi_busy_wait);
 
 *•* Using a global variable when a global resource is sufficient *•* DECLARE_WAIT_QUEUE_HEAD(module_queue);
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 314/436 How to sleep with a waitqueue 2/3
+How to sleep with a waitqueue 2/3
 
- 
+
 
 Several ways to make a kernel process sleep
 
@@ -170,13 +167,12 @@ interrupted.
 
 *•* Can be interrupted by any signal. Returns-[ERESTARTSYS](https://elixir.bootlin.com/linux/latest/ident/ERESTARTSYS) if interrupted.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 315/436
+
 
 How to sleep with a waitqueue 3/3
 
- 
+
 
 ▶ int wait_event_timeout(queue, condition, timeout);
 
@@ -194,11 +190,11 @@ used).
 
 condition was met.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 316/436 How to sleep with a waitqueue - Example
 
- 
+How to sleep with a waitqueue - Example
+
+
 
 sig = wait_event_interruptible(ibmvtpm-\>wq,
 
@@ -210,11 +206,11 @@ return-EINTR;
 
 From [drivers/char/tpm/tpm_ibmvtpm.c](https://elixir.bootlin.com/linux/latest/source/drivers/char/tpm/tpm_ibmvtpm.c)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 317/436 Waking up!
 
- 
+Waking up!
+
+
 
 Typically done by interrupt handlers when data sleeping processes are waiting for become available.
 
@@ -226,11 +222,11 @@ Typically done by interrupt handlers when data sleeping processes are waiting fo
 
 *•* Wakes up all processes waiting in an interruptible sleep on the given queue
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 318/436 Exclusive vs. non-exclusive
 
- 
+Exclusive vs. non-exclusive
+
+
 
 ▶ [wait_event_interruptible()](https://elixir.bootlin.com/linux/latest/ident/wait_event_interruptible) puts a task in a non-exclusive wait.
 
@@ -252,13 +248,12 @@ be able to “consume” the event.
 
 ▶ Non-exclusive sleeps are useful when the event can “benefit” to multiple tasks.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 319/436
+
 
 Sleeping and waking up - Implementation
 
- 
+
 
 The scheduler doesn’t keep evaluating the
 
@@ -282,11 +277,11 @@ sleep if it is not met.
 
 See [include/linux/wait.h](https://elixir.bootlin.com/linux/latest/source/include/linux/wait.h) for implementation details.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 320/436 How to sleep with completions 1/2
 
- 
+How to sleep with completions 1/2
+
+
 
 ▶ Use [wait_for_completion()](https://elixir.bootlin.com/linux/latest/ident/wait_for_completion) when no particular condition must be enforced at
 
@@ -316,11 +311,10 @@ object is initialized
 
 ▶ Internal documentation at [scheduler/completion](https://www.kernel.org/doc/html/latest/scheduler/completion.html)
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 321/436
 
 How to sleep with completions 2/2
 
- 
+
 
 ▶ Enter a wait state with
 
@@ -354,9 +348,9 @@ void reinit_completion(struct completion \*done)
 
 *•* Mind not to call [init_completion()](https://elixir.bootlin.com/linux/latest/ident/init_completion) twice, which could confuse the enqueued tasks
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 322/436 Waiting when there is no interrupt
+Waiting when there is no interrupt
 
- 
+
 
 ▶ When there is no interrupt mechanism tied to a particular hardware state, it is
 
@@ -384,13 +378,12 @@ switches for a sub-millisecond period
 
 the compiler when busy looping for very short periods
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 323/436
+
 
 Waiting when hardware is involved
 
- 
+
 
 ▶ When hardware is involved in the waiting process
 
@@ -410,19 +403,17 @@ val: Content of the register pointed with cond: Boolean condition based on val d
 
 *•* \_atomic variant uses [udelay()](https://elixir.bootlin.com/linux/latest/ident/udelay) instead of [usleep()](https://elixir.bootlin.com/linux/latest/ident/usleep).
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 324/436
+
 
 Processes, scheduling and interrupts
 
- 
+
 
 Interrupt Management
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 325/436
+
 
 Registering an interrupt handler 1/2
 
@@ -448,9 +439,9 @@ per-device data structure. It cannot be NULL as it is used as an identifier for
 
 freeing interrupts on a shared line.
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 326/436 Registering an interrupt handler 2/2
+Registering an interrupt handler 2/2
 
- 
+
 
 Here are the most frequent irq_flags bit values in drivers (can be combined):
 
@@ -466,13 +457,12 @@ interrupt line are called.
 
 interrupt line disabled until the thread function has run.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 327/436
+
 
 Interrupt handler constraints
 
- 
+
 
 ▶ No guarantee in which address space the system will be in when the interrupt
 
@@ -486,11 +476,11 @@ their execution. In particular, need to allocate memory with [GFP_ATOMIC](https:
 
 quickly enough, to avoiding blocking interrupts for too long.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 328/436 /proc/interrupts on Raspberry Pi 2 (ARM, Linux 4.19)
 
- 
+/proc/interrupts on Raspberry Pi 2 (ARM, Linux 4.19)
+
+
 
 CPU0 CPU1 CPU2 CPU3
 
@@ -504,13 +494,12 @@ Note: interrupt numbers shown on the left-most column are virtual numbers when t
 
 [CONFIG_GENERIC_IRQ_DEBUGFS=y.](https://elixir.bootlin.com/linux/latest/K/ident/CONFIG_GENERIC_IRQ_DEBUGFS)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 329/436
+
 
 Interrupt handler prototype
 
- 
+
 
 ▶ irqreturn_t foo_interrupt(int irq, void \*dev_id)
 
@@ -528,11 +517,11 @@ line if none of the interrupt handlers has handled the interrupt.
 
 *•* [IRQ_WAKE_THREAD](https://elixir.bootlin.com/linux/latest/ident/IRQ_WAKE_THREAD): handler requests to wake the handler thread (see next slides)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 330/436 Typical interrupt handler’s job
 
- 
+Typical interrupt handler’s job
+
+
 
 ▶ Acknowledge the interrupt to the device (otherwise no more interrupts will be
 
@@ -540,13 +529,12 @@ generated, or the interrupt will keep firing over and over again) ▶ Read/write
 
 wake_up_interruptible(&device_queue);
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 331/436
+
 
 Threaded interrupts
 
- 
+
 
 The kernel also supports threaded interrupts:
 
@@ -564,11 +552,11 @@ irq_handler_t handler, irq_handler_t thread_fn, unsigned long flags, const char 
 
 ▶ thread_fn, executed in a thread
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 332/436 Top half and bottom half processing
 
- 
+Top half and bottom half processing
+
+
 
 Splitting the execution of interrupt handlers in 2 parts
 
@@ -586,15 +574,15 @@ handling of interrupt-related work. Implemented in Linux as: softirqs, tasklets,
 
 *•* And yet, the abbreviation ”bh” often means ”softirqs”...
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 333/436 Top half and bottom half diagram
 
- 
+Top half and bottom half diagram
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 334/436 Softirqs
 
- 
+
+Softirqs
+
+
 
 ▶ Softirqs are a form of bottom half processing ▶ The softirqs handlers are executed with all interrupts enabled, and a given softirq
 
@@ -614,13 +602,12 @@ drivers, but by kernel subsystems (network, etc.)
 
 ▶ [HI_SOFTIRQ](https://elixir.bootlin.com/linux/latest/ident/HI_SOFTIRQ) and [TASKLET_SOFTIRQ](https://elixir.bootlin.com/linux/latest/ident/TASKLET_SOFTIRQ) are used to execute tasklets
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 335/436
+
 
 Example usage of softirqs - NAPI
 
- 
+
 
 NAPI = *New API*
 
@@ -636,11 +623,11 @@ instead of processing each new packet with an interrupt. ▶ This reduces overhe
 
 <https://bootlin.com/pub/drivers/r6040-network-driver-with-comments.c>
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 336/436 Tasklets
 
- 
+Tasklets
+
+
 
 ▶ Tasklets are executed within the [HI_SOFTIRQ](https://elixir.bootlin.com/linux/latest/ident/HI_SOFTIRQ) and [TASKLET_SOFTIRQ](https://elixir.bootlin.com/linux/latest/ident/TASKLET_SOFTIRQ) softirqs.
 
@@ -662,11 +649,11 @@ individual device drivers, as opposed to softirqs. ▶ The interrupt handler can
 
 Note: new kernel code should not introduce any new tasklet, because tasklets are now deprecated (since 6.9) and being slowly replaced by the new BH workqueue (B̈ottom Half workqueue)̈
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 337/436 Workqueues
 
- 
+Workqueues
+
+
 
 ▶ Workqueues are a general mechanism for deferring work. It is not limited in usage
 
@@ -694,9 +681,9 @@ INIT_WORK(&work_data-\>work, atmel_i2c_work_handler);
 
 schedule_work(&work_data-\>work);
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 338/436 Interrupt management summary
+Interrupt management summary
 
- 
+
 
 ▶ Device driver
 
@@ -716,13 +703,12 @@ interrupt handler for the device’s interrupt channel.
 
 unregistered.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 339/436
+
 
 Practical lab - Interrupts
 
- 
+
 
 ▶ Adding read capability to the character driver
 
@@ -740,8 +726,4 @@ operation.
 
 from the devices.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 340/436
-
-![](media/index-355_1.jpg)

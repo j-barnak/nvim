@@ -1,3 +1,5 @@
+![](media/index-884_1.jpg)
+
 14 CLIENT-SERVER APPLICATIONS AND
 
 DAEMONS
@@ -1593,5 +1595,3 @@ page.
 6\. Add a -d option to *calc_server.c* that, when present, turns it into a daemon, and when not, requires the user to run it in the
 
 background.
-
-![](media/index-921_1.jpg)

@@ -4,7 +4,7 @@
 
 In this chapter we introduce higher-order functions, which allow common programming patterns to be encapsulated as functions. We start by explaining what higher-order functions are and why they are useful, then introduce a number of higher-order functions from the standard prelude, and conclude by implementing a binary string transmitter and two voting algorithms.
 
-### **7.1Basic concepts**
+### **7.1 Basic concepts**
 
 As we have seen in previous chapters, functions with multiple arguments are usually defined in Haskell using the notion of currying. That is, the arguments are taken one at a time by exploiting the fact that functions can return functions as results. For example, the definition
 
@@ -42,7 +42,7 @@ Formally speaking, a function that takes a function as an argument or returns a 
 
 Using higher-order functions considerably increases the power of Haskell, by allowing common programming patterns to be encapsulated as functions within the language itself. More generally, higher-order functions can be used to define domain-specific languages within Haskell. For example, in this chapter we present a simple language for processing lists, and in part II of the book we will develop languages for a range of other domains, including interactive programming, effectful programming, and building parsers.
 
-### **7.2Processing lists**
+### **7.2 Processing lists**
 
 The standard prelude defines a number of useful higher-order functions for processing lists. Many of these are actually generic functions that can be used with a range of different types, but here we restrict our attention to lists. As our first example, the function map applies a function to all elements of a list, and can be defined using a list comprehension as follows:
 
@@ -65,18 +65,18 @@ That is, map f xs returns the list of all values f x such that x is an element o
 There are three further points to note about map. First of all, it is a polymorphic function that can be applied to lists of any type, as are most higher-order functions on lists. Secondly, it can be applied to itself to process nested lists. For example, the function map (map (+1)) increments each number in a list of lists of numbers, as shown in the following calculation:
 
 ``` haskell
-map (map (+1)) [[1,2,3],[4,5]]
-={ applying the outer map }
-[map (+1) [1,2,3], map (+1) [4,5]]
-={ applying the inner maps }
-[[2,3,4],[5,6]]
+  map (map (+1)) [[1,2,3],[4,5]]
+=   { applying the outer map }
+  [map (+1) [1,2,3], map (+1) [4,5]]
+=   { applying the inner maps }
+  [[2,3,4],[5,6]]
 ```
 
 And, finally, the function map can also be defined using recursion:
 
 ``` haskell
 map :: (a -> b) -> [a] -> [b]
-map f []= []
+map f []     = []
 map f (x:xs) = f x : map f xs
 ```
 
@@ -132,25 +132,25 @@ We conclude this section by illustrating a number of other higher-order function
 
   \[6,7\]
 
-### **7.3The** foldr **function**
+### **7.3 The** foldr **function**
 
 Many functions that take a list as their argument can be defined using the following simple pattern of recursion on lists:
 
 ``` haskell
-f []= v
+f []     = v
 f (x:xs) = x # f xs
 ```
 
 That is, the function maps the empty list to a value v, and any non-empty list to an operator \# applied to the head of the list and the result of recursively processing the tail. For example, a number of familiar library functions on lists can be defined using this pattern of recursion:
 
 ``` haskell
-sum []= 0
+sum []     = 0
 sum (x:xs) = x + sum xs
-product []= 1
+product []     = 1
 product (x:xs) = x * product xs
-or []= False
+or []     = False
 or (x:xs) = x || or xs
-and []= True
+and []     = True
 and (x:xs) = x && and xs
 ```
 
@@ -179,7 +179,7 @@ The foldr function itself can be defined using recursion:
 
 ``` haskell
 foldr :: (a -> b -> b) -> b -> [a] -> b
-foldr f v []= v
+foldr f v []     = v
 foldr f v (x:xs) = f x (foldr f v xs)
 ```
 
@@ -201,7 +201,7 @@ Even though foldr encapsulates a simple pattern of recursion, it can be used to 
 
 ``` haskell
 length :: [a] -> Int
-length []= 0
+length []     = 0
 length (_:xs) = 1 + length xs
 ```
 
@@ -228,7 +228,7 @@ Now let us consider the library function that reverses a list, which can be defi
 
 ``` haskell
 reverse :: [a] -> [a]
-reverse []= []
+reverse []     = []
 reverse (x:xs) = reverse xs ++ [x]
 ```
 
@@ -247,7 +247,7 @@ gives the result
 It is perhaps not clear from the definition, or the example, how reverse can be defined using foldr. However, if we define a function snoc x xs = xs ++ \[x\] that adds a new element at the end of a list rather than at the start (snoc is cons backwards), then reverse can be redefined as
 
 ``` haskell
-reverse []= []
+reverse []     = []
 reverse (x:xs) = snoc x (reverse xs)
 ```
 
@@ -264,7 +264,7 @@ We conclude this section by noting that the name *fold right* reflects the use o
 foldr (#) v [x0,x1,...,xn] = x0 # (x1 # (... (xn # v) ...))
 ```
 
-### **7.4The** foldl **function**
+### **7.4 The** foldl **function**
 
 It is also possible to define recursive functions on lists using an operator that is assumed to associate to the left. For example, the function sum can be redefined in this manner by using an auxiliary function sum’ that takes an extra argument v that is used to accumulate the final result:
 
@@ -273,19 +273,19 @@ It is also possible to define recursive functions on lists using an operator tha
 For example:
 
 ``` haskell
-sum [1,2,3]
-={ applying sum }
-sum’ 0 [1,2,3]
-={ applying sum’ }
-sum’ (0+1) [2,3]
-={ applying sum’ }
-sum’ ((0+1)+2) [3]
-={ applying sum’ }
-sum’ (((0+1)+2)+3) []
-={ applying sum’ }
-((0+1)+2)+3
-={ applying + }
-6
+  sum [1,2,3]
+=   { applying sum }
+  sum’ 0 [1,2,3]
+=   { applying sum’ }
+  sum’ (0+1) [2,3]
+=   { applying sum’ }
+  sum’ ((0+1)+2) [3]
+=   { applying sum’ }
+  sum’ (((0+1)+2)+3) []
+=   { applying sum’ }
+  ((0+1)+2)+3
+=   { applying + }
+  6
 ```
 
 The bracketing in this calculation specifies that addition is now assumed to associate to the left. In practice, however, the order of association does not affect the value of the result in this case, because addition is associative. That is, x+(y+z) = (x+y)+z for any numbers x, y, and z.
@@ -293,7 +293,7 @@ The bracketing in this calculation specifies that addition is now assumed to ass
 Generalising from the sum example, many functions on lists can be defined using the following simple pattern of recursion:
 
 ``` haskell
-f v []= v
+f v []     = v
 f v (x:xs) = f (v # x) xs
 ```
 
@@ -337,7 +337,7 @@ The foldl function itself can be defined using recursion:
 
 ``` haskell
 foldl :: (a -> b -> a) -> a -> [b] -> a
-foldl f v []= v
+foldl f v []     = v
 foldl f v (x:xs) = foldl f (f v x) xs
 ```
 
@@ -347,7 +347,7 @@ In practice, however, as with foldr it is best to think of the behaviour of fold
 foldl (#) v [x0,x1,...,xn] = (... ((v # x0) # x1) ...) # xn
 ```
 
-### **7.5The composition operator**
+### **7.5 The composition operator**
 
 The higher-order library operator . returns the composition of two functions as a single function, and can be defined as follows:
 
@@ -390,7 +390,7 @@ compose :: [a -> a] -> (a -> a)
 compose = foldr (.) id
 ```
 
-### **7.6Binary string transmitter**
+### **7.6 Binary string transmitter**
 
 We conclude this chapter with two extended programming examples. First of all, we consider the problem of simulating the transmission of a string of characters in low-level form as a list of binary digits.
 
@@ -433,7 +433,7 @@ A binary number, represented as a list of bits, can be converted into an integer
 ``` haskell
 bin2int :: [Bit] -> Int
 bin2int bits = sum [w*b | (w,b) <- zip weights bits]
-where weights = iterate (*2) 1
+               where weights = iterate (*2) 1
 ```
 
 The higher-order library function iterate produces an infinite list by applying a function an increasing number of times to a value:
@@ -454,15 +454,15 @@ There is, however, a simpler way to define bin2int, which can be revealed with t
 which can be restructured as follows:
 
 ``` haskell
-(1 * a) +(2 * b) +(4 * c) +(8 * d)
-={ simplifying 1 * a }
-a +(2 * b) +(4 * c) +(8 * d)
-={ factoring out 2 *}
-a + 2 * (b +(2 * c) +(4 * d))
-={ factoring out 2 *}
-a + 2 * (b + 2 * (c +(2 * d)))
-={ complicating d }
-a + 2 * (b + 2 * (c + 2 * (d + 2 * 0)))
+  (1 * a) +(2 * b) +(4 * c) +(8 * d)
+=   { simplifying 1 * a }
+  a +(2 * b) +(4 * c) +(8 * d)
+=   { factoring out 2 *}
+  a + 2 * (b +(2 * c) +(4 * d))
+=   { factoring out 2 *}
+  a + 2 * (b + 2 * (c +(2 * d)))
+=   { complicating d }
+  a + 2 * (b + 2 * (c + 2 * (d + 2 * 0)))
 ```
 
 The final result shows that converting a list of bits \[*a, b, c, d*\] into an integer amounts to replacing each cons by the function that adds its first argument to twice its second argument, and replacing the empty list by zero. More generally, we conclude that bin2int can be rewritten using foldr:
@@ -525,7 +525,7 @@ To decode a list of bits produced using encode, we first define a function chop8
 
 ``` haskell
 chop8 :: [Bit] -> [[Bit]]
-chop8 []= []
+chop8 []   = []
 chop8 bits = take 8 bits : chop8 (drop 8 bits)
 ```
 
@@ -559,7 +559,7 @@ For example:
 "higher-order functions are easy"
 ```
 
-### **7.7Voting algorithms**
+### **7.7 Voting algorithms**
 
 For our second extended programming example, we consider two different algorithms for deciding the winner in an election: the simple *first past the post* system, and the more refined *alternative vote* system.
 
@@ -592,7 +592,7 @@ In turn, the higher-order function filter can also be used to define a function 
 
 ``` haskell
 rmdups :: Eq a => [a] -> [a]
-rmdups []= []
+rmdups []     = []
 rmdups (x:xs) = x : filter (/= x) (rmdups xs)
 ```
 
@@ -638,30 +638,30 @@ In this voting system, each person can vote for as many or as few candidates as 
 ``` haskell
 ballots ::   [[String]]
 ballots = [["Red", "Green"],
-["Blue"],
-["Green", "Red", "Blue"],
-["Blue", "Green", "Red"],
-["Green"]]
+       ["Blue"],
+       ["Green", "Red", "Blue"],
+       ["Blue", "Green", "Red"],
+       ["Green"]]
 ```
 
 then the first ballot has "Red" as 1st choice and "Green" as 2nd, while the second has "Blue" as the only choice, and so on. Now let us consider how the winner is decided for this example. First of all, "Red" has the smallest number of 1st-choice votes (just one), and is therefore eliminated:
 
 ``` haskell
 [["Green"],
-["Blue"],
-["Green", "Blue"],
-["Blue", "Green"],
-["Green"]]
+ ["Blue"],
+ ["Green", "Blue"],
+ ["Blue", "Green"],
+ ["Green"]]
 ```
 
 Within these revised ballots, candidate "Blue" now has the smallest number of 1st-choice votes (just two), and is therefore also eliminated:
 
 ``` haskell
 [["Green"],
-[],
-["Green"],
-["Green"],
-["Green"]]
+ [],
+ ["Green"],
+ ["Green"],
+ ["Green"]]
 ```
 
 After removing the second ballot, which is now empty, "Green" is the only remaining candidate and is hence the winner.
@@ -694,8 +694,8 @@ Finally, it is now straightforward to define a recursive function that implement
 ``` haskell
 winner’ :: Ord a => [[a]] -> a
 winner’ bs = case rank (rmempty bs) of
-[c]-> c
-(c:cs) -> winner’ (elim c bs)
+            [c]   -> c
+            (c:cs) -> winner’ (elim c bs)
 ```
 
 That is, we first remove empty ballots, then rank the remaining 1st-choice candidates in increasing order of votes. If only one such candidate remains, they are the winner, otherwise we eliminate the candidate with the smallest number of 1st-choice votes and repeat the process. For example:
@@ -707,35 +707,35 @@ That is, we first remove empty ballots, then rank the remaining 1st-choice candi
 
 We conclude by noting that the case mechanism of Haskell that is used in the above definition allows pattern matching to be used in the body of a definition, and is sometimes useful for avoiding the need to introduce an extra function definition just for the purposes of performing pattern matching.
 
-### **7.8Chapter remarks**
+### **7.8 Chapter remarks**
 
 Further applications of higher-order functions, including the production of computer music, financial contracts, graphical images, hardware descriptions, logic programs, and pretty printers can be found in *The Fun of Programming* \[9\]. A more in-depth tutorial on foldr is given in \[10\].
 
-### **7.9Exercises**
+### **7.9 Exercises**
 
-1.Show how the list comprehension \[f x \| x \<- xs, p x\] can be re-expressed using the higher-order functions map and filter.
+1\. Show how the list comprehension \[f x \| x \<- xs, p x\] can be re-expressed using the higher-order functions map and filter.
 
-2.Without looking at the definitions from the standard prelude, define the following higher-order library functions on lists.
+2\. Without looking at the definitions from the standard prelude, define the following higher-order library functions on lists.
 
-a.Decide if all elements of a list satisfy a predicate:
+a\. Decide if all elements of a list satisfy a predicate:
 
 ``` haskell
 all :: (a -> Bool) -> [Bool] -> Bool
 ```
 
-b.Decide if any element of a list satisfies a predicate:
+b\. Decide if any element of a list satisfies a predicate:
 
 ``` haskell
 any :: (a -> Bool) -> [Bool] -> Bool
 ```
 
-c.Select elements from a list while they satisfy a predicate:
+c\. Select elements from a list while they satisfy a predicate:
 
 ``` haskell
 takeWhile :: (a -> Bool) -> [a] -> [a]
 ```
 
-d.Remove elements from a list while they satisfy a predicate:
+d\. Remove elements from a list while they satisfy a predicate:
 
 ``` haskell
 dropWhile :: (a -> Bool) -> [a] -> [a]
@@ -743,20 +743,20 @@ dropWhile :: (a -> Bool) -> [a] -> [a]
 
 Note: in the prelude the first two of these functions are generic functions rather than being specific to the type of lists.
 
-3.Redefine the functions map f and filter p using foldr.
+3\. Redefine the functions map f and filter p using foldr.
 
-4.Using foldl, define a function dec2int :: \[Int\] -\> Int that converts a decimal number into an integer. For example:
+4\. Using foldl, define a function dec2int :: \[Int\] -\> Int that converts a decimal number into an integer. For example:
 
 ``` haskell
 > dec2int [2,3,4,5]
 2345
 ```
 
-5.Without looking at the definitions from the standard prelude, define the higher-order library function curry that converts a function on pairs into a curried function, and, conversely, the function uncurry that converts a curried function with two arguments into a function on pairs.
+5. Without looking at the definitions from the standard prelude, define the higher-order library function curry that converts a function on pairs into a curried function, and, conversely, the function uncurry that converts a curried function with two arguments into a function on pairs.
 
 Hint: first write down the types of the two functions.
 
-6.A higher-order function unfold that encapsulates a simple pattern of recursion for producing a list can be defined as follows:
+6\. A higher-order function unfold that encapsulates a simple pattern of recursion for producing a list can be defined as follows:
 
 ![image](media/Images/Chapter_7_image_18_20.png)
 
@@ -768,19 +768,19 @@ int2bin = unfold (== 0) (‘mod‘ 2) (‘div‘ 2)
 
 Redefine the functions chop8, map f and iterate f using unfold.
 
-7.Modify the binary string transmitter example to detect simple transmission errors using the concept of parity bits. That is, each eight-bit binary number produced during encoding is extended with a parity bit, set to one if the number contains an odd number of ones, and to zero otherwise. In turn, each resulting nine-bit binary number consumed during decoding is checked to ensure that its parity bit is correct, with the parity bit being discarded if this is the case, and a parity error being reported otherwise.
+7\. Modify the binary string transmitter example to detect simple transmission errors using the concept of parity bits. That is, each eight-bit binary number produced during encoding is extended with a parity bit, set to one if the number contains an odd number of ones, and to zero otherwise. In turn, each resulting nine-bit binary number consumed during decoding is checked to ensure that its parity bit is correct, with the parity bit being discarded if this is the case, and a parity error being reported otherwise.
 
 Hint: the library function error :: String -\> a displays the given string as an error message and terminates the program; the polymorphic result type ensures that error can be used in any context.
 
-8.Test your new string transmitter program from the previous exercise using a faulty communication channel that forgets the first bit, which can be modelled using the tail function on lists of bits.
+8\. Test your new string transmitter program from the previous exercise using a faulty communication channel that forgets the first bit, which can be modelled using the tail function on lists of bits.
 
-9.Define a function altMap :: (a -\> b) -\> (a -\> b) -\> \[a\] -\> \[b\] that alternately applies its two argument functions to successive elements in a list, in turn about order. For example:
+9\. Define a function altMap :: (a -\> b) -\> (a -\> b) -\> \[a\] -\> \[b\] that alternately applies its two argument functions to successive elements in a list, in turn about order. For example:
 
 ``` haskell
 > altMap (+10) (+100) [0,1,2,3,4]
 [10,101,12,103,14]
 ```
 
-10.Using altMap, define a function luhn :: \[Int\] -\> Bool that implements the *Luhn algorithm* from the exercises in chapter 4 for bank card numbers of any length. Test your new function using your own bank card.
+10. Using altMap, define a function luhn :: \[Int\] -\> Bool that implements the *Luhn algorithm* from the exercises in chapter 4 for bank card numbers of any length. Test your new function using your own bank card.
 
 Solutions to exercises 1–5 are given in appendix A.

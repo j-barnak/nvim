@@ -86,7 +86,6 @@ auto derefLess = // C++14 comparison
 
 \[\](const **auto**& p1, // function for
 
-**38 \| Item 5**
 
 const **auto**& p2) // values pointed
 
@@ -128,7 +127,7 @@ const std::unique_ptr\<Widget\>& p2)
 
 { return \*p1 \< \*p2; };
 
-It’s important to recognize that even setting aside the syntactic verbosity and need to repeat the parameter types, using std::function is not the same as using auto. An auto-declared variable holding a closure has the same type as the closure, and as such it uses only as much memory as the closure requires. The type of a std::function-declared variable holding a closure is an instantiation of the std::function template, and that has a fixed size for any given signature. This size may not be adequate for the closure it’s asked to store, and when that’s the case, the std::function constructor will allocate heap memory to store the closure. The result is that the **Item 5 \| 39**
+It’s important to recognize that even setting aside the syntactic verbosity and need to repeat the parameter types, using std::function is not the same as using auto. An auto-declared variable holding a closure has the same type as the closure, and as such it uses only as much memory as the closure requires. The type of a std::function-declared variable holding a closure is an instantiation of the std::function template, and that has a fixed size for any given signature. This size may not be adequate for the closure it’s asked to store, and when that’s the case, the std::function constructor will allocate heap memory to store the closure. The result is that the
 
 std::function object typically uses more memory than the auto-declared object.
 
@@ -162,7 +161,6 @@ for (const std::pair\<std::string, int\>& p : m)
 
 }
 
-**40 \| Item 5**
 
 This looks perfectly reasonable, but there’s a problem. Do you see it?
 
@@ -188,7 +186,6 @@ There are thus several reasons to prefer auto over explicit type declarations. Y
 
 my attention to a different concern you may have about using auto in place of traditional type declarations: the readability of the resulting source code.
 
-**Item 5 \| 41**
 
 First, take a deep breath and relax. auto is an option, not a mandate. If, in your professional judgment, your code will be clearer or more maintainable or in some other way better by using explicit type declarations, you’re free to continue using them. But bear in mind that C++ breaks no new ground in adopting what is generally known in the programming languages world as *type inference*. Other statically typed procedural languages (e.g., C#, D, Scala, Visual Basic) have a more or less equivalent feature, to say nothing of a variety of statically typed functional languages (e.g., ML, Haskell, OCaml, F#, etc.). In part, this is due to the success of dynamically typed languages such as Perl, Python, and Ruby, where variables are rarely explicitly typed. The software development community has extensive experience with type inference, and it has demonstrated that there is nothing contradictory about such technology and the creation and maintenance of large, industrial-strength code bases.
 
@@ -206,7 +203,6 @@ The fact of the matter is that writing types explicitly often does little more t
 
 • auto-typed variables are subject to the pitfalls described in Items 2 and 6.
 
-**42 \| Item 5**
 
 **Item 6: Use the explicitly typed initializer idiom when** **auto deduces undesired types.**
 
@@ -238,7 +234,7 @@ As the comment indicates, the call to processWidget now has undefined behavior.
 
 But why? The answer is likely to be surprising. In the code using auto, the type of highPriority is no longer bool. Though std::vector\<bool\> conceptually holds bools, operator\[\] for std::vector\<bool\> doesn’t return a reference to an element of the container (which is what std::vector::operator\[\] returns for every type *except* bool). Instead, it returns an object of type std::vector\<bool\>::reference (a class nested inside std::vector\<bool\>).
 
-std::vector\<bool\>::reference exists because std::vector\<bool\> is specified to represent its bools in packed form, one bit per bool. That creates a problem for std::vector\<bool\>’s operator\[\], because operator\[\] for std::vector\<T\> is supposed to return a T&, but C++ forbids references to bits. Not being able to return a **Item 6 \| 43**
+std::vector\<bool\>::reference exists because std::vector\<bool\> is specified to represent its bools in packed form, one bit per bool. That creates a problem for std::vector\<bool\>’s operator\[\], because operator\[\] for std::vector\<T\> is supposed to return a T&, but C++ forbids references to bits. Not being able to return a
 
 bool&, operator\[\] for std::vector\<bool\> returns an object that *acts like* a bool&.
 
@@ -258,7 +254,7 @@ Again, features returns a std::vector\<bool\> object, and, again, operator\[\] i
 
 The value it does have depends on how std::vector\<bool\>::reference is implemented. One implementation is for such objects to contain a pointer to the machine word holding the referenced bit, plus the offset into that word for that bit. Consider what that means for the initialization of highPriority, assuming that such a std::vector\<bool\>::reference implementation is in place.
 
-The call to features returns a temporary std::vector\<bool\> object. This object has no name, but for purposes of this discussion, I’ll call it *temp*. operator\[\] is invoked on *temp*, and the std::vector\<bool\>::reference it returns contains a pointer to a word in the data structure holding the bits that are managed by *temp*, plus the offset into that word corresponding to bit 5. highPriority is a copy of this std::vector\<bool\>::reference object, so highPriority, too, contains a pointer to a word in *temp*, plus the offset corresponding to bit 5. At the end of the statement, **44 \| Item 6**
+The call to features returns a temporary std::vector\<bool\> object. This object has no name, but for purposes of this discussion, I’ll call it *temp*. operator\[\] is invoked on *temp*, and the std::vector\<bool\>::reference it returns contains a pointer to a word in the data structure holding the bits that are managed by *temp*, plus the offset into that word corresponding to bit 5. highPriority is a copy of this std::vector\<bool\>::reference object, so highPriority, too, contains a pointer to a word in *temp*, plus the offset corresponding to bit 5. At the end of the statement,
 
 *temp* is destroyed, because it’s a temporary object. Therefore, highPriority contains a dangling pointer, and that’s the cause of the undefined behavior in the call to proc essWidget:
 
@@ -282,7 +278,7 @@ Also in that camp are some classes in C++ libraries employing a technique known 
 
 Matrix sum = m1 + m2 + m3 + m4;
 
-can be computed much more efficiently if operator+ for Matrix objects returns a proxy for the result instead of the result itself. That is, operator+ for two Matrix objects would return an object of a proxy class such as Sum\<Matrix, Matrix\> instead of a Matrix object. As was the case with std::vector\<bool\>::reference and bool, there’d be an implicit conversion from the proxy class to Matrix, which would permit the initialization of sum from the proxy object produced by the expression on the right side of the “=”. (The type of that object would traditionally encode the entire initialization expression, i.e., be something like Sum\<Sum\<Sum\<Matrix, Matrix\>, Matrix\>, Matrix\>. That’s definitely a type from which clients should be shielded.) As a general rule, “invisible” proxy classes don’t play well with auto. Objects of such classes are often not designed to live longer than a single statement, so creating variables of those types tends to violate fundamental library design assumptions. That’s **Item 6 \| 45**
+can be computed much more efficiently if operator+ for Matrix objects returns a proxy for the result instead of the result itself. That is, operator+ for two Matrix objects would return an object of a proxy class such as Sum\<Matrix, Matrix\> instead of a Matrix object. As was the case with std::vector\<bool\>::reference and bool, there’d be an implicit conversion from the proxy class to Matrix, which would permit the initialization of sum from the proxy object produced by the expression on the right side of the “=”. (The type of that object would traditionally encode the entire initialization expression, i.e., be something like Sum\<Sum\<Sum\<Matrix, Matrix\>, Matrix\>, Matrix\>. That’s definitely a type from which clients should be shielded.) As a general rule, “invisible” proxy classes don’t play well with auto. Objects of such classes are often not designed to live longer than a single statement, so creating variables of those types tends to violate fundamental library design assumptions. That’s
 
 the case with std::vector\<bool\>::reference, and we’ve seen that violating that assumption can lead to undefined behavior.
 
@@ -320,9 +316,7 @@ Assuming you know that operator\[\] for std::vector\<T\> normally returns a T&, 
 
 In practice, many developers discover the use of proxy classes only when they try to track down mystifying compilation problems or debug incorrect unit test results.
 
-Regardless of how you find them, once auto has been determined to be deducing the type of a proxy class instead of the type being proxied, the solution need not involve abandoning auto. auto itself isn’t the problem. The problem is that auto isn’t deduc-46 \| Item 6
-
-ing the type you want it to deduce. The solution is to force a different type deduction.
+Regardless of how you find them, once auto has been determined to be deducing the type of a proxy class instead of the type being proxied, the solution need not involve abandoning auto. auto itself isn’t the problem. The problem is that auto isn’t deducing the type you want it to deduce. The solution is to force a different type deduction.
 
 The way you do that is what I call *the explicitly typed initializer idiom*.
 
@@ -344,7 +338,7 @@ calcEpsilon clearly returns a double, but suppose you know that for your applica
 
 but this hardly announces “I’m deliberately reducing the precision of the value returned by the function.” A declaration using the explicitly typed initializer idiom, however, does:
 
-**auto** ep = **static_cast\<float\>(**calcEpsilon()**)**; Similar reasoning applies if you have a floating-point expression that you are deliberately storing as an integral value. Suppose you need to calculate the index of an element in a container with random access iterators (e.g., a std::vector, std::deque, **Item 6 \| 47**
+**auto** ep = **static_cast\<float\>(**calcEpsilon()**)**; Similar reasoning applies if you have a floating-point expression that you are deliberately storing as an integral value. Suppose you need to calculate the index of an element in a container with random access iterators (e.g., a std::vector, std::deque,
 
 or std::array), and you’re given a double between 0.0 and 1.0 indicating how far from the beginning of the container the desired element is located. (0.5 would indicate the middle of the container.) Further suppose that you’re confident that the resulting index will fit in an int. If the container is c and the double is d, you could calculate the index this way,
 
@@ -355,5 +349,3 @@ but this obscures the fact that you’re intentionally converting the double on 
 • “Invisible” proxy types can cause auto to deduce the “wrong” type for an initializing expression.
 
 • The explicitly typed initializer idiom forces auto to deduce the type you want it to have.
-
-**48 \| Item 6**

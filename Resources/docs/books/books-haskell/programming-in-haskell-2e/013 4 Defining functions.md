@@ -4,7 +4,7 @@
 
 In this chapter we introduce a range of mechanisms for defining functions in Haskell. We start with conditional expressions and guarded equations, then introduce the simple but powerful idea of pattern matching, and conclude with the concepts of lambda expressions and operator sections.
 
-### **4.1New from old**
+### **4.1 New from old**
 
 Perhaps the most straightforward way to define new functions is simply by combining one or more existing functions. For example, a few library functions that can be defined in this way are shown below.
 
@@ -28,7 +28,7 @@ Perhaps the most straightforward way to define new functions is simply by combin
 
 Note the use of the class constraints in the types for even and recip above, which make precise the idea that these functions can be applied to numbers of any integral and fractional types, respectively.
 
-### **4.2Conditional expressions**
+### **4.2 Conditional expressions**
 
 Haskell provides a range of different ways to define functions that choose between a number of possible results. The simplest are *conditional expressions*, which use a logical expression called a *condition* to choose between two results of the same type. If the condition is True, then the first result is chosen, and if it is False, then the second result is chosen. For example, the library function abs that returns the absolute value of an integer can be defined as follows:
 
@@ -42,12 +42,12 @@ Conditional expressions may be nested, in the sense that they can contain other 
 ``` haskell
 signum :: Int -> Int
 signum n = if n < 0 then -1 else
-if n == 0 then 0 else 1
+             if n == 0 then 0 else 1
 ```
 
 Note that unlike in some programming languages, conditional expressions in Haskell must always have an else branch, which avoids the well-known *dangling else* problem. For example, if else branches were optional, then the expression if True then if False then 1 else 2 could either return the result 2 or produce an error, depending upon whether the single else branch was assumed to be part of the inner or outer conditional expression.
 
-### **4.3Guarded equations**
+### **4.3 Guarded equations**
 
 As an alternative to using conditional expressions, functions can also be defined using *guarded equations*, in which a sequence of logical expressions called *guards* is used to choose between a sequence of results of the same type. If the first guard is True, then the first result is chosen; otherwise, if the second is True, then the second result is chosen, and so on. For example, the library function abs can also be defined using guarded equations as follows:
 
@@ -59,14 +59,14 @@ The main benefit of guarded equations over conditional expressions is that defin
 
 ![image](media/Images/ch4-01.png)
 
-### **4.4Pattern matching**
+### **4.4 Pattern matching**
 
 Many functions have a simple and intuitive definition using *pattern matching*, in which a sequence of syntactic expressions called *patterns* is used to choose between a sequence of results of the same type. If the first pattern is *matched*, then the first result is chosen; otherwise, if the second is matched, then the second result is chosen, and so on. For example, the library function not that returns the negation of a logical value can be defined as follows:
 
 ``` haskell
 not :: Bool -> Bool
 not False = True
-not True= False
+not True  = False
 ```
 
 Functions with more than one argument can also be defined using pattern matching, in which case the patterns for each argument are matched in order within each equation. For example, the library operator && that returns the conjunction of two logical values can be defined as follows:
@@ -80,7 +80,7 @@ However, this definition can be simplified by combining the last three equations
 This version also has the benefit that, under lazy evaluation as discussed in chapter 15, if the first argument is False, then the result False is returned without the need to evaluate the second argument. In practice, the prelude defines && using equations that have this same property, but make the choice about which equation applies using the value of the first argument only:
 
 ``` haskell
-True && b= b
+True && b  = b
 False && _ = False
 ```
 
@@ -119,13 +119,13 @@ Similarly, a list of patterns is itself a pattern, which matches any list of the
 Up to this point, we have viewed lists as a primitive notion in Haskell. In fact they are not primitive as such, but are constructed one element at a time starting from the empty list \[\] using an operator : called *cons* that *cons*tructs a new list by prepending a new element to the start of an existing list. For example, the list \[1,2,3\] can be decomposed as follows:
 
 ``` haskell
-[1,2,3]
-={ list notation }
-1 : [2,3]
-={ list notation }
-1 : (2 : [3])
-={ list notation }
-1 : (2 : (3 : []))
+  [1,2,3]
+=   { list notation }
+  1 : [2,3]
+=   { list notation }
+  1 : (2 : [3])
+=   { list notation }
+  1 : (2 : (3 : []))
 ```
 
 That is, \[1,2,3\] is just an abbreviation for 1:(2:(3:\[\])). To avoid excess parentheses when working with such lists, the cons operator is assumed to associate to the right. For example, 1:2:3:\[\] means 1:(2:(3:\[\])).
@@ -145,7 +145,7 @@ tail (_:xs) = xs
 
 Note that cons patterns must be parenthesised, because function application has higher priority than all other operators in the language. For example, the definition head x:\_ = x without parentheses means (head x):\_ = x, which is both the incorrect meaning and an invalid definition.
 
-### **4.5Lambda expressions**
+### **4.5 Lambda expressions**
 
 As an alternative to defining functions using equations, functions can also be constructed using *lambda expressions*, which comprise a pattern for each of the arguments, a body that specifies how the result can be calculated in terms of the arguments, but do not give a name for the function itself. In other words, lambda expressions are nameless functions.
 
@@ -197,7 +197,7 @@ Finally, lambda expressions can be used to avoid having to name a function that 
 ``` haskell
 odds :: Int -> [Int]
 odds n = map f [0..n-1]
-where f x = x*2 + 1
+        where f x = x*2 + 1
 ```
 
 (The library function map applies a function to all elements of a list.) However, because the locally defined function f is only referenced once, the definition for odds can be simplified by using a lambda expression:
@@ -207,7 +207,7 @@ odds :: Int -> [Int]
 odds n = map (\x -> x*2 + 1) [0..n-1]
 ```
 
-### **4.6Operator sections**
+### **4.6 Operator sections**
 
 Functions such as + that are written between their two arguments are called *operators*. As we have already seen, any function with two arguments can be converted into an operator by enclosing the name of the function in single back quotes, as in 7 ‘div‘ 2. However, the converse is also possible. In particular, any operator can be converted into a curried function that is written before its arguments by enclosing the name of the operator in parentheses, as in (+) 1 2. Moreover, this convention also allows one of the arguments to be included in the parentheses if desired, as in (1+) 2 and (+2) 1.
 
@@ -242,58 +242,58 @@ sum :: [Int] -> Int
 sum = foldl (+) 0
 ```
 
-### **4.7Chapter remarks**
+### **4.7 Chapter remarks**
 
 A formal meaning for pattern matching by translation using more primitive features of the language is given in the Haskell Report \[4\]. The Greek letter λ used when defining nameless functions comes from the *lambda calculus* \[6\], the mathematical theory of functions upon which Haskell is founded.
 
-### **4.8Exercises**
+### **4.8 Exercises**
 
-1.Using library functions, define a function halve :: \[a\] -\> (\[a\],\[a\]) that splits an even-lengthed list into two halves. For example:
+1\. Using library functions, define a function halve :: \[a\] -\> (\[a\],\[a\]) that splits an even-lengthed list into two halves. For example:
 
 ``` haskell
 > halve [1,2,3,4,5,6]
 ([1,2,3],[4,5,6])
 ```
 
-2.Define a function third :: \[a\] -\> a that returns the third element in a list that contains at least this many elements using:
+2\. Define a function third :: \[a\] -\> a that returns the third element in a list that contains at least this many elements using:
 
-a.head and tail;
+a\. head and tail;
 
-b.list indexing !!;
+b\. list indexing !!;
 
-c.pattern matching.
+c\. pattern matching.
 
-3.Consider a function safetail :: \[a\] -\> \[a\] that behaves in the same way as tail except that it maps the empty list to itself rather than producing an error. Using tail and the function null :: \[a\] -\> Bool that decides if a list is empty or not, define safetail using:
+3\. Consider a function safetail :: \[a\] -\> \[a\] that behaves in the same way as tail except that it maps the empty list to itself rather than producing an error. Using tail and the function null :: \[a\] -\> Bool that decides if a list is empty or not, define safetail using:
 
-a.a conditional expression;
+a\. a conditional expression;
 
-b.guarded equations;
+b\. guarded equations;
 
-c.pattern matching.
+c\. pattern matching.
 
-4.In a similar way to && in section 4.4, show how the disjunction operator \|\| can be defined in four different ways using pattern matching.
+4\. In a similar way to && in section 4.4, show how the disjunction operator \|\| can be defined in four different ways using pattern matching.
 
-5.Without using any other library functions or operators, show how the meaning of the following pattern matching definition for logical conjunction && can be formalised using conditional expressions:
+5\. Without using any other library functions or operators, show how the meaning of the following pattern matching definition for logical conjunction && can be formalised using conditional expressions:
 
 ![image](media/Images/ch4-08.png)
 
 Hint: use two nested conditional expressions.
 
-6.Do the same for the following alternative definition, and note the difference in the number of conditional expressions that are required:
+6\. Do the same for the following alternative definition, and note the difference in the number of conditional expressions that are required:
 
 ``` haskell
-True && b= b
+True && b  = b
 False && _ = False
 ```
 
-7.Show how the meaning of the following curried function definition can be formalised in terms of lambda expressions:
+7\. Show how the meaning of the following curried function definition can be formalised in terms of lambda expressions:
 
 ``` haskell
 mult :: Int -> Int -> Int -> Int
 mult x y z = x*y*z
 ```
 
-8.The *Luhn algorithm* is used to check bank card numbers for simple errors such as mistyping a digit, and proceeds as follows:
+8\. The *Luhn algorithm* is used to check bank card numbers for simple errors such as mistyping a digit, and proceeds as follows:
 
 - consider each digit as a separate number;
 - moving left, double every other number from the second last;

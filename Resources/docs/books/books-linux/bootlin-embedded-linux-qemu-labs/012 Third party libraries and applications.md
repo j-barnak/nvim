@@ -28,7 +28,6 @@ For our cross-compilation work, we will need two separate spaces:
 
 • A *target* space, in which we will only copy the required files from the *staging* space: binaries and 26
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 
 libraries, after stripping, configuration files needed at runtime, etc. This target space will take a lot less space than the *staging* space, and it will contain only the files that are really needed to make the system work on the target.
@@ -85,7 +84,6 @@ Seèconfig.log' for more details
 
 If you look at the config.log file, you can see that the configure script compiles a binary with the cross-compiler and then tries to run it on the development workstation. This is a rather usual thing to do for a
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 27
 
 
 configure script, and that’s why it tests so early that it’s actually doable, and bails out if not.
@@ -140,7 +138,6 @@ These symlinks are needed for two different reasons:
 
 28
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 
 To know what’s the *SONAME* of a library, you can use: \$ arm-linux-readelf -d libasound.so.2.0.0
@@ -177,7 +174,6 @@ First, let’s make the installation in the *staging* space: \$ make DESTDIR=\$H
 
 • A pkgconfig file in /usr/lib/pkgconfig. We’ll come back to these later Finally, let’s install the library in the *target* space: 1. Create the target/usr/lib directory, it will contain the stripped version of the library
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 29
 
 
 2\. Copy the dynamic version of the library. Only libasound.so.2 and libasound.so.2.0.0 are needed, since libasound.so.2 is the *SONAME* of the library and libasound.so.2.0.0 is the real binary:
@@ -228,7 +224,6 @@ Now, it should stop a bit later, this time with the error:
 
 30
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 
 checking for snd_ctl_open in -lasound... no
@@ -291,7 +286,6 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \`-- udev
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 31
 
 
 \|
@@ -620,7 +614,6 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 32
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 
 \|
@@ -843,7 +836,6 @@ Now, let’s make the installation in the *staging* space: \$ make DESTDIR=\$HOM
 
 \$ cd ..
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 33
 
 
 \$ cp -a staging/usr/bin/speaker-test target/usr/bin/
@@ -908,7 +900,6 @@ We are now ready to build *ipcalc*:
 
 34
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 
 \$ ninja
@@ -953,4 +944,3 @@ And check the final size:
 
 \$ ls -l target/lib/
 
-© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 35

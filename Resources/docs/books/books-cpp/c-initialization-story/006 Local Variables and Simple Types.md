@@ -1,16 +1,16 @@
 **1. Local Variables and Simple Types**
 
- 
+
 
 Let’s start simple and ask, “what is initialization?” When we go to the definition from
 
 [C++Reference¹](https://en.cppreference.com/w/cpp/language/initialization), we can read:
 
- 
+
 
 *Initialization* of a variable provides its initial value at the time of construction.
 
- 
+
 
 We can translate this definition to the following example:
 
@@ -46,13 +46,13 @@ std::array\<**float**, 100\> numbers { 1.1f, 2.2f }; // array initialization
 
 ¹<https://en.cppreference.com/w/cpp/language/initialization>
 
- 
+
 
 1
 
 Local Variables and Simple Types 2
 
- 
+
 
 You can also come up with many other forms of setting a value. We can also extend the syntax on class data members, static variables, thread locals, or even dynamic memory allocations.
 
@@ -86,13 +86,13 @@ While the list sounds complex, we’ll move through those topics step by step re
 
 While we can explain most cases on integers and other numerical types, it’s best to work on something more practical. The book starts with some elementary custom types, then considers various issues we might have with their early implementations. Later the types will expand, giving us more context and compelling use cases.
 
- 
+
 
 **Starting with simple types**
 
 Defining a class or a struct (a custom type) in C++ allows you to model your problem domain and solve problems more naturally. Rather than working with a bunch of variables and functions, it’s best to group them and provide a consistent API (Application Programming Local Variables and Simple Types 3
 
- 
+
 
 Interface). C++ provides a set of built-in types, including boolean, integral, character, and floating-point. Additionally, you can use objects from the Standard Library, like various collections, std::string, std::vector, std::map, std::set, and many others. You can collect these essential components and build your types.
 
@@ -100,7 +100,7 @@ To create a background for our main topic, let’s start with a type representin
 
 ![](media/index-18_1.png)
 
- 
+
 
 Below there’s the first version of the code for that CarInfo type:
 
@@ -144,7 +144,7 @@ std::cout \<\< "seats: " \<\< firstCar.seats \<\< '\n';
 
 std::cout \<\< "power (hp): " \<\< firstCar.power \<\< '\n'; }
 
- 
+
 
 In the above example, we defined a simple structure that holds data for a CarInfo. The code is super simple, contains some issues, and follows the style of C++03. In the following few chapters, I’ll guide you through the code and help you understand the problems and how to eliminate them. We’ll also modernize it to include the latest C++ (up to C++20) features.
 
@@ -172,7 +172,7 @@ The std::string data member name, on the other hand, will have an empty state (a
 
 Local Variables and Simple Types 5
 
- 
+
 
 Once the object is created and uninitialized, we can access its members and set proper values. By default, struct has public access to its members (and class has private access). This way, we can access and change their values directly.
 
@@ -184,7 +184,7 @@ All objects in a program have four possible ways to be “stored”: automatic, 
 
 more in the chapter on non-local objects³.
 
- 
+
 
 **Setting values to zero**
 
@@ -194,7 +194,7 @@ You might feel very unsatisfied that after creating a CarInfo object, most data 
 
 std::cout \<\< "name: " \<\< emptyCar.name \<\< '\n'; std::cout \<\< "year: " \<\< emptyCar.year \<\< '\n'; std::cout \<\< "seats: " \<\< emptyCar.seats \<\< '\n'; std::cout \<\< "power (hp): " \<\< emptyCar.power \<\< '\n';
 
- 
+
 
 The output:
 
@@ -220,7 +220,7 @@ std::string s{}; // s is an empty string
 
 This time the storage duration doesn’t matter, and value initialization works the same for static, dynamic, thread-local, or automatic variables. For types with default constructors (more on that later), the code will call them and, in the case of string s; will initialize it to an empty string.
 
- 
+
 
 **Initialization with aggregates**
 
@@ -242,7 +242,7 @@ Our structure is very simple, and for such types, C++ has special rules where we
 
 Line anotherLine = {100}; // rest set to 0 Line shortLine {{-10,-10}, {10, 10}}; // nested
 
- 
+
 
 In summary, for the above code:
 
@@ -252,7 +252,7 @@ ance in the class definition, is copy-initialized from the corresponding clause 
 
 Local Variables and Simple Types 7
 
- 
+
 
 • You can use list initialization for arrays, and when the number of elements is not
 
@@ -314,7 +314,7 @@ printInfo(largeCar);
 
 Local Variables and Simple Types 8
 
- 
+
 
 This will output:
 
@@ -332,7 +332,7 @@ category of types). And there’s a dedicated chapter about Aggregates and Desig
 
 Initialization in C++20.
 
- 
+
 
 **Default data member initialization**
 
@@ -394,7 +394,7 @@ this handy technique. See the dedicated chapter for this topic: Non-static data 
 
 initialization chapter.
 
- 
+
 
 **Summary**
 
@@ -410,7 +410,7 @@ for them so that they will be zero (in their type).
 
 Local Variables and Simple Types 10
 
- 
+
 
 • With value initialization CarInfo car{}; all data members will be zero-initialized
 

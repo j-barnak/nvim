@@ -1,24 +1,26 @@
+![](media/index-166_1.jpg)
+
 Introduction to pin muxing
 
- 
+
 
 Introduction to pin
 
- 
+
 
 muxing
 
- 
+
 
 © Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
 
 Corrections, suggestions, contributions and translations are welcome!
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 152/436 What is pin muxing?
 
- 
+What is pin muxing?
+
+
 
 ▶ Modern SoCs (System on Chip) include more and more hardware blocks, many of
 
@@ -34,15 +36,15 @@ the pins simultaneously.
 
 A **or** the functionality of hardware block B. ▶ This *multiplexing* is usually software configurable.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 153/436 Pin muxing diagram
 
- 
+Pin muxing diagram
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 154/436 Pin muxing in the Linux kernel
 
- 
+
+Pin muxing in the Linux kernel
+
+
 
 ▶ Since Linux 3.2, a pinctrl subsystem has been added.
 
@@ -64,15 +66,15 @@ described in the Device Tree.
 
 [Documentation/devicetree/bindings/pinctrl](https://kernel.org/doc/Documentation/devicetree/bindings/pinctrl).
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 155/436 pinctrl subsystem diagram
 
- 
+pinctrl subsystem diagram
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 156/436 Device Tree properties for consumer devices
 
- 
+
+Device Tree properties for consumer devices
+
+
 
 The devices that require certains pins to be muxed will use the pinctrl-\<x\> and pinctrl-names Device Tree properties.
 
@@ -90,13 +92,12 @@ having to make an explicit *pinctrl* function call.
 
 details.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 157/436
+
 
 Device Tree properties for consumer devices - Examples
 
- 
+
 
 i2c0: i2c@f8014000 {
 
@@ -134,11 +135,11 @@ Case with multiple pin states [(arch/arm/](https://elixir.bootlin.com/linux/late
 
 [marvell/kirkwood.dtsi](https://elixir.bootlin.com/linux/latest/source/arch/arm/boot/dts/marvell/kirkwood.dtsi)) [boot/dts/microchip/sama5d4.dtsi)](https://elixir.bootlin.com/linux/latest/source/arch/arm/boot/dts/microchip/sama5d4.dtsi)
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 158/436 Defining pinctrl configurations
 
- 
+Defining pinctrl configurations
+
+
 
 ▶ The different *pinctrl configurations* must be defined as child nodes of the main
 
@@ -158,11 +159,11 @@ it needs through a DT *phandle*.
 
 [Documentation/devicetree/bindings/pinctrl](https://kernel.org/doc/Documentation/devicetree/bindings/pinctrl) for the pinctrl bindings.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 159/436 Example on OMAP/AM33xx
 
- 
+Example on OMAP/AM33xx
+
+
 
 /\* Excerpt from am335x-bone-common.dts \*/
 
@@ -196,17 +197,16 @@ compatible = "bosch,bmp280"; reg = \<0x76\>;
 
 };
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 160/436 Example on the Allwinner A20 SoC
 
- 
+Example on the Allwinner A20 SoC
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 161/436
+
+
 
 Practical lab - Setup pinmuxing to enable I2C communication
 
- 
+
 
 ▶ Configure the pinmuxing for the I2C bus used
 
@@ -220,8 +220,4 @@ to communicate with the Nunchuk
 
 with user space tools.
 
- 
 
-- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 162/436
-
-![](media/index-177_1.jpg)

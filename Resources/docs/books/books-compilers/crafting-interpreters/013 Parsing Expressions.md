@@ -6,15 +6,15 @@
 
 This chapter marks the first major milestone of the book. Many of us have cobbled together a mishmash of regular expressions and substring operations to extract some sense out of a pile of text. The code was probably riddled with bugs and a beast to maintain. Writing a *real* parser—one with decent error handling, a coherent internal structure, and the ability to robustly chew through a sophisticated syntax—is considered a rare, impressive skill. In this chapter, you will attain it.
 
-“Parse” comes to English from the Old French “pars” for “part of speech”. It means to take a text and map each word to the grammar of the language. We use it here in the same sense, except that our language is a little more modern than Old French.
+> “Parse” comes to English from the Old French “pars” for “part of speech”. It means to take a text and map each word to the grammar of the language. We use it here in the same sense, except that our language is a little more modern than Old French.
 
-Like many rites of passage, you’ll probably find it looks a little smaller, a little less daunting when it’s behind you than when it loomed ahead.
+> Like many rites of passage, you’ll probably find it looks a little smaller, a little less daunting when it’s behind you than when it loomed ahead.
 
 It’s easier than you think, partially because we front-loaded a lot of the hard work in the last chapter. You already know your way around a formal grammar. You’re familiar with syntax trees, and we have some Java classes to represent them. The only remaining piece is parsing—transmogrifying a sequence of tokens into one of those syntax trees.
 
 Some CS textbooks make a big deal out of parsers. In the ’60s, computer scientists—understandably tired of programming in assembly language—started designing more sophisticated, human-friendly languages like Fortran and ALGOL. Alas, they weren’t very *machine*-friendly for the primitive computers of the time.
 
-Imagine how harrowing assembly programming on those old machines must have been that they considered *Fortran* to be an improvement.
+> Imagine how harrowing assembly programming on those old machines must have been that they considered *Fortran* to be an improvement.
 
 These pioneers designed languages that they honestly weren’t even sure how to write compilers for, and then did groundbreaking work inventing parsing and compiling techniques that could handle these new, big languages on those old, tiny machines.
 
@@ -80,7 +80,9 @@ In other words, the grammar allows seeing the expression as `(6 / 3) - 1` or `6 
 
   is equivalent to:
 
-      (5 - 3) - 1
+  ```
+  (5 - 3) - 1
+  ```
 
   Assignment, on the other hand, is **right-associative**. This:
 
@@ -94,15 +96,14 @@ In other words, the grammar allows seeing the expression as `(6 / 3) - 1` or `6 
   a = (b = c)
   ```
 
-While not common these days, some languages specify that certain pairs of operators have *no* relative precedence. That makes it a syntax error to mix those operators in an expression without using explicit grouping.
-
-Likewise, some operators are **non-associative**. That means it’s an error to use that operator more than once in a sequence. For example, Perl’s range operator isn’t associative, so `a .. b` is OK, but `a .. b .. c` is an error.
+> While not common these days, some languages specify that certain pairs of operators have *no* relative precedence. That makes it a syntax error to mix those operators in an expression without using explicit grouping.
+>
+> Likewise, some operators are **non-associative**. That means it’s an error to use that operator more than once in a sequence. For example, Perl’s range operator isn’t associative, so `a .. b` is OK, but `a .. b .. c` is an error.
 
 Without well-defined precedence and associativity, an expression that uses multiple operators is ambiguous—it can be parsed into different syntax trees, which could in turn evaluate to different results. We’ll fix that in Lox by applying the same precedence rules as C, going from lowest to highest.
 
-|            |               |            |
-|------------|---------------|------------|
 | Name       | Operators     | Associates |
+|------------|---------------|------------|
 | Equality   | == !=         | Left       |
 | Comparison | \> \>= \< \<= | Left       |
 | Term       | \- +          | Left       |
@@ -123,15 +124,15 @@ unary          → ...
 primary        → ...
 ```
 
-Instead of baking precedence right into the grammar rules, some parser generators let you keep the same ambiguous-but-simple grammar and then add in a little explicit operator precedence metadata on the side in order to disambiguate.
+> Instead of baking precedence right into the grammar rules, some parser generators let you keep the same ambiguous-but-simple grammar and then add in a little explicit operator precedence metadata on the side in order to disambiguate.
 
 Each rule here only matches expressions at its precedence level or higher. For example, `unary` matches a unary expression like `!negated` or a primary expression like `1234`. And `term` can match `1 + 2` but also `3 * 4 / 5`. The final `primary` rule covers the highest-precedence forms—literals and parenthesized expressions.
 
 We just need to fill in the productions for each of those rules. We’ll do the easy ones first. The top `expression` rule matches any expression at any precedence level. Since `equality` has the lowest precedence, if we match that, then it covers everything.
 
-We could eliminate `expression` and simply use `equality` in the other rules that contain expressions, but using `expression` makes those other rules read a little better.
-
-Also, in later chapters when we expand the grammar to include assignment and logical operators, we’ll only need to change the production for `expression` instead of touching every rule that contains an expression.
+> We could eliminate `expression` and simply use `equality` in the other rules that contain expressions, but using `expression` makes those other rules read a little better.
+>
+> Also, in later chapters when we expand the grammar to include assignment and logical operators, we’ll only need to change the production for `expression` instead of touching every rule that contains an expression.
 
 ```
 expression     → equality
@@ -170,14 +171,14 @@ factor         → factor ( "/" | "*" ) unary
 
 The rule recurses to match the left operand. That enables the rule to match a series of multiplication and division expressions like `1 * 2 / 3`. Putting the recursive production on the left side and `unary` on the right makes the rule left-associative and unambiguous.
 
-In principle, it doesn’t matter whether you treat multiplication as left- or right-associative—you get the same result either way. Alas, in the real world with limited precision, roundoff and overflow mean that associativity can affect the result of a sequence of multiplications. Consider:
-
-```
-print 0.1 * (0.2 * 0.3);
-print (0.1 * 0.2) * 0.3;
-```
-
-In languages like Lox that use [IEEE 754](https://en.wikipedia.org/wiki/Double-precision_floating-point_format) double-precision floating-point numbers, the first evaluates to `0.006`, while the second yields `0.006000000000000001`. Sometimes that tiny difference matters. [This](https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html) is a good place to learn more.
+> In principle, it doesn’t matter whether you treat multiplication as left- or right-associative—you get the same result either way. Alas, in the real world with limited precision, roundoff and overflow mean that associativity can affect the result of a sequence of multiplications. Consider:
+>
+> ```
+> print 0.1 * (0.2 * 0.3);
+> print (0.1 * 0.2) * 0.3;
+> ```
+>
+> In languages like Lox that use [IEEE 754](https://en.wikipedia.org/wiki/Double-precision_floating-point_format) double-precision floating-point numbers, the first evaluates to `0.006`, while the second yields `0.006000000000000001`. Sometimes that tiny difference matters. [This](https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html) is a good place to learn more.
 
 All of this is correct, but the fact that the first symbol in the body of the rule is the same as the head of the rule means this production is **left-recursive**. Some parsing techniques, including the one we’re going to use, have trouble with left recursion. (Recursion elsewhere, like we have in `unary` and the indirect recursion for grouping in `primary` are not a problem.)
 
@@ -211,17 +212,16 @@ Recursive descent is the simplest way to build a parser, and doesn’t require u
 
 Recursive descent is considered a **top-down parser** because it starts from the top or outermost grammar rule (here `expression`) and works its way down into the nested subexpressions before finally reaching the leaves of the syntax tree. This is in contrast with bottom-up parsers like LR that start with primary expressions and compose them into larger and larger chunks of syntax.
 
-It’s called “recursive *descent*” because it walks *down* the grammar. Confusingly, we also use direction metaphorically when talking about “high” and “low” precedence, but the orientation is reversed. In a top-down parser, you reach the lowest-precedence expressions first because they may in turn contain subexpressions of higher precedence.
-
-![Top-down grammar rules in order of increasing precedence.](media/image/parsing-expressions/direction.png)
-
-CS people really need to get together and straighten out their metaphors. Don’t even get me started on which direction a stack grows or why trees have their roots on top.
+> It’s called “recursive *descent*” because it walks *down* the grammar. Confusingly, we also use direction metaphorically when talking about “high” and “low” precedence, but the orientation is reversed. In a top-down parser, you reach the lowest-precedence expressions first because they may in turn contain subexpressions of higher precedence.
+>
+> ![Top-down grammar rules in order of increasing precedence.](media/image/parsing-expressions/direction.png)
+>
+> CS people really need to get together and straighten out their metaphors. Don’t even get me started on which direction a stack grows or why trees have their roots on top.
 
 A recursive descent parser is a literal translation of the grammar’s rules straight into imperative code. Each rule becomes a function. The body of the rule translates to code roughly like:
 
-|                  |                                   |
-|------------------|-----------------------------------|
 | Grammar notation | Code representation               |
+|------------------|-----------------------------------|
 | Terminal         | Code to match and consume a token |
 | Nonterminal      | Call to that rule’s function      |
 | `\|`              | if or switch statement            |
@@ -257,15 +257,17 @@ Like the scanner, the parser consumes a flat input sequence, only now we’re re
 
 We’re going to run straight through the expression grammar now and translate each rule to Java code. The first rule, `expression`, simply expands to the `equality` rule, so that’s straightforward.
 
-      private Expr expression() {
-        return equality();
-      }
+```
+  private Expr expression() {
+    return equality();
+  }
+```
 
 *lox/Parser.java*, add after *Parser*()
 
 Each method for parsing a grammar rule produces a syntax tree for that rule and returns it to the caller. When the body of the rule contains a nonterminal—a reference to another rule—we call that other rule’s method.
 
-This is why left recursion is problematic for recursive descent. The function for a left-recursive rule immediately calls itself, which calls itself again, and so on, until the parser hits a stack overflow and dies.
+> This is why left recursion is problematic for recursive descent. The function for a left-recursive rule immediately calls itself, which calls itself again, and so on, until the parser hits a stack overflow and dies.
 
 The rule for equality is a little more complex.
 
@@ -275,17 +277,19 @@ equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 
 In Java, that becomes:
 
-      private Expr equality() {
-        Expr expr = comparison();
+```
+  private Expr equality() {
+    Expr expr = comparison();
 
-        while (match(BANG_EQUAL, EQUAL_EQUAL)) {
-          Token operator = previous();
-          Expr right = comparison();
-          expr = new Expr.Binary(expr, operator, right);
-        }
+    while (match(BANG_EQUAL, EQUAL_EQUAL)) {
+      Token operator = previous();
+      Expr right = comparison();
+      expr = new Expr.Binary(expr, operator, right);
+    }
 
-        return expr;
-      }
+    return expr;
+  }
+```
 
 *lox/Parser.java*, add after *expression*()
 
@@ -293,16 +297,18 @@ Let’s step through it. The first `comparison` nonterminal in the body translat
 
 Then, the `( ... )*` loop in the rule maps to a `while` loop. We need to know when to exit that loop. We can see that inside the rule, we must first find either a `!=` or `==` token. So, if we *don’t* see one of those, we must be done with the sequence of equality operators. We express that check using a handy `match()` method.
 
-      private boolean match(TokenType... types) {
-        for (TokenType type : types) {
-          if (check(type)) {
-            advance();
-            return true;
-          }
-        }
-
-        return false;
+```
+  private boolean match(TokenType... types) {
+    for (TokenType type : types) {
+      if (check(type)) {
+        advance();
+        return true;
       }
+    }
+
+    return false;
+  }
+```
 
 *lox/Parser.java*, add after *equality*()
 
@@ -310,35 +316,41 @@ This checks to see if the current token has any of the given types. If so, it co
 
 The `check()` method returns `true` if the current token is of the given type. Unlike `match()`, it never consumes the token, it only looks at it.
 
-      private boolean check(TokenType type) {
-        if (isAtEnd()) return false;
-        return peek().type == type;
-      }
+```
+  private boolean check(TokenType type) {
+    if (isAtEnd()) return false;
+    return peek().type == type;
+  }
+```
 
 *lox/Parser.java*, add after *match*()
 
 The `advance()` method consumes the current token and returns it, similar to how our scanner’s corresponding method crawled through characters.
 
-      private Token advance() {
-        if (!isAtEnd()) current++;
-        return previous();
-      }
+```
+  private Token advance() {
+    if (!isAtEnd()) current++;
+    return previous();
+  }
+```
 
 *lox/Parser.java*, add after *check*()
 
 These methods bottom out on the last handful of primitive operations.
 
-      private boolean isAtEnd() {
-        return peek().type == EOF;
-      }
+```
+  private boolean isAtEnd() {
+    return peek().type == EOF;
+  }
 
-      private Token peek() {
-        return tokens.get(current);
-      }
+  private Token peek() {
+    return tokens.get(current);
+  }
 
-      private Token previous() {
-        return tokens.get(current - 1);
-      }
+  private Token previous() {
+    return tokens.get(current - 1);
+  }
+```
 
 *lox/Parser.java*, add after *advance*()
 
@@ -350,7 +362,7 @@ We grab the matched operator token so we can track which kind of equality expres
 
 ![The syntax tree created by parsing 'a == b == c == d == e'](media/image/parsing-expressions/sequence.png)
 
-Parsing `a == b == c == d == e`. For each iteration, we create a new binary expression using the previous one as the left operand.
+> Parsing `a == b == c == d == e`. For each iteration, we create a new binary expression using the previous one as the left operand.
 
 The parser falls out of the loop once it hits a token that’s not an equality operator. Finally, it returns the expression. Note that if the parser never encounters an equality operator, then it never enters the loop. In that case, the `equality()` method effectively calls and returns `comparison()`. In that way, this method matches an equality operator *or anything of higher precedence*.
 
@@ -362,17 +374,19 @@ comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 
 Translated to Java:
 
-      private Expr comparison() {
-        Expr expr = term();
+```
+  private Expr comparison() {
+    Expr expr = term();
 
-        while (match(GREATER, GREATER_EQUAL, LESS, LESS_EQUAL)) {
-          Token operator = previous();
-          Expr right = term();
-          expr = new Expr.Binary(expr, operator, right);
-        }
+    while (match(GREATER, GREATER_EQUAL, LESS, LESS_EQUAL)) {
+      Token operator = previous();
+      Expr right = term();
+      expr = new Expr.Binary(expr, operator, right);
+    }
 
-        return expr;
-      }
+    return expr;
+  }
+```
 
 *lox/Parser.java*, add after *equality*()
 
@@ -380,35 +394,39 @@ The grammar rule is virtually identical to `equality` and so is the correspondin
 
 In order of precedence, first addition and subtraction:
 
-If you wanted to do some clever Java 8, you could create a helper method for parsing a left-associative series of binary operators given a list of token types, and an operand method handle to simplify this redundant code.
+> If you wanted to do some clever Java 8, you could create a helper method for parsing a left-associative series of binary operators given a list of token types, and an operand method handle to simplify this redundant code.
 
-      private Expr term() {
-        Expr expr = factor();
+```
+  private Expr term() {
+    Expr expr = factor();
 
-        while (match(MINUS, PLUS)) {
-          Token operator = previous();
-          Expr right = factor();
-          expr = new Expr.Binary(expr, operator, right);
-        }
+    while (match(MINUS, PLUS)) {
+      Token operator = previous();
+      Expr right = factor();
+      expr = new Expr.Binary(expr, operator, right);
+    }
 
-        return expr;
-      }
+    return expr;
+  }
+```
 
 *lox/Parser.java*, add after *comparison*()
 
 And finally, multiplication and division:
 
-      private Expr factor() {
-        Expr expr = unary();
+```
+  private Expr factor() {
+    Expr expr = unary();
 
-        while (match(SLASH, STAR)) {
-          Token operator = previous();
-          Expr right = unary();
-          expr = new Expr.Binary(expr, operator, right);
-        }
+    while (match(SLASH, STAR)) {
+      Token operator = previous();
+      Expr right = unary();
+      expr = new Expr.Binary(expr, operator, right);
+    }
 
-        return expr;
-      }
+    return expr;
+  }
+```
 
 *lox/Parser.java*, add after *term*()
 
@@ -421,21 +439,23 @@ unary          → ( "!" | "-" ) unary
 
 The code for this is a little different.
 
-      private Expr unary() {
-        if (match(BANG, MINUS)) {
-          Token operator = previous();
-          Expr right = unary();
-          return new Expr.Unary(operator, right);
-        }
+```
+  private Expr unary() {
+    if (match(BANG, MINUS)) {
+      Token operator = previous();
+      Expr right = unary();
+      return new Expr.Unary(operator, right);
+    }
 
-        return primary();
-      }
+    return primary();
+  }
+```
 
 *lox/Parser.java*, add after *factor*()
 
 Again, we look at the current token to see how to parse. If it’s a `!` or `-`, we must have a unary expression. In that case, we grab the token and then recursively call `unary()` again to parse the operand. Wrap that all up in a unary expression syntax tree and we’re done.
 
-The fact that the parser looks ahead at upcoming tokens to decide how to parse puts recursive descent into the category of **predictive parsers**.
+> The fact that the parser looks ahead at upcoming tokens to decide how to parse puts recursive descent into the category of **predictive parsers**.
 
 Otherwise, we must have reached the highest level of precedence, primary expressions.
 
@@ -446,21 +466,23 @@ primary        → NUMBER | STRING | "true" | "false" | "nil"
 
 Most of the cases for the rule are single terminals, so parsing is straightforward.
 
-      private Expr primary() {
-        if (match(FALSE)) return new Expr.Literal(false);
-        if (match(TRUE)) return new Expr.Literal(true);
-        if (match(NIL)) return new Expr.Literal(null);
+```
+  private Expr primary() {
+    if (match(FALSE)) return new Expr.Literal(false);
+    if (match(TRUE)) return new Expr.Literal(true);
+    if (match(NIL)) return new Expr.Literal(null);
 
-        if (match(NUMBER, STRING)) {
-          return new Expr.Literal(previous().literal);
-        }
+    if (match(NUMBER, STRING)) {
+      return new Expr.Literal(previous().literal);
+    }
 
-        if (match(LEFT_PAREN)) {
-          Expr expr = expression();
-          consume(RIGHT_PAREN, "Expect ')' after expression.");
-          return new Expr.Grouping(expr);
-        }
-      }
+    if (match(LEFT_PAREN)) {
+      Expr expr = expression();
+      consume(RIGHT_PAREN, "Expect ')' after expression.");
+      return new Expr.Grouping(expr);
+    }
+  }
+```
 
 *lox/Parser.java*, add after *unary*()
 
@@ -478,13 +500,13 @@ Don’t underestimate how important the second job is! In modern IDEs and editor
 
 When the user doesn’t realize the syntax is wrong, it is up to the parser to help guide them back onto the right path. The way it reports errors is a large part of your language’s user interface. Good syntax error handling is hard. By definition, the code isn’t in a well-defined state, so there’s no infallible way to know what the user *meant* to write. The parser can’t read your mind.
 
-Not yet at least. With the way things are going in machine learning these days, who knows what the future will bring?
+> Not yet at least. With the way things are going in machine learning these days, who knows what the future will bring?
 
 There are a couple of hard requirements for when the parser runs into a syntax error. A parser must:
 
 - **Detect and report the error.** If it doesn’t detect the error and passes the resulting malformed syntax tree on to the interpreter, all manner of horrors may be summoned.
 
-  Philosophically speaking, if an error isn’t detected and the interpreter runs the code, is it *really* an error?
+  > Philosophically speaking, if an error isn’t detected and the interpreter runs the code, is it *really* an error?
 
 - **Avoid crashing or hanging.** Syntax errors are a fact of life, and language tools have to be robust in the face of them. Segfaulting or getting stuck in an infinite loop isn’t allowed. While the source may not be valid *code*, it’s still a valid *input to the parser* because users use the parser to learn what syntax is allowed.
 
@@ -504,9 +526,9 @@ Today, when parsers complete before you’ve even finished typing, it’s less o
 
 ### 6.3.1 Panic mode error recovery
 
-You know you want to push it.
-
-![A big shiny 'PANIC' button.](media/image/parsing-expressions/panic.png)
+> You know you want to push it.
+>
+> ![A big shiny 'PANIC' button.](media/image/parsing-expressions/panic.png)
 
 Of all the recovery techniques devised in yesteryear, the one that best stood the test of time is called—somewhat alarmingly—**panic mode**. As soon as the parser detects an error, it enters panic mode. It knows at least one token doesn’t make sense given its current state in the middle of some stack of grammar productions.
 
@@ -522,32 +544,38 @@ The traditional place in the grammar to synchronize is between statements. We do
 
 Back before we went on this side trip around error recovery, we were writing the code to parse a parenthesized expression. After parsing the expression, the parser looks for the closing `)` by calling `consume()`. Here, finally, is that method:
 
-      private Token consume(TokenType type, String message) {
-        if (check(type)) return advance();
+```
+  private Token consume(TokenType type, String message) {
+    if (check(type)) return advance();
 
-        throw error(peek(), message);
-      }
+    throw error(peek(), message);
+  }
+```
 
 *lox/Parser.java*, add after *match*()
 
 It’s similar to `match()` in that it checks to see if the next token is of the expected type. If so, it consumes the token and everything is groovy. If some other token is there, then we’ve hit an error. We report it by calling this:
 
-      private ParseError error(Token token, String message) {
-        Lox.error(token, message);
-        return new ParseError();
-      }
+```
+  private ParseError error(Token token, String message) {
+    Lox.error(token, message);
+    return new ParseError();
+  }
+```
 
 *lox/Parser.java*, add after *previous*()
 
 First, that shows the error to the user by calling:
 
-      static void error(Token token, String message) {
-        if (token.type == TokenType.EOF) {
-          report(token.line, " at end", message);
-        } else {
-          report(token.line, " at '" + token.lexeme + "'", message);
-        }
-      }
+```
+  static void error(Token token, String message) {
+    if (token.type == TokenType.EOF) {
+      report(token.line, " at end", message);
+    } else {
+      report(token.line, " at '" + token.lexeme + "'", message);
+    }
+  }
+```
 
 *lox/Lox.java*, add after *report*()
 
@@ -573,18 +601,18 @@ This is a simple sentinel class we use to unwind the parser. The `error()` metho
 
 For example, Lox limits the number of arguments you can pass to a function. If you pass too many, the parser needs to report that error, but it can and should simply keep on parsing the extra arguments instead of freaking out and going into panic mode.
 
-Another way to handle common syntax errors is with **error productions**. You augment the grammar with a rule that *successfully* matches the *erroneous* syntax. The parser safely parses it but then reports it as an error instead of producing a syntax tree.
-
-For example, some languages have a unary `+` operator, like `+123`, but Lox does not. Instead of getting confused when the parser stumbles onto a `+` at the beginning of an expression, we could extend the unary rule to allow it.
-
-```
-unary → ( "!" | "-" | "+" ) unary
-      | primary ;
-```
-
-This lets the parser consume `+` without going into panic mode or leaving the parser in a weird state.
-
-Error productions work well because you, the parser author, know *how* the code is wrong and what the user was likely trying to do. That means you can give a more helpful message to get the user back on track, like, “Unary ‘+’ expressions are not supported.” Mature parsers tend to accumulate error productions like barnacles since they help users fix common mistakes.
+> Another way to handle common syntax errors is with **error productions**. You augment the grammar with a rule that *successfully* matches the *erroneous* syntax. The parser safely parses it but then reports it as an error instead of producing a syntax tree.
+>
+> For example, some languages have a unary `+` operator, like `+123`, but Lox does not. Instead of getting confused when the parser stumbles onto a `+` at the beginning of an expression, we could extend the unary rule to allow it.
+>
+> ```
+> unary → ( "!" | "-" | "+" ) unary
+>       | primary ;
+> ```
+>
+> This lets the parser consume `+` without going into panic mode or leaving the parser in a weird state.
+>
+> Error productions work well because you, the parser author, know *how* the code is wrong and what the user was likely trying to do. That means you can give a more helpful message to get the user back on track, like, “Unary ‘+’ expressions are not supported.” Mature parsers tend to accumulate error productions like barnacles since they help users fix common mistakes.
 
 In our case, though, the syntax error is nasty enough that we want to panic and synchronize. Discarding tokens is pretty easy, but how do we synchronize the parser’s own state?
 
@@ -596,31 +624,33 @@ The natural way to do that in Java is exceptions. When we want to synchronize, w
 
 We want to discard tokens until we’re right at the beginning of the next statement. That boundary is pretty easy to spot—it’s one of the main reasons we picked it. *After* a semicolon, we’re probably finished with a statement. Most statements start with a keyword—`for`, `if`, `return`, `var`, etc. When the *next* token is any of those, we’re probably about to start a statement.
 
-I say “probably” because we could hit a semicolon separating clauses in a `for` loop. Our synchronization isn’t perfect, but that’s OK. We’ve already reported the first error precisely, so everything after that is kind of “best effort”.
+> I say “probably” because we could hit a semicolon separating clauses in a `for` loop. Our synchronization isn’t perfect, but that’s OK. We’ve already reported the first error precisely, so everything after that is kind of “best effort”.
 
 This method encapsulates that logic:
 
-      private void synchronize() {
-        advance();
+```
+  private void synchronize() {
+    advance();
 
-        while (!isAtEnd()) {
-          if (previous().type == SEMICOLON) return;
+    while (!isAtEnd()) {
+      if (previous().type == SEMICOLON) return;
 
-          switch (peek().type) {
-            case CLASS:
-            case FUN:
-            case VAR:
-            case FOR:
-            case IF:
-            case WHILE:
-            case PRINT:
-            case RETURN:
-              return;
-          }
-
-          advance();
-        }
+      switch (peek().type) {
+        case CLASS:
+        case FUN:
+        case VAR:
+        case FOR:
+        case IF:
+        case WHILE:
+        case PRINT:
+        case RETURN:
+          return;
       }
+
+      advance();
+    }
+  }
+```
 
 *lox/Parser.java*, add after *error*()
 
@@ -652,13 +682,15 @@ We are mostly done parsing expressions now. There is one other place where we ne
 
 With that, all that remains in the parser is to define an initial method to kick it off. That method is called, naturally enough, `parse()`.
 
-      Expr parse() {
-        try {
-          return expression();
-        } catch (ParseError error) {
-          return null;
-        }
-      }
+```
+  Expr parse() {
+    try {
+      return expression();
+    } catch (ParseError error) {
+      return null;
+    }
+  }
+```
 
 *lox/Parser.java*, add after *Parser*()
 
@@ -692,9 +724,9 @@ Delete the old code to print the scanned tokens and replace it with this:
 
 Congratulations, you have crossed the threshold! That really is all there is to handwriting a parser. We’ll extend the grammar in later chapters with assignment, statements, and other stuff, but none of that is any more complex than the binary operators we tackled here.
 
-It is possible to define a more complex grammar than Lox’s that’s difficult to parse using recursive descent. Predictive parsing gets tricky when you may need to look ahead a large number of tokens to figure out what you’re sitting on.
-
-In practice, most languages are designed to avoid that. Even in cases where they aren’t, you can usually hack around it without too much pain. If you can parse C++ using recursive descent—which many C++ compilers do—you can parse anything.
+> It is possible to define a more complex grammar than Lox’s that’s difficult to parse using recursive descent. Predictive parsing gets tricky when you may need to look ahead a large number of tokens to figure out what you’re sitting on.
+>
+> In practice, most languages are designed to avoid that. Even in cases where they aren’t, you can usually hack around it without too much pain. If you can parse C++ using recursive descent—which many C++ compilers do—you can parse anything.
 
 Fire up the interpreter and type in some expressions. See how it handles precedence and associativity correctly? Not bad for less than 200 lines of code.
 

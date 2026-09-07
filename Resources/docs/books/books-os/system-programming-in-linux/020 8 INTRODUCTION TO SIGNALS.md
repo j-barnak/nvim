@@ -1,3 +1,5 @@
+![](media/index-527_1.jpg)
+
 8 INTRODUCTION TO SIGNALS
 
 In the past few chapters, we wrote programs to implement various
@@ -2919,5 +2921,3 @@ It should be designed so that a SIGINT will terminate it after the
 pending signals are printed. You can open a second terminal to
 
 send signals to this process.
-
-![](media/index-592_1.jpg)

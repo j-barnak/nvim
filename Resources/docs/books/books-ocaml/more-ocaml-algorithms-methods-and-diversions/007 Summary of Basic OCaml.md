@@ -10,7 +10,7 @@ Mathematical operators `+ - * / mod `which take two integers and give another.
 
 ![](media/images/00068.jpg)
 
-Operators  `=  <  <=  >  >=  <> ` which compare two values and evaluate to either `true `or `false`.
+Operators  `=  <  <=  >  >=  <> ` which compare two values and evaluate to either `true `or `false`.
 
 ![](media/images/00125.jpg)
 
@@ -40,7 +40,7 @@ Anonymous (un-named) functions `fun `name `-> `expression.
 
 ![](media/images/00095.jpg)
 
-Making operators into functions as in `( < ) `and `( + )`.
+Making operators into functions as in `( < ) `and `( + )`.
 
 `( + ) 1 2` ![](media/images/00227.jpg)`3`
 
@@ -49,25 +49,25 @@ Functions, introduced by `let` name argument1 argument2 … `=` expression. T
 Recursive functions, which are introduced in the same way, but using `let rec `instead of `let`. For example, here is a function `g `which calculates the smallest power of two greater than or equal to a given positive integer, using the recursive function `f`:
 
 `let rec f x y =`  
-`  if y < x then f x (2 * y) else y`  
+`  if y < x then f x (2 * y) else y`  
   
 `let g z = f z 1`
 
-Mutually recursive functions, introduced by writing `let rec f x = …  and g y = … and …`
+Mutually recursive functions, introduced by writing `let rec f x = …  and g y = … and …`
 
 Pattern Matching
 
 Matching patterns using `match `expression1 `with `pattern1 `| `… `-> `expression2 `| `pattern2 `| `… `-> `expression3 `|`…The expressions expression2, expression3 etc. must have the same type as one another, and this is the type of the whole `match `… `with `expression. The special pattern `_ `which matches anything.
 
 `match x with`  
-`  0 -> 1`  
+`  0 -> 1`  
 `| 1 | 2 -> 3`  
 `| _ -> 4`
 
-Matching two or more things at once, using commas to separate as in `match a, b with 0, 0 -> `expression1 `| x, y ->`  expression2 `| `…
+Matching two or more things at once, using commas to separate as in `match a, b with 0, 0 -> `expression1 `| x, y ->`  expression2 `| `…
 
 `match x, y, z with`  
-`  0, 0, 0 -> true`  
+`  0, 0, 0 -> true`  
 `| _, _, _ -> false`
 
 Lists
@@ -76,15 +76,15 @@ Lists, which are ordered collections of zero or more elements of like type. They
 
 The `::` “cons” operator, which adds an element to the front of a list. The `@ `“append” operator, which concatenates two lists together.
 
-`1 :: [2; 3]` ![](media/images/00218.jpg)`[1; 2; 3]`  
+`1 :: [2; 3]` ![](media/images/00218.jpg)`[1; 2; 3]`  
 `[1; 2] @ [3]` ![](media/images/00034.jpg)`[1; 2; 3]`
 
 Lists and the `::` “cons” symbol may be used for pattern matching to distinguish lists of length zero, one, etc. and with particular contents. For example, we can calculate the length of a list:
 
 `let rec length l =`  
-`  match l with`  
-`    [] -> 0`  
-`  | _::t -> 1 + length t`
+`  match l with`  
+`    [] -> 0`  
+`  | _::t -> 1 + length t`
 
 Exceptions
 
@@ -93,12 +93,12 @@ Defining exceptions with `exception `name. They can carry extra information by a
 `exception Problem of int`  
   
 `let f x y =`  
-`  if y = 0`  
-`    then raise (Problem x)`  
-`    else x / y`  
+`  if y = 0`  
+`    then raise (Problem x)`  
+`    else x / y`  
   
 `let g x y =`  
-`  try f x y with Problem p -> p`
+`  try f x y with Problem p -> p`
 
 Partial Application
 
@@ -117,13 +117,13 @@ New Data Types
 New types with `type `name `= `constructor1 `of `type1 `| `constructor2 `of `type2 `| `… Pattern matching on them as with the built-in types. Polymorphic types.
 
 `type colour =`  
-`  Red | Blue | Green | Grey of int`  
+`  Red | Blue | Green | Grey of int`  
   
 `[Red; Blue; Grey 16]` this has type colour list  
   
-`type 'a tree =`  
-`   Lf`  
-`| Br of 'a tree * 'a * 'a tree`  
+`type 'a tree =`  
+`   Lf`  
+`| Br of 'a tree * 'a * 'a tree`  
   
 For example, `Br (Lf, 'X', Br (Lf, 'Y', Lf))` has type char tree. A useful built-in data type is the option type, defined as `type 'a option = None | Some of 'a`. A type can be polymorphic in more than one type parameter, for example `('a, 'b) Hashtbl.t`, as in the Standard Library.
 
@@ -135,32 +135,32 @@ Mutable State
 
 References of type α ref. Building them using `ref`, accessing their contents using `! `and updating them using the `:= `operator.
 
-` # let p = ref 0;;  `  
-`val p : int ref = {contents = 0}  `  
-`# p := 5;;  `  
-`- : unit = ()  `  
-`# !p;;  `  
-`- : int = 5 `
+` # let p = ref 0;;  `  
+`val p : int ref = {contents = 0}  `  
+`# p := 5;;  `  
+`- : unit = ()  `  
+`# !p;;  `  
+`- : int = 5 `
 
-Arrays of type α array written like `[|1; 2; 3|]`. Creating an array with the built-in function `Array.make`, finding its length with `Array.length`, accessing an element with `a.(`subscript`)`. Updating with `a.(`subscript`)` `<- `expression.
+Arrays of type α array written like `[|1; 2; 3|]`. Creating an array with the built-in function `Array.make`, finding its length with `Array.length`, accessing an element with `a.(`subscript`)`. Updating with `a.(`subscript`)` `<- `expression.
 
 `let swap a x y =`  
-`  let t = a.(x) in`  
-`    a.(x) <- a.(y); a.(y) <- t`
+`  let t = a.(x) in`  
+`    a.(x) <- a.(y); a.(y) <- t`
 
 Bracketing expressions together with `begin `and `end `instead of parentheses for readability.
 
 `if x = y then`  
-`  begin`  
-`    a := b;`  
-`    c := d`  
-`  end`  
+`  begin`  
+`    a := b;`  
+`    c := d`  
+`  end`  
 `else`  
-`  e := f`
+`  e := f`
 
 Performing an action many times based on a boolean condition with the `while `boolean expression `do` expression `done `construct.
 
-`while !x < y do x := !x * 2 done`
+`while !x < y do x := !x * 2 done`
 
 Performing an action a fixed number of times with a varying parameter using the `for `name `= `start `to `end `do` expression `done `construct.
 
@@ -170,7 +170,7 @@ Floating-point Numbers
 
 Floating-point numbers `min_float `… `max_float `of type float. Floating-point operators `+. *. -. /. ** `and built-in functions `sqrt log `etc.
 
-`2. ** 0.2` ![](media/images/00299.jpg)`1.1486983549970351`
+`2. ** 0.2` ![](media/images/00299.jpg)`1.1486983549970351`
 
 The OCaml Standard Library
 
@@ -178,7 +178,7 @@ Using functions from the OCaml Standard Library with the form Module`.`function.
 
 Simple Modules
 
-Writing modules in `.ml `files. Building interfaces in `.mli `files with types and the `val `keyword. For example, the `.ml `file with contents `let f x = x + 1 `might have the interface `val f : int ->` `int`
+Writing modules in `.ml `files. Building interfaces in `.mli `files with types and the `val `keyword. For example, the `.ml `file with contents `let f x = x + 1 `might have the interface `val f : int ->` `int`
 
 Compiling Programs
 

@@ -1,6 +1,6 @@
 ## **Chapter 9 – Some Common UEFI and PI Functions** 
 
- 
+
 
 Never let the future disturb you. You will meet it, if you have to, with the same weapons of reason
 
@@ -8,7 +8,7 @@ which today arm you against the present.
 
 —Marcus Aurelius Antoninus
 
- 
+
 
 UEFI provides a variety of functions that are used for drivers and applications to com-munication with the underlying UEFI components. Many of the designs for interfaces
 
@@ -22,7 +22,7 @@ would ever need. With these poor past predictions in mind, one can attempt to le
 
 tices today, and make the best attempt at predicting how one might use these inter-faces years from today.
 
- 
+
 
 This chapter describes a selection of common interfaces that show up in UEFI as well
 
@@ -68,13 +68,12 @@ utilize the Disk I/O protocol. This interface was introduced for UEFI, and would
 
 be present in both UEFI and PI implementations.
 
- 
+
 
 DOI 10.1515/9781501505690-011
 
-**132** \| Chapter 9 – Some Common UEFI and PI Functions
 
- 
+
 
 ■ *Simple File System*: This protocol allows code running in the EFI Boot Services
 
@@ -86,11 +85,11 @@ vides interfaces to access files on a device volume. This interface was introduc
 
 for UEFI, and would be present in both UEFI and PI implementations.
 
- 
+
 
 **Architectural Protocol Examples**
 
- 
+
 
 A variety of architectural protocols exist in the platform. These protocols function just
 
@@ -104,11 +103,11 @@ else in the system would communicate with a core service to communicate any sort
 
 ![](media/index-151_1.png)
 
- 
+
 
 **Figure 9.1:** Platform Software Flow Diagram
 
- 
+
 
 To show more clearly how some of these architectural protocols are designed and how
 
@@ -116,13 +115,12 @@ they operate, several key examples will be examined in further detail. Note that
 
 trate some of their functionality. For the full set, please refer to the appropriate DXE specifications.
 
-Architectural Protocol Examples \| **133**
 
- 
+
 
 **CPU Architectural Protocol**
 
- 
+
 
 The CPU Architectural Protocol is used to abstract processor-specific functions from
 
@@ -162,9 +160,8 @@ map will be updated accordingly.
 
 The CPU Architectural Protocol uses the following protocol definition:
 
-**134** \| Chapter 9 – Some Common UEFI and PI Functions
 
- 
+
 
 Protocol Interface Structure
 
@@ -182,7 +179,7 @@ UINT32 NumberOfTimers; UINT32 DmaBufferAlignment;
 
 } EFI_CPU_ARCH_PROTOCOL;
 
- 
+
 
 ■ *FlushDataCache* - Flushes a range of the processor’s data cache. If the processor
 
@@ -236,9 +233,8 @@ chitectural Protocol is installed. All consumers must treat this as a read-only
 
 field.
 
-Architectural Protocol Examples \| **135**
 
- 
+
 
 ■ *DmaBufferAlignment* – Gives the size, in bytes, of the alignment required for DMA
 
@@ -256,11 +252,11 @@ be modified after the CPU Architectural Protocol is installed. All consumers mus
 
 treat this as a read-only field.
 
- 
+
 
 **Real Time Clock Architectural Protocol**
 
- 
+
 
 The Real Time Clock Architectural Protocol provides the services required to access a system’s real time clock hardware. This protocol must be produced by a runtime DXE
 
@@ -276,11 +272,11 @@ chitectural Protocol on a new handle with a NULL interface pointer. The installa
 
 are now available and that the DXE Foundation must update the 32-bit CRC of the EFI Runtime Services Table.
 
- 
+
 
 **Timer Architectural Protocol**
 
- 
+
 
 The Timer Architectural Protocol provides the services to initialize a periodic timer interrupt and to register a handler that is called each time the timer interrupt fires. It
 
@@ -292,9 +288,8 @@ only be consumed by the DXE Foundation or DXE drivers that produce other DXE Ar-
 
 driver, it is evident that this abstraction will not persist when the platform has the boot services terminated by launching a boot target, such as an operating system.
 
-**136** \| Chapter 9 – Some Common UEFI and PI Functions
 
- 
+
 
 Protocol Interface Structure
 
@@ -302,7 +297,7 @@ typedef struct \_EFI_TIMER_ARCH_PROTOCOL { EFI_TIMER_REGISTER_HANDLER RegisterHa
 
 } EFI_TIMER_ARCH_PROTOCOL;
 
- 
+
 
 ■ *RegisterHandler* - Registers a handler that is called each time the timer interrupt
 
@@ -328,11 +323,11 @@ of the timer interrupt. This service can be used to invoke the registered handle
 
 the timer interrupt has been masked for a period of time.
 
- 
+
 
 **Reset Architectural Protocol**
 
- 
+
 
 The Reset Architectural Protocol provides the service required to reset a platform. This
 
@@ -344,13 +339,12 @@ handle with a NULL interface pointer. The installation of this protocol informs 
 
 dation must update the 32-bit CRC of the EFI Runtime Services Table.
 
-Architectural Protocol Examples \| **137**
 
- 
+
 
 **Boot Device Selection Architectural Protocol**
 
- 
+
 
 The Boot Device Selection (BDS) Architectural Protocol transfers control from DXE to
 
@@ -364,11 +358,11 @@ return control back to the dispatcher. Once the required boot devices are availa
 
 ![](media/index-156_1.png)
 
- 
+
 
 **Figure 9.2:** Basic Dispatch and BDS Software Flow
 
- 
+
 
 Protocol Interface Structure
 
@@ -376,7 +370,7 @@ typedef struct \_EFI_BDS_ARCH_PROTOCOL { EFI_BDS_ENTRY Entry;
 
 } EFI_BDS_ARCH_PROTOCOL;
 
- 
+
 
 ■ *Entry* - The entry point to BDS. See the Entry() function description. This call does
 
@@ -386,13 +380,12 @@ the dispatcher must be invoked again, if it never returns, then an operating sys
 
 tem or a system utility have been invoked.
 
-**138** \| Chapter 9 – Some Common UEFI and PI Functions
 
- 
+
 
 **Variable Architectural Protocol**
 
- 
+
 
 The Variable Architectural Protocol provides the services required to get and set en-
 
@@ -410,11 +403,11 @@ stalled. DXE drivers that require read-only access or read/write access to volat
 
 pressions. DXE drivers that require write access to nonvolatile environment variables must have the Variable Write Architectural Protocol in their dependency expressions.
 
- 
+
 
 **Watchdog Timer Architectural Protocol**
 
- 
+
 
 The Watchdog Timer Architectural Protocol is used to program the watchdog timer and optionally register a handler when the watchdog timer fires. This protocol must
 
@@ -434,15 +427,14 @@ ware. When the watchdog timer fires, control will be passed to a handler if a ha
 
 turns, then the system will be reset by calling the Runtime Service ResetSystem().
 
-PCI Protocols \| **139**
 
- 
+
 
 Protocol Interface Structure
 
 typedef struct \_EFI_WATCHDOG_TIMER_ARCH_PROTOCOL { EFI_WATCHDOG_TIMER_REGISTER_HANDLER RegisterHandler; EFI_WATCHDOG_TIMER_SET_TIMER_PERIOD SetTimerPeriod; EFI_WATCHDOG_TIMER_GET_TIMER_PERIOD GetTimerPeriod; } EFI_WATCHDOG_TIMER_ARCH_PROTOCOL;
 
- 
+
 
 ■ RegisterHandler - Registers a handler that is invoked when the watchdog timer
 
@@ -456,21 +448,21 @@ period is rounded up to the nearest supported watchdog timer period. ■ GetTime
 
 system will wait before the watchdog timer is fired.
 
- 
+
 
 **PCI Protocols**
 
- 
+
 
 This section describes a series of protocols that are all related to abstracting various
 
 aspects of PCI related interaction such as resource allocation and I/O.
 
- 
+
 
 **PCI Host Bridge Resource Allocation Protocol**
 
- 
+
 
 The PCI Host Bridge Resource Allocation Protocol is used by a PCI bus driver to pro-
 
@@ -490,15 +482,14 @@ Figure 9.3 shows a platform with a set of processors (CPUs) and a set of core ch
 
 troller contain a single instance of the PCI Host Bridge Allocation Protocol. More com-plex systems may contain multiple instances of this protocol.
 
-**140** \| Chapter 9 – Some Common UEFI and PI Functions
 
 ![](media/index-159_1.png)
 
- 
+
 
 **Figure 9.3:** Example Host Bus Controllers
 
- 
+
 
 Figure 9.4 shows how the PCI Host Bridge Resource Allocation Protocol is used to
 
@@ -506,7 +497,7 @@ identify the associated PCI root bridges. After the steps shown in Figure 9.4 ar
 
 tify the device handles of the associated PCI root bridges.
 
- 
+
 
 DXE driver produces
 
@@ -516,7 +507,7 @@ Resource Allocation
 
 Protocol.
 
- 
+
 
 Protocol is placed on
 
@@ -526,7 +517,7 @@ corresponding to the
 
 PCI host bridge.
 
- 
+
 
 Same driver creates
 
@@ -536,7 +527,7 @@ associated PCI root
 
 bridges.
 
- 
+
 
 Same driver installs an
 
@@ -548,13 +539,12 @@ I/O Protocol on each
 
 handle.
 
- 
+
 
 **Figure9.4:** Producing the PCI Host Bridge Resource Allocation Protocol
 
-PCI Protocols \| **141**
 
- 
+
 
 **Sample Desktop System with One PCI Root Bridge**
 
@@ -570,7 +560,7 @@ and/or PCI slots. This setup would be typical of a desktop system. In this syste
 
 ■ All the memory above the top of system memory
 
- 
+
 
 The firmware for this platform would produce the following: ■ One instance of the PCI Host Bridge Resource Allocation Protocol
 
@@ -578,11 +568,11 @@ The firmware for this platform would produce the following: ■ One instance of 
 
 ![](media/index-160_1.png)
 
- 
+
 
 **Figure 9.5:** Desktop System with One PCI Root Bridge
 
- 
+
 
 **Sample Server System with Four PCI Root Bridges**
 
@@ -594,21 +584,21 @@ Figure 9.6 shows an example of a larger server with one PCI host Bus with four P
 
 ■ A common PCI pre-fetchable memory space
 
- 
+
 
 As a result, each PCI root bridge must get resources out of a common pool. Each PCI root bridge produces one PCI local bus that can contain PCI devices on the mother-
 
 board or PCI slots. The firmware for this platform would produce the following: ■ One instance of the PCI Host Bridge Resource Allocation Protocol
 
-■ Four instances of the PCI Root Bridge I/O Protocol **142** \| Chapter 9 – Some Common UEFI and PI Functions
+■ Four instances of the PCI Root Bridge I/O Protocol
 
 ![](media/index-161_1.png)
 
- 
+
 
 **Figure 9.6:** Server System with Four PCI Root Bridges
 
- 
+
 
 **Sample Server System with 2 PCI Segments**
 
@@ -620,7 +610,7 @@ do share the following, which is why they can be described with a single PCI hos
 
 ■ A common PCI memory space ■ A common PCI pre-fetchable memory space
 
- 
+
 
 The firmware for this platform would produce the following: ■ One instance of the PCI Host Bridge Resource Allocation Protocol
 
@@ -628,19 +618,18 @@ The firmware for this platform would produce the following: ■ One instance of 
 
 ![](media/index-161_2.png)
 
- 
+
 
 **Figure 9.7:** Server System with 2 PCI Segments
 
-PCI Protocols \| **143**
 
 ![](media/index-162_1.png)
 
- 
+
 
 **Figure 0.8:** Sample Server System with Two PCI Host Buses
 
- 
+
 
 Figure 9.8 shows a server system with two PCI host buses and one PCI root bridge (RB)
 
@@ -652,17 +641,17 @@ per PCI host bus. Like the server system with 2 PCI segments, this system suppor
 
 ■ PCI pre-fetchable memory space
 
- 
+
 
 The firmware for this platform would produce the following: ■ Two instances of the PCI Host Bridge Resource Allocation Protocol
 
 ■ Two instances of the PCI Root Bridge I/O Protocol
 
- 
+
 
 **PCI Root Bridge I/O**
 
- 
+
 
 The interfaces provided in the PCI Root Bridge I/O Protocol are for performing basic
 
@@ -684,13 +673,12 @@ Protocol does not abstract access to the chipset-specific registers that are use
 
 UEFI driver that produces the handles that represent the PCI Root Bridges.
 
-**144** \| Chapter 9 – Some Common UEFI and PI Functions
 
- 
+
 
 Protocol Interface Structure
 
- 
+
 
 typedef struct \_EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL { EFI_HANDLE ParentHandle;
 
@@ -714,7 +702,7 @@ UINT32 SegmentNumber;
 
 } EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL;
 
- 
+
 
 ■ *ParentHandle* – Gives the EFI_HANDLE of the PCI Host Bridge of which this PCI
 
@@ -742,9 +730,8 @@ memory for DMA.
 
 ■ *Unmap* - Releases any resources allocated by Map().
 
-PCI Protocols \| **145**
 
- 
+
 
 ■ *AllocateBuffer* - Allocates pages that are suitable for a common buffer mapping. ■ *FreeBuffer* – Frees pages that were allocated with AllocateBuffer().
 
@@ -756,11 +743,11 @@ SetAttributes(), and the attributes that a PCI root bridge is currently using. �
 
 ■ *Configuration* - Gets the current resource settings for this PCI root bridge. ■ *SegmentNumber* - The segment number that this PCI root bridge resides.
 
- 
+
 
 **PCI I/O**
 
- 
+
 
 The interfaces provided in the PCI I/O Protocol are for performing basic operations to memory, I/O, and PCI configuration space. The system provides abstracted access to
 
@@ -814,15 +801,14 @@ device is a member.
 
 ■ A copy of the PCI Option ROM if it is present in system memory.
 
-**146** \| Chapter 9 – Some Common UEFI and PI Functions
 
- 
+
 
 ■ Functions to perform bus mastering DMA. This includes both packet based DMA
 
 and common buffer DMA.
 
- 
+
 
 Protocol Interface Structure
 
@@ -832,7 +818,7 @@ EFI_PCI_IO_PROTOCOL_SET_BAR_ATTRIBUTES SetBarAttributes;
 
 UINT64 RomSize; VOID \*RomImage; } EFI_PCI_IO_PROTOCOL;
 
- 
+
 
 ■ *PollMem* - Polls an address in PCI memory space until an exit condition is met, or
 
@@ -864,9 +850,8 @@ ber, and function number.
 
 ports. The operations include getting the set of supported attributes, retrieving
 
-Block I/O \| **147**
 
- 
+
 
 the current attributes, setting the current attributes, enabling attributes, and dis-
 
@@ -892,11 +877,11 @@ or from a platform-specific location. The Attributes() function can be used to d
 
 mine from which of these two sources the RomImage buffer was initialized.
 
- 
+
 
 **Block I/O**
 
- 
+
 
 The Block I/O Protocol is used to abstract mass storage devices to allow code running
 
@@ -914,37 +899,36 @@ of the device. For instance, in the example shown in Figure 9.8, Block I/O \#1 h
 
 location of the partition it is associated with.
 
-**148** \| Chapter 9 – Some Common UEFI and PI Functions
 
 ![](media/index-167_1.png)
 
- 
+
 
 **Fig. 9:** Software Layering of the Storage Device
 
- 
+
 
 Protocol Interface Structure
 
- 
+
 
 typedef struct \_EFI_BLOCK_IO_PROTOCOL { UINT64 Revision;
 
- 
+
 
 EFI_BLOCK_IO_MEDIA \*Media;
 
- 
+
 
 EFI_BLOCK_RESET Reset;
 
 EFI_BLOCK_READ ReadBlocks; EFI_BLOCK_WRITE WriteBlocks; EFI_BLOCK_FLUSH FlushBlocks;
 
- 
+
 
 } EFI_BLOCK_IO_PROTOCOL;
 
- 
+
 
 — *Revision* - The revision to which the block IO interface adheres. All future
 
@@ -966,13 +950,12 @@ EFI_BLOCK_IO_MEDIA is defined in the next code sample.
 
 needs to be supported on block devices that cache writes.
 
-Disk I/O \| **149**
 
- 
+
 
 Protocol Interface Structure
 
- 
+
 
 typedef struct {
 
@@ -980,29 +963,29 @@ UINT32 MediaId;
 
 BOOLEAN RemovableMedia; BOOLEAN MediaPresent;
 
- 
+
 
 BOOLEAN LogicalPartition; BOOLEAN ReadOnly;
 
 BOOLEAN WriteCaching;
 
- 
+
 
 UINT32 BlockSize;
 
 UINT32 IoAlign;
 
- 
+
 
 EFI_LBA LastBlock;
 
 } EFI_BLOCK_IO_MEDIA;
 
- 
+
 
 **Disk I/O**
 
- 
+
 
 The Disk I/O protocol is used to abstract the block accesses of the Block I/O protocol
 
@@ -1016,7 +999,7 @@ data to/from internal buffers as needed to provide the proper requests to the bl
 
 the Block I/O protocol on the device handle.
 
- 
+
 
 The firmware automatically adds a Disk I/O interface to any Block I/O interface that is produced. It also adds file system, or logical block I/O, interfaces to any Disk I/O
 
@@ -1034,13 +1017,12 @@ a logical device for each partition).
 
 eral offset-length abstraction of the underlying Block I/O protocol.
 
-**150** \| Chapter 9 – Some Common UEFI and PI Functions
 
- 
+
 
 Protocol Interface Structure
 
- 
+
 
 typedef struct \_EFI_DISK_IO_PROTOCOL { UINT64 Revision;
 
@@ -1050,7 +1032,7 @@ EFI_DISK_WRITE WriteDisk;
 
 } EFI_DISK_IO_PROTOCOL;
 
- 
+
 
 ■ *Revision* - The revision to which the disk I/O interface adheres. All future revisions
 
@@ -1060,11 +1042,11 @@ it is not the same GUID.
 
 ■ *ReadDisk* - Reads data from the disk. ■ *WriteDisk* - Writes data to the disk.
 
- 
+
 
 **Simple File System**
 
- 
+
 
 The Simple File System protocol allows code running in the UEFI boot services envi-ronment to obtain file-based access to a device. The Simple File System protocol is
 
@@ -1074,13 +1056,12 @@ use exposes a secondary protocol that will directly act on the device on top of 
 
 ![](media/index-169_1.png)
 
- 
+
 
 **Figure 9.10:** Simple File System Software Layering
 
-Simple File System \| **151**
 
- 
+
 
 Protocol Interface Structure
 
@@ -1090,7 +1071,7 @@ UINT64 *Revision;*
 
 EFI_VOLUME_OPEN *OpenVolume;* } EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
 
- 
+
 
 ■ *Revision* - The version of the EFI Simple File System Protocol. The version speci-
 
@@ -1102,11 +1083,11 @@ GUID.
 
 ■ *OpenVolume* - Opens the volume for file I/O access.
 
- 
+
 
 **EFI File Protocol**
 
- 
+
 
 On requesting the file system protocol on a device, the caller gets the instance of the
 
@@ -1148,7 +1129,7 @@ EFI_FILE_FLUSH Flush;
 
 } EFI_FILE;
 
- 
+
 
 ■ *Revision* - The version of the EFI_FILE interface. The version specified by this
 
@@ -1156,9 +1137,8 @@ specification is 0x00010000. Future versions are required to be backward com-
 
 patible to version 1.0.
 
-**152** \| Chapter 9 – Some Common UEFI and PI Functions
 
- 
+
 
 ■ *Open* - Opens or creates a new file. ■ *Close* - Closes the current file handle.
 
@@ -1170,11 +1150,11 @@ patible to version 1.0.
 
 ■ *SetInfo* - Sets the requested file information. ■ *Flush* - Flushes all modified data associated with the file to the device.
 
- 
+
 
 **Configuration Infrastructure**
 
- 
+
 
 The modern UEFI configuration infrastructure that was first described in the UEFI 2.1 specification is known as the Human Interface Infrastructure (HII). HII includes the
 
@@ -1222,9 +1202,8 @@ which allows for platform differentiation.
 
 figuration data from drivers to target configuration applications. It then serves as
 
-Using the Configuration Infrastructure \| **153**
 
- 
+
 
 the single point to receive configuration information from configuration applica-
 
@@ -1238,11 +1217,11 @@ abstracts a driver’s configuration settings and also provides a means by which
 
 the platform can call the driver to initiate driver-specific operations.
 
- 
+
 
 **Using the Configuration Infrastructure**
 
- 
+
 
 The overview introduced the components of the UEFI configuration infrastructure. This section discusses with a bit more detail how one goes about using aspects of this
 
@@ -1298,9 +1277,8 @@ and remote agents as well as BIOS and OS-present components.
 
 have completed, the driver could potentially remain dormant until called upon.
 
-**154** \| Chapter 9 – Some Common UEFI and PI Functions
 
- 
+
 
 A driver would most often be called upon to act on a configuration event. A con-
 
@@ -1312,15 +1290,15 @@ col) and sends the driver a directive. These directives typically would be some-
 
 thing akin to “give me your current settings” or “adjust setting X’s value to a 5”.
 
- 
+
 
 Much more detail on this particular infrastructure is covered later in the book.
 
- 
+
 
 **Driver Model Interactions**
 
- 
+
 
 The drivers that interact with the UEFI configuration infrastructure are often compli-
 
@@ -1330,11 +1308,11 @@ Since driver model compliance is very common (and highly recommended) for device
 
 ![](media/index-173_1.png)
 
- 
+
 
 **Figure 9.11:** A Single Driver that Is Registering Its Configuration Data and Establishing Its Environ-ment in a Recommended Fashion
 
- 
+
 
 ■ *Step 1.* During driver initialization, install services on the controller handle.
 
@@ -1348,9 +1326,8 @@ tered with the HII database (through the NewPackageList() API) using the
 
 device’s device handle. A unique HII handle is created during the registra-tion event.
 
-Provisioning the Platform \| **155**
 
- 
+
 
 ■ *Step 4.* During system operation, when a configuration event occurs, the sys-
 
@@ -1360,11 +1337,11 @@ services associated with the device.
 
 ![](media/index-174_1.png)
 
- 
+
 
 **Figure 9.12:** A Single Driver that Is Managing Multiple Devices, Registering Its Configuration Data, and Establishing Its Environment in a Recommended Fashion
 
- 
+
 
 ■ *Step 1.* During driver initialization, install services on the controller handle.
 
@@ -1386,17 +1363,17 @@ services associated with the driver. In this example, the configuration ser-vice
 
 vices by the passed in HII handle.
 
- 
+
 
 **Provisioning the Platform**
 
- 
+
 
 Figure 9.13 is an illustration that builds on the previously introduced concepts and
 
-shows how the remote interaction would introduce the concept of bare-metal provi-sioning (putting content on a platform without the aid of a formal operating system). **156** \| Chapter 9 – Some Common UEFI and PI Functions
+shows how the remote interaction would introduce the concept of bare-metal provi-sioning (putting content on a platform without the aid of a formal operating system).
 
- 
+
 
 This kind of interaction could be used in the manufacturing environment to achieve the provisioning of the platform or in the after-market environment where one is re-
 
@@ -1404,13 +1381,13 @@ motely managing the platform and updating it.
 
 ![](media/index-175_1.png)
 
- 
+
 
 **Figure 9.13:** Remote Interaction Occurs with a Target System; the System in Turn Accesses the Con-figuration Abstractions Associated with a Device or Set of Devices
 
 ![](media/index-175_2.png)
 
- 
+
 
 ■ *Step 1.* Remote administrator sends a query to a target workstation. This
 
@@ -1426,15 +1403,15 @@ the request to the appropriate device.
 
 lying configuration infrastructure.
 
- 
+
 
 MAR – X-UEFI Config and Redfish
 
- 
+
 
 **Summary**
 
- 
+
 
 In conclusion, this chapter describes a series of the common protocols one would en-
 

@@ -30,6 +30,5 @@ directory for example), start your system, and run your application!
 
 40
 
-© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license
 
 Embedded Linux System Development

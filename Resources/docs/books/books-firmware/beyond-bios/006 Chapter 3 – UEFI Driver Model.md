@@ -1,12 +1,12 @@
 ## **Chapter 3 – UEFI Driver Model** 
 
- 
+
 
 Things should be made as simple as possible—but no simpler.
 
 —Albert Einstein
 
- 
+
 
 The Unified Extensible Firmware Interface (UEFI) provides a driver model for support
 
@@ -34,11 +34,11 @@ This chapter gives a brief overview of the UEFI Driver Model. It describes the e
 
 point of a driver, host bus controllers, properties of device drivers, properties of bus drivers, and how the UEFI Driver Model can accommodate hot plug events.
 
- 
+
 
 **Why a Driver Model Prior to OS Booting?**
 
- 
+
 
 Under the UEFI Driver Model, only the minimum number of I/O devices needs to be activated. For example, with today’s BIOS-based systems, a server with dozens of
 
@@ -50,17 +50,16 @@ the policy of which additional devices need activation up into the operating sys
 
 electronics devices being pushed to all open platforms, this capability is imperative.
 
- 
+
 
 DOI 10.1515/9781501505690-005
 
-**32** \| Chapter 3 – UEFI Driver Model
 
- 
+
 
 **Driver Initialization**
 
- 
+
 
 The file for a driver image must be loaded from some type of media. This could include ROM, flash, hard drives, floppy drives, CD-ROM, or even a network connection. Once
 
@@ -74,15 +73,15 @@ contains a Loaded Image Protocol instance is called an *Image Handle*. At this p
 
 called.
 
- 
+
 
 **Image Handle**
 
- 
+
 
 **Figure 3.1:** Image Handle
 
- 
+
 
 After a driver has been loaded with the Boot Service LoadImage(), it must be started with the Boot Service StartImage(). This is true of all types of UEFI appli-
 
@@ -102,41 +101,40 @@ Binding Protocol instance is known as a *Driver Image Handle*. Figure 3.2 shows 
 
 StartImage() has been called.
 
-Host Bus Controllers \| **33**
 
- 
+
 
 **Driver Image Handle** **Driver Image Handle**
 
- 
+
 
 **EFI_LOADED_IMAGE_PROTOCOL EFI_LOADED_IMAGE_PROTOCOL**
 
- 
+
 
 **EFI_DRIVER_BINDING_PROTOCOL EFI_DRIVER_BINDING_PROTOCOL**
 
- 
+
 
 **EFI_DRIVER_CONFIGURATION_PROTOCOL EFI_DRIVER_CONFIGURATION_PROTOCOL**
 
- 
+
 
 **EFI_DRIVER_DIAGNOSTICS_PROTOCOL EFI_DRIVER_DIAGNOSTICS_PROTOCOL**
 
- 
+
 
 **EFI_COMPONENT_NAME2_PROTOCOL EFI_COMPONENT_NAME2_PROTOCOL**
 
- 
+
 
 **Figure 3.2:** Driver Image Handle
 
- 
+
 
 **Host Bus Controllers**
 
- 
+
 
 Drivers are not allowed to touch any hardware in the driver's entry point. As a result, drivers are loaded and started, but they are all waiting to be told to manage one or
 
@@ -156,51 +154,50 @@ A platform can be viewed as a set of CPUs and a set of core chip set components
 
 that may produce one or more host buses. Figure 3.3 shows a platform with *n* CPUs, and a set of core chipset components that produce *m* host bridges.
 
-**34** \| Chapter 3 – UEFI Driver Model
 
- 
+
 
 **CPU 1** **CPU 2** **CPU** ***n***
 
- 
+
 
 **Front Side Bus**
 
- 
+
 
 **Core Chipset Components**
 
- 
+
 
 **HB 1** **HB 2** **HB** ***m***
 
- 
+
 
 **Figure 3.3:** Host Bus Controllers
 
- 
+
 
 Each host bridge is represented in UEFI as a device handle that contains a Device Path Protocol instance, and a protocol instance that abstracts the I/O operations that the
 
 host bus can perform. For example, a PCI Host Bus Controller supports the PCI Host Bridge I/O Protocol. Figure 3.4 shows an example device handle for a PCI Host Bridge.
 
- 
+
 
 **Device Handle**
 
- 
+
 
 **EFI_DEVICE_PATH_PROTOCOL**
 
- 
+
 
 **EFI_PCI_HOST_BRIDGE_IO_PROTOCOL**
 
- 
+
 
 **Figure 3.4:** Host Bus Device Handle
 
- 
+
 
 A PCI Bus Driver could connect to this PCI Host Bridge, and create child handles for
 
@@ -210,17 +207,16 @@ compliant OS. The following section describes the different types of drivers tha
 
 so not all the possible types of drivers are discussed here. Instead, the major types are
 
-Device Drivers \| **35**
 
- 
+
 
 covered that can be used as a starting point for designing and implementing addi-tional driver types.
 
- 
+
 
 **Device Drivers**
 
- 
+
 
 A device driver is not allowed to create any new device handles. Instead, it installs
 
@@ -234,21 +230,21 @@ ports. It also contains a Device Path Protocol that was placed there by the XYZ 
 
 quired for device handles that represent physical devices in the system. Handles for virtual devices do not contain a Device Path Protocol.
 
- 
+
 
 **Device Handle**
 
- 
+
 
 **EFI_DEVICE_PATH_PROTOCOL**
 
- 
+
 
 **Start()**
 
 **EFI_XYZ_IO_PROTOCOL**
 
- 
+
 
 **Device Handle**
 
@@ -256,27 +252,23 @@ quired for device handles that represent physical devices in the system. Handles
 
 **EFI_DEVICE_PATH_PROTOCOL**
 
- 
+
 
 **EFI_XYZ_IO_PROTOCOL**
 
- 
+
 
 **EFI_BLOCK_IO_PROTOCOL**
 
- 
+
 
 **Figure 2.5:** Connecting Device Drivers
 
- 
+
 
 The device driver that connects to the device handle in Figure 3.5 must have installed
 
-a Driver Binding Protocol on its own image handle. The Driver Binding Protocol con-**36** \| Chapter 3 – UEFI Driver Model
-
- 
-
-tains three functions called Supported(), Start(), and Stop(). The Sup-ported() function tests to see if the driver supports a given controller. In this ex-
+a Driver Binding Protocol on its own image handle. The Driver Binding Protocol contains three functions called Supported(), Start(), and Stop(). The Sup-ported() function tests to see if the driver supports a given controller. In this ex-
 
 ample, the driver will check to see if the device handle supports the Device Path Pro-
 
@@ -298,11 +290,11 @@ tocol interfaces. The information in the handle database can be used to retrieve
 
 consuming a specific protocol interface.
 
- 
+
 
 **Bus Drivers**
 
- 
+
 
 Bus drivers and device drivers are virtually identical from the UEFI Driver Model’s
 
@@ -322,21 +314,20 @@ controller. If the bus controller is a Host Bus Controller, then it does not hav
 
 controller. Nodes A, B, C, D, and E represent the child controllers of the bus controller.
 
-Bus Drivers \| **37**
 
- 
+
 
 **Bus Controller** **Bus Controller** **Start()**
 
- 
+
 
 **Stop()** **A** **B** **C** **D** **E**
 
- 
+
 
 **Figure 3.6:** Connecting Bus Drivers
 
- 
+
 
 A bus driver that supports creating one child on each call to Start() might choose
 
@@ -360,31 +351,30 @@ a PCI controller's option ROM a higher precedence than drivers stored elsewhere 
 
 XYZ Bus Driver that supports a bus specific driver override mechanism.
 
-**38** \| Chapter 3 – UEFI Driver Model
 
- 
+
 
 **Child Device Handle**
 
 **EFI_DEVICE_PATH_PROTOCOL**
 
- 
+
 
 **EFI_XYZ_IO_PROTOCOL**
 
- 
+
 
 **Optional** **EFI_BUS_SPECIFIC_DRIVER_OVERRIDE_PROTOCOL**
 
- 
+
 
 **Figure 3.7:** Child Device Handle with a Bus Specific Override
 
- 
+
 
 **Platform Components**
 
- 
+
 
 Under the UEFI Driver Model, the act of connecting and disconnecting drivers from
 
@@ -408,19 +398,18 @@ tocol, but it has higher priority. This gives the platform firmware the highest 
 
 Override Protocol is attached to a handle in the system. The new Boot Service Con-nectController() will make use of this protocol if it is present in the system.
 
- 
+
 
 **Hot Plug Events**
 
- 
+
 
 In the past, system firmware has not had to deal with hot plug events in the pre-boot environment. However, with the advent of buses like USB, where the end user can
 
 add and remove devices at any time, it is important to make sure that it is possible to describe these types of buses in the UEFI Driver Model. It is up to the bus driver of a
 
-Hot Plug Events \| **39**
 
- 
+
 
 bus that supports the hot adding and removing of devices to provide support for such events. For these types of buses, some of the platform management is going to have
 
@@ -452,7 +441,7 @@ writer might discover if it in fact manages the candidate hardware device. These
 
 ining the device path in the second example.
 
- 
+
 
 extern EFI_GUID
 
@@ -460,7 +449,7 @@ gEfiDriverBindingProtocolGuid;
 
 EFI_HANDLE gMyImageHandle; EFI_HANDLE DriverImageHandle; EFI_HANDLE ControllerHandle; EFI_DRIVER_BINDING_PROTOCOL \*DriverBinding; EFI_DEVICE_PATH_PROTOCOL \*RemainingDevicePath;
 
- 
+
 
 //
 
@@ -486,9 +475,8 @@ EFI_OPEN_PROTOCOL_HANDLE_PROTOCOL
 
 );
 
-**40** \| Chapter 3 – UEFI Driver Model
 
- 
+
 
 if (EFI_ERROR (Status)) {
 
@@ -496,7 +484,7 @@ return Status;
 
 }
 
- 
+
 
 //
 
@@ -532,11 +520,11 @@ NULL
 
 }
 
- 
+
 
 return Status;
 
- 
+
 
 //
 
@@ -562,9 +550,8 @@ return Status;
 
 //
 
-Hot Plug Events \| **41**
 
- 
+
 
 Status = DriverBinding-\>Supported (
 
@@ -590,15 +577,15 @@ RemainingDevicePath
 
 }
 
- 
+
 
 return Status;
 
- 
+
 
 **Pseudo Code**
 
- 
+
 
 The algorithms for the Start() function for three different types of drivers are pre-
 
@@ -616,11 +603,11 @@ or all of the remaining child handles in a single call to Start(). Once again, i
 
 not attach any additional protocols to the handle for the bus controller.
 
- 
+
 
 **Device Driver**
 
- 
+
 
 1. Open all required protocols with OpenProtocol(). If this driver allows the
 
@@ -636,9 +623,8 @@ COL_EXCLUSIVE. It must use the same *Attribute* value that was used in
 
 Supported().
 
-**42** \| Chapter 3 – UEFI Driver Model
 
- 
+
 
 2. If any of the calls to OpenProtocol() in Step 1 returned an error, then close
 
@@ -670,11 +656,11 @@ opened in Step 1 with CloseProtocol(), and return the error from In-
 
 stallProtocolInterface(). 7. Return EFI_SUCCESS.
 
- 
+
 
 **Bus Driver that Creates All of Its Child Handles on the First Call to Start()**
 
- 
+
 
 1. Open all required protocols with OpenProtocol(). If this driver allows the
 
@@ -712,9 +698,8 @@ EFI_DEVICE_ERROR.
 
 ler specified by *ControllerHandle*. 7. FOR each child C of *ControllerHandle*
 
-Hot Plug Events \| **43**
 
- 
+
 
 8\. Allocate and initialize all of the data structures that this driver requires to manage
 
@@ -744,11 +729,11 @@ EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER.
 
 14. Return EFI_SUCCESS.
 
- 
+
 
 **Bus Driver that Is Able to Create All or One of Its Child Handles on Each Call to Start():**
 
- 
+
 
 1. Open all required protocols with OpenProtocol(). If this driver allows the
 
@@ -784,9 +769,9 @@ any additional private data structures that are related to the child device C. I
 
 error occurs allocating the resources, then close all of the protocols opened in
 
-Step 1 with CloseProtocol(), and return EFI_OUT_OF_RESOURCES. **44** \| Chapter 3 – UEFI Driver Model
+Step 1 with CloseProtocol(), and return EFI_OUT_OF_RESOURCES.
 
- 
+
 
 7\. If the bus driver creates device paths for the child devices, then create a device path
 
@@ -838,7 +823,7 @@ EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER.
 
 22. Return EFI_SUCCESS.
 
- 
+
 
 Listed below is sample code of the Start() function of device driver for a device on the XYZ bus. The XYZ bus is abstracted with the EFI_XYZ_IO_PROTOCOL. This
 
@@ -852,15 +837,14 @@ The following code sequence provides a generic example of what a driver can do
 
 in its start routine in the hope of particularizing the guidance listed above.
 
-Hot Plug Events \| **45**
 
- 
+
 
 extern EFI_GUID gEfiXyzIoProtocol; extern EFI_GUID gEfiAbcIoProtocol; EFI_BOOT_SERVICES_TABLE \*gBS;
 
 EFI_HANDLE gMyImageHandle;
 
- 
+
 
 EFI_STATUS
 
@@ -870,7 +854,7 @@ IN EFI_DRIVER_BINDING_PROTOCOL \*This, IN EFI_HANDLE ControllerHandle, IN EFI_DE
 
 )
 
- 
+
 
 {
 
@@ -880,7 +864,7 @@ EFI_XYZ_IO_PROTOCOL \*XyzIo;
 
 EFI_ABC_DEVICE AbcDevice;
 
- 
+
 
 //
 
@@ -908,7 +892,7 @@ return Status;
 
 }
 
- 
+
 
 //
 
@@ -936,9 +920,8 @@ goto ErrorExit;
 
 ZeroMem (AbcDevice, sizeof (EFI_ABC_DEVICE));
 
-**46** \| Chapter 3 – UEFI Driver Model
 
- 
+
 
 //
 
@@ -952,13 +935,13 @@ ZeroMem (AbcDevice, sizeof (EFI_ABC_DEVICE));
 
 AbcDevice-\>Signature = EFI_ABC_DEVICE_SIGNATURE; AbcDevice-\>XyzIo = XyzIo;
 
- 
+
 
 AbcDevice-\>PrivateData1 = PrivateValue1; AbcDevice-\>PrivateData1 = PrivateValue2; . . .
 
 AbcDevice-\>PrivateData1 = PrivateValueN;
 
- 
+
 
 AbcDevice-\>AbcIo.Revision =
 
@@ -968,13 +951,13 @@ AbcDevice-\>AbcIo.Func1 = AbcIoFunc1; AbcDevice-\>AbcIo.Func2 = AbcIoFunc2; . . 
 
 AbcDevice-\>AbcIo.FuncN = AbcIoFuncN;
 
- 
+
 
 AbcDevice-\>AbcIo.Data1 = Value1; AbcDevice-\>AbcIo.Data2 = Value2; . . .
 
 AbcDevice-\>AbcIo.DataN = ValueN;
 
- 
+
 
 //
 
@@ -998,19 +981,19 @@ goto ErrorExit;
 
 }
 
- 
+
 
 return EFI_SUCCESS;
 
- 
+
 
 ErrorExit:
 
 //
 
-// When there is an error, the provate data structures need Additional Innovations \| **47**
+// When there is an error, the provate data structures need
 
- 
+
 
 // to be freed and the protocols that were opened need to be
 
@@ -1040,21 +1023,21 @@ return Status;
 
 }
 
- 
+
 
 **Additional Innovations**
 
- 
+
 
 In addition to the basic capabilities for booting, such as support for the various buses, there are other classes of feature drivers that provide capabilities to the platform. Some examples of these feature drivers include security, manageability, and net-
 
 working.
 
- 
+
 
 **Security**
 
- 
+
 
 In addition to the bus driver-based architecture, the provenance of the UEFI driver
 
@@ -1072,9 +1055,9 @@ ble Executable Signature Format can be found at http://www.microsoft.com/whdc/ w
 
 Other security features in UEFI 2.6 include the User Identity (UID) infrastructure. The UID allows for the inclusion of credential provider drivers, such as biometric de-
 
-vices, smart cards, and other authentication methods, into a user manager frame-work. This framework will allow for combining the factors from the various credential **48** \| Chapter 3 – UEFI Driver Model
+vices, smart cards, and other authentication methods, into a user manager frame-work. This framework will allow for combining the factors from the various credential
 
- 
+
 
 providers and assigning rights to different UEFI users. One use case could include only the administrator having access to the USB devices in the pre-OS, whereas other
 
@@ -1082,11 +1065,11 @@ users could only access the boot loader on the UEFI system partition. More infor
 
 mation on UID can be found in Chapter 31 of the *UEFI 2.6 Specification.*
 
- 
+
 
 **Manageability**
 
- 
+
 
 The UEFI driver model has also introduced the Driver Health Protocol. The Driver
 
@@ -1106,13 +1089,12 @@ described in Chapter 22 of the UEFI 2.6 specification. This protocol allows for 
 
 EFI System Resource Table (ESRT) that exposes updatable elements and the existing UpdateCapsule runtime service. This scenario is shown below.
 
-Additional Innovations \| **49**
 
- 
+
 
 FMP Capsule
 
- 
+
 
 RoungInfo
 
@@ -1120,7 +1102,7 @@ Updated Data
 
 (Oponal)
 
- 
+
 
 **UEFI Firmware Resource Table** Update UEFI
 
@@ -1138,7 +1120,7 @@ Updated Data
 
 ![](media/index-68_1.png)
 
- 
+
 
 Camera G-Sensor System
 
@@ -1148,19 +1130,19 @@ firmware
 
 ![](media/index-68_3.png)
 
- 
+
 
 **Figure 3.8:** ESRT, Capsule, FMP
 
 ![](media/index-68_4.png)
 
- 
+
 
 **Networking**
 
 ![](media/index-68_5.png)
 
- 
+
 
 The UEFI driver model has also evolved to support complex device hierarchies, such as a dual IPV4 and IPV6 modular network stack. Figure 3.8 is a picture of the Internet
 
@@ -1194,27 +1176,25 @@ Small Computer Systems Interface (iSCSI) network application atop both the IPV4 
 
 ![](media/index-68_19.png)
 
-**50** \| Chapter 3 – UEFI Driver Model
 
 ![](media/index-69_1.png)
 
- 
+
 
 **Figure 3.9:** ISCSI on IPV4 and IPV6
 
- 
+
 
 In addition to the ISCSI usage above, the UEFI standard now has support for HTTP boot.
 
-Additional Innovations \| **51**
 
 ![](media/index-70_1.png)
 
- 
+
 
 **Figure 3.10:** HTTP software stack
 
- 
+
 
 Both of these implementations can be found in on the Tianocore website located at http://www.tianocore.org/. HTTP builds upon the same TCP protocol found in ISCSI,
 
@@ -1228,11 +1208,10 @@ enterprise routers. In summary, HTTP boot makes the boot, deployment, and recov-
 
 A common use-case for booting includes the following:
 
-**52** \| Chapter 3 – UEFI Driver Model
 
 ![](media/index-71_1.png)
 
- 
+
 
 EFI HTTPBoot
 
@@ -1246,13 +1225,13 @@ Client
 
 ![](media/index-71_4.png)
 
- 
+
 
 **Figure 3.11:** HTTP network boot
 
 ![](media/index-71_5.png)
 
- 
+
 
 One notable infrastructure element precipitated by this modular design includes the Service Binding Protocol (SBP). The EFI_DRIVER_BINDING_PROTOCOL allows for
 
@@ -1270,13 +1249,13 @@ shown in Figure 3.8.
 
 ![](media/index-71_9.png)
 
- 
+
 
 **Summary**
 
 ![](media/index-71_10.png)
 
- 
+
 
 This chapter has introduced the UEFI driver model and some sample drivers. The
 

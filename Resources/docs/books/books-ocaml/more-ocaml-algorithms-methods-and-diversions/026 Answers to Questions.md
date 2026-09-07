@@ -48,7 +48,7 @@ Note that this is less efficient than `List.mem `because there is no early exit 
 
 This is a classic problem. We either need to
 
- 
+
 
 - add a space after each word except for the last; or
 - add a space before each word except for the first.
@@ -75,14 +75,14 @@ We can compare the speed of `List.mem `and `member `with the help of the `Unix.g
 
 > ![](media/images/00041.jpg)
 
- 
+
 
 > Figure A.1:
 
 ------------------------------------------------------------------------
 
-` Our member took 2.513232 seconds  `  
-`List.mem took 1.162159 seconds `
+` Our member took 2.513232 seconds  `  
+`List.mem took 1.162159 seconds `
 
 There is a significant speed penalty in our version of the member function, at least for this scenario.
 
@@ -138,14 +138,14 @@ If we write a function which, given a number, gives the correct string, then the
 
 Since a reference is just a record with a mutable field `contents`, we can use the `<- `construct:
 
-`        OCaml`  
+`        OCaml`  
   
-`# let x = ref 0;;`  
-`val x : int ref = {contents = 0}`  
-`# x.contents <- 1;;`  
-`- : unit = ()`  
-`# x;;`  
-`- : int ref = {contents = 1}`
+`# let x = ref 0;;`  
+`val x : int ref = {contents = 0}`  
+`# x.contents <- 1;;`  
+`- : unit = ()`  
+`# x;;`  
+`- : int ref = {contents = 1}`
 
 There is no reason to use this rather than `:= `of course.
 
@@ -163,19 +163,19 @@ Note that the names bound by the pattern do not include the `Unix `prefix.
 
 3
 
-The construct `type t = {x : int ref} `is a record type containing a reference to an integer. We can build it using an existing reference, and can extract the reference for use elsewhere. We can share a single reference between two or more instances of this data type. The construct `type t = {mutable x : int} `is a record with a single, mutable field. We must use `<- `rather than `:= `to mutate it, and it may not be shared.
+The construct `type t = {x : int ref} `is a record type containing a reference to an integer. We can build it using an existing reference, and can extract the reference for use elsewhere. We can share a single reference between two or more instances of this data type. The construct `type t = {mutable x : int} `is a record with a single, mutable field. We must use `<- `rather than `:= `to mutate it, and it may not be shared.
 
 4
 
 We can use multiple type parameters (which are written with parentheses and commas) and then use these types for the fields in the appropriate way:
 
 `type ('a, 'b, 'c) t =`  
-`  {a : 'a;`  
-`   b : 'a;`  
-`   c : 'b;`  
-`   d : 'b;`  
-`   e : 'c;`  
-`   f : 'c}`
+`  {a : 'a;`  
+`   b : 'a;`  
+`   c : 'b;`  
+`   d : 'b;`  
+`   e : 'c;`  
+`   f : 'c}`
 
 5
 
@@ -208,11 +208,11 @@ We create a Buffer.t, attempt to read the specified number of characters, and th
 We add a function of the expected type to the input. The option `None `will represent the end of the file.
 
 `type input =`  
-`  {pos_in : unit -> int;`  
-`   seek_in : int -> unit;`  
-`   input_char : unit -> char;`  
-`   input_char_opt : unit -> char option;`  
-`   in_channel_length : int}`
+`  {pos_in : unit -> int;`  
+`   seek_in : int -> unit;`  
+`   input_char : unit -> char;`  
+`   input_char_opt : unit -> char option;`  
+`   in_channel_length : int}`
 
 Now for a new `input_of_channel`. We try to build the `Some `option, returning `None `if the `End_of_file` exception is raised.
 
@@ -227,11 +227,11 @@ The `input_of_string `function is another similar modification. This time, there
 We add the function of type unit → int.
 
 `type input =`  
-`  {pos_in : unit -> int;`  
-`   seek_in : int -> unit;`  
-`   input_char : unit -> char;`  
-`   input_byte : unit -> int;`  
-`   in_channel_length : int}`
+`  {pos_in : unit -> int;`  
+`   seek_in : int -> unit;`  
+`   input_char : unit -> char;`  
+`   input_byte : unit -> int;`  
+`   in_channel_length : int}`
 
 Now, having defined as a convenience, the name `no_more `for the -1, we can modify `input_of_channel `and `input_of_string `easily:
 
@@ -247,9 +247,9 @@ We alter `input_of_channel `to check for a newline and raise `End_of_file `in th
 
 Now we can create one of these special inputs from standard input, and use our `input_string `function to build a string from the user’s input, ending when the return key is pressed. For example:
 
-`# input_string (single_line_input_of_channel stdin) max_int;;`  
-`Some input`  
-`- : string = "Some input"`
+`# input_string (single_line_input_of_channel stdin) max_int;;`  
+`Some input`  
+`- : string = "Some input"`
 
 6
 
@@ -292,9 +292,9 @@ The integer functions are replaced by ones from the Int32 module:
 We add a field `rewind `which will move the position in the output backwards one byte, if possible. This is the new type:
 
 `type output =`  
-`     {output_char : char -> unit;`  
-`      rewind : unit -> unit;`  
-`      out_channel_length : unit -> int}`
+`     {output_char : char -> unit;`  
+`      rewind : unit -> unit;`  
+`      out_channel_length : unit -> int}`
 
 Now we can rewrite, for example, `output_of_string `for this new type:
 
@@ -358,39 +358,39 @@ Now, for example, we can build the white terminating codes as a tree:
 
 (`Util.from a b `gives the list of numbers starting at `a `and ending at `b `in ascending order). The function succeeds, verifying that there are no collisions, and yields:
 
-`   Br  `  
-`   (Br  `  
-`     (Br  `  
-`       (Br  `  
-`         (Br  `  
-`           (Br (Br (Lf, Br (Code 29, Code 30)),  `  
-`             Br (Br (Code 45, Code 46), Code 22)),  `  
-`           Br (Br (Code 23, Br (Code 47, Code 48)), Code 13)),  `  
-`         Br  `  
-`          (Br (Br (Code 20, Br (Code 33, Code 34)),  `  
-`            Br (Br (Code 35, Code 36), Br (Code 37, Code 38))),  `  
-`          Br (Br (Code 19, Br (Code 31, Code 32)), Code 1))),  `  
-`       Br  `  
-`        (Br (Br (Code 12, Br (Br (Code 53, Code 54), Code 26)),  `  
-`          Br (Br (Br (Code 39, Code 40), Br (Code 41, Code 42)),  `  
-`           Br (Br (Code 43, Code 44), Code 21))),  `  
-`        Br  `  
-`         (Br (Br (Code 28, Br (Code 61, Code 62)),  `  
-`           Br (Br (Code 63, Code 0), Lf)),  `  
-`         Code 10))),  `  
-`     Br  `  
-`      (Br  `  
-`        (Br (Code 11,  `  
-`          Br (Br (Code 27, Br (Code 59, Code 60)), Br (Lf, Code 18))),  `  
-`        Br  `  
-`         (Br (Br (Code 24, Br (Code 49, Code 50)),  `  
-`           Br (Br (Code 51, Code 52), Code 25)),  `  
-`         Br (Br (Br (Code 55, Code 56), Br (Code 57, Code 58)), Lf))),  `  
-`      Br (Lf, Code 2))),  `  
-`   Br  `  
-`    (Br (Br (Code 3, Br (Lf, Code 8)),  `  
-`      Br (Br (Code 9, Br (Code 16, Code 17)), Code 4)),  `  
-`    Br (Br (Code 5, Br (Br (Code 14, Code 15), Lf)), Br (Code 6, Code 7)))) `
+`   Br  `  
+`   (Br  `  
+`     (Br  `  
+`       (Br  `  
+`         (Br  `  
+`           (Br (Br (Lf, Br (Code 29, Code 30)),  `  
+`             Br (Br (Code 45, Code 46), Code 22)),  `  
+`           Br (Br (Code 23, Br (Code 47, Code 48)), Code 13)),  `  
+`         Br  `  
+`          (Br (Br (Code 20, Br (Code 33, Code 34)),  `  
+`            Br (Br (Code 35, Code 36), Br (Code 37, Code 38))),  `  
+`          Br (Br (Code 19, Br (Code 31, Code 32)), Code 1))),  `  
+`       Br  `  
+`        (Br (Br (Code 12, Br (Br (Code 53, Code 54), Code 26)),  `  
+`          Br (Br (Br (Code 39, Code 40), Br (Code 41, Code 42)),  `  
+`           Br (Br (Code 43, Code 44), Code 21))),  `  
+`        Br  `  
+`         (Br (Br (Code 28, Br (Code 61, Code 62)),  `  
+`           Br (Br (Code 63, Code 0), Lf)),  `  
+`         Code 10))),  `  
+`     Br  `  
+`      (Br  `  
+`        (Br (Code 11,  `  
+`          Br (Br (Code 27, Br (Code 59, Code 60)), Br (Lf, Code 18))),  `  
+`        Br  `  
+`         (Br (Br (Code 24, Br (Code 49, Code 50)),  `  
+`           Br (Br (Code 51, Code 52), Code 25)),  `  
+`         Br (Br (Br (Code 55, Code 56), Br (Code 57, Code 58)), Lf))),  `  
+`      Br (Lf, Code 2))),  `  
+`   Br  `  
+`    (Br (Br (Code 3, Br (Lf, Code 8)),  `  
+`      Br (Br (Code 9, Br (Code 16, Code 17)), Code 4)),  `  
+`    Br (Br (Code 5, Br (Br (Code 14, Code 15), Lf)), Br (Code 6, Code 7)))) `
 
 3
 
@@ -414,48 +414,48 @@ We can define a simple function to print the histogram, eliding any zero counts:
 
 Here is the histogram for white runs on our example data:
 
-` # print_histogram white;;  `  
-`5 runs of length 1  `  
-`7 runs of length 2  `  
-`15 runs of length 3  `  
-`15 runs of length 4  `  
-`34 runs of length 5  `  
-`20 runs of length 6  `  
-`4 runs of length 7  `  
-`4 runs of length 8  `  
-`4 runs of length 9  `  
-`3 runs of length 10  `  
-`3 runs of length 11  `  
-`7 runs of length 12  `  
-`1 runs of length 13  `  
-`1 runs of length 14  `  
-`1 runs of length 15  `  
-`3 runs of length 16  `  
-`1 runs of length 17  `  
-`1 runs of length 20  `  
-`1 runs of length 21  `  
-`3 runs of length 35  `  
-`1 runs of length 39  `  
-`1 runs of length 46  `  
-`1 runs of length 47  `  
-`1 runs of length 73  `  
-`3 runs of length 80  `  
-`- : unit = () `
+` # print_histogram white;;  `  
+`5 runs of length 1  `  
+`7 runs of length 2  `  
+`15 runs of length 3  `  
+`15 runs of length 4  `  
+`34 runs of length 5  `  
+`20 runs of length 6  `  
+`4 runs of length 7  `  
+`4 runs of length 8  `  
+`4 runs of length 9  `  
+`3 runs of length 10  `  
+`3 runs of length 11  `  
+`7 runs of length 12  `  
+`1 runs of length 13  `  
+`1 runs of length 14  `  
+`1 runs of length 15  `  
+`3 runs of length 16  `  
+`1 runs of length 17  `  
+`1 runs of length 20  `  
+`1 runs of length 21  `  
+`3 runs of length 35  `  
+`1 runs of length 39  `  
+`1 runs of length 46  `  
+`1 runs of length 47  `  
+`1 runs of length 73  `  
+`3 runs of length 80  `  
+`- : unit = () `
 
 And here is the histogram for black runs:
 
-` # print_histogram black;;  `  
-`12 runs of length 1  `  
-`55 runs of length 2  `  
-`38 runs of length 3  `  
-`5 runs of length 4  `  
-`2 runs of length 5  `  
-`1 runs of length 6  `  
-`1 runs of length 7  `  
-`1 runs of length 8  `  
-`2 runs of length 9  `  
-`2 runs of length 10  `  
-`- : unit = () `
+` # print_histogram black;;  `  
+`12 runs of length 1  `  
+`55 runs of length 2  `  
+`38 runs of length 3  `  
+`5 runs of length 4  `  
+`2 runs of length 5  `  
+`1 runs of length 6  `  
+`1 runs of length 7  `  
+`1 runs of length 8  `  
+`2 runs of length 9  `  
+`2 runs of length 10  `  
+`- : unit = () `
 
 7 (Labelled and Optional Arguments)
 
@@ -467,10 +467,10 @@ If α is int then the first and second argument can be confused. We can fix this
 
 Now the function can be called without confusion:
 
-`         OCaml  `  
-`  `  
-`# make ~len:5 ~elt:4;;  `  
-`- : int array = [|4; 4; 4; 4; 4|] `
+`         OCaml  `  
+`  `  
+`# make ~len:5 ~elt:4;;  `  
+`- : int array = [|4; 4; 4; 4; 4|] `
 
 Of course, it can still be called without labels.
 
@@ -516,17 +516,17 @@ We have used a width specifier of `2 `and the `0 `flag to make sure that charact
 
 The format string for `Printf.printf `must be known at compile time. The solution for printing the result of `mkstring `using `printf `is the `%s `format specification:
 
-`Printf.printf "%s" (mkstring ())`
+`Printf.printf "%s" (mkstring ())`
 
 4
 
 The `* `character can be used as a width or precision specifier, to indicate that the width or precision is given as an argument. We use `* `for the width, and pass in 10.
 
-`Printf.sprintf "(%*i)" 10 1`
+`Printf.sprintf "(%*i)" 10 1`
 
 So, the result is:
 
-`(         1)`
+`(         1)`
 
 We can use `List.iter `to print a table by applying this to each of a list of numbers in turn.
 
@@ -564,27 +564,27 @@ We can write a simple profiling function which, given a search function, measure
 
 Compiling with `ocamlc `on the Author’s machine:
 
-` Naive version took 7.608291 seconds  `  
-`Better version tool 3.388830 seconds `
+` Naive version took 7.608291 seconds  `  
+`Better version tool 3.388830 seconds `
 
 Now, compiling with `ocamlopt`:
 
-` Naive version took 2.966211 seconds  `  
-`Better version tool 0.450546 seconds `
+` Naive version took 2.966211 seconds  `  
+`Better version tool 0.450546 seconds `
 
 4
 
 We can add a case to the main search. We must check the character following the backslash for a match, assuming there is such a next character. If so, we move two positions in the pattern and one in the string. Otherwise, the match has failed.
 
 `| '\\'->`  
-`    if`  
-`      sp < String.length s &&`  
-`      ssp < String.length ss - 1 &&`  
-`      ss.[ssp + 1] = s.[sp]`  
-`    then`  
-`      Some (2, 1)`  
-`    else`  
-`      None`
+`    if`  
+`      sp < String.length s &&`  
+`      ssp < String.length ss - 1 &&`  
+`      ss.[ssp + 1] = s.[sp]`  
+`    then`  
+`      Some (2, 1)`  
+`    else`  
+`      None`
 
 5
 
@@ -699,10 +699,10 @@ Here is the output:
 
 We can change the type thus, with `BrR `for red and `BrB `for black:
 
-`type 'a t =`  
-`  Lf`  
-`| BrR of 'a t * 'a * 'a t`  
-`| BrB of 'a t * 'a * 'a t`  
+`type 'a t =`  
+`  Lf`  
+`| BrR of 'a t * 'a * 'a t`  
+`| BrB of 'a t * 'a * 'a t`  
 
 Now, the solutions are tedious to write out, but not difficult. The result is Figure A.2.
 
@@ -710,7 +710,7 @@ Now, the solutions are tedious to write out, but not difficult. The result is Fi
 
 > ![](media/images/00298.jpg)
 
- 
+
 
 > Figure A.2:
 
@@ -756,15 +756,15 @@ Now we can define starting boards for the centre spot, the middle of a side, and
 
 This gives the following:
 
-` val centre_x_wins : int = 5616  `  
-`val centre_o_wins : int = 15648  `  
-`val centre_drawn : int = 4608  `  
-`val side_x_wins : int = 40704  `  
-`val side_o_wins : int = 56928  `  
-`val side_drawn : int = 20736  `  
-`val corner_x_wins : int = 31584  `  
-`val corner_o_wins : int = 58608  `  
-`val corner_drawn : int = 20736 `
+` val centre_x_wins : int = 5616  `  
+`val centre_o_wins : int = 15648  `  
+`val centre_drawn : int = 4608  `  
+`val side_x_wins : int = 40704  `  
+`val side_o_wins : int = 56928  `  
+`val side_drawn : int = 20736  `  
+`val corner_x_wins : int = 31584  `  
+`val corner_o_wins : int = 58608  `  
+`val corner_drawn : int = 20736 `
 
 The total is 255168, of course.
 
@@ -772,7 +772,7 @@ The total is 255168, of course.
 
 The strategy of using the magic square representation is to build a problem which is isomorphic (has the same essential characteristics – literally the same shape) to the original one, but is easier to work with. Before building the tree tree, we will need five little functions:
 
- 
+
 
 - `sum`, which checks if a list sums to 15;
 - `threes`, which finds all the combinations of numbers from a list of numbers which are of length three (the `combinations `function is from Chapter 10);
@@ -794,7 +794,7 @@ We do not need a type for the turn this time – we can just use a boolean. The 
 
 > ![](media/images/00229.jpg)
 
- 
+
 
 > Figure A.3:
 
@@ -814,7 +814,7 @@ Writing `T `for the trailer dictionary, we have the graph `T `→ `2 `→ `3` �
 
 These can be written out by reference to the data structure:
 
- 
+
 
 - `Name "/Name"`
 - `String "Quartz Crystal"`
@@ -828,29 +828,29 @@ In the last two examples, we assumed integer where appropriate. Notice that in t
 
 Consider the tree `Br (Br (Lf, 1, Lf), 2, Br (Lf, 3, Lf))`. We will represent it by using nested PDF dictionaries. A branch will have a `/Type `key with value `/Br`. It will have `/Left `and `/Right` entries for the sub-trees. A leaf is indicated simply by `/Lf`. In the PDF file we would write it like this:
 
-` <</Type /Br  `  
-`  /Value 2  `  
-`  /Left <</Type /Br /Value 1 /Left /Lf /Right /Lf>>  `  
-`  /Right <</Type /Br /Value 3 /Left /Lf /Right /Lf>>>> `
+` <</Type /Br  `  
+`  /Value 2  `  
+`  /Left <</Type /Br /Value 1 /Left /Lf /Right /Lf>>  `  
+`  /Right <</Type /Br /Value 3 /Left /Lf /Right /Lf>>>> `
 
 To construct it from our data type in OCaml:
 
 `let tree =`  
-`  Pdf.Dictionary`  
-`    [("/Type", Pdf.Name "/Br");`  
-`     ("/Value", Pdf.Integer 2);`  
-`     ("/Left",`  
-`        Pdf.Dictionary`  
-`          [("/Type", Pdf.Name "/Br");`  
-`           ("/Value", Pdf.Integer 1);`  
-`           ("/Left", Pdf.Name "/Lf");`  
-`           ("/Right", Pdf.Name "/Lf")]);`  
-`     ("/Right",`  
-`         Pdf.Dictionary`  
-`           [("/Type", Pdf.Name "/Br");`  
-`            ("/Value", Pdf.Integer 3);`  
-`            ("/Left", Pdf.Name "/Lf");`  
-`            ("/Right", Pdf.Name "/Lf")])]`
+`  Pdf.Dictionary`  
+`    [("/Type", Pdf.Name "/Br");`  
+`     ("/Value", Pdf.Integer 2);`  
+`     ("/Left",`  
+`        Pdf.Dictionary`  
+`          [("/Type", Pdf.Name "/Br");`  
+`           ("/Value", Pdf.Integer 1);`  
+`           ("/Left", Pdf.Name "/Lf");`  
+`           ("/Right", Pdf.Name "/Lf")]);`  
+`     ("/Right",`  
+`         Pdf.Dictionary`  
+`           [("/Type", Pdf.Name "/Br");`  
+`            ("/Value", Pdf.Integer 3);`  
+`            ("/Left", Pdf.Name "/Lf");`  
+`            ("/Right", Pdf.Name "/Lf")])]`
 
 4
 
@@ -868,7 +868,7 @@ We can alter the functions `string_of_array `and `string_of_dictionary `to simpl
 
 > ![](media/images/00123.jpg)
 
- 
+
 
 > Figure A.4:
 
@@ -878,7 +878,7 @@ We can alter the functions `string_of_array `and `string_of_dictionary `to simpl
 
 The full code can be found in the online resources. We make the following changes:
 
- 
+
 
 - Change `/Count `from `1 `to `3`.
 - Move the `/Resources `to its own object, number `5`.
@@ -970,9 +970,9 @@ We can pull out font size, line spacing and margin easily, defining them at the 
   
 `let margin = 40.0`  
   
-`let text_width = page_width -. margin -. margin`  
+`let text_width = page_width -. margin -. margin`  
   
-`let max_chars = int_of_float (text_width /. font_size *. (5. /. 3))`
+`let max_chars = int_of_float (text_width /. font_size *. (5. /. 3))`
 
 We can now insert these new names into `typeset_line_at`:
 
@@ -984,8 +984,8 @@ We pass `max_chars `to `clean_lines `and alter our call to `downfrom`:
 `let ls = clean_lines (lines max_chars words) in`  
   
 `downfrom`  
-`  (font_size *. line_spacing)`  
-`  (page_height -. margin -. line_spacing) (List.length ls) 0`
+`  (font_size *. line_spacing)`  
+`  (page_height -. margin -. line_spacing) (List.length ls) 0`
 
 Here is an example of the new program, with text typeset on a much smaller page (it runs off the bottom, of course):
 
@@ -999,7 +999,7 @@ We can implement this by manually inserting space characters into the buffer in 
 
 > ![](media/images/00115.jpg)
 
- 
+
 
 > Figure A.5:
 
@@ -1023,7 +1023,7 @@ The result is shown in Figure A.6.
 
 The page height can be calculated easily:
 
-`let text_height = page_height -. margin -. margin`
+`let text_height = page_height -. margin -. margin`
 
 Now, we can use `Pdfpage.SetCharacterSpacing `in `typeset_line_at`, adding an extra argument for the spacing:
 
