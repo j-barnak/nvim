@@ -84,6 +84,12 @@ fi
 # its physical page, so it must see whole pages. Cutting afterwards cannot change
 # any of its verdicts, and matching on text rather than a line number means the
 # lines it removed do not shift the anchor.
+# book_fix: an optional per-slug repair stage for code listings whose source
+# text layer is baked-in OCR damage (see $FIXAWK below). It is a plain `cat` for
+# every book that sets no $FIXAWK, so the other 31 books are untouched.
+book_fix() {
+  if [ -n "$FIXAWK" ] && [ -f "$FIXAWK" ]; then awk -f "$FIXAWK"; else cat; fi
+}
 cut_anchor() {
   if [ -z "$1" ] && [ -z "$2" ]; then cat; return; fi
   awk -v s="$1" -v e="$2" '
@@ -93,6 +99,47 @@ cut_anchor() {
       if (!on) { if (t == s) on = 1; else next }
       else if (e != "" && t == e) exit
       print }'
+}
+# relocate_footnote_in_code: undo the one place a page-bottom footnote lands in
+# the MIDDLE of a code listing. Per-slug and keyed on exact text, so it is a
+# plain `cat` for every other book and every other chapter.
+#   zero-to-production-in-rust, ch.3: the Cargo.toml listing
+#     #! Cargo.toml / # [...] / [dependencies] / actix-web = "4" / tokio = {...}
+#   straddles the page 26/27 break, and page 26's bottom footnote 17 ("During
+#   our development process ... cargo check was born ...") prints between the
+#   "# [...]" line and "[dependencies]". pdftotext -layout reads a page top to
+#   bottom, so the footnote (physically below the code) linearises INTO it and
+#   splits the listing. folio.awk cannot help: this is a one-off footnote, not a
+#   running head. Move the footnote to just after the listing (after the tokio
+#   line, where its reference sits) so the code reads as one contiguous block.
+#   No words are dropped -- only the footnote's own mid-paragraph blank line --
+#   so the chapter's word count is unchanged.
+relocate_footnote_in_code() {
+  case "$SLUG" in
+    zero-to-production-in-rust) ;;
+    *) cat; return ;;
+  esac
+  awk '
+    BEGIN { st=0 }
+    st==3 { print; next }                                # done: pass through
+    st==0 { print; if ($0=="# [...]") st=1; next }       # watch for listing head
+    st==1 {                                              # line after "# [...]"
+      if ($0 ~ /^ +17 During our development process/) { fb[++nf]=$0; st=2; next }
+      st=3; print; next                                  # not this spot; give up
+    }
+    st==2 {                                              # buffer footnote lines
+      if ($0=="[dependencies]") { print; st=22; next }   # code resumes
+      if ($0 !~ /^[ \t]*$/) fb[++nf]=$0
+      next
+    }
+    st==22 {                                             # print rest of listing
+      print
+      if ($0 ~ /^tokio = \{ version = "1"/) {             # last listing line
+        print ""; for (i=1;i<=nf;i++) print fb[i]; print ""
+        st=3
+      }
+      next
+    }'
 }
 # emit <first page> <last page> <title> [start anchor] [end anchor]
 emit() {
@@ -122,6 +169,8 @@ emit() {
     | sed "$CTLX$CTL" | tr '\000-\010\013\015-\037' '[?*]' | sed "$LIG" \
     | awk -v book="$MODE" -v furn="$FURN" -v keys="$OUT/.folio.keys" -v first_page="$1" -f "$AWKF" \
     | cut_anchor "$4" "$5" \
+    | relocate_footnote_in_code \
+    | book_fix \
     | cat -s > "$OUT/$n $f.txt"
 }
 # Book mode ($4=book): pick chapter/part/appendix boundaries from the outline by
@@ -177,6 +226,17 @@ case "$SLUG" in
   talking-compilers-with-chatgpt) FURN='^(This material is freely available|For typos or suggestions, please contact Fernando|Send comments, typos and suggestions to)' ;;
   disarming-code) FURN='^([0-9?][0-9? ]{0,4} +D ?i ?s ?a ?r ?m ?i ?n ?g +C ?o ?d ?e$|(C ?h ?a ?p ?t ?e ?r|A ?p ?p ?e ?n ?d ?i ?x) ?[0-9AB]{1,2} ?([:.] ?[A-Za-z0-9/]|[A-Z0-9/]).{0,200}$)' ;;
   learn-programming-with-ocaml) FURN='^([0-9]+ +(Chapter [0-9]+[.].*|BIBLIOGRAPHY|INDEX)|[0-9]+[.][0-9]+[.] .+ [0-9]+|(BIBLIOGRAPHY|INDEX) +[0-9]+)$' ;;
+esac
+# Per-slug code-listing repair (book_fix above). programming-with-posix-threads
+# is a Ghostscript print of an OCR'd Word .doc: its text layer carries the wrong
+# glyphs verbatim, so pdftotext cannot recover them and the prose OCR noise is
+# source-limited. posix_threads_fix.awk touches only a closed set of C API
+# prototypes where the intended token is mechanical and unambiguous; it is a
+# no-op everywhere else. Kept next to pdf_build.sh, resolved from folio.awk's
+# directory ($AWKF is already located above).
+FIXAWK=
+case "$SLUG" in
+  programming-with-posix-threads) FIXAWK="${AWKF%/*}/posix_threads_fix.awk" ;;
 esac
 # Furniture learn pass: read the WHOLE book once and record which page-number
 # offsets its page ends attest, and which page-edge lines are running heads (see
