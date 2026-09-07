@@ -115,6 +115,18 @@ and every one is documented at the point it runs:
     interrupt  interrupt.memfault.com's in-article newsletter and submit-PR boxes
     vuepress   VuePress v2 (0xc0ffee): recover the fence language from the outer
                div.language-X and drop its line-number gutter
+    barefence  a language-less <pre>/<pre><code> pandoc would INDENT: re-emit it
+               as a fenced block (mdBook, ctf-wiki, trustfoundry, ret2rop, ...)
+    ghcode     GitHub rendered-markdown <div class="highlight highlight-source-X">
+    gdocs      old Blogger/Google-Docs export: consecutive Courier <div dir=ltr>
+               lines regrouped into one fenced block (Project Zero)
+    divlines   a React highlighter's <pre><div>line</div>...</pre> (no newlines):
+               one line per div, drop the copy button and TOC aside (picoctf)
+    nolnt      Hugo chroma lineNos=table: drop the line-number gutter cell
+    nolineno   Rouge td.gutter/pre.lineno variant: drop the gutter cell
+    cbpro      WordPress Code Block Pro: drop the hidden duplicate copy-source pre
+    gitbookmd  a GitBook page fetched as its own .md: strip the llms.txt index
+               blockquote and unwrap the Liquid {% code %}/{% hint %}/... shortcodes
     brush      WordPress SyntaxHighlighter's <pre class="brush: cpp; ...">
     latexml    arXiv LaTeXML \\lstlisting, rebuilt from its own base64 payload
     gist=DIR   Blogger's <script src="gist.github.com/...js"> embeds, inlined
@@ -663,6 +675,42 @@ if mode == "clean":
     # prose with fences of its own. The prefix allows blockquote markers,
     # because pandoc indents a quoted listing behind "> " and the two herd7
     # pages that quote a session that way kept their bogus label without it.
+    if "gitbookmd" in opts:
+        # A GitBook page fetched as its own Markdown (append ".md" to the page
+        # URL), used when the served HTML renders code as nested styled <div>s
+        # with no <pre>, so an HTML extract would mangle every listing - the
+        # same reason the 0xten dojo chapter froze GitBook markdown. The .md is
+        # already clean GFM (fenced blocks, tabs intact); this strips only the
+        # GitBook furniture around it: the leading "available as Markdown /
+        # llms.txt" doc-index blockquote, and the Liquid shortcodes GitBook
+        # wraps blocks in. Shortcode markers never sit inside a code fence (they
+        # frame it), so a whole-text pass is safe and runs before the fence
+        # loop. {% code title="X" %} keeps its filename as a bold caption; the
+        # {% hint %}/{% file %} wrappers are dropped to leave their inner text;
+        # {% embed url="<U>" %} becomes the bare autolink (as the gitbook opt
+        # does) and its {% endembed %} is dropped.
+        lines = raw.split("\n")
+        i = 0
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+        if i < len(lines) and lines[i].lstrip().startswith(">") and "llms.txt" in lines[i]:
+            del lines[i]
+            if i < len(lines) and not lines[i].strip():
+                del lines[i]
+        kept = []
+        for line in lines:
+            st = line.strip()
+            m = re.match(r'\{%\s*code\s+title="([^"]*)"\s*%\}', st)
+            if m:
+                kept.append("**" + m.group(1) + "**")
+                continue
+            line = re.sub(r'\{%\s*embed\s+url="<?([^"<>]+)>?"\s*%\}', r"<\1>", line)
+            if re.match(r"\{%\s*(endcode|hint\b[^%]*|endhint|file\b[^%]*|"
+                        r"endfile|endembed)\s*%\}$", st):
+                continue
+            kept.append(line)
+        raw = "\n".join(kept)
+
     out, fence, width = [], "", 0
     for line in raw.split("\n"):
         m = re.match(r"^([ \t]*(?:>[ \t]*)*)([`~]{3,})[ \t]*(\S*)[ \t]*$", line)
@@ -953,6 +1001,161 @@ if mode == "content":
             tgt = a.find_parent("p") or a
             if tgt.parent is not None:
                 tgt.decompose()
+
+    if opt("gdocs"):
+        # A Blogger post pasted straight out of Google Docs (the older Project
+        # Zero write-ups): every visual line is its own block, a
+        # <div dir="ltr" style="line-height:1.38">, and there is NO <pre>
+        # anywhere - a code line is a block whose text comes from
+        # <span style="font-family:'Courier New'">, a prose line from
+        # font-family:Arial. pandoc reads each code line as its own prose
+        # paragraph and backslash-escapes it, so a 50-line assembly listing
+        # ships as 50 escaped one-line paragraphs with the indentation gone.
+        # Group each maximal run of consecutive Courier-only line blocks (blank
+        # spacer blocks between them do not break the run) into one fenced
+        # block, taking each line's text from its Courier spans only (which
+        # keeps the leading-space indentation the author typed inside the run
+        # and drops the inter-tag formatting newlines); any &nbsp; used as
+        # indentation is normalised inside the fence by the clean stage. No
+        # language: the export declares none.
+        def _line_kind(b):
+            spans = [sp for sp in b.find_all("span") if sp.get_text(strip=True)]
+            cour = [sp for sp in spans if "Courier" in (sp.get("style") or "")]
+            other = [sp for sp in spans if "Courier" not in (sp.get("style") or "")]
+            if cour and not other:
+                return "code"
+            if b.get_text(strip=True):
+                return "prose"
+            return "blank"
+        blocks = [b for b in el.find_all(["div", "p"], recursive=False)]
+        i = 0
+        while i < len(blocks):
+            if _line_kind(blocks[i]) != "code":
+                i += 1
+                continue
+            j = i
+            last_code = i
+            while j < len(blocks):
+                k = _line_kind(blocks[j])
+                if k == "code":
+                    last_code = j
+                    j += 1
+                elif k == "blank":
+                    j += 1
+                else:
+                    break
+            run = blocks[i:last_code + 1]
+            lines = []
+            for b in run:
+                if _line_kind(b) == "blank":
+                    lines.append("")
+                    continue
+                txt = "".join(sp.get_text() for sp in b.find_all("span")
+                              if "Courier" in (sp.get("style") or ""))
+                lines.append(txt)
+            run[0].replace_with(code_block("\n".join(lines).rstrip("\n") + "\n", "", s))
+            for b in run[1:]:
+                b.decompose()
+            i = last_code + 1
+
+    if opt("barefence"):
+        # A listing written as a plain <pre><code> (or a bare <pre>) with NO
+        # language class anywhere: pandoc renders an attribute-less code element
+        # as an INDENTED block, not a fence, so every line is shifted four
+        # columns and the "this is verbatim" signal is lost (mdBook's unlabelled
+        # blocks on guyinatuxedo's Nightmare, and the plain <pre><code> that
+        # ctf-wiki, trustfoundry, ret2rop, redhat and the one-gadget Blogger
+        # post all use for shell/gdb transcripts). Re-emit each such block
+        # through code_block(), whose data-code attribute forces a BARE fence
+        # with the author's text and indentation intact. A <pre> that already
+        # declares a language, or one inside a highlight/rouge container handled
+        # above, is left alone so its label survives.
+        _lang_cls = lambda t: t is not None and any(
+            c.lower().startswith("language-") for c in (t.get("class") or []))
+        def _in_handled(pre):
+            # a container the rouge/chroma/figure rules above already fence
+            for anc in pre.parents:
+                cls = " ".join(anc.get("class") or [])
+                if "highlighter-rouge" in cls or "chroma" in cls:
+                    return True
+                if anc.name == "figure" and "highlight" in cls:
+                    return True
+            return False
+        for pre in el.find_all("pre"):
+            if _in_handled(pre):
+                continue
+            code = pre.find("code")
+            if _lang_cls(pre) or _lang_cls(code):
+                continue
+            if pre.get("data-code") or (code is not None and code.get("data-code")):
+                continue  # already a code_block() fence from an earlier opt
+            text = (code or pre).get_text()
+            if not text.strip():
+                continue
+            pre.replace_with(code_block(text.rstrip("\n") + "\n", "", s))
+
+    if opt("nolnt"):
+        # Hugo chroma with lineNos=table (roderickchan) renders a listing as
+        # <table class="lntable"><td class="lntd"><pre class="chroma"><code>
+        # <span class="lnt"> 1\n</span>...</code></pre></td><td class="lntd">
+        # <pre class="chroma">CODE</pre></td></table>: a line-number gutter cell
+        # beside the code cell, each in its own <pre class="chroma">. The chroma
+        # rule fences every <pre> it finds, so the gutter <pre> becomes a bogus
+        # fence of bare line numbers (" 1\n 2\n 3...") before every listing.
+        # Drop the gutter cell of each lntable, and any stray line-number spans,
+        # before chroma runs; the code cell keeps its own newlines.
+        for tbl in el.select("table.lntable, div.lntable"):
+            cell = tbl.select_one("td.lntd, .lntd")
+            if cell is not None:
+                cell.decompose()
+        for sp in el.select("span.lnt, span.ln"):
+            sp.decompose()
+
+    if opt("nolineno"):
+        # A Rouge highlight table whose gutter cell is <td class="gutter">
+        # holding <pre class="lineno">1\n2\n3...</pre>, with the code in a
+        # sibling <td class="code"> (m101.github.io's Jekyll theme). The generic
+        # rouge rule only knows the td.rouge-code variant, so its "or
+        # select_one('pre')" fallback grabs the OUTER <pre> that wraps the whole
+        # table and welds the line-number column onto the top of the listing
+        # ("1 2 3 4 5 void exit..."). Drop the gutter here, before that rule
+        # runs; the code cell keeps its own newlines and the <code
+        # class="language-X"> the rule reads the language from.
+        for t in el.select("td.gutter, pre.lineno"):
+            t.decompose()
+
+    if opt("divlines"):
+        # picoctfsolutions.com renders every listing with a React highlighter as
+        # <pre><div>line</div><div>line</div>...</pre> - one block-level <div>
+        # per source line, a <div class="min-h-..."> for a blank line, and NO
+        # <pre><code> and NO newlines between the divs, so pandoc reads them as
+        # separate paragraphs and welds the whole listing onto one line. Each
+        # <pre> also sits in a <div class="group relative"> beside a hover copy
+        # <button> (a "Copied!" label and a base64 clipboard-icon SVG) that
+        # would otherwise land in the text. Drop the buttons and rebuild each
+        # such <pre> from its line divs, one newline per div. No language: the
+        # markup declares none.
+        for btn in el.select("button, aside"):
+            btn.decompose()
+        for pre in el.find_all("pre"):
+            if pre.find("code") is not None:
+                continue
+            kids = [c for c in pre.children if getattr(c, "name", None)]
+            if len(kids) < 2 or any(k.name != "div" for k in kids):
+                continue
+            lines = [d.get_text() for d in kids]
+            pre.replace_with(code_block("\n".join(lines).rstrip("\n") + "\n", "", s))
+
+    if opt("cbpro"):
+        # The "Code Block Pro" WordPress block (4xura) renders each Shiki
+        # listing TWICE: the visible <pre class="shiki"> of per-line spans, and
+        # a hidden <pre class="code-block-pro-copy-button-pre"> holding the same
+        # code as the clipboard source. Both carry real newlines, so pandoc
+        # fences both and every listing ships duplicated. Drop the copy source;
+        # the visible Shiki block stays.
+        for t in el.select("pre.code-block-pro-copy-button-pre, "
+                           "pre[class*=copy-button-pre]"):
+            t.decompose()
 
     if opt("unescape"):
         # blogs.oracle.com's KFENCE post is double-escaped at the source: its

