@@ -1839,6 +1839,9 @@ local SRC_URLS = {
 	rust = "https://github.com/rust-lang/rust",
 	bap = "https://github.com/BinaryAnalysisPlatform/bap",
 	ghidra = "https://github.com/NationalSecurityAgency/ghidra",
+	-- gs from a frozen glibc manual page explores glibc source (master; the
+	-- glibc provider's own menu is where a specific release is chosen).
+	glibc = "https://github.com/bminor/glibc",
 }
 -- Providers whose useful source is a different repo than their doc set: aya's
 -- docs are the book, but "explore the source" means the crate itself.
@@ -2477,6 +2480,102 @@ local pick_llvm_tutorial = frozen_web_provider("llvm-tutorial", "LLVM Tutorial> 
 local pick_browser_engineering = frozen_web_provider("browser-engineering", "Web Browser Engineering> ")
 local pick_learnopengl = frozen_web_provider("learnopengl", "LearnOpenGL> ")
 local pick_revers_hypervisor = frozen_web_provider("revers-hypervisor", "Hypervisor Development> ")
+
+-- ── glibc: frozen manual (docs) + per-version source (:Src) ──────────────
+-- Docs are the frozen latest manual (one book, same for every release). Source
+-- is per version, dynamically discovered so new glibc releases appear on their
+-- own. glibc's tags are "glibc-2.39", not vN.N, so this cannot reuse the
+-- generic versioned_tags helper and lists them itself.
+local GLIBC_URL = "https://github.com/bminor/glibc"
+local pick_glibc_docs = frozen_web_provider("glibc", "glibc manual> ")
+local function glibc_versions(cb)
+	local idx = data_root .. "/glibc/tags.txt"
+	-- Versions already cloned stay selectable with no network, exactly like
+	-- versioned_tags(): never refuse content that is sitting on disk.
+	local function withdisk(list)
+		local seen = {}
+		for _, v in ipairs(list) do
+			seen[v] = true
+		end
+		for _, d in ipairs(vim.fn.glob(data_root .. "/glibc/*", false, true)) do
+			local v = vim.fs.basename(d)
+			if not seen[v] and vim.fn.isdirectory(d) == 1 and v:match("^glibc%-%d") then
+				seen[v] = true
+				list[#list + 1] = v
+			end
+		end
+		return list
+	end
+	if vim.fn.filereadable(idx) == 1 then
+		return cb(withdisk(vim.fn.readfile(idx)))
+	end
+	local ondisk = withdisk({})
+	if #ondisk > 0 and not have("git") then
+		return cb(ondisk)
+	end
+	if not have("git") then
+		return vim.notify("git not found (needed to list glibc versions)", vim.log.levels.WARN)
+	end
+	if not mkdir(vim.fs.dirname(idx)) then
+		return
+	end
+	vim.notify("Fetching glibc versions …")
+	-- Release tags only, newest first. glibc marks the in-development tree after
+	-- each release with a ".9000" tag (glibc-2.42.9000); those are not releases,
+	-- so drop them and keep real point releases like glibc-2.3.4.
+	local cmd = "git ls-remote --tags --refs " .. shq(GLIBC_URL)
+		.. " | grep -oE 'glibc-[0-9]+\\.[0-9]+(\\.[0-9]+)?$'"
+		.. " | grep -vE '\\.9000$'"
+		.. " | sort -Vr"
+	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
+		local list = vim.split(res.stdout or "", "\n", { trimempty = true })
+		vim.schedule(function()
+			if #list == 0 then
+				return vim.notify("Could not list glibc versions:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
+			end
+			vim.fn.writefile(list, idx)
+			cb(withdisk(list))
+		end)
+	end)
+end
+local function pick_glibc()
+	glibc_versions(function(list)
+		fzf().fzf_exec(list, {
+			prompt = "glibc version> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if not (sel and sel[1]) then
+						return
+					end
+					local version = sel[1]
+					-- Docs are frozen and version-independent, so only offer the
+					-- manual when the frozen index is actually present.
+					local choices = { "Explore source" }
+					if resolve_docs("glibc/index.tsv") then
+						table.insert(choices, 1, "Browse Documentation")
+					end
+					fzf().fzf_exec(choices, {
+						prompt = version .. "> ",
+						fzf_opts = { ["--no-multi"] = true },
+						actions = {
+							["default"] = function(s2)
+								if not (s2 and s2[1]) then
+									return
+								end
+								if s2[1] == "Browse Documentation" then
+									return pick_glibc_docs()
+								end
+								-- version IS the git tag (glibc-2.39); src.open checks it out.
+								return require("config.src").open("glibc/" .. version, GLIBC_URL, nil, nil, version)
+							end,
+						},
+					})
+				end,
+			},
+		})
+	end)
+end
 
 -- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
 local function pick_ghidra()
@@ -3392,6 +3491,7 @@ local providers = {
 		-- here if you want them.
 		minmajor = 4,
 	}) },
+	{ name = "glibc (manual + per-version source)", key = "glibc", run = pick_glibc },
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
 	{ name = "bpftrace", key = "bpftrace", run = make_simple("bpftrace", simple.bpftrace) },
 	{ name = "eBPF ABI reference (helpers / kfuncs / maps / program types)", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
