@@ -8,7 +8,7 @@ March 20, 2022
 
 [\#memory](https://sam4k.com/tags/memory/)
 
-![Linternals: The User Virtual Address Space](./Linternals_%20The%20User%20Virtual%20Address%20Space%20_%20sam4k_files/linternals.gif)
+
 
 Ready to get dive back into some Linternals? I hope so! So to recap, [last time](https://sam4k.com/linternals-virtual-memory-part-1/), we covered some virtual memory fundamentals including:
 
@@ -122,7 +122,7 @@ And just like that we’ve pieced together the various userspace (and some kerne
 
 I think I’m going to cover kernel and hardware side of things in coming sections, but I think it’s worth touching on how we go from running `cat /proc/self/maps` to the memory mapping we saw above.
 
-![](./Linternals_%20The%20User%20Virtual%20Address%20Space%20_%20sam4k_files/how_that_happeen.gif)
+
 
 In the last part we mentioned that system calls act as the fundamental interface between userspace applications and the kernel. If an unprivileged userspace process needs to do a privileged action (e.g. map some memory), it can use the syscall interface to ask the kernel to carry out this action on it’s behalf \[1\].
 
@@ -280,7 +280,7 @@ Threads are essentially light-weight processes and represent a flow of execution
 
 Some of you eager enough to run these commands multiple times may have noticed that the addresses for your mappings change each time you run `cat`, what gives?
 
-![](./Linternals_%20The%20User%20Virtual%20Address%20Space%20_%20sam4k_files/confused_girl.gif)
+
 
 Without deviating too off-topic, this is actually normal! It’d be more concerning if nothing changed, as this is the result of a mitigation called ASLR: Address Space Layout Randomisation \[1\].
 
@@ -298,7 +298,7 @@ Of course, I’d be remiss if I didn’t mention there’s a procfs file to chec
 
 ### Wrapping Up In UVAS
 
-![](./Linternals_%20The%20User%20Virtual%20Address%20Space%20_%20sam4k_files/we_did_it.gif)
+
 
 And there we have it! Hopefully this has provided a high level overview of the user virtual address space, we’ve covered:
 

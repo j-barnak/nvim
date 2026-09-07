@@ -8,7 +8,7 @@ January 15, 2022
 
 [\#memory](https://sam4k.com/tags/memory/)
 
-![Linternals: Introducing Virtual Memory](./Linternals_%20Introducing%20Virtual%20Memory%20_%20sam4k_files/linternals.gif)
+
 
 Alright, let’s get stuck into some Linternals! As the title suggests, this post will be exploring the ins and outs of virtual memory with regards to modern Linux systems.
 
@@ -40,7 +40,7 @@ In a later part (or parts, given my track record), we’ll dive a bit deeper and
 
 Virtual memory, every compsci student knows what virtual memory is right, it’s uh, virtual memory, you know, memory that’s not physical? Yeah, I’m realising it can be a bit fiddly to describe virtual memory in a succinct and intuitive way.
 
-![](./Linternals_%20Introducing%20Virtual%20Memory%20_%20sam4k_files/areyouready.gif)
+
 
 ### Physical Memory
 
@@ -69,7 +69,7 @@ $ ps -e --no-headers | wc -l
 
 And if anyone has ever looked into building or upgrading a PC, they’ll know that GB for GB, RAM is a lot more expensive than it’s non-volatile counterparts.
 
-![](./Linternals_%20Introducing%20Virtual%20Memory%20_%20sam4k_files/needmoremem-1.gif)
+
 
 Not to mention, as the “random-access” implies, systems are able to access any memory location in physical memory directly, meaning things can get chaotic real fast if every process is trying to find and manage which bits of memory are up for grabs.
 
@@ -234,7 +234,7 @@ As a result we also have the terms user-space and kernel-space. Typically stuff 
 
 The kernel resides firmly in kernel-space and as such can only be run in kernel-mode and the only way for a user-space process to change the privilege level is via a syscall.
 
-![](./Linternals_%20Introducing%20Virtual%20Memory%20_%20sam4k_files/youshallntpass.gif)
+
 
 So, syscalls act as gatekeepers of sorts, allowing user-space processes to get the kernel to carry out specific, privileged actions on its behalf, without giving away the keys to the kingdom.
 

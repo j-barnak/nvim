@@ -8,7 +8,7 @@ April 25, 2025
 
 [\#memory](https://sam4k.com/tags/memory/)
 
-![Linternals: Exploring The mm Subsystem via mmap \[0x02\]](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/linternals.gif)
+
 
 Welcome back! [Last time](https://sam4k.com/linternals-exploring-the-mm-subsystem-part-1/) I left us on a bit of a cliffhanger, rolling the credits just as we were getting into the thick of it, so I’ll keep the intro brief.
 
@@ -39,7 +39,7 @@ In the [first part](https://sam4k.com/linternals-exploring-the-mm-subsystem-part
 
 So without further ado, let’s dive back into how (anonymous) memory is mapped via `mmap()`!
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/lets_do_this.gif)
+
 
 ## Contents
 
@@ -236,7 +236,7 @@ The key details to highlight are that:
 
 ### `do_mmap()`
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/so_where_we_were.gif)
+
 
 ``` c
 /*
@@ -288,7 +288,7 @@ More specifically, `do_mmap()` has a few responsibilities, including:
 
 #### Finding A Suitable `addr`
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/our_address.gif)
+
 
 In order to find a suitable `addr` for our new memory mapping, broadly speaking, there’s two general cases for `do_mmap()` to consider:
 
@@ -505,7 +505,7 @@ We’re going to head back up to `do_mmap()` and cover the final bit of logic fo
 
 ### `mmap_region()`
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/this_is_it.gif)
+
 
 ``` c
  addr = mmap_region(file, addr, len, vm_flags, pgoff, uf);
@@ -714,7 +714,7 @@ Then we’re pretty much back in userspace, with a shiny new (or merged) mapping
 
 ### Summary
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/confused.gif)
+
 
 It’s only been, uh, 6000 words or so but just like that we’ve covered this line of code:
 
@@ -735,7 +735,7 @@ We also dived into some implementation details, covering some of the security me
 
 ## Next Time
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/weary_pc.gif)
+
 
 Wow, I may have got a bit lost in the sauce for this one (sorry)… Hopefully this is useful for someone. This time we covered the first portion of our simple program: mapping memory. Next time, we’ll move onto writing to memory. Buckle up, as that’ll involve a deep dive into how the kernel does all things (\*specifically pertaining to our case study) paging, starting with page faults and going from there (wish me luck).
 

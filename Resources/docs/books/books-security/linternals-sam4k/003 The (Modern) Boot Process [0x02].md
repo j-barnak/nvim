@@ -6,7 +6,7 @@ October 10, 2021
 
 [\#kernel](https://sam4k.com/tags/kernel/)
 
-![Linternals: The (Modern) Boot Process \[0x02\]](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x02%5D%20_%20sam4k_files/linternals.gif)
+
 
 Welcome to the second part of my totally-wasn’t-meant-to-be-a-one-part Linux internals post on the modern boot process! [Last time](https://sam4k.com/linternals-the-modern-boot-process-part-1/) I set the scene and covered the GUID Partition Table (GPT) scheme for formatting your storage device; briefly touched on what happens when you power on your computer and what happens when it hands over control to UEFI.
 
@@ -27,7 +27,7 @@ So without anymore rambling and rehashing, let’s jump right back into the acti
 
 ## 0x03 Optional Bootloader
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x02%5D%20_%20sam4k_files/obhwg.gif)
+
 
 There’s a number of different bootloaders out there that you can use with your Linux system, each with their own pros and cons, but at their core they’ll all need to meet the requirements laid out by the Linux Boot Protocol\[1\].
 
@@ -41,7 +41,7 @@ With initialisation handled, the bootloader is in a position to be able to do it
 
 As a quick aside, in GRUB this post-initialisation mode is called “normal mode” and we can see this in a call to `grub_load_normal_mode()` at the end of `grub_main()`, and yes  keen-eyed and battle-scarred GRUB users might notice a call to `grub_rescue_run ()` just under that. So, if normal mode falls through, we end up at the dreaded `grub rescue >`…
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x02%5D%20_%20sam4k_files/whywhy.gif)
+
 
 Anyway, back to generic bootloader things, when we select our kernel (or more likely let the timer tick down and select the default option) - which is of course a Linux one, right?! - we begin the “Linux Boot Protocol” as outlined above\[1\] to get our chosen kernel up and running.
 
@@ -96,7 +96,7 @@ However, bear in mind that there are tradeoffs between using EFISTUB and the mor
 
 ## 0x04 The Kernel (Setup)
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x02%5D%20_%20sam4k_files/are_we_there_yet.gif)
+
 
 Okay, so we’re not QUITE in the kernel proper yet, we still need to run the kernel setup code (`/arch/x86/boot/header.S` for x86) in order to basically get a suitable environment up an running to be able to run [arch/x86/boot/main.c](https://github.com/torvalds/linux/blob/v4.16/arch/x86/boot/main.c) in real mode, the first bit of C code! And THEN we can start to look into loading the rest of the kernel into memory. Anyway:
 
@@ -124,7 +124,7 @@ During this stage some more setup occurs, the GDT is updated, page tables are in
 
 ### Decompression Time!
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x02%5D%20_%20sam4k_files/unpacking.gif)
+
 
 #### First Some Background
 
@@ -171,7 +171,7 @@ Next? After extract is complete, we jump to the kernel!
 
 ## 0x05 The Kernel (Initialisation)
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x02%5D%20_%20sam4k_files/jklol.gif)
+
 
 Yep, this fella is turning into a 3-part epic. Apologies! Tune in next time where we’ll cover the last two phases of the boot process I want to cover (hopefully in one post…):
 

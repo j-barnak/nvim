@@ -6,13 +6,13 @@ September 26, 2021
 
 [\#kernel](https://sam4k.com/tags/kernel/)
 
-![Linternals: The (Modern) Boot Process \[0x01\]](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x01%5D%20_%20sam4k_files/linternals.gif)
+
 
 What more appropriate way to kick off a series on Linux internals than figuring out how we actually get those internals running in the first place? This post is going to cover the process that takes us from pressing a power button, to a fully usable Linux operating system.  
 
 As I mentioned in the introduction post for this series, I’m going to focus primarily on modern technologies and implementations where possible. So for this post I’ll be covering how UEFI reads our hard drive’s GPT to figure out how to find our Linux kernel. Once the kernels loaded in memory and ready to go, we look at how it uses systemd to get the operating system up and running in a usable state for us.
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x01%5D%20_%20sam4k_files/confused2.gif)
+
 
 Confused? Don’t worry, hopefully by the end of the post you’ll be able to understand that last part, otherwise I need to rethink this whole series thing. Anyway, without further ado let’s jump over to where the magic begins.
 
@@ -83,7 +83,7 @@ However, this is not backwards compatibility in the traditional sense, and mainl
 
 As a result, older programs at the very least will see a single partition of an unknown type, without free space and generally shouldn’t touch it. And yes, that means the old MBR scheme fit into a single 512 byte logical block!
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x01%5D%20_%20sam4k_files/small.gif)
+
 
 #### Primary GPT Header
 
@@ -107,7 +107,7 @@ The Secondary GPT can be found out the end of the disk and is essentially just a
 
 ## 0x01 Push The Button!
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x01%5D%20_%20sam4k_files/POWERON.gif)
+
 
 So now we know *how* stuff is stored on our disk, let’s figure our what to do with the stuff on it and how that let’s me play Crusader Kings III. The first step? Pushing that power button of course!
 
@@ -123,7 +123,7 @@ Upon receiving the signal, the PSU provides electricity to the computer. The mot
 
 ## 0x02 UEFI
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x01%5D%20_%20sam4k_files/thebeginning.gif)
+
 
 Before we dive into the technicals, let’s clear up a couple of naming ambiguities:
 
@@ -191,7 +191,7 @@ One finally feature worth touching on is the Compatibility Support Module (CSM) 
 
 ## 0x03 Optional Bootloader
 
-![](./Linternals_%20The%20(Modern)%20Boot%20Process%20%5B0x01%5D%20_%20sam4k_files/notsofast.gif)
+
 
 It looks like I severely underestimated the length of this post, (we’re already 1700 words!), so to make this a bit more manageable I’m going to split this into two posts.
 

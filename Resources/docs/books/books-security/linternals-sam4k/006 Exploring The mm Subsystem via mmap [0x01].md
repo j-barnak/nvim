@@ -8,7 +8,7 @@ December 16, 2024
 
 [\#memory](https://sam4k.com/tags/memory/)
 
-![Linternals: Exploring The mm Subsystem via mmap \[0x01\]](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x01%5D%20_%20sam4k_files/linternals.gif)
+
 
 That’s right, you’re not hallucinating, Linternals is back! It’s been a *while*, I know, but after some travelling and moving to a new role, I’ve finally found some time to ramble.
 
@@ -19,7 +19,7 @@ For those of you unfamiliar with the series (or have understandably forgotten th
 
 This post might be a little different, as I’m writing this introduction before I’ve actually planned 100% what I’ll be writing about. I know I want to explore the memory management (mm) subsystem in more detail, building on what we’ve covered so far, but the issue is…
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x01%5D%20_%20sam4k_files/idk_where_to_begin.gif)
+
 
 There’s a LOT to this subsystem, it’s integral to the kernel and interacts with lots of other components. This had me thinking - how do I cover this gargantuan, messy topic in a structured and accessible way?! Where do I begin?? What do I cover???
 
@@ -54,7 +54,7 @@ This post is based on the latest kernel at the time of writing, 6.11.5, and x86_
 
 So before we get stuck into the nitty-gritty details, let’s talk about what we mean by memory management. Fortunately, unlike some of the topics we’ve covered (I’m looking at you SLUB), this one’s fairly self explanatory: it’s about managing a system’s memory.
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x01%5D%20_%20sam4k_files/lets_break_it_down.gif)
+
 
 Memory, in this sense, covers the range of storage a modern system may use: HDDs and SSDs, RAM, CPU registers and caches etc. Managing this involves providing representations of the various types of memory and means for the kernel and userspace to efficiently access and utilise them.
 
@@ -69,7 +69,7 @@ Hopefully this highlights how fundamental the memory management subsystem is and
 
 ## Overview of The MM Subsystem
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x01%5D%20_%20sam4k_files/tell_me_more.gif)
+
 
 Okay, what does this *actually* look like? The kernel has several [core subsystems](https://docs.kernel.org/subsystem-apis.html), one of which is the [memory management subsystem](https://docs.kernel.org/mm/index.html). Looking at the kernel source tree, this is located in the aptly named `[mm/](https://elixir.bootlin.com/linux/v6.11.5/source/mm)` subdirectory.
 
@@ -110,7 +110,7 @@ We’ve talked a lot about the building blocks for managing memory, but what abo
 
 ## Getting Lost in The Source
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x01%5D%20_%20sam4k_files/going_on_an_adventure.gif)
+
 
 Alright, here’s the plan: we will begin our journey with a simple C program that maps some anonymous memory, writes to it and then unmaps it. Sounds easy enough right?
 
@@ -148,7 +148,7 @@ The libc `mmap()` and `munmap()` calls are just wrappers around the respective s
 
 ## Mapping Memory
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x01%5D%20_%20sam4k_files/kermit_map.gif)
+
 
 So let’s start our dive into into the kernel with seeing how memory is mapped.
 
@@ -340,7 +340,7 @@ lockdown,capability,landlock,yama,apparmor
 
 Of these, the capability and apparmor security modules both define hooks for `mmap_file`. In this case, both hooks will be run when `security_mmap_file()` is called.
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x01%5D%20_%20sam4k_files/pat_down.gif)
+
 
 I hope that was interesting, because in our example neither of these checks actually do anything. Capabilities’ `[cap_mmap_file()](https://elixir.bootlin.com/linux/v6.11.5/source/security/commoncap.c#L1436)` always returns a success and apparmor’s `[apparmor_mmap_file()](https://elixir.bootlin.com/linux/v6.11.5/source/security/apparmor/lsm.c#L582)` only does checks if a `file` is specified.
 
@@ -386,7 +386,7 @@ For the curious, the `_killable` suffix indicates that the process can be killed
 
 ## Next Time
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x01%5D%20_%20sam4k_files/tired_baby.gif)
+
 
 Hopefully this isn’t too much of a cliff hanger, but this post has been in my drafts for far too long now and I fear if I don’t post it soon it’ll never get finished 💀.
 

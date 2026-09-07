@@ -433,18 +433,30 @@ def rewrite(records, src_root, out_dir, upstream, stats, max_asset=ASSET_MAX, pr
         text = r["body"]
         edits = []
         for kind, dest, ds, de, ls, le, ts, te in find_refs(text):
+            # Already-resolved local target: a prior build rewrote it to
+            # media/<sha> (or another in-tree file).  Leave it untouched, so an
+            # in-place attach-mode rebuild (linternals) is idempotent instead of
+            # re-resolving a media/ path against the source capture and dropping
+            # a diagram that is in fact present.
+            if not re.match(r"^\w+:", dest):
+                if os.path.exists(os.path.join(out_dir, urllib.parse.unquote(dest))):
+                    continue
             new, why = target_for(src_dir, dest)
             stats[why] = stats.get(why, 0) + 1
             if why == "anchor":
                 continue
             if why == "missing":
-                # The target is not in the source tree either, so there is
-                # nothing to point at.  An image keeps its (dead) reference so
-                # the alt text still reads as a caption; a link drops its
-                # destination and keeps its text, as epub_build.sh does.
+                # The target is not shippable: not in the source tree, or an
+                # image over --max-asset (the sam4k capture's decorative reaction
+                # GIFs), or a "<page>_files/" dir the capture never saved.  A link
+                # drops its destination and keeps its text, as epub_build.sh does;
+                # an image drops entirely rather than leave a broken-image icon in
+                # the reader (nothing points at a GIF we deliberately did not ship).
                 if kind == "link":
                     edits.append((ls, le, text[ts:te]))
-                    stats["dropped"] = stats.get("dropped", 0) + 1
+                else:
+                    edits.append((ls, le, ""))
+                stats["dropped"] = stats.get("dropped", 0) + 1
                 continue
             if new != dest:
                 edits.append((ds, de, new))

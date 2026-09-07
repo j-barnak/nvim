@@ -10,7 +10,7 @@ November 3, 2023
 
 [\#xdev](https://sam4k.com/tags/xdev/)
 
-![Exploring Linux's New Random Kmalloc Caches](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/tired_computer.gif)
+
 
 In this post we’re going to be taking a look at the state of contemporary kernel heap exploitation and how the new opt-in hardening feature added in the 6.6 Linux kernel, `RANDOM_KMALLOC_CACHES`, looks to address that.
 
@@ -41,7 +41,7 @@ As this post is focusing on kernel heap exploitation, I’ll be assuming some pr
 
 ## Current Heap Exploitation Meta
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/need_context.gif)
+
 
 Alright, before we dive into the juicy details lets quickly touch on the current state of heap exploitation to help us understand why this patch was added and how it effects things!
 
@@ -57,7 +57,7 @@ From a defenders perspective, in an ideal world we would mitigate heap corruptio
 
 ### Approaching Heap Exploitation
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/i_want_details.gif)
+
 
 Okay with the exposition out of the way, lets talk a bit about how we might go about exploiting a heap corruption in the kernel nowadays. I’m going to (try) keep things fairly high level, with a focus on the slab allocator side of things due to the topics context.
 
@@ -77,7 +77,7 @@ The general goal here is to find a viable object to corrupt. We can use our unde
 
 ### Current Mitigations
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/wait_wait_wait.gif)
+
 
 However, before we get ahead of ourselves, we first have to consider any mitigations that might impact our ability to exploit our bug on modern systems. This won’t be an exhaustive list, but will help provide some context on the current meta:
 
@@ -89,7 +89,7 @@ However, before we get ahead of ourselves, we first have to consider any mitigat
 
 ### Generic Techniques
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/the_good_part.gif)
+
 
 Okay, now we’re ready to starting pwning the heap. We understand our bug, the allocation context and the kind of mitigations we’re dealing with. Let’s explore some contemporary techniques used to get around this mitigation and exploit heap corruptions bugs!
 
@@ -127,7 +127,7 @@ If we recall our memory allocator fundamentals[\[2\]](https://sam4k.com/linterna
 
 So when all the objects in a slab are freed, the slab itself may in turn be freed back to the page allocator, ready to be reallocated. Can you see where this is going?
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/bill_hader_omg.gif)
+
 
 If we have a UAF on an object in a private cache slab, if that slab is then freed and reallocated as a general purpose cache, suddenly our UAF’d memory is pointing to general purpose objects! Our options for corruption have suddenly expanded!
 
@@ -186,7 +186,7 @@ Perhaps! This is where FUSE comes in: if we have a scenario where an object we *
 
 ## Introducing Random Kmalloc Caches
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/startin_simple-1.gif)
+
 
 Well, that was quite the background read (sorry not sorry), but we’re hopefully in a good position to dive into this new mitigation: **Random kmalloc caches**[\[1\]](https://github.com/torvalds/linux/commit/3c6152940584290668b35fa0800026f6a1ae05fe).
 
@@ -207,7 +207,7 @@ If you’re interested in more information, you can also follow the initial disc
 
 ## Diving Into The Implementation
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/about_to_get_real_2-1.gif)
+
 
 The time has come, I’m sure you’ve all been chomping at the bit for the last 2000 words, let’s dig into the implementation for this patch and see what the deal is.
 
@@ -410,7 +410,7 @@ We can see `kmalloc()` now passes the caller, using the `[_RET_IP_](https://elix
 
 ### Thoughts
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/how_do_we_feel-1.gif)
+
 
 To wrap things up on the implementation side of things, lets discuss some of the pros and cons for `KMALLOC_RANDOM_CACHES`. As the config help text explains, the aim of this hardening feature is to make it “more difficult to spray vulnerable memory objects on the heap for the purpose of exploiting memory vulnerabilities.”[\[2\]](https://elixir.bootlin.com/linux/v6.6/source/mm/Kconfig#L339).
 
@@ -431,7 +431,7 @@ An implementation specific point to note is on the use of the kmalloc return add
 
 ## What’s The New Meta?
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/are_we_in_trouble.gif)
+
 
 Before we put our speculation hats on and start discussing what the new trends and techniques for heap exploitation might look like post `RANDOM_KMALLOC_CACHES`, it’s worth highlighting that just because it’s *in* the 6.6 kernel doesn’t mean we’ll see it for a while.
 
@@ -454,7 +454,7 @@ That said, I’m sure the same was said about previous hardening features so who
 
 ## Wrapping Up
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/did_we_make_it.gif)
+
 
 Wow, we made it to the end! A 4k word deep dive into a new kernel mitigation certainly is one way to get back into the swing of things, hopefully it made a good read though :)
 
