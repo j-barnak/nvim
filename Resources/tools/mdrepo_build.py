@@ -29,9 +29,11 @@ copy but what follows it:
             that was already broken) loses its destination and keeps its text,
             the way epub_build.sh treats a dead intra-epub link.
 
-Chapter text is otherwise byte-identical to the source document.  The one
-exception is the ir0nstone book, whose GitBook YAML front matter is stripped
-and whose "description:" key is kept as an italic line under the heading.
+Chapter text is otherwise byte-identical to the source document.  The two
+exceptions are the ir0nstone book, whose GitBook YAML front matter is stripped
+and whose "description:" key is kept as an italic line under the heading, and
+the CodeCrafters courses, whose stage descriptions carry no heading of their
+own so one is prepended (see plan_codecrafters).
 
 Slugs:
   linux-insides                    0xAX/linux-insides, ordered by SUMMARY.md
@@ -40,6 +42,13 @@ Slugs:
   heap-exploitation-dhaval-kapil   DhavalKapil/heap-exploitation, SUMMARY.md
   ir0nstone-binary-exploitation    ir0nstone/cybersec-notes, the Binary
                                    Exploitation part of SUMMARY.md
+  build-your-own-git               codecrafters-io/build-your-own-git
+  build-your-own-sqlite            codecrafters-io/build-your-own-sqlite
+  build-your-own-docker            codecrafters-io/build-your-own-docker.  All
+                                   three are one course repo apiece and share
+                                   plan_codecrafters: an overview generated
+                                   from course-definition.yml, then one
+                                   chapter per stage.
   linternals-sam4k                 a saved sam4k.com capture.  Its chapters
                                    are produced by webextract.py + pandoc, not
                                    here, so this slug runs in attach mode: it
@@ -704,6 +713,82 @@ def plan_ir0nstone(src):
     return number(uniquify(recs), start=1)
 
 
+# ── CodeCrafters courses ────────────────────────────────────────────────
+#
+# A CodeCrafters course repo is not a book, it is the data a course page is
+# rendered from, so this book is assembled rather than collected.  Two files
+# hold everything a reader wants: course-definition.yml carries the course
+# name, the blurb the overview page shows and the ordered "stages:" list, and
+# stage_descriptions/ carries one markdown file per stage, named
+# "base-<NN>-<stage slug>.md" and written with no heading of its own (the
+# course page supplies the stage's title and difficulty around it).  So the
+# book is an "000 Overview" generated from the YAML, then one chapter per
+# stage: the YAML's stage name as the heading, its difficulty as an italic
+# line, and the stage description verbatim under both.
+#
+# The YAML has two traps, each of which costs or invents a chapter:
+#
+#   - "languages:" is also a list of "- slug:" entries (docker's are c, go,
+#     nim, php, python, ruby, rust, swift).  They are the languages the course
+#     can be solved in, not stages, so the list under "stages:" has to be read
+#     as such -- parse the YAML rather than grep for "- slug:".
+#   - a stage may carry extra keys between "name" and "difficulty" (docker's
+#     last stage has should_skip_previous_stages_for_test_run), so key order
+#     is not something to key off either.
+#
+# What ships is deliberately not cleaned up.  A stage description is written
+# for the course renderer, so it still carries unresolved Mustache
+# conditionals ({{#lang_is_rust}} ... {{/lang_is_rust}}) fencing off
+# language-specific advice, literal <details>/<summary> HTML around optional
+# material, and in one case a whole description commented out with "<!-- -->".
+# The difficulty likewise ships as the raw enum the YAML writes (very_easy).
+# The first two of these books shipped that way and this keeps it: the three
+# read alike, and nothing the course says is silently dropped from the book.
+
+STAGE_DESC = re.compile(r"^base-\d+-(.+)\.md$")
+
+
+def plan_codecrafters(src):
+    """A generated overview from course-definition.yml, then one stage each."""
+    import yaml  # only these books need it, the way bs4 is linternals-only
+
+    with open(os.path.join(src, "course-definition.yml"), encoding="utf-8") as fh:
+        course = yaml.safe_load(fh)
+
+    desc_dir = os.path.join(src, "stage_descriptions")
+    files = {}
+    for name in sorted(os.listdir(desc_dir)):
+        m = STAGE_DESC.match(name)
+        if m:
+            files[m.group(1)] = name
+
+    overview = ["# " + course["name"], "",
+                course["description_md"].rstrip("\n"), "",
+                "## Stages", ""]
+    recs = []
+    for i, stage in enumerate(course["stages"], 1):
+        slug, name, hard = stage["slug"], stage["name"], stage["difficulty"]
+        overview.append("%d. %s  (%s)" % (i, name, hard))
+        if slug not in files:
+            raise SystemExit("stage %r (%s) has no stage_descriptions file" % (slug, name))
+        rel = os.path.join("stage_descriptions", files.pop(slug))
+        recs.append({
+            "title": name,
+            "src": rel,
+            "body": "# %s\n\n*Difficulty: %s*\n\n%s" % (name, hard, read(os.path.join(src, rel))),
+        })
+    # A description the stage list never claims would be a chapter of the
+    # course that silently never reached the book, so stop rather than ship a
+    # book that is quietly short.
+    if files:
+        raise SystemExit("stage_descriptions not listed under stages: %s"
+                         % ", ".join(sorted(files.values())))
+
+    recs.insert(0, {"title": "Overview", "src": "course-definition.yml",
+                    "body": "\n".join(overview) + "\n"})
+    return number(recs, safe=slashonly)
+
+
 # ── linternals fence-language recovery ─────────────────────────────────
 #
 # webextract.py's "content" mode has no special case for Hugo's chroma
@@ -870,6 +955,9 @@ BOOKS = {
     "ebpf-developer-tutorial": (plan_ebpf, "https://github.com/eunomia-bpf/bpf-developer-tutorial/blob/main/", True),
     "heap-exploitation-dhaval-kapil": (plan_heap, "https://github.com/DhavalKapil/heap-exploitation/blob/master/", False),
     "ir0nstone-binary-exploitation": (plan_ir0nstone, "https://github.com/ir0nstone/cybersec-notes/blob/master/", True),
+    "build-your-own-git": (plan_codecrafters, "https://github.com/codecrafters-io/build-your-own-git/blob/main/", False),
+    "build-your-own-sqlite": (plan_codecrafters, "https://github.com/codecrafters-io/build-your-own-sqlite/blob/main/", False),
+    "build-your-own-docker": (plan_codecrafters, "https://github.com/codecrafters-io/build-your-own-docker/blob/main/", False),
     # a browser capture's "<page>_files/" directories exist only on disk, so
     # this book has no upstream path to fall back on
     "linternals-sam4k": (plan_linternals, None, False),

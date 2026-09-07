@@ -2966,6 +2966,9 @@ local BOOKS = {
 		{ title = "Talking Compilers with ChatGPT", fmt = "pdf", file = "TalkingCompilersWithGPT.pdf" },
 		{ title = "Introduction to Static Analysis", fmt = "pdf", file = "Introduction to Static Analysis_ An Abstract Interpretation -- Xavier Rival & Kwangkeun Yi -- MIT Press, Cambridge, Massachusetts, 2020 -- The MIT -- 9780262043410 -- ba89612250e3eb6bad9461c789c1b5fe -- Anna’s Arch.pdf" },
 	} },
+	{ module = "Containers", key = "books-container", items = {
+		{ title = "Build Your Own Docker (CodeCrafters)", fmt = "md", slug = "build-your-own-docker", file = "https://github.com/codecrafters-io/build-your-own-docker" },
+	} },
 	{ module = "Databases", key = "books-db", items = {
 		{ title = "Build Your Own SQLite (CodeCrafters)", fmt = "md", slug = "build-your-own-sqlite", file = "https://github.com/codecrafters-io/build-your-own-sqlite" },
 		{ title = "Database Internals", fmt = "epub", file = "Database Internals _ A Deep Dive Into How Distributed Data -- Alex  Petrov -- O'Reilly Media, Sebastopol, CA, 2019 -- O'Reilly Media, Incorporated -- 9781492040316 -- 6ed4b5c9518da1d5ff76d1cd6c3aa813 -- Anna’s Arc.epub" },
