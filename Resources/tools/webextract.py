@@ -931,6 +931,67 @@ if mode == "content":
             else:
                 del c["class"]
 
+    if opt("docbook"):
+        # TLDP DocBook HTML (Advanced Bash-Scripting Guide): each page is
+        # NAVHEADER + one content container (CHAPTER/SECT1/APPENDIX/PART/INDEX/
+        # BIBLIOENTRY) + NAVFOOTER, all flat under <body>, so the selector is
+        # "body" and the Prev/Next/Home/Up nav comes with it. Drop both nav
+        # bars. The listings are <pre class="PROGRAMLISTING"> (shell scripts)
+        # and <pre class="SCREEN"> (terminal sessions); neither class is a
+        # language, so clean() would strip both to bare fences. This is a bash
+        # book: relabel PROGRAMLISTING as bash so its 861 scripts highlight,
+        # and leave SCREEN as a bare fence (it is mixed command+output). Tabs in
+        # the listings are kept by --preserve-tabs.
+        for t in el.select("div.NAVHEADER, div.NAVFOOTER"):
+            t.decompose()
+        for pre in el.select("pre.PROGRAMLISTING"):
+            pre["class"] = ["bash"]
+        # Admonitions (Note/Tip/Caution/Important/Warning) are drawn as a
+        # two-cell layout table: <td> icon gif + <td> the text. pandoc renders
+        # that as a GFM table with an empty first column ("|  | text |").
+        # Rebuild each as a blockquote led by a bold label, keeping the text
+        # cell's content (including any nested code table) and dropping the icon.
+        for div in el.select("div.NOTE, div.TIP, div.CAUTION, div.IMPORTANT, div.WARNING"):
+            kind = (div.get("class") or ["Note"])[0].title()
+            tbl = div.find("table")
+            tr = tbl.find("tr") if tbl else None
+            tds = tr.find_all("td", recursive=False) if tr else []
+            bq = s.new_tag("blockquote")
+            lab = s.new_tag("p"); st = s.new_tag("strong"); st.string = kind
+            lab.append(st); bq.append(lab)
+            if tds:
+                for child in list(tds[-1].children):
+                    bq.append(child.extract())
+            div.replace_with(bq)
+        # Epigraphs (chapter-opening quotes) are a 2-cell table (spacer + quote);
+        # sidebars are a 1-cell bordered table wrapping a div.SIDEBAR. Both would
+        # otherwise render as GFM tables with an empty cell. Rebuild as
+        # blockquotes, keeping the content cell (prose or a bulleted list).
+        for tbl in el.select("table.EPIGRAPH, table.SIDEBAR"):
+            tr = tbl.find("tr")
+            tds = tr.find_all("td", recursive=False) if tr else []
+            if not tds:
+                continue
+            bq = s.new_tag("blockquote")
+            for child in list(tds[-1].children):
+                bq.append(child.extract())
+            tbl.replace_with(bq)
+        # pandoc's gfm writer drops the character after a backslash in TEXT
+        # (outside code): the escaping example "\$" is written "\\" and the $ is
+        # lost. Double every backslash that precedes ASCII punctuation in text
+        # nodes so the pair survives ("\\$" renders as "\$"); verbatim contexts
+        # (pre/code/...) pass through untouched.
+        _dbesc = re.compile(r'\\(?=[!-/:-@\[-`{-~])')
+        _dbvb = ("pre", "code", "kbd", "samp", "tt", "var", "script", "style")
+        for t in el.find_all(string=True):
+            if type(t) is not NavigableString or "\\" not in t:
+                continue
+            if t.find_parent(_dbvb):
+                continue
+            new = _dbesc.sub(r"\\\\", str(t))
+            if new != str(t):
+                t.replace_with(NavigableString(new))
+
     if opt("wbe"):
         # browser.engineering ships a custom pandoc template with NO article
         # wrapper: every chapter is flat siblings under <body>, so the selector
