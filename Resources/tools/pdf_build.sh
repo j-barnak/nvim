@@ -284,6 +284,13 @@ case "$SLUG" in
   # map, so every bulleted item opens with a literal "z" (1,827 of them);
   # tlpi_fix maps it back to a bullet and drops 9 even-page footer leaks.
   the-linux-programming-interface) FIXAWK="${AWKF%/*}/tlpi_fix.awk" ;;
+  # The Little Book of Semaphores: folio.awk leaks 35 running heads (even-page
+  # "<folio> Chapter Title" footers, odd-page "<n.m> Section Title <folio>"
+  # headers) that splice into the body. semaphores_fix drops both, keyed on the
+  # 12 chapter titles and the "n.m ... trailing folio" shape so no body/code
+  # line is touched. The book's pseudocode spacing ("sem . signal ()") is the
+  # source's own typesetting and is deliberately left as-is.
+  the-little-book-of-semaphores) FIXAWK="${AWKF%/*}/semaphores_fix.awk" ;;
 esac
 # pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
 # control-byte tr. SSA-based Compiler Design typesets a few relations in

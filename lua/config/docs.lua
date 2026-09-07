@@ -3090,6 +3090,7 @@ local BOOKS = {
 		{ title = "System Programming in Linux", fmt = "epub", file = "System-Programming-in-Linux_-A-Hands-On-Introduction-Stewart-N_-Weiss-2025-No-Starch-Press_-Incorpor.epub" },
 		{ title = "Unix Network Programming", fmt = "pdf", file = "Unix-Network-Programming.pdf" },
 		{ title = "Programming with POSIX Threads", fmt = "pdf", file = "Programming with Posix Threads.pdf" },
+		{ title = "The Little Book of Semaphores", fmt = "pdf", file = "LittleBookOfSemaphores.pdf" },
 		{ title = "Is Parallel Programming Hard, And, If So, What Can You Do About It?", fmt = "pdf", slug = "is-parallel-programming-hard", file = "perfbook.pdf" },
 	} },
 	{ module = "Compilers", key = "books-compilers", items = {
