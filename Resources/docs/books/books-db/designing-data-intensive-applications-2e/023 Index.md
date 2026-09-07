@@ -1,0 +1,3518 @@
+# Index
+
+### Symbols
+
+- 3FS (distributed filesystem), Distributed Filesystems
+
+### A
+
+- aborts (transactions), Transactions, Atomicity
+  - cascading, No dirty reads
+  - in two-phase commit, Two-Phase Commit
+  - performance of optimistic concurrency control, Performance of serializable snapshot isolation
+  - retrying aborted transactions, Handling errors and aborts
+- abstraction, Layering of cloud services, Simplicity: Managing Complexity, Data Models and Query Languages, Summary
+- accidental complexity, Simplicity: Managing Complexity
+- accountability, Responsibility and Accountability
+- accounting (financial data), Summary, Advantages of immutable events
+- Accumulo (database), Data locality for reads and writes, Column compression
+- ACID properties (transactions), The Meaning of ACID
+  - atomicity, Atomicity, Single-Object and Multi-Object Operations
+  - consistency, Consistency, Maintaining integrity in the face of software bugs
+  - durability, Making B-trees reliable, Durability
+  - isolation, Isolation, Single-Object and Multi-Object Operations
+- acknowledgments (messaging), Acknowledgments and redelivery
+- active/active replication (see multi-leader replication)
+- active/passive replication (see leader-based replication)
+- ActiveMQ (messaging), Message brokers, XA transactions, Message brokers compared to databases
+- ActiveRecord (object-relational mapper), Object-relational mapping, Handling errors and aborts
+- activity (workflows) (see workflow engines)
+- actor model, Distributed actor frameworks, Event-driven architectures and RPC
+  - (see also event-driven architecture)
+- ad hoc queries, Analytics
+- adaptive capacity, Skewed Workloads and Relieving Hot Spots
+- adjacency list/matrix, Graph-Like Data Models
+- admission control, Combining circuit switching and packet switching
+- Advanced Message Queuing Protocol (AMQP), Message brokers compared to databases
+  - (see also messaging systems)
+  - comparison to log-based messaging, Logs compared to traditional messaging, Replaying old messages
+  - message ordering, Acknowledgments and redelivery
+- aerospace systems, Uses of Byzantine fault tolerance
+- Aerospike (database), Single-object writes
+- AGE (graph database), The Cypher Query Language
+- aggregation
+  - data cubes and materialized views, Materialized Views and Data Cubes
+  - in batch processes, Sorting Versus In-Memory Aggregation
+  - in stream processes, Stream analytics
+- aggregation pipeline (MongoDB), Normalization, Denormalization, and Joins, Query languages for documents
+- Agile, Evolvability: Making Change Easy
+  - minimizing irreversibility, Batch Processing, Reprocessing data for application evolution
+  - moving faster with confidence, The end-to-end argument again
+- agreement, Single-value consensus, Atomic commitment as consensus
+  - (see also consensus)
+- AI (artificial intelligence), Vector Embeddings
+  - (see also machine learning)
+- AI Act (European Union), Data Systems, Law, and Society
+- AirByte (data connector), Data Warehousing
+- Airflow (workflow scheduler), Durable Execution and Workflows, Batch Processing, Scheduling workflows
+  - cloud data warehouse integration, Query Languages
+  - use for ETL, Extract–Transform–Load
+- Akamai response time study, Average, Median, and Percentiles
+- Akka (actor framework), Distributed actor frameworks
+- algorithms
+  - algorithm correctness, Defining the correctness of an algorithm
+  - B-trees, B-Trees-Using B-tree variants
+  - for distributed systems, System Model and Reality
+  - mergesort, Constructing and merging SSTables, Shuffling Data
+  - scheduling, Resource allocation
+  - SSTables and LSM-trees, The SSTable file format-Compaction strategies
+- all-to-all replication topologies, Multi-leader replication topologies
+- AllegroGraph (database), Graph-Like Data Models, The SPARQL query language
+- ALTER TABLE statement (SQL), Schema flexibility in the document model
+- Amazon
+  - Dynamo (see Dynamo (database))
+  - response time study, Average, Median, and Percentiles
+- Amazon EBS (virtual block device), Separation of storage and compute, Setting Up New Followers
+- Amazon Kinesis (messaging), Cloud Data Warehouses
+- Amazon Neptune (graph database), Graph-Like Data Models
+  - Cypher query language, The Cypher Query Language
+  - SPARQL query language, The SPARQL query language
+- Amazon S3 (object storage), Layering of cloud services, Setting Up New Followers, Batch Processing, Distributed Filesystems, Object Stores
+  - checking data integrity, Don’t just blindly trust what they promise
+  - conditional writes, Fencing off zombies and delayed requests
+  - object size, Separation of storage and compute
+  - S3 Express One Zone, Object Stores, Object Stores
+  - use in MapReduce, MapReduce
+- Amazon Web Services (AWS)
+  - Amazon EBS, Separation of storage and compute, Setting Up New Followers
+  - Amazon Kinesis, Cloud Data Warehouses
+  - Amazon Neptune, Graph-Like Data Models, The Cypher Query Language, The SPARQL query language
+  - Amazon S3 (see Amazon S3 (object storage))
+  - Aurora, Cloud Native System Architecture
+  - ClockBound, Clock readings with a confidence interval, Synchronized clocks for global snapshots
+  - correctness testing, Formal Methods and Randomized Testing
+  - DynamoDB (see DynamoDB (database))
+  - Kinesis (see Kinesis (messaging))
+- amplification
+  - of bias, Bias and Discrimination
+  - of failures, Maintaining derived state
+  - of tail latency, Use of Response Time Metrics, Local Secondary Indexes
+  - write amplification, Write amplification
+- AMQP (see Advanced Message Queuing Protocol (AMQP))
+- analytical systems, Operational Versus Analytical Systems
+  - as derived data systems, Systems of Record and Derived Data
+  - ETL from operational systems, Data Warehousing
+  - governance, Beyond the data lake
+  - operational systems compared with, Operational Versus Analytical Systems-Systems of Record and Derived Data
+- analytics, Operational Versus Analytical Systems-Systems of Record and Derived Data
+  - comparison to transaction processing, Characterizing Transaction Processing and Analytics
+  - data normalization, Trade-offs of normalization
+  - data warehousing (see data warehousing)
+  - predictive (see predictive analytics)
+  - relation to batch processing, Analytics-Analytics
+  - schemas for, Stars and Snowflakes: Schemas for Analytics-Stars and Snowflakes: Schemas for Analytics
+  - snapshot isolation for queries, Snapshot Isolation and Repeatable Read
+  - stream analytics, Stream analytics
+- analytics engineers/engineering, Operational Versus Analytical Systems
+- anti-entropy, Catching up on missed writes
+- Antithesis (deterministic simulation testing), Deterministic simulation testing
+- Apache Accumulo (see Accumulo)
+- Apache ActiveMQ (see ActiveMQ)
+- Apache Arrow (see Arrow (data format))
+- Apache Avro (see Avro)
+- Apache Beam (see Beam)
+- Apache BookKeeper (see BookKeeper)
+- Apache Cassandra (see Cassandra)
+- Apache Curator (see Curator)
+- Apache DataFusion (see DataFusion (query engine))
+- Apache Druid (see Druid (database))
+- Apache Flink (see Flink (processing framework))
+- Apache Giraph, Machine Learning
+- Apache HBase (see HBase)
+- Apache Hive (see Hive (data warehouse))
+- Apache Iceberg (see Iceberg (table format))
+- Apache Jena (see Jena)
+- Apache Kafka (see Kafka)
+- Apache Kinesis (messaging), Using logs for message storage
+- Apache Lucene (see Lucene)
+- Apache Oozie (see Oozie (workflow scheduler))
+- Apache ORC (see ORC (data format))
+- Apache Parquet (see Parquet (data format))
+- Apache Pig (query language), Query Languages
+- Apache Pinot (see Pinot (database))
+- Apache Pulsar (see Pulsar)
+- Apache Qpid (see Qpid)
+- Apache Samza (see Samza)
+- Apache Solr (see Solr)
+- Apache Spark (see Spark (processing framework))
+- Apache Storm (see Storm)
+- Apache Superset (see Superset (data visualization software))
+- Apache Thrift (see Thrift)
+- Apache Tinkerpop Gremlin, Query Languages
+- Apache ZooKeeper (see ZooKeeper)
+- Apama (stream analytics), Complex event processing
+- APIs (see application programming interfaces (APIs))
+- append-only files (see logs)
+- append-only log, The Many Faces of Consensus
+- application programming interfaces (APIs), Data Models and Query Languages
+  - for change streams, API support for change streams
+  - for distributed transactions, XA transactions
+  - for services, Dataflow Through Services: REST and RPC-Data encoding and evolution for RPC
+    - (see also services)
+    - evolvability, Data encoding and evolution for RPC
+    - RESTful, Web services
+- application state (see state)
+- approximate search (see similarity search)
+- archival storage, data from databases, Archival storage
+- arcs (see edges)
+- ArcticDB (database), DataFrames, Matrices, and Arrays
+- arithmetic mean, Average, Median, and Percentiles
+- arrays
+  - array databases, DataFrames, Matrices, and Arrays
+  - multidimensional, DataFrames, Matrices, and Arrays
+- Arrow (data format), Column-Oriented Storage, DataFrames
+- artificial intelligence (AI), Vector Embeddings
+  - (see also machine learning)
+- ASCII text, Protocol Buffers
+- ASN.1 (schema language), The Merits of Schemas
+- associative table, Many-to-One and Many-to-Many Relationships, Property Graphs
+- asynchronous communication, Event-Driven Architectures
+- asynchronous networks, Unreliable Networks, Glossary
+  - comparison to synchronous networks, Synchronous Versus Asynchronous Networks
+  - system model, System Model and Reality
+- asynchronous replication, Synchronous Versus Asynchronous Replication, Glossary
+  - data loss on failover, Leader failure: Failover
+  - reads from asynchronous follower, Problems with Replication Lag
+  - with multiple leaders, Multi-Leader Replication
+- Asynchronous Transfer Mode (ATM), Combining circuit switching and packet switching
+- atomic broadcast, Shared logs as consensus
+- atomic clocks, Clock readings with a confidence interval, Synchronized clocks for global snapshots
+  - (see also clocks)
+- atomicity (concurrency), Glossary
+  - atomic increment, Single-object writes
+  - compare-and-set (CAS), Conditional writes (compare-and-set), What Makes a System Linearizable?
+    - (see also compare-and-set (CAS))
+  - denormalized data, Trade-offs of normalization
+  - fetch-and-add/increment, ID Generators and Logical Clocks, Consensus, Fetch-and-add as consensus
+  - write operations, Atomic write operations
+- atomicity (transactions), Atomicity, Single-Object and Multi-Object Operations, Glossary
+  - atomic commit, The Many Faces of Consensus
+    - avoiding, Multishard request processing, Coordination-avoiding data systems
+    - blocking and nonblocking, Three-phase commit
+    - in stream processing, Exactly-once message processing, Exactly-Once Message Processing Revisited, Atomic commit revisited
+    - maintaining derived data, Keeping Systems in Sync
+  - distributed transactions, Distributed Transactions-Exactly-Once Message Processing Revisited
+  - for multi-object transactions, Single-Object and Multi-Object Operations
+  - for single-object writes, Single-object writes
+  - relation to consensus, Atomic commitment as consensus
+- auditability, Trust, but Verify-Tools for auditable data systems
+  - designing for, Designing for auditability
+  - self-auditing systems, Don’t just blindly trust what they promise
+  - through immutability, Advantages of immutable events
+  - tools for auditable data systems, Tools for auditable data systems
+- Aurora (cloud database), Cloud Native System Architecture
+- Aurora DSQL (database), Snapshot Isolation and Repeatable Read
+- auto-scaling, Operations: Automatic Versus Manual Rebalancing
+- Automerge (sync engine), Pros and cons of sync engines
+- availability, Reliability and Fault Tolerance
+  - (see also fault tolerance)
+  - in CAP theorem, The CAP theorem
+  - in leader election, Subtleties of consensus
+  - in service level agreements (SLAs), Use of Response Time Metrics
+- availability zones, Tolerating hardware faults through redundancy, Reading your own writes
+- Avro (data format), From data warehouse to data lake, Avro-Dynamically generated schemas
+  - dynamically generated schemas, Dynamically generated schemas
+  - object container files, But what is the writer’s schema?, Archival storage
+  - reader determining writer’s schema, But what is the writer’s schema?
+  - schema evolution, The writer’s schema and the reader’s schema
+  - use in batch processing, MapReduce
+- awk (Unix tool), Simple Log Analysis, Simple Log Analysis, Distributed Job Orchestration
+- AWS (Amazon Web Services) (see Amazon Web Services (AWS))
+- Axon Framework, Event Sourcing and CQRS
+- Azkaban (workflow scheduler), Batch Processing
+- Azure Blob Storage (object storage), Layering of cloud services, Setting Up New Followers, Fencing off zombies and delayed requests
+- Azure Cosmos DB, Conflict-free replicated datatypes and operational transformation
+- Azure managed disks, Separation of storage and compute
+- Azure SQL DB (database), Cloud Native System Architecture
+- Azure Storage, Object Stores
+- Azure Synapse Analytics (database), Cloud Native System Architecture
+- Azure Virtual Machines, Handling faults
+
+### B
+
+- B-trees (indexes), Storage and Retrieval, B-Trees-Using B-tree variants
+  - B+ trees, Using B-tree variants
+  - branching factor, B-Trees
+  - comparison to LSM-trees, Comparing B-Trees and LSM-Trees-Disk space usage
+  - crash recovery, Making B-trees reliable
+  - growing by splitting a page, B-Trees
+  - immutable variants, Using B-tree variants, Indexes and snapshot isolation
+  - similarity to shard splitting, Rebalancing key-range sharded data
+  - variants, Using B-tree variants
+- B2 (object storage), Distributed Filesystems
+- Backblaze B2 (see B2 (object storage))
+- backend, Trade-Offs in Data Systems Architecture
+- backoff, exponential, Describing Performance, Handling errors and aborts
+- backpressure, Describing Performance, Read performance, Messaging Systems, Glossary
+  - in batch processing, Scheduling workflows
+  - in TCP, The Limitations of TCP
+- backups
+  - database snapshot for replication, Setting Up New Followers
+  - in multitenant systems, Sharding for Multitenancy
+  - integrity of, Don’t just blindly trust what they promise
+  - snapshot isolation for, Snapshot Isolation and Repeatable Read
+  - using object storage, Setting Up New Followers
+  - versus replication, Replication
+- backward compatibility, Encoding and Evolution
+- BadgerDB (database), Serializable Snapshot Isolation
+- bash shell (Unix), Storage and Indexing for OLTP
+- Basically Available, Soft state, and Eventual consistency (BASE), contrast to ACID, The Meaning of ACID
+- batch processing, Batch Processing-Summary, Glossary
+  - and functional programming, MapReduce
+  - benefits of, Batch Processing
+  - combining with stream processing, Unifying batch and stream processing
+  - comparison to stream processing, Processing Streams
+  - dataflow engines, Dataflow Engines-Dataflow Engines
+  - fault tolerance, Handling faults, Messaging Systems
+  - for data integration, Batch and Stream Processing-Unifying batch and stream processing
+  - graphs and iterative processing, Machine Learning
+  - high-level APIs and languages, Query Languages-Query Languages
+  - in cloud data warehouses, Query Languages
+  - in distributed systems, Batch Processing in Distributed Systems
+  - join and group by, Joins and Grouping-Joins and Grouping
+  - limitations, Batch Processing
+  - log-based messaging and, Replaying old messages
+  - maintaining derived state, Maintaining derived state
+  - measuring performance, Batch Processing
+  - models of, Batch Processing Models
+  - resource allocation, Resource allocation-Resource allocation
+  - resource managers, Distributed Job Orchestration
+  - schedulers, Distributed Job Orchestration
+  - serving derived data, Serving Derived Data-Serving Derived Data
+  - shuffling data, Shuffling Data-Shuffling Data
+  - task execution, Distributed Job Orchestration
+  - use cases, Batch Use Cases-Serving Derived Data
+  - using Unix tools (example), Batch Processing with Unix Tools-Sorting Versus In-Memory Aggregation
+- batch processing frameworks, comparison to operating systems, Batch Processing in Distributed Systems
+- Beam (dataflow library), Stream analytics, Unifying batch and stream processing
+- BERT (language model), Vector Embeddings
+- BGP (Border Gateway Protocol), Combining circuit switching and packet switching
+- BI (business intelligence), Operational Versus Analytical Systems
+- bias, Bias and Discrimination
+- bidirectional replication (see multi-leader replication)
+- big ball of mud, Simplicity: Managing Complexity
+- big data, versus data minimization, Data Systems, Law, and Society, Legislation and Self-Regulation
+- BigQuery (database), Cloud Native System Architecture, Cloud Data Warehouses, Batch Processing
+  - DataFrames, Query Languages
+  - sharding and clustering, Sharding by hash range
+  - shuffling data, Shuffling Data
+  - snapshot isolation support, Snapshot Isolation and Repeatable Read
+- Bigtable (database)
+  - sharding scheme, Sharding by Key Range
+  - storage layout, Constructing and merging SSTables
+  - wide-column data model, Data locality for reads and writes, Column compression
+- binary data encodings, Binary encodings-The Merits of Schemas
+  - Avro, Avro-Dynamically generated schemas
+  - MessagePack, Binary encodings-Binary encodings
+  - Protocol Buffers, Protocol Buffers-Field tags and schema evolution
+- binary strings, lack of support in JSON and XML, JSON, XML, and Binary Variants
+- binlog (MySQL), Setting Up New Followers, Logical (row-based) log replication
+- Bitcoin (cryptocurrency), Tools for auditable data systems
+  - Byzantine fault tolerance, Uses of Byzantine fault tolerance
+  - concurrency bugs in exchanges, Weak Isolation Levels
+- bitmap indexes, Column compression
+- BitTorrent uTP protocol, The Limitations of TCP
+- Bkd-trees (indexes), Multidimensional and Full-Text Indexes
+- blameless postmortems, Humans and Reliability
+- Blazegraph (database), Graph-Like Data Models, The SPARQL query language
+- blob storage (see object storage)
+- block (filesystem), Distributed Filesystems
+- block device (disk), Separation of storage and compute
+- blockchains, Summary, Uses of Byzantine fault tolerance, Consensus, Tools for auditable data systems
+- blocking atomic commit, Three-phase commit
+- Bloom filter (algorithm), Bloom filters, Read performance, Stream analytics
+- BookKeeper (replicated log), Allocating work to nodes
+- Border Gateway Protocol (BGP), Combining circuit switching and packet switching
+- bounded datasets, Summary, Glossary
+  - (see also batch processing)
+- bounded delays, Glossary
+  - in networks, Synchronous Versus Asynchronous Networks
+  - process pauses, Provididng response time guarantees
+- BPEL (Business Process Execution Language), Durable Execution and Workflows
+- BPMN (Business Process Model and Notation), Durable Execution and Workflows, Durable Execution and Workflows
+- broadcast (see shared logs)
+- brokerless messaging, Direct messaging from producers to consumers
+- BSP (bulk synchronous parallel), Machine Learning
+- BTM (transaction coordinator), Two-Phase Commit
+- Bufstream (messaging), Disk space usage
+- build or buy, Cloud Versus Self-Hosting
+- bulk synchronous parallel (BSP), Machine Learning
+- bursty network traffic patterns, Can we not simply make network delays predictable?
+- business analyst, Operational Versus Analytical Systems, From data warehouse to data lake
+- business data processing, Characterizing Transaction Processing and Analytics
+- business intelligence (BI), Operational Versus Analytical Systems
+- Business Process Execution Language (BPEL), Durable Execution and Workflows
+- Business Process Model and Notation (BPMN), Durable Execution and Workflows
+  - example, Durable Execution and Workflows
+- byte sequence, encoding data in, Formats for Encoding Data
+- Byzantine faults, Byzantine Faults-Weak forms of lying, System Model and Reality, Glossary
+  - Byzantine fault-tolerant systems, Uses of Byzantine fault tolerance
+  - Byzantine Generals Problem, Byzantine Faults
+  - consensus algorithms and, Consensus, Tools for auditable data systems
+
+### C
+
+- caches, Keeping Everything in Memory, Glossary
+  - and materialized views, Materialized Views and Data Cubes
+  - as derived data, Systems of Record and Derived Data, Composing Data Storage Technologies-Unbundled versus integrated systems
+  - in CPUs, Query Execution: Compilation and Vectorization, Linearizability and network delays
+  - invalidation and maintenance, Keeping Systems in Sync, Maintaining materialized views
+  - linearizability, Linearizability
+  - local disks in the cloud, Separation of storage and compute
+- calendar sync, Sync Engines and Local-First Software, Pros and cons of sync engines
+- California Consumer Privacy Act (CCPA), Data Systems, Law, and Society
+- Camunda (workflow engine), Durable Execution and Workflows
+- canonical version (of data), Systems of Record and Derived Data
+- CAP theorem, The CAP theorem-The CAP theorem, Glossary
+- capacity planning, Operations in the Cloud Era
+- Cap’n Proto (data format), Formats for Encoding Data
+- carbon emissions, Distributed Versus Single-Node Systems
+- CAS (see compare-and-set (CAS))
+- cascading aborts, No dirty reads
+- cascading failures, Software faults, Operations: Automatic Versus Manual Rebalancing, Timeouts and Unbounded Delays
+- Cassandra (database)
+  - change data capture, Implementing CDC, API support for change streams
+  - compaction strategy, Compaction strategies
+  - consistency level ANY, Single-Leader Versus Leaderless Replication Performance
+  - hash-range sharding, Sharding by Hash of Key, Sharding by hash range
+  - last-write-wins conflict resolution, Detecting Concurrent Writes
+  - leaderless replication, Leaderless Replication
+  - lightweight transactions, Single-object writes
+  - linearizability, lack of, Implementing Linearizable Systems
+  - log-structured storage, Constructing and merging SSTables
+  - multi-region support, Multi-Region Operation
+  - secondary indexes, Local Secondary Indexes
+  - use of clocks, Understanding the limitations of quorum consistency
+  - vnodes (sharding), Sharding
+- cat (Unix tool), Simple Log Analysis
+- catalog, Cloud Data Warehouses
+- causal context, Version vectors
+  - (see also causal dependencies)
+- causal dependencies, The happens-before relation and concurrency-Version vectors
+  - capturing, Version vectors, The limits of total ordering, Ordering events to capture causality, Reads are events too
+  - in transactions, Decisions based on an outdated premise
+  - sending message to friends (example), Ordering events to capture causality
+- causality, Glossary
+  - causal ordering, Logical Clocks
+  - consistency with, Logical Clocks-Enforcing constraints using logical clocks
+  - happens-before relation, The happens-before relation and concurrency
+  - in serializable transactions, Decisions based on an outdated premise-Detection of writes that affect prior reads
+  - ordering events to capture, Ordering events to capture causality
+  - violations of, Consistent prefix reads, Problems with different topologies, Timestamps for ordering events
+  - with synchronized clocks, Synchronized clocks for global snapshots
+- CCPA (California Consumer Privacy Act), Data Systems, Law, and Society
+- CDC (see change data capture (CDC))
+- cell-based architecture, Sharding for Multitenancy
+- CEP (complex event processing), Complex event processing
+- CephFS (distributed filesystem), Batch Processing, Object Stores
+- certificate transparency, Tools for auditable data systems
+- cgroups, Distributed Job Orchestration
+- chain of commands, Chain of Commands Versus Custom Program
+- change data capture (CDC), Logical (row-based) log replication, Change Data Capture
+  - API support for change streams, API support for change streams
+  - comparison to event sourcing, CDC versus event sourcing
+  - implementing, Implementing CDC
+  - initial snapshot, Initial snapshot
+  - log compaction, Log compaction
+- change stream, Single-Leader Replication
+- changelogs, State, Streams, and Immutability
+  - change data capture, Change Data Capture
+  - in stream joins, Stream–table join (stream enrichment)
+  - log compaction, Log compaction
+- chaos engineering, Fault Tolerance, Fault injection
+- checkpointing
+  - in high-performance computing, Cloud Computing Versus Supercomputing
+  - in stream processors, Microbatching and checkpointing
+- circuit breaker (limiting retries), Describing Performance
+- circuit-switched networks, Synchronous Versus Asynchronous Networks
+- circular buffers, Disk space usage
+- circular replication topologies, Multi-leader replication topologies
+- Citus (database), Fixed number of shards
+- claiming a username (example), More examples of write skew
+- ClickHouse (database), Characterizing Transaction Processing and Analytics, Cloud Native System Architecture, Maintaining materialized views
+- clickstream data, analysis of, Joins and Grouping
+- clients
+  - calling services, Dataflow Through Services: REST and RPC
+  - offline-capable, Sync Engines and Local-First Software, Stateful, offline-capable clients
+  - pushing state changes to, Pushing state changes to clients
+  - request routing, Request Routing
+- ClockBound (time sync), Clock readings with a confidence interval, Synchronized clocks for global snapshots
+- clocks, Unreliable Clocks-Limiting the impact of garbage collection
+  - atomic clocks, Clock readings with a confidence interval, Synchronized clocks for global snapshots
+  - confidence interval, Clock readings with a confidence interval-Synchronized clocks for global snapshots
+  - for global snapshots, Synchronized clocks for global snapshots
+  - hybrid logical clocks, Hybrid logical clocks
+  - logical (see logical clocks)
+  - skew, Relying on Synchronized Clocks-Clock readings with a confidence interval, Implementing Linearizable Systems
+  - slewing, Monotonic clocks
+  - synchronization and accuracy, Clock Synchronization and Accuracy-Clock Synchronization and Accuracy
+  - synchronization using GPS, Unreliable Clocks, Clock Synchronization and Accuracy, Clock readings with a confidence interval, Synchronized clocks for global snapshots
+  - time-of-day versus monotonic clocks, Monotonic Versus Time-of-Day Clocks
+  - timestamping events, Whose clock are you using, anyway?
+- cloud native, Cloud Native System Architecture-Operations in the Cloud Era
+- cloud services, Cloud Versus Self-Hosting-Cloud Computing Versus Supercomputing
+  - availability zones, Tolerating hardware faults through redundancy, Reading your own writes
+  - data warehouses, Cloud Data Warehouses
+  - need for service discovery, Service discovery
+  - pros and cons, Pros and Cons of Cloud Services-Pros and Cons of Cloud Services
+  - quotas, Operations in the Cloud Era
+  - regions (see regions (geographic distribution))
+  - serverless, Microservices and Serverless
+  - shared resources, Variability of network delays
+  - versus supercomputing, Cloud Computing Versus Supercomputing
+- Cloudflare
+  - R2 (see R2 (object storage))
+- clustered indexes, Storing Values Within the Index
+- clustering (record ordering), Sharding by hash range
+- CMS (concurrent mark sweep), Limiting the impact of garbage collection
+- CockroachDB (database)
+  - consensus-based replication, Single-Leader Replication
+  - consistency model, What Makes a System Linearizable?
+  - key-range sharding, Sharding, Sharding by Key Range
+  - serializable transactions, Serializable Snapshot Isolation
+  - sharded secondary indexes, Global Secondary Indexes
+  - transactions, What Exactly Is a Transaction?, Database-Internal Distributed Transactions
+  - use of model-checking, Model checking and specification languages
+- code generation
+  - for query execution, Query Execution: Compilation and Vectorization
+  - with Protocol Buffers, Protocol Buffers
+- collaborative editing, Real-time collaboration, offline-first, and local-first apps
+- column families (Bigtable), Data locality for reads and writes, Column compression
+- column-oriented storage, Column-Oriented Storage-Query Execution: Compilation and Vectorization
+  - column compression, Column compression
+  - Parquet, Column-Oriented Storage, Archival storage
+  - sort order in, Sort order in column storage-Sort order in column storage
+  - vectorized processing, Query Execution: Compilation and Vectorization
+  - versus wide-column model, Column compression
+  - writing to, Writing to column-oriented storage
+- comma-separated values (CSV), Storage and Indexing for OLTP, JSON, XML, and Binary Variants
+- command query responsibility segregation (CQRS), Event Sourcing and CQRS-Event Sourcing and CQRS, Deriving several views from the same event log
+- commands (event sourcing), Event Sourcing and CQRS
+- commit point, A system of promises
+- commits (transactions), Transactions
+  - atomic commit, Distributed Transactions-Exactly-Once Message Processing Revisited
+    - (see also atomicity; transactions)
+  - read-committed isolation, Read Committed
+  - three-phase commit (3PC), Three-phase commit
+  - two-phase commit (2PC), Two-Phase Commit-Coordinator failure
+- Common Object Request Broker Architecture (CORBA), The problems with remote procedure calls
+- commutative operations, Conflict resolution and replication
+- compaction
+  - of changelogs, Log compaction
+    - (see also logs, compaction)
+  - of log-structured storage, Constructing and merging SSTables
+    - issues with, Read performance
+    - size-tiered and leveled approaches, Compaction strategies, Disk space usage
+- compare-and-set (CAS), Conditional writes (compare-and-set), What Makes a System Linearizable?
+  - implementing locks, Coordination Services
+  - implementing uniqueness constraints, Constraints and uniqueness guarantees
+  - on object storage, Setting Up New Followers
+  - relation to consensus, Implementing Linearizable Systems, Consensus, Compare-and-set as consensus
+  - relation to fencing tokens, Fencing off zombies and delayed requests
+  - relation to transactions, Single-object writes
+- compatibility, Modes of Dataflow
+  - calling services, Data encoding and evolution for RPC
+  - foward and backward, Encoding and Evolution
+  - properties of encoding formats, Summary
+  - using databases, Dataflow Through Databases-Archival storage
+- compensating transactions, Advantages of immutable events, Loosely interpreted constraints
+- compilation, Query Execution: Compilation and Vectorization
+- complex event processing (CEP), Complex event processing
+- complexity
+  - distilling in theoretical models, Mapping system models to the real world
+  - essential and accidental, Simplicity: Managing Complexity
+  - hiding using abstraction, Data Models and Query Languages
+  - managing, Simplicity: Managing Complexity
+- composing data systems (see unbundling databases)
+- compression, in SSTables, The SSTable file format
+- compute-intensive applications, Trade-Offs in Data Systems Architecture
+- computer games, Pros and cons of sync engines
+- concatenated indexes, Multidimensional and Full-Text Indexes
+- concurrency
+  - actor programming model, Distributed actor frameworks, Event-driven architectures and RPC
+    - (see also event-driven architecture)
+  - bugs from weak transaction isolation, Weak Isolation Levels
+  - conflict resolution, Dealing with Conflicting Writes-Types of conflict
+  - definition, Dealing with Conflicting Writes
+  - detecting concurrent writes, Detecting Concurrent Writes-Version vectors
+  - dual writes, problems with, Keeping Systems in Sync
+  - happens-before relation, The happens-before relation and concurrency
+  - in replicated systems, Problems with Replication Lag-Version vectors, Linearizability-Linearizability and network delays
+  - lost updates, Preventing Lost Updates
+  - multiversion concurrency control (MVCC), Multiversion concurrency control, Synchronized clocks for global snapshots
+  - optimistic concurrency control, Pessimistic versus optimistic concurrency control
+  - ordering of operations, What Makes a System Linearizable?
+  - reducing, through event logs, Concurrency control
+  - time and relativity, The happens-before relation and concurrency
+  - transaction isolation, Isolation
+  - write skew (transaction isolation), Write Skew and Phantoms-Materializing conflicts
+- concurrent mark sweep (CMS), Limiting the impact of garbage collection
+- conditional write, Conditional writes (compare-and-set)
+  - in transactions, Single-object writes
+  - on object storage, Setting Up New Followers
+- conference management system (example), Event Sourcing and CQRS
+- confidence interval, Clock readings with a confidence interval
+- conflict-free replicated datatypes (CRDTs), Conflict-free replicated datatypes and operational transformation
+  - for leaderless replication, Capturing the happens-before relationship
+  - preventing lost updates, Conflict resolution and replication
+- conflicts
+  - avoidance, Conflict avoidance
+  - causal dependencies, The happens-before relation and concurrency
+  - conflict detection
+    - in distributed transactions, Problems with XA transactions
+    - in log-based systems, Uniqueness constraints require consensus
+    - in serializable snapshot isolation (SSI), Detection of writes that affect prior reads
+    - in two-phase commit, A system of promises
+  - conflict resolution, Dealing with Conflicting Writes-Types of conflict
+    - automatic, Automatic conflict resolution
+    - by aborting transactions, Pessimistic versus optimistic concurrency control
+    - by apologizing, Loosely interpreted constraints
+    - in leaderless systems, Detecting Concurrent Writes
+    - last write wins (LWW), Last write wins (discarding concurrent writes), Timestamps for ordering events
+    - using atomic operations, Conflict resolution and replication
+    - using CRDTs and OT, Conflict-free replicated datatypes and operational transformation
+  - determining what is a conflict, Types of conflict, Uniqueness in log-based messaging
+  - in leaderless replication, Detecting Concurrent Writes
+  - lost updates, Preventing Lost Updates-Conflict resolution and replication
+  - materializing, Materializing conflicts
+  - siblings, Manual conflict resolution, Capturing the happens-before relationship, Capturing the happens-before relationship
+  - write skew (transaction isolation), Write Skew and Phantoms-Materializing conflicts
+- Confluent
+  - Freight (messaging), Setting Up New Followers, Disk space usage
+  - schema registry, JSON Schema, But what is the writer’s schema?
+- congestion (networks)
+  - avoidance, The Limitations of TCP
+  - limiting accuracy of clocks, Clock readings with a confidence interval
+  - queueing delays, Network congestion and queueing
+- consensus, Consensus-Summary, Glossary
+  - algorithms, Consensus, Consensus in Practice
+  - consensus numbers, Fetch-and-add as consensus
+  - coordination services, Coordination Services-Service discovery
+  - cost of, Pros and cons of consensus
+  - impossibility of, Consensus
+  - preventing split brain, From single-leader replication to consensus
+  - reconfiguration, Subtleties of consensus
+  - relation to atomic commitment, Atomic commitment as consensus
+  - relation to compare-and-set (CAS), Implementing Linearizable Systems, Compare-and-set as consensus
+  - relation to fetch-and-add, Fetch-and-add as consensus
+  - relation to replication, Using shared logs
+  - relation to shared logs, Shared logs as consensus
+  - relation to uniqueness constraints, Uniqueness constraints require consensus
+  - safety and liveness properties, Single-value consensus
+  - single-value consensus, Single-value consensus
+- consent (GDPR), Consent and Freedom of Choice
+- consistency, Consistency, Timeliness and Integrity
+  - across different databases, Leader failure: Failover, Keeping Systems in Sync, Deriving several views from the same event log, Derived data versus distributed transactions
+  - causal, Consistent prefix reads, Problems with different topologies, Ordering events to capture causality
+  - consistent prefix reads, Consistent prefix reads-Consistent prefix reads
+  - consistent snapshots, Setting Up New Followers, Snapshot Isolation and Repeatable Read-Snapshot isolation, repeatable read, and naming confusion, Synchronized clocks for global snapshots, Initial snapshot, Creating an index
+    - (see also snapshots)
+  - crash recovery, Making B-trees reliable
+  - defined, Aiming for Correctness
+  - enforcing constraints (see constraints)
+  - eventual, Problems with Replication Lag
+    - (see also eventual consistency)
+  - in ACID transactions, Consistency, Maintaining integrity in the face of software bugs
+  - in CAP theorem, The CAP theorem
+  - in leader election, Subtleties of consensus
+  - in microservices, Problems with Distributed Systems
+  - linearizability, Solutions for Replication Lag, Linearizability-Linearizability and network delays
+  - meanings of, Consistency
+  - monotonic reads, Monotonic reads
+  - of multi-leader replication, Geographically Distributed Operation
+  - of secondary indexes, The need for multi-object transactions, Indexes and snapshot isolation, Reasoning about dataflows, Creating an index
+  - read-after-write, Reading your own writes-Reading your own writes
+  - strong (see linearizability)
+  - timeliness and integrity, Timeliness and Integrity
+  - using quorums, Understanding the limitations of quorum consistency, Implementing Linearizable Systems
+- consistent hashing, Consistent hashing
+- consistent prefix reads, Consistent prefix reads
+- constraints (databases), Consistency, Characterizing write skew
+  - coordination avoidance, Coordination-avoiding data systems
+  - ensuring idempotence, Uniquely identifying requests
+  - in log-based systems, Enforcing Constraints-Multishard request processing
+    - across multiple shards, Multishard request processing
+  - in two-phase commit, Distributed Transactions, A system of promises
+  - relation to consensus, Uniqueness constraints require consensus
+  - requiring linearizability, Constraints and uniqueness guarantees
+- Consul (coordination service), Coordination Services, Service discovery
+- consumers (message streams), Message brokers, Transmitting Event Streams
+  - backpressure, Messaging Systems
+  - consumer groups, Multiple consumers
+  - consumer offsets in logs, Consumer offsets
+  - failures, Consumer offsets
+  - fan-out, Materializing and Updating Timelines, Multiple consumers, Logs compared to traditional messaging
+  - load balancing, Multiple consumers, Logs compared to traditional messaging
+  - not keeping up with producers, Messaging Systems, Disk space usage, Making unbundling work
+- content models (JSON Schema), JSON Schema
+- contention
+  - between transactions, Handling errors and aborts
+  - blocking threads, Process Pauses
+  - performance of optimistic concurrency control, Pessimistic versus optimistic concurrency control
+  - under two-phase locking, Performance of 2PL
+- context switches, Latency and Response Time, Process Pauses
+- convergence (conflict resolution), Automatic conflict resolution-Conflict-free replicated datatypes and operational transformation
+- coordination
+  - avoidance, Coordination-avoiding data systems
+  - cross-datacenter, The limits of total ordering
+  - cross-region, Geographically Distributed Operation
+  - cross-shard ordering, Sharding, Synchronized clocks for global snapshots, Using shared logs, Multishard request processing
+  - routing requests to shards, Request Routing
+  - services, Locking and leader election, Coordination Services-Service discovery
+- coordinator (in 2PC), Two-Phase Commit
+  - failure, Coordinator failure
+  - in XA transactions, XA transactions-Problems with XA transactions
+  - recovery, Recovering from coordinator failure
+- copy-on-write (B-trees), Using B-tree variants, Indexes and snapshot isolation
+- CORBA (Common Object Request Broker Architecture), The problems with remote procedure calls
+- coronal mass ejection (see solar storm)
+- correctness
+  - auditability, Trust, but Verify-Tools for auditable data systems
+  - Byzantine fault tolerance, Uses of Byzantine fault tolerance
+  - dealing with partial failures, Faults and Partial Failures
+  - in log-based systems, Enforcing Constraints-Multishard request processing
+  - of algorithm within system model, Defining the correctness of an algorithm
+  - of derived data, Designing for auditability
+  - of immutable data, Advantages of immutable events
+  - of personal data, Responsibility and Accountability, Privacy and Use of Data
+  - of time, Problems with different topologies, Clock Synchronization and Accuracy-Synchronized clocks for global snapshots
+  - of transactions, Consistency, Aiming for Correctness, Maintaining integrity in the face of software bugs
+  - timeliness and integrity, Timeliness and Integrity-Coordination-avoiding data systems
+- corruption of data
+  - detecting, The end-to-end argument, Don’t just blindly trust what they promise-Tools for auditable data systems
+  - due to pathological memory access, Hardware and Software Faults
+  - due to radiation, Uses of Byzantine fault tolerance
+  - due to split brain, Leader failure: Failover, Distributed Locks and Leases
+  - due to weak transaction isolation, Weak Isolation Levels
+  - integrity as absence of, Timeliness and Integrity
+  - network packets, Weak forms of lying
+  - on disks, Durability
+  - preventing using write-ahead logs, Making B-trees reliable
+  - recovering from, Batch Processing
+- cosine similarity (semantic search), Vector Embeddings
+- Couchbase (database)
+  - document data model, Relational Versus Document Models
+  - durability, Keeping Everything in Memory
+  - hash sharding, Fixed number of shards
+  - join support, Convergence of document and relational databases
+  - rebalancing, Operations: Automatic Versus Manual Rebalancing
+  - vBuckets (sharding), Sharding
+- CouchDB (database), Batch Processing
+  - as sync engine, Pros and cons of sync engines
+  - B-tree storage, Indexes and snapshot isolation
+  - conflict resolution, Manual conflict resolution
+- coupling (loose and tight), Evolvability: Making Change Easy
+- covering indexes, Storing Values Within the Index
+- CozoDB (database), Datalog: Recursive Relational Queries
+- CPUs
+  - cache coherence and memory barriers, Linearizability and network delays
+  - caching and pipelining, Query Execution: Compilation and Vectorization
+  - computing the wrong result, Hardware and Software Faults
+  - SIMD instructions, Query Execution: Compilation and Vectorization
+- CQRS (command query responsibility segregation), Event Sourcing and CQRS-Event Sourcing and CQRS, Deriving several views from the same event log
+- crash-stop and crash-recovery faults, System Model and Reality
+- CRDTs (see conflict-free replicated datatypes)
+- CREATE INDEX statement (SQL), Multicolumn and Secondary Indexes, Creating an index
+- credit rating agencies, Responsibility and Accountability
+- crypto-shredding, Event Sourcing and CQRS, Limitations of immutability
+- cryptocurrencies, Summary
+- cryptography, The end-to-end argument
+- CSV (comma-separated values), Storage and Indexing for OLTP, JSON, XML, and Binary Variants
+- Curator (ZooKeeper recipes), Locking and leader election, Allocating work to nodes
+- Cypher (query language), Graph-Like Data Models, The Cypher Query Language, The SPARQL query language
+
+### D
+
+- Daft (processing framework)
+  - DataFrames, DataFrames
+  - shuffling data, Shuffling Data
+- DAG (see directed acyclic graphs (DAG))
+- Dagster (workflow scheduler), Durable Execution and Workflows, Batch Processing, Scheduling workflows, Query Languages
+- dashboard (business intelligence), Characterizing Transaction Processing and Analytics
+- Dask (processing framework), DataFrames, Matrices, and Arrays
+- data catalog, Cloud Data Warehouses
+- data connectors, Data Warehousing
+- data contracts, Extract–Transform–Load, CDC versus event sourcing
+- data corruption (see corruption of data)
+- data cubes, Materialized Views and Data Cubes
+- data engineers/engineering, Operational Versus Analytical Systems
+- data fabric, Extract–Transform–Load
+- data formats (see encoding)
+- data infrastructure, Trade-Offs in Data Systems Architecture
+- data integration, Data Integration-Unifying batch and stream processing
+  - batch and stream processing, Batch and Stream Processing-Unifying batch and stream processing
+    - maintaining derived state, Maintaining derived state
+    - reprocessing data, Reprocessing data for application evolution
+    - unifying, Unifying batch and stream processing
+  - by unbundling databases, Unbundling Databases-Multishard data processing
+  - combining tools by deriving data, Combining Specialized Tools by Deriving Data-Ordering events to capture causality
+    - derived data versus distributed transactions, Derived data versus distributed transactions
+    - limits of total ordering, The limits of total ordering
+    - ordering events to capture causality, Ordering events to capture causality
+    - reasoning about dataflows, Reasoning about dataflows
+  - need for, Systems of Record and Derived Data
+  - using batch processing, Batch Processing, Extract–Transform–Load
+- data lake, From data warehouse to data lake, Analytics
+- data locality (see locality)
+- data mesh, Extract–Transform–Load
+- data minimization, Data Systems, Law, and Society, Legislation and Self-Regulation
+- data models, Data Models and Query Languages-Summary
+  - DataFrames and arrays, DataFrames, Matrices, and Arrays
+  - graph-like models, Graph-Like Data Models-GraphQL
+    - Datalog language, Datalog: Recursive Relational Queries-Datalog: Recursive Relational Queries
+    - property graphs, Property Graphs
+    - RDF and triple stores, Triple Stores and SPARQL-The SPARQL query language
+  - relational model versus document model, Relational Versus Document Models-Convergence of document and relational databases
+  - supporting multiple, Event Sourcing and CQRS
+- data pipelines, From data warehouse to data lake, Systems of Record and Derived Data, Extract–Transform–Load
+- data protection regulations (see General Data Protection Regulation (GDPR))
+- data residence laws, Distributed Versus Single-Node Systems, Sharding for Multitenancy
+- data science/scientists, Operational Versus Analytical Systems, From data warehouse to data lake
+- data silo, Data Warehousing
+- data systems
+  - correctness, constraints, and integrity, Aiming for Correctness-Tools for auditable data systems
+  - data integration, Data Integration-Unifying batch and stream processing
+  - goals for using, Trade-Offs in Data Systems Architecture
+  - heterogeneous, keeping in sync, Keeping Systems in Sync
+  - maintainability, Maintainability-Evolvability: Making Change Easy
+  - possible faults in, Transactions
+  - reliability, Reliability and Fault Tolerance-Humans and Reliability
+    - hardware faults, Hardware and Software Faults
+    - human errors, Humans and Reliability
+    - importance of, Humans and Reliability
+    - software faults, Software faults
+  - scalability, Scalability-Principles for Scalability
+  - unbundling databases, Unbundling Databases-Multishard data processing
+  - unreliable clocks, Unreliable Clocks-Limiting the impact of garbage collection
+- data warehousing, Data Warehousing, Glossary
+  - cloud-based solutions, Cloud Data Warehouses
+  - ETL (extract-transform-load), Data Warehousing, Keeping Systems in Sync
+  - for batch processing, Batch Processing
+  - keeping data systems in sync, Keeping Systems in Sync
+  - schema design, Stars and Snowflakes: Schemas for Analytics
+  - sharding and clustering, Sharding by hash range
+  - slowly changing dimension (SCD), Time dependence of joins
+- data-intensive applications, Trade-Offs in Data Systems Architecture
+- database administrator (DBA), Operations in the Cloud Era
+- database-internal distributed transactions, Distributed Transactions Across Different Systems, Database-Internal Distributed Transactions
+- databases
+  - archival storage, Archival storage
+  - comparison with message brokers, Message brokers compared to databases
+  - dataflow through, Dataflow Through Databases
+  - end-to-end argument for, The end-to-end argument-Applying end-to-end thinking in data systems, The end-to-end argument again
+  - relation to event streams, Databases and Streams-Limitations of immutability
+    - (see also changelogs)
+    - API support for change streams, API support for change streams, Separation of application code and state
+    - change data capture, Change Data Capture-API support for change streams
+    - event sourcing, CDC versus event sourcing
+    - keeping systems in sync, Keeping Systems in Sync-Keeping Systems in Sync
+    - philosophy of immutable events, State, Streams, and Immutability-Limitations of immutability
+  - unbundling, Unbundling Databases-Multishard data processing
+    - composing data storage technologies, Composing Data Storage Technologies-Unbundled versus integrated systems
+    - designing applications around dataflow, Designing Applications Around Dataflow-Stream processors and services
+    - observing derived state, Observing Derived State-Multishard data processing
+- Databricks, Cloud Data Warehouses
+- datacenters
+  - failures of, Hardware and Software Faults
+  - geographically distributed (see regions (geographic distribution))
+  - multitenancy and shared resources, Variability of network delays
+  - network architecture, Cloud Computing Versus Supercomputing
+  - network faults, Network Faults in Practice
+- dataflow, Modes of Dataflow-Distributed actor frameworks, Designing Applications Around Dataflow-Stream processors and services
+  - correctness of dataflow systems, Correctness of dataflow systems
+  - dataflow engines, Dataflow Engines
+    - comparison to stream processing, Processing Streams
+    - DataFrames, DataFrames
+    - support in batch processing frameworks, Batch Processing
+  - event-driven, Event-Driven Architectures-Distributed actor frameworks
+  - reasoning about, Reasoning about dataflows
+  - through databases, Dataflow Through Databases
+  - through services, Dataflow Through Services: REST and RPC-Data encoding and evolution for RPC
+  - workflow engines (see workflow engines)
+- DataFrames, DataFrames, Matrices, and Arrays
+  - implementation, DataFrames
+  - in batch processing, DataFrames
+  - in notebooks, Machine Learning
+  - support in batch processing frameworks, Batch Processing
+- DataFusion (query engine), Cloud Data Warehouses
+- Datalog (query language), Graph-Like Data Models, Datalog: Recursive Relational Queries-Datalog: Recursive Relational Queries
+- Datastream (change data capture), API support for change streams
+- datatypes
+  - binary strings in XML and JSON, JSON, XML, and Binary Variants
+  - conflict-free, Conflict-free replicated datatypes and operational transformation
+  - in Avro encodings, Avro
+  - in Protocol Buffers, Field tags and schema evolution
+  - numbers in XML and JSON, JSON, XML, and Binary Variants
+- Datensparsamkeit, Data Systems, Law, and Society
+- Datomic (database)
+  - B-tree storage, Indexes and snapshot isolation
+  - data model, Graph-Like Data Models, Triple Stores and SPARQL
+  - Datalog query language, Datalog: Recursive Relational Queries
+  - excision (deleting data), Limitations of immutability
+  - languages for transactions, Pros and cons of stored procedures
+  - serial execution of transactions, Actual Serial Execution
+- Daylight Saving Time (DST), Time-of-day clocks
+- Db2 (database), Implementing CDC
+- DBA (database administrator), Operations in the Cloud Era
+- DCOM (Distributed Component Object Model), The problems with remote procedure calls
+- DDD (domain-driven design), Simplicity: Managing Complexity, Event Sourcing and CQRS
+- DDSketch (percentile estimation), Use of Response Time Metrics
+- dead letter queues (DLQs), Acknowledgments and redelivery
+- deadlocks, Explicit locking
+  - detection, in distributed transaction, Problems with XA transactions
+  - in two-phase locking (2PL), Implementation of 2PL
+- Debezium (change data capture), Implementing CDC
+  - Cassandra, API support for change streams
+  - for data integration, Unbundled versus integrated systems
+- declarative languages, Data Models and Query Languages, Glossary
+  - and sync engines, Pros and cons of sync engines
+  - Datalog, Datalog: Recursive Relational Queries
+  - in document databases, Convergence of document and relational databases
+  - recursive SQL queries, Graph Queries in SQL
+  - SPARQL, The SPARQL query language
+- decoding, Formats for Encoding Data
+- DeepSeek (see 3FS)
+- delays
+  - bounded network delays, Synchronous Versus Asynchronous Networks
+  - bounded process pauses, Provididng response time guarantees
+  - unbounded network delays, Timeouts and Unbounded Delays
+  - unbounded process pauses, Process Pauses
+- deleting data, Limitations of immutability
+  - in LSM storage, Disk space usage
+  - legal basis, Data Systems, Law, and Society
+- Delta Lake (table format), Constructing and merging SSTables, Cloud Data Warehouses, Sharding by hash range
+- demilitarized zone (DMZ), Serving Derived Data
+- denormalization (data representation), Normalization, Denormalization, and Joins-Many-to-One and Many-to-Many Relationships, Glossary
+  - in derived data systems, Systems of Record and Derived Data
+  - in event sourcing/CQRS, Event Sourcing and CQRS
+  - in social network case study, Denormalization in the social networking case study
+  - materialized views, Materialized Views and Data Cubes
+  - updating derived data, Single-Object and Multi-Object Operations, The need for multi-object transactions, Combining Specialized Tools by Deriving Data
+  - versus normalization, Deriving several views from the same event log
+- derived data, Systems of Record and Derived Data, Stream Processing, Glossary
+  - batch processing, Batch Processing
+  - event sourcing and CQRS, Event Sourcing and CQRS
+  - from change data capture, Implementing CDC
+  - maintaining derived state through logs, Databases and Streams-API support for change streams, State, Streams, and Immutability-Concurrency control
+  - observing, by subscribing to streams, End-to-end event streams
+  - outputs of batch and stream processing, Batch and Stream Processing
+  - through application code, Application code as a derivation function
+  - versus distributed transactions, Derived data versus distributed transactions
+- deserialization (see decoding)
+- design patterns, Simplicity: Managing Complexity
+- deterministic operations, Pros and cons of stored procedures, Faults and Partial Failures, Glossary
+  - and idempotence, Idempotence, Reasoning about dataflows
+  - computing derived data, Maintaining derived state, Correctness of dataflow systems, Designing for auditability
+  - in event sourcing, Event Sourcing and CQRS
+  - in state machine replication, Using shared logs, Databases and Streams
+  - in statement-based replication, Statement-based replication
+  - in testing, Deterministic simulation testing
+  - joins, Time dependence of joins
+  - making code deterministic, Deterministic simulation testing
+  - overview, Deterministic simulation testing
+- deterministic simulation testing (DST), Deterministic simulation testing
+- DevOps, Operations in the Cloud Era
+- DFSs (see distributed filesystems (DFSs))
+- dimension tables, Stars and Snowflakes: Schemas for Analytics
+- dimensional modeling (see star schemas)
+- directed acyclic graphs (DAG), Scheduling workflows
+  - (see also workflow engines)
+- dirty reads (transaction isolation), No dirty reads
+- dirty writes (transaction isolation), No dirty writes
+- disaggregation, of storage and compute, Separation of storage and compute
+- Discord (group chat), GraphQL
+- discrimination, Bias and Discrimination
+- disk space usage, Disk space usage
+- disks (see hard disks)
+- distributed actor frameworks, Distributed actor frameworks
+- Distributed Component Object Model (DCOM), The problems with remote procedure calls
+- distributed filesystems (DFSs), Distributed Filesystems-Distributed Filesystems
+  - comparison to object storage, Object Stores
+  - use by Flink, Rebuilding state after a failure
+- distributed ledgers, Summary
+- Distributed Replicated Block Device (DRBD), Single-Leader Replication
+- distributed systems, The Trouble with Distributed Systems-Summary, Glossary
+  - Byzantine faults, Byzantine Faults-Weak forms of lying
+  - detecting network faults, Fault Detection
+  - faults and partial failures, Faults and Partial Failures
+  - formalization of consensus, Single-value consensus
+  - impossibility results, The CAP theorem, Consensus
+  - issues with failover, Leader failure: Failover
+  - multi-region (see regions (geographic distribution))
+  - network problems, Unreliable Networks-Can we not simply make network delays predictable?
+  - problems with, Problems with Distributed Systems
+  - quorums, relying on, The Majority Rules
+  - reasons for using, Distributed Versus Single-Node Systems, Replication
+  - synchronized clocks, relying on, Relying on Synchronized Clocks-Synchronized clocks for global snapshots
+  - system models, System Model and Reality-Deterministic simulation testing
+  - use of clocks and time, Unreliable Clocks
+- distributed transactions (see transactions)
+- Ditto (database), Pros and cons of sync engines
+- Django (web framework), Handling errors and aborts
+- DLQs (dead letter queues), Acknowledgments and redelivery
+- DMZ (demilitarized zone), Serving Derived Data
+- DNS (Domain Name System), Load balancers, service discovery, and service meshes, Request Routing, Service discovery
+- Docker (container manager), Separation of application code and state
+- document data model, Relational Versus Document Models-Convergence of document and relational databases
+  - comparison to relational model, When to Use Which Model-Convergence of document and relational databases
+  - multi-object transactions, need for, The need for multi-object transactions
+  - sharded secondary indexes, Sharding and Secondary Indexes
+  - versus relational model
+    - convergence of models, Convergence of document and relational databases
+    - data locality, Data locality for reads and writes
+- document-partitioned indexes (see local secondary indexes)
+- Domain Name System (DNS), Load balancers, service discovery, and service meshes, Request Routing, Service discovery
+- domain-driven design (DDD), Simplicity: Managing Complexity, Event Sourcing and CQRS
+- dotted version vectors, Version vectors
+- double-entry bookkeeping, Summary
+- DRBD (Distributed Replicated Block Device), Single-Leader Replication
+- drift (clocks), Clock Synchronization and Accuracy
+- drill-down, Data Storage for Analytics
+- Druid (database), Characterizing Transaction Processing and Analytics, Column-Oriented Storage, Deriving several views from the same event log
+  - handling writes, Writing to column-oriented storage
+  - pre-aggregation, Analytics
+  - serving derived data, Serving Derived Data
+- Dryad (dataflow engine), Dataflow Engines
+- DST (Daylight Saving Time), Time-of-day clocks
+- DST (deterministic simulation testing), Deterministic simulation testing
+- dual writes, problems with, Keeping Systems in Sync
+- DuckDB (database), Problems with Distributed Systems, Compaction strategies
+  - column-oriented storage, Column-Oriented Storage
+  - use for ETL, Extract–Transform–Load
+- duplicates, suppression of, Duplicate suppression, Uniquely identifying requests
+  - (see also idempotence)
+- durability (transactions), Making B-trees reliable, Durability, Glossary
+- durable execution, Durable Execution and Workflows
+  - reliance on determinism, Deterministic simulation testing
+  - Restate (see Restate (workflow engine))
+  - Temporal (see Temporal (workflow engine))
+- durable functions (see workflow engines)
+- duration (time), Unreliable Clocks, Monotonic clocks
+- dynamically typed languages, analogy to schema-on-read, Schema flexibility in the document model
+- Dynamo (database), Leaderless Replication
+- Dynamo-style databases (see leaderless replication)
+- DynamoDB (database)
+  - auto-scaling, Operations: Automatic Versus Manual Rebalancing
+  - hash-range sharding, Sharding by hash range
+  - leader-based replication, Single-Leader Replication
+  - sharded secondary indexes, Global Secondary Indexes
+
+### E
+
+- EC2 (Elastic Compute Cloud), spot instances, Handling faults
+- ECC (error-correcting codes), Hardware and Software Faults, Distributed Filesystems
+- EDB Postgres Distributed (database), Geographically Distributed Operation
+- edges (in graphs), Graph-Like Data Models, Property Graphs
+- edit distance (full-text search), Full-Text Search
+- EE (Java Enterprise Edition), The problems with remote procedure calls, Two-Phase Commit, XA transactions
+- effectively-once semantics, Fault Tolerance, Exactly-once execution of an operation, Correctness of dataflow systems
+  - (see also exactly-once semantics)
+- EFS (Elastic File System), Distributed Filesystems
+- EJB (Enterprise JavaBeans), The problems with remote procedure calls
+- Elastic Compute Cloud (EC2)
+  - spot instances, Handling faults
+- Elastic File System (EFS), Distributed Filesystems
+- elasticity, Distributed Versus Single-Node Systems, Cloud Data Warehouses
+- Elasticsearch (search server)
+  - local secondary indexes, Local Secondary Indexes
+  - percolator (stream search), Search on streams
+  - serving derived data, Serving Derived Data
+  - shard rebalancing, Fixed number of shards
+  - use of Lucene, Full-Text Search
+- Elm (programming language), End-to-end event streams
+- ELT (extract-load-transform), Data Warehousing, Extract–Transform–Load
+- embarrassingly parallel (algorithms)
+  - ETL (see extract-transform-load (ETL))
+  - MapReduce, MapReduce
+    - (see also MapReduce)
+- embedded storage engines, Compaction strategies
+- embedding (vector), Vector Embeddings
+- encodings (data formats), Encoding and Evolution-The Merits of Schemas
+  - Avro, Avro-Dynamically generated schemas
+  - binary variants of JSON and XML, Binary encodings
+  - compatibility, Encoding and Evolution
+    - calling services, Data encoding and evolution for RPC
+    - using databases, Dataflow Through Databases-Archival storage
+  - defined, Formats for Encoding Data
+  - JSON, XML, and CSV, JSON, XML, and Binary Variants
+  - language-specific formats, Language-Specific Formats
+  - merits of schemas, The Merits of Schemas
+  - Protocol Buffers, Protocol Buffers-Field tags and schema evolution
+  - representations of data, Formats for Encoding Data
+- end-to-end argument, The end-to-end argument-Applying end-to-end thinking in data systems
+  - checking integrity, The end-to-end argument again
+  - publish/subscribe streams, End-to-end event streams
+- enrichment (stream), Stream–table join (stream enrichment)
+- Enterprise JavaBeans (EJB), The problems with remote procedure calls
+- enterprise software, Trade-Offs in Data Systems Architecture
+- entities (see vertices)
+- ephemeral storage, Separation of storage and compute
+- epoch (consensus algorithms), From single-leader replication to consensus
+- epoch (Unix timestamps), Time-of-day clocks
+- Epsilon (garbage collector), Limiting the impact of garbage collection
+- erasure coding (error correction), Distributed Filesystems
+- Erlang/OTP (actor framework), Distributed actor frameworks
+- error handling
+  - for network faults, Network Faults in Practice
+  - in transactions, Handling errors and aborts
+- error-correcting codes (ECC), Hardware and Software Faults, Distributed Filesystems
+- Esper (CEP engine), Complex event processing
+- essential complexity, Simplicity: Managing Complexity
+- etcd (coordination service), Coordination Services-Service discovery
+  - generating fencing tokens, Fencing off zombies and delayed requests, Coordination Services
+  - linearizable operations, Implementing Linearizable Systems, Subtleties of consensus
+  - locks and leader election, Locking and leader election
+  - use for service discovery, Load balancers, service discovery, and service meshes, Service discovery
+  - use for shard assignment, Request Routing
+  - use of Raft algorithm, Single-Leader Replication
+- Ethereum (blockchain), Tools for auditable data systems
+- Ethernet (networks), Cloud Computing Versus Supercomputing, Unreliable Networks, Can we not simply make network delays predictable?, The end-to-end argument
+- ethics, Doing the Right Thing-Legislation and Self-Regulation
+  - code of ethics and professional practice, Doing the Right Thing
+  - legislation and self-regulation, Legislation and Self-Regulation
+  - predictive analytics, Predictive Analytics-Feedback Loops
+    - amplifying bias, Bias and Discrimination
+    - feedback loops, Feedback Loops
+  - privacy and tracking, Privacy and Tracking-Legislation and Self-Regulation
+    - consent and freedom of choice, Consent and Freedom of Choice
+    - data as assets and power, Data as Assets and Power
+    - meaning of privacy, Privacy and Use of Data
+    - surveillance, Surveillance
+  - respect, dignity, and agency, Legislation and Self-Regulation
+  - unintended consequences, Doing the Right Thing, Feedback Loops
+- ETL (see extract-transform-load (ETL))
+- Euclidean distance (semantic search), Vector Embeddings
+- European Union
+  - AI Act (see AI Act)
+  - GDPR (see General Data Protection Regulation (GDPR))
+- event sourcing, Event Sourcing and CQRS-Event Sourcing and CQRS
+  - and change data capture, CDC versus event sourcing
+  - comparison to change data capture, CDC versus event sourcing
+  - immutability and auditability, State, Streams, and Immutability, Designing for auditability
+  - large, reliable data systems, Correctness of dataflow systems
+  - reliance on determinism, Deterministic simulation testing
+- event streams (see streams)
+- event-driven architecture, Event-Driven Architectures-Distributed actor frameworks
+- events, Transmitting Event Streams
+  - deciding on total order of, The limits of total ordering
+  - deriving views from event log, Deriving several views from the same event log
+  - event time versus processing time, Event time versus processing time, Microbatching and checkpointing, Unifying batch and stream processing
+  - immutable, advantages of, Advantages of immutable events, Designing for auditability
+  - ordering to capture causality, Ordering events to capture causality
+  - reads as, Reads are events too
+  - stragglers, Handling straggler events
+  - timestamp of, in stream processing, Whose clock are you using, anyway?
+- EventSource (browser API), Pushing state changes to clients
+- EventStoreDB (database), Event Sourcing and CQRS
+- eventual consistency, Replication, Problems with Replication Lag, Distinguishing between safety and liveness
+  - (see also conflicts)
+  - and perpetual inconsistency, Timeliness and Integrity
+  - strong eventual consistency, Automatic conflict resolution
+- evidence, data used as, Humans and Reliability
+- evolvability, Evolvability: Making Change Easy, Encoding and Evolution
+  - calling services, Data encoding and evolution for RPC
+  - event sourcing, Event Sourcing and CQRS
+  - graph-structured data, Property Graphs
+  - of databases, Dataflow Through Databases-Archival storage, Deriving several views from the same event log, Reprocessing data for application evolution
+  - reprocessing data, Reprocessing data for application evolution, Unifying batch and stream processing
+  - schema evolution in Avro, The writer’s schema and the reader’s schema
+  - schema evolution in Protocol Buffers, Field tags and schema evolution
+  - schema-on-read, Schema flexibility in the document model, Encoding and Evolution, The Merits of Schemas
+- exactly-once semantics, Fault Tolerance, Exactly-once message processing, Exactly-Once Message Processing Revisited, Fault Tolerance, Exactly-once execution of an operation
+  - parity with batch processors, Unifying batch and stream processing
+  - preservation of integrity, Correctness of dataflow systems
+  - using durable execution, Durable Execution and Workflows
+- excision (Datomic), Limitations of immutability
+- exclusive mode (locks), Implementation of 2PL
+- exponential backoff, Describing Performance, Handling errors and aborts
+- ext4 (filesystem), Distributed Filesystems
+- eXtended Architecture transactions (see XA transactions)
+- extract-load-transform (ELT), Data Warehousing, Extract–Transform–Load
+- extract-transform-load (ETL), Data Warehousing, Keeping Systems in Sync, Glossary
+  - relation to batch processing, Extract–Transform–Load
+  - using batch processing, Batch Processing
+
+### F
+
+- FaaS (function as a service), Microservices and Serverless
+- Facebook
+  - Faiss (vector index), Vector Embeddings
+  - React (user interface library), End-to-end event streams
+  - social graphs, Graph-Like Data Models
+- facts
+  - fact table (star schema), Stars and Snowflakes: Schemas for Analytics
+  - in Datalog, Datalog: Recursive Relational Queries
+  - in event sourcing, Event Sourcing and CQRS
+- fail-slow faults, System Model and Reality
+- fail-stop model, System Model and Reality
+- failover, Leader failure: Failover, Glossary
+  - (see also leader-based replication)
+  - in leaderless replication, absence of, Writing to the Database When a Node Is Down
+  - potential problems, Leader failure: Failover
+- failures
+  - amplification by distributed transactions, Maintaining derived state
+  - failure detection, Fault Detection
+    - automatic rebalancing causing cascading failures, Operations: Automatic Versus Manual Rebalancing
+    - timeouts and unbounded delays, Timeouts and Unbounded Delays, Variability of network delays
+    - using a coordination service, Coordination Services
+  - faults versus, Reliability and Fault Tolerance
+  - partial failures, Faults and Partial Failures, Summary
+- Faiss (vector index), Vector Embeddings
+- false positive (Bloom filters), Bloom filters
+- fan-out (messaging systems), Materializing and Updating Timelines, Multiple consumers
+- fault injection, Fault Tolerance, Network Faults in Practice, Fault injection
+- fault isolation, Sharding for Multitenancy
+- fault tolerance, Reliability and Fault Tolerance-Humans and Reliability, Glossary
+  - formalization in consensus, Single-value consensus
+  - human fault tolerance, Batch Processing
+  - in batch processing, Handling faults
+  - in distributed systems, Distributed Versus Single-Node Systems
+  - in log-based systems, Applying end-to-end thinking in data systems, Timeliness and Integrity-Correctness of dataflow systems
+  - in stream processing, Fault Tolerance-Rebuilding state after a failure
+    - atomic commit, Atomic commit revisited
+    - idempotence, Idempotence
+    - maintaining derived state, Maintaining derived state
+    - microbatching and checkpointing, Microbatching and checkpointing
+    - rebuilding state after a failure, Rebuilding state after a failure
+  - of distributed transactions, XA transactions-Exactly-Once Message Processing Revisited
+  - of leader-based and leaderless replication, Single-Leader Versus Leaderless Replication Performance
+  - transaction atomicity, Atomicity, Distributed Transactions-Exactly-once message processing
+- faults
+  - Byzantine faults, Byzantine Faults-Weak forms of lying
+  - failures versus, Reliability and Fault Tolerance
+  - handled by transactions, Transactions
+  - handling in supercomputers and cloud computing, Cloud Computing Versus Supercomputing
+  - hardware, Hardware and Software Faults
+  - in distributed systems, Faults and Partial Failures
+  - introducing deliberately (see fault injection)
+  - network faults, Network Faults in Practice-Fault Detection
+    - asymmetric faults, The Majority Rules
+    - detecting, Fault Detection
+    - tolerance of, in multi-leader replication, Geographically Distributed Operation
+  - software faults, Software faults
+  - tolerating (see fault tolerance)
+- feature engineering (machine learning), From data warehouse to data lake
+- federated databases, The meta-database of everything
+- Feldera (database), Maintaining materialized views
+- fence (CPU instruction), Linearizability and network delays
+- fencing (preventing split brain), Fencing off zombies and delayed requests-Fencing with multiple replicas
+  - generating fencing tokens, Using shared logs, Coordination Services
+  - properties of fencing tokens, Defining the correctness of an algorithm
+  - stream processors writing to databases, Idempotence, Exactly-once execution of an operation
+- fetch-and-add, The Many Faces of Consensus, Fetch-and-add as consensus
+- Fibre Channel (networks), Distributed Filesystems
+- field tags (Protocol Buffers), Protocol Buffers-Field tags and schema evolution
+- Figma (graphics software), Real-time collaboration, offline-first, and local-first apps
+- filesystem in userspace (FUSE), Setting Up New Followers, Distributed Filesystems, Object Stores
+- financial data
+  - accounting ledgers, Summary
+  - immutability, Advantages of immutable events
+  - time-series data, DataFrames, Matrices, and Arrays
+- Fivetran (data connector), Data Warehousing
+- FizzBee (specification language), Model checking and specification languages
+- flat index (vector index), Vector Embeddings
+- FlatBuffers (data format), Formats for Encoding Data
+- Flink (processing framework), Batch Processing, Scheduling workflows, Dataflow Engines
+  - cost efficiency, Query Languages
+  - DataFrames, DataFrames, Matrices, and Arrays, DataFrames
+  - fault tolerance, Handling faults, Microbatching and checkpointing, Rebuilding state after a failure
+  - FlinkML, Machine Learning
+  - for data warehouses, Cloud Data Warehouses
+  - high availability using ZooKeeper, Coordination Services
+  - integration of batch and stream processing, Unifying batch and stream processing
+  - query optimizer, Query Languages
+  - shuffling data, Shuffling Data
+  - stream processing, Stream analytics
+  - streaming SQL support, Complex event processing
+- flow control, The Limitations of TCP, Messaging Systems, Glossary
+- FLP result (on consensus), Consensus
+- Flyte (workflow scheduler), Machine Learning
+- followers, Single-Leader Replication, Glossary
+  - (see also leader-based replication)
+  - failure of, Follower failure: Catch-up recovery
+  - setting up new, Setting Up New Followers
+- formal methods, Formal Methods and Randomized Testing-Deterministic simulation testing
+- formats, for encoding, Formats for Encoding Data-The Merits of Schemas
+- forward compatibility, Encoding and Evolution
+- Fossil (version control system), Concurrency control
+- FoundationDB (database), Formal Methods and Randomized Testing
+  - consistency model, What Makes a System Linearizable?
+  - deterministic simulation testing, Deterministic simulation testing
+  - key-range sharding, Sharding by Key Range
+  - process-per-core model, Pros and Cons of Sharding
+  - serializable transactions, Serializable Snapshot Isolation, Performance of serializable snapshot isolation
+  - transactions, What Exactly Is a Transaction?, Database-Internal Distributed Transactions
+- fractional indexing, When to Use Which Model
+- fragmentation (of B-trees), Disk space usage
+- frame (computer graphics), Pros and cons of sync engines
+- frontend (web development), Trade-Offs in Data Systems Architecture
+- FrostDB (database), Deterministic simulation testing
+- fsync (system call), Making B-trees reliable, Durability
+- full-text search, Summary, Full-Text Search, Glossary
+  - Lucene storage engine, Full-Text Search
+  - sharded indexes, Sharding and Secondary Indexes
+- function as a service (FaaS), Microservices and Serverless
+- functional programming, MapReduce
+- functional requirements, Defining Nonfunctional Requirements
+- FUSE (see filesystem in userspace (FUSE))
+- fuzzing, Formal Methods and Randomized Testing
+- fuzzy search (see similarity search)
+
+### G
+
+- Gallina (specification language), Model checking and specification languages
+- game development, Pros and cons of sync engines
+- garbage collection (GC), Sequential versus random writes
+  - immutability and, Limitations of immutability
+  - process pauses, Latency and Response Time, Process Pauses-Limiting the impact of garbage collection
+    - (see also process pauses)
+- gas stations algorithmic pricing, Feedback Loops
+- GC (see garbage collection (GC))
+- GDPR (see General Data Protection Regulation (GDPR))
+- Gelly API (Flink), Machine Learning
+- GenBank (genome database), Summary
+- General Data Protection Regulation (GDPR), Data Systems, Law, and Society, Limitations of immutability, Consent and Freedom of Choice
+  - consent, Consent and Freedom of Choice
+  - data minimization, Legislation and Self-Regulation
+  - legitimate interest, Consent and Freedom of Choice
+  - right of access, Sharding for Multitenancy
+  - right to erasure, Data Systems, Law, and Society, Sharding for Multitenancy
+- genome analysis, Summary
+- geographic distribution (see regions (geographic distribution))
+- geospatial indexes, Multidimensional and Full-Text Indexes
+- Git (version control system), Concurrency control
+  - local-first software, Real-time collaboration, offline-first, and local-first apps
+  - merge conflicts, Manual conflict resolution
+- GitHub, postmortems, Leader failure: Failover
+- Global Positioning System (GPS), use for clock synchronization, Clock Synchronization and Accuracy, Clock readings with a confidence interval, Synchronized clocks for global snapshots
+- global secondary indexes, Global Secondary Indexes, Summary
+- global transaction identifiers (GTIDs), Setting Up New Followers
+- globally unique identifiers (see UUIDs)
+- GlusterFS (distributed filesystem), Batch Processing, Distributed Filesystems, Object Stores
+- GNU Coreutils (Linux), Sorting Versus In-Memory Aggregation
+- Go (programming language), Limiting the impact of garbage collection
+- GoldenGate (change data capture), Implementing CDC
+  - (see also Oracle)
+- Google
+  - BigQuery (see BigQuery (database))
+  - Bigtable (see Bigtable (database))
+  - Chubby (lock service), Coordination Services
+  - Cloud Storage (object storage), Setting Up New Followers, Fencing off zombies and delayed requests, Object Stores
+  - Compute Engine, Handling faults
+  - Dataflow (stream processor), Stream analytics, Atomic commit revisited, Unifying batch and stream processing
+    - (see also Beam)
+    - data warehouse integration, Cloud Data Warehouses
+    - shuffling data, Shuffling Data
+  - Datastream (change data capture), API support for change streams
+  - Docs (collaborative editor), Real-time collaboration, offline-first, and local-first apps, Conflict-free replicated datatypes and operational transformation
+  - Dremel (query engine), Column-Oriented Storage
+  - Firestore (database), Pros and cons of sync engines
+  - MapReduce (batch processing), Batch Processing
+    - (see also MapReduce)
+  - Percolator (transaction system), Implementing a linearizable ID generator
+  - persistent disks (cloud service), Separation of storage and compute
+  - Pub/Sub (messaging), Message brokers, Message brokers compared to databases, Using logs for message storage
+  - response time study, Average, Median, and Percentiles
+  - Sheets (collaborative spreadsheet), Real-time collaboration, offline-first, and local-first apps, Conflict-free replicated datatypes and operational transformation
+  - Spanner (see Spanner (database))
+  - TrueTime (clock API), Clock readings with a confidence interval
+- gossip protocol, Request Routing
+- governance, Beyond the data lake
+- government use of data, Data as Assets and Power
+- GPS (see Global Positioning System (GPS))
+- GPT (language model), Vector Embeddings
+- GPU (graphics processing unit), Layering of cloud services, Distributed Versus Single-Node Systems
+- GQL (Graph Query Language), Graph Queries in SQL
+- gradual rollout (see rolling upgrades)
+- Graph Query Language (GQL), Graph Queries in SQL
+- graphics processing unit (GPU), Layering of cloud services, Distributed Versus Single-Node Systems
+- GraphQL (query language), Graph-Like Data Models, GraphQL, Pros and cons of stored procedures
+- graphs, Glossary
+  - as data models, Graph-Like Data Models-GraphQL
+    - property graphs, Property Graphs
+    - RDF and triple-stores, Triple Stores and SPARQL-The SPARQL query language
+  - DAGs (see directed acyclic graphs)
+  - processing and analysis, Machine Learning
+  - query languages
+    - Cypher, The Cypher Query Language
+    - Datalog, Datalog: Recursive Relational Queries-Datalog: Recursive Relational Queries
+    - GraphQL, GraphQL
+    - Gremlin, Graph-Like Data Models
+    - recursive SQL queries, Graph Queries in SQL
+    - SPARQL, The SPARQL query language-The SPARQL query language
+  - traversal, Property Graphs
+- GraphX API (Spark), Machine Learning
+- gray failures, Single-Leader Versus Leaderless Replication Performance, System Model and Reality
+- Gremlin (graph query language), Graph-Like Data Models
+- grep (Unix tool), Simple Log Analysis
+- gRPC (service calls), Microservices and Serverless, Web services, Data encoding and evolution for RPC
+- GTIDs (global transaction identifiers), Setting Up New Followers
+- GUIDs (see UUIDs)
+
+### H
+
+- Hadoop (data infrastructure)
+  - comparison to distributed databases, Batch Processing
+  - MapReduce (see MapReduce)
+  - NodeManager, Distributed Job Orchestration
+  - YARN (see YARN (job scheduler))
+- Hadoop Distributed File System (HDFS), Batch Processing, Distributed Filesystems
+  - (see also distributed filesystems)
+  - checking data integrity, Don’t just blindly trust what they promise
+  - DataNode, Distributed Filesystems
+  - NameNode, Distributed Filesystems
+  - use in MapReduce, MapReduce
+  - workflow example, Scheduling workflows
+- HANA (see SAP HANA (database))
+- happens-before relation, The happens-before relation and concurrency
+- HAProxy, Load balancers, service discovery, and service meshes
+- hard disks
+  - detecting corruption, The end-to-end argument, Don’t just blindly trust what they promise
+  - faults in, Hardware and Software Faults, Durability
+  - sequential versus random writes, Sequential versus random writes
+  - sequential write throughput, Disk space usage
+- hardware faults, Hardware and Software Faults
+- hash function, in Bloom filters, Bloom filters, Glossary
+- hash join, in stream processing, Stream–table join (stream enrichment)
+- hash sharding, Sharding by Hash of Key-Consistent hashing, Summary
+  - consistent hashing, Consistent hashing
+  - problems with hash mod N, Hash modulo number of nodes
+  - range queries, Sharding by hash range
+  - suitable hash functions, Sharding by Hash of Key
+  - with fixed number of shards, Fixed number of shards
+- hash tables, Log-Structured Storage
+- Hazelcast (in-memory data grid)
+  - FencedLock, Fencing off zombies and delayed requests
+  - Flake ID Generator, ID Generators and Logical Clocks
+- HBase (database)
+  - bug due to lack of fencing, Distributed Locks and Leases
+  - key-range sharding, Sharding by Key Range
+  - log-structured storage, Constructing and merging SSTables
+  - regions (sharding), Sharding
+  - request routing, Request Routing
+  - size-tiered compaction, Compaction strategies
+  - wide-column data model, Data locality for reads and writes, Column compression
+- HDFS (see Hadoop Distributed File System (HDFS))
+- HdrHistogram (percentile estimation), Use of Response Time Metrics
+- head (Unix tool), Simple Log Analysis, Distributed Job Orchestration
+- head vertex (property graphs), Property Graphs
+- head-of-line blocking, Latency and Response Time
+- heap files (databases), Storing Values Within the Index, Multiversion concurrency control
+- heat management, Skewed Workloads and Relieving Hot Spots
+- hedged requests, Single-Leader Versus Leaderless Replication Performance
+- heterogeneous distributed transactions, Distributed Transactions Across Different Systems, Problems with XA transactions
+- heuristic decisions (in 2PC), Recovering from coordinator failure
+- Hex (notebook), Machine Learning
+- hexagons, for geospatial indexing, Multidimensional and Full-Text Indexes
+- Hibernate (object-relational mapper), Object-relational mapping
+- hierarchical model, Relational Versus Document Models
+- hierarchical navigable small world (vector index), Vector Embeddings
+- hierarchical queries (see recursive queries, SQL common table expressions)
+- high availability (see fault tolerance)
+- high-frequency trading, Clock Synchronization and Accuracy
+- high-performance computing (HPC), Cloud Computing Versus Supercomputing
+- highest random weight hashing algorithm, Consistent hashing
+- hinted handoff (leaderless replication), Catching up on missed writes
+- histograms, Use of Response Time Metrics
+- Hive (data warehouse), Cloud Data Warehouses, Query Languages
+- HNSW (hierarchical navigable small world) (vector index), Vector Embeddings
+- homogeneous data, Graph-Like Data Models
+- hopping windows (stream processing), Types of windows
+  - (see also windows)
+- Hoptimator (query engine), The meta-database of everything
+- Horizon scandal, Humans and Reliability, Transactions
+- horizontal scaling (see scaling out)
+- HornetQ (messaging), Message brokers, XA transactions, Message brokers compared to databases
+- hot keys, Sharding of Key-Value Data
+- hot shard (see hot spots)
+- hot spots, Sharding of Key-Value Data
+  - due to celebrities, Skewed Workloads and Relieving Hot Spots
+  - for time-series data, Sharding by Key Range
+  - relieving, Skewed Workloads and Relieving Hot Spots
+- hot standbys (see followers) (see leader-based replication)
+- HPC (high-performance computing), Cloud Computing Versus Supercomputing
+- HTAP (see hybrid transactional/analytic processing)
+- HTTP, use in APIs (see services)
+- human errors, Humans and Reliability, Network Faults in Practice
+- hybrid logical clocks, Hybrid logical clocks
+- hybrid transactional/analytical processing (HTAP), Data Warehousing, Data Storage for Analytics
+- hydrating IDs (join), Denormalization in the social networking case study
+- HyPer (database), Serializable Snapshot Isolation
+- hypergraph, Property Graphs
+- HyperLogLog (algorithm), Stream analytics
+
+### I
+
+- I/O operations, waiting for, Process Pauses
+- IaaS (infrastructure as a service), Cloud Versus Self-Hosting, Layering of cloud services
+- IBM
+  - Db2 (database)
+    - distributed transaction support, XA transactions
+    - serializable isolation, Snapshot isolation, repeatable read, and naming confusion, Implementation of 2PL
+  - MQ (messaging), XA transactions, Message brokers compared to databases
+  - System R (database), What Exactly Is a Transaction?
+  - WebSphere (messaging), Message brokers
+- Iceberg (table format), Cloud Data Warehouses, Analytics
+  - databases on object storage, Setting Up New Followers
+  - log-based message broker storage, Disk space usage
+- idempotence, The problems with remote procedure calls, Idempotence, Glossary
+  - by giving requests unique IDs, Uniquely identifying requests
+  - for exactly-once semantics, Exactly-Once Message Processing Revisited
+  - idempotent operations, Exactly-once execution of an operation
+  - in workflow engines, Durable Execution and Workflows
+- IDL (interface definition language), Protocol Buffers, Avro, Web services
+- immutability
+  - advantages of, Advantages of immutable events, Designing for auditability
+  - and right to erasure, Data Systems, Law, and Society, Disk space usage
+  - crypto-shredding for deletion, Event Sourcing and CQRS, Limitations of immutability
+  - deriving state from event log, State, Streams, and Immutability-Limitations of immutability
+  - for crash recovery, Constructing and merging SSTables
+  - in B-trees, Using B-tree variants, Indexes and snapshot isolation
+  - in event sourcing, Event Sourcing and CQRS, CDC versus event sourcing
+  - limitations of, Concurrency control
+- impedance mismatch, The Object-Relational Mismatch
+- in doubt (transaction status), Coordinator failure
+  - holding locks, Holding locks while in doubt
+  - orphaned transactions, Recovering from coordinator failure
+- in-memory aggregation, Sorting Versus In-Memory Aggregation
+- in-memory databases, Keeping Everything in Memory
+  - durability, Durability
+  - serial transaction execution, Actual Serial Execution
+- incidents
+  - accounting software bugs leading to wrongful convictions, Humans and Reliability
+  - blameless postmortems, Humans and Reliability
+  - crashes due to leap seconds, Clock Synchronization and Accuracy
+  - data corruption and financial losses due to concurrency bugs, Weak Isolation Levels
+  - data corruption on hard disks, Durability
+  - data loss due to last-write-wins, Timestamps for ordering events
+  - disclosure of sensitive data due to primary key reuse, Leader failure: Failover
+  - errors in transaction serializability, Maintaining integrity in the face of software bugs
+  - gigabit network interface with 1 Kb/s throughput, System Model and Reality
+  - leap second crash, Software faults
+  - network faults, Network Faults in Practice
+  - network interface dropping only inbound packets, Network Faults in Practice
+  - network partitions and whole-datacenter failures, Faults and Partial Failures
+  - sending message to ex-partner, Ordering events to capture causality
+  - sharks biting undersea cables, Network Faults in Practice
+  - SSD failure after 32,768 hours, Software faults
+  - thread contention bringing down a service, Process Pauses
+  - vibrations in server rack, Latency and Response Time
+  - violation of uniqueness constraint, Maintaining integrity in the face of software bugs
+- incremental view maintenance (IVM), Maintaining materialized views, Unbundled versus integrated systems
+- indexes, Storage and Indexing for OLTP, Glossary
+  - and snapshot isolation, Indexes and snapshot isolation
+  - as derived data, Systems of Record and Derived Data, Composing Data Storage Technologies-Unbundled versus integrated systems
+  - B-trees, B-Trees-Using B-tree variants
+  - clustered, Storing Values Within the Index
+  - comparison of B-trees and LSM-trees, Comparing B-Trees and LSM-Trees-Disk space usage
+  - covering (with included columns), Storing Values Within the Index
+  - creating, Creating an index
+  - full-text search, Full-Text Search
+  - geospatial, Multidimensional and Full-Text Indexes
+  - index-range locking, Index-range locks
+  - multicolumn (concatenated), Multidimensional and Full-Text Indexes
+  - secondary, Multicolumn and Secondary Indexes
+    - (see also secondary indexes)
+  - sharding and secondary indexes, Sharding and Secondary Indexes-Global Secondary Indexes, Summary
+  - sparse, The SSTable file format
+  - SSTables and LSM-trees, The SSTable file format-Compaction strategies
+  - updating when data changes, Keeping Systems in Sync, Maintaining materialized views
+- Industrial Revolution, Remembering the Industrial Revolution
+- InfiniBand (networks), Combining circuit switching and packet switching
+- InfluxDB IOx (storage engine), Column-Oriented Storage
+- information retrieval (see full-text search)
+- infrastructure as a service (IaaS), Cloud Versus Self-Hosting, Layering of cloud services
+- InnoDB (storage engine)
+  - clustered index on primary key, Storing Values Within the Index
+  - not preventing lost updates, Automatically detecting lost updates
+  - preventing write skew, Characterizing write skew, Implementation of 2PL
+  - serializable isolation, Implementation of 2PL
+  - snapshot isolation support, Snapshot Isolation and Repeatable Read
+- instance (cloud computing), Layering of cloud services
+- integrating different data systems (see data integration)
+- integrity, Timeliness and Integrity
+  - coordination-avoiding data systems, Coordination-avoiding data systems
+  - correctness of dataflow systems, Correctness of dataflow systems
+  - in consensus formalization, Single-value consensus, Atomic commitment as consensus
+  - integrity checks, Don’t just blindly trust what they promise
+    - (see also auditability)
+    - end-to-end, The end-to-end argument, The end-to-end argument again
+    - use of snapshot isolation, Snapshot Isolation and Repeatable Read
+  - maintaining despite software bugs, Maintaining integrity in the face of software bugs
+- interface definition language (IDL), Protocol Buffers, Avro, Web services
+- invariants, Consistency
+  - (see also constraints)
+- inverted file (IVF) index (vector index), Vector Embeddings
+- inverted index, Full-Text Search
+- irreversibility, minimizing, Evolvability: Making Change Easy, Event Sourcing and CQRS, Batch Processing
+- ISDN (Integrated Services Digital Network), Synchronous Versus Asynchronous Networks
+- isolation (in operating systems) (see cgroups)
+- isolation (in transactions), The Meaning of ACID, Isolation, Single-Object and Multi-Object Operations, Glossary
+  - correctness and, Aiming for Correctness
+  - for single-object writes, Single-object writes
+  - serializability, Serializability-Performance of serializable snapshot isolation
+    - actual serial execution, Actual Serial Execution-Summary of serial execution
+    - serializable snapshot isolation (SSI), Serializable Snapshot Isolation-Performance of serializable snapshot isolation
+    - two-phase locking (2PL), Two-Phase Locking-Index-range locks
+  - violating, Single-Object and Multi-Object Operations
+  - weak isolation levels, Weak Isolation Levels-Materializing conflicts
+    - preventing lost updates, Preventing Lost Updates-Conflict resolution and replication
+    - read-committed, Read Committed-Implementing read-committed
+    - snapshot isolation, Snapshot Isolation and Repeatable Read-Snapshot isolation, repeatable read, and naming confusion
+- IVF (vector index), Vector Embeddings
+- IVM (incremental view maintenance), Maintaining materialized views, Unbundled versus integrated systems
+
+### J
+
+- Jaeger (tracing tool), Problems with Distributed Systems
+- Java Database Connectivity (JDBC)
+  - distributed transaction support, XA transactions
+  - network drivers, The Merits of Schemas
+- Java Enterprise Edition (EE), The problems with remote procedure calls, Two-Phase Commit, XA transactions
+- Java Message Service (JMS), Message brokers compared to databases
+  - (see also messaging systems)
+  - comparison to log-based messaging, Logs compared to traditional messaging, Replaying old messages
+  - distributed transaction support, XA transactions
+  - message ordering, Acknowledgments and redelivery
+- Java Transaction API (JTA), Two-Phase Commit, XA transactions
+- Java Virtual Machine (JVM)
+  - garbage collection, Process Pauses, Limiting the impact of garbage collection
+  - JIT compilation, Query Execution: Compilation and Vectorization
+  - process reuse in batch processors, Dataflow Engines
+- JDBC (see Java Database Connectivity (JDBC))
+- Jena (RDF framework), The RDF data model, The SPARQL query language
+- Jepsen (fault tolerance testing), Fault injection, Aiming for Correctness
+- JIT (just-in-time) compilation, Query Execution: Compilation and Vectorization
+- jitter (network delay), Average, Median, and Percentiles, Variability of network delays
+- JMESPath (query language), Query Languages
+- JMS (see Java Message Service (JMS))
+- join table, Many-to-One and Many-to-Many Relationships, Property Graphs
+- joins, Glossary
+  - expressing as relational operators, Query Languages
+  - handling GraphQL query, GraphQL
+  - in application code, Normalization, Denormalization, and Joins, Denormalization in the social networking case study
+  - in DataFrames, DataFrames, Matrices, and Arrays
+  - in relational and document databases, Normalization, Denormalization, and Joins
+  - sort-merge joins, Joins and Grouping
+  - stream joins, Stream Joins-Time dependence of joins
+    - stream-stream join, Stream–stream join (window join)
+    - stream–table join, Stream–table join (stream enrichment)
+    - table–table join, Table–table join (materialized view maintenance)
+    - time-dependence of, Time dependence of joins
+  - support in document databases, Convergence of document and relational databases
+- JOTM (transaction coordinator), Two-Phase Commit
+- journaling (filesystems), Making B-trees reliable
+- JSON
+  - aggregation pipeline (query language), Query languages for documents
+  - Avro schema representation, Avro
+  - binary variants, Binary encodings
+  - data locality, Data locality for reads and writes
+  - document data model, Relational Versus Document Models
+  - for application data, issues with, JSON, XML, and Binary Variants
+  - GraphQL response, GraphQL
+  - in relational databases, Schema flexibility in the document model
+  - representing a résumé (example), The document data model for one-to-many relationships
+  - Schema, JSON Schema
+- JSON Pointer, Query languages for documents
+- JSON-LD, Triple Stores and SPARQL
+- JSONPath (query language), Query languages for documents, Query Languages
+- JTA (Java Transaction API), Two-Phase Commit
+- JuiceFS (distributed filesystem), Distributed Filesystems, Object Stores
+- jump consistent hashing, Consistent hashing
+- Jupyter (notebook), Machine Learning
+- just-in-time (JIT) compilation, Query Execution: Compilation and Vectorization
+- JVM (see Java Virtual Machine (JVM))
+
+### K
+
+- Kafka (messaging), Message brokers, Using logs for message storage
+  - consumer groups, Multiple consumers
+  - for data integration, Unbundled versus integrated systems
+  - for event sourcing, Event Sourcing and CQRS
+  - Kafka Connect (database integration), Implementing CDC, API support for change streams, Deriving several views from the same event log
+  - Kafka Streams (stream processor), Stream analytics
+    - exactly-once semantics, Exactly-Once Message Processing Revisited
+    - fault tolerance, Rebuilding state after a failure
+  - ksqlDB (stream database), Maintaining materialized views
+  - leader-based replication, Single-Leader Replication
+  - log compaction, Log compaction, Maintaining materialized views
+  - message offsets, Using logs for message storage, Idempotence
+  - partitions (sharding), Sharding
+  - request routing, Request Routing
+  - schema registry, But what is the writer’s schema?
+  - serving derived data, Serving Derived Data
+  - tiered storage, Disk space usage
+  - transactions, Database-Internal Distributed Transactions, Atomic commit revisited
+  - unclean leader election, Subtleties of consensus
+  - use of model-checking, Model checking and specification languages
+- kappa architecture, Unifying batch and stream processing
+- key-value stores, Storage and Indexing for OLTP
+  - comparison to object stores, Object Stores
+  - in-memory, Keeping Everything in Memory
+  - LSM storage, Log-Structured Storage-Disk space usage
+  - sharding, Sharding of Key-Value Data-Skewed Workloads and Relieving Hot Spots
+    - by hash of key, Sharding by Hash of Key, Summary
+    - by key range, Sharding by Key Range, Summary
+    - skew and hot spots, Skewed Workloads and Relieving Hot Spots
+- Kinesis (messaging), Message brokers
+- knowledge graphs, Graph-Like Data Models
+- Kryo (Java), Language-Specific Formats
+- ksqlDB (stream database), Maintaining materialized views
+- Kubernetes (cluster manager), Cloud Versus Self-Hosting, Microservices and Serverless, Distributed Job Orchestration, Separation of application code and state
+  - Kubeflow, Machine Learning
+  - kubelet, Distributed Job Orchestration
+  - operators, Distributed Job Orchestration
+  - use of etcd, Request Routing, Coordination Services
+- KùzuDB (database), Problems with Distributed Systems, Graph-Like Data Models
+  - as embedded storage engine, Compaction strategies
+  - Cypher query language, The Cypher Query Language
+
+### L
+
+- L4S (Low Latency, Low Loss, and Scalable Throughput), Combining circuit switching and packet switching
+- labeled property graphs (see property graphs)
+- lambda architecture, Unifying batch and stream processing
+- lambda calculus, Separation of application code and state
+- Lamport timestamps, Lamport timestamps
+- Lance (data format), Cloud Data Warehouses, Column-Oriented Storage
+  - (see also column-oriented storage)
+- large language models (LLMs), Vector Embeddings, Machine Learning
+- last write wins (LWW), Last write wins (discarding concurrent writes), Detecting Concurrent Writes, Implementing Linearizable Systems
+  - problems with, Timestamps for ordering events
+  - prone to lost updates, Conflict resolution and replication
+- latency, Latency and Response Time
+  - (see also response time)
+  - across regions, Distributed Versus Single-Node Systems
+  - instability under two-phase locking, Performance of 2PL
+  - network latency and resource utilization, Can we not simply make network delays predictable?
+  - reducing by request hedging, Single-Leader Versus Leaderless Replication Performance
+  - response time versus, Latency and Response Time
+  - tail latency, Average, Median, and Percentiles, Use of Response Time Metrics, Local Secondary Indexes
+- law (see legal matters)
+- layering (of cloud services), Layering of cloud services
+- leader-based replication, Single-Leader Replication-Logical (row-based) log replication
+  - (see also replication)
+  - failover, Leader failure: Failover
+  - handling node outages, Handling Node Outages
+  - implementation of replication logs
+    - change data capture, Change Data Capture-API support for change streams
+      - (see also changelogs)
+    - statement-based, Statement-based replication
+    - write-ahead log (WAL) shipping, Write-ahead log shipping
+  - linearizability of operations, Implementing Linearizable Systems
+  - locking and leader election, Locking and leader election
+  - log sequence number, Setting Up New Followers, Consumer offsets
+  - read-scaling architecture, Problems with Replication Lag, Single-Leader Versus Leaderless Replication Performance
+  - relation to consensus, Consensus, From single-leader replication to consensus, Pros and cons of consensus
+  - setting up new followers, Setting Up New Followers
+  - synchronous versus asynchronous, Synchronous Versus Asynchronous Replication-Synchronous Versus Asynchronous Replication
+- leaderless replication, Leaderless Replication-Version vectors
+  - (see also replication)
+  - catching up on missed writes, Catching up on missed writes
+  - detecting concurrent writes, Detecting Concurrent Writes-Version vectors
+    - version vectors, Version vectors
+  - multi-region, Multi-Region Operation
+  - quorums, Using quorums for reading and writing-Multi-Region Operation
+    - consistency limitations, Understanding the limitations of quorum consistency-Monitoring staleness, Implementing Linearizable Systems
+- leaf page (B-tree), B-Trees
+- leap seconds, Software faults, Time-of-day clocks, Clock Synchronization and Accuracy
+- leases, Process Pauses
+  - implementation with coordination service, Coordination Services
+  - need for fencing, Distributed Locks and Leases
+  - relation to consensus, Single-value consensus
+- ledgers (accounting), Summary, Advantages of immutable events
+- legacy systems, maintenance of, Maintainability
+- legal matters, Data Systems, Law, and Society-Data Systems, Law, and Society
+  - data deletion, Data Systems, Law, and Society
+  - data residence, Distributed Versus Single-Node Systems, Sharding for Multitenancy
+  - privacy regulation, Data Systems, Law, and Society, Legislation and Self-Regulation
+- legitimate interest (GDPR), Consent and Freedom of Choice
+- leveled compaction, Compaction strategies, Disk space usage
+- Levenshtein automata, Full-Text Search
+- limping (partial failure), System Model and Reality
+- Linear (project management software), Real-time collaboration, offline-first, and local-first apps
+- linear algebra, DataFrames, Matrices, and Arrays
+- linear scalability, Understanding Load
+- linearizability, Solutions for Replication Lag, Linearizability-Linearizability and network delays, Glossary
+  - and consensus, Consensus
+  - cost of, The Cost of Linearizability-Linearizability and network delays
+    - CAP theorem, The CAP theorem
+    - memory on multi-core CPUs, Linearizability and network delays
+  - definition, What Makes a System Linearizable?-What Makes a System Linearizable?
+  - ID generation, Linearizable ID Generators
+  - in coordination services, Coordination Services
+  - of derived data systems, Coordination-avoiding data systems
+  - of different replication methods, Implementing Linearizable Systems-Implementing Linearizable Systems
+  - reads in consensus systems, Subtleties of consensus
+  - relying on, Relying on Linearizability-Cross-channel timing dependencies
+    - constraints and uniqueness, Constraints and uniqueness guarantees
+    - cross-channel timing dependencies, Cross-channel timing dependencies
+    - locking and leader election, Locking and leader election
+  - versus serializability, What Makes a System Linearizable?
+- linked data, Triple Stores and SPARQL
+- LinkedIn
+  - Espresso (database), But what is the writer’s schema?
+  - LIquid (database), Datalog: Recursive Relational Queries
+  - profile (example), The document data model for one-to-many relationships
+- Linux, leap second bug, Software faults
+- Litestream (backup tool), Setting Up New Followers
+- live migration, Process Pauses
+- liveness properties, Distinguishing between safety and liveness
+- LLMs (large language models), Vector Embeddings, Machine Learning
+- LLVM (compiler), Query Execution: Compilation and Vectorization
+- LMDB (storage engine), Compaction strategies, Using B-tree variants, Indexes and snapshot isolation
+- load
+  - coping with, Principles for Scalability
+  - describing, Understanding Load
+- load balancing, Describing Performance, Load balancers, service discovery, and service meshes
+  - in hardware, Load balancers, service discovery, and service meshes
+  - in software, Load balancers, service discovery, and service meshes
+  - using message brokers, Multiple consumers
+- load shedding, Describing Performance
+- local secondary indexes, Local Secondary Indexes, Summary
+- local-first software, Real-time collaboration, offline-first, and local-first apps
+- locality (data access), The document data model for one-to-many relationships, Data locality for reads and writes, Glossary
+  - in batch processing, Dataflow Engines
+  - in stateful clients, Sync Engines and Local-First Software, Stateful, offline-capable clients
+  - in stream processing, Stream–table join (stream enrichment), Rebuilding state after a failure, Stream processors and services, Uniqueness in log-based messaging
+- location transparency, The problems with remote procedure calls, Distributed actor frameworks
+- lock-in, Pros and Cons of Cloud Services
+- locks, Glossary
+  - deadlock, Explicit locking, Implementation of 2PL
+  - distributed locking, Distributed Locks and Leases-Fencing with multiple replicas, Locking and leader election
+    - fencing tokens, Fencing off zombies and delayed requests
+    - implementation with coordination service, Coordination Services
+    - relation to consensus, Single-value consensus
+  - for transaction isolation
+    - in snapshot isolation, Multiversion concurrency control
+    - in two-phase locking (2PL), Two-Phase Locking-Index-range locks
+    - making operations atomic, Atomic write operations
+    - performance, Performance of 2PL
+    - preventing dirty writes, Implementing read-committed
+    - preventing phantoms with index-range locks, Index-range locks, Detection of writes that affect prior reads
+    - read locks (shared mode), Implementing read-committed, Implementation of 2PL
+    - shared mode and exclusive mode, Implementation of 2PL
+  - in distributed transactions
+    - deadlock detection, Problems with XA transactions
+    - in-doubt transactions holding locks, Holding locks while in doubt
+  - materializing conflicts with, Materializing conflicts
+  - preventing lost updates by explicit locking, Explicit locking
+- log sequence number, Setting Up New Followers, Consumer offsets
+- log-structured storage, Storage and Retrieval-Compaction strategies
+  - (see also LSM-trees (indexes))
+- logical clocks, Timestamps for ordering events, ID Generators and Logical Clocks-Enforcing constraints using logical clocks, Ordering events to capture causality
+  - for last-write-wins, Last write wins (discarding concurrent writes)
+  - for read-after-write consistency, Reading your own writes
+  - hybrid logical clocks, Hybrid logical clocks
+  - insufficiency for enforcing constraints, Enforcing constraints using logical clocks
+  - Lamport timestamps, Lamport timestamps
+- logical replication, Logical (row-based) log replication, Implementing CDC
+- LogicBlox (database), Datalog: Recursive Relational Queries
+- logs (data structure), Storage and Indexing for OLTP, Shared logs as consensus, Glossary
+  - (see also shared logs)
+  - advantages of immutability, Advantages of immutable events
+  - and right to erasure, Data Systems, Law, and Society
+  - compaction, Constructing and merging SSTables, Compaction strategies, Log compaction, State, Streams, and Immutability
+    - for stream operator state, Rebuilding state after a failure
+  - implementing uniqueness constraints, Uniqueness in log-based messaging
+  - log-based messaging, Log-Based Message Brokers-Replaying old messages
+    - comparison to traditional messaging, Logs compared to traditional messaging, Replaying old messages
+    - consumer offsets, Consumer offsets
+    - disk space usage, Disk space usage
+    - replaying old messages, Replaying old messages, Reprocessing data for application evolution
+    - slow consumers, When consumers cannot keep up with producers
+    - using logs for message storage, Using logs for message storage
+  - log-structured storage, Storage and Indexing for OLTP-Compaction strategies
+  - relation to consensus, Shared logs as consensus
+  - replication, Single-Leader Replication, Implementation of Replication Logs-Logical (row-based) log replication
+    - change data capture, Change Data Capture-API support for change streams
+      - (see also changelogs)
+    - coordination with snapshot, Setting Up New Followers
+    - logical (row-based) replication, Logical (row-based) log replication
+    - statement-based replication, Statement-based replication
+    - write-ahead log (WAL) shipping, Write-ahead log shipping
+  - scalability limits, The limits of total ordering
+- Looker (business intelligence software), Characterizing Transaction Processing and Analytics, Analytics
+- loose coupling, Making unbundling work
+- lost updates (see updates)
+- Lotus Notes (sync engine), Pros and cons of sync engines
+- Low Latency, Low Loss and Scalable Throughput (L4S), Combining circuit switching and packet switching
+- LSM-trees (indexes), The SSTable file format-Compaction strategies, Comparing B-Trees and LSM-Trees-Disk space usage
+- Lucene (storage engine), Full-Text Search
+- LWW (see last write wins)
+
+### M
+
+- machine learning
+  - batch inference, Machine Learning
+  - data preparation with DataFrames, DataFrames, Matrices, and Arrays
+  - deleting training data, Data Systems, Law, and Society
+  - deploying data products, Beyond the data lake
+  - ethical considerations, Predictive Analytics
+    - (see also ethics)
+  - feature engineering, From data warehouse to data lake, Machine Learning
+  - in analytics systems, Operational Versus Analytical Systems
+  - iterative processing, Machine Learning
+  - LLMs (see large language models (LLMs))
+  - models derived from training data, Application code as a derivation function
+  - relation to batch processing, Machine Learning-Machine Learning
+  - using a data lake, From data warehouse to data lake
+  - using GPUs, Layering of cloud services, Distributed Versus Single-Node Systems
+  - using matrices, DataFrames, Matrices, and Arrays
+- madsim (deterministic simulation testing), Deterministic simulation testing
+- magic scaling sauce, Principles for Scalability
+- maintainability, Maintainability-Evolvability: Making Change Easy, A Philosophy of Streaming Systems
+  - evolvability (see evolvability)
+  - operability, Operability: Making Life Easy for Operations
+  - simplicity and managing complexity, Simplicity: Managing Complexity
+- many-to-many relationships, Many-to-One and Many-to-Many Relationships, Graph-Like Data Models
+- many-to-one relationships, Many-to-One and Many-to-Many Relationships, Stars and Snowflakes: Schemas for Analytics
+- MapReduce (batch processing), Batch Processing, MapReduce-MapReduce
+  - analysis of user activity events (example), Joins and Grouping
+  - comparison to stream processing, Processing Streams
+  - disadvantages and limitations of, MapReduce
+  - fault tolerance, Handling faults
+  - higher-level tools, Query Languages
+  - mapper and reducer functions, MapReduce
+  - shuffling data, Shuffling Data
+  - sort-merge joins, Joins and Grouping
+  - workflows (see workflow engines)
+- Marshal (Ruby), Language-Specific Formats
+- marshaling (see encoding)
+- MartenDB (database), Event Sourcing and CQRS
+- master-slave replication (obsolete term), Single-Leader Replication
+- materialization, Glossary
+  - aggregate values, Materialized Views and Data Cubes
+  - conflicts, Materializing conflicts
+  - materialized views, Materialized Views and Data Cubes
+    - as derived data, Systems of Record and Derived Data, Composing Data Storage Technologies-Unbundled versus integrated systems
+    - in event sourcing, Event Sourcing and CQRS
+    - incremental view maintenance, Maintaining materialized views
+      - (see also incremental view maintenance (IVM))
+    - maintaining, using stream processing, Maintaining materialized views, Table–table join (materialized view maintenance)
+  - social network timeline example, Materializing and Updating Timelines
+- Materialize (database), Materialized Views and Data Cubes, Maintaining materialized views
+- matrices, DataFrames, Matrices, and Arrays
+- mean, Average, Median, and Percentiles
+- median, Average, Median, and Percentiles
+- meeting room booking (example), More examples of write skew, Predicate locks
+- Memgraph (database), Graph-Like Data Models, The Cypher Query Language
+- memory
+  - barrier (CPU instruction), Linearizability and network delays
+  - corruption, Hardware and Software Faults
+  - in-memory databases, Keeping Everything in Memory
+    - durability, Durability
+    - serial transaction execution, Actual Serial Execution
+  - in-memory representation of data, Formats for Encoding Data
+  - memtable (in LSM-trees), Constructing and merging SSTables
+  - use by indexes, Log-Structured Storage
+- memtable (in LSM-trees), Constructing and merging SSTables
+- Mercurial (version control system), Concurrency control
+- merge (DataFrame operator), DataFrames, Matrices, and Arrays
+- merging sorted files, Constructing and merging SSTables, Shuffling Data
+- Merkle trees, Tools for auditable data systems
+- Mesos (cluster manager), Separation of application code and state
+- message brokers (see messaging systems)
+- message queues (see messaging systems)
+- message-oriented middleware (see messaging systems)
+- message-passing (see event-driven architecture)
+- MessagePack (encoding format), Binary encodings
+- messaging systems, Event-Driven Architectures, Stream Processing-Replaying old messages
+  - (see also streams)
+  - backpressure, buffering, or dropping messages, Messaging Systems
+  - brokerless messaging, Direct messaging from producers to consumers
+  - event logs, Log-Based Message Brokers-Replaying old messages
+    - as data model, Event Sourcing and CQRS
+    - comparison to traditional messaging, Logs compared to traditional messaging, Replaying old messages
+    - consumer offsets, Consumer offsets
+    - replaying old messages, Replaying old messages, Reprocessing data for application evolution, Unifying batch and stream processing
+    - slow consumers, When consumers cannot keep up with producers
+  - exactly-once semantics, Exactly-once message processing, Exactly-Once Message Processing Revisited, Fault Tolerance
+  - message brokers, Message brokers-Acknowledgments and redelivery
+    - acknowledgments and redelivery, Acknowledgments and redelivery
+    - comparison to event logs, Logs compared to traditional messaging, Replaying old messages
+    - multiple consumers of same topic, Multiple consumers
+    - versus RPC, Event-Driven Architectures
+  - message loss, Messaging Systems
+  - reliability, Messaging Systems
+  - uniqueness in log-based messaging, Uniqueness in log-based messaging
+- metastable failure, Describing Performance
+- metered billing
+  - serverless, Microservices and Serverless
+  - storage, Operations in the Cloud Era
+- metrics, for response time, Use of Response Time Metrics
+- microbatching, Microbatching and checkpointing
+- microservices, Microservices and Serverless
+  - (see also services)
+  - causal dependencies across services, The limits of total ordering
+  - loose coupling, Making unbundling work
+  - relation to batch/stream processors, Batch Processing, Stream processors and services
+- Microsoft
+  - Azure Blob Storage (see Azure Blob Storage)
+  - Azure managed disks, Separation of storage and compute
+  - Azure Service Bus (messaging), Message brokers, Message brokers compared to databases
+  - Azure SQL DB (database), Cloud Native System Architecture
+  - Azure Storage, Object Stores
+  - Azure Stream Analytics, Stream analytics
+  - Azure Synapse Analytics (database), Cloud Native System Architecture
+  - DCOM (Distributed Component Object Model), The problems with remote procedure calls
+  - Microsoft Power BI (see Power BI (business intelligence software))
+  - MSDTC (transaction coordinator), Two-Phase Commit
+  - SQL Server (see SQL Server)
+- migrating (rewriting) data, Schema flexibility in the document model, Different values written at different times, Deriving several views from the same event log, Reprocessing data for application evolution
+- MinIO (object storage), Distributed Filesystems
+- mobile apps, Trade-Offs in Data Systems Architecture, Compaction strategies
+- model checking, Model checking and specification languages
+- modulus operator (%), Hash modulo number of nodes
+- Mojo (programming language), Limiting the impact of garbage collection
+- MongoDB (database), Batch Processing
+  - aggregation pipeline, Query languages for documents
+  - atomic operations, Atomic write operations
+  - BSON, Data locality for reads and writes
+  - document data model, Relational Versus Document Models
+  - hash-range sharding, Sharding by Hash of Key, Sharding by hash range
+  - in the cloud, Cloud Native System Architecture
+  - joins (\$lookup operator), Normalization, Denormalization, and Joins, Convergence of document and relational databases
+  - JSON Schema validation, JSON Schema
+  - leader-based replication, Single-Leader Replication
+  - ObjectIDs, ID Generators and Logical Clocks
+  - range-based sharding, Sharding by Key Range
+  - request routing, Request Routing
+  - secondary indexes, Local Secondary Indexes
+  - shard splitting, Rebalancing key-range sharded data
+  - stored procedures, Pros and cons of stored procedures
+- monitoring, Operations in the Cloud Era, Humans and Reliability, Operability: Making Life Easy for Operations
+- monotonic clocks, Monotonic clocks
+- monotonic reads, Monotonic reads
+- Morel (query language), Query Languages
+- MSMQ (messaging), XA transactions
+- multi-leader replication, Multi-Leader Replication-Types of conflict
+  - (see also replication)
+  - collaborative editing, Real-time collaboration, offline-first, and local-first apps
+  - conflict detection, Types of conflict
+  - conflict resolution, Dealing with Conflicting Writes
+  - for multi-region replication, Geographically Distributed Operation, The Cost of Linearizability
+  - linearizability, lack of, Implementing Linearizable Systems
+  - offline-capable clients, Sync Engines and Local-First Software
+  - replication topologies, Multi-leader replication topologies-Problems with different topologies
+- multi-object transactions, The need for multi-object transactions
+- Multi-Paxos (consensus algorithm), Leaderless Replication, Consensus in Practice
+- multi-reader single-writer lock, Implementation of 2PL
+- multi-table index cluster tables (Oracle), Data locality for reads and writes
+- multicolumn indexes, Multidimensional and Full-Text Indexes
+- multidimensional arrays, DataFrames, Matrices, and Arrays
+- multidimensional index, Multidimensional and Full-Text Indexes
+- multiplayer game (example), More examples of write skew
+- multitenancy, Separation of storage and compute, Variability of network delays
+  - by sharding, Sharding for Multitenancy
+  - using embedded databases, Compaction strategies
+- multiversion concurrency control (MVCC), Multiversion concurrency control, Summary
+  - detecting stale MVCC reads, Detection of stale MVCC reads
+  - indexes and snapshot isolation, Indexes and snapshot isolation
+  - using synchronized clocks, Synchronized clocks for global snapshots
+- mutual exclusion, Pessimistic versus optimistic concurrency control
+  - (see also locks)
+- MVCC (see multiversion concurrency control (MVCC))
+- MySQL (database)
+  - archiving WAL to object stores, Setting Up New Followers
+  - binlog coordinates, Setting Up New Followers
+  - change data capture, Implementing CDC, API support for change streams
+  - circular replication topology, Multi-leader replication topologies
+  - consistent snapshots, Setting Up New Followers
+  - distributed transaction support, XA transactions
+  - global transaction identifiers (GTIDs), Setting Up New Followers
+  - in the cloud, Cloud Native System Architecture
+  - InnoDB storage engine (see InnoDB)
+  - leader-based replication, Single-Leader Replication
+  - multi-leader replication, Geographically Distributed Operation
+  - row-based replication, Logical (row-based) log replication
+  - sharding (see Vitess (database))
+  - snapshot isolation support, Snapshot isolation, repeatable read, and naming confusion
+    - (see also InnoDB)
+  - statement-based replication, Statement-based replication
+
+### N
+
+- N+1 query problem, Object-relational mapping
+- nanomsg (messaging library), Direct messaging from producers to consumers
+- Narayana (transaction coordinator), Two-Phase Commit
+- NAS (Network Attached Storage), Shared-Memory, Shared-Disk, and Shared-Nothing Architectures, Distributed Filesystems
+- NATS (messaging), Message brokers
+- natural language processing (NLP), From data warehouse to data lake
+- Neo4j (database)
+  - Cypher query language, The Cypher Query Language
+  - graph data model, Graph-Like Data Models
+- Neon (database), Setting Up New Followers
+- Nephele (dataflow engine), Dataflow Engines
+- netcode (game development), Pros and cons of sync engines
+- Network Attached Storage (NAS), Shared-Memory, Shared-Disk, and Shared-Nothing Architectures, Distributed Filesystems
+- Network File System (NFS), Distributed Filesystems, Object Stores
+- network latency/delay, Latency and Response Time
+- network model (data representation), Relational Versus Document Models
+- network partitions, Sharding
+- Network Time Protocol (NTP), Unreliable Clocks
+  - accuracy, Clock Synchronization and Accuracy, Timestamps for ordering events
+  - adjustments to monotonic clocks, Monotonic clocks
+  - multiple server addresses, Weak forms of lying
+- networks
+  - congestion and queueing, Network congestion and queueing
+  - datacenter network topologies, Cloud Computing Versus Supercomputing
+  - faults (see faults)
+  - linearizability and network delays, Linearizability and network delays
+  - network partitions, Network Faults in Practice
+    - in CAP theorem, The Cost of Linearizability
+  - timeouts and unbounded delays, Timeouts and Unbounded Delays
+- NewSQL, Relational Versus Document Models, Solutions for Replication Lag, What Exactly Is a Transaction?, Database-Internal Distributed Transactions
+- next-key locking, Index-range locks
+- NFS (Network File System), Distributed Filesystems, Object Stores
+- NGINX, Load balancers, service discovery, and service meshes
+- Nimble (data format), Cloud Data Warehouses, Column-Oriented Storage
+  - (see also column-oriented storage)
+- NLP (natural language processing), From data warehouse to data lake
+- node (in graphs) (see vertices)
+- nodes (processes), Distributed Versus Single-Node Systems, Glossary
+  - allocating work to, Allocating work to nodes
+  - handling outages in leader-based replication, Handling Node Outages
+  - system models for failure, System Model and Reality
+  - writing to databases, Writing to the Database When a Node Is Down-Monitoring staleness
+- noisy neighbors, Variability of network delays
+- Non-Volatile Memory Express (NVMe) (see solid state drives (SSDs))
+- nonblocking atomic commit, Three-phase commit
+- nondeterministic operations, Statement-based replication
+  - (see also deterministic operations)
+  - in distributed systems, Deterministic simulation testing
+  - in workflow engines, Durable Execution and Workflows
+  - partial failures, Faults and Partial Failures
+  - sources of nondeterminism, Deterministic simulation testing
+- nonfunctional requirements, Defining Nonfunctional Requirements, Summary
+- nonrepeatable reads, Snapshot Isolation and Repeatable Read
+  - (see also read skew)
+- nonsimple domains, Convergence of document and relational databases
+- nonuniform memory access (NUMA), Pros and Cons of Sharding
+- normalization (data representation), Normalization, Denormalization, and Joins-Many-to-One and Many-to-Many Relationships, Glossary
+  - foreign-key references, The need for multi-object transactions
+  - in social network case study, Denormalization in the social networking case study
+  - in systems of record, Systems of Record and Derived Data
+  - versus denormalization, Deriving several views from the same event log
+- NoSQL, Relational Versus Document Models, Solutions for Replication Lag, What Exactly Is a Transaction?, Unbundling Databases
+- Notation3 (N3), Triple Stores and SPARQL
+- NP-hard, Resource allocation
+- NTP (see Network Time Protocol (NTP))
+- NUMA (nonuniform memory access), Pros and Cons of Sharding
+- numbers, in XML and JSON encodings, JSON, XML, and Binary Variants
+- NumPy (Python library), DataFrames, Matrices, and Arrays, Column-Oriented Storage
+- NVMe (Non-Volatile Memory Express) (see solid state drives (SSDs))
+
+### O
+
+- object databases, Relational Versus Document Models
+- object storage, Layering of cloud services, Object Stores-Object Stores
+  - Amazon S3 (see Amazon S3 (object storage))
+  - Azure Blob Storage (see Azure Blob Storage)
+  - comparison to distributed filesystems, Object Stores
+  - comparison to key-value stores, Object Stores
+  - databases backed by, Setting Up New Followers
+  - for backups, Replication
+  - for cloud data warehouses, Cloud Data Warehouses, Writing to column-oriented storage
+  - for database replication, Setting Up New Followers
+  - Google Cloud Storage (see Google, Cloud Storage)
+  - object size, Separation of storage and compute
+  - storing LSM segment files, Constructing and merging SSTables
+  - support for fencing, Fencing off zombies and delayed requests
+  - use in data lakes, From data warehouse to data lake
+- object-relational mapping (ORM) frameworks, Object-relational mapping
+  - error handling and aborted transactions, Handling errors and aborts
+  - unsafe read-modify-write cycle code, Atomic write operations
+- object-relational mismatch, The Object-Relational Mismatch
+- observability, Problems with Distributed Systems, Humans and Reliability, Operability: Making Life Easy for Operations
+- observer pattern, Separation of application code and state
+- OBT (one big table), Stars and Snowflakes: Schemas for Analytics, Stars and Snowflakes: Schemas for Analytics
+- offline systems, Batch Processing
+  - (see also batch processing)
+- offline-first applications, Real-time collaboration, offline-first, and local-first apps, Stateful, offline-capable clients
+- offsets
+  - consumer offsets in sharded logs, Consumer offsets
+  - messages in sharded logs, Using logs for message storage
+- OLAP (online analytical processing), Characterizing Transaction Processing and Analytics, Materialized Views and Data Cubes, Glossary
+- OLTP (see online transaction processing (OLTP))
+- on-premises deployment, Cloud Versus Self-Hosting, Cloud Data Warehouses
+- one big table (OBT), Stars and Snowflakes: Schemas for Analytics, Stars and Snowflakes: Schemas for Analytics
+- one-hot encoding, DataFrames, Matrices, and Arrays
+- one-to-few relationships, The document data model for one-to-many relationships
+- one-to-many relationships, The document data model for one-to-many relationships, The document data model for one-to-many relationships
+- online analytical processing (OLAP), Characterizing Transaction Processing and Analytics, Materialized Views and Data Cubes, Glossary
+- online systems, Cloud Computing Versus Supercomputing, Batch Processing
+  - (see also services)
+- online transaction processing (OLTP), Characterizing Transaction Processing and Analytics, Glossary
+  - analytical queries versus, Analytics
+  - data normalization, Trade-offs of normalization
+  - storage engines optimized for, Storage and Retrieval-Keeping Everything in Memory
+  - workload characteristics, Actual Serial Execution
+- ontologies, Triple Stores and SPARQL
+- Oozie (workflow scheduler), Batch Processing
+- Open Graph protocol (Facebook), Triple Stores and SPARQL
+- OpenAPI (service definition format), Microservices and Serverless, JSON Schema, Web services
+- openCypher (see Cypher (query language))
+- OpenHistogram (percentile estimation), Use of Response Time Metrics
+- OpenLink Virtuoso (see Virtuoso (database))
+- OpenStack, Object Stores
+- OpenTelemetry (tracing tool), Problems with Distributed Systems
+- operability, Operability: Making Life Easy for Operations
+- operating systems versus databases, Unbundling Databases
+- operational systems, Operational Versus Analytical Systems, Systems of Record and Derived Data
+  - (see also online transaction processing (OLTP))
+  - analytical systems compared with, Operational Versus Analytical Systems-Systems of Record and Derived Data
+  - ETL into analytical systems, Data Warehousing
+- operational transformation (OT), Conflict-free replicated datatypes and operational transformation
+- operations teams, Operations in the Cloud Era
+- operators (query execution), Query Execution: Compilation and Vectorization, Processing Streams
+- optimistic concurrency control, Pessimistic versus optimistic concurrency control
+- optimistic locking, Conditional writes (compare-and-set)
+- Oracle (database)
+  - distributed transaction support, XA transactions
+  - GoldenGate (change data capture), Implementing CDC
+  - hierarchical queries, Graph Queries in SQL
+  - lack of serializability, Isolation
+  - leader-based replication, Single-Leader Replication
+  - multi-leader replication, Geographically Distributed Operation
+  - multi-table index cluster tables, Data locality for reads and writes
+  - not preventing write skew, Characterizing write skew
+  - PL/SQL language, Pros and cons of stored procedures
+  - preventing lost updates, Automatically detecting lost updates
+  - read-committed isolation, Implementing read-committed
+  - Real Application Clusters (RAC), Locking and leader election
+  - snapshot isolation support, Snapshot Isolation and Repeatable Read, Snapshot isolation, repeatable read, and naming confusion
+  - TimesTen (in-memory database), Keeping Everything in Memory
+  - WAL-based replication, Write-ahead log shipping
+- ORC (data format), Cloud Data Warehouses, Column-Oriented Storage
+  - (see also column-oriented storage)
+- orchestration (service deployment), Cloud Versus Self-Hosting, Microservices and Serverless
+  - batch job execution, Distributed Job Orchestration-Distributed Job Orchestration
+  - workflow engines, Batch Processing
+- ordering
+  - event logs, Event Sourcing and CQRS
+  - limits of total ordering, The limits of total ordering
+  - logical timestamps, Logical Clocks
+  - of auto-incrementing IDs, ID Generators and Logical Clocks
+  - shared logs, Consensus in Practice-Pros and cons of consensus
+- Orkes (workflow engine), Durable Execution and Workflows
+- Orleans (actor framework), Distributed actor frameworks
+- ORM (see object-relational mapping (ORM) frameworks)
+- orphan pages (B-trees), Making B-trees reliable
+- OT (operational transformation), Conflict-free replicated datatypes and operational transformation
+- outbox pattern, CDC versus event sourcing
+- outliers (response time), Average, Median, and Percentiles
+- outsourcing, Cloud Versus Self-Hosting
+- overload, Describing Performance, Handling errors and aborts
+
+### P
+
+- PACELC principle, The CAP theorem
+- package managers, Separation of application code and state
+- packet switching, Can we not simply make network delays predictable?
+- packets
+  - corruption of, Weak forms of lying
+  - sending via UDP, Direct messaging from producers to consumers
+- PageRank (algorithm), Graph-Like Data Models, Query Languages
+- paging (see virtual memory)
+- Pandas (Python library), From data warehouse to data lake, DataFrames, Matrices, and Arrays, Column-Oriented Storage, DataFrames
+- Parquet (data format), From data warehouse to data lake, Cloud Data Warehouses, Column-Oriented Storage, Archival storage, Query Languages
+  - (see also column-oriented storage)
+  - databases on object storage, Setting Up New Followers
+  - document data model, Column-Oriented Storage
+  - use in batch processing, MapReduce
+- parsing (see decoding)
+- partial failures, Faults and Partial Failures, System Model and Reality, Summary
+- partial synchrony (system model), System Model and Reality
+- partition key, Pros and Cons of Sharding, Sharding of Key-Value Data, Logs compared to traditional messaging
+- partitioning (see sharding)
+- Paxos (consensus algorithm), Consensus, Consensus in Practice
+  - ballot number, From single-leader replication to consensus
+  - Multi-Paxos, Consensus in Practice
+- Payment Card Industry (PCI) compliance, Data Systems, Law, and Society
+- percentiles, Average, Median, and Percentiles, Glossary
+  - calculating efficiently, Use of Response Time Metrics
+  - in service level agreements (SLAs), Use of Response Time Metrics
+  - in service level objectives (SLOs), Use of Response Time Metrics
+- Percolator (Google), Implementing a linearizable ID generator
+- Percona XtraBackup (MySQL tool), Setting Up New Followers
+- performance
+  - degradation as fault, System Model and Reality
+  - describing, Describing Performance
+  - of distributed transactions, Distributed Transactions Across Different Systems
+  - of in-memory databases, Keeping Everything in Memory
+  - of linearizability, Linearizability and network delays
+  - of multi-leader replication, Geographically Distributed Operation
+- permission isolation, Sharding for Multitenancy
+- perpetual inconsistency, Timeliness and Integrity
+- pessimistic concurrency control, Pessimistic versus optimistic concurrency control
+- pgcapture (change data capture), Implementing CDC
+- pglogical (PostgreSQL extension), Geographically Distributed Operation
+- PGQL (Property Graph Query Language), Graph Queries in SQL
+- pgvector (vector index), Vector Embeddings
+- phantoms (transaction isolation), Phantoms causing write skew
+  - materializing conflicts, Materializing conflicts
+  - preventing, in serializability, Predicate locks
+- physical clocks (see clocks)
+- pickle (Python), Language-Specific Formats
+- Pinot (database), Characterizing Transaction Processing and Analytics, Column-Oriented Storage
+  - handling writes, Writing to column-oriented storage
+  - pre-aggregation, Analytics
+  - serving derived data, Serving Derived Data, Serving Derived Data
+- pipelined execution, in data warehouse queries, Query Execution: Compilation and Vectorization
+- pivot table, DataFrames, Matrices, and Arrays
+- point in time, Unreliable Clocks
+- point queries, Characterizing Transaction Processing and Analytics, Comparing B-Trees and LSM-Trees
+- Polaris (data catalog), Cloud Data Warehouses
+- polling, Representing Users, Posts, and Follows, Transmitting Event Streams-Pushing state changes to clients
+- polystores, The meta-database of everything
+- portable operating system interface (POSIX), Setting Up New Followers, Distributed Filesystems
+  - compliant filesystems, Object Stores
+- Post Office Horizon scandal, Humans and Reliability, Transactions
+- Post/Redirect/Get pattern, Duplicate suppression
+- PostgreSQL (database)
+  - archiving WAL to object stores, Setting Up New Followers
+  - change data capture, Implementing CDC, API support for change streams
+  - distributed transaction support, XA transactions
+  - foreign data wrappers, The meta-database of everything
+  - full text search support, Combining Specialized Tools by Deriving Data
+  - in the cloud, Cloud Native System Architecture
+  - JSON Schema validation, JSON Schema
+  - leader-based replication, Single-Leader Replication
+  - log sequence number, Setting Up New Followers
+  - logical decoding, Logical (row-based) log replication
+  - materialized view maintenance, Maintaining materialized views
+  - MVCC implementation, Multiversion concurrency control, Indexes and snapshot isolation
+  - partitioning versus sharding, Sharding
+  - pgvector (vector index), Vector Embeddings
+  - PL/pgSQL language, Pros and cons of stored procedures
+  - PostGIS geospatial indexes, Multidimensional and Full-Text Indexes
+  - preventing lost updates, Automatically detecting lost updates
+  - preventing write skew, Characterizing write skew, Serializable Snapshot Isolation
+  - read-committed isolation, Implementing read-committed
+  - representing graphs, Property Graphs
+  - serializable snapshot isolation (SSI), Serializable Snapshot Isolation
+  - sharding (see Citus (database))
+  - snapshot isolation support, Snapshot Isolation and Repeatable Read, Snapshot isolation, repeatable read, and naming confusion
+  - WAL-based replication, Write-ahead log shipping
+- postings list, Full-Text Search, Local Secondary Indexes
+- postmortems, blameless, Humans and Reliability
+- PouchDB (database), Pros and cons of sync engines
+- Power BI (business intelligence software), Characterizing Transaction Processing and Analytics, Analytics
+- pre-aggregation, Analytics, Serving Derived Data
+- pre-splitting, Rebalancing key-range sharded data
+- Precision Time Protocol (PTP), Clock Synchronization and Accuracy
+- predicate locks, Predicate locks
+- predictive analytics, Operational Versus Analytical Systems, Predictive Analytics-Feedback Loops
+  - amplifying bias, Bias and Discrimination
+  - ethics of (see ethics)
+  - feedback loops, Feedback Loops
+- preemption, Resource allocation
+  - in distributed schedulers, Handling faults
+  - of threads, Process Pauses
+- Prefect (workflow scheduler), Durable Execution and Workflows, Batch Processing, Scheduling workflows, Query Languages
+- Pregel model, Machine Learning
+- Presto (query engine), Cloud Data Warehouses
+- preventing double-spending (example), More examples of write skew
+- primary (see leader-based replication)
+- primary keys, Multicolumn and Secondary Indexes, Glossary
+  - autoincrementing, ID Generators and Logical Clocks
+  - versus partition key, Sharding by hash range
+- primary-backup replication (see leader-based replication)
+- privacy, Privacy and Tracking-Legislation and Self-Regulation
+  - consent and freedom of choice, Consent and Freedom of Choice
+  - data as assets and power, Data as Assets and Power
+  - deleting data, Limitations of immutability
+  - ethical considerations (see ethics)
+  - legislation and self-regulation, Legislation and Self-Regulation
+  - meaning of, Privacy and Use of Data
+  - regulation, Data Systems, Law, and Society
+  - surveillance, Surveillance
+  - tracking behavioral data, Privacy and Tracking
+- probabilistic algorithms
+  - Bloom filters, Bloom filters
+  - in stream analytics, Stream analytics
+  - percentile estimation, Use of Response Time Metrics
+- process pauses, Process Pauses-Limiting the impact of garbage collection
+- processing time (of events), Reasoning About Time
+- producers (message streams), Transmitting Event Streams
+- product analytics, Characterizing Transaction Processing and Analytics, Column-Oriented Storage
+- programming languages for stored procedures, Pros and cons of stored procedures
+- projections (event sourcing), Event Sourcing and CQRS
+- Prolog (language), Datalog: Recursive Relational Queries
+  - (see also Datalog)
+- Property Graph Query Language (PGQL), Graph Queries in SQL
+- property graphs, Property Graphs
+  - Cypher query language, The Cypher Query Language
+  - Property Graph Query Language (PGQL), Graph Queries in SQL
+- property-based testing, Humans and Reliability, Formal Methods and Randomized Testing
+- Protocol Buffers (data format), Protocol Buffers-Field tags and schema evolution
+- provenance of data, Designing for auditability
+- PTP (Precision Time Protocol), Clock Synchronization and Accuracy
+- publish/subscribe model, Messaging Systems
+- publishers (message streams), Transmitting Event Streams
+- Pulsar (streaming platform), Acknowledgments and redelivery
+- PyTorch (machine learning library), Machine Learning
+
+### Q
+
+- QoS (quality of service), Combining circuit switching and packet switching
+- Qpid (messaging), Message brokers compared to databases
+- quality of service (QoS), Combining circuit switching and packet switching
+- query engines
+  - compilation and vectorization, Query Execution: Compilation and Vectorization
+  - in cloud data warehouse, Cloud Data Warehouses
+  - operators, Query Execution: Compilation and Vectorization
+  - optimizing declarative queries, Data Models and Query Languages
+- query languages, Data Models and Query Languages-Summary
+  - Cypher, The Cypher Query Language
+  - Datalog, Datalog: Recursive Relational Queries
+  - GraphQL, GraphQL
+  - MongoDB aggregation pipeline, Normalization, Denormalization, and Joins, Query languages for documents
+  - recursive SQL queries, Graph Queries in SQL
+  - SPARQL, The SPARQL query language
+  - SQL, Normalization, Denormalization, and Joins
+- query optimizers, Query Execution: Compilation and Vectorization, Query Languages
+- queueing, Describing Performance
+  - variability of network delays, Network congestion and queueing
+    - head-of-line blocking, Latency and Response Time
+    - latency and response time, Latency and Response Time
+- queues (messaging), Message brokers
+- QUIC (protocol), The Limitations of TCP
+- quorums, Using quorums for reading and writing-Multi-Region Operation, Glossary
+  - for leaderless replication, Using quorums for reading and writing
+  - in consensus algorithms, From single-leader replication to consensus
+  - limitations of consistency, Understanding the limitations of quorum consistency-Monitoring staleness, Implementing Linearizable Systems
+  - making decisions in distributed systems, The Majority Rules
+  - monitoring staleness, Monitoring staleness
+  - multi-region replication, Multi-Region Operation
+  - relying on durability, Mapping system models to the real world
+- quotas, Operations in the Cloud Era
+
+### R
+
+- R (language), From data warehouse to data lake, DataFrames, Matrices, and Arrays, DataFrames
+- R-trees (indexes), Multidimensional and Full-Text Indexes
+- R2 (object storage), Layering of cloud services, Distributed Filesystems
+- RabbitMQ (messaging), Message brokers, Single-Leader Replication, Message brokers compared to databases
+- race conditions, Isolation
+  - (see also concurrency)
+  - avoiding with linearizability, Cross-channel timing dependencies
+  - caused by dual writes, Keeping Systems in Sync
+  - causing loss of money, Weak Isolation Levels
+  - dirty writes, No dirty writes
+  - in counter increments, No dirty writes
+  - lost updates, Preventing Lost Updates-Conflict resolution and replication
+  - preventing with serializable isolation, Serializability
+  - weak transaction isolation, Weak Isolation Levels
+  - write skew, Write Skew and Phantoms-Materializing conflicts
+- Raft (consensus algorithm), Consensus, Consensus in Practice, Uniqueness constraints require consensus
+  - leader-based replication, Single-Leader Replication
+  - sensitivity to network problems, Pros and cons of consensus
+  - term number, From single-leader replication to consensus
+  - use in etcd, Implementing Linearizable Systems
+- RAID (redundant array of independent disks), Separation of storage and compute
+- RAID (Redundant Array of Independent Disks), Tolerating hardware faults through redundancy, Distributed Filesystems
+- railways
+  - changing the gauge on, Reprocessing data for application evolution
+  - modeling network as a graph, Graph-Like Data Models
+- RAM (see memory)
+- RAMCloud (in-memory storage), Keeping Everything in Memory
+- random writes (access pattern), Sequential versus random writes
+- range (CockroachDB), Sharding
+- range queries
+  - in B-trees, B-Trees, Read performance
+  - in LSM-trees, Read performance
+  - not efficient in hash maps, Log-Structured Storage
+  - with hash sharding, Sharding by hash range
+- ranking algorithms, Machine Learning
+- Ray (workflow scheduler), Machine Learning
+- RDF (Resource Description Framework), The RDF data model, The SPARQL query language
+- RDMA (Remote Direct Memory Access), Layering of cloud services, Cloud Computing Versus Supercomputing
+- React (user interface library), End-to-end event streams
+- reactive programming, Pros and cons of sync engines
+- read models (event sourcing), Event Sourcing and CQRS
+- read path (derived data), Observing Derived State
+- read repair (leaderless replication), Catching up on missed writes, Implementing Linearizable Systems
+- read replicas (see followers) (see leader-based replication)
+- read skew (transaction isolation), Snapshot Isolation and Repeatable Read, Summary
+- read uncommitted isolation level, Implementing read-committed
+- read-after-write consistency, Reading your own writes, Timeliness and Integrity
+- read-committed isolation level, Read Committed-Implementing read-committed
+  - implementing, Implementing read-committed
+  - multiversion concurrency control (MVCC), Multiversion concurrency control
+  - no dirty reads, No dirty reads
+  - no dirty writes, No dirty writes
+- read-modify-write cycle, Preventing Lost Updates
+- read-scaling architecture, Problems with Replication Lag, Single-Leader Versus Leaderless Replication Performance, Pros and Cons of Sharding
+- read-your-writes consistency (see read-after-write consistency)
+- reader's schema (Avro), The writer’s schema and the reader’s schema
+- reads as events, Reads are events too
+- real-time
+  - analytics (see product analytics)
+  - collaborative editing, Real-time collaboration, offline-first, and local-first apps
+  - publish/subscribe dataflow, End-to-end event streams
+  - response time guarantees, Provididng response time guarantees
+  - time-of-day clocks, Time-of-day clocks
+- real-time operating system (RTOS), Provididng response time guarantees
+- Realm (database), Pros and cons of sync engines
+- rebalancing shards, Rebalancing key-range sharded data, Glossary
+  - (see also sharding)
+  - automatic or manual rebalancing, Operations: Automatic Versus Manual Rebalancing
+  - fixed number of shards, Fixed number of shards
+  - fixed number of shards per node, Sharding by hash range
+  - problems with hash mod N, Hash modulo number of nodes
+- recency guarantee (linearizability), Linearizability
+- recipients (see consumers)
+- recommendation engines, Operational Versus Analytical Systems
+  - building using DataFrames, DataFrames, Matrices, and Arrays
+  - iterative processing, Machine Learning
+- reconfiguration (consensus), Subtleties of consensus
+- recursive queries
+  - in Cypher, The Cypher Query Language
+  - in Datalog, Datalog: Recursive Relational Queries
+  - in SPARQL, The SPARQL query language
+  - lack of, in GraphQL, GraphQL
+  - relational, Datalog: Recursive Relational Queries-Datalog: Recursive Relational Queries
+  - SQL common table expressions, Graph Queries in SQL
+- Red Hat, JSON Schema
+- red-black tree, Constructing and merging SSTables
+- redelivery (messaging), Acknowledgments and redelivery
+- Redis (database)
+  - atomic operations, Atomic write operations
+  - CRDT support, Conflict-free replicated datatypes and operational transformation
+  - durability, Keeping Everything in Memory
+  - Lua scripting, Pros and cons of stored procedures
+  - multi-leader replication, Geographically Distributed Operation
+  - process-per-core model, Pros and Cons of Sharding
+  - single-threaded execution, Actual Serial Execution
+- redo log (see write-ahead log)
+- Redpanda (messaging), Message brokers, Setting Up New Followers, Disk space usage
+- Redshift (database), Cloud Data Warehouses
+- redundancy
+  - hardware components, Tolerating hardware faults through redundancy
+  - of derived data, Systems of Record and Derived Data
+    - (see also derived data)
+- redundant array of independent disks (RAID), Separation of storage and compute
+- Redundant Array of Independent Disks (RAID), Tolerating hardware faults through redundancy, Distributed Filesystems
+- Reed–Solomon codes (error correction), Distributed Filesystems
+- refactoring, Evolvability: Making Change Easy
+  - (see also evolvability)
+- regions (geographic distribution), Reading your own writes
+  - (see also datacenters)
+  - consensus across, Pros and cons of consensus
+  - definition, Reading your own writes
+  - latency, Distributed Versus Single-Node Systems
+  - linearizable ID generation, Implementing a linearizable ID generator
+  - replication across, Geographically Distributed Operation-Problems with different topologies, The Cost of Linearizability, The limits of total ordering
+    - leaderless, Multi-Region Operation
+    - multi-leader, Geographically Distributed Operation
+- regions (sharding), Sharding
+- register (data structure), What Makes a System Linearizable?
+- regulation (see legal matters)
+- relational data model, From data warehouse to data lake, Relational Versus Document Models-Convergence of document and relational databases
+  - comparison to document model, When to Use Which Model-Convergence of document and relational databases
+  - graph queries in SQL, Graph Queries in SQL
+  - in-memory databases with, Keeping Everything in Memory
+  - many-to-one and many-to-many relationships, Many-to-One and Many-to-Many Relationships
+  - multi-object transactions, need for, The need for multi-object transactions
+  - object-relational mismatch, The Object-Relational Mismatch
+  - representing a reorderable list, When to Use Which Model
+  - versus document model
+    - convergence of models, Convergence of document and relational databases
+    - data locality, Data locality for reads and writes
+- relational databases
+  - eventual consistency, Problems with Replication Lag
+  - history, Relational Versus Document Models
+  - leader-based replication, Single-Leader Replication
+  - logical logs, Logical (row-based) log replication
+  - philosophy compared to Unix, Unbundling Databases, The meta-database of everything
+  - schema changes, Schema flexibility in the document model, Encoding and Evolution, Different values written at different times
+  - sharded secondary indexes, Sharding and Secondary Indexes
+  - statement-based replication, Statement-based replication
+  - use of B-tree indexes, B-Trees
+- relationships (see edges)
+- reliability, Reliability and Fault Tolerance-Humans and Reliability, A Philosophy of Streaming Systems
+  - building a reliable system from unreliable components, Faults and Partial Failures
+  - hardware faults, Hardware and Software Faults
+  - human errors, Humans and Reliability
+  - importance of, Humans and Reliability
+  - of messaging systems, Messaging Systems
+  - software faults, Software faults
+- Remote Direct Memory Access (RDMA), Layering of cloud services, Cloud Computing Versus Supercomputing
+- Remote Method Invocation (Java RMI), The problems with remote procedure calls
+- remote procedure calls (RPCs), The problems with remote procedure calls-Data encoding and evolution for RPC
+  - (see also services)
+  - data encoding and evolution, Data encoding and evolution for RPC
+  - issues with, The problems with remote procedure calls
+  - using Avro, But what is the writer’s schema?
+  - versus message brokers, Event-Driven Architectures
+- rendezvous hashing, Consistent hashing
+- renewable energy, Distributed Versus Single-Node Systems
+- repeatable reads (transaction isolation), Snapshot isolation, repeatable read, and naming confusion
+- replication, Replication-Summary, Glossary
+  - and durability, Durability
+  - conflict resolution and, Conflict resolution and replication
+  - consistency properties, Problems with Replication Lag-Solutions for Replication Lag
+    - consistent prefix reads, Consistent prefix reads
+    - monotonic reads, Monotonic reads
+    - reading your own writes, Reading your own writes
+  - in distributed filesystems, Distributed Filesystems
+  - leaderless, Leaderless Replication-Version vectors
+    - detecting concurrent writes, Detecting Concurrent Writes-Version vectors
+    - limitations of quorum consistency, Understanding the limitations of quorum consistency-Monitoring staleness, Implementing Linearizable Systems
+  - monitoring staleness, Monitoring staleness
+  - multi-leader, Multi-Leader Replication-Types of conflict
+    - across multiple regions, Geographically Distributed Operation, The Cost of Linearizability
+    - conflict resolution, Dealing with Conflicting Writes-Types of conflict
+    - replication topologies, Multi-leader replication topologies-Problems with different topologies
+  - reasons for using, Distributed Versus Single-Node Systems, Replication
+  - replication lag, Problems with Replication Lag-Solutions for Replication Lag
+  - replication logs (see logs)
+  - sharding and, Sharding
+  - single-leader, Single-Leader Replication-Logical (row-based) log replication
+    - failover, Leader failure: Failover
+    - implementation of replication logs, Implementation of Replication Logs-Logical (row-based) log replication
+    - relation to consensus, From single-leader replication to consensus, Pros and cons of consensus
+    - setting up new followers, Setting Up New Followers
+    - synchronous versus asynchronous, Synchronous Versus Asynchronous Replication-Synchronous Versus Asynchronous Replication
+  - state machine replication, Statement-based replication, Pros and cons of stored procedures, Using shared logs, Databases and Streams
+    - event sourcing, Event Sourcing and CQRS
+    - reliance on determinism, Deterministic simulation testing
+  - using consensus, Pros and cons of consensus
+  - using erasure coding, Distributed Filesystems
+  - using object storage, Setting Up New Followers
+  - versus backups, Replication
+  - with heterogeneous data systems, Keeping Systems in Sync
+- Representational State Transfer (REST), Web services
+  - (see also services)
+- representations of data (see data models)
+- reprocessing data, Replaying old messages, Reprocessing data for application evolution, Unifying batch and stream processing
+  - (see also evolvability)
+- request hedging, Single-Leader Versus Leaderless Replication Performance
+- request identifiers, Uniquely identifying requests, Multishard request processing
+- request routing, Request Routing-Request Routing
+- residence laws for data, Distributed Versus Single-Node Systems, Sharding for Multitenancy
+- resilient systems, Reliability and Fault Tolerance
+  - (see also fault tolerance)
+- Resource Description Framework (RDF), The RDF data model, The SPARQL query language
+- resource isolation, Cloud Computing Versus Supercomputing, Sharding for Multitenancy
+- resource limits, Operations in the Cloud Era
+- response time
+  - as performance metric, Describing Performance, Batch Processing
+  - guarantees on, Provididng response time guarantees
+  - impact on users, Average, Median, and Percentiles
+  - in replicated systems, Single-Leader Versus Leaderless Replication Performance
+  - latency versus, Latency and Response Time
+  - mean and percentiles, Average, Median, and Percentiles
+  - metrics for, Use of Response Time Metrics
+  - user experience, Average, Median, and Percentiles
+- responsibility and accountability, Responsibility and Accountability
+- REST (Representational State Transfer), Web services
+  - (see also services)
+- Restate (workflow engine), Durable Execution and Workflows
+- RethinkDB (database)
+  - join support, Convergence of document and relational databases
+  - key-range sharding, Sharding by Key Range
+- retrieval-augmented generation, Vector Embeddings
+- retry storm, Describing Performance, Software faults
+- reverse ETL, Beyond the data lake
+- Riak (database)
+  - CRDT support, Conflict-free replicated datatypes and operational transformation, Detecting Concurrent Writes
+  - dotted version vectors, Version vectors
+  - gossip protocol, Request Routing
+  - hash sharding, Fixed number of shards
+  - leaderless replication, Leaderless Replication
+  - linearizability, lack of, Implementing Linearizable Systems
+  - multi-region support, Multi-Region Operation
+  - rebalancing, Operations: Automatic Versus Manual Rebalancing
+  - secondary indexes, Local Secondary Indexes
+  - sloppy quorums, Single-Leader Versus Leaderless Replication Performance
+  - vnodes (sharding), Sharding
+- ring buffers, Disk space usage
+- RisingWave (database), Maintaining materialized views
+- road network, Graph-Like Data Models
+- roaring bitmaps, Column compression
+- rockets, Uses of Byzantine fault tolerance
+- RocksDB (storage engine), Constructing and merging SSTables
+  - as embedded storage engine, Compaction strategies
+  - leveled compaction, Compaction strategies
+  - serving derived data, Serving Derived Data
+- rollbacks (transactions), Transactions
+- rolling upgrades, Tolerating hardware faults through redundancy, Encoding and Evolution, Sharding for Multitenancy, Faults and Partial Failures
+- routing (see request routing)
+- row-based replication, Logical (row-based) log replication
+- row-oriented storage, Column-Oriented Storage
+- RPCs (see remote procedure calls)
+- RTOS (real-time operating system), Provididng response time guarantees
+- rules (Datalog), Datalog: Recursive Relational Queries
+- run-length encoding, Column compression
+- Rust (programming language), Limiting the impact of garbage collection
+
+### S
+
+- S3 (object storage) (see Amazon S3 (object storage))
+- SaaS (see software as a service (SaaS))
+- safety and liveness properties, Distinguishing between safety and liveness, Single-value consensus
+- safety guarantees, Transactions
+- sagas (see compensating transactions)
+- Samza (stream processor), Stream analytics
+- SAN (Storage Area Network), Shared-Memory, Shared-Disk, and Shared-Nothing Architectures
+- SAP HANA (database), Data Storage for Analytics
+- scalability, Scalability-Principles for Scalability, A Philosophy of Streaming Systems
+  - auto-scaling, Operations: Automatic Versus Manual Rebalancing
+  - by sharding, Pros and Cons of Sharding
+  - describing load, Understanding Load
+  - describing performance, Describing Performance
+  - in distributed systems, Distributed Versus Single-Node Systems
+  - linear, Understanding Load
+  - principles for, Principles for Scalability
+  - replication and, Problems with Replication Lag
+  - scaling up versus scaling out, Shared-Memory, Shared-Disk, and Shared-Nothing Architectures
+- scaling out, Shared-Memory, Shared-Disk, and Shared-Nothing Architectures, Pros and Cons of Sharding
+  - (see also shared-nothing architecture)
+- scaling up, Shared-Memory, Shared-Disk, and Shared-Nothing Architectures
+- SCD (slowly changing dimension), Time dependence of joins
+- scheduling
+  - algorithms, Resource allocation
+  - batch jobs, Distributed Job Orchestration-Scheduling workflows
+  - gang scheduling, Resource allocation
+- schema-on-read, Schema flexibility in the document model, The Merits of Schemas
+- schema-on-write, Schema flexibility in the document model
+- schemaless databases (see schema-on-read)
+- schemas, Glossary
+  - Avro, Avro-Dynamically generated schemas
+    - reader determining writer’s schema, But what is the writer’s schema?
+    - schema evolution, The writer’s schema and the reader’s schema
+  - dynamically generated, Dynamically generated schemas
+  - evolution of, Reprocessing data for application evolution
+    - affecting application code, Encoding and Evolution
+    - compatibility checking, But what is the writer’s schema?
+    - in databases, Dataflow Through Databases-Archival storage
+    - in service calls, Data encoding and evolution for RPC
+  - flexibility in document model, Schema flexibility in the document model
+  - for analytics, Stars and Snowflakes: Schemas for Analytics-Stars and Snowflakes: Schemas for Analytics
+  - for JSON and XML, JSON, XML, and Binary Variants, JSON Schema
+  - generation and migration using ORMs, Object-relational mapping
+  - merits of, The Merits of Schemas
+  - migration, Schema flexibility in the document model
+  - Protocol Buffers, Protocol Buffers-Field tags and schema evolution
+  - schema migration on railways, Reprocessing data for application evolution
+  - traditional approach to design, fallacy in, Deriving several views from the same event log
+- scientific computing, Cloud Computing Versus Supercomputing
+- scikit-learn (Python library), From data warehouse to data lake
+- SCTP (Stream Control Transmission Protocol), The Limitations of TCP
+- ScyllaDB (database)
+  - cluster metadata, Request Routing
+  - consistency level ANY, Single-Leader Versus Leaderless Replication Performance
+  - hash-range sharding, Sharding by Hash of Key, Sharding by hash range
+  - last-write-wins conflict resolution, Detecting Concurrent Writes
+  - leaderless replication, Leaderless Replication
+  - lightweight transactions, Single-object writes
+  - linearizability, lack of, Implementing Linearizable Systems
+  - log-structured storage, Constructing and merging SSTables
+  - multi-region support, Multi-Region Operation
+  - use of clocks, Understanding the limitations of quorum consistency, Timestamps for ordering events
+  - vnodes (sharding), Sharding
+- search engines (see full-text search)
+- searching on streams, Search on streams
+- secondaries (see followers) (see leader-based replication)
+- secondary indexes, Multicolumn and Secondary Indexes, Glossary
+  - for many-to-many relationships, Many-to-One and Many-to-Many Relationships
+  - problems with dual writes, Keeping Systems in Sync
+  - sharding, Sharding and Secondary Indexes-Global Secondary Indexes, Summary
+    - global, Global Secondary Indexes
+    - index maintenance, Maintaining derived state
+    - local, Local Secondary Indexes
+  - updating, transaction isolation and, The need for multi-object transactions
+- secondary sort (MapReduce), Joins and Grouping
+- sed (Unix tool), Simple Log Analysis
+- self-hosting, Cloud Versus Self-Hosting, Cloud Data Warehouses
+- self-joins, Summary
+- self-validating systems, Don’t just blindly trust what they promise
+- semantic search, Vector Embeddings
+- Semantic Web, Triple Stores and SPARQL
+- semisynchronous replication, Synchronous Versus Asynchronous Replication
+- sender (see producers)
+- sequential writes (access pattern), Sequential versus random writes
+- serializability, Isolation, Weak Isolation Levels, Serializability-Performance of serializable snapshot isolation, Glossary
+  - linearizability versus, What Makes a System Linearizable?
+  - pessimistic versus optimistic concurrency control, Pessimistic versus optimistic concurrency control
+  - serial execution, Actual Serial Execution-Summary of serial execution
+    - sharding, Sharding
+    - using stored procedures, Encapsulating transactions in stored procedures, Using shared logs
+  - serializable snapshot isolation (SSI), Serializable Snapshot Isolation-Performance of serializable snapshot isolation
+    - detecting stale MVCC reads, Detection of stale MVCC reads
+    - detecting writes that affect prior reads, Detection of writes that affect prior reads
+    - distributed execution, Performance of serializable snapshot isolation, Database-Internal Distributed Transactions
+    - performance of SSI, Performance of serializable snapshot isolation
+    - preventing write skew, Decisions based on an outdated premise-Detection of writes that affect prior reads
+  - strict serializability, What Makes a System Linearizable?, Timeliness and Integrity
+  - two-phase locking (2PL), Two-Phase Locking-Index-range locks
+    - index-range locks, Index-range locks
+    - performance, Performance of 2PL
+- Serializable (Java), Language-Specific Formats
+- serializable snapshot isolation (SSI), Serializable Snapshot Isolation-Performance of serializable snapshot isolation
+- serialization, Formats for Encoding Data
+  - (see also encoding)
+- serverless, Microservices and Serverless
+- service discovery, Load balancers, service discovery, and service meshes, Request Routing, Service discovery
+  - registration, Load balancers, service discovery, and service meshes
+  - using DNS, Load balancers, service discovery, and service meshes, Request Routing, Service discovery
+- service framework, Web services
+- service level agreements (SLAs), Use of Response Time Metrics, Understanding Load
+- service level objectives (SLOs), Use of Response Time Metrics
+- service mesh, Load balancers, service discovery, and service meshes
+- Service Organization Control (SOC), Data Systems, Law, and Society
+- service time, Latency and Response Time
+- service-oriented architecture (SOA), Microservices and Serverless
+  - (see also services)
+- services, Dataflow Through Services: REST and RPC-Data encoding and evolution for RPC
+  - causal dependencies across services, The limits of total ordering
+  - loose coupling, Making unbundling work
+  - microservices, Microservices and Serverless
+  - relation to batch/stream processors, Batch Processing, Stream processors and services
+  - remote procedure calls (RPCs), The problems with remote procedure calls-Data encoding and evolution for RPC
+  - similarity to databases, Dataflow Through Services: REST and RPC
+  - web services, Web services
+- session windows (stream processing), Types of windows
+  - (see also windows)
+- sharding, Sharding-Summary, Glossary
+  - and consensus, Using shared logs
+  - and replication, Sharding
+  - distributed transactions across shards, Distributed Transactions
+  - hot shards, Sharding of Key-Value Data
+  - in batch processing, Batch Processing
+  - key-range splitting, Rebalancing key-range sharded data
+  - multishard operations, Multishard data processing
+    - enforcing constraints, Multishard request processing
+    - secondary index maintenance, Maintaining derived state
+  - of key-value data, Sharding of Key-Value Data-Skewed Workloads and Relieving Hot Spots
+    - by key range, Sharding by Key Range
+    - skew and hot spots, Skewed Workloads and Relieving Hot Spots
+  - origin of the term, Sharding
+  - partition key, Pros and Cons of Sharding, Sharding of Key-Value Data
+  - rebalancing shards, Rebalancing key-range sharded data-Operations: Automatic Versus Manual Rebalancing
+    - automatic or manual rebalancing, Operations: Automatic Versus Manual Rebalancing
+    - problems with hash mod N, Hash modulo number of nodes
+    - using fixed number of shards, Fixed number of shards
+    - using N shards per node, Sharding by hash range
+  - request routing, Request Routing-Request Routing
+  - secondary indexes, Sharding and Secondary Indexes-Global Secondary Indexes
+    - global, Global Secondary Indexes
+    - local, Local Secondary Indexes
+  - serial execution of transactions and, Sharding
+  - sorting sharded data, Shuffling Data
+- shared logs, Consensus in Practice-Pros and cons of consensus, Uniqueness in log-based messaging
+  - algorithms, Consensus in Practice
+  - for event sourcing, Event Sourcing and CQRS
+  - for messaging, Log-Based Message Brokers-Replaying old messages
+  - relation to consensus, Shared logs as consensus
+  - using, Using shared logs
+- shared mode (locks), Implementation of 2PL
+- shared subscription (message queues), Multiple consumers
+- shared-disk architecture, Shared-Memory, Shared-Disk, and Shared-Nothing Architectures, Distributed Filesystems
+- shared-memory architecture, Shared-Memory, Shared-Disk, and Shared-Nothing Architectures
+- shared-nothing architecture, Shared-Memory, Shared-Disk, and Shared-Nothing Architectures, Glossary
+  - distributed filesystems, Distributed Filesystems
+    - (see also distributed filesystems)
+  - use of network, Unreliable Networks
+- sharks
+  - biting undersea cables, Network Faults in Practice
+  - counting (example), Query languages for documents
+- Shenandoah (garbage collector), Limiting the impact of garbage collection
+- shredding
+  - deletion (see crypto-shredding)
+  - in columnar encoding, Column-Oriented Storage
+  - in relational model, When to Use Which Model
+- shuffle (batch processing), Shuffling Data-Shuffling Data
+- shunning (Fossil), Limitations of immutability
+- siblings (concurrent values), Manual conflict resolution, Capturing the happens-before relationship, Conflict resolution and replication
+  - (see also conflicts)
+- silo, Data Warehousing
+- SIMD (single-instruction-multidata) instructions, Query Execution: Compilation and Vectorization
+- similarity search
+  - edit distance, Full-Text Search
+  - genome data, Summary
+- simplicity, Simplicity: Managing Complexity
+- Singer (data connector), Data Warehousing
+- single-instruction-multidata (SIMD) instructions, Query Execution: Compilation and Vectorization
+- single-leader replication (see leader-based replication)
+- single-threaded execution, Atomic write operations, Actual Serial Execution, Logs compared to traditional messaging, Concurrency control
+- SingleStore (database), Keeping Everything in Memory, Data Storage for Analytics
+- site reliability engineer (SRE), Operations in the Cloud Era
+- size-tiered compaction, Compaction strategies, Disk space usage
+- skew, Glossary
+  - clock skew, Relying on Synchronized Clocks-Clock readings with a confidence interval, Implementing Linearizable Systems
+  - in transaction isolation
+    - read skew, Snapshot Isolation and Repeatable Read, Summary
+    - write skew, Write Skew and Phantoms-Materializing conflicts, Decisions based on an outdated premise-Detection of writes that affect prior reads
+      - (see also write skew)
+  - meanings of, Snapshot Isolation and Repeatable Read
+  - unbalanced workload, Sharding of Key-Value Data
+    - compensating for, Skewed Workloads and Relieving Hot Spots
+    - due to celebrities, Skewed Workloads and Relieving Hot Spots
+    - for time-series data, Sharding by Key Range
+- skip list, Constructing and merging SSTables
+- Slack (group chat), GraphQL
+- SLAs (service level agreements), Use of Response Time Metrics, Understanding Load
+- SlateDB (database), Constructing and merging SSTables, Setting Up New Followers
+- slicing and dicing, Data Storage for Analytics
+- sliding windows (stream processing), Types of windows
+  - (see also windows)
+- sloppy quorums, Single-Leader Versus Leaderless Replication Performance
+- SLOs (service level objectives), Use of Response Time Metrics
+- slowly changing dimension (data warehouses), Time dependence of joins
+- smearing (leap seconds adjustments), Clock Synchronization and Accuracy
+- snapshots (databases)
+  - as backups, Replication
+  - computing derived data, Creating an index
+  - in change data capture, Initial snapshot
+  - serializable snapshot isolation (SSI), Serializable Snapshot Isolation-Performance of serializable snapshot isolation
+  - setting up a new replica, Setting Up New Followers
+  - snapshot isolation and repeatable read, Isolation, Snapshot Isolation and Repeatable Read-Snapshot isolation, repeatable read, and naming confusion
+    - implementing with MVCC, Multiversion concurrency control
+    - indexes and MVCC, Indexes and snapshot isolation
+    - visibility rules, Visibility rules for observing a consistent snapshot
+  - synchronized clocks for global snapshots, Synchronized clocks for global snapshots
+- Snowflake (database), Cloud Native System Architecture, Cloud Data Warehouses, Cloud Data Warehouses, Batch Processing
+  - column-oriented storage, Column-Oriented Storage
+  - handling writes, Writing to column-oriented storage
+  - sharding and clustering, Sharding by hash range
+  - Snowpark, Query Languages
+- Snowflake (ID generator), ID Generators and Logical Clocks
+- snowflake schemas, Stars and Snowflakes: Schemas for Analytics
+- SOA (service-oriented architecture), Microservices and Serverless
+  - (see also services)
+- SOAP (web services), The problems with remote procedure calls
+- SOC (Service Organization Control), Data Systems, Law, and Society
+- social graph, Graph-Like Data Models
+- society, responsibility toward, Data Systems, Law, and Society, Legislation and Self-Regulation
+- sociotechnical systems, Humans and Reliability
+- software as a service (SaaS), Trade-Offs in Data Systems Architecture, Cloud Versus Self-Hosting
+  - ETL from, Data Warehousing
+  - multitenancy, Sharding for Multitenancy
+- software bugs, Software faults, Maintaining integrity in the face of software bugs
+- solar storm, Hardware and Software Faults
+- solid state drives (SSDs)
+  - compared to object storage, Setting Up New Followers
+  - detecting corruption, The end-to-end argument, Don’t just blindly trust what they promise
+  - failure rate, Hardware and Software Faults
+  - faults in, Durability
+  - firmware bugs, Software faults
+  - read throughput, Read performance
+  - sequential versus random writes, Sequential versus random writes
+- Solr (search server)
+  - local secondary indexes, Local Secondary Indexes
+  - request routing, Request Routing
+  - use of Lucene, Full-Text Search
+- sort (Unix tool), Simple Log Analysis, Sorting Versus In-Memory Aggregation, Distributed Job Orchestration
+- sort-merge joins (MapReduce), Joins and Grouping
+- Sorted String Tables (see SSTables)
+- source of truth (see systems of record)
+- Spanner (database)
+  - consistency model, What Makes a System Linearizable?
+  - data locality, Data locality for reads and writes
+  - in the cloud, Cloud Native System Architecture
+  - snapshot isolation using clocks, Synchronized clocks for global snapshots
+  - transactions, What Exactly Is a Transaction?, Database-Internal Distributed Transactions
+  - TrueTime API, Clock readings with a confidence interval
+- Spark (processing framework), From data warehouse to data lake, Cloud Native System Architecture, Batch Processing, Scheduling workflows, Dataflow Engines
+  - cost efficiency, Query Languages
+  - DataFrames, DataFrames, Matrices, and Arrays, DataFrames
+  - fault tolerance, Handling faults
+  - for data warehouses, Cloud Data Warehouses
+  - high availability using ZooKeeper, Coordination Services
+  - MLlib, Machine Learning
+  - query optimizer, Query Languages
+  - shuffling data, Shuffling Data
+  - Spark Streaming, Stream analytics, Microbatching and checkpointing
+  - streaming SQL support, Complex event processing
+  - use for ETL, Extract–Transform–Load
+- SPARQL (query language), Graph-Like Data Models, The SPARQL query language
+- sparse bitmaps (columnar encoding), Column compression
+- sparse indexes (SSTables), The SSTable file format
+- sparse matrices, DataFrames, Matrices, and Arrays
+- specialized hardware, in distributed systems, Distributed Versus Single-Node Systems
+- split brain, Leader failure: Failover, Request Routing, Glossary
+  - enforcing constraints, Uniqueness constraints require consensus
+  - in consensus algorithms, Consensus, From single-leader replication to consensus
+  - preventing, Implementing Linearizable Systems
+  - using fencing tokens to avoid, Fencing off zombies and delayed requests-Fencing with multiple replicas
+- spot instances, Handling faults
+- spreadsheets, Trade-Offs in Data Systems Architecture, DataFrames, Matrices, and Arrays
+  - dataflow programming, Designing Applications Around Dataflow
+  - pivot table, DataFrames, Matrices, and Arrays
+- SQL (Structured Query Language), Simplicity: Managing Complexity, Relational Versus Document Models, Cloud Data Warehouses
+  - for analytics, Data Warehousing, Column-Oriented Storage
+  - graph queries in, Graph Queries in SQL
+  - isolation levels standard, issues with, Snapshot isolation, repeatable read, and naming confusion
+  - joins, Normalization, Denormalization, and Joins
+  - résumé (example), The document data model for one-to-many relationships
+  - social network home timelines (example), Representing Users, Posts, and Follows
+  - SQL injection vulnerability, Uses of Byzantine fault tolerance
+  - statement-based replication, Statement-based replication
+  - stored procedures, Pros and cons of stored procedures
+  - views, Datalog: Recursive Relational Queries
+- SQL Server (database)
+  - archiving WAL to object stores, Setting Up New Followers
+  - change data capture, Implementing CDC
+  - data warehousing support, Data Storage for Analytics
+  - distributed transaction support, XA transactions
+  - leader-based replication, Single-Leader Replication
+  - multi-leader replication, Geographically Distributed Operation
+  - preventing lost updates, Automatically detecting lost updates
+  - preventing write skew, Characterizing write skew, Implementation of 2PL
+  - read-committed isolation, Implementing read-committed
+  - serializable isolation, Implementation of 2PL, Serializable Snapshot Isolation
+  - snapshot isolation support, Snapshot Isolation and Repeatable Read
+  - T-SQL language, Pros and cons of stored procedures
+- SQLite (database), Problems with Distributed Systems, Compaction strategies, Setting Up New Followers
+- SRE (site reliability engineer), Operations in the Cloud Era
+- SS2PL (strong strict two-phase locking), Two-Phase Locking
+- SSDs (see solid state drives)
+- SSI (serializable snapshot isolation), Serializable Snapshot Isolation-Performance of serializable snapshot isolation
+- SSTables (storage format), The SSTable file format-Compaction strategies
+  - constructing and maintaining, Constructing and merging SSTables
+  - making LSM-Tree from, Constructing and merging SSTables
+- staged rollout (see rolling upgrades)
+- staleness (old data), Reading your own writes
+  - cross-channel timing dependencies, Cross-channel timing dependencies
+  - in leaderless databases, Writing to the Database When a Node Is Down
+  - in multiversion concurrency control, Detection of stale MVCC reads
+  - monitoring for, Monitoring staleness
+  - of client state, Pushing state changes to clients
+  - versus linearizability, Linearizability
+  - versus timeliness, Timeliness and Integrity
+- standbys (see leader-based replication)
+- star replication topologies, Multi-leader replication topologies
+- star schemas, Stars and Snowflakes: Schemas for Analytics-Stars and Snowflakes: Schemas for Analytics
+- Star Wars analogy (event time versus processing time), Event time versus processing time
+- starvation (scheduling), Resource allocation
+- state
+  - derived from log of immutable events, State, Streams, and Immutability
+  - interplay between state changes and application code, Dataflow: Interplay between state changes and application code
+  - maintaining derived state, Maintaining derived state
+  - maintenance by stream processor in stream–stream joins, Stream–stream join (window join)
+  - observing derived state, Observing Derived State-Multishard data processing
+  - rebuilding after stream processor failure, Rebuilding state after a failure
+  - separation of application code and, Separation of application code and state
+- state machine replication, Statement-based replication, Pros and cons of stored procedures, Using shared logs, Databases and Streams
+  - event sourcing, Event Sourcing and CQRS
+  - reliance on determinism, Deterministic simulation testing
+- stateless systems, Trade-Offs in Data Systems Architecture
+- statement-based replication, Statement-based replication, Deterministic simulation testing
+- statically typed languages, analogy to schema-on-write, Schema flexibility in the document model
+- statistical and numerical algorithms, DataFrames, Matrices, and Arrays
+- StatsD (metrics aggregator), Direct messaging from producers to consumers
+- steal time, Process Pauses
+- stock market feeds, Direct messaging from producers to consumers
+- stop-the-world (see garbage collection)
+- storage area network (SAN), Shared-Memory, Shared-Disk, and Shared-Nothing Architectures, Distributed Filesystems
+- storage engines, Storage and Retrieval-Summary
+  - column-oriented, Column-Oriented Storage-Query Execution: Compilation and Vectorization
+    - column compression, Column compression-Column compression
+    - defined, Column-Oriented Storage
+    - Parquet, Cloud Data Warehouses, Column-Oriented Storage, Archival storage
+    - sort order in, Sort order in column storage-Sort order in column storage
+    - versus wide-column model, Column compression
+    - writing to, Writing to column-oriented storage
+  - in-memory storage, Keeping Everything in Memory, Durability
+  - row-oriented, Storage and Indexing for OLTP-Keeping Everything in Memory
+    - B-trees, B-Trees-Using B-tree variants
+    - comparing B-trees and LSM-trees, Comparing B-Trees and LSM-Trees-Disk space usage
+    - defined, Column-Oriented Storage
+- stored procedures, Encapsulating transactions in stored procedures-Pros and cons of stored procedures, Glossary
+  - and shared logs, Using shared logs
+  - pros and cons of, Pros and cons of stored procedures
+  - similarity to stream processors, Application code as a derivation function
+- Storm (stream processor), Stream analytics
+  - distributed RPC, Event-driven architectures and RPC, Multishard data processing
+  - Trident state handling, Idempotence
+- straggler events, Handling straggler events
+- Stream Control Transmission Protocol (SCTP), The Limitations of TCP
+- stream processing, Stream Processing-Summary, Glossary
+  - accessing external services within job, Microbatching and checkpointing, Idempotence, Exactly-once execution of an operation
+  - combining with batch processing, Unifying batch and stream processing
+  - comparison to batch processing, Processing Streams
+  - complex event processing (CEP), Complex event processing
+  - fault tolerance, Fault Tolerance-Rebuilding state after a failure
+    - atomic commit, Atomic commit revisited
+    - idempotence, Idempotence
+    - microbatching and checkpointing, Microbatching and checkpointing
+    - rebuilding state after a failure, Rebuilding state after a failure
+  - for data integration, Batch and Stream Processing-Unifying batch and stream processing
+  - for event sourcing, Event Sourcing and CQRS
+  - maintaining derived state, Maintaining derived state
+  - maintenance of materialized views, Maintaining materialized views
+  - messaging systems (see messaging systems)
+  - reasoning about time, Reasoning About Time-Types of windows
+    - event time versus processing time, Event time versus processing time, Microbatching and checkpointing, Unifying batch and stream processing
+    - knowing when window is ready, Handling straggler events
+    - types of windows, Types of windows
+  - relation to databases (see streams)
+  - relation to services, Stream processors and services
+  - relationship to batch processing, Batch Processing
+  - search on streams, Search on streams
+  - single-threaded execution, Logs compared to traditional messaging, Concurrency control
+  - stream analytics, Stream analytics
+  - stream joins, Stream Joins-Time dependence of joins
+    - stream–stream join, Stream–stream join (window join)
+    - stream–table join, Stream–table join (stream enrichment)
+    - table–table join, Table–table join (materialized view maintenance)
+    - time-dependence of, Time dependence of joins
+- streams
+  - end-to-end, pushing events to clients, End-to-end event streams
+  - messaging systems (see messaging systems)
+  - processing (see stream processing)
+  - relation to databases, Databases and Streams-Limitations of immutability
+    - (see also changelogs)
+    - API support for change streams, API support for change streams
+    - change data capture, Change Data Capture-API support for change streams
+    - derivative of state by time, State, Streams, and Immutability
+    - event sourcing, CDC versus event sourcing
+    - keeping systems in sync, Keeping Systems in Sync-Keeping Systems in Sync
+    - philosophy of immutable events, State, Streams, and Immutability-Limitations of immutability
+  - topics, Transmitting Event Streams
+  - transmitting, Transmitting Event Streams-Replaying old messages
+- strict serializability, What Makes a System Linearizable?, Timeliness and Integrity
+- striping (in columnar encoding), Column-Oriented Storage
+- strong consistency (see linearizability)
+- strong eventual consistency, Automatic conflict resolution
+- strong one-copy serializability, What Makes a System Linearizable?
+- strong strict two-phase locking (SS2PL), Two-Phase Locking
+- Structured Query Language (see SQL (Structured Query Language))
+- subjects, predicates, and objects (in triple-stores), Triple Stores and SPARQL
+- subscribers (message streams), Message brokers, Transmitting Event Streams
+  - (see also consumers)
+- supercomputers, Cloud Computing Versus Supercomputing
+- Superset (data visualization software), Analytics
+- surveillance, Surveillance
+  - (see also privacy)
+- sushi principle, From data warehouse to data lake
+- sustainability, Distributed Versus Single-Node Systems
+- Swagger (service definition format), Web services, Web services
+- swapping to disk (see virtual memory)
+- Swift (programming language), Limiting the impact of garbage collection
+- sync engines, Sync Engines and Local-First Software-Pros and cons of sync engines
+  - examples of, Pros and cons of sync engines
+  - for local-first software, Real-time collaboration, offline-first, and local-first apps
+- synchronous networks, Synchronous Versus Asynchronous Networks, Glossary
+  - comparison to asynchronous networks, Synchronous Versus Asynchronous Networks
+  - system model, System Model and Reality
+- synchronous replication, Synchronous Versus Asynchronous Replication, Multi-Leader Replication, Glossary
+- system administrator (sysadmin), Operations in the Cloud Era
+- system models, Knowledge, Truth, and Lies, System Model and Reality-Deterministic simulation testing
+  - assumptions in, Trust, but Verify
+  - correctness of algorithms, Defining the correctness of an algorithm
+  - mapping to the real world, Mapping system models to the real world
+  - safety and liveness, Distinguishing between safety and liveness
+- systems of record, Systems of Record and Derived Data, Glossary
+  - change data capture, Implementing CDC, Reasoning about dataflows
+  - event logs, Event Sourcing and CQRS
+  - treating event log as, State, Streams, and Immutability
+- systems thinking, Feedback Loops
+
+### T
+
+- t-digest (algorithm), Use of Response Time Metrics
+- Tableau (data visualization software), Characterizing Transaction Processing and Analytics, Analytics
+- table–table joins, Table–table join (materialized view maintenance)
+- tail (Unix tool), Using logs for message storage
+- tail latency (see latency)
+- tail vertex (property graphs), Property Graphs
+- task (workflows) (see workflow engines)
+- TCP (Transmission Control Protocol), The Limitations of TCP
+  - comparison to circuit switching, Can we not simply make network delays predictable?
+  - comparison to UDP, Network congestion and queueing
+  - connection failures, Fault Detection
+  - flow control, Network congestion and queueing, Messaging Systems
+  - packet checksums, Weak forms of lying, The end-to-end argument, Trust, but Verify
+  - reliability and duplicate suppression, Duplicate suppression
+  - retransmission timeouts, Variability of network delays
+  - use for transaction sessions, Single-Object and Multi-Object Operations
+- Temporal (workflow engine), Durable Execution and Workflows
+- TensorFlow (machine learning library), Machine Learning
+- Teradata (database), Cloud Native System Architecture, Cloud Data Warehouses
+- term-partitioned indexes (see global secondary indexes)
+- termination (consensus), Single-value consensus, Atomic commitment as consensus
+- testing, Humans and Reliability
+- thrashing (out of memory), Process Pauses
+- threads (concurrency)
+  - actor model, Distributed actor frameworks, Event-driven architectures and RPC
+    - (see also event-driven architecture)
+  - atomic operations, Atomicity
+  - background threads, Constructing and merging SSTables
+  - execution pauses, Can we not simply make network delays predictable?, Process Pauses-Process Pauses
+  - memory barriers, Linearizability and network delays
+  - preemption, Process Pauses
+  - single (see single-threaded execution)
+- three-phase commit (3PC), Three-phase commit
+- three-way relationships, Property Graphs
+- Thrift (data format), Protocol Buffers
+- throughput, Describing Performance, Understanding Load, Batch Processing
+- TIBCO, Message brokers
+  - Enterprise Message Service, Message brokers compared to databases
+  - StreamBase (stream analytics), Complex event processing
+- TiDB (database)
+  - consensus-based replication, Single-Leader Replication
+  - regions (sharding), Sharding
+  - request routing, Request Routing
+  - serving derived data, Serving Derived Data
+  - sharded secondary indexes, Global Secondary Indexes
+  - snapshot isolation support, Snapshot Isolation and Repeatable Read
+  - timestamp oracle, Implementing a linearizable ID generator
+  - transactions, What Exactly Is a Transaction?, Database-Internal Distributed Transactions
+  - use of model-checking, Model checking and specification languages
+- tiered storage, Setting Up New Followers, Disk space usage
+- TigerBeetle (database), Summary, Formal Methods and Randomized Testing, Deterministic simulation testing
+- TigerGraph (database), Graph Queries in SQL
+- Tigris (object storage), Distributed Filesystems
+- TileDB (database), DataFrames, Matrices, and Arrays
+- time
+  - concurrency and, The happens-before relation and concurrency
+  - cross-channel timing dependencies, Cross-channel timing dependencies
+  - in distributed systems, Unreliable Clocks-Limiting the impact of garbage collection
+    - (see also clocks)
+    - clock synchronization and accuracy, Clock Synchronization and Accuracy
+    - relying on synchronized clocks, Relying on Synchronized Clocks-Synchronized clocks for global snapshots
+  - process pauses, Process Pauses-Limiting the impact of garbage collection
+  - reasoning about, in stream processors, Reasoning About Time-Types of windows
+    - event time versus processing time, Event time versus processing time, Microbatching and checkpointing, Unifying batch and stream processing
+    - knowing when window is ready, Handling straggler events
+    - timestamp of events, Whose clock are you using, anyway?
+    - types of windows, Types of windows
+  - system models for distributed systems, System Model and Reality
+  - time-dependence in stream joins, Time dependence of joins
+- time travel, Batch Processing
+- time-of-day clocks, Time-of-day clocks, Hybrid logical clocks
+- time-series data
+  - as DataFrames, DataFrames, Matrices, and Arrays
+  - column-oriented storage, Column-Oriented Storage
+- timeliness, Timeliness and Integrity
+  - coordination-avoiding data systems, Coordination-avoiding data systems
+  - correctness of dataflow systems, Correctness of dataflow systems
+- timeouts, Unreliable Networks, Glossary
+  - dynamic configuration of, Variability of network delays
+  - for failover, Leader failure: Failover
+  - length of, Timeouts and Unbounded Delays
+- TimescaleDB (database), Column-Oriented Storage
+- timestamps, Logical Clocks
+  - assigning to events in stream processing, Whose clock are you using, anyway?
+  - for read-after-write consistency, Reading your own writes
+  - for transaction ordering, Synchronized clocks for global snapshots
+  - insufficiency for enforcing constraints, Enforcing constraints using logical clocks
+  - key range sharding by, Sharding by Key Range
+  - Lamport, Lamport timestamps
+  - logical, Ordering events to capture causality
+  - ordering events, Timestamps for ordering events
+  - timestamp oracle, Implementing a linearizable ID generator
+- TLA+ (specification language), Model checking and specification languages
+- token bucket algorithm, Describing Performance
+- tombstones, Constructing and merging SSTables, Disk space usage, Log compaction
+- topics (messaging), Message brokers, Transmitting Event Streams
+- torn pages (B-trees), Making B-trees reliable
+- total order, The Many Faces of Consensus, Glossary
+  - broadcast (see shared logs)
+  - limits of, The limits of total ordering
+  - on logical timestamps, Logical Clocks
+- tracing, Problems with Distributed Systems
+- tracking behavioral data, Privacy and Tracking
+  - (see also privacy)
+- trade-offs, in data systems architecture, Trade-Offs in Data Systems Architecture-Data Systems, Law, and Society
+- transaction coordinator (see coordinator)
+- transaction manager (see coordinator)
+- transaction processing, Characterizing Transaction Processing and Analytics-Characterizing Transaction Processing and Analytics
+  - comparison to analytics, Characterizing Transaction Processing and Analytics
+  - comparison to data warehousing, Data Storage for Analytics
+- transactions, Transactions-Summary, Glossary
+  - ACID properties of, The Meaning of ACID
+    - atomicity, Atomicity
+    - consistency, Consistency
+    - durability, Durability
+    - isolation, Isolation
+  - and derived data integrity, Timeliness and Integrity
+  - and replication, Solutions for Replication Lag
+  - compensating (see compensating transactions)
+  - concept of, What Exactly Is a Transaction?
+  - distributed transactions, Distributed Transactions-Exactly-Once Message Processing Revisited
+    - avoiding, Derived data versus distributed transactions, Making unbundling work, Enforcing Constraints-Coordination-avoiding data systems
+    - failure amplification, Maintaining derived state
+    - for sharded systems, Pros and Cons of Sharding
+    - in doubt/uncertain status, Coordinator failure, Holding locks while in doubt
+    - two-phase commit, Two-Phase Commit-Three-phase commit
+    - use of, Distributed Transactions Across Different Systems-Exactly-once message processing
+    - XA transactions, XA transactions-Problems with XA transactions
+  - OLTP versus analytical queries, Analytics
+  - purpose of, Transactions
+  - serializability, Serializability-Performance of serializable snapshot isolation
+    - actual serial execution, Actual Serial Execution-Summary of serial execution
+    - pessimistic versus optimistic concurrency control, Pessimistic versus optimistic concurrency control
+    - serializable snapshot isolation (SSI), Serializable Snapshot Isolation-Performance of serializable snapshot isolation
+    - two-phase locking (2PL), Two-Phase Locking-Index-range locks
+  - single-object and multi-object, Single-Object and Multi-Object Operations-Handling errors and aborts
+    - handling errors and aborts, Handling errors and aborts
+    - need for multi-object transactions, The need for multi-object transactions
+    - single-object writes, Single-object writes
+  - snapshot isolation (see snapshots)
+  - strict serializability, What Makes a System Linearizable?
+  - weak isolation levels, Weak Isolation Levels-Materializing conflicts
+    - preventing lost updates, Preventing Lost Updates-Conflict resolution and replication
+    - read-committed, Read Committed-Snapshot Isolation and Repeatable Read
+- Transmission Control Protocol (TCP) (see TCP (Transmission Control Protocol))
+- transmitting event streams, Transmitting Event Streams-Replaying old messages
+- traversal (graphs), Property Graphs
+- trie (data structure), The SSTable file format, Constructing and merging SSTables, Full-Text Search
+- triggers (databases), Transmitting Event Streams
+- Trino (data warehouse), Cloud Data Warehouses
+  - federated databases, The meta-database of everything
+  - query optimizer, Query Languages
+  - use for ETL, Extract–Transform–Load
+  - workflow example, Scheduling workflows
+- triple-stores, Triple Stores and SPARQL-The SPARQL query language
+- tumbling windows (stream processing), Types of windows, Microbatching and checkpointing
+  - (see also windows)
+- Turbopuffer (vector search), Setting Up New Followers
+- Turtle (RDF data format), Triple Stores and SPARQL
+- Twitter (see X (social network))
+- two-phase commit (2PC), Two-Phase Commit-Coordinator failure, Glossary
+  - confusion with two-phase locking, Two-Phase Locking
+  - coordinator failure, Coordinator failure
+  - coordinator recovery, Recovering from coordinator failure
+  - how it works, A system of promises
+  - performance cost, Distributed Transactions Across Different Systems
+  - problems with XA transactions, Problems with XA transactions
+  - transactions holding locks, Holding locks while in doubt
+- two-phase locking (2PL), Two-Phase Locking-Index-range locks, Glossary
+  - confusion with two-phase commit, Two-Phase Locking
+  - growing and shrinking phases, Implementation of 2PL
+  - index-range locks, Index-range locks
+  - performance of, Performance of 2PL
+- type checking, dynamic versus static, Schema flexibility in the document model
+
+### U
+
+- UDP (User Datagram Protocol)
+  - comparison to TCP, Network congestion and queueing
+  - multicast, Direct messaging from producers to consumers
+- Ultima Online (game), Sharding
+- unbounded datasets, Glossary
+  - (see also streams)
+- unbounded delays, Glossary
+  - in networks, Timeouts and Unbounded Delays
+  - process pauses, Process Pauses
+- unbundling databases, Unbundling Databases-Multishard data processing
+  - composing data storage technologies, Composing Data Storage Technologies-Unbundled versus integrated systems
+  - designing applications around dataflow, Designing Applications Around Dataflow-Stream processors and services
+  - observing derived state, Observing Derived State-Multishard data processing
+    - materialized views and caching, Materialized views and caching
+    - multishard data processing, Multishard data processing
+    - pushing state changes to clients, Pushing state changes to clients
+- uncertain (transaction status) (see in doubt)
+- union type (in Avro), Schema evolution rules
+- uniq (Unix tool), Simple Log Analysis, Distributed Job Orchestration
+- uniqueness constraints
+  - requiring consensus, Uniqueness constraints require consensus
+  - requiring linearizability, Constraints and uniqueness guarantees
+  - uniqueness in log-based messaging, Uniqueness in log-based messaging
+- Unity (data catalog), Cloud Data Warehouses
+- universally unique identifiers (UUIDs), ID Generators and Logical Clocks
+- Unix philosophy
+  - comparison to relational databases, Unbundling Databases, The meta-database of everything
+  - comparison to stream processing, Processing Streams
+- Unix pipes, Simple Log Analysis, Scheduling workflows
+- unmarshaling (see decoding)
+- UPDATE statement (SQL), Schema flexibility in the document model
+- updates
+  - preventing lost updates, Preventing Lost Updates-Conflict resolution and replication
+    - atomic write operations, Atomic write operations
+    - automatically detecting lost updates, Automatically detecting lost updates
+    - compare-and-set (CAS), Conditional writes (compare-and-set)
+    - conflict resolution and replication, Conflict resolution and replication
+    - using explicit locking, Explicit locking
+  - preventing write skew, Write Skew and Phantoms-Materializing conflicts
+- User Datagram Protocol (UDP) (see UDP (User Datagram Protocol))
+- utilization
+  - batch process scheduling, Resource allocation
+  - increasing through preemption, Handling faults
+  - trade-off with latency, Can we not simply make network delays predictable?
+- uTP protocol (BitTorrent), The Limitations of TCP
+- UUIDs (universally unique identifiers), ID Generators and Logical Clocks
+
+### V
+
+- validity (consensus), Single-value consensus, Atomic commitment as consensus
+- vBuckets (sharding), Sharding
+- vector clocks, Version vectors
+  - (see also version vectors)
+  - and Lamport/hybrid logical clocks, Lamport/hybrid logical clocks versus vector clocks
+  - and version vectors, Version vectors
+- vector embedding, Vector Embeddings
+- vectorized processing, Query Execution: Compilation and Vectorization, Vector Embeddings
+- vendor lock-in, Pros and Cons of Cloud Services
+- Venice (database), Serving Derived Data
+- verification, Trust, but Verify-Tools for auditable data systems
+  - avoiding blind trust, Don’t just blindly trust what they promise
+  - designing for auditability, Designing for auditability
+  - end-to-end integrity checks, The end-to-end argument again
+  - tools for auditable data systems, Tools for auditable data systems
+- version control systems
+  - merge conflicts, Manual conflict resolution
+  - reliance on immutable data, Concurrency control
+- version vectors, Problems with different topologies, Version vectors
+  - dotted, Version vectors
+  - versus vector clocks, Version vectors
+- Vertica (database), Cloud Data Warehouses, Writing to column-oriented storage
+- vertical scaling (see scaling up)
+- vertices (in graphs), Graph-Like Data Models, Property Graphs
+- video games, Pros and cons of sync engines
+- video transcoding (example), Cross-channel timing dependencies
+- views (SQL queries), Datalog: Recursive Relational Queries
+  - (see also materialization)
+- Viewstamped Replication (consensus algorithm), Consensus, Consensus in Practice, From single-leader replication to consensus
+- virtual block device, Separation of storage and compute
+- virtual file system (VFS), Distributed Filesystems, Distributed Filesystems
+- virtual machines, Layering of cloud services
+  - context switches, Process Pauses
+  - network performance, Network congestion and queueing
+  - noisy neighbors, Variability of network delays
+  - virtualized clocks in, Clock Synchronization and Accuracy
+- virtual memory, Latency and Response Time, Process Pauses
+- Virtuoso (database), The SPARQL query language
+- VisiCalc (spreadsheets), Designing Applications Around Dataflow
+- Vitess (database), Sharding by Key Range
+- vnodes (sharding), Sharding
+- vocabularies (linked data), Triple Stores and SPARQL
+- Voice over IP (VoIP), Network congestion and queueing
+- VoltDB (database)
+  - cross-shard serializability, Sharding
+  - deterministic stored procedures, Pros and cons of stored procedures
+  - in-memory storage, Keeping Everything in Memory
+  - process-per-core model, Pros and Cons of Sharding
+  - secondary indexes, Local Secondary Indexes
+  - serial execution of transactions, Actual Serial Execution
+  - statement-based replication, Statement-based replication, Rebuilding state after a failure
+  - transactions in stream processing, Atomic commit revisited
+
+### W
+
+- WAL (write-ahead log), Making B-trees reliable, Durable Execution and Workflows, Write-ahead log shipping
+- WAL-G (backup tool), Setting Up New Followers
+- wall-clock time, Time-of-day clocks
+- WarpStream (messaging), Setting Up New Followers, Disk space usage
+- web graph, Graph-Like Data Models
+- web services, Web services-Web services
+  - (see also services)
+- webhooks, Direct messaging from producers to consumers
+- webMethods (messaging), Message brokers
+- WebSocket (protocol), Pushing state changes to clients
+- wide-column data model, Data locality for reads and writes, Column compression
+- windows (stream processing), Stream analytics, Reasoning About Time-Types of windows
+  - infinite windows for changelogs, Maintaining materialized views, Stream–table join (stream enrichment)
+  - knowing when all events have arrived, Handling straggler events
+  - stream joins within a window, Stream–stream join (window join)
+  - types of windows, Types of windows
+- WITH RECURSIVE syntax (SQL), Graph Queries in SQL
+- Word2Vec (language model), Vector Embeddings
+- workflow engines, Durable Execution and Workflows
+  - Airflow (see Airflow (workflow scheduler))
+  - batch processing, Scheduling workflows
+  - Camunda (see Camunda (workflow engine))
+  - Dagster (see Dagster (workflow scheduler))
+  - durable execution, Durable Execution and Workflows
+  - ETL (see extract-transform-load (ETL))
+  - executor, Durable Execution and Workflows
+  - orchestrators, Durable Execution and Workflows, Batch Processing
+  - Orkes (see Orkes (workflow engine))
+  - Prefect (see Prefect (workflow scheduler))
+  - reliance on determinism, Deterministic simulation testing
+  - Restate (see Restate (workflow engine))
+  - Temporal (see Temporal (workflow engine))
+- working set, Sorting Versus In-Memory Aggregation
+- write amplification, Write amplification
+- write path (derived data), Observing Derived State
+- write skew (transaction isolation), Write Skew and Phantoms-Materializing conflicts
+  - characterizing, Write Skew and Phantoms-Phantoms causing write skew, Decisions based on an outdated premise
+  - examples of, Write Skew and Phantoms, More examples of write skew
+  - materializing conflicts, Materializing conflicts
+  - occurrence in practice, Maintaining integrity in the face of software bugs
+  - phantoms, Phantoms causing write skew
+  - preventing
+    - in snapshot isolation, Decisions based on an outdated premise-Detection of writes that affect prior reads
+    - in two-phase locking, Predicate locks-Index-range locks
+    - options for, Characterizing write skew
+- write-ahead log (WAL), Making B-trees reliable, Durable Execution and Workflows, Write-ahead log shipping
+- writer's schema (Avro), The writer’s schema and the reader’s schema
+- writes (database)
+  - atomic write operations, Atomic write operations
+  - detecting writes affecting prior reads, Detection of writes that affect prior reads
+  - preventing dirty writes with read committed, No dirty writes
+- WS-\* framework, The problems with remote procedure calls
+- WS-AtomicTransaction (2PC), Two-Phase Commit
+
+### X
+
+- X (social network)
+  - constructing home timelines (example), Case Study: Social Network Home Timelines, Deriving several views from the same event log, Table–table join (materialized view maintenance), Materialized views and caching
+    - cost of joins, Denormalization in the social networking case study
+  - Snowflake (ID generator), ID Generators and Logical Clocks
+- XA transactions, Two-Phase Commit, XA transactions-Problems with XA transactions
+  - heuristic decisions, Recovering from coordinator failure
+  - problems with, Problems with XA transactions
+- xargs (Unix tool), Simple Log Analysis
+- XFS (filesystem), Distributed Filesystems
+- XGBoost (machine learning library), Machine Learning
+- XML
+  - binary variants, Binary encodings
+  - data locality, Data locality for reads and writes
+  - encoding RDF data, The RDF data model
+  - for application data, issues with, JSON, XML, and Binary Variants
+  - in relational databases, Schema flexibility in the document model
+  - XML databases, Relational Versus Document Models, Query languages for documents
+- Xorq (query engine), The meta-database of everything
+- XPath, Query languages for documents
+- XQuery, Query languages for documents
+
+### Y
+
+- Yahoo response time study, Average, Median, and Percentiles
+- YARN (job scheduler), Distributed Job Orchestration, Distributed Job Orchestration, Scheduling workflows, Separation of application code and state
+- Yjs (sync engine), Pros and cons of sync engines
+- YugabyteDB (database)
+  - hash-range sharding, Sharding by hash range
+  - key-range sharding, Sharding by Key Range
+  - multi-leader replication, Geographically Distributed Operation
+  - request routing, Request Routing
+  - sharded secondary indexes, Global Secondary Indexes
+  - tablets (sharding), Sharding
+  - transactions, What Exactly Is a Transaction?, Database-Internal Distributed Transactions
+  - use of clock synchronization, Synchronized clocks for global snapshots
+
+### Z
+
+- Zab (consensus algorithm), Implementing Linearizable Systems, Consensus, Consensus in Practice
+- zero-copy, Formats for Encoding Data
+- zero-disk architecture (ZDA), Setting Up New Followers
+- ZeroMQ (messaging library), Direct messaging from producers to consumers
+- ZGC (Z garbage collector), Limiting the impact of garbage collection
+- Zipkin (tracing tool), Problems with Distributed Systems
+- zombies (split brain), Fencing off zombies and delayed requests
+- zones (cloud computing) (see availability zones)
+- ZooKeeper (coordination service), Coordination Services-Service discovery
+  - generating fencing tokens, Fencing off zombies and delayed requests, Using shared logs, Coordination Services
+  - linearizable operations, Implementing Linearizable Systems
+  - locks and leader election, Locking and leader election
+  - observers, Service discovery
+  - use for service discovery, Load balancers, service discovery, and service meshes, Service discovery
+  - use for shard assignment, Request Routing
+  - use of Zab algorithm, Consensus

@@ -24,7 +24,14 @@ BOOK_TITLES = [title]  # plus the OPF dc:title entries, filled in below
 # Per-slug chapter names for spine docs the ncx never labels (see the labels code).
 NAME_FIX = {"more-ocaml-algorithms-methods-and-diversions": {
     "index_split_001.html": "Title Page", "index_split_002.html": "Copyright",
-    "index_split_019.html": "Part: Generating PDF Documents (an extended example)"}}
+    "index_split_019.html": "Part: Generating PDF Documents (an extended example)"},
+    # DDIA 2e front matter the ncx does not label: the title page and the
+    # copyright page both carry the book title as their only h1 (so both mined
+    # the same name), and the Alan Kay epigraph has no heading (it fell to the
+    # "dedication03" file stem).
+    "designing-data-intensive-applications-2e": {
+        "titlepage01.html": "Title Page", "copyright-page01.html": "Copyright",
+        "dedication03.html": "Epigraph"}}
 # Calibre PDF-reflow listings printed as <p> paragraphs whose lines are led by a
 # small-font <span class="X">N</span> line number (C++ Initialization Story:
 # 55 paragraphs, 7 listing runs). Value: (line-number span class, fence
@@ -154,6 +161,17 @@ def prep_code(s):
             alt = (img.get("alt") or "").strip()
             if alt.isdigit() and 1 <= int(alt) <= 20: img.replace_with(_CIRC[int(alt) - 1])
             else: img.decompose()
+    # The SAME callout markers reappear OUTSIDE the listing, in the explanation
+    # list keyed to the ①②③ (O'Reilly's "co" legend: <img alt="N" src=".../N.png">
+    # before each item). pandoc keeps those as ![N](media/assets/N.png) image
+    # links, so the legend no longer matches the circled digits inside the
+    # fence. Convert them too, but only when the src basename is exactly
+    # "<alt>.png" - a real figure has a descriptive alt and a "ddia_0301.png"
+    # style src, so it is never touched.
+    for img in s.find_all("img"):
+        alt = (img.get("alt") or "").strip()
+        if alt.isdigit() and 1 <= int(alt) <= 20 and posixpath.basename(img.get("src") or "") == alt + ".png":
+            img.replace_with(_CIRC[int(alt) - 1])
     # Packt / Cambridge epubs mark code as one <p class="source-code"> (Madieu)
     # or <p class="CodeN"> (Programming in Haskell) per line, so pandoc rendered
     # it as escaped prose. Merge each run of consecutive code paragraphs into one
@@ -375,7 +393,7 @@ def flatten_tables(html):
 # pandoc leaked from the source's <pre class="..."> (programlisting, insert,
 # insert-before, table, less_space, pagebreak-before, ...) - strip it to a plain
 # fence so the block still renders as code without a bogus "language".
-_LANGS = set("c cpp c++ cc cxx h hpp cs csharp objc rust rs python py py3 js javascript jsx mjs ts typescript tsx json json5 jsonc sh bash zsh shell console shell-session sh-session shellsession terminal doscon bat batch powershell ps1 java kotlin kt go golang lua ruby rb perl pl php swift scala r matlab octave html xhtml xml svg css scss sass less styl yaml yml toml ini cfg conf sql haskell hs ocaml ml sml fsharp fs asm nasm gas x86asm armasm mips llvm diff patch udiff make makefile cmake meson ninja dockerfile docker text plaintext plain txt none nohighlight ada d dart elixir ex erlang clojure clj lisp elisp scheme racket vim viml vimscript proto protobuf graphql gql markdown md rst tex latex bibtex verilog systemverilog vhdl gdb ld linker-script nginx apache toml groovy gradle tcl awk sed regex ebnf bnf abnf pseudocode".split())
+_LANGS = set("c cpp c++ cc cxx h hpp cs csharp objc rust rs python py py3 js javascript jsx mjs ts typescript tsx json json5 jsonc sh bash zsh shell console shell-session sh-session shellsession terminal doscon bat batch powershell ps1 java kotlin kt go golang lua ruby rb perl pl php swift scala r matlab octave html xhtml xml svg css scss sass less styl yaml yml toml ini cfg conf sql haskell hs ocaml ml sml fsharp fs asm nasm gas x86asm armasm mips llvm diff patch udiff make makefile cmake meson ninja dockerfile docker text plaintext plain txt none nohighlight ada d dart elixir ex erlang clojure clj lisp elisp scheme racket vim viml vimscript proto protobuf graphql gql markdown md rst tex latex bibtex verilog systemverilog vhdl gdb ld linker-script nginx apache toml groovy gradle tcl awk sed regex ebnf bnf abnf pseudocode cypher prolog datalog sparql".split())
 # Dead links. Nothing inside a book directory can be a link target except the
 # extracted media/ files (chapter anchors do not survive pandoc, the epub's
 # .html files are not copied), so every relative link is dead: keep its text,

@@ -3109,6 +3109,7 @@ local BOOKS = {
 	{ module = "Databases", key = "books-db", items = {
 		{ title = "Build Your Own SQLite (CodeCrafters)", fmt = "md", slug = "build-your-own-sqlite", file = "https://github.com/codecrafters-io/build-your-own-sqlite" },
 		{ title = "Database Internals", fmt = "epub", file = "Database Internals _ A Deep Dive Into How Distributed Data -- Alex  Petrov -- O'Reilly Media, Sebastopol, CA, 2019 -- O'Reilly Media, Incorporated -- 9781492040316 -- 6ed4b5c9518da1d5ff76d1cd6c3aa813 -- Anna’s Arc.epub" },
+		{ title = "Designing Data-Intensive Applications (2e)", fmt = "epub", file = "Designing Data-Intensive Applications (for _ _) -- Martin Kleppmann and Chris Riccomini -- 2026 -- O'Reilly Media, Inc_ -- aee9f456573bd0587f21c1b42964789f -- Anna’s Archive.epub" },
 	} },
 	{ module = "Linux / Drivers", key = "books-linux", items = {
 		{ title = "Learning eBPF", fmt = "pdf", file = "Learning-eBPF - Full book.pdf" },
