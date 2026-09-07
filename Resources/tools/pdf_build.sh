@@ -253,6 +253,12 @@ case "$SLUG" in
   # when the pending line is syntactically incomplete (ends in a binary
   # operator/opener, or a comma inside unclosed brackets); author breaks pass.
   opengl-superbible) FIXAWK="${AWKF%/*}/superbible_fix.awk" ;;
+  # ELF spec: folio.awk's page-edge vote strips the even-page running footers but
+  # leaves the odd-page ones (the two footer forms alternate: a page number then
+  # the Book title, or an all-caps section title then the page number).
+  # elf_fix.awk drops both forms symmetrically; it is anchored on the "N-M" page
+  # tag and the all-caps title so it never touches a body line or a TOC entry.
+  elf-specification) FIXAWK="${AWKF%/*}/elf_fix.awk" ;;
 esac
 # pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
 # control-byte tr. SSA-based Compiler Design typesets a few relations in
@@ -301,6 +307,22 @@ if [ "$4" = book ] && { [ "$SLUG" = talking-compilers-with-chatgpt ] || [ "$SLUG
   #   inside the last numbered chapter. Their depth-0 nodes are the chapters, the
   #   appendices and the end matter, in printed order.
   :
+elif [ "$4" = book ] && [ "$SLUG" = elf-specification ]; then
+  # The ELF spec's outline repeats "1. Object Files" under each of Books I, II
+  # and III, so the outline/depth split produces three indistinguishable
+  # chapters. Its real divisions are the Books' numbered sections; name them with
+  # a Book prefix so every title is distinct. Each Book's own Contents / List of
+  # Figures pages fold into that Book's first chapter, and the front matter and
+  # Index bracket the three Books. Boundaries are the printed page starts.
+  { printf '1\tFront Matter\n'
+    printf '9\tBook I: Object Files\n'
+    printf '39\tBook I: Program Loading and Dynamic Linking\n'
+    printf '45\tBook I: Reserved Names\n'
+    printf '49\tBook II: Object Files (Intel Architecture)\n'
+    printf '59\tBook III: Object Files\n'
+    printf '71\tBook III: Program Loading and Dynamic Linking\n'
+    printf '89\tBook III: Intel Architecture and System V R4 Dependencies\n'
+    printf '103\tIndex\n'; } > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
   # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
   # no title pattern can find them; the split follows the outline's shape.
