@@ -90,6 +90,12 @@ fi
 book_fix() {
   if [ -n "$FIXAWK" ] && [ -f "$FIXAWK" ]; then awk -f "$FIXAWK"; else cat; fi
 }
+# pre_fix runs on the RAW pdftotext output, before the control-byte tr, for a
+# book whose defect is font bytes with no ToUnicode map (see $SSAFIX). Plain
+# cat unless $SSAFIX is set, so every other book is untouched.
+pre_fix() {
+  if [ -n "$SSAFIX" ] && [ -f "$SSAFIX" ]; then awk -f "$SSAFIX"; else cat; fi
+}
 cut_anchor() {
   if [ -z "$1" ] && [ -z "$2" ]; then cat; return; fi
   awk -v s="$1" -v e="$2" '
@@ -166,6 +172,7 @@ emit() {
   # whose furniture is not a running head at all (a watermark, a licence notice,
   # an OCR-mangled head that no page-position rule can key).
   pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
+    | pre_fix \
     | sed "$CTLX$CTL" | tr '\000-\010\013\015-\037' '[?*]' | sed "$LIG" \
     | awk -v book="$MODE" -v furn="$FURN" -v keys="$OUT/.folio.keys" -v first_page="$1" -f "$AWKF" \
     | cut_anchor "$4" "$5" \
@@ -237,6 +244,26 @@ esac
 FIXAWK=
 case "$SLUG" in
   programming-with-posix-threads) FIXAWK="${AWKF%/*}/posix_threads_fix.awk" ;;
+  # C++ Move Semantics: 70 alternating running heads survive folio.awk and
+  # linearise into text, four of them inside C++ listings. cmove_fix.awk drops
+  # both head forms and keeps the printed TOC (dot-leaders) and body headings.
+  c-move-semantics-the-complete-guide) FIXAWK="${AWKF%/*}/cmove_fix.awk" ;;
+  # OpenGL SuperBible: long C/C++/GLSL statements are hard-wrapped in the PDF's
+  # own narrow code frame. superbible_fix.awk rejoins a continuation line only
+  # when the pending line is syntactically incomplete (ends in a binary
+  # operator/opener, or a comma inside unclosed brackets); author breaks pass.
+  opengl-superbible) FIXAWK="${AWKF%/*}/superbible_fix.awk" ;;
+esac
+# pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
+# control-byte tr. SSA-based Compiler Design typesets a few relations in
+# subsetted math fonts (MSAM10/MTSYN) that carry no ToUnicode map, so pdftotext
+# emits the raw font byte; the tr below would turn those bytes into "?" (which
+# the book also uses legitimately), losing them for good. ssa_fix.awk maps the
+# bytes to their real glyphs (triangleright, negationslash + relation) from the
+# font's own /Differences names while they are still distinct. No-op elsewhere.
+SSAFIX=
+case "$SLUG" in
+  ssa-based-compiler-design) SSAFIX="${AWKF%/*}/ssa_fix.awk" ;;
 esac
 # Furniture learn pass: read the WHOLE book once and record which page-number
 # offsets its page ends attest, and which page-edge lines are running heads (see
