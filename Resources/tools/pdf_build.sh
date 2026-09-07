@@ -280,6 +280,10 @@ case "$SLUG" in
   # Memory Consistency Primer: 174 running heads folio.awk misses (even
   # "<folio> <n>. TITLE", odd "<n.m>. TITLE <folio>"), all-caps-title keyed.
   a-primer-on-memory-consistency-and-cache-coherence) FIXAWK="${AWKF%/*}/primer_fix.awk" ;;
+  # The Linux Programming Interface: the list bullet is a dingbat with no Unicode
+  # map, so every bulleted item opens with a literal "z" (1,827 of them);
+  # tlpi_fix maps it back to a bullet and drops 9 even-page footer leaks.
+  the-linux-programming-interface) FIXAWK="${AWKF%/*}/tlpi_fix.awk" ;;
 esac
 # pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
 # control-byte tr. SSA-based Compiler Design typesets a few relations in

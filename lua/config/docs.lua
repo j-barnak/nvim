@@ -3095,6 +3095,7 @@ local BOOKS = {
 	} },
 	{ module = "Linux / Drivers", key = "books-linux", items = {
 		{ title = "Learning eBPF", fmt = "pdf", file = "Learning-eBPF - Full book.pdf" },
+		{ title = "The Linux Programming Interface", fmt = "pdf", slug = "the-linux-programming-interface", file = "The-Linux-Programming-Interface.pdf" },
 		{ title = "eBPF Developer Tutorial (eunomia)", fmt = "md", slug = "ebpf-developer-tutorial", file = "https://github.com/eunomia-bpf/bpf-developer-tutorial" },
 		{ title = "Linux Insides (0xAX)", fmt = "md", slug = "linux-insides", file = "https://github.com/0xAX/linux-insides" },
 		{ title = "Linux Device Driver Development (Madieu)", fmt = "epub", file = "Linux Device Driver Development_ Everything you need to -- John Madieu -- Packt Publishing, [Place of publication not identified], -- Packt -- isbn13 9781803235943 -- e409561761c67e6644a54ed53a248850 -- Anna’s (1).epub" },
