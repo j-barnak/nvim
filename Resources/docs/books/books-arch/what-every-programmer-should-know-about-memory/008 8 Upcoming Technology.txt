@@ -1,0 +1,1476 @@
+still fits completely into one single 2MB page and, there-    8      Upcoming Technology
+fore, no DTLB misses occur.
+                                                              In the preceding sections about multi-processor handling
+After this point, the winnings are initially smaller but      we have seen that significant performance problems must
+grow again with increasing working set size. The huge         be expected if the number of CPUs or cores is scaled up.
+pages test is 38% faster for the 512MB working set size.      But this scaling-up is exactly what has to be expected in
+The curve for the huge page test has a plateau at around      the future. Processors will get more and more cores, and
+250 cycles. Beyond working sets of 227 bytes, the num-        programs must be ever more parallel to take advantage
+bers rise significantly again. The reason for the plateau     of the increased potential of the CPU, since single-core
+is that 64 TLB entries for 2MB pages cover 227 bytes.         performance will not rise as quickly as it used to.
+As these numbers show, a large part of the costs of using
+large working set sizes comes from TLB misses. Using          8.1      The Problem with Atomic Operations
+the interfaces described in this section can pay off big-
+time. The numbers in the graph are, most likely, upper        Synchronizing access to shared data structures is tradi-
+limits, but even real-world programs show a significant       tionally done in two ways:
+speed-up. Databases, since they use large amounts of
+data, are among the programs which use huge pages to-
+day.                                                                 • through mutual exclusion, usually by using func-
+                                                                       tionality of the system runtime to achieve just that;
+There is currently no way to use large pages to map file-
+backed data. There is interest in implementing this ca-              • by using lock-free data structures.
+pability, but the proposals made so far all involve explic-
+itly using large pages, and they rely on the hugetlbfs
+                                                              The problem with lock-free data structures is that the pro-
+filesystem. This is not acceptable: large page use in this
+                                                              cessor has to provide primitives which can perform the
+case must be transparent. The kernel can easily deter-
+                                                              entire operation atomically. This support is limited. On
+mine which mappings are large and automatically use
+                                                              most architectures support is limited to atomically read
+large pages. A big problem is that the kernel does not al-
+                                                              and write a word. There are two basic ways to imple-
+ways know about the use pattern. If the memory, which
+                                                              ment this (see section 6.4.2):
+could be mapped as a large page, later requires 4k-page
+granularity (for instance, because the protection of parts
+of the memory range is changed using mprotect) a lot                 • using atomic compare-and-exchange (CAS) oper-
+of precious resources, in particular the linear physical               ations;
+memory, will have been wasted. So it will certainly be
+some more time before such an approach is successfully               • using a load lock/store conditional (LL/SC) pair.
+implemented.
+                                                              It can be easily seen how a CAS operation can be im-
+                                                              plemented using LL/SC instructions. This makes CAS
+                                                              operations the building block for most atomic operations
+                                                              and lock free data structures.
+                                                              Some processors, notably the x86 and x86-64 architec-
+                                                              tures, provide a far more elaborate set of atomic opera-
+                                                              tions. Many of them are optimizations of the CAS op-
+                                                              eration for specific purposes. For instance, atomically
+                                                              adding a value to a memory location can be implemented
+                                                              using CAS and LL/SC operations, but the native support
+                                                              for atomic increments on x86/x86-64 processors is faster.
+                                                              It is important for programmers to know about these op-
+                                                              erations, and the intrinsics which make them available
+                                                              when programming, but that is nothing new.
+                                                              The extraordinary extension of these two architectures
+                                                              is that they have double-word CAS (DCAS) operations.
+                                                              This is significant for some applications but not all (see
+                                                              [5]). As an example of how DCAS can be used, let us try
+                                                              to write a lock-free array-based stack/LIFO data struc-
+                                                              ture. A first attempt using gcc’s intrinsics can be seen in
+                                                              Figure 8.1.
+                                                              This code is clearly not thread-safe. Concurrent accesses
+                                                              in different threads will modify the global variable top
+
+     struct elem {                                              1. l = pop()
+       data_t d;
+       struct elem *c;                                          2. push(newelem)
+     };                                                         3. push(l)
+     struct elem *top;
+     void push(struct elem *n) {
+       n->c = top;                                           The end effect of this operation is that the former top
+       top = n;                                              element of the LIFO is back at the top but the second
+     }                                                       element is different. Back in the first thread, because
+     struct elem *pop(void) {                                the top element is unchanged, the CAS operation will
+       struct elem *res = top;                               succeed. But the value res->c is not the right one. It is
+       if (res != NULL)
+                                                             a pointer to the second element of the original LIFO and
+         top = res->c;
+                                                             not newelem. The result is that this new element is lost.
+       return res;
+     }                                                       In the literature [10] you find suggestions to use a feature
+                                                             found on some processors to work around this problem.
+                                                             Specifically, this is about the ability of the x86 and x86-
+                                                             64 processors to perform DCAS operations. This is used
+           Figure 8.1: Not Thread-Safe LIFO
+                                                             in the third incarnation of the code in Figure 8.3.
+
+without consideration of other threads’s modifications.        #define CAS __sync_bool_compare_and_swap
+Elements could be lost or removed elements can magi-           struct elem {
+                                                                  data_t d;
+cally reappear. It is possible to use mutual exclusion but
+                                                                  struct elem *c;
+here we will try to use only atomic operations.                };
+The first attempt to fix the problem uses CAS operations       struct lifo {
+                                                                  struct elem *top;
+when installing or removing list elements. The resulting
+                                                                  size_t gen;
+code looks like Figure 8.2.
+                                                               } l;
+                                                               void push(struct elem *n) {
+     #define CAS __sync_bool_compare_and_swap                     struct lifo old, new;
+     struct elem {                                                do {
+       data_t d;                                                    old = l;
+       struct elem *c;                                              new.top = n->c = old.top;
+     };                                                             new.gen = old.gen + 1;
+     struct elem *top;                                            } while (!CAS(&l, old, new));
+     void push(struct elem *n) {                               }
+       do                                                      struct elem *pop(void) {
+          n->c = top;                                             struct lifo old, new;
+       while (!CAS(&top, n->c, n));                               do {
+     }                                                              old = l;
+     struct elem *pop(void) {                                       if (old.top == NULL) return NULL;
+       struct elem *res;                                            new.top = old.top->c;
+       while ((res = top) != NULL)                                  new.gen = old.gen + 1;
+          if (CAS(&top, res, res->c))                             } while (!CAS(&l, old, new));
+            break;                                                return old.top;
+       return res;                                             }
+     }
+
+                                                                    Figure 8.3: LIFO using double-word CAS
+              Figure 8.2: LIFO using CAS
+                                                             Unlike the other two examples, this is (currently) pseudo-
+At first glance this looks like a working solution. top is   code since gcc does not grok the use of structures in the
+never modified unless it matches the element which was       CAS intrinsics. Regardless, the example should be suf-
+at the top of the LIFO when the operation started. But       ficient understand the approach. A generation counter
+we have to take concurrency at all levels into account. It   is added to the pointer to the top of the LIFO. Since it is
+might be that another thread working on the data struc-      changed on every operation, push or pop, the ABA prob-
+ture is scheduled at the worst possible moment. One such     lem described above is no longer a problem. By the time
+case here is the so-called ABA problem. Consider what        the first thread is resuming its work by actually exchang-
+happens if a second thread is scheduled right before the     ing the top pointer, the generation counter has been in-
+CAS operation in pop and it performs the following op-       cremented three times. The CAS operation will fail and,
+eration:                                                     in the next round of the loop, the correct first and second
+
+element of the LIFO are determined and the LIFO is not                  lems on their high-end hardware, which featured a few
+corrupted. Voilà.                                                      dozen processors. The principle is the same as for data-
+                                                                        base transactions: the result of a transaction becomes vis-
+Is this really the solution? The authors of [10] certainly              ible all at once or the transaction is aborted and all the
+make it sound like it and, to their credit, it should be men-           values remain unchanged.
+tioned that it is possible to construct data structures for
+the LIFO which would permit using the code above. But,                  This is where memory comes into play and why the pre-
+in general, this approach is just as doomed as the previ-               vious section bothered to develop algorithms which use
+ous one. We still have concurrency problems, just now                   atomic operations. Transactional memory is meant as
+in a different place. Let us assume a thread executes pop               a replacement for–and extension of–atomic operations
+and is interrupted after the test for old.top == NULL.                  in many situations, especially for lock-free data struc-
+Now a second thread uses pop and receives ownership                     tures. Integrating a transaction system into the processor
+of the previous first element of the LIFO. It can do any-               sounds like a terribly complicated thing to do but, in fact,
+thing with it, including changing all values or, in case of             most processors, to some extent, already have something
+dynamically allocated elements, freeing the memory.                     similar.
+Now the first thread resumes. The old variable is still                 The LL/SC operations implemented by some processors
+filled with the previous top of the LIFO. More specifi-                 form a transaction. The SC instruction aborts or commits
+cally, the top member points to the element popped by                   the transaction based on whether the memory location
+the second thread. In new.top = old.top->c the first                    was touched or not. Transactional memory is an exten-
+thread dereferences a pointer in the element. But the ele-              sion of this concept. Now, instead of a simple pair of in-
+ment this pointer references might have been freed. That                structions, multiple instructions take part in the transac-
+part of the address space might be inaccessible and the                 tion. To understand how this can work, it is worthwhile to
+process could crash. This cannot be allowed for a generic               first see how LL/SC instructions can be implemented.48
+data type implementation. Any fix for this problem is ter-
+ribly expensive: memory must never be freed, or at least
+                                                                        8.2.1    Load Lock/Store Conditional Implementation
+it must be verified that no thread is referencing the mem-
+ory anymore before it is freed. Given that lock-free data
+structures are supposed to be faster and more concurrent,               If the LL instruction is issued, the value of the memory
+these additional requirements completely destroy any ad-                location is loaded into a register. As part of that oper-
+vantage. In languages which support it, memory han-                     ation, the value is loaded into L1d. The SC instruction
+dling through garbage collection can solve the problem,                 later can only succeed if this value has not been tampered
+but this comes with its price.                                          with. How can the processor detect this? Looking back
+                                                                        at the description of the MESI protocol in Figure 3.18
+The situation is often worse for more complex data struc-               should make the answer obvious. If another processor
+tures. The same paper cited above also describes a FIFO                 changes the value of the memory location, the copy of
+implementation (with refinements in a successor paper).                 the value in L1d of the first processor must be revoked.
+But this code has all the same problems. Because CAS                    When the SC instruction is executed on the first proces-
+operations on existing hardware (x86, x86-64)47 are lim-                sor, it will find it has to load the value again into L1d.
+ited to modifying two words which are consecutive in                    This is something the processor must already detect.
+memory, they are no help at all in other common situa-
+tions. For instance, atomically adding or removing ele-                 There are a few more details to iron out with respect to
+ments anywhere in a double-linked list is not possible.                 context switches (possible modification on the same pro-
+                                                                        cessor) and accidental reloading of the cache line after
+The problem is that more than one memory address is                     a write on another processor. This is nothing that poli-
+generally involved, and only if none of the values of these             cies (cache flush on context switch) and extra flags, or
+addresses is changed concurrently can the entire oper-                  separate cache lines for LL/SC instructions, cannot fix.
+ation succeed. This is a well-known concept in data-                    In general, the LL/SC implementation comes almost for
+base handling, and this is exactly where one of the most                free with the implementation of a cache coherence pro-
+promising proposals to solve the dilemma comes from.                    tocol like MESI.
+
+8.2    Transactional Memory                                             8.2.2    Transactional Memory Operations
+
+In their groundbreaking 1993 paper [13] Herlihy and Moss                For transactional memory to be generally useful, a trans-
+propose to implement transactions for memory opera-                     action must not be finished with the first store instruction.
+tions in hardware since software alone cannot deal with                 Instead, an implementation should allow a certain num-
+the problem efficiently. Digital Equipment Corporation,                 ber of load and store operations; this means we need sep-
+at that time, was already battling with scalability prob-               arate commit and abort instructions. In a bit we will see
+                                                                        that we need one more instruction which allows check-
+  47 As a side note, the developers of the IA-64 did not include this
+
+feature. They allow comparing two words, but replacing only one.          48 This does not mean it is actually implemented like this.
+
+ing on the current state of the transaction and whether it         struct elem {
+is already aborted or not.                                            data_t d;
+                                                                      struct elem *c;
+There are three different memory operations to imple-              };
+ment:                                                              struct elem *top;
+                                                                   void push(struct elem *n) {
+     • Read memory                                                    while (1) {
+                                                                        n->c = LTX(top);
+     • Read memory which is written to later                            ST(&top, n);
+                                                                        if (COMMIT())
+     • Write memory                                                       return;
+                                                                        ... delay ...
+                                                                      }
+When looking at the MESI protocol it should be clear
+                                                                   }
+how this special second type of read operation can be
+                                                                   struct elem *pop(void) {
+useful. The normal read can be satisfied by a cache line              while (1) {
+in the ‘E’ and ‘S’ state. The second type of read opera-                struct elem *res = LTX(top);
+tion needs a cache line in state ‘E’. Exactly why the sec-              if (VALIDATE()) {
+ond type of memory read is necessary can be glimpsed                      if (res != NULL)
+from the following discussion, but, for a more complete                     ST(&top, res->c);
+description, the interested reader is referred to literature              if (COMMIT())
+about transactional memory, starting with [13].                             return res;
+                                                                        }
+In addition, we need transaction handling which mainly                  ... delay ...
+consists of the commit and abort operation we are al-                 }
+ready familiar with from database transaction handling.            }
+There is one more operation, though, which is optional
+in theory but required for writing robust programs using
+transactional memory. This instruction lets a thread test
+whether the transaction is still on track and can (perhaps)          Figure 8.4: LIFO Using Transactional Memory
+be committed later, or whether the transaction already
+failed and will in any case be aborted.                          The COMMIT operation finishes the transaction; if it is fin-
+We will discuss how these operations actually interact           ished successfully the operation returns true. This means
+with the CPU cache and how they match to bus operation.          that this part of the program is done and the thread can
+But before we do that we take a look at some actual code         move on. If the operation returns a false value, this usu-
+which uses transactional memory. This will hopefully             ally means the whole code sequence must be repeated.
+make the remainder of this section easier to understand.         This is what the outer while loop is doing here. This
+                                                                 is not absolutely necessary, though, in some cases giving
+                                                                 up on the work is the right thing to do.
+8.2.3   Example Code Using Transactional Memory
+                                                                 The interesting point about the LT, LTX, and ST opera-
+For the example we revisit our running example and pro-          tions is that they can fail without signaling this failure in
+vide a LIFO implementation which uses the transactional          any direct way. The way the program can request this
+memory primitives.                                               information is through the VALIDATE or COMMIT oper-
+                                                                 ation. For the load operation, this can mean that the
+This code looks quite similar to the not-thread-safe code,       value actually loaded into the register might be bogus;
+which is an additional bonus as it makes writing code us-        that is why it is necessary in the example above to use
+ing transactional memory easier. The new parts of the            VALIDATE before dereferencing the pointer. In the next
+code are the LTX, ST, COMMIT, and VALIDATE opera-                section, we will see why this is a wise choice for an im-
+tions. These four operations are the way to request ac-          plementation. It might be that, once transactional mem-
+cesses to transactional memory. There is actually one            ory is actually widely available, the processors will im-
+more operation, LT, which is not used here. LT requests          plement something different. The results from [13] sug-
+non-exclusive read access, LTX requests exclusive read           gest what we describe here, though.
+access, and ST is a store into transactional memory. The
+VALIDATE operation checks whether the transaction is             The push function can be summarized as this: the trans-
+still on track to be committed. It returns true if this trans-   action is started by reading the pointer to the head of the
+action is still OK. If the transaction is already marked as      list. The read requests exclusive ownership since, later in
+aborting, it will be actually aborted and a value indicating     the function, this variable is written to. If another thread
+this is returned. The next transactional memory instruc-         has already started a transaction, the load will fail and
+tion will start a new transaction. For this reason, the code     mark the still-born transaction as aborted; in this case,
+uses a new if block in case the transaction is still going       the value actually loaded might be garbage. This value
+on.                                                              is, regardless of its status, stored in the next field of the
+
+new list member. This is fine since this member is not         allel to L1d. All accesses will use the higher level cache
+yet in use, and it is accessed by exactly one thread. The      in the same way they use L1d. The transaction cache is
+pointer to the head of the list is then assigned the pointer   likely much smaller than L1d. If it is fully associative its
+to the new element. If the transaction is still OK, this       size is determined by the number of operations a trans-
+write can succeed. This is the normal case, it can only        action can comprise. Implementations will likely have
+fail if a thread uses some code other than the provided        limits for the architecture and/or specific processor ver-
+push and pop functions to access this pointer. If the          sion. One could easily imagine a transaction cache with
+transaction is already aborted at the time the ST is ex-       16 elements or even less. In the above example we only
+ecuted, nothing at all is done. Finally, the thread tries      needed one single memory location; algorithms with a
+to commit the transaction. If this succeeds the work is        larger transaction working sets get very complicated. It is
+done; other threads can now start their transactions. If       possible that we will see processors which support more
+the transaction fails, it must be repeated from the begin-     than one active transaction at any one time. The num-
+ning. Before doing that, however, it is best to insert an      ber of elements in the cache then multiplies, but it is still
+delay. If this is not done the thread might run in a busy      small enough to be fully associative.
+loop (wasting energy, overheating the CPU).
+                                                               The transaction cache and L1d are exclusive. That means
+The pop function is slightly more complex. It also starts      a cache line is in, at most, one of the caches but never in
+with reading the variable containing the head of the list,     both. Each slot in the transaction cache is in, at any one
+requesting exclusive ownership. The code then immedi-          time, one of the four MESI protocol states. In addition
+ately checks whether the LTX operation succeeded or not.       to this, a slot has an transaction state. The states are as
+If not, nothing else is done in this round except delaying     follows (names according to [13]):
+the next round. If the top pointer was read successfully,
+this means its state is good; we can now dereference
+                                                               EMPTY the cache slot contains no data. The MESI
+the pointer. Remember, this was exactly the problem
+                                                                  state is always ‘I’.
+with the code using atomic operations; with transactional
+memory this case can be handled without any problem.           NORMAL the cache slot contains committed data. The
+The following ST operation is only performed when the             data could as well exist in L1d. The MESI state
+LIFO is not empty, just as in the original, thread-unsafe         can be ‘M’, ‘E’, and ‘S’. The fact that the ‘M’ state
+code. Finally the transaction is committed. If this suc-          is allowed means that transaction commits do not
+ceeds the function returns the old pointer to the head;           force the data to be written into the main memory
+otherwise we delay and retry. The one tricky part of this         (unless the memory region is declared as uncached
+code is to remember that the VALIDATE operation aborts            or write-through). This can significantly help to
+the transaction if it has already failed. The next trans-         increase performance.
+actional memory operation would start a new transaction
+and, therefore, we must skip over the rest of the code in      XABORT the cache slot contains data which is to be
+the function.                                                      discarded on abort. This is obviously the opposite
+                                                                   of XCOMMIT. All the data created during a trans-
+How the delay code works will be something to see when             action is kept in the transaction cache, nothing is
+implementations of transactional memory are available              written to main memory before a commit. This
+in hardware. If this is done badly system performance              limits the maximum transaction size but it means
+might suffer significantly.                                        that, beside the transaction cache, no other mem-
+                                                                   ory has to be aware of the XCOMMIT/XABORT
+8.2.4   Bus Protocol for Transactional Memory                      duality for a single memory location. The possible
+                                                                   MESI states are ‘M’, ‘E’, and ‘S’.
+Now that we have seen the basic principles behind trans-       XCOMMIT the cache slot contains data which is dis-
+actional memory, we can dive into the details of the im-          carded on commit. This is a possible optimization
+plementation. Note that this is not based on actual hard-         processors could implement. If a memory loca-
+ware. It is based on the original design of transactional         tion is changed using a transaction operation, the
+memory and knowledge about the cache coherency pro-               old content cannot be just dropped: if the transac-
+tocol. Some details are omitted, but it still should be pos-      tion fails the old content needs to be restored. The
+sible to get insight into the performance characteristics.        MESI states are the same as for XABORT. One
+                                                                  difference with regard to XABORT is that, if the
+Despite the name, transactional memory is not actually
+                                                                  transaction cache is full, any XCOMMIT entries
+implemented as separate memory; that would not make
+                                                                  in the ‘M’ state could be written back to memory
+any sense given that transactions on any location in a
+                                                                  and then, for all states, discarded.
+thread’s address space are wanted. Instead, it is imple-
+mented as part of the first level cache handling. The im-
+plementation could, in theory, happen in the normal L1d        When an LT operation is started, the processor allocates
+but, as [13] points out, this is not a good idea. We will      two slots in the cache. Victims are chosen by first looking
+more likely see the transaction cache implemented in par-      for NORMAL slots for the address of the operation, i.e.,
+
+a cache hit. If such an entry is found, a second slot is       ically and implicitly create bus operations. This is the
+located, the value copied, one entry is marked XABORT,         huge advantage transactional memory has over atomic
+and the other one is marked XCOMMIT.                           operations. With atomic operations, concurrency is made
+                                                               possible by writing changed values back into main mem-
+If the address is not already cached, EMPTY cache slots        ory. If you have read this document thus far, you should
+are located. If none can be found, NORMAL slots are            know how expensive this is. With transactional memory,
+looked for. The old content must then be flushed to mem-       no accesses to the main memory are forced. If the cache
+ory if the MESI state is ‘M’. If no NORMAL slot is             has no EMPTY slots, current content must be evicted,
+available either, it is possible to victimize XCOMMIT          and for slots in the ‘M’ state, the content must be writ-
+entries. This is likely going to be an implementation de-      ten to main memory. This is not different from regular
+tail, though. The maximum size of a transaction is de-         caches, and the write-back can be performed without spe-
+termined by the size of the transaction cache, and, since      cial atomicity guarantees. If the cache size is sufficient,
+the number of slots which are needed for each operation        the content can survive for a long time. If transactions
+in the transaction is fixed, the number of transactions can    are performed on the same memory location over and
+be capped before having to evict XCOMMIT entries.              over again, the speed improvements can be astronomical
+If the address is not found in the transactional cache, a      since, in the one case, we have one or two main memory
+T READ request is issued on the bus. This is just like         accesses in each round while, for transactional memory,
+the normal READ bus request, but it indicates that this        all accesses hit the transactional cache, which is as fast
+is for the transactional cache. Just like for the normal       as L1d.
+READ request, the caches in all other processors first get     All the VALIDATE and COMMIT operations do at the time
+the chance to respond. If none does the value is read          of an abort of a transaction is to mark the cache slots
+from the main memory. The MESI protocol determines             marked XABORT as empty and mark the XCOMMIT
+whether the state of the new cache line is ‘E’ or ‘S’. The     slots as NORMAL. Similarly, when COMMIT successfully
+difference between T READ and READ comes into play             finishes a transaction, the XCOMMIT slots are marked
+when the cache line is currently in use by an active trans-    empty and the XABORT slots are marked NORMAL.
+action on another processor or core. In this case the T -      These are very fast operations on the transaction cache.
+READ operation plainly fails, no data is transmitted. The      No explicit notification to other processors which want to
+transaction which generated the T READ bus request is          perform transactions happens; those processors just have
+marked as failed and the value used in the operation (usu-     to keep trying. Doing this efficiently is another matter. In
+ally a simple register load) is undefined. Looking back        the example code above we simply have ...delay...
+to the example, we can see that this behavior does not         in the appropriate place. We might see actual processor
+cause problems if the transactional memory operations          support for delaying in a useful way.
+are used correctly. Before a value loaded in a transaction
+is used, it must be verified with VALIDATE. This is, in        To summarize, transactional memory operations cause
+almost no cases, an extra burden. As we have seen in the       bus operation only when a new transaction is started and
+attempts to create a FIFO implementation using atomic          when a new cache line, which is not already in the trans-
+operations, the check which we added is the one missing        action cache, is added to a still-successful transaction.
+feature which would make the lock-free code work.              Operations in aborted transactions do not cause bus op-
+                                                               erations. There will be no cache line ping-pong due to
+The LTX operation is almost identical to LT. The one dif-      multiple threads trying to use the same memory.
+ference is that the bus operation is T RFO instead of T -
+READ. T RFO, like the normal RFO bus message, re-
+quests exclusive ownership of the cache line. The state        8.2.5   Other Considerations
+of the resulting cache line is ‘E’. Like the T READ bus
+request, T RFO can fail, in which case the used value is       In section 6.4.2, we already discussed how the lock pre-
+undefined, too. If the cache line is already in the local      fix, available on x86 and x86-64, can be used to avoid the
+transaction cache with ‘M’ or ‘E’ state, nothing has to be     coding of atomic operations in some situations. The pro-
+done. If the state in the local transaction cache is ‘S’ the   posed tricks falls short, though, when there are multiple
+bus request has to go out to invalidate all other copies.      threads in use which do not contend for the same mem-
+The ST operation is similar to LTX. The value is first         ory. In this case, the atomic operations are used unnec-
+made available exclusively in the local transaction cache.     essarily. With transactional memory this problem goes
+Then the ST operation makes a copy of the value into a         away. The expensive RFO bus message are issued only
+second slot in the cache and marks the entry as XCOM-          if memory is used on different CPUs concurrently or in
+MIT. Lastly, the other slot is marked as XABORT and            succession; this is only the case when they are needed. It
+the new value is written into it. If the transaction is al-    is almost impossible to do any better.
+ready aborted, or is newly aborted because the implicit        The attentive reader might have wondered about delays.
+LTX fails, nothing is written.                                 What is the expected worst case scenario? What if the
+Neither the VALIDATE nor COMMIT operations automat-            thread with the active transaction is descheduled, or if it
+                                                               receives a signal and is possibly terminated, or decides to
+
+use siglongjmp to jump to an outer scope? The answer                     The second source of latency is the increasing use of
+to this is: the transaction will be aborted. It is possible to           NUMA. AMD’s Opterons are NUMA machines if they
+abort a transaction whenever a thread makes a system call                have more than one processor. There is some local mem-
+or receives a signal (i.e., a ring level change occurs). It              ory attached to the CPU with its own memory controller
+might also be that aborting the transaction is part of the               but, on SMP motherboards, the rest of the memory has to
+OS’s duties when performing system calls or handling                     be accessed through the Hypertransport bus. Intel’s CSI
+signals. We will have to wait until implementations be-                  technology will use almost the same technology. Due to
+come available to see what is actually done.                             per-processor bandwidth limitations and the requirement
+                                                                         to service (for instance) multiple 10Gb/s Ethernet cards,
+The final aspect of transactional memory which should                    multi-socket motherboards will not vanish, even if the
+be discussed here is something which people might want                   number of cores per socket increases.
+to think about even today. The transaction cache, like
+other caches, operates on cache lines. Since the transac-                A third source of latency are co-processors. We thought
+tion cache is an exclusive cache, using the same cache                   that we got rid of them after math co-processors for com-
+line for transactions and non-transaction operation will                 modity processors were no longer necessary at the be-
+be a problem. It is therefore important to                               ginning of the 1990’s, but they are making a comeback.
+                                                                         Intel’s Geneseo and AMD’s Torrenza are extensions of
+                                                                         the platform to allow third-party hardware developers to
+      • move non-transactional data off of the cache line
+                                                                         integrate their products into the motherboards. I.e., the
+      • have separate cache lines for data used in separate              co-processors will not have to sit on a PCIe card but, in-
+        transactions                                                     stead, are positioned much closer to the CPU. This gives
+                                                                         them more bandwidth.
+
+The first point is not new, the same effort will pay off for             IBM went a different route (although extensions like In-
+atomic operations today. The second is more problem-                     tel’s and AMD’s are still possible) with the Cell CPU.
+atic since today objects are hardly ever aligned to cache                The Cell CPU consists, beside the PowerPC core, of 8
+lines due to the associated high cost. If the data used,                 Synergistic Processing Units (SPUs) which are special-
+along with the words modified using atomic operations,                   ized processors mainly for floating-point computation.
+is on the same cache line, one less cache line is needed.
+                                                                         What co-processors and SPUs have in common is that
+This does not apply to mutual exclusion (where the mu-
+                                                                         they, most likely, have even slower memory logic than
+tex object should always have its own cache line), but one
+                                                                         the real processors. This is, in part, caused by the nec-
+can certainly make cases where atomic operations go to-
+                                                                         essary simplification: all the cache handling, prefetching
+gether with other data. With transactional memory, using
+                                                                         etc is complicated, especially when cache coherency is
+the cache line for two purposes will most likely be fatal.
+                                                                         needed, too. High-performance programs will increas-
+Every normal access to data 49 would remove the cache
+                                                                         ingly rely on co-processors since the performance differ-
+line from the transactional cache, aborting the transac-
+                                                                         ences can be dramatic. Theoretical peak performance for
+tion in the process. Cache alignment of data objects will
+                                                                         a Cell CPU is 210 GFLOPS, compared to 50-60 GFLOPS
+be in future not only a matter of performance but also of
+                                                                         for a high-end CPU. Graphics Processing Units (GPUs,
+correctness.
+                                                                         processors on graphics cards) in use today achieve even
+It is possible that transactional memory implementations                 higher numbers (north of 500 GFLOPS) and those could
+will use more precise accounting and will, as a result, not              probably, with not too much effort, be integrated into the
+suffer from normal accesses to data on cache lines which                 Geneseo/Torrenza systems.
+are part of a transaction. This requires a lot more effort,
+                                                                         As a result of all these developments, a programmer must
+though, since then the MESI protocol information is not
+                                                                         conclude that prefetching will become ever more impor-
+sufficient anymore.
+                                                                         tant. For co-processors it will be absolutely critical. For
+                                                                         CPUs, especially with more and more cores, it is neces-
+8.3     Increasing Latency
+                                                                         sary to keep the FSB busy all the time instead of piling
+                                                                         on the requests in batches. This requires giving the CPU
+One thing about future development of memory tech-                       as much insight into future traffic as possible through the
+nology is almost certain: latency will continue to creep                 efficient use of prefetching instructions.
+up. We already discussed, in section 2.2.4, that the up-
+coming DDR3 memory technology will have higher la-                       8.4    Vector Operations
+tency than the current DDR2 technology. FB-DRAM,
+if it should get deployed, also has potentially higher la-               The multi-media extensions in today’s mainstream pro-
+tency, especially when FB-DRAM modules are daisy-                        cessors implement vector operations only in a limited
+chained. Passing through the requests and results does                   fashion. Vector instructions are characterized by large
+not come for free.                                                       numbers of operations which are performed as the re-
+   49 From the cache line in question. Access to arbitrary other cache   sult of one instruction (Single Instruction Multiple Data,
+lines does not influence the transaction.                                SIMD). Compared with scalar operations, this can be
+
+said about the multi-media instructions, but it is a far      allow the most useful access patterns:
+cry from what vector computers like the Cray-1 or vector
+units for machines like the IBM 3090 did.
+                                                                  • using striding, the program can specify how big
+To compensate for the limited number of operations per-             the gap between two neighboring vector elements
+formed for one instruction (four float or two double                is. The gap between all elements must be the same
+operations on most machines) the surrounding loops have             but this would, for instance, easily allow to read
+to be executed more often. The example in section A.1               the column of a matrix into a vector register in one
+shows this clearly, each cache line requires SM iterations.         instruction instead of one instruction per row.
+
+With wider vector registers and operations, the number            • using indirection, arbitrary access patterns can be
+of loop iterations can be reduced. This results in more             created. The load or store instruction receive a
+than just improvements in the instruction decoding etc.;            pointer to an array which contains addresses or off-
+here we are more interested in the memory effects. With             sets of the real memory locations which have to be
+a single instruction loading or storing more data, the pro-         loaded.
+cessor has a better picture about the memory use of the
+application and does not have to try to piece together the    It is unclear at this point whether we will see a revival of
+information from the behavior of individual instructions.     true vector operations in future versions of mainstream
+Furthermore, it becomes more useful to provide load or        processors. Maybe this work will be relegated to co-
+store instructions which do not affect the caches. With       processors. In any case, should we get access to vector
+16 byte wide loads of an SSE register in an x86 CPU, it       operations, it is all the more important to correctly or-
+is a bad idea to use uncached loads since later accesses to   ganize the code performing such operations. The code
+the same cache line have to load the data from memory         should be self-contained and replaceable, and the inter-
+again (in case of cache misses). If, on the other hand,       face should be general enough to efficiently apply vector
+the vector registers are wide enough to hold one or more      operations. For instance, interfaces should allow adding
+cache lines, uncached loads or stores do not have nega-       entire matrixes instead of operating on rows, columns, or
+tive impacts. It becomes more practical to perform oper-      even groups of elements. The larger the building blocks,
+ations on data sets which do not fit into the caches.         the better the chance of using vector operations.
+Having large vector registers does not necessarily mean       In [11] the authors make a passionate plea for the revival
+the latency of the instructions is increased; vector in-      of vector operations. They point out many advantages
+structions do not have to wait until all data is read or      and try to debunk various myths. They paint an overly
+stored. The vector units could start with the data which      simplistic image, though. As mentioned above, large reg-
+has already been read if it can recognize the code flow.      ister sets mean high context switch times, which have to
+That means, if, for instance, a vector register is to be      be avoided in general purpose OSes. See the problems
+loaded and then all vector elements multiplied by a scalar,   of the IA-64 processor when it comes to context switch-
+the CPU could start the multiplication operation as soon      intensive operations. The long execution time for vector
+as the first part of the vector has been loaded. It is just   operations is also a problem if interrupts are involved. If
+a matter of sophistication of the vector unit. What this      an interrupt is raised, the processor must stop its current
+shows is that, in theory, the vector registers can grow       work and start working on handling the interrupt. After
+really wide, and that programs could potentially be de-       that, it must resume executing the interrupted code. It is
+signed today with this in mind. In practice, there are lim-   generally a big problem to interrupt an instruction in the
+itations imposed on the vector register size by the fact      middle of the work; it is not impossible, but it is compli-
+that the processors are used in multi-process and multi-      cated. For long running instructions this has to happen,
+thread OSes. As a result, the context switch times, which     or the instructions must be implemented in a restartable
+include storing and loading register values, is important.    fashion, since otherwise the interrupt reaction time is too
+With wider vector registers there is the problem that the     high. The latter is not acceptable.
+input and output data of the operations cannot be sequen-     Vector units also were forgiving as far as alignment of
+tially laid out in memory. This might be because a ma-        the memory access is concerned, which shaped the al-
+trix is sparse, a matrix is accessed by columns instead of    gorithms which were developed. Some of today’s pro-
+rows, and many other factors. Vector units provide, for       cessors (especially RISC processors) require strict align-
+this case, ways to access memory in non-sequential pat-       ment so the extension to full vector operations is not triv-
+terns. A single vector load or store can be parametrized      ial. There are big potential upsides to having vector oper-
+and instructed to load data from many different places        ations, especially when striding and indirection are sup-
+in the address space. Using today’s multi-media instruc-      ported, so that we can hope to see this functionality in
+tions, this is not possible at all. The values would have     the future.
+to be explicitly loaded one by one and then painstakingly
+combined into one vector register.
+The vector units of the old days had different modes to
+
+A    Examples and Benchmark Programs
+A.1 Matrix Multiplication
+
+This is the complete benchmark program for the matrix multiplication in section section 6.2.1. For details on the
+intrinsics used the reader is referred to Intel’s reference manual.
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <emmintrin.h>
+#define N 1000
+double res[N][N] __attribute__ ((aligned (64)));
+double mul1[N][N] __attribute__ ((aligned (64)));
+double mul2[N][N] __attribute__ ((aligned (64)));
+#define SM (CLS / sizeof (double))
+
+int
+main (void)
+{
+  // ... Initialize mul1 and mul2
+
+    int i, i2, j, j2, k, k2;
+    double *restrict rres;
+    double *restrict rmul1;
+    double *restrict rmul2;
+    for (i = 0; i < N; i += SM)
+      for (j = 0; j < N; j += SM)
+        for (k = 0; k < N; k += SM)
+          for (i2 = 0, rres = &res[i][j], rmul1 = &mul1[i][k]; i2 < SM;
+               ++i2, rres += N, rmul1 += N)
+            {
+              _mm_prefetch (&rmul1[8], _MM_HINT_NTA);
+              for (k2 = 0, rmul2 = &mul2[k][j]; k2 < SM; ++k2, rmul2 += N)
+                {
+                  __m128d m1d = _mm_load_sd (&rmul1[k2]);
+                  m1d = _mm_unpacklo_pd (m1d, m1d);
+                  for (j2 = 0; j2 < SM; j2 += 2)
+                    {
+                      __m128d m2 = _mm_load_pd (&rmul2[j2]);
+                      __m128d r2 = _mm_load_pd (&rres[j2]);
+                      _mm_store_pd (&rres[j2],
+                                    _mm_add_pd (_mm_mul_pd (m2, m1d), r2));
+                    }
+                }
+            }
+
+    // ... use res matrix
+
+    return 0;
+}
+
+The structure of the loops is pretty much the same as in the final incarnation in section 6.2.1. The one big change is
+that loading the rmul1[k2] value has been pulled out of the inner loop since we have to create a vector where both
+elements have the same value. This is what the _mm_unpacklo_pd() intrinsic does.
+The only other noteworthy thing is that we explicitly aligned the three arrays so that the values we expect to be in the
+same cache line actually are found there.
+
+A.2     Debug Branch Prediction
+
+If, as recommended, the definitions of likely and unlikely from section 6.2.2 are used, it is easy50 to have a debug
+mode to check whether the assumptions are really true. The definitions of the macros could be replaced with this:
+
+#ifndef DEBUGPRED
+# define unlikely(expr) __builtin_expect (!!(expr), 0)
+# define likely(expr) __builtin_expect (!!(expr), 1)
+#else
+asm (".section predict_data, \"aw\"; .previous\n"
+      ".section predict_line, \"a\"; .previous\n"
+      ".section predict_file, \"a\"; .previous");
+# ifdef __x86_64__
+# define debugpred__(e, E) \
+  ({ long int _e = !!(e); \
+      asm volatile (".pushsection predict_data\n" \
+                    "..predictcnt%=: .quad 0; .quad 0\n" \
+                    ".section predict_line; .quad %c1\n" \
+                    ".section predict_file; .quad %c2; .popsection\n" \
+                    "addq $1,..predictcnt%=(,%0,8)" \
+                    : : "r" (_e == E), "i" (__LINE__), "i" (__FILE__)); \
+    __builtin_expect (_e, E); \
+  })
+# elif defined __i386__
+# define debugpred__(e, E) \
+  ({ long int _e = !!(e); \
+      asm volatile (".pushsection predict_data\n" \
+                    "..predictcnt%=: .long 0; .long 0\n" \
+                    ".section predict_line; .long %c1\n" \
+                    ".section predict_file; .long %c2; .popsection\n" \
+                    "incl ..predictcnt%=(,%0,4)" \
+                    : : "r" (_e == E), "i" (__LINE__), "i" (__FILE__)); \
+    __builtin_expect (_e, E); \
+  })
+# else
+# error "debugpred__ definition missing"
+# endif
+# define unlikely(expt) debugpred__ ((expr), 0)
+# define likely(expr) debugpred__ ((expr), 1)
+#endif
+
+These macros use a lot of functionality provided by the GNU assembler and linker when creating ELF files. The first
+asm statement in the DEBUGPRED case defines three additional sections; it mainly gives the assembler information about
+how the sections should be created. All sections are available at runtime, and the predict_data section is writable.
+It is important that all section names are valid C identifiers. The reason will be clear shortly.
+The new definitions of the likely and unlikely macros refer to the machine-specific debugpred__ macro. This
+macro has the following tasks:
+
+     1. allocate two words in the predict_data section to contain the counts for correct and incorrect predictions.
+        These two fields get a unique name through the use of %=; the leading dots makes sure the symbols do not
+        pollute the symbol table.
+
+     2. allocate one word in the predict_line section to contain the line number of the likely or unlikely macro
+        use.
+ 50 At least with the GNU toolchain.
+
+   3. allocate one word in the predict_file section to contain a pointer to the file name of the likely or unlikely
+      macro use.
+
+   4. increment the “correct” or “incorrect” counter created for this macro according to the actual value of the expres-
+      sion e. We do not use atomic operations here because they are massively slower and absolute precision in the
+      unlikely case of a collision is not that important. It is easy enough to change if wanted.
+
+The .pushsection and .popsection pseudo-ops are described in the assembler manual. The interested reader is
+asked to explore the details of these definition with the help of the manuals and some trial and error.
+These macros automatically and transparently take care of collecting the information about correct and incorrect branch
+predictions. What is missing is a method to get to the results. The simplest way is to define a destructor for the object
+and print out the results there. This can be achieved with a function defined like this:
+
+extern long int __start_predict_data;
+extern long int __stop_predict_data;
+extern long int __start_predict_line;
+extern const char *__start_predict_file;
+
+static void
+__attribute__ ((destructor))
+predprint(void)
+{
+  long int *s = &__start_predict_data;
+  long int *e = &__stop_predict_data;
+  long int *sl = &__start_predict_line;
+  const char **sf = &__start_predict_file;
+  while (s < e) {
+    printf("%s:%ld: incorrect=%ld, correct=%ld%s\n", *sf, *sl, s[0], s[1],
+            s[0] > s[1] ? "  <==== WARNING" : "");
+    ++sl;
+    ++sf;
+    s += 2;
+  }
+}
+
+Here the fact that the section names are valid C identifiers comes into play; it is used by the GNU linker to automatically
+define, if needed, two symbols for the section. The __start_XYZ symbols corresponds to the beginning of the section
+XYZ and __stop_XYZ is the location of the first byte following section XYZ. These symbols make it possible to iterate
+over the section content at runtime. Note that, since the content of the sections can come from all the files the linker
+uses at link time, the compiler and assembler do not have enough information to determine the size of the section. Only
+with these magic linker-generated symbols is it possible to iterate over the section content.
+The code does not iterate over one section only, though; there are three sections involved. Since we know that, for every
+two words added to the predict_data section we add one word to each of the predict_line and predict_file
+sections, we do not have to check the boundaries of these two sections. We just carry pointers along and increment
+them in unison.
+The code prints out a line for every prediction which appears in the code. It highlights those uses where the prediction
+is incorrect. Of course, this can be changed, and the debug mode could be restricted to flag only the entries which have
+more incorrect predictions than correct ones. Those are candidates for change. There are details which complicate the
+issue; for example, if the branch prediction happens inside a macro which is used in multiple places, all the macro uses
+must be considered together before making a final judgment.
+Two last comments: the data required for this debugging operation is not small, and, in case of DSOs, expensive
+(the predict_file section must be relocated). Therefore the debugging mode should not be enabled in production
+binaries. Finally, each executable and DSO creates it own output, this must be kept in mind when analyzing the data.
+
+A.3   Measure Cache Line Sharing Overhead
+
+This section contains the test program to measure the overhead of using variables on the same cache line versus
+variables on separate cache lines.
+
+#include <error.h>
+#include <pthread.h>
+#include <stdlib.h>
+
+#define N (atomic ? 10000000 : 500000000)
+
+static int atomic;
+static unsigned nthreads;
+static unsigned disp;
+static long **reads;
+
+static pthread_barrier_t b;
+
+static void *
+tf(void *arg)
+{
+  long *p = arg;
+
+    if (atomic)
+      for (int n = 0; n < N; ++n)
+         __sync_add_and_fetch(p, 1);
+    else
+      for (int n = 0; n < N; ++n)
+         {
+           *p += 1;
+           asm volatile("" : : "m" (*p));
+         }
+
+    return NULL;
+}
+
+int
+main(int argc, char *argv[])
+{
+  if (argc < 2)
+    disp = 0;
+  else
+    disp = atol(argv[1]);
+
+    if (argc < 3)
+      nthreads = 2;
+    else
+      nthreads = atol(argv[2]) ?: 1;
+
+    if (argc < 4)
+      atomic = 1;
+    else
+      atomic = atol(argv[3]);
+
+    pthread_barrier_init(&b, NULL, nthreads);
+
+    void *p;
+    posix_memalign(&p, 64, (nthreads * disp ?: 1) * sizeof(long));
+    long *mem = p;
+
+    pthread_t th[nthreads];
+    pthread_attr_t a;
+    pthread_attr_init(&a);
+    cpu_set_t c;
+    for (unsigned i = 1; i < nthreads; ++i)
+      {
+        CPU_ZERO(&c);
+        CPU_SET(i, &c);
+        pthread_attr_setaffinity_np(&a, sizeof(c), &c);
+        mem[i * disp] = 0;
+        pthread_create(&th[i], &a, tf, &mem[i * disp]);
+      }
+
+    CPU_ZERO(&c);
+    CPU_SET(0, &c);
+    pthread_setaffinity_np(pthread_self(), sizeof(c), &c);
+    mem[0] = 0;
+    tf(&mem[0]);
+
+    if ((disp == 0 && mem[0] != nthreads * N)
+        || (disp != 0 && mem[0] != N))
+      error(1,0,"mem[0] wrong: %ld instead of %d",
+    mem[0], disp == 0 ? nthreads * N : N);
+
+    for (unsigned i = 1; i < nthreads; ++i)
+      {
+        pthread_join(th[i], NULL);
+        if (disp != 0 && mem[i * disp] != N)
+          error(1,0,"mem[%u] wrong: %ld instead of %d", i, mem[i * disp], N);
+      }
+
+    return 0;
+}
+
+The code is provided here mainly as an illustration of how to write a program which measures effects like cache line
+overhead. The interesting parts are the bodies of the loops in tf. The __sync_add_and_fetch intrinsic, known to
+the compiler, generates an atomic add instruction. In the second loop we have to “consume” the result of the increment
+(through the inline asm statement). The asm does not introduce any actual code; instead, it prevents the compiler from
+lifting the increment operation out of the loop.
+The second interesting part is that the program pins the threads onto specific processors. The code assumes the pro-
+cessors are numbered 0 to 3, which is usually the case if the machine has four or more logical processors. The code
+could have used the interfaces from libNUMA to determine the numbers of the usable processors, but this test program
+should be widely usable without introducing this dependency. It is easy enough to fix up one way or another.
+
+B     Some OProfile Tips
+The following is not meant as a tutorial on how to use oprofile. There are entire documents written on that topic.
+Instead it is meant to give a few higher-level hints on how to look at one’s programs to find possible trouble spots. But
+before that we must at least have a minimal introduction.
+
+B.1     Oprofile Basics
+
+Oprofile works in two phases: collection and then analysis. The collection is performed by the kernel; it cannot be
+done at userlevel since the measurements use the performance counters of the CPU. These counters require access to
+MSRs which, in turn, requires privileges.
+Each modern processor provides its own set of performance counters. On some architectures a subset of the counters
+are provided by all processor implementations while the others differ from version to version. This makes giving
+general advice about the use of oprofile hard. There is not (yet) a higher-level abstraction for the counters which could
+hide these details.
+The processor version also controls how many events can be traced at any one time, and in which combination. This
+adds yet more complexity to the picture.
+If the user knows the necessary details about the performance counters, the opcontrol program can be used to select the
+events which should be counted. For each event it is necessary to specify the “overrun number” (the number of events
+which must occur before the CPU is interrupted to record an event), whether the event should be counted for userlevel
+and/or the kernel, and finally a “unit mask” (it selects sub-functions of the performance counter).
+To count the CPU cycles on x86 and x86-64 processors, one has to issue the following command:
+      opcontrol --event CPU_CLK_UNHALTED:30000:0:1:1
+
+The number 30000 is the overrun number. Choosing a reasonable value is important for the behavior of the system
+and the collected data. It is a bad idea ask to receive data about every single occurrence of the event. For many events,
+this would bring the machine to a standstill since all it would do is work on the data collection for the event overrun;
+this is why oprofile enforces a minimum value. The minimum values differ for each event since different events have
+a different probability of being triggered in normal code.
+Choosing a very high number reduces the resolution of the profile. At each overrun oprofile records the address of
+the instruction which is executed at that moment; for x86 and PowerPC it can, under some circumstances, record the
+backtrace as well.51 With a coarse resolution, the hot spots might not get a representative number of hits; it is all about
+probabilities, which is why oprofile is called a probabilistic profiler. The lower the overrun number is the higher the
+impact on the system in terms of slowdown but the higher the resolution.
+If a specific program is to be profiled, and the system is not used for production, it is often most useful to use the lowest
+possible overrun value. The exact value for each event can be queried using
+      opcontrol --list-events
+
+This might be problematic if the profiled program interacts with another process, and the slowdown causes problems
+in the interaction. Trouble can also result if a process has some realtime requirements which cannot be met when it is
+interrupted often. In this case a middle ground has to be found. The same is true if the entire system is to be profiled
+for extended periods of time. A low overrun number would mean the massive slowdowns. In any case, oprofile, like
+any other profiling mechanism, introduces uncertainty and inaccuracy.
+The profiling has to be started with opcontrol --start and can be stopped with opcontrol --stop. While
+oprofile is active it collects data; this data is first collected in the kernel and then send to a userlevel daemon in batches,
+where it is decoded and written to a filesystem. With opcontrol --dump it is possible to request all information
+buffered in the kernel to be released to userlevel.
+The collected data can contain events from different performance counters. The numbers are all kept in parallel unless
+the user selects to wipe the stored data in between separate oprofile runs. It is possible to accumulate data from the
+same event at different occasions. If an event is encountered during different profiling runs the numbers are added if
+this is what is selected by the user.
+The userlevel part of the data collection process demultiplexes the data. Data for each file is stored separately. It is
+  51 Backtrace support will hopefully be available for all architectures at some point.
+
+even possible to differentiate DSOs used by individual executable and, even, data for individual threads. The data
+thus produced can be archived using oparchive. The file produced by this command can be transported to another
+machine and the analysis can be performed there.
+With the opreport program one can generate reports from the profiling results. Using opannotate it is possible to see
+where the various events happened: which instruction and, if the data is available, in which source line. This makes it
+easy to find hot spots. Counting CPU cycles will point out where the most time is spent (this includes cache misses)
+while counting retired instructions allows finding where most of the executed instructions are–there is a big difference
+between the two.
+A single hit at an address usually has no meaning. A side effect of statistical profiling is that instructions which are
+only executed a few times, or even only once, might be attributed with a hit. In such a case it is necessary to verify the
+results through repetition.
+
+B.2   How It Looks Like
+
+An oprofile session can look as simple as this:
+
+$ opcontrol -i cachebench
+$ opcontrol -e INST_RETIRED:6000:0:0:1 --start
+$ ./cachebench ...
+$ opcontrol -h
+
+Note that these commands, including the actual program, are run as root. Running the program as root is done here only
+for simplicity; the program can be executed by any user and oprofile would pick up on it. The next step is analyzing
+the data. With opreport we see:
+
+CPU: Core 2, speed 1596 MHz (estimated)
+Counted INST_RETIRED.ANY_P events (number of instructions retired) with a unit mask of
+0x00 (No unit mask) count 6000
+INST_RETIRED:6000|
+  samples|      %|
+------------------
+   116452 100.000 cachebench
+
+This means we collected a bunch of events; opannotate can now be used to look at the data in more detail. We can see
+where in the program the most events were recorded. Part of the opannotate --source output looks like this:
+
+               :static void
+               :inc (struct l *l, unsigned n)
+               :{
+               : while (n-- > 0) /* inc total: 13980 11.7926 */
+               :    {
+     5 0.0042 :       ++l->pad[0].l;
+ 13974 11.7875 :      l = l->n;
+     1 8.4e-04 :      asm volatile ("" :: "r" (l));
+               :    }
+               :}
+
+That is the inner function of the test, where a large portion of the time is spent. We see the samples spread out over
+all three lines of the loop. The main reason for this is that the sampling is not always 100% accurate with respect
+to the recorded instruction pointer. The CPU executes instructions out of order; reconstructing the exact sequence of
+execution to produce a correct instruction pointer is hard. The most recent CPU versions try to do this for a select few
+events but it is, in general, not worth the effort–or simply not possible. In most cases it does not really matter. The
+programmer should be able to determine what is going on even if there is a normally-distributed set of samples.
+
+B.3   Starting To Profile
+
+When starting to analyze a body of code, one certainly can start looking at the places in the program where the most
+time is spent. That code should certainly be optimized as well as possible. But what happens next? Where is the
+program spending unnecessary time? This question is not so easy to answer.
+
+One of the problems in this situation is that absolute values do not tell the real story. One loop in the program might
+demand the majority of the time, and this is fine. There are many possible reasons for the high CPU utilization, though.
+But what is more common, is that CPU usage is more evenly spread throughout the program. In this case, the absolute
+values point to many places, which is not useful.
+In many situations it is helpful to look at ratios of two events. For instance, the number of mispredicted branches in a
+function can be meaningless if there is no measure for how often a function was executed. Yes, the absolute value is
+relevant for the program’s performance. The ratio of mispredictions per call is more meaningful for the code quality
+of the function. Intel’s optimization manual for x86 and x86-64 [15] describes ratios which should be investigated
+(Appendix B.7 in the cited document for Core 2 events). A few of the ratios relevant for memory handling are the
+following.
+
+ Instruction Fetch Stall       CYCLES_L1I_MEM_STALLED            Ratio of cycles during which in instruction decoder is
+                               / CPU_CLK_UNHALTED.CORE           waiting for new data due to cache or ITLB misses.
+ ITLB Miss Rate                ITLB_MISS_RETIRED      /          ITLB misses per instruction. If this ratio is high the
+                               INST_RETIRED.ANY                  code is spread over too many pages.
+ L1I Miss Rate                 L1I_MISSES    /  INST_-           L1i misses per instruction. The execution flow is un-
+                               RETIRED.ANY                       predictable or the code size is too large. In the former
+                                                                 case avoiding indirect jumps might help. In the latter
+                                                                 case block reordering or avoiding inlining might help.
+ L2 Instruction Miss Rate      L2_IFETCH.SELF.I_STATE            L2 misses for program code per instruction. Any
+                               / INST_RETIRED.ANY                value larger than zero indicates code locality problems
+                                                                 which are even worse than L1i misses.
+ Load Rate                     L1D_CACHE_LD.MESI     /           Read operations per cycle. A Core 2 core can service
+                               CPU_CLK_UNHALTED.CORE             one load operation. A high ratio means the execution
+                                                                 is bound by memory reads.
+ Store Order Block             STORE_BLOCK.ORDER     /           Ratio if stores blocked by previous stores which miss
+                               CPU_CLK_UNHALTED.CORE             the cache.
+ L1d Rate Blocking Loads       LOAD_BLOCK.L1D / CPU_-            Loads from L1d blocked by lack of resources. Usually
+                               CLK_UNHALTED.CORE                 this means too many concurrent L1d accesses.
+ L1D Miss Rate                 L1D_REPL    /    INST_-           L1d misses per instruction. A high rate means that
+                               RETIRED.ANY                       prefetching is not effective and L2 is used too often.
+ L2 Data Miss Rate             L2_LINES_IN.SELF.ANY /            L2 misses for data per instruction. If the value is
+                               INST_RETIRED.ANY                  significantly greater than zero, hardware and software
+                                                                 prefetching is ineffective. The processor needs more
+                                                                 (or earlier) software prefetching help.
+ L2 Demand Miss Rate           L2_LINES_-                        L2 misses for data per instruction for which the hard-
+                               IN.SELF.DEMAND / INST_-           ware prefetcher was not used at all. That means, pre-
+                               RETIRED.ANY                       fetching has not even started.
+ Useful NTA Prefetch Rate      SSE_PRE_MISS.NTA      /           Ratio of useful non-temporal prefetch relative to the
+                               SSS_PRE_EXEC.NTA                  total number of all non-temporal prefetches. A low
+                                                                 value means many values are already in the cache.
+                                                                 This ratio can be computed for the other prefetch types
+                                                                 as well.
+ Late NTA Prefetch Rate        LOAD_HIT_PRE        /   SSS_-     Ratio of load requests for data with ongoing pre-
+                               PRE_EXEC.NTA                      fetch relative to the total number of all non-temporal
+                                                                 prefetches. A high value means the software prefetch
+                                                                 instruction is issued too late. This ratio can be com-
+                                                                 puted for the other prefetch types as well.
+
+For all these ratios, the program should be run with oprofile being instructed to measure both events. This guarantees
+the two counts are comparable. Before the division, one has to make sure that the possibly different overrun values are
+taken into account. The simplest way is to ensure this is by multiplying each events counter by the overrun value.
+The ratios are meaningful for whole programs, at the executable/DSO level, or even at the function level. The deeper
+one looks into the program, the more errors are included in the value.
+What is needed to make sense of the ratios are baseline values. This is not as easy as it might seem. Different types of
+code has different characteristics and a ratio value which is bad in one program might be normal in another program.
+
+C    Memory Types
+
+Though it is not necessary knowledge for efficient programming, it might be useful to describe some more technical
+details of available memory types. Specifically we are here interested in the difference of “registered” versus “unregis-
+tered” and ECC versus non-ECC DRAM types.
+The terms “registered” and “buffered” are used synonymously when de-
+scribing a DRAM type which has one additional component on the DRAM
+module: a buffer. All DDR memory types can come in registered and un-
+registered form. For the unregistered modules, the memory controller is
+directly connected to all the chips on the module. Figure C.1 shows the
+setup.
+Electrically this is quite demanding. The memory controller must be able                         MC
+to deal with the capacities of all the memory chips (there are more than the
+six shown in the figure). If the memory controller (MC) has a limitation,      Figure C.1: Unregistered DRAM Module
+or if many memory modules are to be used, this setup is not ideal.
+Buffered (or registered) memory changes the situation: instead of directly
+connecting the RAM chips on the DRAM module to the memory, they
+are connected to a buffer which, in turn, is then connected to the memory
+controller. This significantly reduces the complexity of the electrical con-
+nections. The ability of the memory controllers to drive DRAM modules                           Buffer
+increases by a factor corresponding to the number of connections saved.
+With these advantages the question is: why aren’t all DRAM modules                              MC
+buffered? There are several reasons. Obviously, buffered modules are
+a bit more complicated and, hence, more expensive. Cost is not the only        Figure C.2: Registered DRAM Module
+factor, though. The buffer delays the signals from the RAM chips a bit; the
+delay must be high enough to ensure that all signals from the RAM chips are buffered. The result is that the latency of
+the DRAM module increases. A last factor worth mentioning here is that the additional electrical component increases
+the energy cost. Since the buffer has to operate at the frequency of the bus this component’s energy consumption can
+be significant.
+With the other factors of the use of DDR2 and DDR3 modules it is usually not possible to have more than two DRAM
+modules per bank. The number of pins of the memory controller limit the number of banks (to two in commodity
+hardware). Most memory controllers are able to drive four DRAM modules and, therefore, unregistered modules are
+sufficient. In server environments with high memory requirements the situation might be different.
+A different aspect of some server environments is that they cannot tolerate errors. Due to the minuscule charges held
+by the capacitors in the RAM cells, errors are possible. People often joke about cosmic radiation but this is indeed a
+possibility. Together with alpha decays and other natural phenomena, they lead to errors where the content of RAM
+cell changes from 0 to 1 or vice versa. The more memory is used, the higher the probability of such an event.
+If such errors are not acceptable, ECC (Error Correction Code) DRAM can be used. Error correction codes enable the
+hardware to recognize incorrect cell contents and, in some cases, correct the errors. In the old days, parity checks only
+recognized errors, and the machine had to be stopped when one was detected. With ECC, instead, a small number of
+erroneous bits can be automatically corrected. If the number of errors is too high, though, the memory access cannot
+be performed correctly and the machine still stops. This is a rather unlikely case for working DRAM modules, though,
+since multiple errors must happen on the same module.
+When we speak about ECC memory we are actually not quite correct. It is not the memory which performs the error
+checking; instead, it is the memory controller. The DRAM modules simply provide more storage and transport the
+additional non-data bits along with the real data. Usually, ECC memory stores one additional bit for each 8 data bits.
+Why 8 bits are used will be explained a bit later.
+Upon writing data to a memory address, the memory controller computes the ECC for the new content on the fly
+before sending that data and ECC onto the memory bus. When reading, the data plus the ECC is received, the memory
+controller computes the ECC for the data, and compares it with the ECC transmitted from the DRAM module. If the
+ECCs match everything is fine. If they do not match, the memory controller tries to correct the error. If this correction
+is not possible, the error is logged and the machine is possibly halted.
+
+                                                   SEC                        SEC/DED
+                         Data Bits W      ECC Bits E Overhead           ECC Bits E Overhead
+                               4              3        75.0%                4        100.0%
+                              8               4        50.0%                5         62.5%
+                              16              5        31.3%                6         37.5%
+                              32              6        18.8%                7         21.9%
+                              64              7        10.9%                8         12.5%
+
+                                       Table C.1: ECC and Data Bits Relationship
+
+Several techniques for error correction are in use but, for DRAM ECC, usually Hamming codes are used. Hamming
+codes originally were used to encode four data bits with the ability to recognize and correct one flipped bit (SEC, Single
+Error Correction). The mechanism can easily be extended to more data bits. The relationship between the number of
+data bits W and the number of bits for the error code E is described by the equation
+
+                                               E = dlog2 (W + E + 1)e
+
+Solving this equation iteratively results in the values shown in the second column of Table C.1. With an additional
+bit, we can recognize two flipped bits using a simple parity bit. This is then called SEC/DED, Single Error Correc-
+tion/Double Error Detection. With this additional bit we arrive at the values in the fourth column of Table C.1. The
+overhead for W = 64 is sufficiently low and the numbers (64, 8) are multiples of 8, so this is a natural selection for
+ECC. On most modules, each RAM chip produces 8 bits and, therefore, any other combination would lead to less
+efficient solution.
+                                                     The Hamming code computation is easy to demonstrate with a code
+                7    6    5     4   3     2   1      using W = 4 and E = 3. We compute parity bits at strategic
+  ECC Word      D    D    D     P   D     P   P      places in the encoded word. Table C.2 shows the principle. At
+   P1 Parity    D    –    D     –   D     –   P      the bit positions corresponding to the powers of two the parity bits
+   P2 Parity    D    D    –     –   D     P   –      are added. The parity sum for the first parity bit P1 contains every
+   P4 Parity    D    D    D     P   –     –   –      second bit. The parity sum for the second parity bit P2 contains
+                                                     data bits 1, 3, and 4 (encoded here as 3, 6, and 7). Similar ly P4 is
+Table C.2: Hamming Generation Matrix Con-            computed.
+struction                                            The computation of the parity bits can be more elegantly described
+                                                     using a matrix multiplication. We construction a matrix G = [I|A]
+where I is the identity matrix and A is the parity generation matrix we can determine from Table C.2.
+
+                                                                             
+                                              1       0   0   0     1   1   1
+                                             0       1   0   0     0   1   1 
+                                          G=
+                                             0
+                                                                              
+                                                      0   1   0     1   0   1 
+                                              0       0   0   1     1   1   0
+
+The columns of A are constructed from the bits used in the computation of P1 , P2 , and P4 . If we now represent each
+input data item as a 4-dimensional vector d we can compute r = d · G and get a 7-dimensional vector r. This is the
+data which in the case of ECC DDR is stored.
+To decode the data we construct a new matrix H = [AT |I] where AT is the transposed parity generation matrix from
+the computation of G. That means:
+
+                                                                             
+                                              1       0   1   1     1   0   0
+                                          H= 1       1   0   1     0   1   0 
+                                              1       1   1   0     0   0   1
+
+The result of H · r shows whether the stored data is defective. If this is not the case, the product is the 3-dimensional
+                     T
+vector 0 0 0           . Otherwise the value of the product, when interpreted as the binary representation of a number,
+indicates the column number with the flipped bit.
+                                               
+As an example, assume d = 1 0 0 1 . This results in
+
+                                                                                
+                                           r=     1   0   0    1   0   0   1
+
+Performing the test using the multiplication with H results in
+
+                                                           
+                                                          0
+                                                      s= 0 
+                                                          0
+
+Now, assume we have a corruption of the stored data and read back from memory r0 =
+                                                                                                                       
+                                                                                             1   0   1 1    0   0   1 .
+In this case we get
+
+                                                            
+                                                           1
+                                                      0
+                                                      s = 0 
+                                                           1
+
+The vector is not the null vector and, when interpreted as a number, s0 has the value 5. This is the number of the bit
+we flipped in r0 (starting to count the bits from 1). The memory controller can correct the bit and the programs will not
+notice that there has been a problem.
+Handling the extra bit for the DED part is only slightly more complex. With more effort is it possible to create
+codes which can correct two flipped bits and more. It is probability and risk which decide whether this is needed.
+Some memory manufacturers say an error can occur in 256MB of RAM every 750 hours. By doubling the amount of
+memory the time is reduced by 75%. With enough memory the probability of experiencing an error in a short time
+can be significant and ECC RAM becomes a requirement. The time frame could even be so small that the SEC/DED
+implementation is not sufficient.
+Instead of implementing even more error correction capabilities, server motherboards have the ability to automatically
+read all memory over a given timeframe. That means, whether or not the memory was actually requested by the
+processor, the memory controller reads the data and, if the ECC check fails, writes the corrected data back to memory.
+As long as the probablity of incurring less than two memory errors in the time frame needed to read all of memory and
+write it back is acceptable, SEC/DED error correction is a perfectly reasonable solution.
+As with registered DRAM, the question has to be asked: why is ECC DRAM not the norm? The answer to this question
+is the same as for the equivalent question about registered RAM: the extra RAM chip increases the cost and the parity
+computation increases the delay. Unregistered, non-ECC memory can be significantly faster. Because of the similarity
+of the problems of registered and ECC DRAM, one usually only finds registered, ECC DRAM and not registered,
+non-ECC DRAM.
+There is another method to overcome memory errors. Some manufacturers offer what is often incorrectly called
+“memory RAID” where the data is distributed redundantly over multiple DRAM modules, or at least RAM chips.
+Motherboards with this feature can use unregistered DRAM modules, but the increased traffic on the memory busses
+is likely to negate the difference in access times for ECC and non-ECC DRAM modules.
+
+D     libNUMA Introduction
+Although much of the information programmers need to schedule threads optimally, allocate memory appropriately,
+etc. is available, this information is cumbersome to get at. The existing NUMA support library (libnuma, in the numactl
+package on RHEL/Fedora systems) does not, by a long shot, provide adequate functionality.
+As a response, the author has proposed a new library which provides all the functionality needed for NUMA. Due to the
+overlap of memory and cache hierarchy handling, this library is also useful for non-NUMA systems with multi-thread
+and multi-core processors–almost every currently-available machine.
+The functionality of this new library is urgently needed to follow the advice given in this document. This is the only
+reason why it is mentioned here. The library (as of this writing) is not finished, not reviewed, not polished, and not
+(widely) distributed. It might change significantly in future. It is currently available at
+      http://people.redhat.com/drepper/libNUMA.tar.bz2
+The interfaces of this library depend heavily on the information exported by the /sys filesystem. If this filesystem
+is not mounted, many functions will simply fail or provide inaccurate information. This is particularly important to
+remember if a process is executed in a chroot jail.
+The interface header for the library contains currently the following definitions:
+
+typedef memnode_set_t;
+
+#define MEMNODE_ZERO_S(setsize, memnodesetp)
+#define MEMNODE_SET_S(node, setsize, memnodesetp)
+#define MEMNODE_CLR_S(node, setsize, memnodesetp)
+#define MEMNODE_ISSET_S(node, setsize, memnodesetp)
+#define MEMNODE_COUNT_S(setsize, memnodesetp)
+
+#define MEMNODE_EQUAL_S(setsize, memnodesetp1, memnodesetp2)
+
+#define MEMNODE_AND_S(setsize, destset, srcset1, srcset2)
+#define MEMNODE_OR_S(setsize, destset, srcset1, srcset2)
+#define MEMNODE_XOR_S(setsize, destset, srcset1, srcset2)
+
+#define MEMNODE_ALLOC_SIZE(count)
+#define MEMNODE_ALLOC(count)
+#define MEMNODE_FREE(memnodeset)
+
+int NUMA_cpu_system_count(void);
+int NUMA_cpu_system_mask(size_t destsize, cpu_set_t *dest);
+
+int NUMA_cpu_self_count(void);
+int NUMA_cpu_self_mask(size_t destsize, cpu_set_t *dest);
+
+int NUMA_cpu_self_current_idx(void);
+int NUMA_cpu_self_current_mask(size_t destsize, cpu_set_t *dest);
+
+ssize_t NUMA_cpu_level_mask(size_t destsize, cpu_set_t *dest,
+                            size_t srcsize, const cpu_set_t *src,
+                            unsigned int level);
+
+int NUMA_memnode_system_count(void);
+int NUMA_memnode_system_mask(size_t destsize, memnode_set_t *dest);
+
+int NUMA_memnode_self_mask(size_t destsize, memnode_set_t *dest);
+
+int NUMA_memnode_self_current_idx(void);
+int NUMA_memnode_self_current_mask(size_t destsize, memnode_set_t *dest);
+
+int NUMA_cpu_to_memnode(size_t cpusetsize, const cpu_set_t *cpuset,
+                        size_t __memnodesize, memnode_set_t *memnodeset);
+int NUMA_memnode_to_cpu(size_t memnodesize, const memnode_set_t *memnodeset,
+
+                                 size_t cpusetsize, cpu_set_t *cpuset);
+
+int NUMA_mem_get_node_idx(void *addr);
+int NUMA_mem_get_node_mask(void *addr, size_t size,
+                           size_t destsize, memnode_set_t *dest);
+
+The MEMNODE_* macros are similar in form and functionality to the CPU_* macros introduced in section section 6.4.3.
+There are no non-_S variants of the macros, they all require a size parameter. The memnode_set_t type is the
+equivalent of cpu_set_t, but this time for memory nodes. Note that the number of memory nodes need not have
+anything to do with the number of CPUs and vice versa. It is possible to have many CPUs per memory node or even
+no CPU at all. The size of dynamically allocated memory node bit sets should, therefore, not be determined by the
+number of CPUs.
+Instead, the NUMA_memnode_system_count interface should be used. It returns the number of nodes currently reg-
+istered. This number might grow or shrink over time. More often than not, though, it will remain constant, and is
+therefore a good value to use for sizing memory node bit sets. The allocation, again similar to the CPU_ macros,
+happens using MEMNODE_ALLOC_SIZE, MEMNODE_ALLOC and MEMNODE_FREE.
+As a last parallel with the CPU_* macros, the library also provides macros to compare memory node bit sets for equality
+and to perform logical operations.
+The NUMA_cpu_* functions provide functionality to handle CPU sets. In part, the interfaces only make existing func-
+tionality available under a new name. NUMA_cpu_system_count returns the number of CPUs in the system, the
+NUMA_CPU_system_mask variant returns a bit mask with the appropriate bits set–functionality which is not otherwise
+available.
+NUMA_cpu_self_count and NUMA_cpu_self_mask return information about the CPUs the current thread is cur-
+rently allowed to run on. NUMA_cpu_self_current_idx returns the index of the currently used CPU. This informa-
+tion might already be stale when returned, due to scheduling decisions the kernel can make; it always has to be assumed
+to be inaccurate. The NUMA_cpu_self_current_mask returns the same information and sets the appropriate bit in
+the bit set.
+NUMA_memnode_system_count has already been introduced. NUMA_memnode_system_mask is the equivalent func-
+tion which fills in a bit set. NUMA_memnode_self_mask fills in a bit set according to the memory nodes which are
+directly attached to any of the CPUs the thread can currently run on.
+Even more specialized information is returned by the NUMA_memnode_self_current_idx and NUMA_memnode_-
+self_current_mask functions. The information returned is the memory node which is connected to the processor
+the thread is currently running on. Just as for the NUMA_cpu_self_current_* functions, this information can already
+be stale when the function returns; it can only be used as a hint.
+The NUMA_cpu_to_memnode function can be used to map a set of CPUs to the set of directly-attached memory nodes.
+If only a single bit is set in the CPU set, one can determine which memory node each CPU belongs to. Currently, there
+is no support in Linux for a single CPU belonging to more than one memory node; this could, theoretically, change in
+future. To map in the other direction the NUMA_memnode_to_cpu function can be used.
+If memory is already allocated, it is sometimes useful to know where it is allocated. This is what the NUMA_mem_-
+get_node_idx and NUMA_mem_get_node_mask allow the programmer to determine. The former function returns
+the index of the memory node on which the page corresponding to the address specified by the parameter is allocated–
+or will be allocated according to the currently installed policy if the page is not yet allocated. The second function can
+perform the work for a whole address range; it returns the information in the form of a bit set. The function’s return
+value is the number of different memory nodes which are used.
+In the remainder of this section we will see a few example for use cases of these interfaces. In all cases we skip the
+error handling and the case where the number of CPUs and/or memory nodes is too large for the cpu_set_t and
+memnode_set_t types respectively. Making the code robust is left as an exercise to the reader.
+
+Determine Thread Sibling of Given CPU
+
+To schedule helper threads, or other threads which benefit from being scheduled on a thread of a given CPU, a code
+sequence like the following can be used.
+
+  cpu_set_t cur;
+  CPU_ZERO(&cur);
+  CPU_SET(cpunr, &cur);
+  cpu_set_t hyperths;
+  NUMA_cpu_level_mask(sizeof(hyperths), &hyperths, sizeof(cur), &cur, 1);
+  CPU_CLR(cpunr, &hyperths);
+
+The code first generates a bit set for the CPU specified by cpunr. This bit set is then passed to NUMA_cpu_level_-
+mask along with the fifth parameter specifying that we are looking for hyper-threads. The result is returned in the
+hyperths bit set. All that remains to be done is to clear the bit corresponding to the original CPU.
+
+Determine Core Siblings of Given CPU
+
+If two threads should not be scheduled on two hyper-threads, but can benefit from cache sharing, we need to determine
+the other cores of the processor. The following code sequence does the trick.
+
+  cpu_set_t cur;
+  CPU_ZERO(&cur);
+  CPU_SET(cpunr, &cur);
+  cpu_set_t hyperths;
+  int nhts = NUMA_cpu_level_mask(sizeof(hyperths), &hyperths, sizeof(cur), &cur, 1);
+  cpu_set_t coreths;
+  int ncs = NUMA_cpu_level_mask(sizeof(coreths), &coreths, sizeof(cur), &cur, 2);
+  CPU_XOR(&coreths, &coreths, &hyperths);
+  ncs -= nhts;
+
+The first part of the code is identical to the code to determine hyper-threads. This is no coincidence since we have to
+distinguish the hyper-threads of the given CPU from the other cores. This is implemented in the second part which
+calls NUMA_cpu_level_mask again, but, this time, with a level of 2. All that remains to be done is to remove all
+hyper-threads of the given CPU from the result. The variables nhts and ncs are used to keep track of the number of
+bits set in the respective bit sets.
+The resulting mask can be used to schedule another thread. If no other thread has to be explicitly scheduled, the
+decision about the core to use can be left to the OS. Otherwise one can iteratively run the following code:
+
+  while (ncs > 0) {
+    size_t idx = 0;
+    while (! CPU_ISSET(idx, &ncs))
+      ++idx;
+    CPU_ZERO(&cur);
+    CPU_SET(idx, &cur);
+    nhts = NUMA_cpu_level_mask(sizeof(hyperths), &hyperths, sizeof(cur), &cur, 1);
+    CPU_XOR(&coreths, &coreths, hyperths);
+    ncs -= nhts;
+
+      ... schedule thread on CPU idx ...
+  }
+
+The loop picks, in each iteration, a CPU number from the remaining, used cores. It then computes all the hyper-threads
+for the this CPU. The resulting bit set is then subtracted (using CPU_XOR) from the bit set of the available cores. If the
+XOR operation does not remove anything, something is really wrong. The ncs variable is updated and we are ready
+for the next round, but not before the scheduling decisions are made. At the end, any of idx, cur, or hyperths can
+be used to schedule a thread, depending on the requirements of the program. Often it is best to leave the OS as much
+freedom as possible and, therefore, to use the hyperths bit set so that the OS can select the best hyper-thread.
+
+E       Index
+                                                                                                     DMA, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3, 12
+ABI, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 54          Double Error Detection, . . . . . . . . . . . . . . . . . . . . . . . . 106
+Access Pattern, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4                Double-Pumped, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+Activation, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9            DRAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3, 5
+Address Demultiplexing, . . . . . . . . . . . . . . . . . . . . . . . . . 6                          Dynamic RAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+Address Snooping, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+Address Space Layout Randomization, . . . . . . . . . . . 59                                         ECC DRAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 105
+Alias, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15        Error Correction Code, . . . . . . . . . . . . . . . . . . . . . . . . . 105
+Aliasing, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 50           Exclusive Cache, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+Alpha Decay, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 105
+ALU, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29          False Sharing, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 65
+Application Binary Interface, . . . . . . . . . . . . . . . . . . . . 54                             FB-DRAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+Arithmetic Logic Unit, . . . . . . . . . . . . . . . . . . . . . . . . . . 29                        Fortran, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 50
+ASID, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 40           Front Side Bus, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+ASLR, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 59           FSB, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3, 8f., 11, 14, 70
+Asynchronous DRAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . 8                           Fully Associative Cache, . . . . . . . . . . . . . . . . . . . . . . . . 17
+                                                                                                     Fully Duplex Bus, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+Bottleneck, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3
+Branch Prediction, . . . . . . . . . . . . . . . . . . . . . . . . . . 14, 56                        gcov, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 85
+Burst Speed, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8               Geneseo, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 95
+                                                                                                     getconf, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 50
+Cache, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 1, 13
+      Access Cost, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16                  Hamming Code, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 106
+      Associativity, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18                  Hardware Prefetching, . . . . . . . . . . . . . . . . . . . . . . . . . . 60
+      Coherency, . . . . . . . . . . . . . . . . . . . . . . . . . . . 16, 25f.                      Helper Thread, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 63
+      Pollution, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 60                HUGE_TLB, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 88
+      Replacement Strategy, . . . . . . . . . . . . . . . . . . . . . . 14                           hugetlbfs, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 88
+      Tag, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15            Hyper Transport, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 43
+Capacitor, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5           Hyper-Thread, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29, 63
+      Charge Curve, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6                    Hypervisor, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31, 39
+Capacity Cache Miss, . . . . . . . . . . . . . . . . . . . . . . . . . . . 34
+                                                                                                     Inclusive Cache, . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16, 78
+CAS, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 68, 89
+CAS, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7ff.          Latency, . . . . . . . . . . . . . . . . . . . . . . . . . . . 8, 23, 30, 60, 95
+      Latency, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8             Leakage, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+Cell CPU, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 95             LL/SC, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 68, 89
+CL, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8      Load Lock/Store Conditional, . . . . . . . . . . . . . . . . 68, 89
+Co-processors, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 95                  Loop Stream Detector, . . . . . . . . . . . . . . . . . . . . . . . . . . 57
+Column Address Selection, . . . . . . . . . . . . . . . . . . . . . . . 7                            LSD, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 57
+Command Rate, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Commodity Hardware, . . . . . . . . . . . . . . . . . . . . . . . . . . . 3                          MAP_FIXED, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 60
+Common System Interface, . . . . . . . . . . . . . . . . . . . . . . . 4                             Mass Storage, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 1
+Compare-And-Swap, . . . . . . . . . . . . . . . . . . . . . . . . 68, 89                             Memory Channel, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+Compulsory Cache Miss, . . . . . . . . . . . . . . . . . . . . . . . . 34                            Memory Controller, . . . . . . . . . . . . . . . . . . . . . . . . . . . . 1, 4
+Conflict Misses, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 54                  Memory Management Unit, . . . . . . . . . . . . . . . . . . . . . 30
+Cosmic Rays, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 105                   Memory Model, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+CPU Pipeline,. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .14, 30                     Memory Ordering, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 48
+Critical Word, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 34                Memory RAID, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+CSI, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4       MESI, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+                                                                                                     MMU, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 30
+DCAS, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 89             MPI, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 43
+dcbz, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 48           Multi-core, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+DDR, DDR1, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10                    Multiplexer, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+DDR2, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8, 10
+DDR3, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11             Northbridge, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3, 70
+Demultiplexer,. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6                NUMA, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+Direct Cache Access, . . . . . . . . . . . . . . . . . . . . . . . . . . . 64                        NUMA factor, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4, 43
+Direct-Mapped Cache, . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+Dirty Flag, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16             OOO, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 60
+
+opcontrol,. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .102          Torrenza, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 95
+opreport,. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .103         Trace Cache, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31
+OProfile,. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .102         Transactional Memory, . . . . . . . . . . . . . . . . . . . . . . . . . . 91
+Out-Of-Order, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 60            Transistor, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+                                                                                                Translation Look-Aside Buffer, . . . . . . . . . . . . . . . . . . 39
+Pacifica, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 40      tRAS , . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+Page Table Walk, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 37               tRCD , . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Parallel Port, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3        tRP , . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+PATA, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3
+PCI Express, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3          Unregistered DRAM, . . . . . . . . . . . . . . . . . . . . . . . . . . 105
+PCI-E, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3    USB, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3, 12
+PGO, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 85
+Physical Address, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6             Vector Operation, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 95
+Pre-Faulting, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 87          Virtual Address, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+Precharge, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9        Virtual Machine Monitor, . . . . . . . . . . . . . . . . . . . . . . . . 31
+Prefetch Trigger, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 60            VMM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31, 39
+Prefetching, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14, 20, 60               von Neumann Architecture, . . . . . . . . . . . . . . . . . . . . . . 14
+Profile Guide Optimization, . . . . . . . . . . . . . . . . . . . . . . 85
+                                                                                                WE, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+Quad-Pumped, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8              Write Enable, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+                                                                                                Write-Combining, . . . . . . . . . . . . . . . . . . . . . . . . . . . 25, 48
+RAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3
+Rambus, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3, 8
+RAS, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7ff.
+RAS-to-CAS Delay,. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Recharging, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+Refresh, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+Registered DRAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . 105
+Request For Ownership, . . . . . . . . . . . . . . . . . . . . . . . . . 26
+RFO, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26, 65
+Row Address Selection, . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+
+SATA, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3
+_SC_LEVEL1_DCACHE_LINESIZE, . . . . . . . . . . . . . . 50
+SDRAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3, 8, 10
+Self Modifying Code, . . . . . . . . . . . . . . . . . . . . . . . . . . . 31
+Sense Amplifier, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+Serial Port, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3
+Set Associative, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+SIMD, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 51, 95
+Single Error Correction, . . . . . . . . . . . . . . . . . . . . . . . . 105
+SMC, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31
+SMP, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+SMT, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29
+Software Prefetching, . . . . . . . . . . . . . . . . . . . . . . . . . . . 61
+Southbridge, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3
+Spatial Locality, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+Speculation, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 62
+Speculative Load, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 63
+SPU, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 95
+SRAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+Static RAM, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+Stream, Prefetch, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 60
+Streaming Read Buffer, . . . . . . . . . . . . . . . . . . . . . . . . . 48
+Strides, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 60, 96
+Symmetric Multi-Thread, . . . . . . . . . . . . . . . . . . . . . . . . 29
+
+Tag, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+Temporal Locality, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+TLB, . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22, 39
+
+F   Bibliography
+ [1] Performance Guidelines for AMD Athlon™ 64 and AMD Opteron™ ccNUMA Multiprocessor Systems.
+     Advanced Micro Devices, June 2006. URL
+     http://www.amd.com/us-en/assets/content type/white papers and tech docs/40555.pdf. 5.4
+ [2] Jennifer M. Anderson, Lance M. Berc, Jeffrey Dean, Sanjay Ghemawat, Monika R. Henzinger, Shun-Tak A.
+     Leung, Richard L. Sites, Mark T. Vandevoorde, Carl A. Waldspurger, and William E. Weihl. Continuous
+     profiling: Where have all the cycles gone. In Proceedings of the 16th ACM Symposium of Operating Systems
+     Principles, pages 1–14, October 1997. URL http://citeseer.ist.psu.edu/anderson97continuous.html. 7.1
+ [3] Vinodh Cuppu, Bruce Jacob, Brian Davis, and Trevor Mudge. High-Performance DRAMs in Workstation
+     Environments. IEEE Transactions on Computers, 50(11):1133–1153, November 2001. URL
+     http://citeseer.ist.psu.edu/476689.html. 2.1.2, 2.2, 2.2.1, 2.2.3, 10
+ [4] Arnaldo Carvalho de Melo. The 7 dwarves: debugging information beyond gdb. In Proceedings of the Linux
+     Symposium, 2007. URL https://ols2006.108.redhat.com/2007/Reprints/melo-Reprint.pdf. 6.2.1
+ [5] Simon Doherty, David L. Detlefs, Lindsay Grove, Christine H. Flood, Victor Luchangco, Paul A. Martin, Mark
+     Moir, Nir Shavit, and Jr. Guy L. Steele. DCAS is not a Silver Bullet for Nonblocking Algorithm Design. In
+     SPAA ’04: Proceedings of the Sixteenth Annual ACM Symposium on Parallelism in Algorithms and
+     Architectures, pages 216–224, New York, NY, USA, 2004. ACM Press. ISBN 1-58113-840-7. URL
+     http://research.sun.com/scalable/pubs/SPAA04.pdf. 8.1
+ [6] M. Dowler. Introduction to DDR-2: The DDR Memory Replacement.
+     http://www.pcstats.com/articleview.cfm?articleID=1573, May 2004. 2.2.1
+ [7] Ulrich Drepper. Futexes Are Tricky, December 2005. URL http://people.redhat.com/drepper/futex.pdf. 6.3.4
+ [8] Ulrich Drepper. ELF Handling For Thread-Local Storage. Technical report, Red Hat, Inc., 2003. URL
+     http://people.redhat.com/drepper/tls.pdf. 6.4.1
+ [9] Ulrich Drepper. Security Enhancements in Red Hat Enterprise Linux, 2004. URL
+     http://people.redhat.com/drepper/nonselsec.pdf. 4.2
+[10] Dominique Fober, Yann Orlarey, and Stephane Letz. Lock-Free Techiniques for Concurrent Access to Shared
+     Objects. In GMEM, editor, Actes des Journes d’Informatique Musicale JIM2002, Marseille, pages 143–150,
+     2002. URL http://www.grame.fr/pub/fober-JIM2002.pdf. 8.1, 8.1
+[11] Joe Gebis and David Patterson. Embracing and Extending 20th -Century Instruction Set Architectures.
+     Computer, 40(4):68–75, April 2007. 8.4
+[12] David Goldberg. What Every Computer Scientist Should Know About Floating-Point Arithmetic. ACM
+     Computing Surveys, 23(1):5–48, March 1991. URL http://citeseer.ist.psu.edu/goldberg91what.html. 1
+[13] Maurice Herlihy and J. Eliot B. Moss. Transactional memory: Architectural support for lock-free data
+     structures. In Proceedings of 20th International Symposium on Computer Architecture, 1993. URL
+     http://citeseer.ist.psu.edu/herlihy93transactional.html. 8.2, 8.2.2, 8.2.3, 8.2.4
+[14] Ram Huggahalli, Ravi Iyer, and Scott Tetrick. Direct Cache Access for High Bandwidth Network I/O, 2005.
+     URL http://www.stanford.edu/group/comparch/papers/huggahalli05.pdf. 6.3.5
+[15] Intel R 64 and IA-32 Architectures Optimization Reference Manual. Intel Corporation, May 2007. URL
+     http://www.intel.com/design/processor/manuals/248966.pdf. B.3
+[16] William Margo, Paul Petersen, and Sanjiv Shah. Hyper-Threading Technology: Impact on Compute-Intensive
+     Workloads. Intel Technology Journal, 6(1), 2002. URL
+     ftp://download.intel.com/technology/itj/2002/volume06issue01/art06 computeintensive/vol6iss1 art06. 3.3.4
+[17] Caolán McNamara. Controlling symbol ordering.
+     http://blogs.linux.ie/caolan/2007/04/24/controlling-symbol-ordering/, April 2007. 7.5
+[18] Double Data Rate (DDR) SDRAM MT46V. Micron Technology, 2003. Rev. L 6/06 EN. 2.2.2, 10
+[19] Jon “Hannibal” Stokes. Ars Technica RAM Guide, Part II: Asynchronous and Synchronous DRAM.
+     http://arstechnica.com/paedia/r/ram guide/ram guide.part2-1.html, 2004. 2.2
+[20] Wikipedia. Static random access memory. http://en.wikipedia.org/wiki/Static Random Access Memory, 2006.
+     2.1.1
+
+G     Revision History
+2007-6-24 First internal draft.
+2007-8-11 Add first set of Johnray’s edits.
+
+2007-9 to 2007-11 Lots of language cleanup from Jonathan Corbet and team.
+2007-11-21 Version 1.0.
+
+ Source File Identification
+ Last Modification            D:20071121175205-08’00’
+ Source File Size             553180 Bytes
+ Source File MD5              0299BAC7C5B6A501077DEB5714C944DF
+ MPost Last Modification      D:20071104104838-08’00’
+ MPost Source File Size       138021 Bytes
+ MPost Source File MD5        7732297065D660A939A9D651A7992FA2
+

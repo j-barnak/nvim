@@ -3152,6 +3152,8 @@ local BOOKS = {
 		{ title = "A Primer on Memory Consistency and Cache Coherence", fmt = "pdf", slug = "a-primer-on-memory-consistency-and-cache-coherence", file = "A Primer on Memory Consistency and Cache Coherence (2nd ed).pdf" },
 		{ title = "Shared-Memory Synchronization", fmt = "pdf", slug = "shared-memory-synchronization", file = "Shared-Memory Synchronization (2nd ed).pdf" },
 		{ title = "The Art of Multiprocessor Programming", fmt = "pdf", slug = "the-art-of-multiprocessor-programming", file = "TheArtOfMultiprocessorProgramming.pdf" },
+		{ title = "The RISC-V Instruction Set Manual", fmt = "pdf", slug = "the-risc-v-instruction-set-manual", file = "riscv-spec.pdf" },
+		{ title = "What Every Programmer Should Know About Memory", fmt = "pdf", slug = "what-every-programmer-should-know-about-memory", file = "cpumemory.pdf" },
 		{ title = "Optimizing Software in C++ (Agner Fog)", fmt = "pdf", slug = "optimizing-software-in-cpp-agner-fog", file = "optimizing_cpp.pdf" },
 		{ title = "Optimizing Subroutines in Assembly (Agner Fog)", fmt = "pdf", slug = "optimizing-subroutines-in-assembly-agner-fog", file = "optimizing_assembly.pdf" },
 		{ title = "The Microarchitecture of Intel, AMD, and VIA CPUs (Agner Fog)", fmt = "pdf", slug = "microarchitecture-of-cpus-agner-fog", file = "microarchitecture.pdf" },
