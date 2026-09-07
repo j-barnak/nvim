@@ -3105,7 +3105,7 @@ local WEB_BOOKS = {
 	{ title = "SLUB", key = "slub", run = pick_slub },
 	{ title = "Snapshot Fuzzer", key = "snapshot-fuzzer", run = pick_snapshot_fuzzer },
 	{ title = "The Astra Book", key = "astra", run = pick_astra },
-	{ title = "Linux Kernel Exploitation Chapter", key = "kernel-exploitation", run = pick_kernel_exploitation },
+	{ title = "Linux Kernel Exploitation Dojo", key = "kernel-exploitation", run = pick_kernel_exploitation },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.
