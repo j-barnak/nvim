@@ -112,6 +112,9 @@ and every one is documented at the point it runs:
     chroma     Hugo's <pre class="chroma"><code class="language-c">
     rouge      Jekyll's Rouge highlighter (div.language-X.highlighter-rouge):
                recover the wrapper language label and drop the line-number gutter
+    interrupt  interrupt.memfault.com's in-article newsletter and submit-PR boxes
+    vuepress   VuePress v2 (0xc0ffee): recover the fence language from the outer
+               div.language-X and drop its line-number gutter
     brush      WordPress SyntaxHighlighter's <pre class="brush: cpp; ...">
     latexml    arXiv LaTeXML \\lstlisting, rebuilt from its own base64 payload
     gist=DIR   Blogger's <script src="gist.github.com/...js"> embeds, inlined
@@ -1036,6 +1039,33 @@ if mode == "content":
             if src is None:
                 continue
             div.replace_with(code_block(src.get_text().rstrip("\n") + "\n", lang, s))
+
+    if opt("interrupt"):
+        # interrupt.memfault.com (Jekyll) closes every post, INSIDE div.content
+        # (the article's own container, so the selector cannot exclude it), with a
+        # newsletter-subscribe box and, on the docs-style posts, a "found a
+        # mistake? submit a PR" box. Neither is the article. Its Jekyll/Rouge code
+        # blocks are handled by the generic div.highlighter-rouge rule (rouge).
+        for t in el.select("div.newsletter, div.submit-pr"):
+            t.decompose()
+
+    if opt("vuepress"):
+        # VuePress v2 (0xc0ffee.netlify.app) renders each fenced block as
+        # <div class="language-c line-numbers-mode"><pre><code> ...prismjs token
+        # spans, one <span class="line"> per source line, separated by real
+        # newlines... </code></pre><div class="line-numbers">...</div></div>. The
+        # language sits ONLY on the outer div; the <code> carries no class, so
+        # pandoc writes an INDENTED block and drops the label, and the empty
+        # line-number gutter divs would leak in. Rebuild each from the inner <pre>
+        # (whose get_text already holds the newlines and indentation) and label it
+        # from the div's language- class.
+        for div in el.select("div[class*=language-]"):
+            lang = next((c[len("language-"):] for c in (div.get("class") or [])
+                         if c.startswith("language-")), "")
+            pre_in = div.select_one("pre")
+            if pre_in is None:
+                continue
+            div.replace_with(code_block(pre_in.get_text(), lang, s))
 
     if opt("ec"):
         # Astro Expressive Code renders every source line as a BLOCK-level
