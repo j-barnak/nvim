@@ -291,6 +291,11 @@ case "$SLUG" in
   # line is touched. The book's pseudocode spacing ("sem . signal ()") is the
   # source's own typesetting and is deliberately left as-is.
   the-little-book-of-semaphores) FIXAWK="${AWKF%/*}/semaphores_fix.awk" ;;
+  # RISC-V specs (ISA manual + SBI/AIA/IOMMU/... the whole books-riscv set): the
+  # asciidoc toolchain prints a "<Section Title> | Page <N>" footer on every
+  # page; folio.awk strips only bare page numbers, so ~800 survive. riscv_fix
+  # drops the footer lines (body-safe: only a footer ends in "| Page N").
+  riscv-* | the-risc-v-instruction-set-manual) FIXAWK="${AWKF%/*}/riscv_fix.awk" ;;
 esac
 # pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
 # control-byte tr. SSA-based Compiler Design typesets a few relations in
