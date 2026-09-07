@@ -336,6 +336,18 @@ local function render_lines(lines, ft, dir, title)
 	-- defaults for nvim_create_buf(false, true); only bufhidden needs override.
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.bo[buf].bufhidden = "wipe"
+	viewer_seq = viewer_seq + 1
+	pcall(vim.api.nvim_buf_set_name, buf, string.format("docs://%d/%s", viewer_seq, title or "doc"))
+	-- Fill and guard the buffer BEFORE mutating the window. readfile() renders an
+	-- embedded NUL as a literal newline, which nvim_buf_set_lines rejects; if that
+	-- threw after the buffer was already swapped in, the user would be left with an
+	-- empty, modifiable, keymap-less scratch buffer on top of the previous doc.
+	-- Aborting here leaves the current doc untouched. (is_binary catches the known
+	-- cases up front; this is the backstop for a binary it does not recognise.)
+	if not pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, lines) then
+		pcall(vim.api.nvim_buf_delete, buf, { force = true })
+		return vim.notify("Could not render " .. (title or "doc") .. " (unreadable content)", vim.log.levels.WARN)
+	end
 	-- Wiping the previous doc buffer re-sourced syntax/markdown.vim (the
 	-- TSHighlighter teardown re-runs the syntaxset FileType autocmd), ~14 ms on
 	-- every open whatever the size. Clearing its filetype first makes the wipe
@@ -354,9 +366,6 @@ local function render_lines(lines, ft, dir, title)
 		end)
 	end
 	vim.api.nvim_win_set_buf(win, buf)
-	viewer_seq = viewer_seq + 1
-	pcall(vim.api.nvim_buf_set_name, buf, string.format("docs://%d/%s", viewer_seq, title or "doc"))
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 
 	-- Prose-friendly window-local viewport (wrap only for prose, not code).
 	local prose = ft == nil or ft == "" or ft == "markdown" or ft == "rst"
@@ -548,7 +557,11 @@ local function is_binary(path)
 	if not fh then
 		return false
 	end
-	local head = fh:read(65536) or ""
+	-- 200 KB, not 64 KB: some cached PDF specs carry no NUL in their first
+	-- ~150 KB, and the generic NUL scan below is the only guard for a binary
+	-- whose header is not in BINARY_MAGIC. A short window would pass such a file
+	-- to the reader as text (the wedged-buffer case render_lines now also guards).
+	local head = fh:read(204800) or ""
 	fh:close()
 	for _, magic in ipairs(BINARY_MAGIC) do
 		if head:sub(1, #magic) == magic then
@@ -2103,7 +2116,7 @@ local function pick_cppman()
 	end
 	local function render(sym)
 		render_shell(
-			bin .. " --force-columns=90 " .. shq(sym) .. " 2>/dev/null | col -bx",
+			shq(bin) .. " --force-columns=90 " .. shq(sym) .. " 2>/dev/null | col -bx",
 			"cppman " .. sym,
 			"man",
 			"cppman:" .. sym
@@ -2686,25 +2699,23 @@ local function update_all()
 						for _, t in ipairs(vim.fn.glob(data_root .. "/*/tags.txt", false, true)) do
 							pcall(vim.fn.delete, t)
 						end
-						for _, idx in ipairs(vim.fn.glob(data_root .. "/*/api-index.tsv", false, true)) do
-							pcall(vim.fn.delete, idx)
-						end
-						for _, idx in ipairs(vim.fn.glob(data_root .. "/*/*/api-index.tsv", false, true)) do
-							pcall(vim.fn.delete, idx)
+						-- Derived indexes rebuild from a tree's contents, so a pull
+						-- leaves them describing the old checkout. Drop them ONLY for
+						-- repos that were actually PULLED (skipping the detached, pinned
+						-- version trees): a kernel tag did not change and its kernel-doc
+						-- API index or ctags index costs minutes to rebuild, so wiping
+						-- it would charge a full re-index for nothing. The doxygen
+						-- output (.dox) is the one an earlier version never invalidated,
+						-- so libdrgn/sfml served stale API docs after a source pull.
+						for _, d in ipairs(repos) do
+							pcall(vim.fn.delete, d .. "/api-index.tsv") -- kernel-doc symbol index
+							pcall(vim.fn.delete, d .. "/.dox", "rf") -- doxygen output (libdrgn/sfml)
+							if d:sub(1, #src_root) == src_root then
+								pcall(vim.fn.delete, d .. "/.srctags") -- :Src ctags index
+							end
 						end
 						pcall(vim.fn.delete, data_root .. "/ocaml/modules.txt")
 						pcall(vim.fn.delete, data_root .. "/aya-api/items.tsv")
-						-- ctags indexes of the source clones, now that those are
-						-- pulled above; each rebuilds on the next gs.
-						-- Only for repos that were actually PULLED. A pinned tree did
-						-- not change, and its index can be enormous (the kernel's is
-						-- 1.2 GB and takes minutes to rebuild), so dropping it would
-						-- charge the user a full re-index for nothing.
-						for _, d in ipairs(repos) do
-							if d:sub(1, #src_root) == src_root then
-								pcall(vim.fn.delete, d .. "/.srctags")
-							end
-						end
 						vim.notify("Docs update: all " .. #repos .. " repos up to date")
 					else
 						vim.notify(("Docs update: %d/%d ok; failed: %s"):format(#repos - #failed, #repos, table.concat(failed, ", ")), vim.log.levels.WARN)
@@ -3078,17 +3089,21 @@ end
 -- Book-shaped web providers: read cover to cover like a book, so they belong in
 -- the same list as the epub/pdf ones even though they are frozen web caches
 -- rather than converted chapters. Their on-disk layout is unchanged.
+-- `key` is the provider's LOCATION key (usually its on-disk dir under
+-- Resources/docs), so :Docs list can report each web book's own frozen status
+-- and page count instead of guessing from the title. Keep it in sync with the
+-- LOCATION.<key> entries below.
 local WEB_BOOKS = {
-	{ title = "Hypervisor From Scratch", run = pick_rayanfam },
-	{ title = "Kernel CTF", run = pick_kernel_ctf },
-	{ title = "Learn C++ (learncpp.com)", run = pick_learncpp },
-	{ title = "Kernel Internals", run = pick_kernel_internals },
-	{ title = "Linux Kernel Labs", run = pick_kernel_labs },
-	{ title = "Making Our Own Executable Packer", run = pick_packer },
-	{ title = "Rust Atomics and Locks", run = pick_rust_atomics },
-	{ title = "SLUB", run = pick_slub },
-	{ title = "Snapshot Fuzzer", run = pick_snapshot_fuzzer },
-	{ title = "The Astra Book", run = pick_astra },
+	{ title = "Hypervisor From Scratch", key = "rayanfam", run = pick_rayanfam },
+	{ title = "Kernel CTF", key = "kernel-ctf", run = pick_kernel_ctf },
+	{ title = "Learn C++ (learncpp.com)", key = "learncpp", run = pick_learncpp },
+	{ title = "Kernel Internals", key = "kernel-internals", run = pick_kernel_internals },
+	{ title = "Linux Kernel Labs", key = "kernel-labs", run = pick_kernel_labs },
+	{ title = "Making Our Own Executable Packer", key = "packer", run = pick_packer },
+	{ title = "Rust Atomics and Locks", key = "atomics", run = pick_rust_atomics },
+	{ title = "SLUB", key = "slub", run = pick_slub },
+	{ title = "Snapshot Fuzzer", key = "snapshot-fuzzer", run = pick_snapshot_fuzzer },
+	{ title = "The Astra Book", key = "astra", run = pick_astra },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.
@@ -3232,6 +3247,14 @@ LOCATION.osdev = { index = "osdev/index.tsv", unit = "article" }
 LOCATION.learncpp = { index = "learncpp/index.tsv", unit = "lesson" }
 LOCATION.rayanfam = { index = "rayanfam/index.tsv", unit = "part" }
 LOCATION.atomics = { index = "rust-atomics/index.tsv", unit = "chapter" }
+-- The curated multi-source web books (each is a directory of the same name).
+LOCATION.astra = { index = "astra/index.tsv", unit = "chapter" }
+LOCATION["kernel-ctf"] = { index = "kernel-ctf/index.tsv", unit = "chapter" }
+LOCATION.packer = { index = "packer/index.tsv", unit = "part" }
+LOCATION["snapshot-fuzzer"] = { index = "snapshot-fuzzer/index.tsv", unit = "chapter" }
+LOCATION["kernel-labs"] = { index = "kernel-labs/index.tsv", unit = "chapter" }
+LOCATION.slub = { index = "slub/index.tsv", unit = "chapter" }
+LOCATION["kernel-internals"] = { index = "kernel-internals/index.tsv", unit = "article" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
 	LOCATION[key] = { network = true }
@@ -3280,7 +3303,7 @@ local function docs_status(loc)
 	end
 	if loc.books then
 		-- Every title the Books picker offers: the converted chapter sets, the
-		-- four rust-lang mdBooks, and the three frozen web books.
+		-- four rust-lang mdBooks, and the frozen web books.
 		local total, frozen_n = 0, 0
 		for _, m in ipairs(BOOKS) do
 			for _, e in ipairs(m.items) do
@@ -3295,8 +3318,8 @@ local function docs_status(loc)
 		end
 		for _, w in ipairs(WEB_BOOKS) do
 			total = total + 1
-			local key = w.title:match("^Hypervisor") and "rayanfam" or w.title:match("^Learn") and "learncpp" or "rust-atomics"
-			if select(2, resolve_docs(key .. "/index.tsv")) == "frozen" then
+			local wl = LOCATION[w.key]
+			if wl and wl.index and select(2, resolve_docs(wl.index)) == "frozen" then
 				frozen_n = frozen_n + 1
 			end
 		end
@@ -3480,12 +3503,11 @@ pick_list = function()
 			add(p.name, p.key, p.run)
 		end
 	end
-	-- The three book-shaped web providers moved under Books, but they keep their
-	-- own frozen index and their own key, so the list shows them in their own
-	-- right: "every source" has to mean every source.
+	-- The book-shaped web providers moved under Books, but they keep their own
+	-- frozen index and their own LOCATION key, so the list shows each in its own
+	-- right with its true page count: "every source" has to mean every source.
 	for _, w in ipairs(WEB_BOOKS) do
-		local key = w.title:match("^Hypervisor") and "rayanfam" or w.title:match("^Learn") and "learncpp" or "atomics"
-		add(w.title, key, w.run)
+		add(w.title, w.key, w.run)
 	end
 	table.sort(rows, function(a, b)
 		local ra, rb = STATUS_RANK[a.status] or 0, STATUS_RANK[b.status] or 0

@@ -107,12 +107,20 @@ local function build_tags(dir, excl, cb)
 	local tagfile = dir .. "/.srctags"
 	local tmp = tagfile .. ".tmp"
 	vim.notify("Indexing " .. vim.fs.basename(dir) .. " with ctags …")
-	vim.system(ctags_argv(tmp, excl), { cwd = dir, text = true }, function(res)
+	-- 10 min cap: the kernel index is the slow case (~30-60s), so a wedged ctags
+	-- would otherwise never fire the callback and the "Indexing …" notice would
+	-- hang forever. A timeout SIGKILLs the child, which surfaces as res.code ~= 0.
+	vim.system(ctags_argv(tmp, excl), { cwd = dir, text = true, timeout = 600000 }, function(res)
 		vim.schedule(function()
-			if vim.fn.filereadable(tmp) == 1 then
+			-- Require a clean exit, not merely a readable temp file: a ctags that
+			-- died partway (killed, disk full, timeout) leaves a truncated index,
+			-- and promoting it to .srctags would cache a half-built tag file that
+			-- <C-]> then searches silently. Drop the partial so the next gs retries.
+			if res.code == 0 and vim.fn.filereadable(tmp) == 1 then
 				vim.uv.fs_rename(tmp, tagfile)
 				cb(tagfile)
 			else
+				pcall(vim.fn.delete, tmp)
 				vim.notify("ctags failed:\n" .. (res.stderr or ""):sub(1, 300), vim.log.levels.ERROR)
 			end
 		end)
