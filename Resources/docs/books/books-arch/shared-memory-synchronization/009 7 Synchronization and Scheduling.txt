@@ -1,0 +1,798 @@
+Synchronization and Scheduling
+                                                                                               7
+
+So far in this monograph, we have emphasized busy-wait synchronization. In the current
+chapter we turn to mechanisms built on top of a scheduler, which multiplexes some collection
+of cores among a (typically larger) set of threads, switching among them from time to time
+and—in particular—when the current thread needs to wait for synchronization.
+   We begin with a brief introduction to scheduling in Sec. 7.1. We then discuss the oldest
+(and still most widely used) scheduler-based synchronization mechanism—the semaphore—
+in Sec. 7.2. Semaphores have a simple, subroutine-call interface. Many scheduler-based
+synchronization mechanisms, however, were designed to be embedded in a concurrent pro-
+gramming language, with special, non-procedural syntax. We consider the most important
+of these—the monitor—in Sec. 7.3, and others—conditional critical regions, futures, and
+series-parallel (split-merge) execution—in Sec. 7.4.
+   With these mechanisms as background, we return in Sec. 7.5 to questions surrounding
+the interaction of user- and kernel-level code: specifically, how to minimize the number of
+context switches, avoid busy-waiting for threads that are not running, and reduce the demand
+for kernel resources.
+
+7.1      Scheduling
+
+As outlined in Sec. 1.3, scheduling often occurs at more than one level of a system. The
+operating system kernel, for example, may multiplex kernel threads on top of hardware
+cores, while a user-level run-time package multiplexes user threads on top of the kernel
+threads. On many machines, the processor itself may schedule multiple hardware threads
+on the pipeline(s) of any given core (in which case the kernel schedules its threads on top
+of hardware threads, not cores). Library packages (e.g., in Java) may sometimes schedule
+
+© The Author(s), under exclusive license to Springer Nature Switzerland AG 2024         119
+M. L. Scott and T. Brown, Shared-Memory Synchronization, Synthesis Lectures
+on Computer Architecture, https://doi.org/10.1007/978-3-031-38684-8_7
+
+run-to-completion (unblockable) tasks on top of user threads. System-level virtual machine
+monitors may even multiplex the (virtual) hardware threads seen by guest operating systems
+on top of some smaller number of physical hardware threads.
+    Regardless of the level of implementation, we can describe the construction of a scheduler
+by starting with an overly simple system and progressively adding functionality. The details
+are somewhat tedious (Scott 2009, Secs. 8.6, 12.2.4, and 12.3.4); we outline the basic
+ideas here in the interest of having “hooks” that we can call in subsequent descriptions
+of synchronization mechanisms. We begin with coroutines—each of which is essentially
+a stack and a set of registers—and a single core (or kernel thread) that can execute one
+coroutine at a time. To switch to a different coroutine, the core (or kernel thread) calls an
+explicit transfer routine, passing as argument a pointer to the context block (descriptor) of
+some other coroutine. The transfer routine (1) pushes all registers other than the stack pointer
+onto the top of the (current) stack, (2) saves the (updated) stack pointer into the context block
+of the current coroutine (typically found by examining a global current_thread variable),
+(3) sets current_thread to the address of the new context block (the argument to transfer),
+and (4) retrieves a (new) stack pointer from that context block. Because the new coroutine
+could only have stopped running by calling transfer (and new coroutines are created in such
+a way that they appear to have just called transfer), the program counter need not change—it
+will already be at the right instruction. Consequently, the transfer routine simply (5) pops
+registers from the top of the (new) stack and returns.
+    On top of coroutines, we implement non-preemptive threads (otherwise known as run-
+until-block or cooperatively scheduled threads) by introducing a global ready list (often
+but not always a queue) of runnable-but-not-now-running threads, and a parameterless
+reschedule routine that pulls a thread off the ready list and transfers to it. To avoid monop-
+olizing resources, a thread should periodically relinquish its core or kernel thread by calling
+a routine (often named yield) that enqueues it at the tail of the ready list and then calls
+reschedule. To block for synchronization, the thread can call reschedule after adding itself
+to some other data structure (other than the ready list), with the expectation that another
+thread will move it from that structure to the ready list when it is time for it to continue.
+    The problem with cooperatively scheduled threads, of course, is the need to cooperate—to
+call yield periodically. At the kernel level, where threads may belong to mutually untrusting
+applications, this need for cooperation is clearly unacceptable. And even at the user level,
+it is highly problematic: how do we arrange to yield often enough (and uniformly enough)
+to ensure fairness and interactivity, but not so often that we spend all of our time in the
+scheduler? The answer is preemption: we arrange for periodic timer interrupts (at the kernel
+level) or signals (at the user level) and install a handler for the timer that simulates a call
+to yield in the currently running thread. To avoid races with handlers when accessing the
+ready list or other scheduler data structures, we temporarily disable interrupts (signals) when
+executing scheduler operations explicitly.
+    Given transfer, reschedule/yield, and preemption, we can multiplex concurrent kernel
+or user threads on a single core or kernel thread. To accommodate true parallelism, we
+
+need a separate current_thread variable for each core or kernel thread, and we need one or
+more spin locks to protect scheduler data structures from simultaneous access by another
+core or kernel thread. The disabling of interrupts/signals eliminates races between normal
+execution and timer handlers; spin locks eliminate races among cores or kernel threads.
+Explicit calls to scheduler routines first disable interrupts (signals) and then acquire the
+appropriate spin lock(s); handlers simply acquire the lock(s), on the assumption that nested
+interrupts (signals) are disabled automatically when the first one is delivered.
+
+Races in the Scheduler
+Schedulers are tricky algorithms, with many opportunities for data and (low-level) synchronization
+races. When implementing (high-level) condition synchronization, for example, the scheduler must
+generally check a condition and de-schedule the current thread if the condition does not hold. To
+ensure correctness, we must avoid scenarios in which the corresponding wakeup operation in some
+other thread falls into the “timing window” between the check of the condition and the operation
+(typically an enqueue) that makes the waiting thread visible to peers:
+thread 1:                                   thread 2:
+     if ¬condition
+                                                 if ¬Q.empty()
+                                                      ready_list.enqueue(Q.dequeue())
+          Q.enqueue(self )
+          reschedule()
+Here it is important that thread 1 acquire the scheduler spin lock before it checks the awaited condition,
+and hold it through the call to reschedule.
+
+Priority Inversion
+The problem addressed by disabling interrupts or signals during scheduler operations is an example
+of a more general class of problems known as priority inversion. Priority inversion occurs when a
+high priority task (of any sort) preempts a low priority task (of any sort), but is unable to proceed
+because it needs some resource held by the low priority task. Cast in these terms, a program running
+above a preemption-based scheduler can be thought of as a low-priority task; an arriving interrupt
+or signal preempts it, and runs a handler at high priority instead. A spin lock on scheduler data
+structures ensures atomicity among explicit scheduler operations performed by different cores (or
+kernel threads), but it cannot provide the same protection between normal execution and interrupt
+(signal) handlers: a handler that tried to acquire a lock held by the normal code it preempted would
+end up spinning forever; priority inversion would leave the system deadlocked.
+
+ class buffer
+     const int SIZE = . . .
+     data buf[SIZE]
+     int next full, next empty := 0, 0
+     semaphore mutex := 1
+     semaphore full slots, empty slots := 0, SIZE
+ buffer.insert(data d):                                     buffer.remove():
+     empty slots.P()                                            full slots.P()
+     mutex.P()                                                  mutex.P()
+     buf[next empty] := d                                       data d := buf[next full]
+     next empty := (next empty + 1) mod SIZE                    next full := (next full + 1) mod SIZE
+     mutex.V()                                                  mutex.V()
+     full slots.V()                                             empty slots.V()
+                                                                return d
+
+Figure 7.1 Implementation of a bounded buffer using semaphores. Semaphore mutex is used to
+ensure the atomicity of updates to buf, next_full, and next_empty. Semaphores full_slots and
+empty_slots are used for condition synchronization.
+
+7.2       Semaphores
+
+Semaphores are the oldest and probably still the most widely used of the scheduler-based
+synchronization mechanisms. They were introduced by Dijkstra in the mid 1960s (Dijkstra
+1968b). A semaphore is essentially a non-negative integer with two special operations, P and
+V.1 P waits, if necessary, for the semaphore’s value to become positive, and then decrements
+it. V increments the value and, if appropriate, unblocks a thread that is waiting in P. If the
+initial value of the semaphore is C, is easy to see that # P − #V ≤ C, where # P is the
+number of completed P operations and #V is the number of completed V operations.
+    If we let C = 1, the semaphore functions as a mutual exclusion lock: P is the acquire
+operation; V is the release operation. Assuming that the program uses acquire and release
+correctly (never attempting to release a lock that is not held), the value of the semaphore
+will always be either 0 (indicating that the lock is held) or 1 (indicating that the lock is
+free). In this case we say we have a binary semaphore. In other cases, a semaphore may
+represent some general resource of which there are C instances. In this case we say we have
+a general or counting semaphore. A thread reserves a resource instance using P; it releases
+it using V. Within the OS kernel, a semaphore might represent a frame buffer, an optical
+drive, a physical page of memory, a recurring slot in a time-based communication protocol,
+or any other resource with a limited, discrete set of instances. Many (though not all) forms
+of condition synchronization can be captured by the notion of waiting for such a resource.
+    In Sec. 1.2 we introduced condition synchronization using the example of a bounded
+buffer, where insert operations would wait, if necessary, for the buffer to become nonfull,
+and remove operations would wait for it to become nonempty. Code for such a buffer using
+semaphores appears in Figure 7.1.
+
+1 The names stand for words in Dijkstra’s native Dutch: passeren (to pass) and vrijgeven (to release).
+English speakers may find it helpful to pretend that P stands for “pause.”
+
+    The code for insert and remove is highly symmetric. An initial P operation delays the
+calling thread until it can claim the desired resource (a full or empty slot). A subsequent
+brief critical section, protected by the binary mutex semaphore, updates the contents of the
+buffer and the appropriate index atomically. Finally, a V operation on the complementary
+condition semaphore indicates the availability of an empty or full slot, and unblocks an
+appropriate waiting thread, if any.
+    Given the scheduler infrastructure outlined in Sec. 7.1, the implementation of semaphores
+is straightforward. Each semaphore is represented internally by an integer counter and a
+queue for waiting threads. The P operation disables signals and acquires the scheduler spin
+lock. It then checks to see whether the counter is positive. If so, it decrements it; if not, it
+adds itself to the queue of waiting threads and calls reschedule. Either way (immediately
+or after subsequent wakeup), it releases the scheduler lock, reenables signals, and returns.
+(Note that the reschedule operation, if called, will release the scheduler lock and reenable
+signals after pulling a new thread off the ready list.
+
+Binary and Counting Semaphores
+Counting semaphores obviously subsume binary semaphores: given a counting semaphore, we can
+always choose to initialize it to either 0 or 1, and then perform P and V operations in alternating
+pairs. As it turns out, we can also build counting semaphores from binary semaphores. Barz (1983)
+suggests the following implementation:
+
+      class general_sem
+           int count := . . .
+           binary_sem mutex := 1
+           binary_sem gate := min(1, count)
+      general_sem.P():                          general_sem.V():
+          gate.P()                                  mutex.P()
+          mutex.P()                                 ++count
+          −−count                                   if count = 1
+          if count >0                                    gate.V()
+               gate.V()                             mutex.V()
+          mutex.V()
+The gate binary semaphore serves to serialize P operations. So long as count remains positive, each
+P “occupies” the gate briefly and then opens it for its successor. A P that drops the count to zero
+leaves the gate closed; a V that makes it positive again reopens the gate.
+The mutual implementability of binary and counting semaphores implies that the two mechanisms
+are equally powerful. Because their implementations in terms of underlying scheduler primitives are
+comparable in speed, time, and code size, most systems provide the counting version. A few provide
+the binary version as well, with extra code to enforce a mutual exclusion-style use pattern: if the
+program attempts to perform two V operations in a row, a run-time error is announced.
+
+   That thread will, in turn, reacquire the lock and disable signals before calling back into
+the scheduler.) The V operation disables signals, acquires the scheduler lock, and checks to
+see whether the queue of waiting threads is empty. If so, it moves a thread from that queue
+to the ready list; if not, it increments the counter. Finally, it releases the scheduler lock,
+reenables signals, and returns.
+   With very similar implementation techniques, we can implement native support for
+scheduler-based reader-writer locks (we could also build them on top of semaphores). Mod-
+est changes to the internal representation (protected, of course, by the disabling of signals
+and the scheduler lock), would lead to fair, reader-preference, or writer-preference versions.
+In a similar vein, while we have described the behavior of counting semaphores in terms of
+a “queue” of waiting threads (suggesting FIFO ordering), the choice of thread to resume in
+V could just as easily be arbitrary, randomized, or based on some notion of priority.
+
+7.3      Monitors
+
+To a large extent, the enduring popularity of semaphores can be attributed to their simple
+subroutine-call interface: implemented by a run-time library or operating system, they can
+be used in almost any language. At the same time, the subroutine-call interface can be seen
+as a liability. To start with, while mutual exclusion constitutes the most common use case
+for semaphores, the syntactic independence of P and V operations makes it easy to omit
+one or the other accidentally—especially in the presence of deeply nested conditions, break
+and return statements, or exceptions. This problem can be addressed fairly easily by adding
+syntax in which lock acquisition introduces a nested scope, e.g.:
+   with_lock(L) {
+       // …
+   }
+The compiler can ensure that the lock is released on any exit from the critical section,
+including those that occur via break, return, or exception. (Note, however, that syntactic
+nesting does not accommodate the hand-over-hand locking of Sec. 3.1.2.) In languages like
+C++, which provide a destructor mechanism for objects, a similar effect can be achieved
+without extending language syntax:
+   {std::lock_guard<std::mutex> _(L);
+       // ...
+   }
+This construct declares a dummy object (here named simply with an underscore) of class
+lock_guard. The constructor for this object takes a parameter L of class mutex, and
+calls its acquire method. The destructor for the unnamed object, which will be called
+automatically on any exit from the scope, calls L’s release method. Both mutex and
+lock_guard are defined in the C++ standard library.
+
+    While scope-based critical sections help to solve the problem of missing acquire and
+release calls, the association between a lock and the data it protects is still entirely a matter
+of convention. Critical sections on a given lock may be widely scattered through the text of
+a program, and condition synchronization remains entirely ad hoc.
+    To address these limitations, Dijkstra (1972), Brinch Hansen (1973), and Hoare (1974)
+developed a language-level synchronization mechanism known as the monitor. In essence,
+a monitor is a data abstraction (a module or class) whose methods (often called entries) are
+automatically translated into critical sections on an implicit per-monitor lock. Since fields of
+the monitor are visible only within its methods, language semantics ensure that the state of
+the abstraction will be read or written only when holding the monitor lock. To accommodate
+condition synchronization, monitors also provide condition variables. A thread that needs
+to wait for a condition within the monitor executes a wait operation on a condition variable;
+a thread that has made a condition true performs a signal operation to awaken a waiting
+thread. Unlike semaphores, which count the difference in the number of P and V operations
+over time, condition variables contain only a queue of waiting threads: if a signal operation
+occurs when no threads are waiting, the operation has no effect.
+    Over the past 40 years, monitors have been incorporated into dozens of programming
+languages. Historically, Concurrent Pascal (Brinch Hansen 1975), Modula (Wirth 1977), and
+Mesa (Lampson and Redell 1980) were probably the most influential. Today, Java (Goetz
+et al. 2006) is probably the most widely used. There have also been occasional attempts to
+devise a library interface for monitors, but these have tended to be less successful: the idea
+depends quite heavily on integration into a language’s syntax and type system.
+    Details of monitor semantics vary from one language to another. In the first subsection
+below we consider the classic definition by Hoare. Though it is not followed precisely (to
+the best of the authors’ knowledge) by any particular language, it is the standard against
+which all other variants are compared. The following two subsections consider the two
+most significant areas of disagreement among extant monitor variants. The final subsection
+describes the variant found in Java.
+
+7.3.1    Hoare Monitors
+
+As originally defined by Hoare (1974), a monitor can be represented pictorially as shown
+in Figure 7.2. Threads queue for entry at the left and exit at the right. Only one is allowed
+“inside the box” at any given time. When a thread performs a wait operation, it steps out of
+the box and into a condition queue. When a thread performs a signal operation, it checks
+to see whether any thread is waiting on the associated condition queue. If so, it steps out of
+the box and into the urgent queue, and the thread at the head of the condition queue steps
+in. When a thread exits the monitor, the implementation allows a thread to enter from the
+urgent queue or, if that queue is empty, from the entry queue. If both queues are empty, the
+monitor is unlocked.
+
+                                         urgent queue
+
+                           entry queue
+                                                    Monitor methods
+                                                (run in mutual exclusion;
+                                                can access protected data)      exit
+
+                                                           ...
+                                                    condition queues
+
+Figure 7.2 A Hoare monitor. Only one thread is permitted “inside the box” at any given time.
+
+ monitor buffer
+    const int SIZE = . . .
+    data buf[SIZE]
+    int next full, next empty := 0, 0
+    int full slots := 0
+    condition full slot, empty slot
+ entry insert(data d):                                        entry remove():
+      if full slots = SIZE                                         if full slots = 0
+             empty slot.wait()                                            full slot.wait()
+      buf[next empty] := d                                         data d := buf[next full]
+      next empty := (next empty + 1) mod SIZE                      next full := (next full + 1) mod SIZE
+     ++full slots                                                  −−full slots
+      full slot.signal()                                           empty slot.signal()
+                                                                   return d
+
+Figure 7.3 Implementation of a bounded buffer as a Hoare monitor. Threads wait on condition
+variables full_slot and empty_slot only when the associated condition does not currently hold.
+
+    Some implementations of monitors dispense with the urgent queue, and move signalers
+back to the entry queue instead. Some implementations also relax the ordering constraints
+on the various queues, and unblock, when appropriate, an arbitrary, random, or high-priority
+thread instead of the first in line.
+    We can use Hoare monitors to implement a bounded buffer as shown in Figure 7.3. It can
+be instructive to compare it to the semaphore version in Figure 7.1. Where Figure 7.1 uses
+a binary semaphore for mutual exclusion, Figure 7.3 relies on the implicit mutual exclusion
+of the monitor lock. More significantly, where Figure 7.1 uses a pair of general semaphores
+for condition synchronization, and performs a P operation at the beginning of every call to
+insert or remove, Figure 7.3 inspects integer variable full_slots, and waits only when its
+value indicates that the desired condition does not hold. This difference reflects the fact that
+semaphores “remember” an excess of V operations, but monitor condition variables do not
+remember an excess of signals.
+
+    Hoare’s original paper contains a concise definition of monitors in terms of semaphores.
+It also notes that a monitor can be used, trivially, to implement a general semaphore, thus
+proving that the two notations are equally powerful. The principal advantage of the monitor
+is data abstraction: protected variables (fields) cannot be accessed outside the monitor that
+contains them, and mutual exclusion on calls to monitor methods is guaranteed implicitly,
+without the need for explicit acquire (P) and release (V) operations.
+    To argue that a concurrent data abstraction has been implemented correctly with a mon-
+itor, one typically specifies a monitor invariant—a logical property of the protected data
+that must be true whenever the monitor is unoccupied, and whenever the thread inside is
+changed. Clearly a monitor invariant must always be true initially. It must similarly be true
+on monitor exit, at every call to wait, and (in a Hoare monitor) on every call to signal. In
+our bounded buffer example, an appropriate invariant might be that the full_slots variable
+correctly indicates the number of items in the buffer, and that these items reside in slots
+next_full through next_empty−1 (mod SIZE) of buf. (We also know that threads will be
+waiting on the full_slot condition variable only if full_slots is 0, and on the empty_slot
+condition variable only if full_slots is SIZE, but since the thread queues are generally hidden,
+this information may not be included in the invariant.)
+
+7.3.2       Signal Semantics
+
+In a Hoare monitor, the thread performing a signal operation (the “signaler”) steps out
+of the monitor and into the urgent queue, so the thread performing a wait operation (the
+“signalee”) can execute immediately. The argument for this behavior is that it allows the
+signalee to assume that the condition discovered by the signaler still holds. If the signaler
+were permitted to continue, it might (intentionally or inadvertently) change the state of the
+monitor before leaving in such a way that the condition no longer held. If any other thread
+could enter the monitor between the signaler and the signalee, there would be no way to
+ensure the condition.
+   Unfortunately, immediate resumption of the signalee implies that the signaler must be
+blocked and then unblocked before continuing execution, entailing two arguably unnecessary
+context switches of the core on which it is executing. An immediate switch also requires
+that the signaler reestablish the monitor invariant before the call to signal; it cannot defer
+this action to code between the signal and the end of the entry. In an attempt to reduce the
+overhead of context switches, and also to relax reestablishment of the monitor invariant, the
+designers of Mesa (Lampson and Redell 1980) chose to define signals as “hints” instead of
+“absolutes.” Mesa dispenses with the urgent queue, and allows a signaling thread to continue
+execution, switching only when it reaches the end of its entry. Code that would be written
+      if ¬condition
+           cvar.wait()
+
+in a Hoare monitor would be
+
+   while ¬condition
+       cvar.wait()
+
+in a Mesa monitor. This change is certainly not onerous. It is also consistent with the notion of
+covering conditions, discussed in the box below. Most modern implementations of monitors
+adopt Mesa semantics for signals.
+    As it turns out, many algorithms (including our bounded buffer) naturally place signal
+operations only at the ends of entries. A few languages—notably Concurrent Pascal—have
+required this positioning of signals, thereby maintaining the semantics of signals as absolutes
+while avoiding any extra context switches for immediate transfer to the signalee.
+
+7.3.3     Nested Monitor Calls
+
+A second major difference among monitor implementations concerns behavior in the event
+of nested calls. Suppose a thread calls entry E of monitor M1, which in turn calls entry F
+of monitor M2, and the code in F then waits on a condition variable. Clearly monitor M2
+will be unlocked. But what about M1? If we leave it locked, the program will deadlock if
+the only way for another thread to reach the necessary signal in M2 is through M1. If we
+unlock it, however, then the waiting thread in M2 will need to reacquire it when it wakes
+up, and we may deadlock if some other thread is holding M1’s lock at that time—especially
+if that thread can’t release M1’s lock without making a nested call to M2.
+
+Covering Conditions and Cascading Signals
+Several languages, including Mesa and Java, provide a broadcast or signalAll operation that awakens
+all threads waiting on a condition. Such an operation finds obvious use in cases where all threads
+should continue: it makes it trivial, for example, to implement a monitor-based barrier. Broadcast can
+also be used in programs where the conditions on which threads may wait cannot easily be statically
+enumerated. Consider, for example, a concurrent set that provides a remove(v) method that waits until
+v is a member of the set. Absent a separate condition variable for every possible value of v, waiting
+threads must share a covering condition. When such threads may be present, a thread performing an
+insert operation must broadcast the covering condition, awakening all threads. Since at most one
+thread will continue in this case, while the rest discover that they must wait again, covering conditions
+can lead to very high overhead, and must be used with care.
+In the absence of broadcast operations, one can employ a cascading signal idiom, in which only one
+thread is initially awoken. If unable to proceed, it explicitly re-signals the condition variable before
+waiting on it again. Unfortunately, this idiom requires both FIFO ordering of waiting threads (which
+some systems may not provide) and some mechanism to avoid an infinite loop of signals in the case
+where no waiting thread is able to proceed.
+
+   A possible solution, suggested by Wettstein (1978), is to release the outer monitor when
+waiting, dictate that signals are only hints, and arrange for a re-awakened lock to re-acquire
+locks from the outside in—i.e., first on M1 and then on M2. This strategy is deadlock free
+so long as the programmer takes care to ensure that nested monitor calls always occur in the
+same order (i.e., always from M1 to M2, and never from M2 to M1).
+   Unfortunately, any scheme in which a nested wait releases the locks on outer monitors
+will require the programmer to restore the monitor invariant not only on monitor exit, wait,
+and possibly signal, but also whenever calling an entry of another monitor that may wait—or
+a subroutine that may call such an entry indirectly. The designers of most languages—Java
+among them—have concluded that this requirement constitutes an unacceptable burden, and
+have opted to leave the outer monitor locked.
+
+7.3.4     Java Monitors
+
+The original design of Java—still present in the core of the language—combines scope-based
+critical sections with a simplified form of monitors. Each object is associated, implicitly,
+with a mutex lock and a single condition variable. A critical section on the lock is specified
+by a synchronized block that names the object:
+      synchronized (my_object) {
+          // critical section
+      }
+
+As a form of syntactic sugar, the declaration of a class method can be prefaced with
+synchronized, in which case its body behaves as if surrounded by synchronized
+(this) { ... }. A class whose methods are all synchronized functions as a monitor.
+   Within a synchronized method or block, a thread can block for condition synchro-
+nization by executing the wait method, which all objects inherit from the root class
+Object; it can unblock a waiting peer by executing notify. If threads need to wait
+for more than one condition associated with some abstraction (as they do in our bounded
+buffer), one must either restructure the code in such a way that each condition is awaited
+in a different object, or else use some single object’s one condition variable to cover all the
+alternatives. To unblock all threads waiting in a given object, one can execute notifyAll.
+   C# provides mechanisms similar to those of core Java. Its lock statement is analogous
+to synchronized, and conditions are awaited and signaled with Wait, Pulse, and
+PulseAll.
+   The Java 5 revision of the language, released in 2004, introduced a new library-based
+interface to monitors. Its Lock class (with a capital ‘L’) has explicit lock (acquire) and
+unlock (release) methods. These can be used for hand-over-hand locking (Sec. 3.1.2) and
+other techniques that cannot easily be captured with scope-based critical sections. Locks can
+also have an arbitrary number of associated condition variables, eliminating many unneces-
+
+sary uses of covering conditions. Unfortunately, the library-based interface makes programs
+somewhat awkward. There is no equivalent of the synchronized label on methods, and
+the Lock-based equivalent of a synchronized block looks like this:
+   Lock l = ...;
+   ...
+   l.lock();
+   try {
+       // critical section
+   } finally {
+       // l.unlock();
+   }
+
+The C# standard library also provides more general synchronization mechanisms, via its
+WaitHandle objects, but these are operating-system specific, and may behave differently
+on different systems.
+
+7.4      Other Language Mechanisms
+
+7.4.1    Conditional Critical Regions
+
+In Sec. 1.2 we introduced condition synchronization in the form of a hypothetical await
+condition statement. One potential complaint with both semaphores and monitors is that
+they require explicit variables as “stand-ins” for Boolean conditions. This observation led
+(Brinch Hansen 1973, Sec. 3.4.3) to propose a notation—the conditional critical region—in
+which awaited conditions could be specified directly. Critical conditional regions appear in
+several languages, including Edison (Brinch Hansen 1981) and Ada 95 (Intermetrics 1995,
+Secs. II.9 and 9.1). Syntax is generally some variant on
+   region protected_variable when condition
+        // … (critical section)
+
+   As in a Java synchronized block, the protected_variable specifies an object whose
+implicit lock is to be acquired. Some languages allow the programmer to specify a list of
+objects, in which case their locks are acquired in some canonical order (to avoid deadlock).
+Significantly, the when clause (also known as a guard) can appear only at the beginning of
+the critical section. The intent is that the enclosed code execute atomically at some point
+in time where the specified condition is true. This convention avoids the issue of monitor
+signal semantics, but leaves the issue of nested calls.
+   Figure 7.4 uses conditional critical sections to implement a bounded buffer. The code is
+arguably more natural than the semaphore (Figure 7.1) or monitor (Figure 7.3) versions, but
+raises a crucial implementation question: when and how are the guards evaluated?
+
+ class buffer
+     const int SIZE = . . .
+     data buf[SIZE]
+     int next full, next empty := 0, 0
+ buffer.insert(data d):                               buffer.remove():
+     region when full slots < SIZE                       data d
+          buf[next empty] := d                           region when full slots > 0
+          next empty := (next empty + 1) mod SIZE             d := buf[next full]
+                                                              next full := (next full + 1) mod SIZE
+                                                         return d
+
+Figure 7.4 Implementation of a bounded buffer using conditional critical regions. Here we have
+assumed that regions are with respect to the current object (this) unless otherwise specified.
+
+    With no restrictions on the conditions tested by guards, we are faced with the prospect,
+when one thread leaves a region, of context switching into every other thread that is waiting
+to enter a region on the same object, so that each can evaluate its own condition in its own
+referencing environment. With a bit more sophistication, we may be able to determine—
+statically or at run time—the set of variables on which a condition depends, and only switch
+into a thread when one of these has changed value (raising the possibility that the condition
+may now be true). This optimization turns out to be natural in the context of transactional
+memory; we will return to it in Sec. 9.3.2. Depending on the cost of tracking writes, it may be
+cheaper in practice than resuming every thread on every region exit, but worst-case overhead
+remains significant.
+    Another cost-reduction strategy, originally proposed by Kessels (1977) and adopted (in
+essence) by Ada, is to require conditions to depend only on the state of the lockable object
+(never on the parameters passed to methods), and to list these conditions explicitly in the
+object’s declaration. These rules allow the implementation to associate each condition with
+an implicit queue of waiting threads, and to evaluate it in a generic context, without restoring
+the referencing environment of any particular thread. When one thread leaves a region, each
+condition can be evaluated exactly once, and a corresponding thread resumed if the condition
+is true.
+    As noted in Sec. 5.1, it is important that tests of a condition not race with updates to the
+variables on which the condition depends. This property, too, can be ensured by allowing
+conditions to depend only on the state of the lockable object—and perhaps also on parameters
+passed by value, which cannot be changed by other threads.
+
+7.4.2     Futures
+
+Futures, first proposed by Halstead (1985) for the Multilisp dialect of Scheme, exploit
+the observation that function arguments, in most languages, are evaluated before they are
+
+passed, but may not actually be used for some time. In Multilisp, any expression—but most
+commonly a function argument—could be enclosed in a future construct:
+   (future expression)
+
+Evaluation of the expression might then proceed in parallel with continued execution in the
+caller, up until the point (if any) at which the caller actually needs the value of the expression.
+   Futures embody synchronization in the sense that evaluation of the enclosed expression
+will not begin until execution in the parent thread reaches the point at which the future
+appears, and execution in the parent thread will not proceed beyond the point where the
+value is needed until evaluation has completed. Using futures, the key recursive step in
+quicksort might be written as follows:
+   (append (future (sort elements less than or equal to pivot))
+           (list pivot)
+           (future (sort elements greater than pivot)))
+
+   In general, a future and the continuation of its caller need to be independent, up to
+the point where the value of the future is needed. If the threads executing the future and
+the continuation share a data or synchronization race, behavior of the program may be
+nondeterministic or even undefined. As recognized by Halstead, futures are thus particularly
+appealing in purely functional programs, in which the lack of side effects means that an
+expression will always evaluate to the same value in a given context.
+   Some thread libraries provide futures outside the language core—typically as a generic
+(polymorphic) object whose constructor accepts a closure (a subroutine and its parameters)
+and whose get method can be used to retrieve the computed value (waiting for it if necessary).
+In Java, given a Callable < T > object c, the code
+   T val = c.call();
+
+can be replaced by
+   Future<T> f = new FutureTask<T>(c);
+       // Class FutureTask implements interface Future
+   f.run();
+   ...
+   T val = f.get();
+
+Because Java is not a functional language, the programmer must exercise special care to
+ensure that a future will execute safely. Welc et al. (2005) have proposed that futures
+be made safe in all cases, using an implementation reminiscent of transactional memory.
+Specifically, they use multiversioning to ensure that a future does not observe changes made
+by the continuation of its caller, and speculation in the caller to force it to start over if it fails
+to observe a change made by the future.
+
+7.4.3        Series-Parallel Execution
+
+At the beginning of Chapter 5, we noted that many spin-based mechanisms for condition
+synchronization can be rewritten, straightforwardly, to use scheduler-based synchronization
+instead. Examples include flags, barriers, and reader-writer locks. Any place a thread might
+spin for a (statically known) condition, we can lock out signals or interrupts, grab the
+scheduler lock, move the current thread to a condition queue, and call reschedule instead.
+   Scheduler-based implementations are also commonly used for series-parallel execution,
+mentioned briefly in Sec. 5.3.3. In Cilk (Frigo et al. 1998; Blumofe et al. 1995), for example,
+a multi-phase application might look something like this:
+      do {
+          for (i = 0; i < n; i++) {
+              spawn work(i);
+          }
+          sync;   // wait for all children to complete
+      } while ¬terminating condition
+
+    Conceptually, this code suggests that the main thread create (“fork”) n threads at the top
+of each do loop iteration, and “join” them at the bottom. The Cilk runtime system, however,
+is designed to make spawn and sync as inexpensive as possible. Concise descriptions of
+the tasks are placed into a “work-stealing queue” (Blumofe et al. 1995) from which they are
+farmed out to a collection of preexisting worker threads. Similar schedulers are used in a
+variety of other languages as well. Source code syntax may vary, of course. X10 (Charles
+et al. 2005), for example, replaces spawn and sync with async and finish.
+    Many languages (including the more recent Cilk++) include a “parallel for” loop whose
+iterations proceed logically in parallel. An implicit sync causes execution of the main pro-
+gram to wait for all iterations to complete before proceeding with whatever comes after the
+loop. Similar functionality can be added to existing languages in the form of a library routine
+that takes the loop bounds as arguments, together with a parameterized lambda expression
+to represent the body of the loop; examples can be found in C# and C++’17. In the absence
+of lambdas, extensions can leverage annotations on sequential loops. OpenMP (Chandra
+et al. 2001), in particular, defines a set of compiler- or preprocessor-based pragmas that
+can be used to parallelize loops in C and Fortran. Like threads executing the same phase of
+a barrier-based application, iterations of a parallel loop must generally be free of data races.
+If occasional conflicts are allowed, they must be resolved using other synchronization.
+    In a very different vein, Fortran 95 and its descendants provide a forall loop whose
+iterations are heavily synchronized. Code like the following
+
+                          (a)                   (b)                     (c)
+
+Figure 7.5 Parallel task graphs for programs based on a fork and join, b spawn and sync, and c
+parallel enumeration (split-merge).
+
+   forall (i=1:n)
+       A[i] = expr1
+       B[i] = expr2
+       C[i] = expr3
+   end forall
+
+contains (from a semantic perspective) a host of implicit barriers: All instances of expr1
+are evaluated first, then all writes are performed to A, then all instances of expr2 are
+evaluated, followed by all writes to B, and so forth. A good compiler will elide any barriers
+it can prove to be unneeded.
+    In contrast to unstructured fork-join parallelism, in which a thread may be created—
+or its completion awaited—at any time, series-parallel programs always generate properly
+nested groups of tasks. The difference is illustrated in Figure 7.5. With fork and join (a),
+tasks may join their parent out of order, join with a task other than the parent, or terminate
+without joining at all. With spawn and sync (b), the parent launches tasks one at a time, but
+rejoins them as a group. In split-merge parallelism (c), we think of the parent as dividing
+into a collection of children, all at once, and then merging together again later. While less
+flexible, series-parallel execution leads to clearer source code structure. Assuming that tasks
+do not conflict with each other, there is also an obvious equivalence to serial execution.
+For debugging purposes, series-parallel semantics may even facilitate the construction of
+efficient race detection tools, which serve to identify unintended conflicts (Raman et al.
+2012; Lu et al. 2014).
+    Recognizing the host of different patterns in which parallel threads may synchronize,
+Shirako et al. (2008) have developed a barrier generalization known as phasers. Threads
+can join (register with) or leave a phaser dynamically, and can participate as signalers,
+waiters, or both. Their signal and wait operations can be separated by other code to effect a
+fuzzy barrier (Sec. 5.3.1). Threads can also, as a group, specify a statement to be executed,
+atomically, as part of a phaser episode. Finally, and perhaps most importantly, a thread that is
+registered with multiple phasers can signal or wait at all of them together when it performs a
+
+signal or wait operation. This capability facilitates the management of stencil applications,
+in which a thread synchronizes with its neighbors at the end of each phase, but not with other
+threads. Neighbor-only synchronization is also supported, in a more limited fashion, by the
+topological barriers of Scott and Michael (1996). In the message-passing world, barrier-like
+operations are supported by the collective communication primitives of systems like MPI
+(Bruck et al. 1995), but these are beyond the scope of this monograph.
+
+7.5       Kernel/User Interactions
+
+Throughout this chapter, we have focused on scheduling as a means of implementing syn-
+chronization. It is also, however, a means of sharing some limited number of cores or kernel
+threads among a (usually larger) number of kernel or user threads. Fair sharing requires
+that user-level applications cross into the kernel when switching between kernel threads,
+introducing nontrivial overheads. Inopportune preemption—e.g., during a critical section—
+may introduce greater overheads. Resources required for synchronization (e.g., headers for
+queues of waiting threads) may constitute a significant burden for systems with large num-
+bers of synchronization objects. The subsections below address these issues in turn.
+
+7.5.1     Context Switching Overhead
+
+As we noted in Sec. 1.3, spinning is generally preferable to blocking when the expected wait
+time is less than twice the context-switching overhead. When switching between kernel
+threads in user space, this overhead can easily be hundreds of cycles, due to the cost of
+crossing into kernel mode and back. Some 30 years ago, Ousterhout (1982) suggested that
+a user-level thread that is unable to acquire a lock (or that is waiting for a currently-false
+condition) should spin for some modest amount of time before invoking the kernel-level
+scheduler, in the hope that it might avoid the context switch. Many widely used locks today,
+including most implementations of pthread locks and Java synchronized blocks, use
+spin-then-block techniques. Karlin et al. (1991) provide a detailed analysis of how long to
+spin before blocking; they demonstrate the value of dynamic adaptation, and prove bounds
+on worst-case performance.
+   Of course, spinning in user space requires that the state of the lock be visible in user-
+level memory. This is natural for locking among threads of the same application, but not for
+threads in separate address spaces. Traditional interprocess locks, such as Unix System V
+semaphores, are implemented entirely within the kernel. The semget system call returns
+an opaque handle, which can be passed to P and V (semop). Spinning before blocking is
+simply not an option. Sadly, this implies an overhead of hundreds of cycles to acquire even
+an uncontended lock.
+
+   To accommodate fast user-level synchronization across address spaces, Franke and Rus-
+sell (2002) introduced the notion of a futex —a fast userspace mutex. Now widely used in
+Linux and other operating systems, futexes require at least one page of memory to be mapped
+into the address spaces of all processes sharing a lock. The futex syscalls are intended for use
+only by user-space thread libraries, and are not ordinarily exported to application program-
+mers.2 They manipulate data structures in shared memory, and call into the kernel only when
+required. In any thread that does need to block, the kernel-level context block is modified to
+indicate the location on which the thread is waiting; this allows the OS to recover cleanly if a
+process misuses the interface, or terminates unexpectedly. In a similar vein, Oracle’s Solaris
+operating system provides lwp_park and lwp_unpark syscalls that allow a thread to
+be descheduled and rescheduled explicitly. Oracle’s adaptive mutex library uses these calls
+to build an enhanced analog of futex. Johnson et al. (2010) discuss the behavior of these
+mechanisms under a variety of workloads, and present adaptive techniques to control not
+only the duration of spinning, but also the number of threads that are permitted to spin at
+any given time.
+
+7.5.2     Preemption and Convoys
+
+Authors of parallel programs have known for decades that performance can suffer badly if
+a thread is preempted while holding a lock; this is sometimes referred to as inopportune
+preemption. If other threads attempt to acquire the lock, they will need to wait until the lock
+holder is rescheduled and can complete its critical section. If threads block while waiting,
+there is reason to hope that the preempted thread will acquire one of the freed-up kernel
+threads or cores, but if threads spin while waiting instead, an entire scheduling quantum (or
+more) may expire before the lock holder gets to run again.
+   Inopportune preemption can generate contention even in otherwise well-balanced pro-
+grams. Blasgen et al. (1979) describe what they call the convoy phenomenon. Suppose that
+every thread in an application attempts to execute a brief critical section on lock L on a
+regular but infrequent basis—say once per millisecond. Normally we would not expect the
+lock to be a bottleneck. But if lock holder T is preempted for more than a millisecond, every
+other thread may be waiting for L by the time T runs again, and the lock may become a
+bottleneck. Worse, if threads tend to follow similar code paths, their actions coming out
+of back-to-back critical sections may generate a storm of cache coherence traffic, and they
+may end up contending for whatever lock is accessed next in program order. Over time
+the contention may abate, as execution histories drift apart, but as soon as a lock holder is
+preempted again, the pattern may repeat.
+   To address the convoy phenomenon, Edler et al. (1988) introduced the notion of temporary
+non-preemption. In a region of memory shared between them, the user thread and the kernel
+maintain a pair of flags. The first flag is written by the user thread and read by the kernel: it
+
+2 Drepper (2011) discusses some of the surprisingly subtle aspects of using futexes correctly.
+
+indicates that the user wishes not to be preempted. The second flag is written by the kernel
+and read by the user thread: it indicates that the kernel wanted to preempt the thread, but
+refrained because the first flag was set. A test_and_set spin lock might use these flags as
+follows:
+      atomic<bool> do not preempt me := false             // shared between the kernel and user
+      atomic<bool> kernel wanted to preempt me := false   // shared between the kernel and user
+      class lock
+           atomic<bool> f := false
+      lock.acquire():                                     lock.release():
+           do not preempt me.store(true, ∥)                    f.store(false, RW∥)
+           while ¬f.TAS(W∥)                                    do not preempt me.store(false, W∥)
+                do not preempt me.store(false, R∥)             if kernel wanted to preempt me.load(W∥)
+               if kernel wanted to preempt me.load(W∥)              yield
+                    yield
+                do not preempt me.store(true, R∥)
+           fence(R∥RW)
+
+To avoid abuse, the kernel is free to ignore the do_not_preempt_me flag if it stays set
+for too long. It can also deduct any extra time granted a thread from the beginning of its
+subsequent quantum. Other groups have proposed related mechanisms that can likewise
+be used to avoid (Marsh et al. 1991) or recover from (Anderson et al. 1992) inopportune
+preemption. Solaris (Dice 2011) provides a schedctl mechanism closely related to that of
+Edler et al.
+   The code shown for test_and_set above can easily be adapted to many other locks,
+with features including backoff, locality awareness, timeout, double-checked or asymmetric
+locking, and adaptive spin-then-wait. Fair queueing is harder to accommodate. In a ticket,
+Hemlock, MCS, or CLH lock, one must consider the possibility of preemption not only while
+holding a lock, but also while waiting in line. So if several threads are waiting, preemption
+of any one may end up creating a convoy.
+   To avoid passing a lock to a thread that has been preempted while waiting in line,
+Kontothanassis et al. (1997) proposed extensions to the kernel interface in the spirit of
+Edler et al. Specifically, they provide additional values for the do_not_preempt_me flag,
+and make it visible to other threads. These changes allow one thread to pass a lock to
+another, and to make the other nonpreemptable, atomically. In a different vein, He et al.
+(2005) describe a family of queue-based locks in which a lock-releasing thread can esti-
+mate (with high confidence) whether the next thread in line has been preempted and, if so,
+dynamically remove it from the queue. The key to these locks is for each spinning thread to
+periodically write the wall-clock time into its lock queue node. If a thread discovers that the
+difference between the current time and the time in its successor’s queue node exceeds some
+appropriate threshold, it assumes that the successor is preempted. A thread whose node has
+been removed from the queue will try again the next time it has a chance to run.
+
+7.5.3    Resource Minimization
+
+In addition to avoiding unnecessary crossings in and out of kernel mode, the futexes of
+Linux and the lwp_park-based mutexes of Solaris also eliminate the need to allocate a
+kernel-level condition queue for every lock. Lists of blocked threads are kept in user-level
+memory; within the kernel, a waiting thread is simply descheduled, with a note in its context
+block that indicates what it is waiting for. Since kernel address space is often a scarce resource
+(especially for preallocated structures), this migration of information into user space may
+significantly increase the maximum number of locks a system can support.
+   A similar observation regarding kernel resources was made by the designers of the NT
+kernel, the foundation for Microsoft OS releases starting with Windows 2000. Compared to
+Unix variants, the Windows API includes a much larger number of standard library routines.
+These in turn declare a very large number of internal locks (Windows mutex objects), most
+of which are never used in a typical program. To economize on kernel resources, NT delays
+allocating a kernel queue for a given lock until some thread actually tries to acquire the
+lock. Kernel space is still required for every active lock, and kernel-mode crossings occur
+on every acquire and release, but space is never wasted on locks that are not used.
+   Unfortunately, delayed allocation of kernel queues raises the possibility of a run-time
+exception if space is not available. This possibility was a source of considerable complexity
+and brittleness in Windows 2000. To eliminate the run-time exception, the designers of
+Windows XP introduced the notion of keyed events (Duffy 2006), which allow logically
+distinct conditions to share a single kernel-level queue. Every call to wait or set (signal)
+must specify both an event and a 32-bit key. Every thread waiting in the queue is then tagged
+with the key it provided, and set will only awaken a thread with a matching key. Under most
+circumstances, the kernel allocates a new keyed event for every active lock. If it runs out
+of memory, however, it falls back to a preexisting (per-address-space) keyed event, with a
+new lock-specific key. In Windows XP, which used a linked list for the per-address-space
+queue, performance could sometimes be a problem. Windows Vista replaced the list with
+a hash table for fast key-based lookups. It also introduced a new family of synchronization
+objects, including a “slim reader-writer lock,” or SRWL. Like futexes and lwp_park-based
+mutexes, these objects maintain state in user-level memory, and avoid kernel-mode crossings
+whenever possible. When a thread does need to block, it always employs the per-address-
+space queue.

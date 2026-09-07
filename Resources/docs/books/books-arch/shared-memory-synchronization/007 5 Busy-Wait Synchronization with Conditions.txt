@@ -1,0 +1,642 @@
+Busy-Wait Synchronization with Conditions
+                                                                                                      5
+
+In Chapter 1 we suggested that almost all synchronization serves to achieve either atom-
+icity or condition synchronization. Chapter 4 considered spin-based atomicity. The current
+chapter considers spin-based condition synchronization—flags and barriers in particular. In
+many cases, spins can be replaced, straightforwardly, with waits on scheduler-based syn-
+chronization queues. We will return to the topic of scheduler-based conditions in Chapter 7.
+
+5.1      Flags
+
+In its simplest form, a flag is Boolean variable, initially false, on which a thread can wait:
+
+   class flag
+        atomic<bool> f := false
+   flag.set():
+         f.store(true, RW∥)
+   flag.await():
+        while ¬f.load();      // spin
+        fence(R∥RW)
+
+    Methods set and await are presumably called by different threads. Code for set consists
+of a release-annotated store; await ends with an acquire fence. These reflect the fact that one
+typically uses set to indicate that previous operations of the calling thread (e.g., initialization
+of a shared data structure) have completed; one typically uses await to ensure that subsequent
+operations of the calling thread do not begin until the condition holds.
+
+© The Author(s), under exclusive license to Springer Nature Switzerland AG 2024                 87
+M. L. Scott and T. Brown, Shared-Memory Synchronization, Synthesis Lectures
+on Computer Architecture, https://doi.org/10.1007/978-3-031-38684-8_5
+
+     In some algorithms, it may be helpful to have a reset method:
+     flag.reset():
+           f.store(false, ∥W)
+
+   Before calling reset, a thread must ascertain (generally through application-specific
+means) that no thread is still using the flag for its previous purpose. The ∥W ordering
+on the store ensures that any subsequent updates (to be announced by a future set) are seen
+to happen after the reset.
+   In an obvious generalization of flags, one can arrange to wait on an arbitrary predicate:
+     class predicate
+          abstract bool eval()
+               // to be extended by users
+     predicate.await():
+         while ¬eval();           // spin
+         fence(R∥RW)
+With compiler or preprocessor support, this can become
+     await( condition ):
+         while ¬condition;        // spin
+         fence(R∥RW)
+This latter form is the notation we employed in Chapters 1 and 3. It must be used with
+care: the absence of an explicit set method means there is no obvious place to specify the
+release ordering that typically accompanies the setting of a Boolean flag. In any program
+that spins on nontrivial conditions, a thread that changes a variable that may contribute to
+such a condition may need to declare the variable as volatile or atomic, and update it with
+a RW ∥ store. One must also consider the atomicity of attempts to check the condition, and
+the monotonicity of the condition itself: an await will generally be safe if the condition
+will become true due to a single store in some other thread, and never again become false.
+Without such a guarantee, it is unclear what can safely be assumed by the code that follows
+the await. We will return to generalized await statements when we consider conditional
+critical regions in Sec. 7.4.1.
+
+5.2         Barrier Algorithms
+
+Many applications—simulations in particular—proceed through a series of phases, each of
+which is internally parallel but must complete in its entirety before the next phase can begin.
+A typical example might look something like this:
+
+      barrier b
+      in parallel for i ∈ T
+           repeat
+                 // do i’s portion of the work of a phase
+                 b.cycle()
+           until terminating condition
+
+The cycle method of barrier b (sometimes called wait, next, or even barrier) forces each
+thread i to wait until all threads have reached that same point in their execution. Calling cycle
+accomplishes two things: it announces to other threads that all work prior to the barrier in
+the current thread has been completed (this is the arrival part of the barrier), and it ensures
+that all work prior to the barrier in other threads has been completed before continuing
+execution in the current thread (this is the departure part). To avoid data races, the arrival
+part typically includes a release (RW ∥) fence or synchronizing store; the departure part
+typically ends with an acquire (∥ RW) fence.
+    The simplest barriers, commonly referred to as centralized, employ a small, fixed-size
+data structure, and consume Θ(n) time between the arrival of the first thread and the departure
+of the last. More complex barriers distribute the data structure among the threads, consuming
+Θ(n) or Θ(n log n) space, but requiring only O(log n) time.
+    For any maximum number of threads n, of course, log n is a constant, and with hardware
+support it can be a very small constant. Some multiprocessors (e.g., the Cray X/XE/Cascade,
+SGI UV, and IBM Blue Gene series) have exploited this observation to provide special
+constant-time barrier operations (the Blue Gene machines, though, did not have a global
+address space). With a large number of processors, constant-time hardware barriers can
+provide a substantial benefit over log-time software barriers.
+    In effect, barrier hardware performs a global AND operation, setting a flag or asserting
+a signal once all cores have indicated their arrival. It may also be useful—especially on
+NRC-NUMA machines, to provide a global OR operation (sometimes known as Eureka)
+that can be used to determine when any one of a group of threads has indicated its arrival.
+Eureka mechanisms are commonly used for parallel search: as soon as one thread has found
+a desired element (e.g., in its portion of some large data set), the others can stop looking.
+The principal disadvantage of hardware barriers and Eureka mechanisms is that they are
+difficult to virtualize or share among the dynamically changing processes and threads of a
+multiprogrammed workload.
+    The first subsection below presents a particularly elegant formulation of the centralized
+barrier. The following three subsections present different log-time barriers; a final subsection
+summarizes their relative advantages.
+
+        class barrier
+             atomic<int> count := 0
+            const int n := |T |
+             atomic<bool> sense := true
+            bool local sense[T ] := { true . . . }
+        barrier.cycle():
+             bool s := ¬local sense[self]
+             local sense[self] := s                   // each thread toggles its own sense
+             if count.FAI(RW∥) = n−1                  // note release ordering
+                  count.store(0, W∥)                  // after FAI, last thread resets count
+                  sense.store(s, W∥)                  // and then toggles global sense
+             else
+                  while sense.load(R∥) ̸= s;          // spin
+             fence(R∥RW)                              // note acquire ordering
+
+Figure 5.1 The sense-reversing centralized barrier.
+
+5.2.1     The Sense-Reversing Centralized Barrier
+
+It is tempting to expect a centralized barrier to be easy to write: just initialize a counter
+to zero, have each thread perform a fetch_and_increment when it arrives, and then spin
+until the total reaches the number of threads. The tricky part, however, is what to do the
+second time around. Barriers are meant to be used repeatedly, and without care it is easy
+to write code in which threads that reach the next barrier “episode” (set of calls to cycle)
+interfere with threads that have not yet gotten around to leaving the previous episode. Several
+algorithms that suffer from this bug have actually been published.
+    Perhaps the cleanest solution is to separate the counter from the spin flag, and to “reverse
+the sense” of that flag in every barrier episode. Code that embodies this technique appears
+in Figure 5.1. It is adapted from Hensgen et al. (1988); Almasi and Gottlieb (1989, p. 445)
+credit similar code to Isaac Dimitrovsky.
+    The bottleneck of the centralized barrier is the arrival part: fetch_and_increment opera-
+tions will serialize, and each can be expected to entail a remote memory access or coherence
+miss. Departure will also entail O(n) time, but on a globally cache-coherent machine every
+spinning thread will have its own cached copy of the sense flag, and post-invalidation refills
+will generally be able to pipeline or combine, for much lower per-access latency.
+
+5.2.2     Software Combining
+
+It has long been known that a linear sequence of associative (and, ideally, commutative)
+operations (a “reduction”) can be performed tree-style in logarithmic time (Ladner and
+Fischer 1980). For certain read-modify-write operations (notably fetch_and_add), Kruskal
+et al. (1988) developed reduction-like hardware support as part of the NYU Ultracomputer
+project (Gottlieb et al. 1983). On a machine with a log-depth interconnection network (in
+which a message from processor i to memory module j goes through a O(log p) internal
+
+ type node = record
+     const int k                                       // fan-in of this node
+      atomic<int> count := k
+      atomic<bool> sense := false
+     node* const parent := . . .                       // initialized appropriately for tree
+ class barrier
+     bool local sense[T ] := { true . . . }
+     node* my leaf[T ] := . . .                       // pointer to starting node for each thread
+     // initialization must create a tree of nodes (each in its own cache line)
+     // linked by parent pointers
+ barrier.cycle():
+      fence(RW∥W)
+      combining helper(my leaf[self], local sense[self])         // join the barrier
+      local sense[self] := ¬local sense[self]                    // for next barrier
+      fence(R∥RW)
+ combining helper(node* n, bool my sense):
+    if n→count.FAD(W∥) = 1                    // last thread to reach this node
+         if n→parent ̸= null
+              combining helper(n→parent, my sense)
+         n→count.store(n→k, W∥)               // prepare for next barrier episode
+         n→sense.store(¬n→sense, W∥)          // release waiting threads
+    else
+         while n→sense.load(R∥) ̸= my sense; // spin
+
+Figure 5.2 A software combining tree barrier. FAD is fetch_and_decrement.
+
+switching nodes on a p-processor machine), near-simultaneous requests to the same location
+combine at the switching nodes. For example, if operations l. FAA(a) and l. FAA(b) landed in
+the same internal queue at about the same point in time, they would be forwarded on as a
+single l. FAA(a+b) operation. When the result (the original value—call it v) returned (over
+the same path), it would be split into two responses—v and either (v+a) or (v+b)—and
+returned to the original requesters.
+   While hardware combining tends not to appear on modern machines, Yew et al. (1987)
+observed that similar benefits could be achieved with an explicit tree in software. A shared
+variable that is expected to be the target of multiple concurrent accesses is represented as a
+tree of variables, with each node in the tree assigned to a different cache line. Threads are
+divided into groups, with one group assigned to each leaf of the tree. Each thread updates
+the state in its leaf. If it discovers that it is the last thread in its group to do so, it continues
+up the tree and updates its parent to reflect the collective updates to the child. Proceeding in
+this fashion, late-coming threads eventually propagate updates to the root of the tree.
+   Using a software combining tree, Tang and Yew (1990) showed how to create a log-time
+barrier. Writes into one tree are used to determine that all threads have reached the barrier;
+reads out of a second are used to allow them to continue. Figure 5.2 shows a variant of this
+
+                                        0   1   2   3    4    5
+
+                             round 0:
+
+                             round 1:
+
+                             round 2:
+
+Figure 5.3 Communication pattern for the dissemination barrier (adapted from Hensgen et al.
+(1988)).
+
+combining tree barrier, as modified by Mellor-Crummey and Scott (1991b) to incorporate
+sense reversal and to replace the fetch_and_Φ instructions of the second combining tree
+with simple reads (since no real information is returned).
+   Simulations by Yew et al. (1987) show that a software combining tree can significantly
+decrease contention for reduction variables, and Mellor-Crummey and Scott (1991b) confirm
+this result for barriers. At the same time, the need to perform (typically expensive) fetch_
+and_Φ operations at each node of the tree induces substantial constant-time overhead. On
+an NRC-NUMA machine, most of the spins can also be expected to be remote, leading
+to potentially unacceptable contention. The barriers of the next two subsections tend to
+work much better in practice, making combining tree barriers mainly a matter of historical
+interest. This said, the notion of combining—broadly conceived—has proven useful in the
+construction of a wide range of concurrent data structures. We will return to the concept
+briefly in Sec. 5.4.
+
+5.2.3    The Dissemination Barrier
+
+Building on earlier work on barriers (Brooks 1986) and information dissemination (Han and
+Finkel 1988; Alon et al. 1987), Hensgen et al. 1988 describe a dissemination barrier that
+reduces barrier latency by eliminating the separation between arrival and departure. The
+algorithm proceeds through ⌈log2 n⌉ (unsynchronized) rounds. In round k, each thread i
+signals thread (i + 2k ) mod n. The resulting pattern (Figure 5.3), which works for arbitrary
+n (not just a power of 2), ensures that by the end of the final round every thread has heard—
+directly or indirectly—from every other thread.
+   Code for the dissemination barrier appears in Figure 5.4. The algorithm uses alternating
+sets of variables (chosen via parity) in consecutive barrier episodes, avoiding interference
+without requiring two separate spins in each round. It also uses sense reversal to avoid
+
+      const int logN := ⌈log2 n⌉
+      type flag t = record
+           atomic<bool> my flags[0..1][0..logN−1]
+           atomic<bool> * partner flags[0..1][0..logN−1]
+      class barrier
+          int parity[T ] := { 0 . . . }
+          bool sense[T ] := { true . . . }
+          flag t flag array[T ] := . . .
+               // on an NRC-NUMA machine, flag array[i] should be local to thread i
+               // initially flag array[i].my flags[r][k] is false ∀i, r, k
+               // if j = (i + 2k ) mod n, then ∀r, k:
+               //      flag array[i].partner flags[r][k] points to flag array[j].my flags[r][k]
+      barrier.cycle():
+           fence(RW∥W)
+           flag t* fp := &flag array[self]
+           int p := parity[self]
+           bool s := sense[self]
+           for int i in 0..logN−1
+                 fp→partner flags[p][i]→store(s, R∥)
+                 while fp→my flags[p][i].load(W∥) ̸= s;     // spin
+           if p = 1
+                 sense[self] := ¬s
+           parity[self] := 1 − p
+           fence(R∥RW)
+
+Figure 5.4 The dissemination barrier.
+
+resetting variables after every episode. The flags on which each thread spins are statically
+determined (allowing them to be local even on an NRC-NUMA machine), and no two threads
+ever spin on the same flag.
+   Interestingly, while the critical path length of the dissemination barrier is ⌈log2 n⌉, the
+total amount of interconnect traffic (remote writes) is n⌈log2 n⌉. (Space requirements are
+also O(n log n).) This is asymptotically larger than the O(n) space and bandwidth of the
+centralized and combining tree barriers, and may be a problem on machines whose inter-
+connection networks have limited cross-sectional bandwidth.
+
+5.2.4     Non-combining Tree Barriers
+
+While the potential cost of fetch_and_Φ operations is an argument against the combin-
+ing tree barrier, it turns out not to be an argument against tree barriers in general. Hens-
+gen et al. (1988) and Lubachevsky (1989) observe that one can eliminate the need for
+fetch_and_Φ by choosing the “winner” at each tree node in advance. As in a combining
+
+tree, threads in the resulting tournament barrier begin at the leaves and move upward, with
+only one continuing at each level. Instead of the last arrival, however, it is a particular thread
+(say the one from the left-most child) that always continues upward. Other threads set a flag
+in the node to let the “winner” know they have arrived. If the winner arrives before its peers,
+it simply waits. Wakeup can proceed back down the tree, as in the combining tree barrier, or
+(on a machine with broadcast-based cache coherence) it can use a global flag. With care, the
+tree can be designed to avoid remote spinning, even on an NRC-NUMA machine, though
+the obvious way to do so increases space requirements from O(n) to O(n log2 n) (Lee 1990;
+Mellor-Crummey and Scott 1991b).
+    Inspired by experience with tournament barriers, Mellor-Crummey and Scott (1991b)
+proposed a static tree barrier that takes logarithmic time and linear space, spins only on
+local locations (even on an NRC-NUMA machine), and performs the theoretical minimum
+number of remote memory accesses (2n − 2) on machines that lack broadcast. Unlike a
+tournament barrier, the static tree barrier associates threads with internal nodes as well as
+leaves, thereby reducing the overall size of the tree. Each thread signals its parent, which in
+turn signals its parent when it has heard from all of its children.
+    Code for the static tree barrier appears in Figure 5.5. It incorporates a minor bug fix from
+Kishore Ramachandran. Each thread is assigned a unique tree node which is linked into an
+arrival tree by a parent link and into a wakeup tree by a set of child links. It is useful to think
+of the trees as separate because their arity may be different. The code shown here uses an
+arrival fan-in of 4 and a departure fan-out of 2, which worked well in the authors’ original
+(c. 1990) experiments. Assuming that the hardware supports single-byte writes, fan-in of 4
+(on a 32-bit machine) or 8 (on a 64-bit machine) will allow a thread to use a single-word
+spin to wait for all of its arrival-tree children simultaneously. Optimal departure fan-out is
+likely to be machine-dependent. As in the tournament barrier, wakeup on a machine with
+broadcast-based global cache coherence could profitably be effected with a single global
+flag.
+
+5.2.5    Which Barrier Should I Use?
+
+Experience suggests that the centralized, dissemination, and static tree barriers are all useful
+in certain circumstances. Tradeoffs among them are summarized in Table 5.1. Given the
+cost of remote spinning (and of fetch_and_Φ operations on most machines), the combining
+tree barrier tends not to be competitive. The tournament barrier (mentioned in Sec. 5.2.4)
+likewise has little to recommend it over the static tree barrier.
+   The centralized barrier has the advantage of simplicity, and tends to outperform all other
+alternatives when the number of threads is small. It also adapts easily to different numbers of
+threads. In an application in which the number changes from one barrier episode to another,
+this advantage may be compelling. Likewise, central barriers are the only option we have
+considered so far that can exploit the “fuzzy” barrier technique of Sec. 5.3.1 below.
+
+      type node = record
+           atomic<bool> parent sense := false
+           atomic<bool>* parent ptr
+          const bool have child[0..3]         // for arrival
+           atomic<bool> child not ready[0..3]
+           atomic<bool>* child ptrs[0..1]     // for departure
+           atomic<bool> dummy                 // pseudodata
+      class barrier
+          bool sense[T ] := true
+          node nodes[T ]
+          // on an NRC-NUMA machine, nodes[i] should be local to thread i
+          // in nodes[i]:
+          //     have child[j] = true iff 4i + j + 1 < n
+          //     parent ptr = &nodes[⌊(i − 1)/4 ].child not ready[(i − 1) mod 4],
+          //           or &dummy if i = 0
+          //     child ptrs[0] = &nodes[2i + 1].parent sense, or &dummy if 2i + 1 ≥ n
+          //     child ptrs[1] = &nodes[2i + 2].parent sense, or &dummy if 2i + 2 ≥ n
+          //     initially child not ready := have child
+      barrier.cycle():
+           fence(RW∥W)
+           node* n := &nodes[self]
+           bool my sense := sense[self]
+           while n→child not ready.load(∥) ̸= { false, false, false, false };    // spin
+           n→child not ready.store(n→have child)                // prepare for next episode
+           n→parent ptr→store(false)                            // let parent know we’re ready
+           // if not root, wait until parent signals departure:
+           if self ̸= 0
+                  while n→parent sense.load() ̸= my sense;          // spin
+           // signal children in departure tree:
+           n→child ptrs[0]→store(my sense, ∥)
+           n→child ptrs[1]→store(my sense, ∥)
+           sense[self] := ¬my sense
+           fence(R∥RW)
+
+Figure 5.5 A static tree barrier with local-spinning tree-based departure.
+
+    The choice between the dissemination and static tree barriers comes down to a question of
+architectural features and costs. The dissemination barrier has the shortest critical path, but
+induces asymptotically more total network traffic. Given broadcast-based cache coherence,
+nothing is likely to outperform the static tree barrier, modified to use a global departure flag.
+In the absence of broadcast, the dissemination barrier will do better on a machine with high
+cross-sectional bandwidth; otherwise the static tree barrier (with explicit departure tree) is
+likely to do better. When in doubt, practitioners would be wise to try both and measure their
+performance.
+
+Table 5.1 Tradeoffs among leading software barriers. Critical path lengths are in remote memory
+references (assuming broadcast on a CC-NUMA machine); they may not correspond precisely to
+wall-clock time. Space needs are in words. Constants a and d in the static tree barrier are arrival
+fan-in and departure fan-out, respectively. Fuzzy barriers are discussed in Sec. 5.3.1.
+                            central dissemination          static tree
+ space needs
+   CC-NUMA                                                   4n + 1
+                              n+1      n + 2n⌈log2 n⌉
+   NRC-NUMA                                                 (5 + d)n
+ critical path length
+   CC-NUMA                   n+1                         ⌈loga n⌉ + 1
+                                          ⌈log2 n⌉
+   NRC-NUMA                    ∞                      ⌈loga n⌉ + ⌈logd n⌉
+ total remote refs
+   CC-NUMA                 n + 1 .. 2n                          n
+                                         n⌈log2 n⌉
+   NRC-NUMA                    ∞                             2n − 2
+ fuzzy barrier suitability     +             −                  −
+ tolerance of changes in n     +             −                  −
+
+5.3      Barrier Extensions
+
+5.3.1    Fuzzy Barriers
+
+One of the principal performance problems associated with barriers is skew in thread arrival
+times, often caused by irregularities in the amount of work performed between barrier
+episodes. If one thread always does more work than the others, of course, then its arrival
+will always be delayed, and all of the others will wait. If variations are more randomly
+distributed, we may see the situation illustrated on the left side of Figure 5.6, where the
+time between barrier episodes is repeatedly determined by a different slowest thread. If Ti,r
+is the time thread i consumes in phase r of the computation, then total execution time is
+ 
+   r (tb + maxi∈T Ti,r ), where tb is the time required by a single barrier episode.
+    Fortunately, it often turns out that the work performed in one algorithmic phase depends
+on only some of the work performed by peers in previous phases. Imagine, for example, a
+program that repeatedly updates all the elements of a complex simulated system, collects
+and logs information about the current state for subsequent (off-line) analysis, and proceeds
+to the next step. If logs are kept on a per-thread basis, then we can start the next phase of
+simulation in a fast thread as soon as its peers have finished their local updates: we don’t
+have to wait for them to finish their logging. This observation, due to Gupta (1989), leads
+to the design of a fuzzy barrier, in which arrival and departure are separate operations. The
+standard idiom
+
+                                 0   1     2     3                0   1    2     3
+
+                      phase 0:
+
+                      phase 1:
+
+                      phase 2:
+
+Figure 5.6 Impact of variation across threads in phase execution times, with normal barriers (left)
+and fuzzy barriers (right). Blue work bars are the same length in each version of the figure. Fuzzy
+intervals are shown as outlined portions of the bars. With fuzzy barriers, threads can leave the barrier
+as soon as the last peer has entered its fuzzy interval. Overall performance improvement is shown by
+the double-headed arrow at center.
+
+      in parallel for i ∈ T
+           repeat
+                 // do i’s portion of the work of a phase
+                 b.cycle()
+           until terminating condition
+becomes
+      in parallel for i ∈ T
+           repeat
+                 // do i’s critical work for this phase
+                 b.arrive()
+                 // do i’s non-critical work—its fuzzy interval
+                 b.depart()
+           until terminating condition
+As illustrated on the right side of Figure 5.6, the impact on overall run time can be a dramatic
+improvement.
+   A centralized barrier is easily modified to produce a fuzzy variant (Figure 5.7). Unfor-
+tunately, none of the logarithmic barriers we have considered has such an obvious fuzzy
+version. We address this issue in the following subsection.
+
+5.3.2       Adaptive Barriers
+
+When all threads arrive at about the same time, tree and dissemination barriers enjoy an
+asymptotic advantage over the centralized barrier. The latter, however, has an important
+advantage when thread arrivals are heavily skewed: if all threads but one have already
+finished their arrival work, the last thread is able recognize this fact in constant time in a
+
+ in parallel for i ∈ T
+      repeat
+            // do i’s portion of the work of a phase
+            b.cycle()
+      until terminating condition
+ class barrier
+      atomic<int> count := 0
+     const int n := |T |
+      atomic<bool> sense := true
+     bool local sense[T ] := { true . . . }
+ barrier.arrive():
+      local sense[self] := ¬local sense[self]           // each thread toggles its own sense
+      if count.FAI(RW∥) = n−1                           // note release ordering
+           count.store(0, W∥)                           // last thread prepares for next episode
+           sense.store(local sense[self], W∥)           // and toggles global sense
+ barrier.depart():
+      while sense.load(R∥) ̸= local sense[self];        // spin
+      fence(R∥RW)
+
+Figure 5.7 Fuzzy variant of the sense-reversing centralized barrier.
+
+centralized barrier. In the other barriers it will almost always require logarithmic time (an
+exception being the lucky case in which the last-arriving thread just happens to own a node
+within constant distance of the root of the static tree barrier).
+    This inability to amortize arrival time is the reason why most log-time barriers do not
+easily support fuzzy-style separation of their arrival and departure operations. In any fuzzy
+barrier it is essential that threads wait only in the departure operation, and then only for
+threads that have yet to reach the arrival operation. In the dissemination barrier, no thread
+knows that all other threads have arrived until the very end of the algorithm. In the tournament
+and static tree barriers, static synchronization orderings force some threads to wait for their
+peers before announcing that they have reached the barrier. In all of the algorithms with
+tree-based departure, threads waiting near the leaves cannot discover that the barrier has
+been achieved until threads higher in the tree have already noticed this fact.
+    Among our log-time barriers, only the combining tree appears to offer a way to sepa-
+rate arrival and departure. Each arriving thread works its way up the tree to the top-most
+unsaturated node (the first at which it was not the last to arrive). If we call this initial traver-
+sal the arrive operation, it is easy to see that it involves no spinning. On a machine with
+broadcast-based global cache coherence, the thread that saturates the root of the tree can
+flip a sense-reversing flag, on which all threads can spin in their depart operation. On other
+machines, we can traverse the tree again in depart, but in a slightly different way: this time
+a thread proceeds upward only if it is the first to arrive at a node, rather than the last. Other
+threads spin in the top-most node in which they were the first to arrive. The thread that
+reaches the root waits, if necessary, for the last arriving thread, and then flips flags in each
+
+                                            p                 p
+
+                                    w           x         o       x
+                                n       o
+
+Figure 5.8 Dynamic modification of the arrival tree in an adaptive combining tree barrier.
+
+of the children of the root. Any thread that finds a flipped flag on its way up the tree knows
+that it can stop and flip flags in the children of that node during departure. Races among
+threads take a bit of care to get right, but the code can be made to work. Unfortunately, the
+last thread to call the arrive operation still requires Θ(log n) time to realize that the barrier
+has been achieved.
+    To address this remaining issue, Gupta and Hill (1989) proposed an adaptive combining
+tree, in which early-arriving threads dynamically modify the structure of the tree so that
+late-arriving peers are closer to the root. With modest skew in arrival times, the last-arriving
+thread realizes that the barrier has been achieved in constant time.
+    The code for this barrier is somewhat complex. The basic idea is illustrated in Figure 5.8.
+It uses a binary tree. Each thread, in its arrive operation, starts at its (statically assigned)
+leaf and proceeds upward, stopping at the first node (say, w) that has not yet been visited
+by any other thread. Having reached w through, say n, it then modifies the tree so that w’s
+other child, o, is one level closer to the root. Specifically, it changes o’s parent to be p (the
+parent of w) and makes o a child of p. A thread that reaches p through w’s sibling, x, will
+promote o another level, and a later-arriving thread, climbing through o, will traverse fewer
+levels of the tree than it would have otherwise.
+    In their paper, Gupta and Hill (1989) present both standard and fuzzy versions of their
+adaptive combining tree barrier. Unfortunately, both versions retain the remote spins of the
+original (non-adaptive) combining tree. They also employ test_and_set locks to arbitrate
+access to each tree node. To improve performance—particularly but not exclusively on NRC
+NUMA machines—Scott and Mellor-Crummey (1994) present versions of the adaptive
+combining tree barrier (both regular and fuzzy) that spin only on local locations and that
+adapt the tree in a wait-free fashion, without the need for per-node locks. In the process they
+also fix several subtle bugs in the earlier algorithms. Shavit and Zemach (2000) generalize
+the notion of combining to support more general operations than simply “arrive at barrier”;
+we will return to their work in Sec. 5.4.
+    Scott and Mellor-Crummey report mixed performance results for adaptive barriers: if
+arrival times are skewed across threads, tree adaptation can make a significant difference,
+both by reducing departure times in the wake of the last arrival and by making fuzzy intervals
+compatible with a logarithmic critical path. If thread arrival times are very uniform, however,
+the overhead of adaptation may yield a net loss in performance. As with many other tradeoffs,
+the break-even point will vary with both the machine and workload.
+
+5.3.3    Barrier-Like Constructs
+
+While barriers are the most common form of global (all-thread) synchronization, they are
+far from the only one. We have already mentioned the “Eureka” operation in Secs. 2.3.3
+and 5.2. Invoked by a thread that has discovered some desired result (hence the name),
+it serves to interrupt the thread’s peers, allowing them (in the usual case) to stop looking
+for similar results. Whether supported in hardware or software, the principal challenge for
+Eureka is to cleanly terminate the peers. The easiest solution is to require each thread to poll
+for termination periodically, but this can be both awkward and wasteful. More asynchronous
+solutions require careful integration with the thread library or language run-time system,
+and are beyond the scope of this monograph.
+    Many languages (and, more awkwardly, library packages) support series-parallel exe-
+cution, in which an executing thread can launch a collection of children and then wait for
+their completion. The most common syntax involves a “loop” whose iterations are intended
+to execute in parallel. While the programmer is typically encouraged to think of such a loop
+as forking a separate task for each iteration, and joining them at the end, the underlying
+implementation may just as easily employ a set of preexisting “worker” threads and a barrier
+at the bottom of the loop. Because the number of workers and the number of tasks cannot in
+general be assumed to be the same, implementations of series-parallel execution are usually
+based on scheduler-based synchronization, rather than busy-wait. We will return to this topic
+in Sec. 7.4.3.
+
+5.4      Combining as a General Technique
+
+As noted in Sec. 5.2.2, the software combining tree barrier is a specific instance of a more
+general combining technique. An important detail, glossed over in that section, is that the
+first thread to arrive at a node of a combining tree must wait for others to arrive. In a
+barrier, we know that every thread must participate, exactly once, and so waiting for peers
+is appropriate.
+    Suppose, however, that we wish to implement a shared counter object with a fetch_and_
+add operation. Any thread can invoke fetch_and_add at any time; there is no guarantee
+that the number of invocations will be balanced across threads, or that any particular peer
+will invoke an operation within any particular span of time. For objects such as this, we
+can choose some modest delay interval, pause for that amount of time at each tree node,
+and continue on up the tree if no peer arrives (Tang and Yew 1990). The delays, of course,
+increase the latency of any individual operation, as does the traversal of a log-depth tree.
+Under heavy load, this disadvantage is outweighed by the decrease in contention, which
+leads to higher throughput.
+    To some extent, one can obtain the best of both worlds: the combining funnels of Shavit
+and Zemach (2000) adapt the width and depth of a combining tree to match the offered load.
+
+This adaptation is more general than that of the barrier in Sec. 5.3.2; combining funnels allow
+threads to perform their operations at arbitrary times and rates, and to receive individualized
+return values.
+   One of the most common applications of combining occurs in reduction operations, in
+which the results of some large number of tasks are “folded” together to produce a single
+summary value—e.g., the sum, product, maximum, or minimum of the values computed
+by the tasks. When the combining operation (+, ×, max, min) is commutative, individual
+values can be folded into the summary value in any order. When the operation is also
+associative, values can be folded together in a combining tree. In the simple case, all we
+care about is the final result, so values flow only from the leaves to the root. In the more
+general case, in which we want an intermediate result for each individual operation, values
+also flow back from the root to the leaves; in this latter case, the operation (call it ⊕) must be
+reversible: given a, b, and the return value of v ⊕ (a ⊕ b), where v was the original (usually
+unknown) value, we must be able to deduce either v ⊕ a or v ⊕ b.
+   In some cases, combined operations may eliminate each other. If we are computing a
+global sum, for example (without intermediate results), and if “+3” and “−3” operations
+combine in a tree node, there is really no point in propagating a “+0” message up the tree.
+A more compelling example occurs in the case of pushes and pops on an abstract stack.
+Given any stack configuration, a push followed immediately by a pop leaves the same
+configuration afterward, meaning that as long as the pop returns the value provided by the
+push, their location (as a pair) in the overall linearization order of the stack is immaterial
+(Shavit and Touitou 1997). While it is tempting to think of a stack as an inherently serial
+structure, with operations taking turns updating a single top-of-stack “hot spot,” elimination
+makes it possible to build a scalable implementation (Shavit and Zemach 2000).
+   In the general case, when threads combine their operations, one proceeds on behalf of
+both, and the other waits for the first to return. In the more restricted case of elimination, the
+fact that neither thread must wait raises the possibility of a nonblocking implementation.
+The elimination trees of Shavit and Touitou (1997) can be used to build an “almost stack”
+that is nonblocking and, while not linearizable, at least quiescently consistent: individual
+pairs of operations may appear to occur out of order, so long as some operation is active,
+but as soon as the structure is idle, there must be some sequential order that explains the
+results of all completed operations. Subsequent work by Hendler et al. (2004) developed an
+elimination-backoff stack that is both nonblocking and linearizable; we will return to it in
+Sec. 8.9.
+   In a related special case, Ellen et al. (2007) present a sort of census mechanism to track
+whether any threads are currently in some special state. Their scalable nonzero indicator—
+SNZI (“snazzy”)—allows one to query not the actual number of special-state threads, but
+only whether that number is zero or nonzero. Their implementation employs a tree in which
+each leaf corresponds to a thread and holds either a 0 or a 1, depending on the state of the
+thread. Each internal node indicates whether any leaf below it holds a 1. The root is then a
+zero/nonzero indicator for the set of threads as a whole. Changes at a leaf propagate up the
+
+tree only as far as needed to maintain correctness, thereby avoiding contention. Inspired by
+SNZI, Liu et al. (2013) present a mindicator object, in which each thread proposes an integer
+value and the query operation returns the current global minimum. The original motivation
+for SNZI was to track threads reading a given location in transactional memory (Sec. 9.1.3).
+Applications of the mindicator include the implementation of “grace periods” in read-copy
+update (Sec. 6.3) and of privatization in transactional memory (Sec. 9.3.3).
+    In yet another development, Hendler et al. (2010b) demonstrate that combining can
+improve performance even in the absence of a log-depth combining tree. Their flat combining
+approach begins with the code of an ordinary sequential data structure, protected by a single
+lock. To this the authors add a shared nonblocking set of pending requests. When a thread
+that wants to perform an operation finds that the lock is held, it adds its request to the set and
+then waits for its completion, rather than waiting for the lock. When the thread that holds
+the lock completes its operation, it scans the set, combines or eliminates requests as much as
+it can, and then applies what remains as a group. Only when the set is empty does it finally
+release the lock.
+    During periods of low contention, operations on the data structure occur more or less one
+at a time, and behavior is equivalent to traditional coarse-grain locking. When contention
+is high, however, large numbers of requests are completed by a single thread, which then
+benefits from three important effects. First, when two operations are combined and then
+applied together, the total amount of work performed is often less than that of performing
+the operations separately. A push and a pop, for example, when combined, avoid not only
+any updates to the top-of-stack pointer, but also, in a linked-list implementation, the overhead
+of allocating and freeing list nodes. In a similar vein, updates to a sorted list can themselves
+be sorted, and then applied in a single pass. Second, while performing a group of operations,
+a thread incurs no costly synchronization. Third, because all the operations occur in a single
+thread, the total number of cache misses is likely to be quite low: parameters may need to
+be fetched from remote locations, but accesses to the data structure itself are all likely to be
+local. In follow-on work, Hendler et al. (2010a) demonstrate that additional speedup can be
+obtained by dividing the work of combining among several parallel worker threads.

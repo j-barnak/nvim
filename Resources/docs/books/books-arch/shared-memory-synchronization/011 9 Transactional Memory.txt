@@ -1,0 +1,1321 @@
+Transactional Memory
+                                                                                                   9
+
+Transactional memory (TM) has been one of the most active areas of synchronization
+research over the course of the past two decades, spanning literally hundreds of published
+papers. The current chapter attempts to outline the shape of the TM design space, the current
+state of the art, and the major open questions. For further details, readers may wish to consult
+the encyclopedic monograph of Harris et al. (2010).
+    At its core, TM represents the fusion of two complementary ideas: first, that we should
+raise the level of abstraction for synchronization, allowing programmers to specify what
+should be atomic without needing to specify how to make it atomic; second, that we should
+employ (at least in many cases) an underlying implementation based on speculation. The
+user-level construct is typically simply an atomic label attached to a block of code. The
+speculative implementation allows transactions (executions of atomic blocks) to proceed
+in parallel unless and until they conflict with one another (access the same location, with
+at least one of them performing a write). At most one conflicting transaction is allowed to
+continue; the other(s) abort, roll back any changes they have made, and try again.
+    Ideally, the combination of atomic blocks and speculation should provide (much of) the
+scalability of fine-grain locking with (most of) the simplicity of coarse-grain locking, thereby
+sidestepping the traditional tradeoff between clarity and performance. The combination also
+offers a distinct semantic advantage over lock-based critical sections, namely composability.
+    An atomicity mechanism is said to be composable if it allows smaller atomic operations
+to be combined into larger atomic operations without the possibility of introducing deadlock.
+Critical sections based on fine-grain locks are not composable: if operations are composed
+in different orders in different threads, they may attempt to acquire the same set of locks
+in different orders, and deadlock can result. Speculation-based implementations of atomic
+blocks break the “irrevocability” required for deadlock (Sec. 3.1.1): when some transactions
+abort and roll back, others are able to make progress.
+    As noted at the end of Chapter 2, TM was originally proposed by Herlihy and Moss (1993).
+A similar mechanism was proposed concurrently by Stone et al. (1993), and precursors can
+
+© The Author(s), under exclusive license to Springer Nature Switzerland AG 2024             185
+M. L. Scott and T. Brown, Shared-Memory Synchronization, Synthesis Lectures
+on Computer Architecture, https://doi.org/10.1007/978-3-031-38684-8_9
+
+be found in the work of Knight (1986) and Chang and Mergen (1988). Originally perceived as
+too complex for technology of the day, TM was largely ignored in the hardware community
+for a decade. Meanwhile, as mentioned at the end of Chapter 8, several groups in the theory
+community were exploring the notion of universal constructions (Turek et al. 1992; Herlihy
+1993; Barnes 1993a; Israeli and Rappoport 1994; Shavit and Touitou 1995; Anderson and
+Moir 1999), which could transform a correct sequential data structure, mechanically, into a
+correct concurrent data structure. Shortly after the turn of the century, breakthrough work
+in both hardware (Rajwar and Goodman 2001; Rajwar and Goodman 2002; Martínez and
+Torrellas 2002) and software (Herlihy et al. 2003b; Harris and Fraser 2003; Fraser and Harris
+2007) led to a resurgence of interest in TM. This resurgence was fueled, in part, by the move
+to multicore processors, which raised profound concerns about the ability of “ordinary”
+programmers to write code (correct code!) with significant amounts of exploitable thread-
+level parallelism.
+   Much of the inspiration for TM, both originally and more recently, has come from the
+database community, where transactions have been used for many years. Much of the theory
+of database transactions was developed in the 1970s (Eswaran et al. 1976). Haerder and
+Reuter (1983) coined the acronym ACID to describe the essential semantics: a transaction
+should be
+atomic –     it should happen exactly once (or not at all), even in the presence of crashes
+consistent – it should maintain all correctness properties of the database
+isolated – its internal behavior should not be visible to other transactions, nor should it
+             see the effects of other transactions during its execution
+durable – once performed, its effects should survive system crashes
+
+   These same semantics apply to TM transactions, with two exceptions. First, there is an
+(arguably somewhat sloppy) tendency in the TM literature to use the term “atomic” when
+“isolated” would be more accurate. Second, most TM systems dispense with durability.
+
+Composability
+We also used the term “composability” in Sec. 3.1.2, where it was one of the advantages of lineariz-
+ability over other ordering criteria. The meaning of the term there, however, was different from the
+meaning here. With linearizability, we wanted to ensure, locally (i.e., on an object-by-object basis,
+without any need for global knowledge or control), that the orders of operations on different objects
+would be mutually consistent, so we could compose them into a single order for the program as a
+whole. In transactional memory, we want to combine small operations (transactions) into larger, still
+atomic, operations. In other words, we’re now composing operations, not orders.
+Interestingly, the techniques used to implement linearizable concurrent objects do not generally
+support the creation of atomic composite operations: a linearizable operation is designed to be visible
+to all threads before it returns to its caller; its effect can’t easily be delayed until the end of some
+larger operation. Conversely, the techniques used to implement composable transactions generally
+involve some sort of global control—exactly what linearizability was intended to avoid.
+9 Transactional Memory                                                                        187
+
+Because they may encompass as little as two or three memory accesses, they cannot afford
+the overhead of crash-surviving disk I/O. At the same time, because they are intended mainly
+for synchronization among threads of a single program (which usually live and die together),
+durability is much less important than it is in the database world.1
+   Given a correct sequential implementation of a data structure (a tree-based set, for exam-
+ple), TM allows the author of a parallel program to reuse the sequential code, with guaranteed
+correctness, in an almost trivial fashion:
+   class pset                               pset.insert(item x):
+        set S                                    atomic
+   bool pset.lookup(item x):                          S.insert(x)
+       atomic                               pset.remove(item x):
+            return S.lookup(x)                   atomic
+                                                     S.remove(x)
+   Moreover, unlike lock-based critical sections, transactions can safely be composed into
+larger atomic operations:
+   pset P, Q
+   …
+   atomic
+        if P.lookup(x)
+               P.remove(x)
+               Q.insert(x)
+
+   Here the fact that P.lookup, P.remove, and Q.insert contain nested transactions is entirely
+harmless. Moreover, if some other thread attempts a concurrent, symmetric move from Q
+to P, deadlock can never result.
+   The original intent of TM was to simplify the construction of library-level concurrent
+data abstractions, with relatively small operations. Current hardware (HTM) and (to a lesser
+extent) software (STM) implementations serve this purpose well. How much larger trans-
+actions can get before they conflict too often to scale is still an open question.
+   The following two sections consider software and hardware transactions in turn; the
+third takes a closer look at challenges—many of them initially unanticipated—that have
+complicated the development of TM, and may yet determine the degree of its success.
+   While early STM implementations were provided simply as library packages—with entry
+points to begin a transaction, read or write a shared location transactionally, and (attempt to)
+commit a transaction—experience suggests that such libraries are too cumbersome for most
+programmers to use (Dalessandro et al. 2007). We assume through the rest of this chapter
+that TM is embedded in a programming language, and that all necessary hooks (including
+instrumentation of STM loads and stores) are generated by the compiler.
+
+1 The prospect of byte-addressable nonvolatile memory (successor technologies to DRAM) has begun
+to undermine this argument, leading concurrency and TM researchers to consider durable data struc-
+tures and transactions. We do not consider such extensions here.
+
+9.1      Software TM
+
+If two TM implementations provide the same functionality—one in hardware and the other
+in software—the hardware version will almost certainly be faster. Software implementations
+have other advantages, however: they can run on legacy hardware, they are more flexible
+(extensible), and they can provide functionality that is considered too complex to implement
+in hardware. As of 2023, commercial hardware TM is limited to relatively simple “best
+effort” systems from Intel, IBM, and Arm. The majority of research over the past 20 years
+has taken place in a software context.
+
+9.1.1    Dimensions of the STM Design Space
+
+The variety of STM designs has proven to be something of a surprise: researchers in the early
+2000s did not anticipate how large the design space would be. Principal design dimensions
+include the following:
+
+Progress guarantees – Most of the early universal constructions were nonblocking, and
+  many of the original STM systems were likewise. The OSTM (object-based STM) of
+  Fraser’s thesis work was lock free (Fraser 2003; Fraser and Harris 2007); several other
+  systems have been obstruction free (Herlihy et al. 2003b; Harris and Fraser 2003; Marathe
+  et al. 2005; Marathe et al. 2006; Marathe and Moir 2008; Tabba et al. 2009). Over time,
+  however, most groups have moved to blocking implementations in order to obtain better
+  expected-case performance.
+
+Buffering of speculative updates – To be able to roll back aborted transactions, a TM sys-
+  tem must maintain both the old and new versions of speculatively modified data. The two
+  most common options are sometimes referred to as “undo logging” (Harris et al. 2006;
+  Saha et al. 2006a), in which changes are made “in place,” but old values are buffered
+  for write-back on abort, and “redo logging” (Harris and Fraser 2003; Dice et al. 2006),
+  in which new values are buffered for write-back on commit. In either case, a secondary
+  decision must be made regarding the granularity (byte, word, cache line, object) at which
+  to buffer changes. In a system with redo logs, load instructions must be modified to
+  first check the redo log, to make sure the transaction sees its own writes. Some object-
+  based systems use a third, “cloning” option, in which multiple copies of a language-level
+  object are globally visible, and threads choose among them based on metadata that tracks
+  commits and aborts (Herlihy et al. 2003b; Fraser and Harris 2007; Marathe et al. 2005;
+  Marathe et al. 2006; Tabba et al. 2009).
+
+Access tracking and conflict resolution – When two transactions conflict, a TM system
+  must ensure that they do not both commit. Some systems are eager: they notice as soon
+  as a location already accessed in one transaction is accessed in a conflicting way by a
+
+      second transaction. Other systems are lazy: they delay the detection and resolution of
+      conflicts until one of the transactions has finished execution and is ready to commit. A
+      few systems are mixed: they resolve write-write conflicts early but read-write conflicts
+      late (Scott 2006; Shriraman and Dwarkadas 2009; Dragojević et al. 2009).
+      To detect conflicts, a TM system must track the accesses performed by each transaction.
+      In principle, with lazy conflict resolution, one could log accesses locally in each thread,
+      and intersect, at commit time, the logs of transactions that overlap in time. RingSTM
+      (Spear et al. 2008a), indeed, does precisely this. More commonly, TM systems employ
+      some sort of shared metadata for access tracking. Some object-oriented systems include
+      metadata in the header of each object. Most STM systems, however, use a hash function
+      keyed on the address of the accessed location to index into a global table of “ownership”
+      records (Orecs). By ignoring the low bits of the address when hashing, we can arrange
+      for the bytes of a given block (word, cache line, etc.) to share the same Orec. Given
+      many-to-one hashing, a single Orec will also, of course, be shared by many blocks: this
+      false sharing means that logically independent transactions will sometimes appear to
+      conflict, forcing us to choose among them.
+      Lazy and mixed conflict resolution have the advantage that readers can avoid updating
+      metadata to make themselves visible to writers. A system that skips these updates is
+      said to have invisible readers. Because metadata updates tend to induce cache misses,
+      eliminating them can dramatically improve the performance of read-only or read-mostly
+      transactions.
+
+Validation – It is straightforward to demonstrate that an STM system will guarantee strict
+  serializability if it never commits conflicting transactions that overlap in time. In a sys-
+  tem with invisible readers, we commonly distinguish between validation and the rest of
+  conflict resolution. In a given transaction A, validation serves to ensure that no other trans-
+  action B has made in-place updates (or committed updates) to locations read by A. When
+  a read-only transaction (one that modifies no shared locations) completes its execution,
+  successful validation is all that it requires in order to commit. When a writer transaction
+  completes, it must also make its updates visible to other threads. In an Orec-based system
+  with a redo-log (e.g., TL2 (Dice et al. 2006)), a transaction will typically lock the Orecs
+  of all locations it wishes to modify, validate, write back the contents of its redo log, and
+  then unlock the Orecs.
+      In a system with lazy conflict resolution, validation must also be performed on occa-
+      sion during transaction execution—not just at the end. Otherwise a transaction that has
+      read mutually inconsistent values of memory locations (values that could not logically
+      have been valid at the same time) may perform operations that would never occur in any
+      sequential execution, possibly resulting in faults (e.g., divide-by-zero or segmentation
+      fault), infinite loops, nontransactional (uninstrumented) stores to shared addresses, or
+      branches to nontransactional (uninstrumented) code. A maximally pessimistic system
+
+   may choose to validate immediately after every shared read; such a system is said to
+   preserve opacity (Guerraoui and Kapałka 2008). A more optimistic system may delay
+   validation until the program is about to execute a “dangerous” operation; such a system is
+   said to be sandboxed (Dalessandro and Scott 2012) and to tolerate “zombie” transactions,
+   which are doomed to abort but have not yet realized this fact (Scott 2014).
+
+Contention management – To resolve conflicts among transactions, we must choose
+  which of the contenders should continue and which should abort or wait. (Waiting may be
+  a viable option if the transaction that continues is a reader, working with the original value
+  of the conflicting datum, and we allow it to finish before the writer continues. Waiting
+  may also be viable if there is a possibility that the transaction that continues may ulti-
+  mately fail to commit.) If certain atomic blocks frequently access the same data, we may
+  wish to alter system scheduling to reduce the likelihood that those blocks will execute
+  concurrently. We may also wish to make choices, over time, that ensure some measure of
+  fairness (Sec. 3.2.2) among transactions or threads. These concerns are all issues of live-
+  ness (Sec. 3.2). In some systems—particularly those with eager conflict resolution—it
+  may be useful, from a software engineering perspective, to separate liveness from safety
+  (correctness) concerns, and address it in a separate contention management module.
+
+   With the exception of progress guarantees, we will discuss each of these design space
+dimensions in its own subsection below. Readers who are interested in exploring the alterna-
+tives may wish to download the RSTM suite (RSTM 2023), which provides a wide variety
+of interchangeable STM “back ends” for C++.
+   The design space dimensions are largely but not fully orthogonal. When transactions
+conflict, there is no way for a writer to defer to a reader it cannot see: invisible readers
+reduce the flexibility of contention management. In a similar vein, private undo logs (not
+visible to other threads) cannot be used in a nonblocking system, and private access logs
+cannot be used for eager conflict resolution. Perhaps most important, there is no obvious way
+to combine in-place update (undo logs) with lazy conflict resolution: Suppose transaction
+A reads x, transaction B writes x (speculatively, in place), and transaction A is the first to
+complete. Without knowing whether A’s read occurred before or after B’s write, we have
+no way of knowing whether it is safe to commit A.
+
+9.1.2    Buffering of Speculative State
+
+Transactions mediate access to shared data, but they may also access thread-private data. On
+an abort, these private data may need to be rolled back. In principle, one could treat all data
+as shared, but this would induce unnecessary overhead in the private case. Variables that are
+declared within the lexical scope of an atomic block require no load/store instrumentation:
+because their lifetimes are bounded by that of the transaction (and their storage is typically
+beyond the value of the stack pointer that will be restored on abort), there is nothing to
+
+roll back to. Variables that are private but were created outside the transaction will need
+to be rolled back. Because no other thread can modify them, it suffices to checkpoint their
+values at the beginning of the transaction, and simply restore them on abort: no per-access
+instrumentation is required.
+    Compilers may use conservative static analysis to distinguish between private and shared
+data. Any access that might be to shared data must be instrumented. Any pre-existing private
+variable that might be modified in the transaction must be checkpointed (and restored on
+abort)—unless every store that might access it is instrumented.
+    Dynamically allocated data require special treatment. Malloc and free (or their equiva-
+lents) can be made transaction-safe. Data malloced in an aborted transaction must be freed.
+Data freed in a transaction must be kept in limbo until we know whether the transaction
+will commit. With lazy conflict resolution, freed data is probably best kept in limbo until
+all potentially concurrent transactions have completed.
+    As noted above, most TM systems are prone to false sharing—accesses to disjoint data
+that are covered by the same metadata. Here the mismatch between access and metadata
+granularity may lead to unnecessary aborts. Granularity is also a problem for redo and undo
+logging. Suppose that transaction A stores to byte b of word w, and that nontransactional
+code stores to byte c. If the TM system logs accesses at full-word granularity, then the write-
+back of w on commit (in a redo-log system) or abort (in an undo-log system) may overwrite
+the nontransactionally updated value of c. Note that the example entails no data race between
+transactional and nontransactional code: the problem is one of implementation. To maintain
+correctness, either the compiler must ensure (via data structure layout) that transactional and
+nontransactional instructions never access different pieces of a logging-granularity block,
+or the TM system must log at the finest possible granularity. One possible optimization is
+to log at word granularity, but tag each logged word with per-byte dirty bits.
+
+9.1.3    Access Tracking and Conflict Resolution
+
+Two concurrent transactions conflict if they both access the same location and at least one
+of them writes it. Conflicts can be resolved by aborting either transaction or (in some cases)
+by stalling the transaction that makes its access second. Without prior knowledge of read
+and write sets (and without enforcing global mutual exclusion), a TM system must speculate
+(and be prepared to roll back) at least up to the first conflict. It can speculate beyond that
+point, but then write-write conflicts among transactions will eventually force all but one to
+abort, and read-write conflicts will force the reader(s) to abort if a writer commits first.
+    There is a fundamental tradeoff between eager and lazy conflict resolution. Let us say
+that a conflict occurs at the time of the second of a pair of conflicting accesses. The conflict
+is resolved when the TM system chooses which transaction will be given the chance to
+commit. (In some systems, there may be a point in-between at which the conflict is detected
+but not yet resolved.) With lazy conflict resolution, if transaction A eventually aborts, any
+
+work it performs after the original occurrence of a conflict might be seen as “egregiously
+wasted”: in hindsight, given the conflict, there is no way it could have been productive. With
+eager conflict resolution, however, we may not know, at the time of the conflict, what other
+conflicts may arise in the future. If transaction A aborts in deference to transaction B, but B
+subsequently aborts in deference to some other transaction C, then in hindsight there was
+no point in aborting A: its work has been wasted just as egregiously as it was in the lazy
+case. There is no way, in general, to tell whether eager or lazy conflict resolution will result
+in more wasted work. Mixed resolution exploits the observation that in a redo-log-based
+system, both transactions can commit in the wake of a read-write conflict, if the reader does
+so first.
+    As noted above, invisible readers avoid the problem of “turning readers into writers” by
+forcing them to update metadata. By introducing asymmetry between readers and writers,
+however, we force conflict resolution to be performed by readers. Moreover, read-write
+conflicts in which the read occurs first must be detected after the fact: a reader must revisit
+and validate its reads before committing (Sec. 9.1.4). An intermediate option, explored in
+the SkySTM system (Lev et al. 2009a), is to use a scalable non-zero indicator (SNZI) (Ellen
+et al. 2007) to indicate the presence of one or more readers, without recording their individual
+identities. As noted in Sec. 5.4, SNZI uses a tree-based representation to reduce contention
+
+Generalizing the Notion of Conflict
+Write-write and read-write conflicts interfere with serializability because the accesses don’t com-
+mute: they can lead to different results if performed in the opposite order. Concurrent reads of the
+same location by different transactions do not interfere with serializability because they do commute:
+they produce the same results if performed in the opposite order.
+With this observation in mind, one can raise the level of abstraction, generalize the notion of conflict,
+decrease the overhead of conflict detection, and reduce the frequency with which transactions
+conflict. We have already seen an example with malloc and free. Unless these are treated as a
+special case, loads and stores to locations in the memory manager (e.g., a global free list) are
+likely to be seen as conflicts, even though operations on separate blocks of memory are logically
+independent. By special-casing malloc and free, we essentially add them to the list of primitive
+operations (along with load and store), and we note that (as long as the memory manager is properly
+synchronized internally), operations on separate blocks commute at the level of program semantics,
+even if they result in different memory contents (different blocks in different places) at the level of
+the implementation.
+Herlihy and Koskinen (2008) have proposed a transactional boosting mechanism to add abstractions
+to the TM system, so that conflicts on a set abstraction, for example, might be tracked at the level of
+add, remove, and lookup operations, rather than individual loads and stores. Two add operations
+would then commute—and fail to cause a conflict—even if they resulted in a different concrete
+representation of the (abstract) set in memory. Boosting requires that every operation have an inverse
+that can be used to undo its effects. It also benefits from an asymmetric generalization of the notion
+of commutativity (Koskinen et al. 2010).
+
+for the reader count, thereby reducing the overhead of read-only transactions while still
+allowing writers to detect the existence of conflicts with one or more earlier readers.
+
+9.1.4    Validation
+
+As described in Sec. 3.1.2, two-phase locking provides a straightforward way to ensure
+serializability. Each transaction, as it runs, acquires a reader-writer lock (in read or write
+mode as appropriate) on the Orec of every location it wishes to access. (This implies eager
+conflict detection.) If an Orec is already held in an incompatible mode, the transaction stalls,
+aborts, or (perhaps) kills the transaction(s) that already hold the lock. (This implies eager
+conflict resolution. To avoid deadlock, a transaction that stalls must do so provisionally;
+if it waits too long it must time out and abort.) If all locks are held from the point of
+their acquisition to the end of the transaction, serializability is ensured. As described in the
+previous subsection, SNZI can be used to reduce the contention and cache misses associated
+with lock updates by readers, at the expense, in a writer, of not being able to identify which
+transactions have already acquired an Orec in read mode. Alternatively, Ramalhete et al.
+(2023) have shown how to avoid metadata conflicts among readers of a given lock while
+still providing complete information for contention management. Like most visible reader
+schemes, their 2PLSF system devotes one bit to each ⟨lock, thread⟩ pair, but it packs these
+into words associated with the threads instead of the locks. Acquiring a write lock now
+
+Composing Already-concurrent Operations
+As noted in the chapter introduction, TM allows a correct, sequential data structure to be converted,
+mechanically, into a correct concurrent structure. Given a set of existing concurrent structures—
+ideally with implementations that are not only correct but also very efficient—one might also wish
+to compose operations, mechanically, into atomic transactions. For lock-based structures, two-phase
+locking (2PL—Sec. 3.1.2) provides a natural means of doing so. The principal challenge is the need
+to back out and retry if failure to acquire a lock within a reasonable amount of time suggests the
+possibility of deadlock. Spiegelman et al. (2016) use ideas from STM to develop a methodology
+whereby existing structures can be modified (by hand) to compose with one another seamlessly and
+efficiently via 2PL.
+In STM systems, transactional boosting (described in the box on page 196) similarly allows
+programmers to leverage past investments in high-performance data structures, avoiding the need
+for expensive instrumentation in boosted operations.
+Several researchers have also explored the possibility of composing operations on existing nonblock-
+ing structures, without the full machinery of STM (Zhang and Dechev 2016; LaBorde et al. 2019;
+Elizarov et al. 2019). As in the algorithms of Sec. 8.6.1, operations typically “announce” them-
+selves by appending descriptors to nodes of a linked data structure. More recently, Cai et al. (2023)
+have presented a technique that increases generality and reduces overhead by instrumenting only
+the linearization points and other “critical” memory accesses of nonblocking operations. A universal
+construction based on those of Sec. 8.10 then effects these accesses together, atomically.
+
+requires a separate read for every thread (rather than one for every wordsize threads), but
+readers never write the words of other threads, and contention is dramatically reduced in
+read-heavy workloads.
+    If we dispense with visible readers, we can use sequence locks (Sec. 6.2) to replace the
+reader-writer locks on Orecs. A reader makes no change to the (shared) lock, but does keep
+a (private) record of the value of the lock at the time it reads a covered location. The record
+of lock values constitutes a read log, analogous to the write log already required for redo on
+commit or undo on abort. Using its read log, a transaction can validate its reads by double-
+checking the values of Orec locks: if a lock has changed, then some other transaction has
+acquired the Orec as a writer, and the covered data can no longer be assumed to be consistent;
+the reader must abort.
+    To reduce the impact of false sharing, a transaction can choose to keep the values of
+loaded locations in its read log, instead of—or in addition to—the values of Orec locks. It
+can then perform value-based validation (Olszewski et al. 2007; Ding et al. 2007), verifying
+that previously-read locations still (or again) contain the same values. Some mechanism—
+typically a check of Orec lock values—must still be used, of course, to guarantee that the
+verified values are all present at the same time.
+    In the degenerate case, Dalessandro et al. (2010c) use a single global Orec to provide this
+guarantee. Their “NOrec” system allows a read-only transaction to validate—and commit—
+without acquiring any locks: the transaction reads the global sequence lock, uses value-
+based-validation to verify the consistency of all read locations, and then double-checks the
+sequence lock to make sure that no other transaction committed writes during the validation.
+As in any system with invisible readers, they employ a redo log rather than an undo log, and
+they validate during the transaction immediately after every shared read or (with sandboxing
+(Dalessandro and Scott 2012)) immediately before every “dangerous” operation. NOrec
+forces transactions to write back their redo logs one at a time, in mutual exclusion, but it
+allows them to create those logs—to figure out what they want to write—in parallel. At the
+time of testing in 2013, no known STM system was found to consistently outperform NOrec
+for realistic workloads on single-chip multicore machines, though both TML (Dalessandro
+et al. 2010a) and FastLane (Wamhoff et al. 2013) were better in important cases.
+
+Avoiding Redundant Validation
+If a transaction reads n different locations, and validates its previous reads after each new
+read (to guarantee opacity), Orecs will need to be consulted O(n 2 ) times over the course
+of the transaction. For large transactions, the overhead of this incremental validation can
+be prohibitive. To reduce it, Spear et al. (2006) observe that in a redo-log-based system,
+transaction T must validate its reads only if some other transaction has committed writes
+since T ’s last validation. Absent a very large number of cores and a very high transaction
+completion rate, many validations can be avoided if we maintain a global count of the number
+
+of committed writer transactions, and elide validation whenever the count has not changed.
+NOrec uses the global sequence lock to effect the same optimization.
+
+Time-Based Validation
+By validating its previous reads immediately after reading a new location x, transaction T
+ensures that even if x has been modified very recently, all of T ’s work so far is still valid,
+because the other locations have not been modified since they were originally read. An
+alternative approach, pioneered by the TL2 system of Dice et al. (2006), is to verify that the
+newly read location x has not been modified since T began execution. That is, instead of
+ensuring that all of T ’s work so far is correct as of the current moment, we ensure that it
+is correct as of T ’s start time. To implement this approach, TL2 employs a global “clock”
+(actually, just a global count of committed transactions). It then augments each Orec with a
+version number that specifies the value of the global clock as of the most recent write to any
+location covered by the Orec. At the beginning of each transaction, TL2 reads and remembers
+the global clock. On each read, it verifies that the version number in the corresponding Orec
+is less than or equal to the remembered clock value. If not, the transaction aborts.
+    If a read-only transaction completes its execution successfully, we know its behavior is
+correct as of its start time. No additional work is necessary; it trivially commits. A writer
+transaction, however, must validate its read set. It locks the Orecs of all locations it wishes
+to write, atomically increments the global clock, checks the version numbers of (the Orecs
+of) all locations it has read, and verifies that all are still less than its start time (so the
+covered locations have not been modified since). If it is unable to acquire any of the Orecs
+for the write set, or if any of the Orecs for the read set have too-recent version numbers, the
+transaction aborts. Otherwise, it writes back the values in its redo log and writes the (newly
+incremented) global clock value into each locked Orec. By colocating the lock and version
+number in a single word, TL2 arranges for these writes to also unlock the Orecs.
+    When a transaction T in TL2 reads a location x that has been modified since T ’s start
+time, the transaction simply aborts. Riegel et al. (2006) observe, however, that just as a
+writer transaction must validate its reads at commit time, effectively “extending” them to
+its completion time, a reader or writer transaction can update its reads incrementally. If T
+began at time t1 , but x has been modified at time t2 > t1 , T can check to see whether any
+previously read location has been modified since t2 . If not, T can pretend it began at time t2
+instead of t1 , and continue. This extensible timestamp strategy is employed in the TinySTM
+system of Felber et al. (2008), which has invisible readers but eager conflict detection. It is
+also used in SwissTM (Dragojević et al. 2009), with mixed conflict detection, and NOrec
+(Dalessandro et al. 2010c), with lazy detection.
+
+Bloom Filters as an Alternative to Read Logs
+While NOrec is easily described as a single-Orec STM system with value-based validation,
+its inspiration came not from Orec-based systems but from an earlier system known as
+
+RingSTM (Spear et al. 2008a). RingSTM uses redo logs and lazy conflict detection, but
+its validation is based not on the write log and a full read set but rather on Bloom filter
+approximations of these.
+    The behavior of RingSTM is most easily understood by imagining an unbounded global
+list whose entries represent committed transactions, in serialization order. Each entry of the
+list contains the write set of the transaction, summarized as a Bloom filter. When it begins
+execution, a transaction reads and remembers a pointer to the head of the list. While running,
+it builds Bloom filters that represent its reads and writes. To validate, it intersects its read
+and write filters with the write filters of any transactions that have been added to the global
+commit list since the last validation (or the start of the transaction). If all intersections are
+empty, the transaction updates its pointer to the head of the list. If some intersection is
+nonempty, a conflict (true or false) has occurred, and the transaction aborts. To commit, a
+transaction reads the current head pointer, validates, and then uses CAS to add its own Bloom
+filter to the head of the list. A successful CAS constitutes serialization. The transaction then
+writes back its redo log, waits until all previously-committed transactions have finished
+doing the same (as indicated in their entries of the global list) and finally marks its own
+write-back as finished.
+    While an unbounded global list is clearly impractical, we really only need the portion
+that was created after the start time of the oldest running transaction. In practice, the list
+is replaced with a bounded circular buffer (a ring—hence the name); modest extra checks
+avoid any problems with wrap-around.
+    In comparison to NOrec, RingSTM has higher costs for load/store instrumentation but
+lower costs for validation (at least in large transactions). It also allows concurrent write-back.
+
+Bloom Filters
+For readers not familiar with the notion, a Bloom filter (Bloom 1970) is a bit vector representation
+of a set that relies on one or more hash functions. Bit i of the vector is set if and only if for some set
+member e and some hash function h j , h j (e) = i. Element e is inserted into the vector by setting bit
+h j (e) for all j. The lookup method tests to see if e is present by checking all these bits. If all of them
+are set, lookup will return true; if any bit is unset, lookup will return false. These conventions allow
+false positives (an element may appear to be present when it is not) but not false negatives (a present
+element will never appear to be absent). In the basic implementation, deletions are not supported.
+Note that Bloom filters do not introduce a qualitatively different problem for TM: Orec-based STM
+systems already suffer from false sharing. The actual rate of false positives in RingSTM depends on
+the application and the choice of Bloom filter size.
+
+9.1.5    Contention Management
+
+In a system with lazy conflict resolution, contention management is more or less straight-
+forward: since one transaction is ready to commit, and cannot encounter further problems at
+this point, it should generally win out over any partially-completed transactions with which
+it conflicts (Spear et al. 2009a). In particular, letting it do so ensures livelock freedom:
+whenever a conflict is resolved, some transaction is guaranteed to commit, and the system
+as a whole makes progress. Starvation may still be a problem, especially for long-running
+transactions that read a large number of locations. Spear et al. report good results with a
+simple heuristic: any transaction that aborts repeatedly will eventually acquire a global lock
+that blocks other transactions from committing and makes completion of the previously
+starving transaction inevitable.
+    It is much less clear what strategy to use for systems with eager conflict resolution.
+Possibilities include favoring the transaction that started earlier, or has read or written a
+larger number of shared locations, or has been forced to abort more often, or has already
+killed off a larger number of competitors. In general, these strategies attempt to recognize
+and preserve the investment that has already been made in a transaction. There was a flurry
+of papers on the subject back around 2005 (Guerraoui et al. 2005a; Guerraoui et al. 2005b;
+Scherer and Scott 2005a), and follow-on projects continued for some time. No one strategy
+appears to work best in all situations.
+
+9.2      Hardware TM
+
+While (as we have seen) TM can be implemented entirely in software, hardware implemen-
+tations have several compelling advantages. They are faster, of course, at least for equivalent
+functionality. Most can safely (and speculatively) call code in unmodified (uninstrumented)
+binary libraries. Most guarantee that transactions will serialize not only with other transac-
+tions but also with individual (non-transactional) loads, stores, and other atomic instruc-
+tions. (This property is sometimes known as strong atomicity or strong isolation (Blundell
+et al. 2005).) Finally, most provide automatic, immediate detection of inconsistency, elimi-
+nating the need for explicit validation.
+    Most of the design decisions discussed in Sec. 9.1, in the context of STM, are relevant
+to HTM as well, though hardware may impose additional restrictions. Contention manage-
+ment, for example, will typically be quite simple, or else deferred to software handlers. More
+significantly, buffer space for speculative updates is unlikely to exceed the size of on-chip
+caches: transactions that exceed the limit may abort even in the absence of conflicts. Trans-
+actions may also abort for any of several “spurious” reasons, including context switches and
+external interrupts.
+    In any new hardware technology, there is a natural incentive for vendors to leverage
+existing components as much as possible, and to limit the scope of changes. Several HTM
+
+implementations have been designed for plug-compatibility with traditional cross-chip cache
+coherence protocols. In the IBM Blue Gene/Q (Wang et al. 2012), designers chose to use an
+unmodified processor core, and to implement HTM entirely within the memory system.
+   To accommodate hardware limitations, most HTM systems require software backup. In
+the simple case, one can always fall back to a global lock. More ambitiously, one can consider
+hybrid TM systems in which compatible STM and HTM implementations coexist.
+   In the first subsection below we discuss aspects of the TM design space of particular
+significance for HTM. In Sec. 9.2.2 we consider speculative lock elision, an alternative
+programming strategy (possibly supported by a separate ABI) that uses TM-style speculation
+to execute traditional lock-based critical sections. In 9.2.3 we consider alternative ways in
+which to mix hardware and software support for TM.
+   HTM work to date includes a large number of academic designs and several commer-
+cial implementations. The latter include the Azul Systems Vega 2 and 3 (Click 2019); the
+experimental Sun/Oracle Rock processor (Dice et al. 2009); three independently developed
+systems—for the Blue Gene/Q (Wang et al. 2012), zEC12 mainframe (Jacobi et al. 2012),
+and Power 8 (IBM 2012; Le et al. 2015)—from IBM; the Transactional Synchronization
+Extensions (TSX) of Intel’s x86 processors starting with the “Haswell” generation (Intel
+2021a); and the Transactional Memory Extension (TME) of Arm’s v9-A instruction set
+(Mann 2019).
+   Unfortunately, as of early 2023, the future of commercial HTM appears unclear. The
+Azul, Sun, and Blue Gene implementations are of historical interest only. IBM has retained
+TM support in z15 but discontinued it in Power 10 (IBM 2020). AMD published an early
+HTM proposal (AMD 2009) but never implemented it, nor did they pick up Intel’s TSX.
+Intel, for its part, has disabled TSX by default on recent x86 processors to forestall side-
+channel information leaks (Intel 2021b; Mott 2021). And Arm’s TME design is too new to
+have acquired any real-world experience.
+
+9.2.1    Dimensions of the HTM Design Space
+
+ABI
+Most HTM implementations include instructions to start a transaction, explicitly abort the
+current transaction, and (attempt to) commit the current transaction. (In this chapter, we
+refer to these, generically, as tx_start, tx_abort, and tx_commit.) Some implementations
+include additional instructions, e.g., to suspend and resume transactions, or to inspect their
+status.
+   While a transaction is active, load and store instructions are considered speculative: the
+hardware automatically buffers updates and performs access tracking and conflict detection.
+Some systems provide special instructions to access memory nonspeculatively inside of a
+transaction—e.g., to spin on a condition or to save information of use to a debugger or
+
+performance analyzer.2 Because these instructions violate isolation and/or atomicity, they
+must be used with great care.
+   On an abort, a transaction may retry automatically (generally no more than some fixed
+number of times), retry the transaction under protection of an implicit global lock, or jump
+to a software handler that figures out what to do (e.g., retry under protection of a software
+lock). In Intel’s RTM (Restricted Transactional Memory—part of TSX), the address of the
+handler is an argument to the tx_start instruction. In IBM’s z and Power TM, and in Arm
+TME, tx_start sets a condition code, in the style of the POSIX setjmp routine, to indicate
+whether the transaction is beginning or has just aborted; this code is typically checked by the
+following instruction. With either style of abort delivery, any speculative updates performed
+so far will be discarded.
+   In the IBM Blue Gene/Q, HTM operations were triggered not with special instructions
+but with stores to special locations in I/O space. Conflicts would raise an interrupt, which
+was fielded by the OS kernel.
+
+Buffering of Speculative Updates
+There are many ways in which a processor can buffer speculative updates. Herlihy and
+Moss’s original proposal called for a special transactional cache located alongside the L1
+data cache. Sun’s prototype Rock processor (never brought to market) allowed only a very
+small number of speculative stores, which it kept in the core’s store buffer (Dice et al.
+2009). A few academic systems have proposed keeping logs in virtual memory (Ananian
+et al. 2005; Yen et al. 2007; Bobba et al. 2008), but by far the most common approach is to
+buffer speculative updates at some level of the normal cache hierarchy, and to “hide” them
+from the coherence protocol until the transaction is ready to commit. In some systems (e.g.,
+Blue Gene/Q and the original Herlihy and Moss proposal), the cache holds both the original
+and the speculative version of a line, but most systems buffer only the speculative version;
+the original can always be found in some deeper level of cache or memory.
+    Whatever the physical location used to buffer speculative updates, there will be a limit on
+the space available. In most HTM systems, a transaction will abort if it overflows this space,
+or exceeds the supported degree of associativity (footnote, Sec. 2.1.2). Several academic
+groups have proposed mechanisms to “spill” excess updates to virtual memory and continue
+to execute a hardware transaction of effectively unbounded size (Rajwar et al. 2005; Blundell
+et al. 2007; Chuang et al. 2006; Ceze et al. 2006; Chung et al. 2006; Shriraman et al. 2010),
+
+2 Among commercial machines (as of 2023), z TM provides nontransactional stores (ordered at com-
+mit or abort time), but not loads. Sun’s Rock provided both, with stores again ordered at commit/abort.
+Intel’s TSX originally provided neither, but Sapphire Rapids processors introduced a “Suspend Load
+Address Tracking” mechanism that supports nontransactional loads. Power TM allows transactions
+to enter a “suspended” state (see Sec. 9.2.1) in which both loads and stores will happen immediately
+and “for real.” Blue Gene/Q facilities could be used to similar ends, but only with kernel assistance. On
+both the Power 8/9 and Blue Gene/Q, the programmer must be aware of the potential for paradoxical
+memory ordering.
+
+but such mechanisms seem unlikely to make their way into commercial systems anytime
+soon.
+   In addition to the state of memory, a TM system must consider the state of in-core
+resources—registers in particular. In most HTM systems, tx_begin checkpoints all or most
+of the registers, and restores them on abort. In a few systems (including Blue Gene/Q and
+the Azul Vega processors (Click 2019)), software must checkpoint the registers prior to
+tx_begin, and restore them manually on abort.
+
+Access Tracking and Conflict Resolution
+By far the most common way to identify conflicts in an HTM system is to leverage the
+existing cache coherence protocol. Consider a basic MESI protocol of the sort described in
+Sec. 2.1.2. Suppose, in addition to the tag bits used to indicate whether a line is modified,
+exclusive, shared, or invalid, we add an additional speculative bit. The speculative modified
+state indicates a line that has been written in the current transaction; the speculative exclusive
+
+Buffering in the Cache
+Though most commercial HTM implementations buffer speculative updates (and tag speculative
+reads) in the cache hierarchy, they do so in different ways. Azul’s implementation was entirely in the
+(private) L1 caches; its shared L2 was oblivious to speculation. Blue Gene/Q, by contrast, kept its
+buffering and tags in a 32 MB L2 cache, with very little support from the L1 caches (each of which is
+shared by as many as 4 threads). In so-called “short-running” mode, a transaction needed to bypass
+the L1 on every access (suffering an L1 miss penalty), so that speculative accesses could be tracked
+in the L2, and loads could see the stores. Alternatively, in “long-running” mode, the operating
+system would flush the L1 at the beginning of a transaction, and then manipulate virtual-to-physical
+mappings so that separate threads used separate physical addresses in the L1 (the bits in which these
+addresses differed were stripped by hardware on the L1-to-L2 path).
+The zEC12 took yet another approach. It tracked and buffered speculative accesses in the L1, but
+both the L1 and L2 were normally write-through. To hide speculative stores from the L2 and L3,
+designers introduced a 64-cache line (8 KB) gathering store cache on the L1-to-L2 path. During
+a transaction, stores were held in the gathering cache until commit time; stores that targeted the
+same cache line were coalesced. Given that the L3 was shared by 6 cores, each of which could (in
+bursts) execute two stores (and 5 other instructions) per cycle at 5.5 GHz, the gathering cache served
+the important additional function of reducing incoming bandwidth to the L3, even during normal
+operation.
+Like the Azul machines, Intel’s Haswell processor and its successors perform access tracking and
+update buffering in the L1 cache, at cache line granularity. Conflicts are detected using the existing
+coherence protocol. Intriguingly, speculative loads (but not stores) that exceed the capacity or asso-
+ciativity of the L1 cache are summarized in a hardware structure (widely assumed to be some sort of
+Bloom filter) that is then checked against incoming coherence requests. As a result, Intel’s machines
+can often accommodate transactions with very large read sets. The IBM Power 8 buffered speculative
+state in the L2 cache, with a separate set of 64 tags that were dynamically associated with speculative
+lines.
+
+and shared states indicate lines that have been read (but not written) in the current transaction.
+Any incoming coherence message requesting shared access to a line in speculative modified
+state constitutes a conflict, as does any request for exclusive access to a speculative line of
+any kind.
+   Most HTM systems perform eager conflict detection. The TCC proposal of Hammond
+et al. (2004) delayed detection until a transaction was ready to commit. Shriraman et al.
+(2010) proposed to detect conflicts as they occurred but resolve them only at commit time.
+Blue Gene/Q’s TM hardware could in principle be used to construct a lazy system, but its
+software runtime was designed to resolve conflicts eagerly. Even so, it was distinctive in its
+ability to choose, dynamically, which transaction should continue and which should wait or
+abort in the event of a conflict.
+   In an eager system, the most straightforward response to a conflict (detected via incom-
+ing coherence traffic) is to abort the current transaction. This strategy, known as “responder
+loses,” has the advantage of full compatibility with existing coherence protocols. After abort-
+ing, the local (responding) core can provide the conflicting line to the remote (requesting)
+core in precisely the same way it would on a machine without HTM.
+   The disadvantage of “responder loses” is the potential for livelock: if the local transaction
+restarts and attempts to access the conflicted line before the remote transaction has com-
+pleted, the roles of requester and responder will be reversed, and the remote transaction will
+abort. Various contention management strategies (e.g., randomized exponential backoff)
+can be used to minimize the problem. In the IBM zEC12 (Jacobi et al. 2012), the coherence
+protocol already included a NAK message, used to (temporarily) refuse to downgrade a
+line for which writeback is currently in progress. The TM system leveraged this message
+to “stiff-arm” requests for a transactional line, in hopes of completing the active transaction
+before the requester tried again. Le et al. suggest that Power 8 arranged for the responder to
+win when its copy of the requested line had been speculatively written (2015, first bullet,
+p. 8:4).
+   Several proposals for “unbounded” HTM use hardware-implemented Bloom filter signa-
+tures to summarize read and write sets that overflow the cache (Ceze et al. 2006; Yen et al.
+2007; Shriraman et al. 2010). An incoming request from the coherence protocol will trigger
+conflict management not only due to conflict with a speculative line in the local cache but
+also due to conflict with an overflowed line, as captured by the read or write set signature.
+Other proposals control access to overflowed data using page-level memory protections
+(Chuang et al. 2006) or distributed ownership tokens (Bobba et al. 2008).
+
+Potential Causes of Aborts
+In all TM systems, transactions must sometimes abort in response to conflicts with other
+transactions. Most HTM systems will also abort a transaction for various other reasons,
+including conflicts due to false sharing, overflow of the capacity or associativity of the spec-
+ulative cache, exceptions (interrupts and faults) of various kinds, and attempts to execute
+
+instructions not supported in speculative mode. Exactly which instructions and exceptions
+will trigger an abort differs from machine to machine. Transactions on Sun’s Rock pro-
+cessor were particularly fragile: most subroutine calls or mispredicted branches would end
+the current transaction (Dice et al. 2009). Blue Gene/Q was particularly robust: uncached
+memory accesses and DMA requests were the only program behaviors that would force
+the TM system to interrupt a transaction (the operating system would also abort the current
+transaction on various interrupts and faults).
+    Most of the proposals for “unbounded” hardware transactions have addressed not only
+the possibility of inadequate space for buffered updates but also inadequate time: the system
+generally provides a way to save the state of a transaction to memory at the end of a scheduling
+quantum and resume it the next time its thread gets to run. Among the HTM systems that
+have actually been built, only Blue Gene/Q allows transactions to survive a context switch.
+Most others abort the current transaction on any of the interrupts (e.g., timer expiration,
+device completion) that might end the current quantum.
+    Power 8 (IBM 2012; Le et al. 2015) introduced a distinctive mechanism to suspend and
+resume the current transaction. While a transaction is suspended, loads and stores proceed
+nontransactionally. Most exceptions cause the current transaction to be suspended rather
+than aborted. The operating system can choose whether to resume the transaction after
+servicing the exception. If it decides to effect a context switch, a special instruction allows
+it to reclaim the processor state that was checkpointed at the beginning of the transaction.
+At the start of the next quantum, another special instruction allows the OS to re-checkpoint
+and resume the transaction, whereupon it will immediately abort and fall into its software
+handler (which can then retry, fall back to a software lock, etc., as appropriate).
+    For mission-critical applications, IBM’s z TM (Jacobi et al. 2012) provided a special
+constrained transaction mode that was guaranteed to succeed, eventually, in hardware, with
+no software handler or fallback path. Constrained transactions are limited to a small total
+number of instructions (32 on the zEC12) with no backward branches, no subroutine calls,
+and a small (128 bytes on the zEC12) memory access footprint. They are intended for small
+data structure updates—the sorts of things for which Herlihy and Moss TM (or Oklahoma
+Update) was originally intended. AMD’s Advanced Synchronization Facility (ASF) (AMD
+2009; Diestelhorst et al. 2010) envisioned a similar guarantee for small transactions.
+
+9.2.2    Speculative Lock Elision
+
+While proponents typically argue for TM as a way to simplify the construction of scalable
+parallel programs, this is not necessarily a compelling argument from the perspective of
+hardware vendors. Given the investment needed to add TM to an existing ISA—and to
+propagate it through all future generations—potential improvements in the performance
+of existing programs provide a much more compelling argument. Speculative lock elision
+(SLE) (Rajwar and Goodman 2001; Rajwar and Goodman 2002) is a use case that promises
+
+precisely this sort of improvement. It retains the traditional lock-based programming model,
+but attempts to execute critical sections as transactions whenever possible. Doing so has at
+least two potential benefits:
+
+1. Particularly for code with medium- to coarse-grain locks, it is common for critical sec-
+   tions protected by the same lock to encounter no actual conflicts. SLE may allow such
+   critical sections to execute in parallel.
+
+2. Even when data conflicts are relatively rare, it is common for a thread to find that a lock
+   was last accessed on a different core. By eliding acquisition of the lock (i.e., simply
+   verifying that it is not held), SLE may avoid the need to acquire the lock’s cache line
+   in exclusive mode. By leaving locks shared among cores, a program with many small
+   critical sections may suffer significantly fewer cache misses.
+
+Both of these benefits may improve performance on otherwise comparable machines. They
+also have the potential to increase scalability, allowing programs in which locks were becom-
+ing a bottleneck to run well on larger numbers of cores.
+   Azul has indicated that lock elision was the sole motivation for their HTM design (Click
+2019), and the designers of most other commercial systems, including z (Jacobi et al. 2012),
+Power (IBM 2012), and TSX (Intel 2021a), cite it as a principal use case. On z, SLE is
+simply a programming idiom, along the following lines:
+               really_locked := false
+               tx_begin
+               if failure goto handler
+               read lock value               // add to transaction read set
+               if not held goto cs
+               abort
+      handler: really_locked := true
+               acquire lock
+      cs:      …                             // critical section
+               if really_locked goto release
+               tx_commit
+               goto over
+      release: release lock
+      over:
+This idiom may be enhanced in various ways—e.g., to retry a few times in hardware if the
+abort appears to be transient—but the basic pattern is as shown. One shortcoming is that
+if the critical section (or a function it calls) inspects the value of the lock (e.g., if the lock
+is reentrant, and is needed by a nested operation), the lock will appear not to be held. The
+obvious remedy—to write a “held” value to the lock—would abort any similar transaction
+that is running concurrently. An “SLE-friendly” solution would require each transaction to
+remember, in thread-local storage, the locks it has elided.
+
+   Power TM provides a small ISA enhancement in support of SLE: the tx_commit instruc-
+tion can safely be called when not in transactional mode, in which case it sets a condition
+code. The idiom above then becomes:
+            tx_begin
+            if failure goto handler
+            read lock value           // add to transaction read set
+            if not held goto cs
+            abort
+   handler: acquire lock
+   cs:      …                         // critical section
+            tx_commit
+            if commit_succeeded goto over
+            release lock
+   over:
+   Originally proposed in the thesis work of Ravi Rajwar (2002), SLE plays a significantly
+more prominent role in Intel’s Transactional Synchronization Extensions (TSX), of which
+Rajwar was a principal architect. In its original release, TSX actually provided two separate
+ABIs, called Hardware Lock Elision (HLE) and Restricted Transactional Memory (RTM).3
+RTM’s behavior, to first approximation, is similar to that of z or Power TM. There are
+instructions to begin, commit, or abort a transaction, and to test whether one is currently
+active.
+
+Lock Subscription
+The pseudocode shown in this section (without Intel’s special ABI) is of course quite similar to what
+a compiler or library would use for best-effort implementation of atomic blocks with fallback to a
+global lock. In both cases, a fallback transaction that writes to a location read or written by a hardware
+transaction will cause the latter to abort. Unfortunately, we must also consider the possibility that a
+fallback transaction might read a pair of locations X and Y that are updated together, atomically, by
+a hardware transaction that runs after the read of X but before the read of Y. To prevent the fallback
+transaction from seeing the resulting inconsistency, both SLE and atomic-block code arrange for a
+hardware transaction to “subscribe” to the fallback lock by reading its value and aborting if the lock
+is held.
+Unfortunately, subscription to a global lock (or to a coarse-grain SLE lock) forces a hardware transac-
+tion to defer to software transactions with which it does not logically conflict. To reduce the window
+of vulnerability, several researchers have suggested that subscription should be delayed until the very
+end of the hardware transaction, allowing it to commit if the software transaction has already finished.
+While tempting, this lazy subscription is safe only in the presence of very careful sandboxing on the
+hardware side (Dice et al. 2014). Without it, the hardware transaction may see inconsistent values
+that end up defeating the eventual subscription—e.g., by inducing a logically impossible branch,
+overwriting a return address, or corrupting the lock itself. As we shall see in Sec. 9.2.3, similar issues
+arise in hybrid TM systems.
+
+3 As of early 2020, Intel appears to have deprecated the HLE ABI (Intel 2023, Vol. 1, Sec. 2.5).
+
+Figure 9.1 The Ticket lock of         class lock
+Figure 4.7, modified to make               atomic<int> next ticket := 0
+use of hardware lock elision.              atomic<int> now serving := 0
+                                          const int base = ...               // tuning parameter
+                                      lock.acquire():
+                                           int my ticket := XACQUIRE next ticket.FAI()
+                                           loop
+                                                int ns := now serving.load()
+                                                if ns = my ticket
+                                                      break
+                                                pause(base × (my ticket − ns))
+                                           fence(R∥RW)
+                                      lock.release():
+                                           int ns := now serving.load()
+                                           if ¬ XRELEASE next ticket.CAS(ns+1, ns, RW∥)
+                                                 now serving.store(ns + 1)
+
+    On legacy machines, RTM instructions will cause an unsupported instruction exception.
+To facilitate the construction of backward-compatible code, HLE provides an alternative
+interface in which traditional lock acquire and release instructions (typically CAS and store)
+can be tagged with an XACQUIRE or XRELEASE prefix byte. The prefixes were carefully chosen
+from among codes that function as nops on legacy machines; when run on such a machine,
+HLE-enabled code will acquire and release its locks “for real.” On a TSX machine, the
+hardware will refrain from acquiring exclusive ownership of the cache line accessed by
+an XACQUIRE -tagged instruction. Rather, it will enter speculative mode, add the lock to its
+speculative update set, and remember the lock’s original value and location. If the subsequent
+XRELEASE -tagged instruction restores the original value to the same location (and no conflicts
+have occurred in the interim), the hardware will commit the speculation. Crucially, any loads
+of the lock within the critical section will see its value as “locked,” even though its line is
+never acquired in exclusive mode. The only way for code in a critical section to tell whether
+it is speculative or not is to execute a (non-backward-compatible) explicit XTEST instruction.
+    Because an XRELEASE -tagged instruction must restore the original value of a lock, several
+of the lock algorithms in Chapter 4 must be modified to make them HLE-compatible. The
+ticket lock (Figure 4.7), for example, can be rewritten as shown in Figure 9.1. Speculation
+will succeed only if ns = next_ticket on the first iteration of the loop in acquire, and no
+other thread increments next_ticket during the critical section. Note in particular that if
+now_serving ̸ = next_ticket when a thread first calls acquire, the loop will continue to
+execute until the current lock holder updates either now_serving or next_ticket, at which
+point HLE will abort and retry the FAI “for real.” More significantly, if no two critical sections
+conflict, and if no aborts occur due to overflow or other “spurious” reasons, then an arbitrary
+number of threads can execute critical sections on the same lock simultaneously, each of
+them invisibly incrementing and restoring next_ticket, and never changing now_serving.
+
+9.2.3    Hybrid TM
+
+While faster than the all-software TM implementations of Sec. 9.1, HTM systems seem
+likely, for the foreseeable future, to have limitations that will sometimes lead them to abort
+even in the absence of conflicts. It seems reasonable to hope that a hardware/software hybrid
+might combine (most of) the speed of the former with the generality of the latter.
+    Several styles of hybrid have been proposed. In some, hardware serves only to accelerate
+a TM system implemented primarily in software. In others, hardware implements complete
+support for some subset of transactions. In this latter case, the hardware and software may be
+designed together, or the software may be designed to accommodate a generic “best effort”
+HTM.
+    “Best effort” hybrids have the appeal of compatibility with near-term commercial HTM.
+If transactions abort due to conflicts, the only alternative to rewriting the application would
+seem to be fallback to a global lock. If transactions abort due to hardware limitations,
+however, fallback to software transactions would seem to be attractive.
+
+Hardware-Accelerated STM
+Experimental results with a variety of STM systems suggest a baseline overhead (single-
+thread slowdown) of 3–10× for atomic operations. Several factors contribute to this over-
+head, including conflict detection, the buffering of speculative writes (undo or redo logging),
+validation to ensure consistency, and conflict resolution (arbitration among conflicting trans-
+actions). All of these are potentially amenable to hardware acceleration.
+    Saha et al. (2006b) propose to simplify conflict detection by providing hardware mark
+bits on cache lines. Set and queried by software, these bits are cleared when a cache line is
+invalidated—e.g., by remote access. To avoid the need to poll the bits, Spear et al. (2007) pro-
+pose a general-purpose alert-on-update mechanism that triggers a software handler when a
+marked line is accessed remotely. Minh et al. (2007) propose an alternative conflict detection
+mechanism based on hardware read and write signatures (Bloom filters).
+    Shriraman et al. (2007) propose to combine in-cache hardware buffering of speculative
+cache lines with software conflict detection and resolution; alert-on-update provides imme-
+diate notification of conflicts, eliminating the need for validation. In subsequent work, the
+authors add signatures and conflict summary tables; these support eager conflict detection
+in hardware, leaving software responsible only for conflict resolution, which may be lazy
+if desired (Shriraman et al. 2010). As suggested by Hill et al. (2007), the “decoupling” of
+mechanisms for access tracking, buffering, notification, etc. serves to increase their gen-
+erality: in various other combinations they can be used for such non-TM applications as
+debugging, fine-grain protection, memory management, and active messaging.
+
+Hardware/Software TM Codesign
+In hardware-assisted STM, atomicity remains a program-level property, built on multiple
+(non-atomic) hardware-level operations. To maximize performance, one would presumably
+prefer to implement atomicity entirely in hardware. If hardware transactions are sometimes
+unsuccessful for reasons other than conflicts, and if fallback to a global lock is not considered
+acceptable, the challenge then becomes to devise a fallback mechanism that interoperates
+correctly with hardware transactions.
+   One possible approach is to design the hardware and software together. Kumar et al.
+(2006) propose an HTM to complement the object-cloning DSTM of Herlihy et al. (2003b).
+Baugh et al. (2008) assume the availability of fine-grain memory protection (Zhou et al.
+2004), which they use in software transactions to force aborts in conflicting hardware trans-
+actions. A more common approach assumes that the hardware is given, and designs software
+to go with it.
+
+Best-Effort Hybrid TM
+An HTM implementation is termed “best effort” if it makes no guarantees of completion,
+even in the absence of conflicts, and makes no assumptions about the nature of software trans-
+actions that might be running concurrently. All of the commercial HTM systems discussed in
+Sec. 9.2.1—with the exception of constrained transactions in z TM—fit this characterization.
+    If “spurious” aborts are common enough to make fallback to a global lock unattractive,
+one is faced with a generalization of the problem that arose in that simpler case: how do
+we ensure mutual isolation between the hardware and software code paths? In Sec. 9.2.2
+we arranged for each hardware transaction to subscribe to the fallback lock—either at the
+beginning of the transaction or, with sandboxing, at the end. This arrangement ensured that
+a hardware transaction would always abort when a software transaction (implemented as a
+critical section, which could not, itself, abort) was active. For hybrid TM, we should like
+to do better—to enable significant concurrency not only among nonconflicting hardware
+transactions but also with respect to concurrent software transactions.
+    A hardware transaction, of course, will abort automatically if a concurrent software
+transaction writes—either eagerly or at commit time—a location that the hardware has
+written or read. But this is not enough. If hardware transaction H executes in the middle
+of software transaction S–perhaps when S is stalled—then H may see inconsistent state.
+Conversely, H may perform writes that subsequently cause S to see inconsistent state. We
+must detect such conflicts.
+    Perhaps the most straightforward solution, suggested by Damron et al. (2006), is to
+add extra instructions to the code of hardware transactions, so they inspect and update
+software metadata. Hardware transactions can then determine whether reads are mutually
+compatible, and software transactions can validate as they would in an all-software system.
+Unfortunately, while hardware transactions need not re-validate at commit time (as software
+transactions must), the metadata operations they still must perform have significant run-time
+
+cost. Vallejo et al. (2011) move much of this instrumentation inside if (hw_txn) conditions,
+thereby reducing the overhead when calling shared routines from nontransactional code. For
+object-oriented languages, Tabba et al. (2009) show how instrumented hardware transactions
+can safely make in-place updates to objects that are cloned by software transactions.
+    To obviate instrumentation on the hardware path entirely, Lev et al. (2007) suggest switch-
+ing between hardware and software phases on a global basis, so the two types of transactions
+never run concurrently. Performance can be excellent, but also somewhat brittle: unless soft-
+ware phases are rare, global phase changes can introduce significant delays.
+    Arguably the most appealing approach to best-effort hybrid TM is to employ an STM
+algorithm that can detect the execution of concurrent hardware transactions without the
+need to instrument HTM loads and stores. Dalessandro et al. (2011) achieve this goal by
+using NOrec (Sec. 9.1.4) on the software path, to leverage value-based validation. Hardware
+transactions must still subscribe to the global NOrec sequence lock, ensuring that they will
+abort if a software transaction is currently in its commit phase. Significantly, however, the
+scalability limitation imposed by NOrec’s serial write-back is mitigated in the hybrid version
+by counting on most transactions to finish in hardware—STM is only a fallback. In addition,
+if the hardware supports nontransactional loads within transactions, the compiler can use
+these to implement safe and precise sandboxing, enabling lazy subscription without false
+conflicts. Riegel et al. (2011) suggest an alternative approach that relies on nontransactional
+read and FAI instructions.
+    Matveev and Shavit (2013) propose a three-level system that avoids both the need for
+nontransactional instructions and (when many transactions fail to commit in hardware) the
+potential scalability problems of Hybrid NOrec. Their approach is named for the middle
+level: reduced hardware transactions. In this middle level, the bulk of the transaction is
+executed in software, building read and write sets using an algorithm like TL2 or TinySTM
+(Sec. 9.1.4). The reads are then validated—and the writes effected—in a single hardware
+transaction whose memory footprint is likely to be much smaller than that of the transaction
+as a whole and whose instruction stream is almost certain to be free of anything that would
+deterministically abort best-effort HTM. In the rare event that a middle-level transaction fails
+to commit, its thread reverts to a third-level, all-software code path that precludes concurrent
+execution of hardware transactions. Top- and middle-level transactions must update the per-
+Orec version numbers that all-software transactions use for conflict detection, but they do not
+need to instrument loads: because all-software transactions are rare, top- and middle-level
+transactions can simply read a global count of committed software transactions, secure in
+the knowledge that they will abort if such a transaction has been active.
+
+9.3      Challenges
+
+To serve its original purpose—to facilitate the construction of small, self-contained concur-
+rent data structures—TM need not be exposed at the programming language level. Much
+
+as expert programmers use CAS and other atomic hardware instructions to build library-
+level synchronization mechanisms and concurrent data structures, so might they use HTM
+to improve performance “under the hood,” without directly impacting “ordinary” program-
+mers. Much of the appeal of TM, however, is its potential to help those programmers write
+parallel code that is both correct and scalable. To realize this potential, TM must be inte-
+grated into language semantics and implementations. In this final section of the monograph,
+we discuss some of the issues involved in this integration. Note that the discussion raises
+more questions than it answers: 30 years after its original conception, language support for
+TM is still a work in progress.
+
+9.3.1    Semantics
+
+The most basic open question for TM semantics is “what am I allowed to do inside?” Some
+operations—interactive I/O in particular—are incompatible with speculation. (We cannot
+tell the human user “please forget I asked you that.”) Rollback of other operations—many
+system calls among them—may be so difficult as to force a nonspeculative implementa-
+tion. The two most obvious strategies for such irreversible (irrevocable) operations are to
+(1) simply disallow them in transactions, or (2) force a transaction that performs them to
+become inevitable—i.e., guaranteed to commit. While Spear et al. (2008b) have shown that
+inevitability does not always necessitate mutual exclusion, it nonetheless imposes severe
+constraints on scalability.
+    In its role as a synchronization mechanism, language-level TM must be integrated into the
+language memory model (Sec. 3.3). Some researchers have argued that since locks already
+form the basis of many memory models, the behavior of transactions should be defined in
+terms of implicit locking (Menon et al. 2008). Others have suggested that transactions should
+be defined along with locks and other synchronization primitives, in a co-equal fashion—all
+varieties of synchronization will then contribute to a program’s ordering. This approach
+was taken by the developers of the 2014 “technical specification” (draft feature set) for
+transactional memory in C++ (Wong et al. 2015), based on an earlier proposal from Intel,
+Oracle, IBM, and Red Hat (Adl-Tabatabai et al. 2012). As of 2023, a simpler version of that
+specification (Boehm et al. 2021) is under consideration for inclusion in C++’26.
+    At the same time, given that TM is often promoted as a higher-level, more intuitive
+alternative to locks, there is something conceptually unsatisfying about defining transactional
+behavior in terms of (or even in concert with) the thing it is supposed to replace. Clearly
+any language that allows transactions and locks in the same program must explain how
+the two interact. Considering that locks are typically implemented using lower-level atomic
+operations like CAS, a potentially appealing approach is to turn the tables, as it were, and
+define locks in terms of atomic blocks (Dalessandro et al. 2010b). In the framework of
+Sec. 3.3, a global total order on transactions provides a trivial synchronization order, which
+combines with program order to yield the overall notion of happens-before. In the resulting
+
+framework, one can easily show that a data-race-free program is transactionally sequentially
+consistent: all memory accesses appear to happen in a global total order that is consistent
+with program order in each thread, and that keeps the accesses of any given transaction
+contiguous.
+    Some challenges of language integration are more pedestrian: If there are limits on the
+operations allowed inside transactions, should these be enforced at compile time or at run
+time? If the former, how do we tell whether it is safe to call a subroutine that is defined in
+a different compilation unit? Must the subroutine interface explicitly indicate whether it is
+“transaction safe”?
+    Other challenges involve “surprise” interactions with other language features. Exceptions
+are particularly problematic. If an exception arises in a transaction and is not caught inter-
+nally, what should happen when its propagation reaches the transaction boundary? Should
+the transaction commit or abort? If the exception represents an error, committing may not
+be safe: the transaction may not have restored program invariants. On the other hand, if the
+transaction aborts, and “never happened,” how can it raise an exception? The answer may
+depend, at least in part, on whether speculation is part of the language semantics. Some
+researchers argue “no”—transactions should simply be atomic, and speculation (if any)
+should be an implementation detail. Other researchers argue that not only exceptions but
+also inevitability, explicit aborts, and condition synchronization (the latter two of which we
+consider in Sec. 9.3.2 below) are easier to understand if the programmer thinks in terms of
+speculation.
+    Finally, there is the issue of forward progress (absence of deadlock or livelock). Guerraoui
+and Kapałka (2009) formalize this issue in terms of a property they call progressiveness,
+with two key variants. A TM system is said to be weakly progressive if a transaction that
+encounters no conflicts is always able to commit. A system is said to be strongly progressive
+if whenever a set of transactions conflict on only a single variable (or perhaps a single Orec),
+at least one of them is able to commit. Language semantics based on progressiveness would
+presumably require not only an explicit acknowledgment of speculation but also a formal
+definition of conflict. The latter would appear to be challenging, given issues of granularity
+and of false conflicts due to collisions in object-to-Orec mappings.
+
+Strong and Weak Isolation
+As we noted at the beginning of Sec. 9.2, most HTM systems are strongly atomic—their transactions
+serialize not only with other transactions but also with individual loads and stores. Some researchers
+have argued (Blundell et al. 2005; Schneider et al. 2008; Baugh et al. 2008; Abadi et al. 2009;
+Shpeisman et al. 2007) that language-level TM should guarantee strong atomicity as well, though this
+is difficult to implement in software. The difference between strong and weak atomicity, however,
+can be seen only in programs with data races—races between transactional and non-transactional
+accesses in particular (Dalessandro and Scott 2009). If data races are considered to be bugs, then
+strong atomicity serves only to make the behavior of buggy programs easier to diagnose—race-free
+programs can never tell the difference.
+
+   Interestingly, progressiveness is largely orthogonal to nonblocking progress. A nonblock-
+ing TM system, as discussed in Sec. 9.1.1, may allow a thread to make progress within the
+STM implementation while still not providing progressiveness at the level of complete
+transactions. Perhaps the strongest argument for nonblocking STM is its ability to accom-
+modate event-based code, in which a handler may need to make progress (again, within the
+STM implementation) even when a main-program thread is in the middle of a conflicting
+transaction.
+
+9.3.2    Extensions
+
+When adding transactions to a programming language, one may want—or need—to include
+a variety of features not yet discussed in this chapter.
+
+Nesting
+In the chapter introduction we argued that one of the key advantages of transactions over
+lock-based critical sections was their composability. Composability requires that we allow
+transactions to nest. The simplest way to do so is to “flatten” them—to subsume the inner
+transaction(s) in the outer and allow the entire unit to commit or abort together. All cur-
+rent commercial HTM implementations provide subsumption nesting, generally with some
+maximum limit on depth. Several STM systems do likewise.
+   For performance reasons, it may sometimes be desirable to allow an inner transaction to
+abort and retry while retaining the work that has been done so far in the outer transaction.
+This option, known as “true” or closed nesting, will also be required in any system that
+allows a transaction to abort and not retry. We have already considered such a possibility
+for exceptions that escape transactions. It will also arise in any language that provides the
+programmer with an explicit abort command (Harris et al. 2005).
+   For the sake of both performance and generality, it may also be desirable to allow concur-
+rency within transactions—e.g., to employ multiple threads to cooperate in a computationally
+demanding operation and commit their results together, atomically (Agrawal et al. 2008).
+   In some cases it may even be desirable to allow an inner transaction to commit when
+the surrounding transaction aborts (Ni et al. 2007; Moss and Hosking 2006). This sort of
+open nesting may violate serializability, and must be used with care. Possible applications
+include the preservation of semantically neutral but performance-advantageous operations
+like garbage collection, memoization, and rebalancing; the collection of debugging or per-
+formance information; and the construction of “boosted” abstractions (Sec. 9.1.3).
+
+Condition Synchronization
+Like lock-based critical sections, transactions sometimes depend on preconditions, which
+may or may not hold. In Chapter 5 we considered a variety of mechanisms whereby a thread
+
+could wait for a precondition in a critical section. But a transaction cannot wait: because it
+is isolated, changes to the state of the world, made by other threads, will not be visible to it.
+    There is an analogy here to nonblocking operations, which cannot wait and still be
+nonblocking. The analogy suggests a potential solution: insist that transactions be total—
+that their preconditions always be true—but allow them to commit “reservation” notices in
+the style of dual data structures (Sec. 8.8). If, say, a dequeue operation on a transactional
+queue finds no data to remove, it can enqueue a reservation atomically instead, and return
+an indication that it has done so. The surrounding code can then wait for the reservation to
+be satisfied in normal, nontransactional code.
+    A second alternative, suggested by Smaragdakis et al. (2007), is to suspend (“punctuate”)
+a transaction at a conditional wait, and to make the sections of the transaction before and
+after the wait individually (but not jointly) atomic. This alternative requires, of course, that
+any invariants maintained by the transaction be true at the punctuation point. If a wait may
+be nested inside called routines, the fact that they may wait probably needs to be an explicit
+part of their interface.
+    Perhaps the most appealing approach to transactional condition synchronization is the
+retry primitive of Harris et al. (2005). When executed by a transaction, it indicates that the
+current operation cannot proceed, and should abort, to be retried at some future time. Exactly
+when to retry is a question reminiscent of conditional critical regions (Sec. 7.4.1). There is
+a particularly elegant answer for STM: The transaction is sure to behave the same the next
+time around if it reads the same values from memory. Therefore, it should become a visible
+reader of every location in its read set, and wait for one of those locations to be modified by
+another transaction. (Modification by nontransactional code would imply the existence of
+a data race.) The wakeup mechanism for condition synchronization is then essentially the
+same as the abort mechanism for visible readers, and can share the same implementation.
+
+Other Uses of Speculation
+Transactional memory is not the only potential use of speculation. Given a speculation and
+rollback mechanism implemented for TM, we may consider using it for other things as well.
+Possibilities include
+
+• try blocks that roll back to their original state instead of stopping where they are when an
+  exception arises. Shinnar et al. (2004) refer to such blocks as “try-all.” They are supported
+  explicitly in hardware on Power 8, as “rollback-only” (non-isolated) transactions (Le et al.
+  2015).
+• automatic or semi-automatic (programmer-hint-driven) parallelization of semantically
+  sequential loops (Ding et al. 2007; Berger et al. 2009). In such a loop, each iteration is
+  essentially a transaction, but conflicts are always resolved in favor of the earlier iteration,
+  and no iteration is permitted to commit until all its predecessors have done so. Blue
+  Gene/Q provided explicit hardware support for such ordered speculation. It can also
+
+  be implemented on HTM systems (e.g., Power TM and recent Intel RSX) that allow
+  nontransactional loads inside transactions.
+• safe futures (Sec. 7.4.2) (Welc et al. 2005), which abort and roll back their continuation
+  in the event of conflict, and can thus be used in languages with side effects, without
+  changing program semantics. Like ordered speculation, safe futures can be implemented
+  with an HTM system that supports nontransactional loads inside transactions.
+
+9.3.3    Implementation
+
+The discussion of STM in Sec. 9.1 conveys some sense of the breadth of possible implemen-
+tation strategies. It is far from comprehensive, however. Drawing inspiration from database
+systems, several groups have considered multi-version STM systems, which increase the
+success rate for long-running read-only transactions by keeping old versions of modified
+data (Riegel et al. 2006; Cachopo and Rito-Silva 2006; Perelman et al. 2011; Lu and Scott
+2013; Wei et al. 2023). Instead of requiring that all loaded values be correct as of commit
+time (and then aborting every time a location in the read set is updated by another transac-
+tion), multi-version TM systems arrange for a reader to use the values that were current as
+of its start time, and thus to “commit in the past.” To increase concurrency, it is conceivable
+that TM might also adopt the ability of some database systems to forward updates from
+one (still active) transaction to another, making the second dependent on the first (Ramadan
+et al. 2008).
+
+Privatization
+Informally, a transaction is said to privatize a data structure X if, prior to the transaction,
+X may be accessed by more than one thread, but after the transaction program logic guar-
+antees that X is private to some particular thread. The canonical example of privatization
+arises with shared containers through which threads pass objects to one another. In a pro-
+gram with such a container, the convention may be that once an object has been removed
+from the container, it “belongs” to the thread that removed it, which can safely operate on
+it without any synchronization. If the thread returns the object to the same or a different
+container at a later time, it is said to publish the object. Publication of most shared objects
+also occurs at creation time: a thread typically allocates an object and initializes it before
+making it visible (publishing it) to other threads. Prior to publication, no synchronization is
+required. Dalessandro et al. (2010b) have observed that privatization is semantically equiv-
+alent to locking—it renders a shared object temporarily private. Publication is equivalent to
+unlocking—it makes the private object shared again.
+   In their usual form, publication and privatization are race-free idioms, at least at the
+level of the programming model: any accesses by different threads are always ordered by an
+intervening transaction. Unfortunately, in many STM systems, privatization is not race-free
+
+at the implementation level, and may require compiler support for correctness (Rodriguez
+and Spear 2020). Races arise for two reasons, and may lead to incorrect behavior in programs
+that seem logically correct. First, completed transactions may perform “cleanup” operations
+(write-back of redo or undo logs) after their serialization point. These cleanup writes may
+interfere with nontransactional reads in the thread that now owns the privatized data. Second,
+“zombie” transactions, which are doomed to abort but have not yet realized this fact, may
+read locations that are written nontransactionally by the thread that now owns the privatized
+data; such transactions must be carefully sandboxed to avoid erroneous, externally visible
+behavior.
+    Early STM systems did not experience the “privatization problem” because they assumed
+(implicitly or explicitly) that any datum that was ever accessed by more than one thread was
+always accessed transactionally. One solution to the privatization problem is thus to stati-
+cally partition data into “always private” and “sometimes shared” categories. Unfortunately,
+attempts to enforce this partition via the type system lead to programs in which utility rou-
+tines and data structures must be “cloned” to create explicitly visible transactional and
+nontransactional versions (Dalessandro et al. 2007).
+    Absent a static partition of data, any modern STM system must be “privatization safe”
+to be correct. Systems that serialize cleanup—RingSTM and NOrec among them—are nat-
+urally so. Others can be made so with extra instrumentation. Marathe et al. (2008) describe
+and evaluate several instrumentation alternatives. They identify an adaptive strategy whose
+performance is stable across a wide range of workloads. Dice et al. (2010) describe an
+additional mechanism that can be used to reduce the cost of privatization when the num-
+ber of active transactions is significantly smaller than the number of extant threads. Even
+so, the overheads remain significant—enough so that one must generally dismiss reported
+performance numbers for any prototype STM system that is not privatization safe.
+    Publication, it turns out, can also lead to unexpected or erroneous behavior, but only in
+the presence of program-level data races between transactional and nontransactional code
+(Menon et al. 2008). If data races are viewed as bugs, the “publication problem” can safely
+be ignored.
+
+Compilation
+While many researchers once expected that TM might be successfully implemented in a
+library/run-time system, most now agree that it requires language integration and compiler
+support if it is to be used by non-experts. Compilers can be expected to instrument transac-
+tional loads and stores; clone code paths for nontransactional, STM, and HTM execution;
+and insert validation where necessary to sandbox dangerous operations. They can also be
+expected to implement a variety of performance optimizations:
+
+• Identify accesses that are sure to touch the same location, and elide redundant instrumen-
+  tation (Harris et al. 2006).
+
+• Identify loads and stores that are certain to access private variables, and refrain from
+  instrumenting them (Shpeisman et al. 2007). (This task is rather tricky: if an access may
+  touch either a shared datum or a private datum, then it must be instrumented. If the
+  system uses redo logs, then any other accesses to the same private datum must also be
+  instrumented, to ensure that a transaction always sees its own writes.)
+• For strings of successive accesses, infer the minimum number of synchronizing instruc-
+  tions required to maintain sequential consistency (Spear et al. 2009b).
+
+More exotic optimizations may also be possible. Olszewski et al. (2007) have proposed
+dynamic binary rewriting to allow arbitrary library routines to be instrumented on the fly,
+and called from within transactions. More ambitiously, if subroutine foo is often called inside
+transactions, there may be circumstances in which some subset of its arguments are known
+to be private, or to have already been logged. To exploit these circumstances, a compiler
+may choose to generate a custom clone of foo that elides instrumentation for one or more
+parameters.
+   As of this writing, compilers have been developed for transactional extensions to a vari-
+ety of programming languages, including Java (Adl-Tabatabai et al. 2006), C# (Harris et al.
+2006), C (Wang et al. 2007), C++ (Afek et al. 2010; Free Software Foundation 2012),4 Clo-
+jure (Hickey 2022), and Haskell (HaskellWiki 2012; Yates and Scott 2019). Language-level
+semantics are currently the most mature in Clojure and Haskell. Among more “mainstream”
+languages, C++ is likely to be the first to incorporate TM extensions into the language
+standard (Boehm et al. 2021).
+
+9.3.4    Debugging and Performance Tuning
+
+TM also raises significant issues for debugging and for performance analysis and tuning.
+The most obvious issue for debugging is the tension between the desire on the one hand to
+support debugging at the level of statements or machine instructions and, on the other hand,
+the need for transactions to effect their memory updates as a single indivisible operation.
+    Zyulkyarov et al. (2011, 2010) propose to differentiate, explicitly, between debugging
+an application, debugging the code inside atomic blocks, and debugging the TM implemen-
+tation. For the first task, transactions should appear to be atomic. When single-stepping, for
+example, they should execute “all at once.” For the second task, the debugger should ensure
+that threads other than the one in the transaction are quiescent, and that the values of all
+variables not under modification by the transaction should appear to be consistent. The third
+task is then akin to conventional debugging of library and runtime code.
+    Without new tools, programmers are likely to find it very difficult to debug transactional
+programs—in effect, a conventional debugger supports only the third of the TM debugging
+
+4 Intel also developed a prototype edition of its ICC compiler with software transactional memory
+support in 2010, but it was discontinued.
+
+tasks. Properly supported, however, debugging of transactional programs may actually be
+easier than conventional debugging.
+    Herlihy and Lev (2009, 2010) propose a standard API for communication between a
+transactional debugger and the underlying STM system. Their work can be seen as focusing
+on the second of the TM debugging tasks. It requires that transactions execute in software,
+even if production runs employ an HTM. It also requires that the debugger differentiate,
+explicitly, between the state of the transaction and that of the rest of the program: if focus
+shifts from the transaction to that of some other thread, memory should appear to be con-
+sistent.
+    Unlike a lock-based critical section, a transaction never sees changes caused by other
+threads. A programmer who single-steps a thread through a transaction can therefore be sure
+that all observed changes were caused by the active thread. The STM system, moreover,
+can be expected to maintain extensive information of use to the debugging task, including
+read and write sets, both speculative and prior (consistent) versions of modified data, and
+conflicts between threads. In particular, if a conflict forces a thread to wait or to abort, a
+transactional debugger can see and report the cause.
+    Similar information can be expected to be of use to performance analysis tools. Conven-
+tional tools, again, are unlikely to be adequate: aborted transactions can be expected to have
+a major impact on performance, but isolation, if naively implemented, will leave no trace of
+their activity (Porter and Witchel 2010). Clearly some sort of information needs to “leak”
+out of aborted transactions. HTM designers (e.g., for Power and x86) have devoted con-
+siderable attention to the interaction of transactions with hardware performance counters.
+Systems software can, to a large extent, control which counters track events of committed
+instructions only, and which include (or also include) events performed and then elided by
+aborted speculation.
+    With traditional lock-based critical sections, performance analysis tools typically focus
+on acquire operations with long wait times. These identify conflicts between critical sec-
+tions, which then prompt the programmer to explore more fine-grain locking alternatives.
+With transactions, programmers may begin, analogously, with large atomic blocks. When
+a performance analysis tool discovers that these often abort, it can identify the conflicts
+among them, prompting the programmer to search for ways to express the algorithm with
+smaller, more fine-grain transactions. Extensions to the programming model, such as the
+early release of Herlihy et al. (2003b) or the elastic transactions of Felber et al. (2009)
+may also allow the programmer to reduce conflicts among large transactions by explicitly
+evicting certain locations from the read set (e.g., if they were used only during a search
+phase, which can be independently verified).
+    The need to break transactions into smaller atomic pieces, in order to minimize conflicts,
+raises correctness issues: the programmer must somehow verify that decomposed operations
+still serialize and that the individual transactions maintain (now presumably somewhat more
+complex) program invariants. By continuing to use transactions instead of locks, however,
+the programmer can be sure (at least in the absence of condition synchronization) that the
+
+decomposition process will never introduce deadlock, and that the program will remain data-
+race free if shared objects are accessed only in transactions. These observations suggest that
+time spent diagnosing correctness bugs in lock-based programs may be replaced by time
+spent diagnosing performance bugs in transactional code. This change alone may prove to
+be a compelling benefit of transactional synchronization.

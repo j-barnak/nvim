@@ -1,0 +1,963 @@
+Architectural Background
+                                                                                                 2
+
+The correctness and performance of synchronization algorithms depend crucially on archi-
+tectural details of multicore and multiprocessor machines. This chapter provides an overview
+of these details. It can be skimmed by those already familiar with the subject, but should
+probably not be skipped in its entirety: the implications of store buffers and directory-based
+coherence on synchronization algorithms, for example, may not be immediately obvious,
+and the semantics of synchronizing instructions (ordered accesses, memory fences, and
+read-modify-write instructions) may not be universally familiar.
+   The chapter is divided into three main sections. In the first, we consider the implica-
+tions for parallel programs of caching and coherence protocols. In the second, we consider
+consistency—the degree to which accesses to different memory locations can or cannot be
+assumed to occur in any particular order. In the third, we survey the various read-modify-
+write instructions—test_and_set and its cousins—that underlie most implementations of
+atomicity.
+
+2.1      Cores and Caches: Basic Shared-Memory Architecture
+
+Figures 2.1 and 2.2 depict two of the many possible configurations of processors, cores,
+caches, and memories in a modern parallel machine. In a so-called symmetric machine,
+all memory banks are equally distant from every processor core. Symmetric machines are
+sometimes said to have a uniform memory access (UMA) architecture. More common today
+are nonuniform memory access (NUMA) machines, in which each memory bank is associ-
+ated with a processor (or in some cases with a multi-processor node), and can be accessed
+by cores of the local processor more quickly than by cores of other processors.
+    As feature sizes continue to shrink, the number of cores per processor can be expected
+to increase. As of this writing, the typical desk-side machine has 1–4 processors with 2–16
+
+© The Author(s), under exclusive license to Springer Nature Switzerland AG 2024            11
+M. L. Scott and T. Brown, Shared-Memory Synchronization, Synthesis Lectures
+on Computer Architecture, https://doi.org/10.1007/978-3-031-38684-8_2
+
+           Processor 1                                        Processor n
+            Core 1                       Core k
+                     ...           ...                                 ...            ...
+
+              L1
+
+                           ...
+                                                     ...                     ...
+                     L2
+
+                           L3
+
+                                              Global Interconnect
+
+                Memory Bank 1                                                 Memory Bank m
+
+                                                     ...
+Figure 2.1 Typical symmetric (uniform memory access—UMA) machine. Numbers of components
+of various kinds, and degree of sharing at various levels, differs across manufacturers and models.
+
+           Processor 1                                        Processor n
+            Core 1                       Core k
+                     ...           ...                                 ...            ...
+
+              L1
+
+                           ...
+                                                     ...                     ...
+                     L2
+
+                                              Global Interconnect
+
+                           L3
+
+                Memory Bank 1                                                 Memory Bank n
+
+                                                     ...
+Figure 2.2 Typical nonuniform memory access (NUMA) machine. Again, numbers of components
+of various kinds, and degree of sharing at various levels, differs across manufacturers and models.
+
+cores each. Server-class machines are architecturally similar, but with the potential for many
+more processors and cores. Small machines often employ a symmetric architecture for the
+sake of simplicity. The physical distances in larger machines often motivate a switch to
+NUMA architecture, so that memory accesses can be somewhat faster when they happen to
+be local.
+   On some machines, each core may be multithreaded—capable of executing instructions
+from more than one thread at a time (current per-core thread counts range from 1 to 8). Each
+core typically has a private level-1 (L1) cache, and shares a level-2 cache with other cores
+in its local cluster. Clusters on the same processor of a symmetric machine then share a
+common L3 cache. Each cache holds a temporary copy of data currently in active use by
+cores above it in the hierarchy, allowing those data to be accessed more quickly than they
+could be if kept in memory. On a NUMA machine in which the L2 connects directly to the
+global interconnect, the L3 may sometimes be thought of as “belonging” to the memory.
+   In a machine with more than one processor, the global interconnect may have vari-
+ous topologies. On small machines, broadcast buses and crossbars are common; on large
+machines, a network of point-to-point links is more common. For synchronization purposes,
+broadcast has the side effect of imposing a total order on all inter-processor messages; we
+shall see in Sec. 2.2 that this simplifies the design of concurrent algorithms—synchronization
+algorithms in particular. Ordering is sufficiently helpful, in fact, that some large machines
+(notably those sold by Oracle) employ two different global networks: one for data requests,
+which are small, and benefit from ordering, and the other for replies, which require signifi-
+cantly more aggregate bandwidth, but do not need to be ordered.
+   As the number of cores per processor increases, on-chip interconnects—the connections
+among the L2 and L3 caches in particular—can be expected to take on the complexity of
+current global interconnects. Other forms of increased complexity are also likely, includ-
+ing, perhaps, additional levels of caching, non-hierarchical topologies, and heterogeneous
+implementations or even instruction sets among cores.1
+   The diversity of current and potential future architectures notwithstanding, multilevel
+caching has several important consequences for programs on almost any modern machine;
+we explore these in the following subsections.
+
+2.1.1    Temporal and Spatial Locality
+
+In both sequential and parallel programs, performance can usually be expected to correlate
+with the temporal and spatial locality of memory references. If a given location l is accessed
+more than once by the same thread (or perhaps by different threads on the same core or
+cluster), performance is likely to be better if the two references are close together in time
+
+1 The most obvious example of heterogeneity is the now-ubiquitous programmable GPU. Recent
+GPU architectures pose intriguing challenges for synchronization but are beyond the scope of this
+monograph.
+
+(temporal locality). The benefit stems from the fact that l is likely still to be in cache, and
+the second reference will be a hit instead of a miss. Similarly, if a thread accesses location l2
+shortly after l1 , performance is likely to be better if the two locations have nearby addresses
+(spatial locality). Here the benefit stems from the fact that l1 and l2 are likely to lie in the
+same cache line, so l2 will have been loaded into cache as a side effect of loading l1 .
+   On current machines, cache line sizes typically vary between 32 and 512 bytes. There has
+been a gradual trend toward larger sizes over time. Different levels of the cache hierarchy
+may also use different sizes, with lines at lower levels typically being larger.
+   To improve temporal locality, the programmer must generally restructure algorithms, to
+change the order of computations. Spatial locality is often easier to improve—for example,
+by changing the layout of data in memory to co-locate items that are frequently accessed
+together, or by changing the order of traversal in multidimensional arrays. These sorts of
+optimizations have long been an active topic of research, even for sequential programs—
+see, for example, the texts of Muchnick (1997, Chapter 20) or Allen and Kennedy (2002,
+Chapter 9).
+
+2.1.2    Cache Coherence
+
+On a single-core machine, there is a single cache at each level, and while a given block of
+memory may be present in more than one level of the memory hierarchy, one can always
+be sure that the version closest to the top contains up-to-date values. (With a write-through
+cache, values in lower levels of the hierarchy will never be out of date by more than some
+bounded amount of time. With a write-back cache, values in lower levels may be arbitrarily
+stale—but harmless, because they are hidden by copies at higher levels.)
+   On a shared-memory parallel system, by contrast—unless we do something special—
+data in upper levels of the memory hierarchy may no longer be up-to-date if they have been
+modified by some thread on another core. Suppose, for example, that threads on Cores 1
+and k in Figure 2.1 have both been reading variable x, and each has retained a copy in its L1
+cache. If the thread on Core 1 then modifies x, even if it writes its value through (or back)
+to memory, how do we prevent the thread on Core k from continuing to read the stale copy?
+   A cache-coherent parallel system is one in which (1) changes to data, even when cached,
+are guaranteed to become visible to all threads, on all cores, within a bounded (and typically
+small) amount of time; and (2) changes to the same location are seen in the same order
+by all threads. On almost all modern machines, coherence is achieved by means of an
+invalidation-based cache coherence protocol. Such a protocol, operating across the system’s
+cache controllers, maintains the invariant that there is at most one writable copy of any given
+cache line anywhere in the system—and, if the number is one and not zero, there are no
+read-only copies.
+   Algorithms to maintain cache coherence are a complex topic, and the subject of ongoing
+research (for an overview, see the monograph of Sorin et al. (2019), or the more extensive [if
+
+dated] coverage of Culler and Singh (1998, Chaps. 5, 6, & 8)). Most protocols in use today
+descend from the four-state protocol of Goodman (1983). In this protocol (using modern
+names for the states), each line in each cache is either invalid (empty) or holds a block that is
+shared (read-only, and possibly present in more than one cache), exclusive (present in only
+one cache, and up-to-date in memory), or modified (present in only one cache, and in need
+of write-back).
+   To maintain the at-most-one-writable-copy invariant, the coherence protocol arranges,
+on any write to an invalid or shared line, to invalidate (evict) any copies of the block in all
+other caches in the system. In a system with a broadcast-based interconnect, invalidation is
+straightforward. In a system with point-to-point connections, the coherence protocol typi-
+cally maintains some sort of directory information that allows it to find all other copies of a
+block.
+
+2.1.3     Processor (Core) Locality
+
+On a single-core machine, misses occur on an initial access (a “cold miss”) and as a result of
+limited cache capacity or associativity (a “conflict miss”).2 On a cache-coherent machine,
+misses may also occur because of the need to maintain coherence. Specifically, a read or
+write may miss because a previously cached block has been written by some other core,
+and has reverted to invalid state; a write may also miss because a previously exclusive or
+modified block has been read by some other core, and has reverted to shared state.
+   Absent program restructuring, coherence misses are inevitable if threads on different
+cores access the same datum (and at least one of them writes it) at roughly the same point
+
+No-remote-caching Multiprocessors
+Most of this monograph assumes a shared-memory multiprocessor with global (distributed) cache
+coherence, which we have contrasted with machines in which message passing provides the only
+means of interprocessor communication. There is an intermediate option. Some NUMA machines
+(notably many of the offerings from Cray, Inc.) support a single global address space, in which
+any processor can access any memory location, but remote locations cannot be cached. We may
+refer to such a machine as a no-remote-caching (NRC-NUMA) multiprocessor. (Globally cache
+coherent NUMA machines are sometimes known as CC-NUMA.) Any access to a location in some
+other processor’s memory will traverse the interconnect of an NRC-NUMA machine. Assuming the
+hardware implements cache coherence within each node—in particular, between the local processor(s)
+and the network interface—memory will still be globally coherent. For the sake of performance,
+however, system and application programmers will need to employ algorithms that minimize the
+number of remote references.
+
+2 A cache is said to be k-way associative if its indexing structure permits a given block to be cached
+in any of k distinct locations. If k is 1, the cache is said to be direct mapped. If a block may be held
+in any line, the cache is said to be fully associative.
+
+in time. In addition to temporal and spatial locality, it is therefore important for parallel
+programs to exhibit good thread locality: as much possible, a given datum should be accessed
+by only one thread at a time.
+   Coherence misses may sometimes occur when threads are accessing different data, if those
+data happen to lie in the same cache block. This false sharing can often be eliminated—
+yielding a major speed improvement—if data structures are padded and aligned to occupy an
+integral number of cache lines. For busy-wait synchronization algorithms, it is particularly
+important to minimize the extent to which different threads may spin on the same location—
+or locations in the same cache block. Spinning with a write on a shared location—as we
+did in the test_and_set lock of Sec. 1.3, is particularly deadly: each such write leads to
+interconnect traffic proportional to the number of other spinning threads. We will consider
+these issues further in Chapter 4.
+
+2.2      Memory Consistency
+
+On a single-core machine, it is relatively straightforward to ensure that instructions appear
+to complete in execution order. Ideally, one might hope that a similar guarantee would apply
+to parallel machines—that memory accesses, system-wide, would appear to constitute an
+interleaving (in execution order) of the accesses of the various cores. For several reasons,
+this sort of sequential consistency (Lamport 1979) imposes nontrivial constraints on perfor-
+mance. Most real machines implement a more relaxed (i.e., potentially inconsistent) memory
+model, in which accesses by different threads, or to different locations by the same thread,
+may appear to occur “out of order” from the perspective of threads on other cores. When
+consistency is required, programmers (or compilers) must employ special synchronizing
+instructions that are more strongly ordered than other, “ordinary” instructions, forcing the
+local core to wait for various classes of potentially in-flight events. Synchronizing instruc-
+tions are an essential part of synchronization algorithms on any non-sequentially consistent
+machine.
+
+2.2.1    Sources of Inconsistency
+
+Inconsistency is a natural result of common architectural features. In an out-of-order pro-
+cessor, for example—one that can execute instructions in any order consistent with (thread-
+local) data dependences—a write must be held in the reorder buffer until all instructions that
+precede it in program order have completed. Likewise, since almost any modern processor
+can generate a burst of store instructions faster than the underlying memory system can
+absorb them, even writes that are logically ready to commit may need to be buffered for
+many cycles. The structure that holds these writes is known as a store buffer.
+
+                 // initially x = y = 0
+                 thread 1:                                        thread 2:
+                 1:   x := 1                                      1:   y := 1
+                 2:                                               2:
+                                               ?
+                      i := y                                           j := x
+
+                 // finally i = j = 0
+
+Figure 2.3 An apparent ordering loop.
+
+    When executing a load instruction, a core checks the contents of its reorder and store
+buffers before forwarding a request to the memory system. This check ensures that the core
+always sees its own recent writes, even if they have not yet made their way to cache or
+memory. At the same time, a load that accesses a location that has not been written recently
+may make its way to memory before logically previous instructions that wrote to other
+locations. This fact is harmless on a uniprocessor, but consider the implications on a parallel
+machine, as shown in Figure 2.3. If the write to x is delayed in thread 1’s store buffer, and
+the write to y is similarly delayed in thread 2’s store buffer, then both threads may read a
+zero at line 2, suggesting that line 2 of thread 1 executes before line 1 of thread 2, and line 2
+of thread 2 executes before line 1 of thread 1. When combined with program order (line 1
+in each thread should execute before line 2 in the same thread), this gives us an apparent
+“ordering loop,” which “should” be logically impossible.
+    Similar problems can occur deeper in the memory hierarchy. A modern machine can
+require several hundred cycles to service a miss that goes all the way to memory. At each
+step along the way (core to L1, …, L3 to bus, …) pending requests may be buffered in a
+queue. If multiple requests may be active simultaneously (as is common, at least, on the
+global interconnect), and if some requests may complete more quickly than others, then
+memory accesses may appear to be reordered. So long as accesses to the same location (by
+the same thread) are forced to occur in order, single-threaded code will run correctly. On a
+multiprocessor, however, sequential consistency may again be violated.
+    On a NUMA machine, or a machine with a topologically complex interconnect, differing
+distances among locations provide additional sources of circular ordering. If variable x in
+Figure 2.3 is close to thread 2 but far from thread 1, and y is close to thread 1 but far
+from thread 2, the reads on line 2 can easily complete before the writes on line 1, even if
+all accesses are inserted into the memory system in program order. With a topologically
+complex interconnect, the cache coherence protocol itself may introduce variable delays—
+e.g., to dispatch invalidation requests to the various locations that may need to change the
+state of a local cache line, and to collect acknowledgments. Again, these differing delays
+may allow line 2 of the example—in both threads—to complete before line 1.
+    In all the explanations of Figure 2.3, the ordering loop results from reads bypassing
+writes—executing in-order (write-then-read) from the perspective of the issuing core, but
+out of order (read-then-write) from the perspective of the memory system—or of threads on
+
+// initially x = y = 0
+
+thread 1:                thread 2:                           thread 3:                  thread 4:
+1:   x := 1              1:   x2 := x                        1:   y3 := y               1:   y := 1
+                         2:   y2 := y             ?          2:   x3 := x
+
+// finally y2 = x3 = 0 and x2 = y3 = 1
+
+Figure 2.4 Independent reads of independent writes (IRIW). If the writes of threads 1 and 4 propagate
+to different places at different speeds, we can see a ordering loop even if instructions from the same
+thread never bypass one another.
+
+other cores. On NUMA or topologically complex machines, it may also be possible for reads
+to bypass reads, writes to bypass reads, or writes to bypass writes. Worse, circularity may
+arise even without bypassing—i.e., even when every thread executes its own instructions
+in strict program order. Consider the “independent reads of independent writes” (IRIW)
+example shown in Figure 2.4. If thread 1 is close to thread 2 but far from thread 3, and
+thread 4 is close to thread 3 but far from thread 2, the reads on line 1 in threads 2 and 3 may
+see the new values of x and y, while the reads on line 2 see the old. Here the problem is
+not bypassing, but a lack of write atomicity—one thread sees the value written by a store
+and another thread subsequently sees the value prior to the store. Many other examples of
+unintuitive behavior permitted by modern hardware can be found in the literature (Adve and
+Gharachorloo 1996; Adve et al. 1999; Manson et al. 2005; Boehm and Adve 2008).
+
+2.2.2     Special Instructions to Order Memory Access
+
+If left unaddressed, memory inconsistency can easily derail attempts at synchronization.
+Consider the flag-based programming idiom illustrated in Figure 2.5. If foo can never return
+
+Compilers Also Reorder Instructions
+While this chapter focuses on architectural issues, it should be noted that compilers also routinely
+reorder instructions. In any program not written in machine code, compilers perform a variety of opti-
+mizations in an attempt to improve performance. Simple examples include reordering computations to
+expose and eliminate redundancies, hoisting invariants out of loops, and “scheduling” instructions to
+minimize processor pipeline bubbles. Such optimizations are legal so long as they respect control and
+data dependences within a single thread. Like the hardware optimizations discussed in this section,
+compiler optimizations can lead to inconsistent behavior when more than one thread is involved. As
+we shall see in Sec. 3.3, a language designed for concurrent programming must provide a memory
+model that explains allowable behavior, and some set of primitives—typically special synchroniza-
+tion operations or reads and writes of special atomic variables—that serve to order accesses at the
+language level.
+
+                         // initially x = f = 0
+                         thread 1:                           thread 2:
+                              x := foo()                          while !f
+                              f := true                                // spin
+                                                                  y := 1/x
+
+Figure 2.5 A simple example of flag-based synchronization. To avoid a spurious error, the update
+to x must be visible to thread 2 before the update to f.
+
+zero, a programmer might naively expect that thread 2 will never see a divide-by-zero error
+at line 3. If the write at line 2 in thread 1 can bypass the write in line 1, however, thread 2
+may read x too early, and see a value of zero. Similarly, if the read of x at line 3 in thread 2
+can bypass the read of f in line 1, a divide-by-zero may again occur, even if the writes in
+thread 1 complete in order. (While thread 2’s read of x is separated from the read of f by
+a conditional test, the second read may still issue before the first completes, if the branch
+predictor guesses that the loop will never iterate.)
+    Any machine that is not sequentially consistent will provide special instructions that allow
+the programmer to force consistent ordering in situations in which it matters, but in which
+the hardware might not otherwise guarantee it. Perhaps the simplest such instruction is a
+synchronizing access (typically a special load or store) that is guaranteed to be both locally
+and globally ordered. Here “locally ordered” means that the synchronizing access will appear
+to occur after any preceding (ordinary or synchronizing) accesses in its own thread, and
+before any subsequent (ordinary or synchronizing) accesses in its thread, from the perspective
+of all threads. “Globally ordered” means that the synchronizing access will appear to occur
+in some consistent, total order with respect to all other synchronizing instructions in the
+program, from the perspective of all threads. (These orders overlap, in that both require
+synchronizing accesses by the same thread appear to occur in program order, from the
+perspective of all threads.)
+    To avoid the spurious error in Figure 2.5, it is sufficient (though not necessary) to use fully
+(locally and globally) ordered accesses to f in both threads, thereby ensuring that thread 1’s
+update of x happens before its update of f, and thread 2’s read of x happens after it sees
+
+Barriers Everywhere
+Fences are sometimes known as memory barriers. Sadly, the word barrier is heavily overloaded.
+As noted in Sec. 1.2 (and explored in more detail in Sec. 5.2), it is the name of a synchronization
+mechanism used to separate program phases. In the programming language community, it refers to
+code that must be executed when changing a pointer, in order to maintain bookkeeping information
+for the garbage collector. In a similar vein, it sometimes refers to code that must be executed when
+reading or writing a shared variable inside an atomic transaction, in order to detect and recover from
+speculation failures (we discuss this code in Chapter 9, but without referring to it as a “barrier”). The
+intended meaning is usually clear from context, but may be confusing to readers who are familiar
+with only some of the definitions.
+
+the change to f. Alternatively, ordering could be ensured by inserting a full fence instruction
+between lines 1 and 2 in thread 1, and between lines 2 and 3 in thread 2. A full fence doesn’t
+read or write memory itself, but it ensures that all preceding memory accesses in its thread
+appear to occur before all subsequent memory accesses in its thread, from the perspective
+of all threads.
+   Write atomicity guarantees that stores will be seen in the same order by all threads; it is
+a necessary condition for global ordering, and is usually available—at least as an option—
+for synchronizing stores (even if not for ordinary stores). At the hardware level, the cache
+coherence protocol can ensure write atomicity by preventing a load from returning the value
+written by a given store until it verifies that no load elsewhere in the machine can ever again
+return the previous value.
+   In Figure 2.3, circularity could be avoided by using fully ordered stores for the line-1
+writes (in both threads) or by using fully ordered loads for the line-2 reads (in both threads).
+Alternatively, we could insert full fences between lines 1 and 2 in both threads. Interestingly,
+write atomicity has no impact, since each thread reads only one variable. In Figure 2.4, by
+contrast, write atomicity is really all that matters; to ensure it, we must use write-atomic
+synchronizing stores in both thread 1 and thread 4. Synchronizing loads in threads 2 and 3—
+or fences between the loads—will not address the problem: absent write atomicity, it is
+possible for thread 1’s write to appear to happen before the entire set of reads—and thread 4’s
+write after—from the perspective of thread 2, and vice versa for thread 3.
+   On many machines, fully ordered synchronizing instructions turn out to be quite expen-
+sive—tens or even hundreds of cycles. Moreover, in many cases—including those described
+above—full ordering is more than we need for correct behavior. Architects therefore often
+provide a variety of weaker synchronizing instructions. These may or may not be globally
+ordered, and may prevent some, but not all, local bypassing. As we shall see in Sec. 2.2.3, the
+details vary greatly from one machine architecture to another. Moreover, behavior is often
+defined not in terms of the orderings an instruction guarantees among memory accesses,
+but in terms of the reorderings it inhibits in the processor core, the cache subsystem, or the
+interconnect.
+   Unfortunately, there is no obvious, succinct way to specify minimal ordering requirements
+in parallel programs. Neither synchronizing accesses nor fences, for example, allow us to
+order two individual accesses with respect to one another (and not with respect to anything
+else), if that is all that is really required. In an attempt to balance simplicity and clarity,
+subsequent examples in this monograph use a notation inspired by (but simpler than) the
+atomic operations of C++’11 and its successors. Using this notation, we will indicate
+opportunities to employ less-than-fully-ordered synchronizing accesses in many (though
+not all) algorithms.
+   A summary of our notation, and of the memory model behind it, can be found in Table 2.1.
+To specify local ordering, each synchronizing instruction admits an optional annotation of
+the form P ∥ S, indicating that the instruction is ordered with respect to preceding (P) and/or
+subsequent (S) read and write accesses in its thread (P, S ⊂ {R, W}). Note that atomic
+
+Table 2.1 Understanding the pseudocode.
+ Throughout the remainder of this monograph, pseudocode will be set in sans serif font
+ (code in real programming languages will be set in typewriter font). We will use the
+ term synchronizing access to refer to explicit loads and stores, fences, and atomic read-
+ modify-write (fetch_and_Φ) operations (listed in Table 2.4). Other memory accesses will
+ be referred to as “ordinary.” We will assume the following:
+ coherence (per-location)
+    For any given location, all accesses (ordinary and synchronizing) to that location
+    appear in some global total order.
+ global order (for synchronizing accesses)
+    There is a global, total order on synchronizing accesses (to all locations, by all
+    threads).
+ program order (per-thread)
+    All accesses by a given thread occur (from that thread’s perspective) in the order
+    specified by programming language semantics. Note that this order does not
+    necessarily correspond to physical reality in the implementation: both the com-
+    piler and the hardware may reorder assembly-level instructions if they are able
+    to prove that a sequential program cannot tell the difference. Moreover, since
+    ordinary accesses of different threads are ordered only transitively via local order
+    (below), a thread is generally unable to observe the program order of its peers.
+ local order
+    Within a given thread, each synchronizing access is ordered with respect to pre-
+    vious and subsequent accesses (both ordinary and synchronizing) as specified
+    by (implicit or explicit) {R,W}∥{R,W} annotations. For fully ordered (RW∥RW)
+    synchronizing instructions, global and program order are consistent.
+ values read
+    A read instruction may return the value written by the most recent write (to the
+    same location) that is ordered before the read. It may also, in some cases, return
+    the value written by an unordered write. More detail on memory models can be
+    found in Sec. 3.3.
+
+read-modify-write instructions, such as those described below in Sec. 2.3, count as both
+reads and writes in such annotations. So, for example, f.store(1, W∥) might be used in Figure
+2.5 at line 2 of thread 1 to order the (synchronizing) store to f after the (ordinary) write
+to x, and f.load(∥RW) might be used at line 1 of thread 2 to order the (synchronizing)
+load of f before both the (ordinary) read of x and any other subsequent reads and writes.
+Similarly, fence(RW∥RW) would indicate a full fence, ordered globally with respect to all
+other synchronizing instructions and locally with respect to all preceding and subsequent
+ordinary accesses in its thread. For simplicity, we will assume that synchronizing stores and
+fetch_and_Φ operations are always write atomic.
+   As a general rule, we will use an explicit load or store instruction for any access that may
+race with a conflicting access in another thread (more on the notion of races in Sec. 3.4.2). In
+
+the absence of annotations, we assume RW ∥ RW ordering for synchronizing instructions.3 To
+indicate a synchronizing instruction with no ordering constraints, we use the annotation ∥.
+The main difference between an ordinary access and a synchronizing access annotated with
+∥ is that the former can participate in a data race, and the latter cannot. We will assume that
+the annotation on a synchronizing instruction (including the default RW ∥ RW of an unlabeled
+instruction) inhibits reordering not only by the hardware (processor, cache, or interconnect),
+but also by the compiler or interpreter. Compiler writers or assembly language programmers
+interested in porting our pseudocode to some concrete machine will need to restrict their code
+improvement algorithms accordingly, and issue appropriate synchronizing instructions for
+the hardware at hand. Beginning guidance can be found in Doug Lea’s on-line “Cookbook
+for Compiler Writers” (Lea 2001) or in the on-line compendium hosted at the University of
+Cambridge (Sewell 2014).
+   To determine the need for synchronizing instructions in the code of a given synchroniza-
+tion algorithm, we shall need to consider both the correctness of the algorithm itself and
+the semantics it is intended to provide to the rest of the program. The acquire operation
+of Peterson’s two-thread spin lock (Peterson 1981), for example, employs synchronizing
+stores to arbitrate between competing threads, but this ordering is not enough to prevent a
+thread from reading or writing shared data before the lock has actually been acquired—or
+after it has been released. For that, one needs accesses or fences with local ∥ RW and RW ∥
+ordering (code in Sec. 4.1).
+
+Order Proactively, not Defensively
+In the absence of appropriate memory ordering annotations, processors and compilers can introduce
+a surprising amount of reordering. It is not uncommon, for example, for parts of a subroutine to
+be executed before the routine is called—either because the processor is executing out of order or
+because the compiler has expanded the subroutine in-line and intermixed its instructions with those
+of the caller.
+Intuition can often be misleading. Consider, for example, the code s := x; if (s) t := y. Given the
+conditional test, it is tempting to assume that the read of x must be ordered before the read of y.
+However, the processor can guess that x is non-zero, read y, then complete the read of x, verify that
+it is non-zero, and use the value of y (i.e., t) that was read before x. In multithreaded code, this may
+leave the reader with mutually incompatible versions of s and t, if y was written before x in another
+thread.
+Rather than imagining all of the ways in which optimizations can violate expectations, authors of
+synchronization mechanisms and concurrent data structures are advised to determine the order in
+which steps must occur for correctness, and then insert appropriate instructions to guarantee that
+ordering.
+
+3 These conventions are similar to C/C++, in which an unannotated synchronizing instruction (or
+equivalently, one with argument memory_order_seq_cst) has RW ∥ RW semantics by default.
+Note, however, that certain annotated loads and stores in C/C++ may not be globally ordered.
+
+    Fortunately for most programmers, memory ordering details are generally of concern only
+to the authors of synchronization algorithms and low-level concurrent data structures, which
+may need to be re-written (or at least re-tuned) for each target architecture. Programmers who
+use these algorithms correctly are then typically assured that their programs will behave as if
+the hardware were sequentially consistent (more on this in Sec. 3.3), and will port correctly
+across machines.
+    Identifying a minimal set of ordering instructions to ensure the correctness of a given
+algorithm on a given machine is a difficult and error-prone task.4 In fact, the minimal fencing
+problem has been shown to be NP hard even for straightline programs when there are only
+two types of fences (Taheri et al. 2019). Fencing has traditionally been performed by hand,
+though there has been promising recent work aimed at verifying the correctness of a given
+set of fences or even inferring them directly (Burckhardt et al. 2007; Kuperstein et al. 2010;
+Oberhauser et al. 2021). We have made a good-faith effort—especially in Chapters 4 through
+6—to explicitly specify near-minimal ordering constraints. For more complex algorithms—
+including most of those presented in Chapter 8—we revert to unlabeled load and store
+instructions, which are fully ordered by default.
+    To clarify the memory model further, we give several examples in Table 2.2 that illustrate
+when instruction reordering can and cannot occur. In Table 2.3, we demonstrate the interplay
+between ordering constraints on synchronizing instructions and communication between
+threads.
+
+2.2.3     Example Architectures
+
+A few multiprocessors (notably, those built around the c. 1996 MIPS R10000 processor
+(Yeager 1996)) have been defined to be sequentially consistent. A few others (notably, the HP
+PA-RISC and some IBM z machines) have been implemented with sequential consistency,
+even though the documentation permitted something more relaxed. Hill (1998) has argued
+that the overhead of sequential consistency need not be onerous, particularly in comparison
+to its conceptual benefits. Most machines today, however, fall into two broad classes of
+more relaxed alternatives. On the SPARC, x86 (both 32- and 64-bit), and IBM z Series,
+reads are allowed to bypass writes, but R ∥ R, R ∥W, and W ∥W orderings are all guaranteed to
+be respected by the hardware, and writes are always globally ordered (write atomic). Special
+instructions—synchronizing accesses or fences—are required only when the programmer
+must ensure that a write and a subsequent read complete in program order. On Arm, Power,
+and IA-64 (Itanium) machines, all four combinations of local bypassing are possible: special
+instructions must be used whenever ordering is required. Moreover, on Arm v8 and Power,
+ordinary writes are not guaranteed to be write atomic.
+
+4 The first edition of this monograph contained numerous such errors, and some almost certainly
+remain.
+
+Table 2.2 Illustrative examples of possible reorderings under the memory model employed herein.
+In these examples, x, y, z, and w are assumed to be atomic variables, and b is not. L is a lock.
+ ordered load-store
+   x.load(∥)        // cannot be reordered after the store
+               ∥
+   y.store(1, R )
+
+ unordered load-store
+   x.load(∥R)       // can be reordered after the store
+               ∥
+   y.store(1, W RW)
+
+ fence ordered load
+    x.load(∥)       // cannot be reordered after the fence
+    fence(R∥)
+
+ unidirectional ordering
+   x.store(1, ∥)     // can be reordered freely
+   y.load(∥RW)       // cannot be reordered after z.store
+   z.store(2, ∥)     // cannot be reordered before y.load
+
+ implicit ordering
+   x.store(1, ∥)       // cannot be reordered after y.load,
+   y.load()            // as this load has implicit RW∥RW ordering
+
+ conditional load reordering
+   if x.load(∥)        // even if the compiler does not reorder these instructions,
+         y.store(1, ∥) // the processor can
+
+ reordering into a critical section
+    x.load(∥)         // can be reordered into the critical section
+    x.store(1, ∥)     // can be reordered into the critical section
+    L.acquire()       // lock implementation will ensure ∥RW ordering
+           ∥
+    y.load( )         // can be reordered with z.store, but
+    z.store(2, ∥)     // both must remain within the critical section
+    L.release()       // lock implementation will ensure RW∥ ordering
+    w.store(3, )∥     // can be reordered into the critical section
+    w.load(∥)         // can be reordered into the critical section
+
+ ordering ordinary and synchronizing accesses
+   x.store(1, ∥W)   // cannot be reordered after the store to b because of ∥W
+   b := 1
+
+Table 2.3 Illustrative examples of ordering and inter-thread communication.
+ delaying loads until stores have occurred in another thread
+      atomic<int> x, y := 0, 0
+      atomic<bool> flag := false
+      thread 1:
+          repeat                         // busy wait on flag
+              done := flag.load(∥R)      // cannot be reordered after x.load or y.load
+          until done
+          x.load(∥)                      // must return 1
+          y.load(∥)                      // must return 2
+
+      thread 2:
+          x.store(1, ∥)                  // cannot be reordered after flag.store
+          y.store(2, ∥)                  // cannot be reordered after flag.store
+          flag.store(true, W∥)
+
+ arguing that stores were not observed by another thread
+      atomic<int> x, y := 0, 0
+      atomic<bool> flag := false
+      thread 1:
+          x.load(∥)                      // cannot be reordered after flag.store
+          y.load(∥)                      // cannot be reordered after flag.store
+          flag.store(true, R∥)
+
+      thread 2:
+          flag.load(∥W)                  // cannot be reordered after x.store or y.store,
+          x.store(1, ∥)                  // so if thread 2 sees flag = true,
+          y.store(2, ∥)                  // then thread 1 must have seen x = 0 and y = 0
+
+   We will refer to hardware-level memory models in the SPARC/x86/z camp using the
+SPARC term TSO (Total Store Order). We will refer to the other machines as “more relaxed.”
+On TSO machines, W ∥ R orderings (W ∥ on a load, ∥ R on a store, or a W ∥ R fence) should
+be enforced with appropriate machine instructions; other annotations can be elided from our
+code. On more relaxed machines, all annotations (explicit and implicit) must be enforced
+with appropriate machine instructions. It should be emphasized that there are significant
+differences among machines within a given camp—in the default ordering, the available
+synchronizing instructions, and the details of corner cases. A full explanation is well beyond
+what we can cover here. For a taste of the complexities involved, see the Ph.D. theses of Adve
+
+(1993), Gharachorloo (1995), or Lustig (2015), or Sewell et al.’s attempt (2010) to formalize
+the behavior specified informally in Intel’s architecture manual (Intel 2023, Vol. 3, Sec. 9.2).
+    A few instruction sets—notably the IA64 (Itanium) and AArch64 (Arm v8 and v9, but
+not v7)—provide explicit synchronizing loads and stores. Other machines typically pro-
+vide separate fence instructions, which do not, themselves, modify memory. Though less
+common, synchronizing accesses have two principal advantages. First, they can be designed
+to ensure write atomicity, even on a machine that does not otherwise provide it, thereby
+precluding the sort of circularity shown in Figure 2.4. Second, they can allow an individ-
+ual access (the load or store itself) to be ordered with respect to preceding or subsequent
+accesses. A fence, by contrast, must order all preceding and subsequent accesses of the
+specified kind.
+    One particular form of local ordering is worthy of special mention. As noted in Sec. 2.2.2,
+a lock acquire operation must ensure that a thread cannot read or write shared data until
+it has actually acquired the lock. The appropriate guarantee will typically be provided by a
+∥ RW load or a load that is followed by a R ∥ RW fence. In a similar vein, a lock release must
+ensure that all reads and writes within the critical section have completed before the lock is
+actually released. The appropriate guarantee will typically be provided by a RW ∥ store or
+a store that is preceded by a RW ∥W fence. These combinations are common enough that
+they are sometimes referred to as acquire and release orderings. They are used not only
+for mutual exclusion, but for most forms of condition synchronization as well. The IA-64
+(Itanium), AArch64, and several research machines—notably the Stanford Dash (Lenoski
+et al. 1992)—support acquire and release orderings directly in hardware. In the mutual
+exclusion case, particularly when using synchronizing accesses rather than fences, acquire
+and release orderings allow work to “migrate” into a critical section both from above (prior
+to the lock acquire) and from below (after the lock release). They do not allow work to
+migrate out of a critical section in either direction.
+
+Speculation in Compilers and in Hardware
+When reasoning about ordering, it is tempting to assume that compilers and processors will always
+respect control and data dependences—that they won’t, for example, access shared memory on the
+far side of a not-yet-resolved conditional test, or guess the address from which to read a value. Such
+assumptions are a recipe for disaster: modern compilers and processors can be surprisingly aggressive,
+and programmers who assume otherwise are likely to write code that doesn’t work. In this monograph,
+we assume only that no reasonable compiler or processor will speculate the address or value of a write.
+In a similar vein, we assume that a reasonable compiler and processor will eventually (in finite time)
+verify speculated values. So, for example, in the code if (x.load(∥)) while (true) { }, if x is speculated
+to be true but its value is really false, it should not be possible for a thread to spin forever in the while
+loop. Likewise, in the code repeat a := x.load() until a, where x is an atomic variable, the compiler
+should never optimize away the spin loop by hoisting a single load of x outside. (We shall have more
+to say about spinning when we consider the subject of fairness in Sec. 3.2.2.)
+
+   Note that work migrating into a critical section cannot create correctness or progress
+issues. If work was safe to perform outside of a critical section, it remains safe to perform
+inside the critical section. Progress could potentially be threatened if the work that migrates
+into the critical section involves acquiring additional locks. However, the ordering constraints
+on lock acquire and release operations prevent this. At worst, work migrating into a critical
+section may decrease the potential for parallel execution, leading to lower performance.
+
+2.3      Atomic Primitives
+
+To facilitate the construction of synchronization algorithms and concurrent data structures,
+most modern architectures provide instructions capable of updating (i.e., reading and writ-
+ing) a memory location as a single atomic operation. We saw a simple example—the
+test_and_set instruction (TAS)—in Sec. 1.3. A longer list of common instructions appears
+in Table 2.4. Note that for each of these, when it appears in our pseudocode, we per-
+mit an optional, final argument that indicates local ordering constraints. The instruction
+a.CAS(old, new, W∥), for example, indicates a CAS that is ordered after all preceding write
+accesses in its thread.
+   Originally introduced on mainframes of the 1960s, TAS and swap are still available on
+several modern machines, including the x86. FAA and FAI were introduced for “combining
+network” machines of the 1980s (Kruskal et al. 1988); the former is still supported today
+on the x86. The semantics of TAS, swap, FAI, and FAA should all be self-explanatory. Note
+that they all return the value of the target location before any change was made.
+    CAS and LL / SC are universal primitives, in a sense we will define formally in Sec. 3.3.
+In practical terms, we can use them to emulate essentially arbitrary (single-word) read-
+modify-write (fetch_and_Φ) operations (including all the other operations in Table 2.4).
+CAS was originally introduced in the 1973 version of the IBM 370 architecture (IBM 1975;
+Gifford et al. 1987; Brown and Smith 1975). It was also provided by IA-64 (Itanium) and
+SPARC processors, and is still available on x86 and certain recent Arm machines. LL / SC
+was originally proposed for the S-1 AAP Multiprocessor at Lawrence Livermore National
+Laboratory (Jensen et al. 1987). It was also provided by Alpha processors, and is found on
+modern Power, MIPS, and Arm machines. Interestingly, Arm’s AArch64 (v8/9) architecture
+introduced CAS in addition to LL / SC, though in at least some implementations the latter
+remains significantly faster (Jesus and Weiland 2023).
+    CAS takes three arguments: a memory location, an old value that is expected to occupy
+that location, and a new value that should be placed in the location if indeed the old value is
+currently there. The instruction returns a Boolean value indicating whether the replacement
+occurred successfully.
+
+Table 2.4 Common atomic (read-modify-write) instructions. For notational consistency with load
+and store, we have written these as methods of an atomic word of type bool, int, or simply “word”
+(when type is immaterial). In the literature they are also commonly written as stand-alone functions
+that take a pointer to the to-be-accessed word as an additional first operand. As described in the text,
+we also permit an optional final operand that specifies non-default local ordering.
+ test_and_set
+     bool (atomic<bool> a).TAS(): atomic { bool t := a.load(); a.store(true); return t }
+
+ swap
+     word (atomic<word> a).swap(word w): atomic { word t := a.load(); a.store(w); return t }
+
+ fetch_and_increment
+     int (atomic<int> a).FAI(): atomic { int t := a.load(); a.store(t + 1); return t }
+
+ fetch_and_add
+     int (atomic<int> a).FAA(int n): atomic { int t := a.load(); a.store(t + n); return t }
+
+ compare_and_swap
+     bool (atomic<word> a).CAS(word old, word new):
+        atomic { bool t := (a.load() = old); if (t) a.store(new); return t }
+
+ load_linked / store_conditional
+     word (atomic<word> a).LL(): atomic { remember a; return a.load() }
+     bool (atomic<word> a).SC(word w):
+        atomic { t := (a is remembered, and has not been evicted since LL)
+               if (t) a.store(w); return t }
+
+Fetch-and-Φ from CAS Given CAS, fetch_and_i can be written as follows, for any given
+function Φ:
+     1:   word fetch_and_Φ(function Φ, atomic<word> *w):
+     2:       word old, new
+     3:       repeat
+     4:            old := w→load(∥)
+     5:            new := Φ(old)
+     6:       until w→CAS(old, new, ∥)
+     7:       return old
+
+In effect, this code computes Φ(*w) speculatively and then updates w atomically if its value
+has not changed since the speculation began. The only way the CAS can fail to perform its
+update (and return false at line 6) is if some other thread has recently modified w. If several
+threads attempt to perform a fetch_and_i on w simultaneously, one of them is guaranteed
+to succeed, and the system as a whole will make forward progress. This guarantee impliesthat
+
+fetch_and_Φ operations implemented with CAS are nonblocking (more specifically, lock
+free), a property we will consider in more detail in Sec. 3.2.
+
+Fetch-and-Φ from LL / SC One problem with CAS, from an architectural point of view, is
+that it combines a load and a store into a single instruction, which complicates the implemen-
+tation of pipelined processors. LL / SC was designed to address this problem. In the fetch_
+and_Φ idiom above, it replaces the load at line 4 with a special instruction that has the
+side effect of “tagging” the associated cache line so that the processor will “notice” any
+subsequent eviction of the line. A subsequent SC will then succeed only if the line is still
+present in the cache:
+      word fetch_and_Φ(function Φ, atomic<word> *w):
+          word old, new
+          repeat
+               old := w→LL(∥)
+               new := Φ(old)
+          until w→SC(new, R∥)
+          return old
+
+    Here any argument for forward progress requires an understanding of why SC might
+fail. Details vary from machine to machine. In all cases, SC is guaranteed to fail if another
+thread has modified *w (the location pointed at by w) since the LL was performed. On most
+machines, SC will also fail if a hardware interrupt happens to arrive in the post-LL window.
+On some machines, it will fail if the cache suffers a capacity or conflict miss, or if the
+processor mispredicts a branch. To avoid deterministic, spurious failure, the programmer
+may need to limit (perhaps severely) the types of instructions executed between the LL and
+SC. If unsafe instructions are required in order to compute the function Φ, one may need a
+hybrid approach:
+
+Emulating CAS
+Note that while LL / SC can be used to emulate CAS, the emulation requires a loop to deal with spurious
+SC failures. This issue was recognized explicitly by the designers of the C++’11 atomic types and
+operations, who introduced two variants of CAS. The atomic_compare_exchange_strong
+operation has the semantics of hardware CAS: it fails only if the expected value was not found. On
+an LL / SC machine, it is implemented with a loop. The atomic_compare_exchange_weak
+operation admits the possibility of spurious failure: it has the interface of CAS, but is implemented
+without a loop on an LL / SC machine. For algorithms that already require a source-level loop (e.g., to
+implement fetch_and_Φ), atomic_compare_exchange_weak may result in more terse and
+efficient assembly code.
+
+     1:   word fetch_and_Φ(function Φ, atomic<word> *w):
+     2:       word old, new
+     3:       repeat
+     4:            old := w→load(∥)
+     5:            new := Φ(old)
+     6:       until w→LL(∥) = old and w→SC(new, R∥)
+     7:       return old
+
+In effect, this code uses LL and SC at line 6 to emulate CAS. Note that unlike the imple-
+mentation from CAS, in the implementations from LL/SC, we have used explicit ordering
+annotations to prevent the SC from being reordered before the preceding LL. Such reordering
+could prevent forward progress, as an SC performed before an LL should fail.
+
+2.3.1      The ABA Problem
+
+While both CAS and LL / SC appear in algorithms in the literature, the former is quite a bit
+more common—perhaps because its semantics are self-contained, and do not depend on the
+implementation-oriented side effect of cache-line tagging. That said, CAS has one significant
+disadvantage from the programmer’s point of view—a disadvantage that LL / SC avoids.
+
+Ordering Constraints for Fetch-and-Φ from CAS or LL / SC
+At first glance, it might seem surprising that there are no memory ordering constraints specified for
+fetch-and-Φ from CAS. The reader might wonder: What if Φ(old) is hoisted before the load? Since
+the load would not have occurred yet, the value of argument old would need to be speculated by
+the processor. If the speculated value does not match the contents of w, then the subsequent CAS
+will fail and no harm will be done. However, one could imagine that the speculated value is actually
+correct and the CAS succeeds. In this case, too, no harm is done, since the result is the same as it
+would be if the load and Φ were performed in program order. A similar argument can be made in the
+event that the CAS is hoisted before the load.
+In fetch-and-Φ from LL / SC, however, we add ordering constraints to prevent the SC from being
+hoisted before the LL. Unlike CAS(old, ...), SC does not verify that w contains the appropriate old
+value, so the above argument fails.
+It is also worth mentioning that implementations of synchronization primitives like fetch_and_Φ
+are used in the context of a larger program, where one must think about whether additional ordering
+constraints, beyond those needed to simply implement fetch_and_Φ, are needed to implement the
+desired program semantics. Just as we allow ordering constraints to be specified for synchronizing
+instructions, it may be helpful to allow them to be specified for fetch_and_Φ. One might then, for
+example, write fetch_and_Φ(Φ, x, RW ∥). To facilitate this usage, an implementation of fetch_and_Φ
+would need to incorporate the desired ordering constraints. In the case of RW ∥ RW, the ordering
+constraint could be added to the atomic load instruction, but then the associated overhead would be
+incurred on every iteration of the loop. Arguably better is to begin and end the routine with appropriate
+fences.
+
+                                   top
+                            (a)                A     C
+
+                            (b)                A     B          C
+
+                            (c)                B     C
+
+Figure 2.6 The ABA problem in a linked-list stack.
+
+   Because it chooses whether to perform its update based on the value in the target location,
+CAS may succeed in situations where the value has changed (say from A to B) and then
+changed back again (from B to A) (IBM 1975; IBM 1983; Treiber 1986). In some algorithms,
+such a change and restoration is harmless: it is still acceptable for the CAS to succeed. In
+other algorithms, incorrect behavior may result. This possible incorrectness, often referred
+to as the ABA problem, is particularly worrisome in pointer-based algorithms. Consider the
+following (buggy!) code to manipulate a linked-list stack:
+
+      class node { atomic<node*> next, ... }             1: node* pop(atomic<node*> *top):
+      1: void push(atomic<node*> *top, node* new):       2: node* old, new
+      2: node* old                                       3: repeat
+      3: repeat                                          4:     old := top→load(∥)
+      4:        old := top→load(∥)                       5:     if old = null return null
+      5:        new→next→store(old, Φ)                   6:     new := old→next→load(∥)
+      6: until top→CAS(old, new, W∥)                     7: until top→CAS(old, new, ∥)
+                                                         8: return old
+
+    Note the explicit ordering annotation on the CAS in push. This annotation is necessary
+to prevent the hardware (or compiler) from reordering the CAS before the preceding store.
+Such reordering would allow a node to become visible to other threads before its next pointer
+is set, causing a segmentation fault or data corruption. We have omitted explicit ordering on
+the CAS in pop, on the assumption that neither the compiler nor the hardware will speculate
+a value for the load of new at line 6.
+    Despite the ordering annotation, this code has many problem scenarios, one of which is
+shown in Figure 2.6. In (a), our stack contains the elements A and C. Suppose that thread 1
+begins to execute pop(&top), and has completed line 6, but has yet to reach line 7. If
+thread 2 now executes a (complete) pop(&top) operation, followed by push(&top, &B) and
+then push(&top, &A), it will leave the stack as shown in (b). If thread 1 now continues, its
+CAS will succeed, leaving the stack in the broken state shown in (c).
+    The problem here is that top changed between thread 1’s load and the subsequent CAS.
+If these two instructions were replaced with LL and SC, the latter would fail—as indeed it
+should—causing thread 1 to try again.
+    On machines with CAS, programmers must consider whether the ABA problem can arise
+in the algorithm at hand and, if so, take measures to avoid it. The simplest and most common
+
+class stack { atomic<⟨node*, int⟩> top }
+                                                          node* stack.pop():
+class node { atomic<node*> next, ... }
+                                                              repeat
+void stack.push(node* n):                                           ⟨o, c⟩ := top.load(∥)
+     repeat                                                         if o = null return null
+           ⟨o, c⟩ := top.load(∥)                                    n := o→next→load(∥)
+           n→next→store(o, ∥)                                 until top.CAS(⟨o, c⟩, ⟨n, c+1⟩, R∥)
+     until top.CAS(⟨o, c⟩, ⟨n, c⟩, W∥)                        return o
+
+Figure 2.7 The lock-free “Treiber stack,” with a counted top-of-stack pointer to solve the ABA
+problem. It suffices to modify the count in pop only; if CAS is available in multiple widths, it may
+be applied to only the pointer in push.
+
+technique is to devote part of each to-be-CASed word to a sequence number that is updated
+in pop on a successful CAS. Using this counted pointer technique, we can convert our stack
+code to the (now safe) version shown in Figure 2.7.5
+    The sequence number solution to the ABA problem requires that there be enough bits
+available for the number that wrap-around cannot occur in any reasonable program execution.
+Some machines (in particular, the x86/64 via cmpxchg8b and cmpxchg16b for 32-bit
+and 64-bit processors, respectively) provide a double-width CAS that is ideal for this purpose.
+If the maximum word width is required for “real” data, however, another approach may be
+required.
+    In many programs, the programmer can reason that a given pointer will reappear in a given
+data structure only as a result of memory deallocation and reallocation. Note that this is not
+the case in the Treiber stack as presented here. It would be the case if we re-wrote the code
+to pass push a value, and had the method allocate a new node to hold it. Symmetrically,
+pop would deallocate the node and return the value it contained. In a garbage-collected
+language, deallocation will not occur so long as any thread retains a reference, so all is
+well. In a language with manual storage management, various safe memory reclamation
+(SMR) strategies can be used to delay deallocation until all concurrent uses of a datum have
+completed. In the general case (where a pointer can recur without its memory having been
+recycled), safe CASing may require an extra level of pointer indirection (Michael 2004c;
+Jayanti and Petrovic 2003). Further discussion of SMR—including safe versions of the
+Treiber stack—appears in Sec. 8.7.
+
+5 While Treiber’s technical report (Treiber 1986) is the standard reference for the nonblocking stack
+algorithm, the ABA problem is mentioned as early as the 1975 edition of the System 370 manual
+(IBM 1975, p. 125), and a version of the stack appears in the 1983 edition (IBM 1983, App. A).
+Treiber’s personal contribution was to observe that counted pointers are required only in the pop
+operation; push can safely perform a single-width CAS on the pointer alone (Michael 2013).
+
+2.3.2    The Value of FAA
+
+While both CAS and LL / SC can be used to implement fetch_and_Φ, the emulation may
+not be as efficient as we might hope. Suppose, for example, that n threads, running on
+n cores, attempt to increment a counter more or less concurrently, using the speculative
+implementation defined above. In the worst case, all n threads will compute a new value,
+all will execute CAS or SC, and exactly one will succeed. If the remaining n − 1 try again
+concurrently, n − 2 may fail and try again, then n − 3, and so on. In the end, the hardware
+may be forced to serialize O(n 2 ) atomic accesses to the counter in order to complete n
+updates.
+    Consider, on the other hand, what happens with FAA or FAI. The hardware still serializes
+atomic accesses to the counter, but each access succeeds: no speculation is involved, and all
+n updates can complete in O(n) time, worst case. For data structures with high contention,
+the difference in performance can be quite dramatic, and clearly justifies the continued
+inclusion of FAA in the x86 instruction set. While similar arguments could in principle be
+made for other functions Φ, the specific case of add has proven most useful in practice.
+A particularly compelling application to queues can be found in the work of Morrison and
+Afek (2013).
+
+2.3.3     Other Synchronization Hardware
+
+Several historical machines have provided special locking instructions. The QOLB (queue on
+lock bit) instruction, originally designed for the Wisconsin Multicube (Goodman et al. 1989),
+and later adopted for the IEEE Scalable Coherent Interface (SCI) standard (Aboulenein et al.
+1994), leverages a coherence protocol that maintains, in hardware, a linked list of copies
+of a given cache line. When multiple processors attempt to lock the same line at the same
+time, the hardware arranges to grant the requests in linked-list order. The Kendall Square
+KSR-1 machine (KSR 1992) provided a similar mechanism based not on an explicit linked
+list, but on the implicit ordering of nodes in a ring-based network topology. As we shall see
+in Chapter 4, similar strategies can be emulated in software. The principal argument for the
+hardware approach is the ability to avoid a costly cache miss when passing the lock (and
+perhaps its associated data) from one processor to the next (Woest and Goodman 1991).
+    The x86 allows many memory-update instructions (including increment and add) to
+be prefixed with a special LOCK code, rendering them atomic (Intel 2023, Vol. 2, Sec. 3.3;
+Vol. 3, Sec. 9.1). The benefit to the programmer is limited, however, by the fact that most
+update instructions do not return the previous value from the modified location. Two threads
+executing concurrent FAI instructions can use the resulting return values to tell which update
+happened first. Two threads executing concurrent LOCKed increments can be sure that both
+updates will happen, but will be unable to determine their order.
+
+   Several supercomputer-class machines have provided special network hardware (gener-
+ally accessed via memory-mapped I/O) for near-constant-time barrier and “Eureka” oper-
+ations. These amount to cross-machine AND (all processors are ready) and OR (some pro-
+cessor is ready) computations. We will mention them again in Secs. 5.2 and 5.3.3.
+   In 1991, Stone et al. proposed a multi-word variant of LL / SC, which they called “Okla-
+homa Update” (Stone et al. 1993) (in reference to the song “All Er Nuthin’ ” from the Rodgers
+and Hammerstein musical). Concurrently and independently, Herlihy and Moss proposed
+a similar mechanism for Transactional Memory (TM) 1993. Neither proposal was imple-
+mented at the time, but TM enjoyed a rebirth of interest about a decade later. Like queued
+locks, it can be implemented in software using CAS or LL / SC, but hardware implementations
+enjoy a substantial performance advantage (Harris et al. 2010). As of 2023, hardware TM
+has been implemented on the Azul Systems Vega 2 and 3 (Click 2019); the experimental
+Sun/Oracle Rock processor (Dice et al. 2009); the IBM Blue Gene/Q (Wang et al. 2012);
+IBM’s zEC12 mainframe (Jacobi et al. 2012) and its successors; IBM’s Power 8 and 9 pro-
+cessors; Intel’s x86 processors starting with the “Haswell” generation; and Arm processors
+that implement the v9-A instruction set. We will discuss TM in Chapter 9.

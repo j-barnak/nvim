@@ -3121,6 +3121,7 @@ local BOOKS = {
 	} },
 	{ module = "Architecture", key = "books-arch", items = {
 		{ title = "A Primer on Memory Consistency and Cache Coherence", fmt = "pdf", slug = "a-primer-on-memory-consistency-and-cache-coherence", file = "A Primer on Memory Consistency and Cache Coherence (2nd ed).pdf" },
+		{ title = "Shared-Memory Synchronization", fmt = "pdf", slug = "shared-memory-synchronization", file = "Shared-Memory Synchronization (2nd ed).pdf" },
 	} },
 	{ module = "Hardware", key = "books-hardware", items = {
 		{ title = "Retrocomputing with Clash", fmt = "pdf", slug = "retrocomputing-with-clash", file = "retroclash.pdf" },
