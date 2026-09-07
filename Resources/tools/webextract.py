@@ -122,7 +122,9 @@ and every one is documented at the point it runs:
                the <hr> touching it, and the hover-only copiable-link permalink
     unescape   undo a doubly-escaped entity inside <pre> (blogs.oracle.com)
     phrack     phrack.org's issue index table, and its one 80-column <pre>
-    lwn        LWN's reader-comment form and keyword index
+    lwn        LWN's reader-comment form and keyword index, and a free-to-read
+               article's subscription-nag box (blockquote.ad, "We're bad at
+               marketing ... subscribe today") - an advertisement, not article
     jetpack    WordPress.com's "Share this" / "Related" block
     doare      doar-e.github.io's date strip and its language-less Pygments blocks
     duasynt    duasynt.com's section headings, drawn as <div class="post-section">
@@ -840,7 +842,7 @@ if mode == "content":
         # LWN keeps the whole reader-comment thread inside div.ArticleText, in
         # the <form> that carries the "post comments" button, and closes the
         # article with its keyword-index table. Neither is the article.
-        for t in el.select("form, table.IndexEntries"):
+        for t in el.select("form, table.IndexEntries, blockquote.ad"):
             t.decompose()
         main = el.select_one("main") or el
         kids = [c for c in main.children if getattr(c, "name", None)]

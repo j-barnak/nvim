@@ -68,7 +68,8 @@ function M.check()
 		{ "packer", 18 }, { "snapshot-fuzzer", 13 }, { "kernel-labs", 27 },
 		{ "slub", 14 }, { "kernel-internals", 482 }, { "kernel-exploitation", 77 },
 		{ "llvm-tutorial", 15 }, { "browser-engineering", 24 }, { "learnopengl", 72 },
-		{ "revers-hypervisor", 8 }, { "glibc", 775 }, { "emulator", 51 } }) do
+		{ "revers-hypervisor", 8 }, { "glibc", 775 }, { "emulator", 51 },
+		{ "elf-series", 6 } }) do
 		local idx = fr .. "/" .. w[1] .. "/index.tsv"
 		if vim.fn.filereadable(idx) == 1 then
 			local n = #vim.fn.readfile(idx)
