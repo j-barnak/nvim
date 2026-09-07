@@ -110,6 +110,8 @@ and every one is documented at the point it runs:
     sphinx     Sphinx / sphinx_rtd_theme: lexer on the grandparent div, the
                <span class="pre"> shrapnel inside inline <code>
     chroma     Hugo's <pre class="chroma"><code class="language-c">
+    rouge      Jekyll's Rouge highlighter (div.language-X.highlighter-rouge):
+               recover the wrapper language label and drop the line-number gutter
     brush      WordPress SyntaxHighlighter's <pre class="brush: cpp; ...">
     latexml    arXiv LaTeXML \\lstlisting, rebuilt from its own base64 payload
     gist=DIR   Blogger's <script src="gist.github.com/...js"> embeds, inlined
@@ -1007,6 +1009,33 @@ if mode == "content":
             # The frozen library labels C as lowercase "c" (never "C"); Ghost
             # and Hugo both leak the source's "language-C".
             pre.attrs = {"class": [lang.lower()]}
+
+    if opt("rouge"):
+        # Jekyll's Rouge highlighter (Minimal Mistakes: jhalon.github.io; Chirpy:
+        # madstacks.dev). The declared language is ONLY on the wrapper
+        # <div class="language-X highlighter-rouge">, never on the <pre>/<code>,
+        # so pandoc fences the block from <pre class="highlight"> ("highlight"),
+        # which clean() then strips - the author's language label is lost. Chirpy
+        # also wraps each listing in a line-number gutter (table.rouge-table with
+        # a td.rouge-gutter <pre class="lineno">1 2 3...</pre> beside the
+        # td.rouge-code <pre>) and a copy-button div.code-header, all of which
+        # pandoc would fold into the code (the whole 1..N gutter welded on). Rebuild
+        # each block from its code cell (td.rouge-code's <pre> when the gutter table
+        # is present, else the inner <pre>), dropping the gutter and header, and
+        # label it from the wrapper's "language-X" class. Inline code is a bare
+        # <code class="...highlighter-rouge"> with no wrapping div, so keying on the
+        # div never touches it.
+        for div in el.select("div.highlighter-rouge"):
+            lang = next((c[len("language-"):] for c in (div.get("class") or [])
+                         if c.startswith("language-")), "")
+            code_td = div.select_one("td.rouge-code")
+            src = code_td.select_one("pre") if code_td else None
+            if src is None:
+                hi = div.select_one("div.highlight")
+                src = hi.select_one("pre") if hi else div.select_one("pre")
+            if src is None:
+                continue
+            div.replace_with(code_block(src.get_text().rstrip("\n") + "\n", lang, s))
 
     if opt("ec"):
         # Astro Expressive Code renders every source line as a BLOCK-level
