@@ -3119,6 +3119,9 @@ local BOOKS = {
 		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
 		{ title = "Secure Coding in C and C++ (2e)", fmt = "pdf", slug = "secure-coding-in-c-and-cpp", file = "Secure Coding in C and C++ (2nd Edition) (SEI Series in -- Seacord, Robert C_ -- 601df46864954c0d50394370bb73c517 -- Anna’s Archive.pdf" },
 	} },
+	{ module = "Architecture", key = "books-arch", items = {
+		{ title = "A Primer on Memory Consistency and Cache Coherence", fmt = "pdf", slug = "a-primer-on-memory-consistency-and-cache-coherence", file = "A Primer on Memory Consistency and Cache Coherence (2nd ed).pdf" },
+	} },
 	{ module = "Hardware", key = "books-hardware", items = {
 		{ title = "Retrocomputing with Clash", fmt = "pdf", slug = "retrocomputing-with-clash", file = "retroclash.pdf" },
 	} },
