@@ -25,6 +25,7 @@ and differ only in <mode> <selector> <opts>. --preserve-tabs is not optional
     rust-atomics     content article "" guesslang
     herd7            content body
     kernel-labs      content 'div[itemprop=articleBody]' "" sphinx
+    glibc            content '[class*=-level-extent]' <url> texinfo,abs
     kernel-internals content article.md-content__inner <url> mkdocs,abs
     packer           content div.page-html-padded <url> ftl,abs
     snapshot-fuzzer  content div.post-content <url> abs                  (ch 1-6, 8-13)
@@ -92,6 +93,9 @@ and every one is documented at the point it runs:
     ftl        fasterthanli.me's <figure class="code-block"> listings, its
                <picture>/<video>, and its two-speaker asides
     mkdocs     mkdocs-material's site nav, sidebars and headerlinks
+    texinfo    GNU Texinfo html_node's <div class="nav-panel"> (older makeinfo:
+               <div class="header">) Next/Previous/Up "[Contents][Index]" strip,
+               the <hr> touching it, and the hover-only copiable-link permalink
     unescape   undo a doubly-escaped entity inside <pre> (blogs.oracle.com)
     phrack     phrack.org's issue index table, and its one 80-column <pre>
     lwn        LWN's reader-comment form and keyword index
@@ -792,6 +796,27 @@ if mode == "content":
                            ".md-content__button, .md-footer, .md-header, "
                            ".md-top, .md-dialog, .md-feedback, .md-skip"):
             t.decompose()
+
+    if opt("texinfo"):
+        # GNU Texinfo's makeinfo "html_node" split (the glibc manual): each node
+        # is one page wrapped in <div class="...-level-extent">, opening with a
+        # <div class="nav-panel"> (older makeinfo: <div class="header">) that
+        # holds the "Next:/Previous:/Up: ... [Contents][Index]" link strip, and a
+        # matching <hr> rule between that panel and the node's heading. The BOTTOM
+        # nav panel is a sibling of the extent div, so the selector already
+        # excludes it; here we drop the top panel and ONLY the <hr> touching it
+        # (the index pages draw an <hr> inside their tables as real letter-group
+        # separators - 35 on the Concept Index - so a blanket hr removal guts
+        # them). Every heading and every @deftypefun prototype also carries a
+        # hover-only <a class="copiable-link"> permalink glyph (U+00B6 ¶) that CSS
+        # hides but pandoc would print into the middle of a function signature.
+        for panel in el.select("div.header, div.nav-panel"):
+            for sib in (panel.find_previous_sibling(), panel.find_next_sibling()):
+                if getattr(sib, "name", None) == "hr":
+                    sib.decompose()
+            panel.decompose()
+        for a in el.select("a.copiable-link"):
+            a.decompose()
 
     if opt("logl"):
         # learnopengl.com's theme prints TWO <h1> at the top of div#content: the

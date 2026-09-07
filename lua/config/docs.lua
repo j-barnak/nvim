@@ -3371,6 +3371,7 @@ LOCATION["llvm-tutorial"] = { index = "llvm-tutorial/index.tsv", unit = "chapter
 LOCATION["browser-engineering"] = { index = "browser-engineering/index.tsv", unit = "chapter" }
 LOCATION["learnopengl"] = { index = "learnopengl/index.tsv", unit = "chapter" }
 LOCATION["revers-hypervisor"] = { index = "revers-hypervisor/index.tsv", unit = "chapter" }
+LOCATION["glibc"] = { index = "glibc/index.tsv", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
 	LOCATION[key] = { network = true }
