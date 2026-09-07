@@ -2497,6 +2497,7 @@ local pick_glibc_malloc = frozen_web_provider("glibc-malloc", "glibc malloc> ")
 local pick_js_exploitation = frozen_web_provider("javascript-exploitation", "JavaScript Exploitation> ")
 local pick_bootloader = frozen_web_provider("bootloader-articles", "Bootloader> ")
 local pick_bxd = frozen_web_provider("binary-exploitation-dojo", "Binary Exploitation Dojo> ")
+local pick_makefile_tutorial = frozen_web_provider("makefile-tutorial", "Makefile> ")
 
 -- ── glibc: frozen manual (docs) + per-version source (:Src) ──────────────
 -- Docs are the frozen latest manual (one book, same for every release). Source
@@ -3261,6 +3262,7 @@ local WEB_BOOKS = {
 	{ title = "JavaScript Exploitation", key = "javascript-exploitation", run = pick_js_exploitation },
 	{ title = "Bootloader (Articles)", key = "bootloader-articles", run = pick_bootloader },
 	{ title = "Binary Exploitation Dojo", key = "binary-exploitation-dojo", run = pick_bxd },
+	{ title = "Learn Makefiles", key = "makefile-tutorial", run = pick_makefile_tutorial },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.
@@ -3424,6 +3426,7 @@ LOCATION["glibc-malloc"] = { index = "glibc-malloc/index.tsv", unit = "chapter" 
 LOCATION["javascript-exploitation"] = { index = "javascript-exploitation/index.tsv", unit = "chapter" }
 LOCATION["bootloader-articles"] = { index = "bootloader-articles/index.tsv", unit = "chapter" }
 LOCATION["binary-exploitation-dojo"] = { index = "binary-exploitation-dojo/index.tsv", unit = "chapter" }
+LOCATION["makefile-tutorial"] = { index = "makefile-tutorial/index.tsv", unit = "chapter" }
 LOCATION["elf-tis"] = { rel = "books/books-compilers/elf-specification", marker = ".complete", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do

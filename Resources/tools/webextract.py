@@ -146,6 +146,7 @@ and every one is documented at the point it runs:
     doare      doar-e.github.io's date strip and its language-less Pygments blocks
     duasynt    duasynt.com's section headings, drawn as <div class="post-section">
     guesslang  label an attribute-less <pre> from its own text (rust-atomics)
+    hljs       highlight.js <code class="hljs LANG">: keep the real language label
     wbe        browser.engineering's <header> social links, print-edition
                <aside class="ad">, Substack <div id="signup">, and <footer>
                (its custom pandoc template has no article wrapper)
@@ -915,6 +916,20 @@ if mode == "content":
         # land as a bare word in a paragraph.
         for d in el.select("div.post-section"):
             d.name = "h2"
+
+    if opt("hljs"):
+        # highlight.js tags a listing <code class="hljs makefile"> (or on the <pre>),
+        # so pandoc's gfm writer takes the FIRST class ("hljs") as the fence info
+        # string, which clean() then strips - the real language (makefile, c, sh,
+        # ...) is the SECOND class. Drop "hljs" so the language is what pandoc emits
+        # and keeps. The code text already carries real newlines (and tabs, kept by
+        # --preserve-tabs), so only the label is repaired.
+        for c in el.select("code.hljs, pre.hljs"):
+            kept = [x for x in (c.get("class") or []) if x != "hljs"]
+            if kept:
+                c["class"] = kept
+            else:
+                del c["class"]
 
     if opt("wbe"):
         # browser.engineering ships a custom pandoc template with NO article
