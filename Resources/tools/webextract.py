@@ -3,17 +3,92 @@
 The build pipeline is not otherwise recorded anywhere in this repository, and
 an audit has already been burned once by "rebuild with the current tool" being
 ambiguous while this file had uncommitted changes, so the exact commands that
-produced Resources/docs/.webcache live here, next to the tool that runs them:
+produced Resources/docs/.webcache live here, next to the tool that runs them.
+Every book goes through the same three stages,
 
-    osdev         python3 webextract.py mediawiki "" https://wiki.osdev.org
-                    | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs
-                    | python3 webextract.py clean "" "" listsep
-    learncpp      python3 webextract.py content div.entry-content   | pandoc ... | clean
-    rayanfam      python3 webextract.py content div.post-content    | pandoc ... | clean
-    rust-atomics  python3 webextract.py content article "" guesslang| pandoc ... | clean
-    herd7         python3 webextract.py content body                | pandoc ... | clean
+    curl -fsSL --compressed <url>
+      | python3 webextract.py <mode> <selector> <page-url> <opts>
+      | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs
+      | python3 webextract.py clean "" "" <clean-opts>
 
     cache file = Resources/docs/.webcache/<sha256 of the index.tsv URL>.txt
+
+and differ only in <mode> <selector> <opts>. --preserve-tabs is not optional
+(see the note at the end of this docstring).
+
+    osdev            mediawiki "" https://wiki.osdev.org      clean opts: listsep
+    learncpp         content div.entry-content <url> abs
+    rayanfam         content div.post-content
+    rust-atomics     content article "" guesslang
+    herd7            content body
+    kernel-labs      content 'div[itemprop=articleBody]' "" sphinx
+    kernel-internals content article.md-content__inner <url> mkdocs,abs
+    packer           content div.page-html-padded <url> ftl,abs
+    snapshot-fuzzer  content div.post-content <url> abs                  (ch 1-6, 8-13)
+                     content div.entry-content <url> doare,abs           (ch 7)
+    astra            content div.post-content <url> chroma,abs           (ch 1)
+                     content div.post-body <url> abs                     (ch 4-7)
+                     ch 2 and 3 are .txt whitepapers, wrapped in a bare fence,
+                     with no HTML stage at all
+    kernel-ctf       content section.article-content <url> abs           (ch 1-2)
+                     content div.content <url> chroma,abs                (ch 3-5)
+                     content article <url> latexml,abs                   (ch 6)
+                     content div.post-text <url> duasynt,abs             (ch 7)
+                     content div.article-prose <url> chroma,abs          (ch 8)
+                     content div.post-content <url> chroma,abs           (ch 9)
+                     content div.post-body <url> gist=<dir>,abs          (ch 10)
+    slub             content div.framed <url> phrack,abs                 (ch 1)
+                     content div.entry-content <url> brush,jetpack,abs   (ch 2)
+                     content article.post <url> abs                      (ch 3)
+                     content div.post-content <url> brush,unescape,abs   (ch 5-8)
+                     content div.ArticleText <url> lwn,abs               (ch 9)
+                     content div.post-body <url> abs                     (ch 10)
+                     content article.md-content__inner <url> mkdocs,abs  (ch 11)
+                     content div.post-content <url> chroma,abs           (ch 12)
+                     content div.content <url> abs                       (ch 13)
+                     ch 4 and 14 are PDFs and have no HTML stage: both go
+                     through pdf_build.sh's byte filters (control bytes,
+                     ligatures) into one text file, the slide deck with
+                     "pdftotext -layout" and its xairy.io watermark dropped,
+                     the two-column paper through a recursive XY-cut of each
+                     page (a "pdftotext -layout" per column and per full-width
+                     block, in reading order), because plain reading-order mode
+                     flattens every listing to the left margin and loses the
+                     line-number gutter its captions refer to, while a whole-page
+                     -layout interleaves the two columns.
+
+The <opts> are a comma-separated set. Each one exists because a real source in
+this library needs it; each is named after the generator that emits the markup,
+and every one is documented at the point it runs:
+
+    abs        resolve relative href/src/srcset/poster against the page URL
+    sphinx     Sphinx / sphinx_rtd_theme: lexer on the grandparent div, the
+               <span class="pre"> shrapnel inside inline <code>
+    chroma     Hugo's <pre class="chroma"><code class="language-c">
+    brush      WordPress SyntaxHighlighter's <pre class="brush: cpp; ...">
+    latexml    arXiv LaTeXML \\lstlisting, rebuilt from its own base64 payload
+    gist=DIR   Blogger's <script src="gist.github.com/...js"> embeds, inlined
+               from files fetched into DIR and named after the gist's ?file=
+    ftl        fasterthanli.me's <figure class="code-block"> listings, its
+               <picture>/<video>, and its two-speaker asides
+    mkdocs     mkdocs-material's site nav, sidebars and headerlinks
+    unescape   undo a doubly-escaped entity inside <pre> (blogs.oracle.com)
+    phrack     phrack.org's issue index table, and its one 80-column <pre>
+    lwn        LWN's reader-comment form and keyword index
+    jetpack    WordPress.com's "Share this" / "Related" block
+    doare      doar-e.github.io's date strip and its language-less Pygments blocks
+    duasynt    duasynt.com's section headings, drawn as <div class="post-section">
+    guesslang  label an attribute-less <pre> from its own text (rust-atomics)
+
+Some rules are unconditional because the markup they repair is never anything
+but damage: Cloudflare's data-cfemail obfuscation (which eats real text such as
+`cargo add enumflags2@0.6` and `change_number@got.plt`), the deprecated <xmp>
+element (which pandoc reads as prose, running a 10-line SQL listing together),
+a permalink glyph anchor (Sphinx's 580 pilcrows), and a header row whose cells
+are <td> inside <thead> (which pandoc demotes to a body row and then prints a
+blank header above - the ELF relocation tables lost the "Calculation" column
+that makes "S + A - P" mean anything). epub_build.sh's flatten_tables already
+folds thead the same way; the two are deliberately consistent.
 
 --preserve-tabs is not optional. Without it pandoc expands a tab inside <code>
 to the next tab stop computed from the character's ABSOLUTE COLUMN in the input,
@@ -24,8 +99,11 @@ precede it in the file. Deleting one icon-only anchor in a heading re-indented
 unchanged and the indentation is the author's.
 """
 
+import base64
+import os
 import re
 import sys
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup, NavigableString
 
 # lxml is a hard requirement, deliberately not a preference. html.parser cannot
@@ -50,6 +128,17 @@ base = sys.argv[3] if len(sys.argv) > 3 else ""
 opts = set(x for x in (sys.argv[4] if len(sys.argv) > 4 else "").split(",") if x)
 raw = sys.stdin.read()
 
+
+def opt(name):
+    """A bare "sphinx"-style flag, or the value of a "gist=DIR"-style one."""
+    if name in opts:
+        return True
+    for o in opts:
+        if o.startswith(name + "="):
+            return o[len(name) + 1:]
+    return False
+
+
 # Real code-fence languages. Whatever else lands on a fence is a CSS class the
 # source leaked through pandoc, not a language: "language-cpp" is Prism's raw
 # class (learncpp puts it on terminal output as readily as on code), "verbatim"
@@ -72,11 +161,22 @@ awk sed regex ebnf bnf abnf pseudocode
 cobol dts fortran modula2 nix objdump pascal vbnet vbscript winbatch zig
 """.split())
 
+# A language name that means "no highlighting": Sphinx writes highlight-none
+# for a literal block, Hugo and Rouge write "plaintext"/"text" for real plain
+# text. The first is the absence of a declaration and must not become a label
+# ("``` none" tells the reader nothing and is not a language); the second is a
+# declaration and is kept.
+_NOLANG = {"none", "default", "nohighlight", "auto"}
+
 
 def fence_lang(info):
-    """The language a fence should carry, or "" for a bare fence."""
+    """The language a fence should carry, or "" for a bare fence. Always
+    lowercased: Ghost and Hugo leak the author's "language-C", and a reader's
+    highlighter is not obliged to know that "C" is "c" (the rest of the library
+    writes it lowercase, so an uppercase label would also read as a different
+    language to a grep over the cache)."""
     lang = info[len("language-"):] if info.lower().startswith("language-") else info
-    return lang if lang.lower() in _LANGS else ""
+    return lang.lower() if lang.lower() in _LANGS else ""
 
 
 def cell_runs(cell):
@@ -115,23 +215,47 @@ def fill(runs, into, soup):
             into.append(NavigableString(text))
 
 
+def table_rows(table):
+    """The table's rows as (row-is-a-header-row, cells, row element), in
+    document order. A row is normally a <tr>, but a <thead> may hold its cells
+    with no <tr> around them at all - which is exactly what fasterthanli.me
+    serves, and lxml keeps it that way - and then find_all("tr") never sees the
+    header cells and the whole header is DROPPED: all six tables in the packer
+    book shipped with a blank header line, so the ELF relocation tables lost
+    the "Calculation" column that makes "S + A - P" readable, and a CPU history
+    table lost "Year | Model | Pins | Data width | Address width | Address
+    space". So a <thead>/<tbody>/<tfoot> holding cells directly is a row too."""
+    out = []
+    for el in table.find_all(["tr", "thead", "tbody", "tfoot"]):
+        if el.find_parent("table") is not table:
+            continue
+        if el.name == "tr":
+            if el.find_parent("tr") is not None:
+                continue
+            cells = [x for x in el.find_all(["td", "th"]) if x.find_parent("tr") is el]
+            out.append((el.find_parent("thead") is not None, cells, el))
+        else:
+            cells = el.find_all(["td", "th"], recursive=False)
+            if cells:
+                out.append((el.name == "thead", cells, el))
+    return out
+
+
 def grid(table):
-    """The table's cells as a rectangular grid with colspan/rowspan expanded,
-    one (cell, tag name) per column. Ignoring the spans slid every later value
-    one column left (the IDT vector table read "No" under Type) and left every
-    row after the first of a rowspan block empty (the SIB table in X86-64
-    Instruction Encoding). A rowspan repeats its cell down the rows it covers;
-    a colspan keeps its value in the first column it covers and pads the rest,
-    so the columns line up with their headers without the text being printed
-    twice. A pad carries the name of the cell it pads, because pandoc reads a
-    row that mixes <th> and <td> as a body row and then prints an empty header
-    above it, which is precisely what a spanning header cell would produce."""
-    rows = [x for x in table.find_all("tr")
-            if x.find_parent("table") is table and x.find_parent("tr") is None]
+    """The table's cells as a rectangular grid with colspan/rowspan expanded:
+    (row-is-in-thead, [(cell, tag name) per column]). Ignoring the spans slid
+    every later value one column left (the IDT vector table read "No" under
+    Type) and left every row after the first of a rowspan block empty (the SIB
+    table in X86-64 Instruction Encoding). A rowspan repeats its cell down the
+    rows it covers; a colspan keeps its value in the first column it covers and
+    pads the rest, so the columns line up with their headers without the text
+    being printed twice. A pad carries the name of the cell it pads, because
+    pandoc reads a row that mixes <th> and <td> as a body row and then prints
+    an empty header above it, which is precisely what a spanning header cell
+    would produce."""
     out = []
     carry = {}  # column -> [rows still to fill, entry to repeat there]
-    for r in rows:
-        cells = [x for x in r.find_all(["td", "th"]) if x.find_parent("tr") is r]
+    for hdr, cells, r in table_rows(table):
         row, i, col = [], 0, 0
         while True:
             if col in carry:
@@ -168,7 +292,7 @@ def grid(table):
             else:
                 row.append((None, "td"))
             col += 1
-        out.append(row)
+        out.append((hdr, row))
     return out
 
 
@@ -184,7 +308,7 @@ def flatten_tables(el, s):
             p = s.new_tag("p"); st = s.new_tag("strong")
             st.string = cap.get_text(" ", strip=True); p.append(st); div.append(p)
         if table.find(["pre", "ul", "ol"]):
-            for r in [x for x in table.find_all("tr") if x.find_parent("table") is table and x.find_parent("tr") is None]:
+            for _hdr, _cells, r in table_rows(table):
                 pres = [pr.extract() for pr in r.find_all("pre")]
                 runs = cell_runs(r)
                 if runs:
@@ -192,28 +316,190 @@ def flatten_tables(el, s):
                 for pr in pres:
                     div.append(pr)
         else:
+            def cell(c, name):
+                nc = s.new_tag(name)
+                if c is None:
+                    return nc
+                runs = cell_runs(c)
+                txt = " ".join(t for _, t in runs)
+                inner = c.find(["code", "samp", "kbd", "tt", "var"])
+                if (inner and txt and not any(h for h, _ in runs)
+                        and inner.get_text(" ", strip=True) == txt):
+                    # whole cell is verbatim: keep a <code> wrapper so pandoc
+                    # does not \-escape it (which drops \' \" \. ( ) etc.)
+                    code = s.new_tag("code"); code.string = txt; nc.append(code)
+                else:
+                    fill(runs, nc, s)
+                return nc
+
+            g = grid(table)
+            head = [row for hdr, row in g if hdr]
+            body = [row for hdr, row in g if not hdr]
             nt = s.new_tag("table")
-            for row in grid(table):
+            if head:
+                # A header cell may be a <td> that only a thead CSS selector
+                # made bold, and pandoc reads a row of <td> as body text and
+                # then invents a BLANK header above it: all six tables in the
+                # packer book shipped with an empty header row, which is how
+                # the ELF relocation tables lost the "Calculation" column that
+                # makes "S + A - P" readable, and how a CPU table lost
+                # "Year | Model | Pins | Data width | ...". gfm has exactly one
+                # header row, so fold a multi-row thead down its columns. Same
+                # rule, and for the same reason, as epub_build.sh.
                 nr = s.new_tag("tr")
-                for c, name in row:
-                    nc = s.new_tag(name)
-                    if c is not None:
-                        runs = cell_runs(c)
-                        txt = " ".join(t for _, t in runs)
-                        inner = c.find(["code", "samp", "kbd", "tt", "var"])
-                        if (inner and txt and not any(h for h, _ in runs)
-                                and inner.get_text(" ", strip=True) == txt):
-                            # whole cell is verbatim: keep a <code> wrapper so
-                            # pandoc does not \-escape it (which drops \' \" \.
-                            # ( ) etc.)
-                            code = s.new_tag("code"); code.string = txt; nc.append(code)
-                        else:
+                for j in range(max(len(r) for r in head)):
+                    col = [r[j] for r in head if j < len(r)]
+                    # the columns a colspan pads carry its label only when a
+                    # sub-header sits under them; a colspan with no second
+                    # header row leaves them blank rather than repeating itself
+                    sub = any(c is not None for c, _ in col)
+                    seen = []
+                    for own, _ in col:
+                        if own is None:
+                            continue
+                        if not any(own is x for x in seen):
+                            seen.append(own)
+                    if len(seen) == 1 and (seen[0] is col[0][0] or sub):
+                        nc = cell(seen[0], "th")
+                    else:
+                        nc = s.new_tag("th")
+                        if seen:
+                            runs = []
+                            for c in seen:
+                                runs += cell_runs(c)
                             fill(runs, nc, s)
                     nr.append(nc)
                 if nr.find(True):
                     nt.append(nr)
+            for row in body:
+                nr = s.new_tag("tr")
+                for c, name in row:
+                    nr.append(cell(c, name))
+                if nr.find(True):
+                    nt.append(nr)
             div.append(nt)
         table.replace_with(div)
+
+
+# A permalink glyph: the anchor beside a heading that every static-site
+# generator hangs there. Sphinx uses U+00B6 with title="Permalink to this
+# headline" (580 of them in the kernel-labs book, shipped as a visible
+# "[¶](#x "Permalink to this headline")" on every heading line), mkdocs-material
+# and Hugo use a link symbol or a literal "#". drop_empty_links cannot see them
+# because the glyph IS text, so match the glyph plus the generator's own class
+# or title - never a bare "#" that is part of a sentence.
+_PERMA_GLYPH = {"¶", "§", "#", "\U0001f517", "∞", "⚓", "⚭"}
+_PERMA_CLASS = {"headerlink", "anchor", "anchor-link", "permalink", "hash-link",
+                "header-link", "heading-link", "anchorjs-link", "md-content__button"}
+
+
+def drop_permalinks(el):
+    """Remove the permalink anchor beside a heading. Returns the count."""
+    n = 0
+    for a in el.find_all("a", href=True):
+        if a.get_text(strip=True) not in _PERMA_GLYPH:
+            continue
+        cls = set(a.get("class") or [])
+        title = (a.get("title") or "").lower()
+        if (cls & _PERMA_CLASS or title.startswith("permalink")
+                or a.get("href", "").startswith("#")
+                and a.find_parent(["h1", "h2", "h3", "h4", "h5", "h6"]) is not None):
+            a.decompose()
+            n += 1
+    return n
+
+
+def undo_cf_email(el):
+    """Cloudflare's Email Address Obfuscation replaces anything that looks like
+    an address with <a class="__cf_email__" data-cfemail="HEX">[email protected]</a>,
+    and it does it inside listings too, so on a technical site it is not a
+    privacy feature but silent corruption of the article: `cargo add
+    enumflags2@0.6` became `cargo add [email protected]`, a gdb dump's
+    `<change_number@got.plt>` was destroyed ten times in one chapter, and a
+    hexdump lost the ASCII column of the line holding `.@.8...@`. The attribute
+    is the plaintext XORed with its own first byte, so put the author's text
+    back. Also covers the "email-protection#HEX" href form and the
+    /cdn-cgi/l/email-protection script the page loads to do the same job."""
+    n = 0
+    for a in el.select(".__cf_email__[data-cfemail]"):
+        h = a["data-cfemail"]
+        try:
+            b = bytes.fromhex(h)
+        except ValueError:
+            continue
+        a.replace_with(NavigableString("".join(chr(c ^ b[0]) for c in b[1:])))
+        n += 1
+    for a in el.select('a[href*="/cdn-cgi/l/email-protection#"]'):
+        h = a["href"].split("#", 1)[1]
+        try:
+            b = bytes.fromhex(h)
+        except ValueError:
+            continue
+        a.replace_with(NavigableString("".join(chr(c ^ b[0]) for c in b[1:])))
+        n += 1
+    for sc in el.select('script[src*="/cdn-cgi/scripts/"][src*="email-decode"]'):
+        sc.decompose()
+    return n
+
+
+def normalise_verbatim(el, s):
+    """<xmp> (and its siblings <listing> and <plaintext>) is the pre-HTML4 way
+    of writing a preformatted block. It is deprecated, so pandoc's HTML reader
+    has no rule for it and folds the content into the surrounding prose: astra
+    chapter 5's ten-line SQL example shipped as one run-on line. The element
+    means exactly what <pre> means, so say so."""
+    n = 0
+    for x in el.find_all(["xmp", "listing", "plaintext"]):
+        pre = s.new_tag("pre")
+        code = s.new_tag("code")
+        code["data-code"] = "1"   # an attribute pandoc cannot write in gfm, so
+        code.string = x.get_text()  # the block fences without a bogus label
+        pre.append(code)
+        x.replace_with(pre)
+        n += 1
+    return n
+
+
+def code_block(text, lang, s):
+    """<pre><code class="language-X">, the shape pandoc fences. With no
+    language, data-code is an attribute pandoc cannot write in gfm, so the
+    fence comes out bare instead of the block coming out INDENTED (which is
+    what pandoc does with an attribute-less <pre>, losing the "this is
+    verbatim" signal and shifting every line four columns)."""
+    pre, code = s.new_tag("pre"), s.new_tag("code")
+    if lang and lang.lower() not in _NOLANG:
+        code["class"] = "language-" + lang.lower()
+    else:
+        code["data-code"] = "1"
+    code.string = text
+    pre.append(code)
+    return pre
+
+
+def absolutise(el, page_url):
+    """Resolve every relative reference against the page's own URL. Only the
+    mediawiki mode used to do this, so a content-mode site that writes its
+    images relative shipped "![Fig 1](/wp-content/.../slab-layout.png)": a dead
+    link that also READS as an absolute path on the reader's own filesystem."""
+    for attr in ("href", "src", "poster", "data"):
+        for t in el.find_all(attrs={attr: True}):
+            v = t.get(attr) or ""
+            if v.startswith(("data:", "mailto:", "javascript:", "#", "tel:")):
+                continue
+            if re.match(r"[A-Za-z][A-Za-z0-9+.\-]*://", v):
+                continue  # already absolute: urljoin would also NORMALISE it,
+                          # and it silently dropped the empty fragment off a
+                          # link the author wrote as "https://wandbox.org/#"
+            t[attr] = urljoin(page_url, v)
+    for t in el.find_all(attrs={"srcset": True}):
+        parts = []
+        for cand in t["srcset"].split(","):
+            cand = cand.strip()
+            if not cand:
+                continue
+            bits = cand.split(None, 1)
+            parts.append(" ".join([urljoin(page_url, bits[0])] + bits[1:]))
+        t["srcset"] = ", ".join(parts)
 
 
 def drop_empty_links(el):
@@ -311,6 +597,27 @@ if mode == "clean":
     sys.stdout.write("\n".join(out))
     sys.exit(0)
 
+# fasterthanli.me writes its listings as <code class="scroll-wrapper"> inside a
+# <figure>, NOT inside a <pre>. libxml2's HTML parser drops whitespace-only
+# text nodes it considers ignorable and makes an exception only for <pre> (and
+# friends), so parsing the page as served silently DELETES the leading
+# indentation and the blank lines of every listing whose line begins with one
+# of the author's <a-c>/<a-f> highlight tags: the packer book's first assembly
+# block lost 8 spaces on 9 of its 14 lines. html.parser collapses it too; only
+# html5lib preserves it, and this tool requires lxml on purpose (see above), so
+# the repair is to rename the element in the BYTE STREAM, before any parser
+# sees it. Verified on all 18 chapters: 1,584 of 1,584 code blocks then match
+# html5lib's reading of the untouched source exactly. Both counts are asserted,
+# because the rewrite is only safe while every code figure closes the same way.
+if opt("ftl"):
+    _o = raw.count('<code class="scroll-wrapper">')
+    _c = raw.count("</code></figure>")
+    if _o != _c:
+        sys.exit("webextract.py: %d code figures open but %d close as expected"
+                 % (_o, _c))
+    raw = (raw.replace('<code class="scroll-wrapper">', '<pre class="scroll-wrapper">')
+              .replace("</code></figure>", "</pre></figure>"))
+
 s = BeautifulSoup(raw, "lxml")
 
 if mode == "links":
@@ -329,6 +636,7 @@ if mode == "links":
             continue
         seen.add(h)
         sys.stdout.write(t + "\t" + h + "\n")
+    sys.exit(0)
 elif mode == "lessontable":
     # learncpp TOC: each div.lessontable-row has the lesson number and the link,
     # so emit "N.M Title\tURL" in document (chapter) order.
@@ -341,10 +649,302 @@ elif mode == "lessontable":
         t = " ".join(a.get_text(" ", strip=True).split())
         href = a["href"].split("#")[0].split("?")[0].rstrip("/")
         sys.stdout.write(f"{n} {t}\t{href}\n")
-elif mode == "content":
+    sys.exit(0)
+
+# ---------------------------------------------------------------- page repair
+# Everything from here to the mode switch runs on every extracted page, in both
+# modes, because the markup it repairs is damage wherever it appears.
+undo_cf_email(s)
+
+if mode == "content":
     el = s.select_one(arg) or s.find("article")
     if not el:
         sys.exit(1)
+
+    # --- opt-in, per-generator rules, run before the generic ones so the
+    # generic ones see the shapes they know.
+
+    if opt("phrack"):
+        # phrack.org renders the whole issue's article index as a table INSIDE
+        # div.framed, above the phile: navigation, not content.
+        for t in el.select("table.tissue"):
+            t.decompose()
+        # The phile itself is one attribute-less <pre> of 80-column ASCII.
+        # pandoc would write that as an INDENTED block, shifting every line
+        # four columns and dropping the "this is verbatim" signal from a
+        # document that is nothing but verbatim.
+        for pre in el.select("pre"):
+            pre.replace_with(code_block(pre.get_text(), "text", s))
+
+    if opt("lwn"):
+        # LWN keeps the whole reader-comment thread inside div.ArticleText, in
+        # the <form> that carries the "post comments" button, and closes the
+        # article with its keyword-index table. Neither is the article.
+        for t in el.select("form, table.IndexEntries"):
+            t.decompose()
+        main = el.select_one("main") or el
+        kids = [c for c in main.children if getattr(c, "name", None)]
+        while kids and kids[-1].name in ("hr", "br"):
+            kids.pop().decompose()
+
+    if opt("jetpack"):
+        # WordPress.com hangs Jetpack's sharing block ("Share this:", the X and
+        # Facebook links, "Like Loading...", "Related") and its ad markers
+        # INSIDE div.entry-content, after the article's own last paragraph.
+        for t in el.select("div.sharedaddy, #jp-post-flair, div.jp-relatedposts, "
+                           ".sd-block, span.wordads-inline-marker, div[id^=atatags-]"):
+            t.decompose()
+
+    if opt("duasynt"):
+        # duasynt.com draws its section headings as divs, so they otherwise
+        # land as a bare word in a paragraph.
+        for d in el.select("div.post-section"):
+            d.name = "h2"
+
+    if opt("mkdocs"):
+        # mkdocs-material renders the WHOLE site nav plus the page's own table
+        # of contents into every article, and hangs a permalink anchor off
+        # every heading. Only the article body is the article.
+        for t in el.select(".md-nav, .md-sidebar, .md-source-file, "
+                           ".md-content__button, .md-footer, .md-header, "
+                           ".md-top, .md-dialog, .md-feedback, .md-skip"):
+            t.decompose()
+
+    if opt("unescape"):
+        # blogs.oracle.com's KFENCE post is double-escaped at the source: its
+        # HTML holds "&amp;lt;type of error&amp;gt;", so a BROWSER also shows
+        # the reader a literal "&lt;". The intended text is the kernel's own
+        # report format from Documentation/dev-tools/kfence.rst. Undo the
+        # second escaping inside listings only: in prose a literal "&lt;" can
+        # be deliberate.
+        _ENT = re.compile(r"&(lt|gt|amp|quot|#39|apos);")
+        _SUB = {"lt": "<", "gt": ">", "amp": "&", "quot": '"', "#39": "'", "apos": "'"}
+        for pre in el.find_all("pre"):
+            for t in pre.find_all(string=True):
+                if type(t) is not NavigableString or not _ENT.search(t):
+                    continue
+                t.replace_with(NavigableString(_ENT.sub(lambda m: _SUB[m.group(1)], str(t))))
+
+    if opt("doare"):
+        # doar-e.github.io. The date/author/category strip is inside the
+        # article container, and its Pygments blocks are
+        # <div class="highlight"><pre><span></span><code> with no language
+        # anywhere in the HTML (the author's source declared none) and no
+        # attribute on the <pre>, so pandoc would write an INDENTED block and
+        # add four spaces to every line of every listing.
+        for t in el.select("div.well"):
+            t.decompose()
+        for div in el.select("div.highlight"):
+            code = div.select_one("code") or div.select_one("pre")
+            if code is None:
+                continue
+            div.replace_with(code_block(code.get_text(), "", s))
+
+    if opt("brush"):
+        # WordPress SyntaxHighlighter writes <pre class="brush: cpp; title: ;
+        # notranslate">. pandoc reads the FIRST class as the language, so the
+        # fence comes out labelled "brush:" - which the allow-list then
+        # (correctly) throws away, losing a language the author DID declare.
+        for pre in el.select("pre[class*=brush]"):
+            cls = " ".join(pre.get("class") or [])
+            lang = cls.split("brush:", 1)[1].split(";")[0].strip() if "brush:" in cls else ""
+            pre["class"] = ["language-" + lang.lower()] if lang else []
+
+    if opt("chroma"):
+        # Hugo emits <pre tabindex="0" class="chroma"><code class="language-c"
+        # data-lang="c">. pandoc builds the block from the <pre>'s own
+        # attributes when it has any, so the language on the <code> is dropped
+        # and the fence comes out labelled "chroma" (which clean then strips to
+        # nothing) or bare. Move the declared language onto the <pre>.
+        for pre in el.find_all("pre"):
+            code = pre.find("code")
+            if code is None:
+                continue
+            lang = next((c for c in (code.get("class") or [])
+                         if c.lower().startswith("language-")), "") or \
+                (("language-" + code["data-lang"]) if code.get("data-lang") else "")
+            if not lang:
+                continue
+            # The frozen library labels C as lowercase "c" (never "C"); Ghost
+            # and Hugo both leak the source's "language-C".
+            pre.attrs = {"class": [lang.lower()]}
+
+    if opt("latexml"):
+        # arXiv's LaTeXML writes a \lstlisting as a stack of
+        # <div class="ltx_listingline">, one per line, which pandoc writes as
+        # prose: line numbers inline, "buf-\>page", a blank line between every
+        # source line. LaTeXML also embeds the listing's exact source as a
+        # base64 "download" link, so rebuild each listing from that payload -
+        # byte exact, tabs included - and drop the download link.
+        for lst in el.select("div.ltx_listing"):
+            lang = ""
+            for c in lst.get("class") or []:
+                m = re.match(r"ltx_lst_language_(.+)", c)
+                if m:
+                    lang = m.group(1).lower()
+            data = lst.select_one("div.ltx_listing_data a[href^='data:']")
+            text = None
+            if data is not None:
+                payload = data["href"].split("base64,", 1)
+                if len(payload) == 2:
+                    text = base64.b64decode(payload[1]).decode("utf-8", "replace")
+            if text is None:  # no embedded source: rebuild from the numbered lines
+                lines = []
+                for line in lst.select("div.ltx_listingline"):
+                    for num in line.select(".ltx_lst_numbers, .ltx_lst_number"):
+                        num.decompose()
+                    lines.append(line.get_text())
+                text = "\n".join(lines)
+            lst.replace_with(code_block(text.rstrip("\n") + "\n", lang, s))
+        # Every figure carries the placeholder alt "Refer to caption"; the real
+        # caption is the figure's own <figcaption>, kept alongside, so the alt
+        # is just noise in the rendered "![Refer to caption](url)".
+        for img in el.find_all("img", alt="Refer to caption"):
+            img["alt"] = ""
+
+    gist = opt("gist")
+    if gist:
+        # Blogger loads every code block through
+        # <script src="https://gist.github.com/<id>.js?file=<name>">. A <script>
+        # is chrome everywhere else, and dropping it silently emptied ten C
+        # listings out of one writeup, so inline each embed from the gist file
+        # fetched into DIR (curl -fsSL
+        # https://gist.githubusercontent.com/<user>/<id>/raw/<name> -o DIR/<name>).
+        for sc in list(el.find_all("script", src=True)):
+            m = re.match(r"https?://gist\.github\.com/([^/]+)/([0-9a-f]+)\.js"
+                         r"(?:\?file=(.+))?$", sc["src"])
+            if not m:
+                continue
+            user, gid, fname = m.groups()
+            path = os.path.join(gist, fname or gid)
+            if not os.path.exists(path):
+                sys.exit("webextract.py: gist file not fetched: " + path)
+            body = open(path, encoding="utf-8", errors="replace").read()
+            lang = "c" if (fname or "").endswith((".c", ".h")) else ""
+            sc.replace_with(code_block(body.rstrip("\n") + "\n", lang, s))
+
+    if opt("sphinx"):
+        # Sphinx (sphinx_rtd_theme, writer-html4) puts the lexer NOWHERE the
+        # code block can be read from: the <pre> and the <code> carry no class
+        # at all and the language sits on the GRANDPARENT,
+        # <div class="highlight-c"><div class="highlight"><pre>. 460 of the
+        # kernel-labs book's 492 listings shipped with no language because of
+        # it. "highlight-none" is Sphinx for "a literal block", which is the
+        # absence of a language, not a language called none.
+        for cont in el.select("div[class*=highlight-]"):
+            lang = next((c[len("highlight-"):] for c in (cont.get("class") or [])
+                         if c.startswith("highlight-")), "")
+            pre_in = cont.select_one("pre")
+            if pre_in is None:
+                continue
+            cont.replace_with(code_block(pre_in.get_text(), lang, s))
+        # Sphinx also breaks every inline literal into one <span class="pre">
+        # per whitespace-separated token, which pandoc writes as one backtick
+        # run per span welded together: `struct`` ``file_operations`. 571 of
+        # the book's inline literals came out that way, and a reader cannot
+        # tell the stray backticks from the code. The spans are a line-breaking
+        # hint, and the whitespace between them is a real space.
+        for code in el.find_all("code"):
+            if len(code.select("span.pre")) < 1:
+                continue
+            code.string = " ".join(code.get_text().split())
+
+    if opt("ftl"):
+        # fasterthanli.me. Chrome that the fixed list below does not name: the
+        # series pager (top and bottom), the reading-time/tag strip, the
+        # sponsor roll, the "this page is N years old" banner, the newsletter
+        # nudge and the bottom "random post" block. The <h1> page title stays:
+        # it is the article's own title.
+        for t in el.select("div.series-nav, div.page-metadata, p.sponsor-list, "
+                           "#sponsor-list, div.after-page-metadata-spacer, "
+                           "div.disclosure, div.gentle-nudge-island, "
+                           "div.bottom-nav, aside"):
+            t.decompose()
+        # Every heading is wrapped in <a class="anchor"> (a self-link); pandoc
+        # would write the heading text as a link to a fragment that means
+        # nothing offline.
+        for a in el.select("a.anchor"):
+            a.unwrap()
+        # <figure class="code-block" data-lang="rust"> holding the
+        # scroll-wrapper renamed above, plus, when the language is named, a
+        # <span class="language-tag"> whose only content is a private-use-area
+        # icon glyph (U+E6AB and friends) that must not land in the listing.
+        # data-lang="raw"/"" means the author declared no language.
+        for fig in el.select("figure.code-block"):
+            for tag in fig.select("span.language-tag"):
+                tag.decompose()
+            code = fig.select_one("pre.scroll-wrapper") or fig.select_one("code")
+            if code is None:
+                continue
+            lang = (fig.get("data-lang") or "").strip()
+            fig.replace_with(code_block(code.get_text(),
+                                        "" if lang == "raw" else lang, s))
+        # "Cool bear" asides and the two-character dialogues are article
+        # content, not chrome: keep the words and the speaker, drop the avatar.
+        # A blockquote is how they read.
+        for d in el.select("div.tip, div.dialog"):
+            head = d.select_one("div.tip-header, div.dialog-head")
+            who = ""
+            if head is not None:
+                who = " ".join(head.get_text(" ", strip=True).split()) or \
+                    (head.get("title") or "")
+                head.decompose()
+            bq = s.new_tag("blockquote")
+            if who:
+                p = s.new_tag("p"); st = s.new_tag("strong"); st.string = who
+                p.append(st); bq.append(p)
+            for c in list(d.children):
+                bq.append(c.extract())
+            d.replace_with(bq)
+        # <picture> -> a plain <img> pandoc can write. The <img> inside points
+        # at a .jxl, which almost nothing renders; the same asset is offered as
+        # webp and avif in the <source> list, so prefer webp 1x, then avif.
+        for pic in el.find_all("picture"):
+            src = None
+            for want in ("image/webp", "image/avif"):
+                for cand in pic.find_all("source"):
+                    if cand.get("type") != want or cand.get("media"):
+                        continue
+                    first = (cand.get("srcset") or "").split(",")[0].strip().split(" ")[0]
+                    if first:
+                        src = first
+                        break
+                if src:
+                    break
+            img = pic.find("img")
+            src = src or (img.get("src") if img else None)
+            if not src:
+                pic.decompose()
+                continue
+            new = s.new_tag("img", src=src)
+            new["alt"] = img.get("alt", "") if img else ""
+            pic.replace_with(new)
+        for vid in el.find_all("video"):
+            src = vid.find("source")
+            href = (src.get("src") if src else None) or vid.get("poster")
+            p = s.new_tag("p")
+            if href:
+                em = s.new_tag("em"); em.string = "Video: "
+                a = s.new_tag("a", href=href); a.string = href.rsplit("/", 1)[-1]
+                p.append(em); p.append(a)
+            vid.replace_with(p)
+        for w in el.select("div.responsive-table, div.paragraph-like"):
+            w.unwrap()
+        # None of the diagrams carries an alt, so pandoc writes a bare
+        # "![](url)" and the reader gets a line of URL with nothing saying what
+        # it shows. The author's own file name does say: data-input-path is the
+        # source asset ("assets/elf64-file-header.drawio") and the CDN name is
+        # the same word with a content hash after a "~".
+        for img in el.find_all("img"):
+            if img.get("alt"):
+                continue
+            name = img.get("data-input-path") or img.get("src") or ""
+            name = name.rsplit("/", 1)[-1].split("~")[0]
+            name = re.sub(r"\.(drawio|svg|webp|avif|jxl|png|jpe?g|gif)$", "", name)
+            if name:
+                img["alt"] = name
+
+    # --- generic content rules
     for t in el.select("script, style, ins, iframe, nav, #comments, .comments, .code-block-buttons, .prevnext, .share-buttons, .page__share, .pagination, .code-header, .breadcrumbs, .paginav, .post-tags, .entry-footer, .post-footer"):
         t.decompose()
     # hevea (the diy.inria.fr manuals) prints a Previous/Up/Next bar of linked
@@ -362,11 +962,23 @@ elif mode == "content":
     # Jekyll/Rouge highlight blocks put line numbers in a gutter (pre.lineno)
     # that pandoc turns into a bogus ```lineno block of bare numbers. Rebuild
     # each as a clean <pre><code class="language-X"> with only the code column.
+    # The language is on the container for Rouge, but Hugo and Jekyll's own
+    # kramdown put it on the inner <code class="language-c"> and leave the
+    # <figure> classed only "highlight": reading the container alone dropped
+    # EVERY label on the two Hugo sites in the slub book (chapter 3 lost all 8,
+    # chapter 12 all 21), so fall back to the inner element.
     for cont in el.select("div.highlighter-rouge, figure.highlight"):
         lang = next((c for c in (cont.get("class") or []) if c.startswith("language-")), "")
         codeel = cont.select_one("td.rouge-code") or cont.select_one("pre")
         if not codeel:
             continue
+        if not lang:
+            inner = cont.find("code")
+            if inner is not None:
+                lang = next((c for c in (inner.get("class") or [])
+                             if c.lower().startswith("language-")), "") or \
+                    (("language-" + inner["data-lang"]) if inner.get("data-lang") else "")
+                lang = lang.lower()
         pre = s.new_tag("pre")
         code = s.new_tag("code")
         if lang:
@@ -399,8 +1011,12 @@ elif mode == "content":
                 pre.clear()
                 pre.append(code)
 
+    normalise_verbatim(el, s)
+    drop_permalinks(el)
     drop_empty_links(el)
     lift_stray_list_children(el)
+    if base:
+        absolutise(el, base)
     flatten_tables(el, s)
     sys.stdout.write(str(el))
 elif mode == "mediawiki":
@@ -450,6 +1066,7 @@ elif mode == "mediawiki":
         code.string = pre_in.get_text()
         pre.append(code)
         cont.replace_with(pre)
+    normalise_verbatim(el, s)
     # The remaining bare <pre> blocks are mostly not source (memory maps, port
     # tables, directory trees, config files), so label them "text" rather than
     # guess a language: an attribute-less <pre> would otherwise come out as a
@@ -486,6 +1103,7 @@ elif mode == "mediawiki":
             if "://" in h or h.startswith(("#", "mailto:")):
                 continue
             a["href"] = base.rstrip("/") + "/" + h.lstrip("./")
+    drop_permalinks(el)
     drop_empty_links(el)
     lift_stray_list_children(el)
     flatten_tables(el, s)
