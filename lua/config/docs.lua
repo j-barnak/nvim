@@ -1263,6 +1263,17 @@ local simple = {
 		exts = "-e md -e rst -e py -e c -e cc -e h -e lua -e txt",
 		prompt = "BCC> ",
 	},
+	-- Bochs: the x86/x64 emulator. Its user + development manuals live in the repo
+	-- as DocBook under bochs/doc/docbook (the rendered copy on sourceforge blocks
+	-- bots); browse those, and gs/:Src explores the emulator source.
+	bochs = {
+		url = "https://github.com/bochs-emu/Bochs",
+		sparse = "/bochs/doc /bochs/README /bochs/CHANGES",
+		marker = "bochs/doc",
+		browse = "/bochs/doc",
+		exts = "-e txt -e dbk -e sgm -e html -e md -e rst",
+		prompt = "Bochs docs> ",
+	},
 	-- The tools' own tree: herd/libdir holds the .cat memory models (aarch64,
 	-- x86tso, riscv, linux-kernel, C11 ...), doc holds the manual sources and
 	-- 47 worked .litmus examples, catalogue holds the per-model test suites.
@@ -3507,6 +3518,7 @@ local pick_list
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
 	{ name = "BCC", key = "bcc", run = make_simple("bcc", simple.bcc) },
+	{ name = "Bochs (x86/x64 emulator)", key = "bochs", run = make_simple("bochs", simple.bochs) },
 	{ name = "QEMU", key = "qemu", run = make_versioned("qemu", {
 		url = simple.qemu.url,
 		sparse = simple.qemu.sparse,
