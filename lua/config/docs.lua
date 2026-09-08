@@ -3112,6 +3112,7 @@ local BOOKS = {
 		{ title = "Blue Fox: Arm Assembly Internals and Reverse Engineering", fmt = "pdf", slug = "blue-fox-arm-assembly-internals", file = "blue-fox-arm-assembly.pdf" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
+		{ title = "An Introduction to Computer Networks (Dordal)", fmt = "pdf", slug = "an-introduction-to-computer-networks", file = "an-introduction-to-computer-networks.pdf" },
 		-- https://www.cs.cmu.edu/~410-s07/p4/p4-boot.pdf (CMU 15-410, 2007)
 		{ title = "Writing a Bootloader from Scratch (CMU 15-410)", fmt = "pdf", file = "CMU 15-410 Project 4 - Writing a Bootloader from Scratch.pdf" },
 		{ title = "Operating Systems: Three Easy Pieces", fmt = "pdf", file = "OSTEP.pdf" },
@@ -3162,6 +3163,7 @@ local BOOKS = {
 	} },
 	{ module = "Security", key = "books-security", items = {
 		{ title = "The Art of Memory Forensics", fmt = "pdf", file = "TheArtOfMemoryForensics.pdf" },
+		{ title = "Attacking Network Protocols (Forshaw)", fmt = "pdf", slug = "attacking-network-protocols", file = "attacking-network-protocols.pdf" },
 		{ title = "Practical Binary Analysis", fmt = "epub", file = "PBA.epub" },
 		{ title = "Linternals + Kernel Exploitation (sam4k)", fmt = "md", slug = "linternals-sam4k", file = "https://sam4k.com/linternals/" },
 		{ title = "Nightmare: Binary Exploitation Course", fmt = "md", slug = "nightmare-binary-exploitation", file = "https://github.com/guyinatuxedo/nightmare" },
