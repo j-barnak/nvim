@@ -3352,14 +3352,19 @@ local function pick_books()
 	-- without fd before this menu existed.
 	local titles, by_title, dupes = {}, {}, {}
 	for _, m in ipairs(BOOKS) do
-		for _, e in ipairs(m.items) do
-			-- Two books sharing a title would silently shadow each other here,
-			-- so keep the first and note the collision rather than lose one.
-			if by_title[e.title] then
-				dupes[#dupes + 1] = e.title
-			else
-				by_title[e.title] = { mkey = m.key, entry = e }
-				titles[#titles + 1] = e.title
+		-- RISC-V has 25 manuals; listed flat they drowned every other book in
+		-- the picker, so they live behind their own top-level "RISC-V" entry
+		-- (pick_riscv_books) and are skipped here.
+		if m.key ~= "books-riscv" then
+			for _, e in ipairs(m.items) do
+				-- Two books sharing a title would silently shadow each other here,
+				-- so keep the first and note the collision rather than lose one.
+				if by_title[e.title] then
+					dupes[#dupes + 1] = e.title
+				else
+					by_title[e.title] = { mkey = m.key, entry = e }
+					titles[#titles + 1] = e.title
+				end
 			end
 		end
 	end
@@ -3391,6 +3396,39 @@ local function pick_books()
 					return hit.run()
 				end
 				return ensure_book(hit.mkey, hit.entry)
+			end,
+		},
+	})
+end
+
+-- The RISC-V manuals are their own top-level entry (RISC-V -> manual -> chapter)
+-- instead of 25 lines in the flat Books list. Titles keep the "RISC-V " prefix
+-- they already carry, so fzf still matches "aia", "iommu", "debug" etc.
+local function pick_riscv_books()
+	local mod
+	for _, m in ipairs(BOOKS) do
+		if m.key == "books-riscv" then
+			mod = m
+			break
+		end
+	end
+	if not mod then
+		return
+	end
+	local titles, by_title = {}, {}
+	for _, e in ipairs(mod.items) do
+		by_title[e.title] = e
+		titles[#titles + 1] = e.title
+	end
+	table.sort(titles)
+	fzf().fzf_exec(titles, {
+		prompt = "RISC-V> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if sel and sel[1] and by_title[sel[1]] then
+					return ensure_book("books-riscv", by_title[sel[1]])
+				end
 			end,
 		},
 	})
@@ -3746,6 +3784,10 @@ local providers = {
 -- three book-shaped web providers (Hypervisor From Scratch, learncpp.com,
 -- Rust Atomics and Locks), which used to sit at the top level.
 providers[#providers + 1] = { name = "Books", key = "books", run = pick_books }
+-- RISC-V manuals get their own top-level entry (25 books) so they do not crowd
+-- the flat Books list. key "books-riscv" is the on-disk module dir, so :Docs
+-- list still reports each manual's frozen status.
+providers[#providers + 1] = { name = "RISC-V (manuals)", key = "books-riscv", run = pick_riscv_books }
 
 -- Every source in one list, each row carrying where its content lives. Rows are
 -- "<index>\t<display>": fzf shows column 2, the action looks the row up by
