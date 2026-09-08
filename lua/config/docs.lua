@@ -3028,6 +3028,7 @@ local STD_URLS = {
 	["riscv"] = "https://github.com/riscv/riscv-isa-manual/releases/latest/download/riscv-spec.pdf",
 	["arm-a"] = "https://www.cs.princeton.edu/courses/archive/fall19/cos217/reading/ArmArchitectureReferenceManual.pdf",
 	["arm-m"] = "https://community.arm.com/cfs-file/__key/communityserver-discussions-components-files/471/DDI0553B_5F00_y_5F00_armv8m_5F00_arm.pdf",
+	["gdb-manual"] = "https://sourceware.org/gdb/download/onlinedocs/gdb.pdf",
 }
 
 local function pick_pdf(name, prompt)
@@ -3057,6 +3058,50 @@ local function pick_pdf(name, prompt)
 		end)
 	end)
 end
+
+-- GDB: source (binutils-gdb, versioned by gdb-*-release tags), the single-page
+-- User Manual (PDF, split like the other specs), and the Internals Manual
+-- (a MoinMoin wiki on sourceware, opened in the browser rather than frozen).
+local GDB_SRC_URL = "https://sourceware.org/git/binutils-gdb.git"
+local function pick_gdb()
+	fzf().fzf_exec({ "User Manual (PDF)", "Internals Manual (wiki)", "Explore source (by version)" }, {
+		prompt = "GDB> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if not (sel and sel[1]) then
+					return
+				end
+				if sel[1]:match("^User Manual") then
+					return pick_pdf("gdb-manual", "GDB Manual> ")
+				end
+				if sel[1]:match("^Internals") then
+					local url = "https://sourceware.org/gdb/wiki/Internals"
+					if vim.fn.executable("xdg-open") == 1 then
+						vim.system({ "xdg-open", url })
+						return vim.notify("Opened GDB Internals wiki in the browser")
+					end
+					return vim.notify("GDB Internals: " .. url)
+				end
+				-- Explore source, versioned (gdb-N.N-release tags, newest first).
+				versioned_tags("gdb", GDB_SRC_URL, { tagre = "gdb-[0-9.]+-release", diskpat = "^gdb%-%d" }, function(list)
+					fzf().fzf_exec(list, {
+						prompt = "GDB version> ",
+						fzf_opts = { ["--no-multi"] = true },
+						actions = {
+							["default"] = function(v)
+								if v and v[1] then
+									require("config.src").open("gdb/" .. v[1], GDB_SRC_URL, nil, nil, v[1])
+								end
+							end,
+						},
+					})
+				end)
+			end,
+		},
+	})
+end
+VERSIONED_PICK.gdb = pick_gdb
 
 -- ── GCC internals + manuals (texinfo, rendered with makeinfo) ────────────
 -- gccint covers the internals: passes, RTL, GIMPLE, machine descriptions.
@@ -3941,6 +3986,7 @@ local providers = {
 	{ name = "GNU as (assembler)", key = "as", run = man_provider("man as", "as(1)") },
 	{ name = "GCC internals + manuals", key = "gcc", run = pick_gcc },
 	{ name = "binutils (readelf/objdump/nm/…)", key = "binutils", run = pick_binutils },
+	{ name = "GDB (manual + internals + per-version source)", key = "gdb", run = pick_gdb },
 	{ name = "ELF (TIS) specification", key = "elf-tis", run = pick_elf_tis },
 	{ name = "Bash (man bash)", key = "bash", run = man_provider("man bash", "bash(1)") },
 	{ name = "pydoc (any Python pkg)", key = "pydoc", run = pick_pydoc },
