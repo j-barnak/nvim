@@ -2508,6 +2508,7 @@ local pick_jit_series = frozen_web_provider("jit-series", "JIT> ")
 local pick_bochs_docs = frozen_web_provider("bochs-docs", "Bochs docs> ")
 local pick_decompilation = frozen_web_provider("decompilation-wiki", "Decompilation> ")
 local pick_philopp = frozen_web_provider("writing-an-os-in-rust", "Writing an OS in Rust> ")
+local pick_algorithmica_hpc = frozen_web_provider("algorithmica-hpc", "HPC> ")
 
 -- ── glibc: frozen manual (docs) + per-version source (:Src) ──────────────
 -- Docs are the frozen latest manual (one book, same for every release). Source
@@ -3319,6 +3320,7 @@ local WEB_BOOKS = {
 	{ title = "Bochs Documentation", key = "bochs-docs", run = pick_bochs_docs },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
+	{ title = "Algorithms for Modern Hardware (Algorithmica)", key = "algorithmica-hpc", run = pick_algorithmica_hpc },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.
@@ -3492,6 +3494,7 @@ LOCATION["jit-series"] = { index = "jit-series/index.tsv", unit = "chapter" }
 LOCATION["bochs-docs"] = { index = "bochs-docs/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
 LOCATION["writing-an-os-in-rust"] = { index = "writing-an-os-in-rust/index.tsv", unit = "chapter" }
+LOCATION["algorithmica-hpc"] = { index = "algorithmica-hpc/index.tsv", unit = "chapter" }
 LOCATION["elf-tis"] = { rel = "books/books-compilers/elf-specification", marker = ".complete", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do

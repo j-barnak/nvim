@@ -1,0 +1,79 @@
+Consider [yet again](https://en.algorithmica.org/hpc/cpu-cache/associativity) the strided incrementing loop:
+
+``` cpp
+const int N = (1 << 13);
+int a[D * N];
+
+for (int i = 0; i < D * N; i += D)
+    a[i] += 1;
+```
+
+We change the stride \$D\$ and increase the array size proportionally so that the total number of iterations \$N\$ remains constant. As the total number of memory accesses also remains constant, for all \$D \geq 16\$, we should be fetching exactly \$N\$ cache lines — or \$64 \cdot N = 2^6 \cdot 2^{13} = 2^{19}\$ bytes, to be exact. This precisely fits into the L2 cache, regardless of the step size, and the throughput graph should look flat.
+
+This time, we consider a larger range of \$D\$ values, up to 1024. Starting from around 256, the graph is definitely not flat:
+
+![](https://en.algorithmica.org/hpc/cpu-cache/img/strides.svg)
+
+This anomaly is also due to the cache system, although the standard L1-L3 data caches have nothing to do with it. [Virtual memory](https://en.algorithmica.org/hpc/external-memory/virtual) is at fault, in particular the *translation lookaside buffer* (TLB), which is a cache responsible for retrieving the physical addresses of the virtual memory pages.
+
+On [my CPU](https://en.wikichip.org/wiki/amd/microarchitectures/zen_2), there are two levels of TLB:
+
+- The L1 TLB has 64 entries, and if the page size is 4K, then it can handle \$64 \times 4K = 512K\$ of active memory without going to the L2 TLB.
+- The L2 TLB has 2048 entries, and it can handle \$2048 \times 4K = 8M\$ of memory without going to the page table.
+
+How much memory is allocated when \$D\$ becomes equal to 256? You’ve guessed it: \$8K \times 256 \times 4B = 8M\$, exactly the limit of what the L2 TLB can handle. When \$D\$ gets larger than that, some requests start getting redirected to the main page table, which has a large latency and very limited throughput, which bottlenecks the whole computation.
+
+### Changing Page Size
+
+That 8MB of slowdown-free memory seems like a very tight restriction. While we can’t change the characteristics of the hardware to lift it, we *can* increase the page size, which would in turn reduce the pressure on the TLB capacity.
+
+Modern operating systems allow us to set the page size both globally and for individual allocations. CPUs only support a defined set of page sizes — mine, for example, can use either 4K or 2M pages. Another typical page size is 1G — it is usually only relevant for server-grade hardware with hundreds of gigabytes of RAM. Anything over the default 4K is called *huge pages* on Linux and *large pages* on Windows.
+
+On Linux, there is a special system file that governs the allocation of huge pages. Here is how to make the kernel give you huge pages on every allocation:
+
+``` bash
+$ echo always > /sys/kernel/mm/transparent_hugepage/enabled
+```
+
+Enabling huge pages globally like this isn’t always a good idea because it decreases memory granularity and raises the minimum memory that a process consumes — and some environments have more processes than free megabytes of memory. So, in addition to `always` and `never`, there is a third option in that file:
+
+``` bash
+$ cat /sys/kernel/mm/transparent_hugepage/enabled
+always [madvise] never
+```
+
+`madvise` is a special system call that lets the program advise the kernel on whether to use huge pages or not, which can be used for allocating huge pages on-demand. If it is enabled, you can use it in C++ like this:
+
+``` c++
+#include <sys/mman.h>
+
+void *ptr = std::aligned_alloc(page_size, array_size);
+madvise(ptr, array_size, MADV_HUGEPAGE);
+```
+
+You can only request a memory region to be allocated using huge pages if it has the corresponding alignment.
+
+Windows has similar functionality. Its memory API combines these two functions into one:
+
+``` c++
+#include "memoryapi.h"
+
+void *ptr = VirtualAlloc(NULL, array_size,
+                         MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE);
+```
+
+In both cases, `array_size` should be a multiple of `page_size`.
+
+### Impact of Huge Pages
+
+Both variants of allocating huge pages immediately flatten the curve:
+
+![](https://en.algorithmica.org/hpc/cpu-cache/img/strides-hugepages.svg)
+
+Enabling huge pages also improves [latency](https://en.algorithmica.org/hpc/cpu-cache/latency) by up to 10-15% for arrays that don’t fit into the L2 cache:
+
+![](https://en.algorithmica.org/hpc/cpu-cache/img/permutation-hugepages.svg)
+
+In general, enabling huge pages is a good idea when you have any sort of sparse reads, as they usually slightly improve and ([almost](https://en.algorithmica.org/hpc/cpu-cache/aos-soa)) never hurt performance.
+
+That said, you shouldn’t rely on huge pages if possible, as they aren’t always available due to either hardware or computing environment restrictions. There are [many](https://en.algorithmica.org/hpc/cpu-cache/cache-lines) [other](https://en.algorithmica.org/hpc/cpu-cache/prefetching) [reasons](https://en.algorithmica.org/hpc/cpu-cache/aos-soa) why grouping data accesses spatially may be beneficial, which automatically solves the paging problem.

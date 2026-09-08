@@ -1352,9 +1352,13 @@ if mode == "content":
             code = pre.find("code")
             if code is None:
                 continue
-            lang = next((c for c in (code.get("class") or [])
+            # The bare language, WITHOUT the "language-" prefix: pandoc does not
+            # strip that prefix off a <pre>'s class (it writes the fence as
+            # "language-c++", which clean() then drops), so hand it the plain
+            # label ("c++", "c", ...) that the fence allow-list knows.
+            lang = next((c[len("language-"):] for c in (code.get("class") or [])
                          if c.lower().startswith("language-")), "") or \
-                (("language-" + code["data-lang"]) if code.get("data-lang") else "")
+                (code.get("data-lang") or "")
             if not lang:
                 continue
             # The frozen library labels C as lowercase "c" (never "C"); Ghost
