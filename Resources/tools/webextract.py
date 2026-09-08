@@ -257,6 +257,7 @@ scheme racket vim viml vimscript proto protobuf graphql gql markdown md rst tex 
 bibtex verilog systemverilog vhdl gdb ld linker-script nginx apache groovy gradle tcl
 awk sed regex ebnf bnf abnf pseudocode
 cobol dts fortran modula2 nix objdump pascal vbnet vbscript winbatch zig
+coq gallina isabelle agda lean idris
 """.split())
 
 # A language name that means "no highlighting": Sphinx writes highlight-none
@@ -825,6 +826,28 @@ if mode == "content":
                            "div.footer, div.statcounter, table.nav-table, "
                            "table.sec-table"):
             t.decompose()
+
+    if opt("coqdoc"):
+        # Software Foundations (coqdoc HTML): #main is alternating
+        # <div class="doc"> prose and <div class="code"> Coq listings. Each code
+        # div is one Coq block rendered with <br/> line breaks, &nbsp; for
+        # indentation and per-token <span class="id"> highlighting, plus <a>
+        # cross-reference anchors. Left to pandoc it becomes a wall of inline
+        # spans; rebuild each as a plain <pre> (coq) so it emits one fenced
+        # block. get_text() over the spans/anchors reproduces the source
+        # verbatim once <br/> is a newline and &nbsp; a space.
+        for d in el.select("div.code"):
+            for br in d.select("br"):
+                br.replace_with("\n")
+            txt = d.get_text().replace("\xa0", " ")
+            # each source line is "<text><br/>" then a newline in the HTML
+            # source, so <br/>->"\n" doubles every line break; collapse a blank
+            # line (newline + optional spaces + newline) back to a single break.
+            txt = re.sub(r"\n[ \t]*\n+", "\n", txt).strip("\n")
+            d.clear()
+            d.name = "pre"
+            d.attrs = {"class": ["coq"]}
+            d.string = txt
 
     if opt("ghcode"):
         # GitHub's rendered markdown (a repo README, a wiki page, or a .md blob
