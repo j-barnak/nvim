@@ -318,6 +318,11 @@ case "$SLUG" in
   # page; folio.awk strips only bare page numbers, so ~800 survive. riscv_fix
   # drops the footer lines (body-safe: only a footer ends in "| Page N").
   riscv-* | the-risc-v-instruction-set-manual) FIXAWK="${AWKF%/*}/riscv_fix.awk" ;;
+  # Fluent Python: O'Reilly running head "<section> | <page>" / "<page> |
+  # <chapter>" on every body page, using section headings folio.awk's outline
+  # list does not know, so ~260 survive mid-listing. fluent_python_fix drops the
+  # bar-and-bare-page-number line (body-safe: prose/Python never look like that).
+  fluent-python) FIXAWK="${AWKF%/*}/fluent_python_fix.awk" ;;
 esac
 # pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
 # control-byte tr. SSA-based Compiler Design typesets a few relations in

@@ -3225,6 +3225,7 @@ local BOOKS = {
 		{ title = "Learn Programming with OCaml", fmt = "pdf", file = "programming_with_ocaml.pdf" },
 	} },
 	{ module = "Python", key = "books-python", items = {
+		{ title = "Fluent Python (2nd Edition)", fmt = "pdf", slug = "fluent-python", file = "fluent-python.pdf" },
 		{ title = "Python Crash Course", fmt = "pdf", file = "Python-Crash-Course.pdf" },
 		{ title = "Dead Simple Python", fmt = "pdf", file = "Dead Simple Python _ Idiomatic Python for the Impatient -- Jason C_ McDonald -- Penguin Random House LLC (Publisher Services), [N_p_], 2022 -- No -- 9781718500921 -- 86363cb1caad694cdfe8893bf2fb3de2 -- Anna’s Archi.pdf" },
 	} },
