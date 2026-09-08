@@ -3091,6 +3091,7 @@ local BOOKS = {
 		{ title = "Modern x86 Assembly Language Programming", fmt = "pdf", file = "Daniel Kusswurm - Modern X86 Assembly Language Programming_ Covers X86 64-bit, AVX, AVX2, and AVX-512 (2023, Apress) [10.1007_978-1-4842-9603-5] - libgen.li.pdf" },
 		{ title = "The Art of ARM Assembly, Volume 1", fmt = "pdf", file = "[The BOOK of…] The Art of ARM Assembly. Volume 1_ 64-Bit ARM Machine Organization and Programming{Randall Hyde}(2025, No Starch Press){108023809} libgen.li.pdf" },
 		{ title = "DisARMing Code", fmt = "pdf", file = "DisARMing Code  545p (2).pdf" },
+		{ title = "Blue Fox: Arm Assembly Internals and Reverse Engineering", fmt = "pdf", slug = "blue-fox-arm-assembly-internals", file = "blue-fox-arm-assembly.pdf" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
 		-- https://www.cs.cmu.edu/~410-s07/p4/p4-boot.pdf (CMU 15-410, 2007)
@@ -3150,6 +3151,8 @@ local BOOKS = {
 		{ title = "Serious Cryptography (2e)", fmt = "epub", file = "Serious Cryptography, 2nd Edition_ A Practical Introduction -- Jean-Philippe Aumasson -- 2, 2024 -- No Starch Press, Incorporated -- isbn13 9781718503847 -- 98baee034c0a929a742dfde69353a637 -- Anna’s Archive.epub" },
 		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
 		{ title = "Secure Coding in C and C++ (2e)", fmt = "pdf", slug = "secure-coding-in-c-and-cpp", file = "Secure Coding in C and C++ (2nd Edition) (SEI Series in -- Seacord, Robert C_ -- 601df46864954c0d50394370bb73c517 -- Anna’s Archive.pdf" },
+		{ title = "Reverse Engineering for Beginners (Yurichev)", fmt = "pdf", slug = "reverse-engineering-for-beginners", file = "reverse-engineering-for-beginners.pdf" },
+		{ title = "Surreptitious Software: Obfuscation, Watermarking, and Tamperproofing", fmt = "pdf", slug = "surreptitious-software", file = "surreptitious-software.pdf" },
 	} },
 	{ module = "Architecture", key = "books-arch", items = {
 		{ title = "A Primer on Memory Consistency and Cache Coherence", fmt = "pdf", slug = "a-primer-on-memory-consistency-and-cache-coherence", file = "A Primer on Memory Consistency and Cache Coherence (2nd ed).pdf" },

@@ -388,6 +388,32 @@ elif [ "$4" = book ] && [ "$SLUG" = a-primer-on-memory-consistency-and-cache-coh
   # auto-emitted before the first boundary.
   awk -F'\t' '$1==0 && $3!="Blank Page"{t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); print $2"\t"t}' "$OUT/.all.tsv" \
     | sort -t"$(printf '\t')" -k1,1n -s > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = reverse-engineering-for-beginners ]; then
+  # RE4B's outline uses bare topic phrases (no Chapter N / Part keyword), so the
+  # title patterns matched only stray deep bookmarks ("Part I", a "submenu"
+  # leaf, a "10 PRINT CHR$" demo) and left a 1.6 MB "Front Matter" swallowing the
+  # whole book. Its real divisions are the outline's depth-0 parts, in printed
+  # order - EXCEPT the first part, "Code Patterns", is 562 pages (p23-585, ~40%
+  # of the book), so it is split further into its own depth-1 sections (the only
+  # depth-1 nodes before p586). Two of those sections share a start page with a
+  # broken "... : redux" / "Worth noting ..." cross-reference bookmark that
+  # resolves to the same page but carries no content; among boundaries on one
+  # page, keep the node that has children (a real section always has depth-2
+  # subsections) so "Stack" (p62) and "Accessing passed arguments" (p147) win
+  # over their leaf collisions. Front matter (p1-22) is auto-emitted before the
+  # first boundary.
+  awk -F'\t' '
+    { d[NR]=$1; p[NR]=$2; t[NR]=$3 }
+    END {
+      for (i=1;i<=NR;i++) hc[i]=(i<NR && d[i+1]>d[i])?1:0
+      for (i=1;i<=NR;i++) if (d[i]==0 || (d[i]==1 && p[i]+0<586)) {
+        tt=t[i]; sub(/^[ \t]+/,"",tt); sub(/[ \t]+$/,"",tt)
+        k=p[i]+0
+        if (!(k in best) || (hc[i] && !bhc[k])) { best[k]=tt; bhc[k]=hc[i] }
+      }
+      for (k in best) print k"\t"best[k]
+    }' "$OUT/.all.tsv" \
+    | sort -t"$(printf '\t')" -k1,1n -s > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
   # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
   # no title pattern can find them; the split follows the outline's shape.
