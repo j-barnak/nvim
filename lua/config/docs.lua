@@ -233,6 +233,19 @@ end
 local follow_link -- forward declaration; assigned after open_file is defined
 local render_shell -- forward declaration; gd on a man page (render_lines) renders through it
 local gs_source -- forward declaration; assigned after the `simple` table exists
+-- Version pickers keyed by provider name, populated as versioned providers are
+-- registered (register_versioned below, plus the hand-rolled kernel/glibc/ghidra
+-- pickers). `:V` in a docs buffer re-opens the CURRENT provider's picker; the
+-- provider is the first path segment of the doc dir, exactly as gs_source reads it.
+local VERSIONED_PICK = {}
+local function version_repick(dir)
+	local name = dir and dir:match("/docs/([^/]+)")
+	local f = name and VERSIONED_PICK[name]
+	if f then
+		return f()
+	end
+	vim.notify("No versioned document here (:V / :Version)", vim.log.levels.INFO)
+end
 local last_picker -- re-open the current provider's fuzzy finder (D in a doc)
 -- Bumped on every user-initiated open; an async render (pandoc/curl) checks it
 -- before drawing so a slow conversion cannot clobber a doc opened after it.
@@ -461,6 +474,14 @@ local function render_lines(lines, ft, dir, title)
 		vim.api.nvim_buf_create_user_command(buf, "Src", function()
 			gs_source(dir)
 		end, { desc = "Explore this project's source (docs viewer only)" })
+		-- :V / :Ver / :Version — re-open THIS provider's version picker so you can
+		-- jump to another release of the doc/source you are reading. Buffer-local,
+		-- so it does nothing (a note) outside a versioned document.
+		for _, alias in ipairs({ "V", "Ver", "Version" }) do
+			vim.api.nvim_buf_create_user_command(buf, alias, function()
+				version_repick(dir)
+			end, { desc = "Pick a version of this doc/source (docs viewer only)" })
+		end
 		vim.keymap.set("n", "<leader>fe", function()
 			require("oil").toggle_float(dir)
 		end, { buffer = buf, desc = "Oil (this doc's directory)" })
@@ -1718,8 +1739,24 @@ end
 -- until it is chosen, and once fetched it is never re-fetched (a tag does not
 -- move, which is also why `Update all cached docs` skips pulling them). That
 -- command deletes the index, so the next open picks up releases made since.
-local function versioned_tags(name, url, minmajor, cb)
+-- List a project's release tags, newest first. `spec` carries the per-project
+-- tag shape because the 40+ projects wired through here do NOT agree on one:
+--   spec.tagre  - the ERE fed to `grep -oE` to pull tags out of `ls-remote`.
+--                 Defaults to the plain "vN.N[.N]" form. Anchor it with `$` so
+--                 -rc/-alpha/-beta suffixes are dropped. Examples: LLVM
+--                 'llvmorg-[0-9]+\.[0-9]+\.[0-9]+$', SDL 'release-[0-9.]+$',
+--                 Frida bare '[0-9]+\.[0-9]+\.[0-9]+$', GDB 'gdb-[0-9.]+-release$'.
+--   spec.minmajor - only applied to the DEFAULT numeric pattern (a custom tagre
+--                 is already its own filter), so an old v1/v2 major is dropped.
+--   spec.diskpat - Lua pattern that recognises an already-downloaded version dir
+--                 for the offline/no-network fallback. Defaults to "^v?%d"; set
+--                 it for non-v tag shapes (e.g. "^llvmorg%-%d", "^release%-%d").
+-- The tag INDEX (a text file of tags) is the only thing cached eagerly; no
+-- version's docs/source is fetched until chosen, and a tag never moves.
+local function versioned_tags(name, url, spec, cb)
+	spec = spec or {}
 	local idx = data_root .. "/" .. name .. "/tags.txt"
+	local diskpat = spec.diskpat or "^v?%d"
 	-- Versions already fetched stay selectable even when the remote filter would
 	-- exclude them now (an old major, or a tag deleted upstream): losing access
 	-- to something already on disk is never the right answer.
@@ -1730,7 +1767,7 @@ local function versioned_tags(name, url, minmajor, cb)
 		end
 		for _, d in ipairs(vim.fn.glob(data_root .. "/" .. name .. "/*", false, true)) do
 			local v = vim.fs.basename(d)
-			if not seen[v] and vim.fn.isdirectory(d) == 1 and v:match("^v?%d") then
+			if not seen[v] and vim.fn.isdirectory(d) == 1 and v:match(diskpat) then
 				seen[v] = true
 				list[#list + 1] = v
 			end
@@ -1754,12 +1791,22 @@ local function versioned_tags(name, url, minmajor, cb)
 		return
 	end
 	vim.notify("Fetching " .. name .. " versions …")
-	-- Release tags only, newest first: the end-of-line anchor drops -rc and
-	-- -alpha tags, and the awk major test (rather than a character class) keeps
-	-- a future two-digit major sorting in instead of silently vanishing.
+	-- The bare tag name is reduced with `sed 's#.*/##'` and matched WHOLE against
+	-- ^(tagre)$, so the printed string IS the exact git ref (a prefix like
+	-- "llvmorg-"/"edk2-stable" stays attached — grep -oE would have stripped it and
+	-- handed back a ref that does not exist). tagre carries no anchors of its own.
+	local tagre = spec.tagre or "v[0-9]+\\.[0-9]+(\\.[0-9]+)?"
+	-- The awk major test only makes sense for the default numeric form; a custom
+	-- tagre is already the filter (its major may sit behind a prefix like
+	-- "llvmorg-"), so applying the awk there would wrongly drop everything.
+	local awkf = ""
+	if not spec.tagre and spec.minmajor then
+		awkf = " | awk -F. '{ m = $1; sub(/^v/, \"\", m); if (m + 0 >= " .. spec.minmajor .. ") print }'"
+	end
 	local cmd = "git ls-remote --tags --refs " .. shq(url)
-		.. " | grep -oE 'v[0-9]+\\.[0-9]+(\\.[0-9]+)?$'"
-		.. " | awk -F. '{ m = $1; sub(/^v/, \"\", m); if (m + 0 >= " .. minmajor .. ") print }'"
+		.. " | sed 's#.*/##'"
+		.. " | grep -E " .. shq("^(" .. tagre .. ")$")
+		.. awkf
 		.. " | sort -Vr"
 	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
 		local list = vim.split(res.stdout or "", "\n", { trimempty = true })
@@ -1773,9 +1820,26 @@ local function versioned_tags(name, url, minmajor, cb)
 	end)
 end
 
+-- Version picker → { Browse Documentation, Explore source }, both at the chosen
+-- tag. `spec` extends the `simple` shape:
+--   spec.url      - the repo the DOCS come from (sparse-checkout at the tag).
+--   spec.src_url  - the repo `Explore source` / `:Src` clones. Defaults to
+--                   spec.url; set it where docs and source live in different
+--                   repos (SDL docs = sdlwiki, source = libsdl-org/SDL).
+--   spec.tagre / spec.diskpat / spec.minmajor - the tag shape (see versioned_tags).
+--   spec.docs_mode - how docs at the tag are produced: nil/"intree" = sparse
+--                    clone of spec.url at the tag; "doxygen" = regenerate the
+--                    doxygen set from the source at the tag; "none" = source only.
+--   spec.submodules - recurse git submodules when exploring source (AFL++/LibAFL).
+--   spec.excl     - extra ctags excludes passed to config.src.open.
 local function make_versioned(name, spec)
+	local src_url = spec.src_url or spec.url
 	local function menu(version)
-		fzf().fzf_exec({ "Browse Documentation", "Explore source" }, {
+		local choices = { "Browse Documentation", "Explore source" }
+		if spec.docs_mode == "none" then
+			choices = { "Explore source" }
+		end
+		fzf().fzf_exec(choices, {
 			prompt = version .. "> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -1784,7 +1848,11 @@ local function make_versioned(name, spec)
 						return
 					end
 					if sel[1] == "Explore source" then
-						return require("config.src").open(name .. "/" .. version, spec.url, nil, spec.excl, version)
+						return require("config.src").open(
+							name .. "/" .. version, src_url, nil, spec.excl, version, spec.submodules)
+					end
+					if spec.docs_mode == "doxygen" then
+						return pick_doxygen_at(name, version, spec)
 					end
 					local dir = data_root .. "/" .. name .. "/" .. version
 					if vim.fn.isdirectory(dir .. "/" .. spec.marker) == 1 then
@@ -1800,7 +1868,7 @@ local function make_versioned(name, spec)
 	return function()
 		-- No git gate here: versioned_tags needs git only when it must FETCH the
 		-- index, and a version already on disk browses with no git at all.
-		versioned_tags(name, spec.url, spec.minmajor or 0, function(list)
+		versioned_tags(name, src_url, spec, function(list)
 			fzf().fzf_exec(list, {
 				prompt = (spec.label or name) .. " version> ",
 				fzf_opts = { ["--no-multi"] = true },
@@ -1814,6 +1882,28 @@ local function make_versioned(name, spec)
 			})
 		end)
 	end
+end
+
+-- Build a versioned provider AND register its picker under `name` so that `:V`
+-- inside one of its doc buffers re-opens it. Use this in the provider registry in
+-- place of make_versioned wherever `:V` should work. `name` must equal the first
+-- path segment of the doc dir (what gs_source / version_repick read).
+local function register_versioned(name, spec)
+	local f = make_versioned(name, spec)
+	VERSIONED_PICK[name] = f
+	return f
+end
+
+-- Build a versioned spec from a `simple` entry (url/sparse/marker/browse/exts/
+-- prompt reused as the in-tree docs + source repo) plus a tag pattern and any
+-- overrides (label, diskpat, src_url, docs_mode, submodules, excl).
+local function vspec(base, tagre, extra)
+	local s = {
+		url = base.url, sparse = base.sparse, marker = base.marker,
+		browse = base.browse, exts = base.exts, prompt = base.prompt, tagre = tagre,
+	}
+	for k, v in pairs(extra or {}) do s[k] = v end
+	return s
 end
 
 -- Some projects keep their real docs in a GitHub *wiki* (a flat separate repo,
@@ -1881,6 +1971,21 @@ local VERSIONED = {
 	-- Docs are per ACK branch, so the source must be too. The branch name is the
 	-- directory name (android14-5.15), which is also the git branch to check out.
 	["android-kernel"] = { url = "https://github.com/aosp-mirror/kernel_common", excl = KERNEL_EXCLUDE },
+	-- Batch of source==docs (in-tree) projects converted to versioned providers:
+	-- gs_source resolves :Src to the SAME tag as the docs being read.
+	llvm = { url = simple.llvm.url },
+	xen = { url = simple.xen.url },
+	qbdi = { url = simple.qbdi.url },
+	capstone = { url = simple.capstone.url },
+	volatility = { url = simple.volatility.url },
+	unicorn = { url = simple.unicorn.url },
+	keystone = { url = simple.keystone.url },
+	uefi = { url = simple.uefi.url },
+	uboot = { url = simple.uboot.url },
+	-- AFL++ vendors qemuafl/unicornafl/QEMU-Nyx/libnyx/packer/qemu-libafl-bridge/
+	-- coresight-trace/grammar_mutator as git submodules; recurse so :Src carries
+	-- their source (and in-tree docs) too.
+	aflpp = { url = simple.aflpp.url, submodules = true },
 }
 -- Books whose companion source is a real upstream repo worth exploring. Every
 -- book's docs cache lives under docs/books/<key>/<slug>, so the shared "books"
@@ -1892,7 +1997,7 @@ gs_source = function(dir)
 	if not dir then
 		return
 	end
-	local srcname, url, excl, ref
+	local srcname, url, excl, ref, gs_sub
 	-- First path segment under the docs cache is the provider name (simple
 	-- providers live at <name>/master, others at <name>/… or <name>/<ver>).
 	local name = dir:match("/docs/([^/]+)")
@@ -1910,7 +2015,7 @@ gs_source = function(dir)
 		-- is in a versioned doc tree.
 		local ver = dir:match("/docs/" .. name .. "/([^/]+)")
 		srcname = name .. (ver and ("/" .. ver) or "")
-		url, excl, ref = VERSIONED[name].url, VERSIONED[name].excl, ver
+		url, excl, ref, gs_sub = VERSIONED[name].url, VERSIONED[name].excl, ver, VERSIONED[name].submodules
 	elseif name and simple[name] then
 		srcname, url = name, simple[name].url
 	elseif name == "linux" then
@@ -1934,7 +2039,7 @@ gs_source = function(dir)
 	}
 	require("config.src").open(srcname, url, function()
 		render_lines(restore.lines, restore.ft, dir, restore.title)
-	end, excl, ref)
+	end, excl, ref, gs_sub)
 end
 
 -- ── doxygen providers: doxygen (XML) -> moxygen -> per-class/group Markdown ─
@@ -3680,11 +3785,17 @@ local STATUS_RANK = { PARTIAL = 1, ["NOT FETCHED"] = 2, NETWORK = 3, CACHED = 4,
 local pick_list
 
 -- ── providers + :Docs command ────────────────────────────────────────────
+-- The three hand-rolled versioned pickers predate register_versioned; register
+-- them for `:V` by hand (their doc-dir path segment = the key here).
+VERSIONED_PICK.linux = pick_kernel_version
+VERSIONED_PICK.glibc = pick_glibc
+VERSIONED_PICK.ghidra = pick_ghidra
+
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
 	{ name = "BCC", key = "bcc", run = make_simple("bcc", simple.bcc) },
 	{ name = "Bochs (x86/x64 emulator)", key = "bochs", run = make_simple("bochs", simple.bochs) },
-	{ name = "QEMU", key = "qemu", run = make_versioned("qemu", {
+	{ name = "QEMU", key = "qemu", run = register_versioned("qemu", {
 		url = simple.qemu.url,
 		sparse = simple.qemu.sparse,
 		marker = simple.qemu.marker,
@@ -3721,10 +3832,10 @@ local providers = {
 	{ name = "SDL2", key = "sdl2", run = make_simple("sdl2", simple.sdl2) },
 	{ name = "SDL3", key = "sdl3", run = make_simple("sdl3", simple.sdl3) },
 	{ name = "OpenGL", key = "opengl", run = make_simple("opengl", simple.opengl) },
-	{ name = "AFL++", key = "aflpp", run = make_simple("aflpp", simple.aflpp) },
+	{ name = "AFL++", key = "aflpp", run = register_versioned("aflpp", vspec(simple.aflpp, "v[0-9]+\\.[0-9]+[a-z]?", { label = "AFL++", submodules = true })) },
 	{ name = "Python", key = "python", run = make_simple("python", simple.python) },
-	{ name = "LLVM", key = "llvm", run = make_simple("llvm", simple.llvm) },
-	{ name = "Xen", key = "xen", run = make_simple("xen", simple.xen) },
+	{ name = "LLVM", key = "llvm", run = register_versioned("llvm", vspec(simple.llvm, "llvmorg-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LLVM", diskpat = "^llvmorg%-%d" })) },
+	{ name = "Xen", key = "xen", run = register_versioned("xen", vspec(simple.xen, "RELEASE-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Xen", diskpat = "^RELEASE%-%d" })) },
 	{ name = "Intel SDM Vol 1", key = "sdm1", run = function() pick_sdm(1) end },
 	{ name = "Intel SDM Vol 2", key = "sdm2", run = function() pick_sdm(2) end },
 	{ name = "Intel SDM Vol 3", key = "sdm3", run = function() pick_sdm(3) end },
@@ -3756,22 +3867,22 @@ local providers = {
 	{ name = "Triton", key = "triton", run = make_simple("triton", simple.triton) },
 	{ name = "angr", key = "angr", run = make_simple("angr", simple.angr) },
 	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") },
-	{ name = "QBDI (Quarkslab)", key = "qbdi", run = make_simple("qbdi", simple.qbdi) },
-	{ name = "Capstone", key = "capstone", run = make_simple("capstone", simple.capstone) },
+	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI" })) },
+	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone" })) },
 	{ name = "Binary Ninja API", key = "binja", run = make_simple("binja", simple.binja) },
 	{ name = "LIEF", key = "lief", run = make_simple("lief", simple.lief) },
 	{ name = "pyelftools", key = "pyelftools", run = make_simple("pyelftools", simple.pyelftools) },
 	{ name = "QBinDiff", key = "qbindiff", run = make_simple("qbindiff", simple.qbindiff) },
 	{ name = "Qiling", key = "qiling", run = make_simple("qiling", simple.qiling) },
 	{ name = "PANDA", key = "panda", run = make_simple("panda", simple.panda) },
-	{ name = "Volatility", key = "volatility", run = make_simple("volatility", simple.volatility) },
+	{ name = "Volatility", key = "volatility", run = register_versioned("volatility", vspec(simple.volatility, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Volatility" })) },
 	{ name = "syzkaller", key = "syzkaller", run = make_simple("syzkaller", simple.syzkaller) },
-	{ name = "Unicorn", key = "unicorn", run = make_simple("unicorn", simple.unicorn) },
-	{ name = "Keystone", key = "keystone", run = make_simple("keystone", simple.keystone) },
+	{ name = "Unicorn", key = "unicorn", run = register_versioned("unicorn", vspec(simple.unicorn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Unicorn" })) },
+	{ name = "Keystone", key = "keystone", run = register_versioned("keystone", vspec(simple.keystone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Keystone" })) },
 	{ name = "pwntools", key = "pwntools", run = make_simple("pwntools", simple.pwntools) },
-	{ name = "UEFI (edk2)", key = "uefi", run = make_simple("uefi", simple.uefi) },
+	{ name = "UEFI (edk2)", key = "uefi", run = register_versioned("uefi", vspec(simple.uefi, "edk2-stable[0-9]+", { label = "UEFI (edk2)", diskpat = "^edk2%-stable%d" })) },
 	{ name = "coreboot", key = "coreboot", run = make_simple("coreboot", simple.coreboot) },
-	{ name = "U-Boot", key = "uboot", run = make_simple("uboot", simple.uboot) },
+	{ name = "U-Boot", key = "uboot", run = register_versioned("uboot", vspec(simple.uboot, "v[0-9]{4}\\.[0-9]+", { label = "U-Boot" })) },
 	{ name = "Android (bionic internals)", key = "android", run = make_simple("android", simple.android) },
 	{ name = "Android kernel (ACK, versioned)", key = "android-kernel", run = pick_android_kernel },
 	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = make_simple("dynamorio", simple.dynamorio) },
