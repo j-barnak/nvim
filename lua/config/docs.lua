@@ -3343,7 +3343,6 @@ local WEB_BOOKS = {
 	{ title = "Software Foundations: Logic Foundations", key = "software-foundations-lf", run = pick_sf },
 	{ title = "Write You a Haskell (Stephen Diehl)", key = "write-you-a-haskell", run = pick_wyah },
 	{ title = "Linux Kernel Module Programming Guide", key = "lkmpg", run = pick_lkmpg },
-	{ title = "The Typeclassopedia (Haskell)", key = "typeclassopedia", run = pick_tco },
 	{ title = "High Performance Browser Networking (Grigorik)", key = "hpbn", run = pick_hpbn },
 	{ title = "LazyFoo SDL3 Tutorials", key = "lazyfoo-sdl3", run = pick_lazyfoo_sdl3 },
 	{ title = "QEMU Internals (Airbus Seclab)", key = "qemu-internals", run = pick_qemu_internals },
@@ -3807,6 +3806,7 @@ providers[#providers + 1] = { name = "Books", key = "books", run = pick_books }
 -- the flat Books list. key "books-riscv" is the on-disk module dir, so :Docs
 -- list still reports each manual's frozen status.
 providers[#providers + 1] = { name = "RISC-V (manuals)", key = "books-riscv", run = pick_riscv_books }
+providers[#providers + 1] = { name = "Typeclassopedia (Haskell)", key = "typeclassopedia", run = pick_tco }
 
 -- Every source in one list, each row carrying where its content lives. Rows are
 -- "<index>\t<display>": fzf shows column 2, the action looks the row up by
