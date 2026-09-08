@@ -2009,6 +2009,7 @@ local VERSIONED = {
 	coreboot = { url = simple.coreboot.url },
 	codeql = { url = simple.codeql.url },
 	lldb = { url = simple.lldb.url },
+	dynamorio = { url = simple.dynamorio.url },
 	libafl = { url = simple.libafl.url, submodules = true },
 }
 -- Books whose companion source is a real upstream repo worth exploring. Every
@@ -3965,7 +3966,7 @@ local providers = {
 	{ name = "U-Boot", key = "uboot", run = register_versioned("uboot", vspec(simple.uboot, "v[0-9]{4}\\.[0-9]+", { label = "U-Boot" })) },
 	{ name = "Android (bionic internals)", key = "android", run = make_simple("android", simple.android) },
 	{ name = "Android kernel (ACK, versioned)", key = "android-kernel", run = pick_android_kernel },
-	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = make_simple("dynamorio", simple.dynamorio) },
+	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = register_versioned("dynamorio", vspec(simple.dynamorio, "release_[0-9]+\\.[0-9]+\\.[0-9]+", { label = "DynamoRIO", diskpat = "^release_%d" })) },
 	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
 	{ name = "LibAFL", key = "libafl", run = register_versioned("libafl", vspec(simple.libafl, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LibAFL", diskpat = "^%d", submodules = true })) },
 	{ name = "CodeQL", key = "codeql", run = register_versioned("codeql", vspec(simple.codeql, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "CodeQL" })) },
