@@ -1906,6 +1906,15 @@ local function vspec(base, tagre, extra)
 	return s
 end
 
+-- Source-only provider (no doc set): open the repo's source directly at its
+-- default branch. Used for the branch-tracked AFL++ submodules (libnyx, packer,
+-- coresight-trace, …) that publish no release tags to version.
+local function src_only(name, url)
+	return function()
+		require("config.src").open(name .. "/src", url, nil, nil, nil, false)
+	end
+end
+
 -- Some projects keep their real docs in a GitHub *wiki* (a flat separate repo,
 -- <repo>.wiki.git) where sparse-checkout-by-path doesn't help: shallow-clone it whole.
 local function make_wiki(name, url, prompt)
@@ -3848,6 +3857,17 @@ local providers = {
 	{ name = "SDL3", key = "sdl3", run = make_simple("sdl3", simple.sdl3) },
 	{ name = "OpenGL", key = "opengl", run = make_simple("opengl", simple.opengl) },
 	{ name = "AFL++", key = "aflpp", run = register_versioned("aflpp", vspec(simple.aflpp, "v[0-9]+\\.[0-9]+[a-z]?", { label = "AFL++", submodules = true })) },
+	-- AFL++ vendored submodules, each also reachable on its own. The three that
+	-- publish release tags get a version picker (source-only, docs_mode "none");
+	-- the branch-tracked rest open source at their default branch.
+	{ name = "AFL++: qemuafl", key = "qemuafl", run = register_versioned("qemuafl", { url = "https://github.com/AFLplusplus/qemuafl", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemuafl", docs_mode = "none" }) },
+	{ name = "AFL++: unicornafl", key = "unicornafl", run = register_versioned("unicornafl", { url = "https://github.com/AFLplusplus/unicornafl", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "unicornafl", docs_mode = "none" }) },
+	{ name = "AFL++: QEMU-Nyx", key = "qemu-nyx", run = register_versioned("qemu-nyx", { url = "https://github.com/nyx-fuzz/QEMU-Nyx", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "QEMU-Nyx", docs_mode = "none" }) },
+	{ name = "AFL++: libnyx", key = "libnyx", run = src_only("libnyx", "https://github.com/nyx-fuzz/libnyx") },
+	{ name = "AFL++: packer", key = "nyx-packer", run = src_only("nyx-packer", "https://github.com/nyx-fuzz/packer") },
+	{ name = "AFL++: qemu-libafl-bridge", key = "qemu-libafl-bridge", run = src_only("qemu-libafl-bridge", "https://github.com/AFLplusplus/qemu-libafl-bridge") },
+	{ name = "AFL++: coresight-trace", key = "coresight-trace", run = src_only("coresight-trace", "https://github.com/AFLplusplus/coresight-trace") },
+	{ name = "AFL++: grammar-mutator", key = "grammar-mutator", run = src_only("grammar-mutator", "https://github.com/AFLplusplus/Grammar-Mutator") },
 	{ name = "Python", key = "python", run = make_simple("python", simple.python) },
 	{ name = "LLVM", key = "llvm", run = register_versioned("llvm", vspec(simple.llvm, "llvmorg-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LLVM", diskpat = "^llvmorg%-%d" })) },
 	{ name = "Xen", key = "xen", run = register_versioned("xen", vspec(simple.xen, "RELEASE-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Xen", diskpat = "^RELEASE%-%d" })) },
