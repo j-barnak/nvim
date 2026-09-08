@@ -2518,6 +2518,7 @@ local pick_lyah = frozen_web_provider("lyah", "LYAH> ")
 local pick_sf = frozen_web_provider("software-foundations-lf", "Software Foundations> ")
 local pick_wyah = frozen_web_provider("write-you-a-haskell", "Write You a Haskell> ")
 local pick_lkmpg = frozen_web_provider("lkmpg", "LKMPG> ")
+local pick_tco = frozen_web_provider("typeclassopedia", "Typeclassopedia> ")
 local pick_lazyfoo_sdl3 = frozen_web_provider("lazyfoo-sdl3", "SDL3> ")
 local pick_qemu_internals = frozen_web_provider("qemu-internals", "QEMU> ")
 local pick_jit_series = frozen_web_provider("jit-series", "JIT> ")
@@ -3339,6 +3340,7 @@ local WEB_BOOKS = {
 	{ title = "Software Foundations: Logic Foundations", key = "software-foundations-lf", run = pick_sf },
 	{ title = "Write You a Haskell (Stephen Diehl)", key = "write-you-a-haskell", run = pick_wyah },
 	{ title = "Linux Kernel Module Programming Guide", key = "lkmpg", run = pick_lkmpg },
+	{ title = "The Typeclassopedia (Haskell)", key = "typeclassopedia", run = pick_tco },
 	{ title = "LazyFoo SDL3 Tutorials", key = "lazyfoo-sdl3", run = pick_lazyfoo_sdl3 },
 	{ title = "QEMU Internals (Airbus Seclab)", key = "qemu-internals", run = pick_qemu_internals },
 	{ title = "JIT (Series)", key = "jit-series", run = pick_jit_series },
@@ -3554,6 +3556,7 @@ LOCATION["lyah"] = { index = "lyah/index.tsv", unit = "chapter" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
 LOCATION["write-you-a-haskell"] = { index = "write-you-a-haskell/index.tsv", unit = "chapter" }
 LOCATION["lkmpg"] = { index = "lkmpg/index.tsv", unit = "chapter" }
+LOCATION["typeclassopedia"] = { index = "typeclassopedia/index.tsv", unit = "chapter" }
 LOCATION["lazyfoo-sdl3"] = { index = "lazyfoo-sdl3/index.tsv", unit = "chapter" }
 LOCATION["qemu-internals"] = { index = "qemu-internals/index.tsv", unit = "chapter" }
 LOCATION["jit-series"] = { index = "jit-series/index.tsv", unit = "chapter" }
