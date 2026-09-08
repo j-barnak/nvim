@@ -1022,6 +1022,12 @@ if mode == "content":
                 (a.find_parent("div", class_="bg-card") or a).decompose()
         for img in el.select('img[src^="data:"]'):
             img.decompose()
+        # The react-syntax-highlighter code blocks carry a line-number gutter as
+        # a <span class="linenumber ..."> per line, styled display:none so it is
+        # invisible on the page but still in the DOM; pandoc would otherwise fuse
+        # each hidden digit onto the start of its line ("1// comment", "2", ...).
+        for ln in el.select("span.linenumber, span.react-syntax-highlighter-line-number"):
+            ln.decompose()
 
     if opt("philopp"):
         # os.phil-opp.com "Writing an OS in Rust": the post body is inside <main>,
