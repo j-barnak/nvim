@@ -3121,6 +3121,7 @@ local BOOKS = {
 	{ module = "Compilers", key = "books-compilers", items = {
 		{ title = "Linkers and Loaders", fmt = "pdf", file = "Linkers-and-Loaders.pdf" },
 		{ title = "Program Analysis (CMU 17-355)", fmt = "pdf", slug = "program-analysis-cmu", file = "cmu-program-analysis.pdf" },
+		{ title = "Static Program Analysis (Moller & Schwartzbach)", fmt = "pdf", slug = "static-program-analysis", file = "spa.pdf" },
 		{ title = "How To Write Shared Libraries", fmt = "pdf", slug = "how-to-write-shared-libraries", file = "dsohowto.pdf" },
 		{ title = "Crafting Interpreters", fmt = "epub", file = "Crafting Interpreters -- Robert Nystrom -- United States_] _, 2021 -- Genever Benning -- isbn13 9780990582939 -- c96d09f7d0933fc5c9b75228f7f3e2a3 -- Anna’s Archive.epub" },
 		{ title = "Writing a C Compiler", fmt = "epub", file = "WritingaCCompiler.epub" },
