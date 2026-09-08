@@ -827,6 +827,18 @@ if mode == "content":
                            "table.sec-table"):
             t.decompose()
 
+    if opt("lkmpg"):
+        # Linux Kernel Module Programming Guide (sysprog21, tex4ht/fancyvrb):
+        # each line of a <pre class="fancyvrb"> listing is a roman-font
+        # line-number span (class ecrm-*) immediately followed by the typewriter
+        # code span (class ectt-*). Left alone the number fuses onto the code
+        # ("5#include", "20MODULE_LICENSE"). Drop the ecrm-* line-number spans
+        # inside the code blocks; the code (ectt) and its &nbsp; indentation stay.
+        for pre in el.select("pre.fancyvrb"):
+            for sp in pre.find_all("span"):
+                if " ".join(sp.get("class") or []).startswith("ecrm"):
+                    sp.decompose()
+
     if opt("wyah"):
         # Write You a Haskell (Stephen Diehl, smunix mirror): the chapter body
         # opens with a hidden <div style="display:none"> holding a MathJax
