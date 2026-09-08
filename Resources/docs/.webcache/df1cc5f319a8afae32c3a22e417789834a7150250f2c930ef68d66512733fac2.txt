@@ -1,0 +1,818 @@
+In the previous lessons, we compressed our status flags from 3 booleans (3 bytes) to a `uint_8` (1 byte) which we interacted with using bit flags. Can we perform similar optimizations everywhere?
+
+In many situations, **bandwidth** is often a stricter bottleneck than CPU speed. A typical server might need to replicate the state of 10,000 entities to connected clients 60 times per second. A replay system might need to store minutes of gameplay in RAM. A save system might need to serialize the world state to disk instantly.
+
+If we store our data using standard `int` and `float` types, we are wasting massive amounts of space.
+
+- An `int` ID (32 bits) can store 4 billion values. Do we have 4 billion players?
+- A `float` rotation (32 bits) can distinguish angles smaller than an atom. Can the player see that?
+- A `vec3` position (96 bits) stores absolute coordinates that can represent any position in the world. Can a player teleport across the world in a single frame?
+
+In this lesson, we will learn to trade **ALU instructions** (CPU math) for **memory bandwidth** (RAM transfer). We will aggressively compress our data using three techniques: **Bit-Packing**, **Quantization**, and **Delta Encoding**.
+
+This will introduce a lot of complexity to our data layout and manipulation, but as usual, we can hide that. We'll have our `PlayerRef` proxy handle the ugliness to preserve the clean, object-oriented API.
+
+## The Bandwidth Bottleneck
+
+Let's bring back our `PlayerStorage` structure of arrays and set up some columns. The comments track how much data each entity requires, with the assumption that `int` and `float` are both 32-bit (4 byte) types:
+
+```
+#pragma once
+#include <vector>
+#include <cstdint>
+
+// We'll re-introduce PlayerRef later in the lesson
+
+namespace PlayerFlags {
+  constexpr uint8_t None     = 0;
+  constexpr uint8_t Friendly = 1 << 0;
+  constexpr uint8_t Alive    = 1 << 1;
+  constexpr uint8_t Nearby   = 1 << 2;
+}
+
+class PlayerStorage {
+public:
+  std::vector<int> m_ids;        // 4 bytes
+  std::vector<int> m_teams;      // 4 bytes
+  std::vector<uint8_t> m_flags;  // 1 byte
+  std::vector<float> m_health;   // 4 bytes
+  std::vector<float> m_rotation; // 4 bytes
+  
+  // Positions
+  std::vector<float> m_pos_x;    // 4 bytes
+  std::vector<float> m_pos_y;    // 4 bytes
+  std::vector<float> m_pos_z;    // 4 bytes
+  
+  // We'll bring back the functions later
+};
+```
+
+Each entity is 29 bytes in total. This is an awkward size. It doesn't align well with cache lines, which are usually 64 bytes. A single player can straddle across cache lines, requiring two fetches to read completely
+
+Furthermore, if we have 10,000 entities, that's roughly **290 KB** of data for our relatively minimal collection of variables. This doesn't sound like much, but what if we were trying to send this over a network connection 60 times per second to keep all the clients in sync? That is over 1GB of data per minute per player; 10TB across all players.
+
+We'll focus on techniques for high-level optimizations in the next chapter, like not sending data at all for players who aren't nearby. But for now, let's focus on making each individual entity as efficient as possible.
+
+## Lossless Compression: Bit-Packing
+
+The first target is our integer data. We are currently using 32 bits for IDs, 32 bits for teams, and 8 bits for flags - 72 bits in total.
+
+What do we actually need?
+
+- **IDs:** Let's say our game supports a maximum of 1024 players per match. We only need **10 bits** ($2^{10} = 1024$210=1024).
+- **Teams:** We may only have 4 teams (Red, Blue, Green, Yellow). We only need **2 bits** for this ($2^{2} = 4$22=4).
+- **Flags:** We currently have 3 boolean flags (`Alive`, `Friendly`, `Nearby`). We need **3 bits**.
+
+So, we only need 15 bits to store all of this, but we're allocating 72 bits. 80% of our bandwidth is being wasted to send bits that are never used, and always `0`.
+
+### Bit Packing
+
+We can merge these three fields into a single `uint16_t`. This shrinks the memory footprint from 9 bytes to 2 bytes. We even have a bit to spare. We'll assign it to the flags for now, as we might need another flag in the future.
+
+We view our bit containers like `uint16_t` from right-to-left and, similar to arrays, we start counting from `0`. So, our "first" bit is at position `0`, and it is the rightmost bit.
+
+When bit-packing multiple properties, we need to define each property's **size** (how many bits are assigned to it) and its **offset** (where those bits are positioned within the `uint16_t`). The offset of our first property will be `0`, and the offset of other properties depends on the size of the previous properties.
+
+Our strategy of assigning 10 bits to Player ID, then 2 bits to Team ID, and then 4 bits to Flags creates a `uint16_t` whose bitwise memory layout looks like this:
+
+To implement this, we replace the three integer arrays in our `PlayerStorage` with a new `uint16_t` array. We'll also add a `PlayerLayout` namespace to describe our arrangement strategy and provide some useful masks:
+
+```
+#pragma once
+#include <vector>
+#include <cstdint>
+
+namespace PlayerFlags {
+  constexpr uint8_t None     = 0;
+  constexpr uint8_t Friendly = 1 << 0;
+  constexpr uint8_t Alive    = 1 << 1;
+  constexpr uint8_t Nearby   = 1 << 2;
+}
+
+namespace PlayerLayout {
+  static constexpr int ID_BITS = 10;
+  static constexpr int TEAM_BITS = 2;
+  static constexpr int FLAG_BITS = 4;
+
+  static constexpr int ID_OFFSET = 0;
+  static constexpr int TEAM_OFFSET = ID_BITS;
+  static constexpr int FLAG_OFFSET = ID_BITS + TEAM_BITS;
+  
+  // 0000 0011 1111 1111
+  static constexpr uint16_t ID_MASK = (1 << ID_BITS) - 1;
+  
+  // 0000 1100 0000 0000
+  static constexpr uint16_t TEAM_MASK = (1 << TEAM_BITS) - 1;
+  
+  // 1111 0000 0000 0000
+  static constexpr uint16_t FLAG_MASK = (1 << FLAG_BITS) - 1;
+};
+
+class PlayerStorage {
+public:
+  std::vector<int> m_ids;        // 4 bytes 
+  std::vector<int> m_teams;      // 4 bytes 
+  std::vector<uint8_t> m_flags;  // 1 byte 
+  
+  // Replaces m_ids, m_teams, m_flags
+  std::vector<uint16_t> m_packed_info; // 2 bytes 
+  
+  std::vector<float> m_health;   // 4 bytes
+  std::vector<float> m_rotation; // 4 bytes
+  
+  // Positions
+  std::vector<float> m_pos_x;    // 4 bytes
+  std::vector<float> m_pos_y;    // 4 bytes
+  std::vector<float> m_pos_z;    // 4 bytes
+};
+```
+
+### Packing and Unpacking Data
+
+We have deleted three vectors that store 9 bytes per player, and added one that can store all the same data at 2 bytes per player. We'll benchmark the performance later to see the payoff, but we've added huge usability problems.
+
+Logically, we want to work with things like `id` and `team`, not this `m_packed_info` thing. As always, we can hide this nightmarish layout behind a much friendlier API. Our `AddPlayer()` function can still accept normal data, and take care of the packing for us:
+
+```
+// ...
+
+class PlayerStorage {
+public:
+  // ...
+  void AddPlayer(
+    int id, int team, uint8_t flags,
+    float rot, float hp, float x, float y, float z
+  ) {
+    // Pack Integers
+    uint16_t packed = 0;
+    packed |= (id & PlayerLayout::ID_MASK)
+      << PlayerLayout::ID_OFFSET;
+    packed |= (team & PlayerLayout::TEAM_MASK)
+      << PlayerLayout::TEAM_OFFSET;
+    packed |= (flags & PlayerLayout::FLAG_MASK)
+      << PlayerLayout::FLAG_OFFSET;
+    m_packed_info.push_back(packed);
+    
+    m_rotation.push_back(rot);
+    m_health.push_back(health);
+    m_pos_x.push_back(x);
+    m_pos_y.push_back(y);
+    m_pos_z.push_back(z);
+  }
+};
+```
+
+We can also add friendly getters and setters for whatever property we want:
+
+```
+// ...
+
+class PlayerStorage {
+public:
+// ...
+  int GetID(size_t index) const {
+    uint16_t packed = m_packed_info[index];
+    return (packed >> ID_OFFSET) & ID_MASK;
+  }
+
+  void SetID(size_t index, int id) {
+    uint16_t& packed = m_packed_info[index];
+    
+    // 1. Clear old ID bits (create a hole)
+    packed &= ~(PlayerLayout::ID_MASK
+      << PlayerLayout::ID_OFFSET);
+    
+    // 2. Insert new ID (masked to safety, shifted
+    // into position)
+    packed |= (id & PlayerLayout::ID_MASK)
+      << PlayerLayout::ID_OFFSET;
+  }
+};
+```
+
+As before, our `PlayerRef` proxy tends to be what consumers interact with, so we can invest plenty of effort here to hide the ugliness. We're just working with our packed info for now, but we'll add the other fields soon:
+
+```
+// ...
+
+struct PlayerRef {
+private:
+  // Reference to the packed storage
+  uint16_t& m_packed;
+  
+  // Private constructor that takes the reference to the bitfield
+  friend class PlayerStorage;
+  explicit PlayerRef(uint16_t& packed) : m_packed(packed) {}
+  
+public:
+  // Interacting with the ID bits:
+  int GetID() const {
+    // Mask out the ID bits
+    return (m_packed & PlayerStorage::ID_MASK);
+  }
+
+  void SetID(int id) {
+    // 1. Clear old ID
+    m_packed &= ~PlayerStorage::ID_MASK;
+    // 2. Set new ID (ensure it fits!)
+    m_packed |= (id & PlayerStorage::ID_MASK);
+  }
+  
+  // Interacting with the Team bits:
+  int GetTeam() const {
+    // Shift right to move team bits to the bottom, then mask
+    return (m_packed >> PlayerStorage::TEAM_OFFSET)
+      & PlayerStorage::TEAM_MASK;
+  }
+
+  void SetTeam(int team) {
+    // 1. Clear old team (Shifted mask)
+    m_packed &= ~(PlayerStorage::TEAM_MASK
+      << PlayerStorage::TEAM_OFFSET);
+    // 2. Set new team
+    m_packed |= (team & PlayerStorage::TEAM_MASK)
+      << PlayerStorage::TEAM_OFFSET;
+  }
+  
+  // Interacting with the Flag bits:
+  uint8_t GetFlags() const {
+    return (m_packed >> PlayerLayout::FLAG_OFFSET)
+      & PlayerLayout::FLAG_MASK;
+  }
+
+  void SetFlags(uint8_t flags) {
+    m_packed &= ~(PlayerLayout::FLAG_MASK
+      << PlayerLayout::FLAG_OFFSET);
+    m_packed |= (flags & PlayerLayout::FLAG_MASK)
+      << PlayerLayout::FLAG_OFFSET;
+  }
+
+  // Example helpers for specific flags
+  bool IsAlive() const {
+    return GetFlags() & PlayerFlags::Alive;
+  }
+  
+  void Kill() {
+    SetFlags(GetFlags() & ~PlayerFlags::Alive);
+  }
+};
+
+// ...
+```
+
+We can bring back our `GetView()` function to construct these new `PlayerRef` objects:
+
+```
+#pragma once
+#include <vector>
+#include <ranges> 
+#include <tuple> 
+#include <cstdint>
+
+// ...
+
+class PlayerStorage {
+public:
+  // ...
+
+  auto GetView() {
+    // Just zipping m_packed_info for now, but we'll add more later
+    return std::views::zip(m_packed_info)
+      | std::views::transform([](auto&& tuple) {
+         auto& [p] = tuple;
+         return PlayerRef{p};
+      });
+  }
+};
+```
+
+## Lossy Compression: Quantization
+
+Next, let's compress the floating-point numbers. Our example system is using two `float` values per player - one for health and one for rotation - but a real system typically has many more.
+
+A 32-bit `float` provides incredible precision. It can represent the distance to a galaxy or the width of an atom. In many cases, the values we want to store for a rotation range from $0.0$0.0 to $360.0$360.0.
+
+A `float` lets us distinguish between $90.000001^{\circ}$90.000001∘ and $90.000002^{\circ}$90.000002∘? Do we need that? No - we couldn't tell the difference.
+
+We can use **quantization** to map these continuous floating-point ranges into discrete integer ranges. Below, you can select the number of bits used to represent a full $360^{\circ}$360∘ rotation, and assess how that affects the accuracy.
+
+You'll likely notice no difference between using 32 bits (a full `float`) and 8 bits. A combination of 8 bits can represent 256 possible values, which corresponds to $1.4^{\circ}$1.4∘ increments when mapped to a $0^{\circ} - 360^{\circ}$0∘−360∘ range:
+
+### The Math
+
+If we want to compress a rotation into a single byte like a `uint8_t`, we map the range $\lbrack 0,360\rbrack$\[0,360\] to $\lbrack 0,255\rbrack$\[0,255\]. Quantizing and restoring a value using that mapping looks like this:
+
+$$\begin{matrix}
+\text{Quantized} & {= \text{Value} \times (255/360)} \\
+\text{Restored} & {= \text{Quantized} \times (360/255)}
+\end{matrix}$$QuantizedRestored​=Value×(255/360)=Quantized×(360/255)​
+
+We can quantize anything - not just rotations - using the same technique. For example, 4 bits can support $2^{4} = 16$24=16 degrees of freedom.
+
+Quantizing a $\lbrack 0,100\rbrack$\[0,100\] range to $\lbrack 0,16\rbrack$\[0,16\] range that can be stored in 4 bits looks like this:
+
+$$\begin{matrix}
+\text{Quantized} & {= \text{Value} \times (16/100)} \\
+\text{Restored} & {= \text{Quantized} \times (100/16)}
+\end{matrix}$$QuantizedRestored​=Value×(16/100)=Quantized×(100/16)​
+
+We can incorporate addition and subtraction if our range does not start at $0$0. Quantizing a $\lbrack 100,200\rbrack$\[100,200\] range to $\lbrack 0,16\rbrack$\[0,16\] can be done like this:
+
+$$\begin{matrix}
+\text{Quantized} & {= (\text{Value} - 100) \times (16/100)} \\
+\text{Restored} & {= \text{Quantized} \times (100/16) + 100}
+\end{matrix}$$QuantizedRestored​=(Value−100)×(16/100)=Quantized×(100/16)+100​
+
+### Implementing Quantized Columns
+
+To implement this, we replace our `float` vectors with `uint8_t` vectors.
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+class PlayerStorage {
+public:
+  std::vector<uint16_t> m_packed_info;
+  
+  std::vector<float> m_rotation;
+  std::vector<uint8_t> m_rotation_quantized;
+  
+  std::vector<float> m_health;
+  std::vector<uint8_t> m_health_quantized;
+
+  // ...
+  
+  auto GetView() {
+    return std::views::zip(
+      m_packed_info, m_rotation_quantized, m_health_quantized
+    ) | std::views::transform([](auto&& tuple) {
+       auto& [p, r, h] = tuple;
+       return PlayerRef{p, r, h};
+    });
+  }
+};
+```
+
+### Quantizing and Restoring Data
+
+Our outward-facing API can continue to use the friendlier floating-point values for health and rotation. When we receive a value, we just quantize it before we store it:
+
+```
+// ...
+
+class PlayerStorage {
+public:
+  // ...
+  void AddPlayer(
+    int id, int team, uint8_t flags,
+    float rot, float hp, float x, float y, float z
+  ) {
+    // Pack Integers
+    uint16_t packed = 0;
+    packed |= (id & PlayerLayout::ID_MASK)
+      << PlayerLayout::ID_OFFSET;
+    packed |= (team & PlayerLayout::TEAM_MASK)
+      << PlayerLayout::TEAM_OFFSET;
+    packed |= (flags & PlayerLayout::FLAG_MASK)
+      << PlayerLayout::FLAG_OFFSET;
+    m_packed_info.push_back(packed);
+    
+    // Quantize Floats
+    m_rotation.push_back(rot);
+    m_rotation_quantized.push_back(
+      static_cast<uint8_t>(rot * (255.0f / 360.0f))
+    );
+    m_health.push_back(health);
+    m_health_quantized.push_back(
+      static_cast<uint8_t>(hp * (255.0f / 100.0f))
+    );
+    
+    m_pos_x.push_back(x);
+    m_pos_y.push_back(y);
+    m_pos_z.push_back(z);
+  }
+};
+```
+
+Our `PlayerRef` can also hide these quantized values behind friendly OOP-inspired methods like `GetRotation()` and `SetRotation()`:
+
+```
+struct PlayerRef {
+private:
+  uint16_t& m_packed; // Packed Integers
+  uint8_t& m_rot;     // Quantized Rotation 
+  uint8_t& m_hp;      // Quantized Health 
+  
+  friend class PlayerStorage;
+  PlayerRef(uint16_t& p, uint8_t& r, uint8_t& h) 
+    : m_packed(p), m_rot(r), m_hp(h) {} 
+
+public:
+  // ...
+
+  float GetRotation() const {
+    return m_rot * (360.0f / 255.0f);
+  }
+
+  void SetRotation(float deg) {
+    m_rot = static_cast<uint8_t>(deg * (255.0f / 360.0f));
+  }
+
+  float GetHealth() const {
+    return m_hp * (100.0f / 255.0f);
+  }
+};
+```
+
+So far, we have compressed 17 bytes down to 4 bytes:
+
+- ID/Team/Flags: 9 bytes -\> 2 bytes
+- Health: 4 bytes -\> 1 byte
+- Rotation: 4 bytes -\> 1 byte
+
+## Delta Encoding
+
+The final boss is **position**, which we're currently storing as floating point values. A complete 3D position vector (`x, y, z`) therefore requires 12 bytes. We cannot easily quantize absolute world positions into 8 bits or 16 bits.
+
+For example, if the world is 10km wide, a 16-bit integer would only give us ~15cm precision.
+
+However, we often don't need to store absolute positions. In many systems, we're not working with discrete snapshots of our state - we are working with a stream of data. For example:
+
+- Frame 1: Player is at `(100.0, 50.0, 10.0)`.
+- Frame 2: Player is at `(100.1, 50.0, 10.0)`.
+
+Whilst the world itself might be huge, the distance that any object can move within a single update is much smaller - `(0.1, 0.0, 0.0)` in this case.
+
+**Delta encoding** takes advantage of the fact that many types of data change slowly over time. Instead of storing the absolute value, we store the difference from the previous known state. Because the difference is small, we can store it in a much smaller data type, replacing each `float` with a `int8_t` or `int16_t`.
+
+### Implementing Delta Encoding
+
+To support this in our `PlayerStorage`, let's imagine we have a networking system updating positions.
+
+We cannot afford to transfer a full 12-byte position for every player on every update. Instead, the system will deliver the compressed delta representing how the player has moved since the previous update.
+
+To implement this, we need to define the **precision** of our delta. A single byte (`int8_t`) can hold values from -128 to +127.
+
+If we map `1` unit in the delta to `1.0` meter in the world, our players can move up to `127` meters per update, but they can't move less than a meter. If our system is updating frequently (many times per second), that is too chunky. It limits how smoothly objects can move.
+
+On the other hand, if we map `1` unit to `0.01` meters, players can move with centimeter precision, but their top speed is limited to `1.27` meters per update. Depending on how often we update, that might not be enough.
+
+For this example, let's pick a precision factor of `0.1f`:
+
+```
+// ...
+
+struct CompressedDelta {
+  int8_t dx; // Range -127 to +127
+  int8_t dy;
+  int8_t dz;
+};
+
+class PlayerStorage {
+public:
+  // ...
+
+  // The current, absolute position (High Precision)
+  // We keep this as float for gameplay logic calculations...
+  std::vector<float> m_pos_x;
+  std::vector<float> m_pos_y;
+  std::vector<float> m_pos_z;
+
+  // ...but we let systems change it using compressed deltas 
+  
+  // 1 unit in the delta = 0.1 units in the world
+  static constexpr float DELTA_SCALE = 0.1f;
+  
+  void UpdatePosition(size_t index, CompressedDelta d) {
+    // Apply the delta to the high-precision float storage
+    m_pos_x[index] += d.dx * DELTA_SCALE;
+    m_pos_y[index] += d.dy * DELTA_SCALE;
+    m_pos_z[index] += d.dz * DELTA_SCALE;
+  }
+};
+```
+
+By using `int8_t` for deltas, we reduce the per-update cost of positions from 12 bytes (3 x `float`) to 3 bytes (3 x `int8_t`).
+
+Overall, our changes have reduced our per-entity size from 29 bytes down to 7, less than a quarter of their original size.
+
+### Full Updates and Key Frames
+
+Delta encoding builds a house of cards. To know the position at frame 100, you need the position at frame 99. To know 99, you need 98. If our delta updates are being lossily compressed, or some are being lost in the chaos of networking, our shared understanding of reality will drift apart.
+
+To solve this, we borrow a technique from video compression. We interleave **deltas** (P-Frames) with occasional **keyframes** (I-Frames). A keyframe contains absolute, uncompressed data. It is self-contained.
+
+In a networking context, you might send a delta every tick, but a full absolute snapshot every second. This gets almost all of the compression benefits of delta encoding, but without letting the shared understanding of the world drift too far apart. When a client desynchronizes, the next keyframe is arriving within a second to snap them back to reality.
+
+### Relative Encoding (Anchors and Offsets)
+
+A related technique is **relative encoding**. If our players can pick up items and carry them around, or they have a pet that follows them, we don't need to track the position of that pet in the overall world. It's always close to the player (its **anchor**), so we can instead encode the relative position (its **offset**) to the player, which will be a much smaller number.
+
+More advanced variations of this technique can allow objects to switch what anchor they use. For example, if we are simulating a huge world, rather than storing positions as huge numbers, we could instead partition the world into smaller chunks. Each player's position can then be represented by a partition ID (a few bits to identify which partition they're currently in) and a much smaller "local position" (their offset relative to that partition's anchor point).
+
+## Complete Code
+
+Here is our `PlayerStorage`, incorporating all the techniques from this lesson:
+
+```
+#pragma once
+#include <vector>
+#include <ranges>
+#include <tuple>
+#include <cstdint>
+#include <algorithm>
+
+// Define our bit flags
+namespace PlayerFlags {
+  constexpr uint8_t None     = 0;
+  constexpr uint8_t Friendly = 1 << 0;
+  constexpr uint8_t Alive    = 1 << 1;
+  constexpr uint8_t Nearby   = 1 << 2;
+}
+
+struct PlayerLayout {
+  static constexpr int ID_BITS = 10;
+  static constexpr int TEAM_BITS = 2;
+  static constexpr int FLAG_BITS = 4;
+
+  static constexpr int ID_OFFSET = 0;
+  static constexpr int TEAM_OFFSET = ID_BITS;
+  static constexpr int FLAG_OFFSET = ID_BITS + TEAM_BITS;
+
+  static constexpr uint16_t ID_MASK = (1 << ID_BITS) - 1;
+  static constexpr uint16_t TEAM_MASK = (1 << TEAM_BITS) - 1;
+  static constexpr uint16_t FLAG_MASK = (1 << FLAG_BITS) - 1;
+};
+
+struct CompressedDelta {
+  int8_t dx;
+  int8_t dy;
+  int8_t dz;
+};
+
+struct PlayerRef {
+private:
+  uint16_t& m_packed; // ID (10) + Team (2) + Flags (4)
+  uint8_t& m_rot;     // Quantized Rotation
+  uint8_t& m_hp;      // Quantized Health
+  
+  friend class PlayerStorage;
+  PlayerRef(uint16_t& p, uint8_t& r, uint8_t& h) 
+    : m_packed(p), m_rot(r), m_hp(h) {}
+
+public:
+  int GetID() const { 
+    return (m_packed >> PlayerLayout::ID_OFFSET)
+      & PlayerLayout::ID_MASK; 
+  }
+  
+  void SetID(int id) {
+    m_packed &= ~(PlayerLayout::ID_MASK
+      << PlayerLayout::ID_OFFSET);
+    m_packed |= (id & PlayerLayout::ID_MASK)
+      << PlayerLayout::ID_OFFSET;
+  }
+
+  int GetTeam() const { 
+    return (m_packed >> PlayerLayout::TEAM_OFFSET)
+      & PlayerLayout::TEAM_MASK;
+  }
+
+  void SetTeam(int team) {
+    m_packed &= ~(PlayerLayout::TEAM_MASK
+      << PlayerLayout::TEAM_OFFSET);
+    m_packed |= (team & PlayerLayout::TEAM_MASK)
+      << PlayerLayout::TEAM_OFFSET;
+  }
+
+  uint8_t GetFlags() const {
+    return (m_packed >> PlayerLayout::FLAG_OFFSET)
+      & PlayerLayout::FLAG_MASK;
+  }
+
+  void SetFlags(uint8_t flags) {
+    m_packed &= ~(PlayerLayout::FLAG_MASK
+      << PlayerLayout::FLAG_OFFSET);
+    m_packed |= (flags & PlayerLayout::FLAG_MASK)
+      << PlayerLayout::FLAG_OFFSET;
+  }
+
+  // --- Helpers for specific flags ---
+  bool IsAlive() const {
+    return GetFlags() & PlayerFlags::Alive;
+  }
+  void Kill() {
+    SetFlags(GetFlags() & ~PlayerFlags::Alive);
+  }
+
+  float GetRotation() const {
+    return m_rot * (360.0f / 255.0f);
+  }
+
+  void SetRotation(float deg) {
+    m_rot = static_cast<uint8_t>(deg * (255.0f / 360.0f));
+  }
+
+  float GetHealth() const {
+    return m_hp * (100.0f / 255.0f);
+  }
+};
+
+class PlayerStorage {
+public:
+  std::vector<uint16_t> m_packed_info;
+  std::vector<uint8_t> m_rotation_quantized;
+  std::vector<uint8_t> m_health_quantized;
+
+  // Position Storage (Absolute, High Precision)
+  std::vector<float> m_pos_x;
+  std::vector<float> m_pos_y;
+  std::vector<float> m_pos_z;
+
+  static constexpr float DELTA_SCALE = 0.1f;
+
+  void AddPlayer(
+    int id, int team, uint8_t flags, float rot,
+    float hp, float x, float y, float z
+  ) {
+    // Pack Integers
+    uint16_t packed = 0;
+    packed |= (id & PlayerLayout::ID_MASK)
+      << PlayerLayout::ID_OFFSET;
+    packed |= (team & PlayerLayout::TEAM_MASK)
+      << PlayerLayout::TEAM_OFFSET;
+    packed |= (flags & PlayerLayout::FLAG_MASK)
+      << PlayerLayout::FLAG_OFFSET;
+    
+    m_packed_info.push_back(packed);
+
+    // Quantize Floats
+    m_rotation_quantized.push_back(
+      static_cast<uint8_t>(rot * (255.0f / 360.0f))
+    );
+    m_health_quantized.push_back(
+      static_cast<uint8_t>(hp * (255.0f / 100.0f))
+    );
+
+    // Store Positions
+    m_pos_x.push_back(x);
+    m_pos_y.push_back(y);
+    m_pos_z.push_back(z);
+  }
+
+  // Apply a compressed delta to a specific player
+  void UpdatePosition(size_t index, CompressedDelta d) {
+    if (index < m_pos_x.size()) {
+        m_pos_x[index] += d.dx * DELTA_SCALE;
+        m_pos_y[index] += d.dy * DELTA_SCALE;
+        m_pos_z[index] += d.dz * DELTA_SCALE;
+    }
+  }
+
+  auto GetView() {
+    return std::views::zip(
+      m_packed_info, m_rotation_quantized, m_health_quantized
+    ) | std::views::transform([](auto&& tuple) {
+       auto& [p, r, h] = tuple;
+       return PlayerRef{p, r, h};
+    });
+  }
+};
+```
+
+## Benchmarking
+
+Let's test our tradeoffs. Normally, a getter like `GetRotation()` is just a memory fetch. Now, `GetRotation()` involves a memory fetch, a multiplication, and a division.
+
+Are we making the code slower? Let's run some tests. We will benchmark:
+
+- `BM_Bandwidth_Fat`: The bandwidth/copying costs of our uncompressed data
+- `BM_Bandwidth_Packed`: The bandwidth/copying costs of our packed data
+- `BM_Iterate_Fat`: The cost of iterating over an array of uncompressed (`float`) rotations and performing some operations on them
+- `BM_Iterate_Packed`: The cost of iterating over our `PlayerStorage`, decompressing the `uint8_t` rotation to a `float`, and then performing the same operations on it:
+
+```
+#include <benchmark/benchmark.h>
+#include <dsa/PlayerStorage.h>
+#include <vector>
+#include <cstring>
+#include <random>
+
+// Uncompressed Data (~29 bytes)
+struct FatPlayer {
+  int id;
+  int team;
+  uint8_t flags;
+  float rotation;
+  float health;
+  float x, y, z;
+};
+
+// Compressed Data (~7 bytes)
+struct PackedPlayer {
+  uint16_t packed_info; // Bitpacked ID, Team, Flags
+  uint8_t rotation;     // Quantized
+  uint8_t health;       // Quantized
+  int8_t dx, dy, dz;    // Delta Encoded
+};
+
+// Bandwidth Benchmarks
+static void BM_Bandwidth_Fat(benchmark::State& state) {
+  std::vector<FatPlayer> src(state.range(0));
+  std::vector<FatPlayer> dst(state.range(0));
+  
+  for (auto _ : state) {
+    std::memcpy(
+      dst.data(), src.data(), src.size() * sizeof(FatPlayer)
+    );
+    benchmark::DoNotOptimize(dst.data());
+  }
+}
+
+static void BM_Bandwidth_Packed(benchmark::State& state) {
+  std::vector<PackedPlayer> src(state.range(0));
+  std::vector<PackedPlayer> dst(state.range(0));
+  
+  for (auto _ : state) {
+    std::memcpy(
+      dst.data(), src.data(), src.size() * sizeof(PackedPlayer)
+    );
+    benchmark::DoNotOptimize(dst.data());
+  }
+}
+
+// Iteration Benchmarks
+static void BM_Iterate_Fat(benchmark::State& state) {
+  size_t count = state.range(0);
+  std::vector<float> rotations(count, 180.0f);
+
+  for (auto _ : state) {
+    float total = 0.0f;
+    for (auto rot : rotations) {
+      total += rot;
+    }
+    benchmark::DoNotOptimize(total);
+  }
+}
+
+static void BM_Iterate_Packed(benchmark::State& state) {
+  int n = state.range(0);
+  PlayerStorage ps;
+  
+  for(int i = 0; i < n; ++i) {
+    ps.AddPlayer(0, 0, 0, 180.0f, 100.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  for (auto _ : state) {
+    float total = 0.0f;
+    for (auto p : ps.GetView()) {
+      total += p.GetRotation();
+    }
+    benchmark::DoNotOptimize(total);
+  }
+}
+
+#define BENCHMARK_CONFIG(FUNC) \
+  BENCHMARK(FUNC)  \
+    ->RangeMultiplier(10)  \
+    ->Range(100'000, 10'1000'1000)  \
+    ->Unit(benchmark::kMillisecond)
+
+BENCHMARK_CONFIG(BM_Bandwidth_Fat);
+BENCHMARK_CONFIG(BM_Bandwidth_Packed);
+BENCHMARK_CONFIG(BM_Iterate_Fat);
+BENCHMARK_CONFIG(BM_Iterate_Packed);
+```
+
+```
+---------------------------------------
+Benchmark                           CPU
+---------------------------------------
+BM_Bandwidth_Fat/1000000        2.40 ms
+BM_Bandwidth_Fat/10000000       25.0 ms
+BM_Bandwidth_Packed/1000000    0.426 ms
+BM_Bandwidth_Packed/10000000    6.08 ms
+BM_Iterate_Fat/1000000         0.750 ms
+BM_Iterate_Fat/10000000         7.95 ms
+BM_Iterate_Packed/1000000      0.750 ms
+BM_Iterate_Packed/10000000      7.29 ms
+```
+
+Unsurprisingly, 75% fewer bits takes 75% less time to move, and have additional benefits for things like cache efficiency, reduced RAM usage, network traffic, and disk storage.
+
+However, what might be surprising is that there isn't even a trade-off in this experiment - the iteration speed hasn't degraded, even though `Iterate_Packed` needs to perform additional work to decompress the data on each iteration.
+
+This is because the CPU wasn't the bottleneck here - it was the memory bandwidth. As we get better at algorithm design, we increasingly encounter situations where the CPU can process data faster than memory can deliver it.
+
+An implementation that gives the CPU additional work to do, such as compressing and decompressing data, can actually improve performance if it reduces the strain on memory.
+
+## Summary
+
+In this lesson, we covered some of the main compression strategies we can apply.
+
+1.  **Bit-Packing:** We used `uint16_t` as a suitcase to carry multiple small integers, reducing overhead.
+2.  **Quantization:** We accepted a loss of precision in floating-point numbers to slash their size by 75%.
+3.  **Delta Encoding:** We learned that for historical data, storing the *change* is often cheaper than storing the *value*.
+4.  **Abstractions:** We used our `PlayerRef` to do the dirty work of decompression, packing, and unpacking, maintaining a friendly API.
+
+In the next lesson, we'll finish off our chapter with a quick tour of several other bit-based techniques that can be helpful. We cover bloom filters, hierarchical bitmasks, "dirty masks", and hardware intrinsics that make working with bits even faster.

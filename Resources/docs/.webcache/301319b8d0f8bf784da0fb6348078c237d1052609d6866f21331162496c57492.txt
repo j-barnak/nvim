@@ -1,0 +1,509 @@
+In the previous lesson, we built the `PlayerStorage`. This container stores data in a highly efficient **Structure of Arrays (SoA)** layout but exposes it via a friendly, object-oriented `PlayerRef` proxy.
+
+We can loop over our players, filter them, and transform them, and we have confirmed this is now much more efficient than our previous array-of-structures (AoS) layout. But let's revisit an earlier problem, and see how we can implement the heavy task of sorting.
+
+We'll implement this in the two variations we introduced previously:
+
+1.  **Virtual (Proxy) Sorting:** We create a sorted "view" of the data without touching the physical memory. This is fast and minimizes disruption, but it can hurt iteration performance later.
+2.  **Physical Sorting:** We physically rearrange the memory in all our parallel vectors. This is expensive, but we will learn to make it faster using multithreading.
+
+## Virtual Sorting (The Proxy Sort)
+
+As we discussed previously, moving data is expensive. If we just want to *display* a leaderboard, we shouldn't rewrite gigabytes of RAM. We should just calculate the *order* in which the players appear.
+
+Let's implement the proxy sorting technique first. We can add a method `GetSortedIndices()` to our `PlayerStorage`. This method generates a `std::vector<size_t>` containing indices `0` to `N-1`, and then sorts those indices based on the data in our system. Below, we create a `proxy` array storing the indices of our players, sorted by `score`:
+
+We can eventually design whatever API we want here - perhaps hiding the "proxy" entirely - but let's first get the foundations in place so we can make sure our approach works and is viable. We'll add a `GetSortedIndices()` function that accepts a comparator, and then returns the proxy array of indices.
+
+We call our comparator with two `PlayerRef` objects, and will expect it to return `true` if the first should appear before the second:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+#include <numeric> // for std::iota 
+#include <algorithm> // for std::sort 
+
+class PlayerStorage {
+public:
+  // ...
+  
+  // Returns a list of indices sorted according to
+  // the comparator
+  std::vector<size_t> GetSortedIndices(auto comp) {
+    // 1. Create the indices {0, 1, 2, ... N}
+    std::vector<size_t> indices(m_ids.size());
+    std::iota(indices.begin(), indices.end(), 0);
+
+    // 2. Sort the INDICES, but look at the DATA
+    std::sort(
+      indices.begin(), indices.end(),
+      [&](size_t a, size_t b) {
+        // We construct temporary PlayerRefs to pass to
+        // the comparator. The compiler optimizes these
+        // away completely.
+      return comp(
+        PlayerRef{
+          m_ids[a], m_scores[a], m_health[a], m_names[a]
+        },
+        PlayerRef{
+          m_ids[b], m_scores[b], m_health[b], m_names[b]
+        }
+      );
+    });
+
+    return indices;
+  }
+};
+```
+
+### Creating the Sorted View
+
+Now that we have the indices, we can create a view that uses them. This effectively gives us a "sorted `PlayerStorage`" without sorting the underlying data.
+
+We'll provide a `GetSortedView()` function, and will ask that the sorted indices - the value returned by `GetSortedIndicies()` - be provided as an argument.
+
+We use `std::views::transform` to map the sorted indices back into `PlayerRef` objects on the fly:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+class PlayerStorage {
+public:
+  // ...
+
+  auto GetSortedView(const std::vector<size_t>& indices) {
+    // Return a view that yields PlayerRefs in sorted order
+    return indices | std::views::transform([this](size_t index) {
+      return PlayerRef{
+        m_ids[index],
+        m_scores[index],
+        m_health[index],
+        m_names[index]
+      };
+    });
+  }
+};
+```
+
+This pattern allows us to maintain multiple different sort orders simultaneously. We can have a `score_indices` vector and a `name_indices` vector, both backed by the same physical data.
+
+As long as the underlying data hasn't changed, those proxies remain valid. If it has changed, they will be "stale", which we'll learn how to deal with later in the chapter. For now, let's benchmark our work.
+
+### Benchmarking: Virtual vs. Raw
+
+There is, of course, a catch with proxy sorting. When we iterate through `GetSortedView()`, we are jumping around in memory. We access the index `593`, then index `28`, then index `9516`. This breaks the hardware prefetcher.
+
+Let's verify this trade-off. We will benchmark:
+
+1.  **Physical Iteration:** The iteration speed if we traverse the collection in its physical order.
+2.  **Proxy Sort:** The cost to generate the indices proxy.
+3.  **Proxy Sort Iteration:** The iteration speed if we traverse via our intermediate array constructed by proxy sorting.
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <dsa/PlayerStorage.h>
+#include <random>
+
+static void BM_SoA_PhysicalIterate(benchmark::State& state) {
+  int n = state.range(0);
+  PlayerStorage ps;
+  for(int i=0; i<n; ++i) ps.AddPlayer(1, 2, 3.0f, "Name");
+
+  for (auto _ : state) {
+    float sum = 0.0f;
+    for (const PlayerRef player : ps.GetView()) {
+      sum += player.score;
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+}
+
+static void BM_SoA_ProxySort_Construct(benchmark::State& state) {
+  int n = state.range(0);
+  PlayerStorage ps;
+  for(int i=0; i<n; ++i) ps.AddPlayer(i, n-i, 100.f, "Name");
+
+  for (auto _ : state) {
+    // Measure time to generate indices
+    auto indices = ps.GetSortedIndices([](auto a, auto b){
+      return a.score < b.score;
+    });
+    benchmark::DoNotOptimize(indices.data());
+  }
+}
+
+static void BM_SoA_ProxySort_Iterate(benchmark::State& state) {
+  int n = state.range(0);
+  PlayerStorage ps;
+  std::mt19937 rng(12345);
+  std::uniform_int_distribution<int> dist(0, 100000);
+
+  for(int i=0; i<n; ++i) {
+    ps.AddPlayer(i, dist(rng), 100.f, "Name");
+  }
+
+  // Pre-calculate indices
+  auto indices = ps.GetSortedIndices([](auto a, auto b){
+    return a.score < b.score;
+  });
+
+  for (auto _ : state) {
+    float sum = 0.0f;
+    // Measure time to walk the scattered memory
+    for (auto player : ps.GetSortedView(indices)) {
+      sum += player.score;
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+}
+
+#define BENCHMARK_STD(func) \
+  BENCHMARK(func) \
+    ->RangeMultiplier(10) \
+    ->Range(10 * 1000, 1000 * 1000) \
+    ->Unit(benchmark::kMillisecond)
+
+BENCHMARK_STD(BM_SoA_PhysicalIterate);
+BENCHMARK_STD(BM_SoA_ProxySort_Construct);
+BENCHMARK_STD(BM_SoA_ProxySort_Iterate);
+```
+
+You're likely to see the proxy-based iteration keep up as long as the working set is small enough to fit within the pre-warmed caches, with performance falling off rapidly beyond that point:
+
+```
+---------------------------------------------
+Benchmark                                 CPU
+---------------------------------------------
+BM_SoA_PhysicalIterate/10000         0.008 ms
+BM_SoA_PhysicalIterate/100000        0.077 ms
+BM_SoA_PhysicalIterate/1000000       0.781 ms
+BM_SoA_ProxySort_Construct/10000     0.122 ms
+BM_SoA_ProxySort_Construct/100000     1.35 ms
+BM_SoA_ProxySort_Construct/1000000    17.7 ms
+BM_SoA_ProxySort_Iterate/10000       0.007 ms
+BM_SoA_ProxySort_Iterate/100000      0.080 ms
+BM_SoA_ProxySort_Iterate/1000000      3.56 ms
+```
+
+## Physical Sorting (Applying Permutations)
+
+Let's say we really do want to physically sort our SoA container to eliminate the iteration cost of the proxy indirection.
+
+When we already have the `indicies` array that expresses the order we want the physical data to be in, we just need to place the data in that precalculated order.
+
+We create a temporary vector, copy elements into it based on the sorted indices, and then swap it back. Our SoA system has 4 arrays and, to keep everything in sync, we need to perform this action on all of them:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+class PlayerStorage {
+public:
+  // ...
+  // Permute all the arrays in the SoA
+  void ApplyPermutation(const std::vector<size_t>& indices) {
+    if (indices.size() != m_ids.size()) return;
+
+    // Helper to permute a single array
+    auto permute_vec = [&](auto& vec) {
+      using T = typename std::decay_t<decltype(vec)>::value_type;
+
+      std::vector<T> temp;
+      temp.reserve(vec.size());
+
+      for (size_t i : indices) {
+        temp.push_back(std::move(vec[i]));
+      }
+      vec = std::move(temp);
+    };
+
+    // Call the helper for every array
+    permute_vec(m_ids);
+    permute_vec(m_scores);
+    permute_vec(m_health);
+    permute_vec(m_names);
+  }
+};
+```
+
+### Benchmarking: Physical Sorting
+
+Physically sorting a large amount of data is unavoidably expensive, but we should at least make sure we haven't made things worse:
+
+```
+#include <benchmark/benchmark.h>
+#include <dsa/PlayerStorage.h>
+#include <random>
+#include <vector>
+#include <algorithm>
+#include <string>
+
+struct Player {
+  int id;
+  int score;
+  float health;
+  std::string name;
+};
+
+static void BM_AoS_PhysicalSort(benchmark::State& state) {
+  int n = state.range(0);
+
+  for (auto _ : state) {
+    // We don't want to benchmark sorting a container that
+    // is already sorted, so we generate fresh data for each
+    // test. We don't want this creation of data to be included
+    // in the benchmark results, so we pause the timer
+    state.PauseTiming();
+    std::vector<Player> players;
+    
+    for(int i = 0; i < n; ++i) {
+        Player p;
+        p.id = i;
+        p.score = n - i; // Reverse sorted
+        p.health = 100.f;
+        p.name = "Name";
+        players.push_back(p);
+    }
+    state.ResumeTiming();
+
+    // Measure Sort
+    std::sort(
+      players.begin(), players.end(),
+      [](const Player& a, const Player& b) {
+        return a.score < b.score;
+      }
+    );
+    
+    benchmark::DoNotOptimize(players.data());
+  }
+}
+
+static void BM_SoA_PhysicalSort(benchmark::State& state) {
+  int n = state.range(0);
+
+  for (auto _ : state) {
+    // Generate fresh data
+    state.PauseTiming();
+    PlayerStorage ps;
+    for(int i = 0; i < n; ++i) {
+        ps.AddPlayer(i, n - i, 100.f, "Name");
+    }
+    state.ResumeTiming();
+
+    // Measure Sort
+    // Measure time to generate indices...
+    auto indices = ps.GetSortedIndices([](auto a, auto b){
+      return a.score < b.score;
+    });
+
+    // ..and to apply the permutation
+    ps.ApplyPermutation(indices);
+    
+    benchmark::DoNotOptimize(indices);
+  }
+}
+
+#define BENCHMARK_STD(func) \
+  BENCHMARK(func) \
+    ->RangeMultiplier(10) \
+    ->Range(10 * 1000, 1000 * 1000) \
+    ->Unit(benchmark::kMillisecond)
+
+BENCHMARK_STD(BM_AoS_PhysicalSort);
+BENCHMARK_STD(BM_SoA_PhysicalSort);
+```
+
+```
+--------------------------------------
+Benchmark                          CPU
+--------------------------------------
+BM_AoS_PhysicalSort/10000     0.272 ms
+BM_AoS_PhysicalSort/100000     2.71 ms
+BM_AoS_PhysicalSort/1000000    45.0 ms
+BM_SoA_PhysicalSort/10000     0.253 ms
+BM_SoA_PhysicalSort/100000     2.42 ms
+BM_SoA_PhysicalSort/1000000    46.0 ms
+```
+
+Even though our new layout doesn't reduce the raw amount of data needing to be moved, it does give us some flexibility on **how** we can solve some heavy problems like this.
+
+## Concurrency
+
+Because our data layout is physically split, we don't need complex synchronization to update different components at the same time. We can just tell the CPU to "go fix the IDs" and "go fix the Names" simultaneously. We covered this idea of **concurrency** in the [previous chapter ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/concurrency-vectorization).
+
+We can use the `std::async` helper to tell the compiler that sorting of each of our arrays can be discrete, independent tasks that are safe to run at the same time:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+#include <future> // For std::async
+
+class PlayerStorage {
+public:
+  // ...
+  void ApplyPermutation(const std::vector<size_t>& indices) {
+    if (indices.size() != m_ids.size()) return;
+
+    auto permute_vec = [&](auto& vec) {
+      using T = typename std::decay_t<decltype(vec)>::value_type;
+
+      std::vector<T> temp;
+      temp.reserve(vec.size());
+
+      for (size_t i : indices) {
+        temp.push_back(std::move(vec[i]));
+      }
+      vec = std::move(temp);
+    };
+
+    // Launch a task for each array using std::async and
+    // std::launch::async.  The OS scheduler will distribute
+    // these across available cores
+    using std::launch::async;
+    auto f1 = std::async(async, [&](){ permute_vec(m_ids); });
+    auto f2 = std::async(async, [&](){ permute_vec(m_scores); });
+    auto f3 = std::async(async, [&](){ permute_vec(m_health); });
+    auto f4 = std::async(async, [&](){ permute_vec(m_names); });
+
+    // Wait for all tasks to finish before returning control
+    // to the caller
+    f1.wait(); f2.wait(); f3.wait(); f4.wait();
+  }
+};
+```
+
+Remember, we can also tell `std::sort()` that it's safe to sort our original AoS layout in parallel. As we covered in a [previous lesson ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/parallel-algorithms), we can do this by passing `std::execution::par` as the first argument:
+
+```
+// ...
+#include <execution> // for std::execution::par
+
+// ...
+
+static void BM_AoS_PhysicalSort(benchmark::State& state) {
+  int n = state.range(0);
+
+  for (auto _ : state) {
+    // ...
+
+    std::sort(
+      std::execution::par, 
+      players.begin(), players.end(),
+      [](const Player& a, const Player& b) {
+        return a.score < b.score;
+      }
+    );
+    
+    benchmark::DoNotOptimize(players.data());
+  }
+}
+
+// ...
+```
+
+On my system, this makes both approaches around 50% less demanding on the **main thread**, which is what Google Benchmark displays in the CPU column by default:
+
+```
+--------------------------------------
+Benchmark                          CPU
+--------------------------------------
+BM_AoS_PhysicalSort/10000     0.441 ms
+BM_AoS_PhysicalSort/100000     1.80 ms
+BM_AoS_PhysicalSort/1000000    22.4 ms
+BM_SoA_PhysicalSort/10000     0.419 ms
+BM_SoA_PhysicalSort/100000     2.58 ms
+BM_SoA_PhysicalSort/1000000    22.5 ms
+```
+
+## API Improvements
+
+We've proven the performance, but the API is still a bit raw. Because we are building a custom container, we have the freedom (and the burden) to implement exactly the features we need.
+
+This will depend on our exact use case, but for inspiration on things that might be generally useful, we might look at standard library containers like `std::vector` for inspiration. Maybe we want to implement the `[]` operator to give access to individual players, or functions like `clear()` and `reserve()`.
+
+Something like `size()` would be useful to count the number of players in the system, but we'll implement a more powerful version of this capability later in the chapter.
+
+### Implementing Projections
+
+One of the benefits of C++20 range-based algorithms is the projection feature, allowing us to write code like this:
+
+```
+std::ranges::sort(party, {}, &PlayerRef::score);
+```
+
+Our proxy `PlayerRef` implementation doesn't support this - its members are references, and we can't take the address of a reference member.
+
+Note that using this lightweight proxy technique is entirely optional - nothing about our system requires this API.
+
+Our API can be set up to accept and provide full blown `Player` objects, completely unrestricted. It can be more difficult to avoid performance overheads in this case, but performance is only one factor. Creating a better API at the cost of performance can be a totally reasonable choice for many cases.
+
+However, if we wanted to provide a projection-like API for our zero-cost abstraction, we could add helpful functions to support common requirements. This might be added to the `PlayerRef` type, to our underlying `PlayerStorage` type, or to a nearby namespace:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+namespace PlayerComparators {
+inline constexpr auto ByScore = [](const PlayerRef& a, const PlayerRef& b) {
+  return a.score < b.score;
+};
+
+inline constexpr auto ByHealth = [](const PlayerRef& a, const PlayerRef& b) {
+  return a.health < b.health;
+};
+}
+```
+
+```
+// Usage:
+auto indices = ps.GetSortedIndices(PlayerComparators::ByScore);
+```
+
+### Implementing `const`
+
+Finally, a container isn't complete without `const` support. If we pass `const PlayerStorage&` to a function, we should still be able to iterate it.
+
+We need a `ConstPlayerRef` that holds `const` references.
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+struct ConstPlayerRef {
+  const int& id;
+  const int& score;
+  const float& health;
+  const std::string& name;
+};
+
+class PlayerStorage {
+public:
+  // ...
+
+  auto GetConstView() const {
+    return std::views::zip(
+      m_ids, m_scores, m_health, m_names
+    ) | std::views::transform([](auto&& tuple) {
+          const auto& [id, score, hp, name] = tuple;
+          return ConstPlayerRef{id, score, hp, name};
+        });
+  }
+};
+```
+
+## Summary
+
+In this lesson, we rounded out our domain-specific container with the ability to deliver data in a specific order.
+
+1.  **Proxy Sorting:** We implemented `GetSortedIndices()` to perform cheap, non-destructive sorting. This is excellent for one-off queries.
+2.  **Physical Sorting:** We implemented `ApplyPermutation` to physically rearrange the memory for more permanent changes.
+3.  **Parallelization:** We used `std::async` and `std::execution::par` to parallelize the sorting step.
+
+In the next lesson, we will cover the problems associated with **deleting** objects from our collections and strategies on how to mitigate them.

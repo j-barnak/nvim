@@ -1,0 +1,310 @@
+In the previous lesson, we learned that replacing a `std::mutex` with a `std::atomic<int>` yields a massive performance improvement. By relying on native hardware instructions like `LOCK ADD`, we avoid putting threads to sleep, bypassing the operating system's heavy context-switching tax entirely.
+
+But a native hardware instruction only works for simple mathematical operations. What happens if we need to do something more complex? What if we have a game entity with both a `Health` integer and an `IsDead` flag wrapped in a struct, and we need to update the entire struct atomically based on some complex combat logic? If we revert to using a `std::mutex`, we invite the OS scheduler back into our tight loops, killing our multi-core throughput.
+
+In this lesson, we will look at how to solve this using **optimistic concurrency**. We will use the silicon's **Compare-And-Swap (CAS)** instruction to build our own custom atomic operations.
+
+## The Limits of Atomics
+
+Previously, we saw how to atomically add a value to an integer. In this lesson, let's imagine we want to create more complex atomic logic. When a `Player` takes damage, we want to reduce their health, but not lower than `0`. Additionally, if their health is exactly `0`, we want to flag the `Player` as dead.
+
+Let's look at the simple `PlayerState` struct that we'll be updating:
+
+```
+#include <cstdint>
+
+struct alignas(8) PlayerState {
+  uint32_t Health;
+  uint32_t IsDead; // 0 for alive, 1 for dead
+};
+```
+
+### Why not a `bool`?
+
+You might be wondering why we declared `IsDead` as `uint32_t` instead of a `bool`. It seems like using a `bool` here would make our intent clearer, and reduce our memory footprint from 64 bits to 40 bits.
+
+In this lesson, we are going to use hardware instructions that perform a raw bit-for-bit check on our values. A 40-bit struct would be an awkward size for this - it's too big to fit into a 32-bit register and too small to fit perfectly into a 64-bit register.
+
+As we covered [earlier in the course ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/cache-coherency-false-sharing), this is an **alignment** problem, which can be solved with **padding**. Behind the scenes, the compiler would take care of this for us. It would silently inject 24 additional bits of invisible padding into our struct so that it neatly aligns to 64 bits (8 bytes). This means we're not wasting any space by using a 32-bit variable for our boolean - our combined `PlayerState` was going to be 64 bits regardless.
+
+In addition, by proactively intervening to inject these bits ourselves, our application code now has visibility and direct control over every bit in our struct. In many cases, particularly when using CAS, this is preferred over relying on hidden, unknown padding bits injected by the compiler.
+
+We revisit controlling our bit-by-bit memory layout a few times throughout the course, so don't worry if this doesn't make sense right now.
+
+### A Flawed Implementation
+
+We want to apply damage to this player, reducing `PlayerState.Health`. If the player's health drops to zero, we also need to set the `PlayerState.IsDead` flag to `1`.
+
+Because multiple threads might be processing projectiles hitting this player at the same millisecond, this entire update must be thread-safe. If we attempt a naive read-modify-write operation on a `std::atomic`, we will recreate the data race we worked so hard to avoid:
+
+```
+#include <atomic>
+
+std::atomic<PlayerState> State;
+
+void ApplyDamage(uint32_t Damage) {
+  // 1. READ
+  PlayerState Current{State.load()};
+
+  // 2. MODIFY (Complex custom logic)
+  if (Current.Health > Damage) {
+    Current.Health -= Damage;
+  } else {
+    Current.Health = 0;
+    Current.IsDead = 1;
+  }
+
+  // 3. WRITE
+  // DANGER: What if another thread changed State
+  // while we were calculating?
+  State.store(Current); 
+}
+```
+
+This is fundamentally broken. If Thread A and Thread B both load the state when the player has 100 Health, they will both calculate that the new health should be 80. Thread A writes 80. Thread B blindly overwrites it with 80. One of the projectile hits was completely lost.
+
+To fix this, we need a way to tell the CPU: *"Write this new state to memory, but* ***only*** *if nobody else has touched it since I last looked."*
+
+## Pessimistic vs. Optimistic Concurrency
+
+When engineers face this problem, the traditional response is ***pessimistic concurrency***. We assume the worst. We assume that other threads are constantly trying to corrupt our data, so we lock the door using a `std::mutex`. We pull the data into our registers, take our time executing our complex logic, push the data back to memory, and unlock the door. Anyone who wants to enter while we are working is put to sleep by the operating system.
+
+***Optimistic concurrency*** takes the opposite approach. We assume the best. We assume that collisions are rare. We don't lock anything. Instead, we grab a copy of the live data and do all of our heavy calculations off to the side in our thread's local registers.
+
+When we are finished, we attempt to publish our results back to main memory. If we discover that another thread modified the live data while we were busy calculating, we simply throw away our math, grab a fresh copy of the data, and try again.
+
+Optimistic concurrency burns CPU cycles recalculating data when collisions occur, but it guarantees that a thread is never put to sleep by the OS scheduler.
+
+## The Compare-And-Swap (CAS) Primitive
+
+To implement optimistic concurrency, we need a way to perform the final "publish" step atomically. We need to check the current state and overwrite it in a single, indivisible hardware step.
+
+Modern processors provide this via the Compare-And-Swap instruction. In C++, we access this using the `compare_exchange_weak()` method provided by `std::atomic`. Here is what the syntax looks like:
+
+```
+bool Success = State.compare_exchange_weak(Expected, Desired);
+```
+
+When this line executes, the CPU locks the 64-byte cache line containing `State`. Unlike the slow Operating System lock of `std::mutex`, CAS uses fast, low-level cache concurrency protocols such as MESI, which we introduced in the previous chapter.
+
+It then reads our `State` value. If the bytes at `State` exactly match the bytes in our `Expected` variable, the CPU overwrites `State` with our `Desired` variable, unlocks the cache line, and returns `true`.
+
+If the bytes at `State` do ***not*** match `Expected` (because another thread snuck in and changed it), the CPU does not write anything. Instead, it overwrites our local `Expected` variable with the fresh bytes it just found in main memory, unlocks the cache line, and returns `false`.
+
+### The Magic of the API
+
+The fact that `compare_exchange_weak()` modifies the `Expected` parameter on failure is an important feature of this API.
+
+If it didn't do this, our failure logic would have to manually call `State.load()` to get the new value so we could try calculating again. By automatically populating `Expected` with the actual current state, the CPU saves us an entire memory fetch instruction. We are handed the fresh data for free.
+
+## Writing the CAS Loop
+
+Because our optimistic transaction might fail, we must wrap it in a `do-while` loop that keeps trying until our transaction does **not** fail - that is, until `compare_exchange_weak()` returns `true`.
+
+Let's rewrite our `ApplyDamage()` function safely. This function represents the core pattern of almost all lock-free programming:
+
+```
+#include <atomic>
+#include <cstdint>
+
+struct alignas(8) PlayerState {
+  uint32_t Health;
+  uint32_t IsDead;
+};
+
+std::atomic<PlayerState> State;
+
+void ApplyDamage(uint32_t Damage) {
+  // 1. Take a snapshot of the live data
+  PlayerState Expected{State.load()};
+
+  // We need a variable to hold our math result
+  PlayerState Desired;
+
+  do {
+    // 2. We enter the loop. Do the math off to the side,
+    // working entirely with our local registers.
+    Desired = Expected;
+
+    if (Desired.Health > Damage) {
+      Desired.Health -= Damage;
+    } else {
+      Desired.Health = 0;
+      Desired.IsDead = 1;
+    }
+
+    // 3. Attempt the atomic swap.
+    // If it returns false, Expected is automatically updated
+    // with the fresh state, and the loop restarts
+  } while (!State.compare_exchange_weak(Expected, Desired)); 
+}
+```
+
+Let's trace what happens when two threads call `ApplyDamage(10)` at around the same time on a player with `100` Health and an `IsDead` value of `0`:
+
+## Weak vs. Strong
+
+You will notice the standard library also provides `compare_exchange_strong()`. Why did we use the `weak` version?
+
+The physical silicon inside CPUs is messy. The processor will sometimes fail a CAS instruction even if the data hasn't actually changed. This is called a ***spurious failure***. It can happen if the OS briefly interrupts the thread, or if background cache eviction traffic disturbs the memory line at the wrong microsecond.
+
+The `strong` version of the function hides this reality. It wraps the hardware instruction with additional checks, doing extra work to absolutely guarantee that a `false` return value implies a true data mismatch.
+
+The `weak` version emits the bare-metal, unadulterated machine instruction. It runs as fast as physically possible, but it might fail for no logical reason. Because we are already wrapping our logic in a `do-while` loop anyway, we don't particularly care. Our code works whether the failure was legitimate or spurious - our loop just spins around and tries again in a nanosecond.
+
+In almost all cases, we prefer to use the `weak` logic. In aggregate, the occasional unnecessary spins of our loop caused by spurious failures are less expensive than the additional checks that `compare_exchange_strong()` must perform to hide them.
+
+## The Hardware Limit and Secret Locks
+
+If CAS is so powerful, why don't we use it for everything? We could wrap our entire 100-megabyte `GameWorld` struct inside a `std::atomic` and transaction the whole thing?
+
+Unfortunately, this won't work - `std::atomic` is not magic - it is a direct binding to physical silicon. Hardware CAS instructions operate on CPU registers, so they can only swap what physically fits inside those registers.
+
+In the modern era, it's generally expected that the platforms we're targeting can support lock-free structs up to 8 bytes (64 bits). Most consumer and server architectures (including modern x86-64 chips) also support double-wide 16-byte (128-bit) CAS instructions, but beyond that, the hardware simply cannot do it.
+
+If we try to put a large 32-byte struct inside a `std::atomic`, the compiler will still happily accept it. But it lies to us. Because the CPU cannot swap 32 bytes atomically, the standard library quietly injects a hidden `std::mutex` into our object to protect the data. We think we are writing fast, lock-free code, but we are actually suffering from the OS context switches of mutual exclusion.
+
+To protect ourselves from this compiler betrayal, we can check that our struct maps to true lock-free hardware instructions on our target platform. The `std::atomic` wrapper makes this available via the `is_always_lock_free` constant:
+
+```
+#include <atomic>
+#include <cstdint>
+
+struct alignas(8) PlayerState {
+  uint32_t Health;
+  uint32_t IsDead;
+};
+
+std::atomic<PlayerState> State;
+
+// The compiler will halt the build if this type is 
+// too large to fit into a native hardware register
+static_assert(
+  std::atomic<PlayerState>::is_always_lock_free, 
+  "PlayerState requires a hidden OS lock!"
+);
+```
+
+If our struct is too big for the architecture we're targeting, we will now get a compiler error instead of a secret `std::mutex`.
+
+Additionally, the struct must be ***trivially copyable***. The CPU has no concept of C++ copy constructors or virtual tables; it just blindly blasts raw bits from cache lines into registers. The `std::atomic` wrapper protects us from this by default - if the type isn't trivially copyable, we will get a compiler error.
+
+## Benchmarking CAS vs. Mutex
+
+Let's compare our CAS approach to an equivalent implementation using a lock. We will have multiple threads, each performing 100,000 operations on a shared `PlayerState`:. To benchmark our performance across a range of thread counts, we can use the `->ThreadRange()` helper when registering our benchmarks:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <atomic>
+#include <mutex>
+#include <cstdint>
+
+static constexpr int opsPerThread = 100'000;
+
+struct alignas(8) PlayerState {
+  uint32_t Health;
+  uint32_t IsDead;
+};
+
+// 1. The Mutex Approach
+PlayerState MutexState{1'000'000, 0};
+std::mutex  StateMutex;
+
+static void BM_MutexUpdate(benchmark::State& state) {
+  for (auto _ : state) {
+    // Before every test, use the main thread to reset the state
+    state.PauseTiming();
+    if (state.thread_index() == 0) MutexState = {1'000'000, 0};
+    state.ResumeTiming();
+
+    for (int i = 0; i < opsPerThread; ++i) {
+      std::scoped_lock lock(StateMutex);
+      if (MutexState.Health > 1) {
+        MutexState.Health -= 1;
+      } else {
+        MutexState.Health = 0;
+        MutexState.IsDead = 1;
+      }
+    }
+  }
+}
+
+// 2. The Lock-Free CAS Approach
+std::atomic<PlayerState> AtomicState{{1'000'000, 0}};
+
+static void BM_CASUpdate(benchmark::State& state) {
+  for (auto _ : state) {
+    state.PauseTiming();
+    if (state.thread_index() == 0) AtomicState.store({1'000'000, 0});
+    state.ResumeTiming();
+
+    for (int i = 0; i < opsPerThread; ++i) {
+      PlayerState Expected = AtomicState.load();
+      PlayerState Desired;
+      do {
+        Desired = Expected;
+        if (Desired.Health > 1) {
+          Desired.Health -= 1;
+        } else {
+          Desired.Health = 0;
+          Desired.IsDead = 1;
+        }
+      } while (!AtomicState.compare_exchange_weak(
+        Expected, Desired
+      ));
+    }
+  }
+}
+
+#define REGISTER_BENCHMARK(func)    \
+  BENCHMARK(func)                   \
+    ->ThreadRange(2, 16)            \
+    ->Unit(benchmark::kMillisecond) \
+    ->UseRealTime()
+
+REGISTER_BENCHMARK(BM_MutexUpdate);
+REGISTER_BENCHMARK(BM_CASUpdate);
+```
+
+```
+---------------------------------------------
+Benchmark                                Time
+---------------------------------------------
+BM_MutexUpdate/real_time/threads:2    1.63 ms
+BM_MutexUpdate/real_time/threads:4    4.81 ms
+BM_MutexUpdate/real_time/threads:8    12.6 ms
+BM_MutexUpdate/real_time/threads:16   18.1 ms
+BM_CASUpdate/real_time/threads:2      1.38 ms
+BM_CASUpdate/real_time/threads:4      2.00 ms
+BM_CASUpdate/real_time/threads:8      1.81 ms
+BM_CASUpdate/real_time/threads:16     1.74 ms
+```
+
+In this test, we'd want the wall time to remain relatively flat, as the work involved scales in proportion to the number of threads - each thread performs 100,000 updates to `PlayerState`. Our lock-free CAS implementation accomplishes this - the wall clock remains consistent whilst the `std::mutex` variation gets progressively slower as more threads contend for locks.
+
+## Preview: The Danger of Pointers
+
+Our CAS transaction works perfectly for swapping integers and small value structs. However, we must be extremely cautious when using this pattern to update **pointers**.
+
+The CAS hardware instruction protects the pointer, but it offers zero protection for the object being pointed to. This introduces two major problems:
+
+1.  **Use-After-Free:** While our thread is running its calculation loop, another thread might swoop in and `delete` the object our `Expected` pointer is looking at. If we attempt to read `Expected->Health` to perform the math, the operating system will hit us with a segmentation fault before the CAS instruction even fires.
+2.  **The ABA Problem:** Even if we manage to avoid dereferencing the pointer, global memory allocators aggressively recycle addresses. If Thread B deletes Node A and later allocates a new node that reuses that physical memory address, our CAS instruction will see the matching 64-bit value stored in the pointer. It will blindly assume no threads have intervened and execute the swap, corrupting our memory.
+
+We cover the ABA problem in more detail in the next chapter, and we explore the challenges of pointer concurrency and the architectural patterns to overcome them when we build lock-free data structures later in the course.
+
+## Summary
+
+In this lesson, we bridged the gap between basic integer atomics and complex data structures.
+
+1.  **Optimistic Concurrency**: Instead of pessimistically locking data with a `std::mutex`, we calculate state transitions locally and optimistically attempt to publish them.
+2.  **Compare-and-Swap (CAS)**: We used `std::atomic`'s `compare_exchange_weak()` to tap into the silicon's native capacity to verify and update a memory address in a single hardware cycle.
+3.  **The CAS Loop**: We learned that a failed CAS automatically updates our `Expected` variable with the fresh memory state, saving us a read instruction and allowing our `do-while` loop to immediately recalculate.
+4.  **Spurious Failures**: We discovered that modern CPUs can fail a CAS operation due to hardware quirks, which is why `weak` loops are standard practice over `strong` calls.
+5.  **Memory Ordering**: We tuned our loop by using `memory_order_release` to publish successful work, and `memory_order_relaxed` to ensure failed iterations retry as fast as possible.
+
+To maximize performance, modern CPUs and compilers actively dismantle and reorder our code out of sequence. While invisible in single-threaded programs, this aggressive **Out-of-Order Execution** can shatter concurrent algorithms.
+
+In the next lesson, we will learn how to tame the silicon using `std::memory_order`. You will cover how to use `acquire`, `release`, `acq_rel`, and `relaxed` memory fences to enforce safety contracts between threads without sacrificing the performance gains.

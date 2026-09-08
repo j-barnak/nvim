@@ -1,0 +1,469 @@
+In our previous lesson, we built a `FlatHashSet` using simple linear probing. By ditching the linked lists, the CPU's hardware prefetcher happily sucked our contiguous array into the L1 cache, granting us a massive performance boost.
+
+However, linear probing has a major flaw: ***variance***. In real-time systems, audio processing, or high-frequency trading, average performance doesn't matter if our worst-case performance causes a dropped frame or a missed trade. Our basic linear probe works when the array is mostly empty, but as it fills up, it becomes unpredictable.
+
+In this lesson, we will introduce a heuristic called **Robin Hood Hashing**. We are going to reorder the data as it lands in memory, smoothing out the variance and guaranteeing more predictable, bounded search times.
+
+## The Primary Clustering Bottleneck
+
+To understand why we need a new algorithm, we should observe how linear probing degrades.
+
+Imagine an array that is 80% full. Hash functions distribute data **randomly**, which isn't quite the same as distributing it **evenly**. In a random distribution, some areas of our array will be relatively empty, whilst some areas will have large clusters of contiguous keys.
+
+We call this ***primary clustering***, and it can snowball out of control.
+
+If a new key hashes to an index that happens to land in the middle of a 15-slot cluster, it has to walk all the way to the end of that cluster to find an `Empty` slot.
+
+Finding a free slot at the end of a large cluster is slow and, even worse, it then makes the cluster even larger by claiming that slot. Future hashes are now more likely to land somewhere in that cluster, our insertion algorithm will take even longer to find its way to the end of it, and will then make the cluster larger once again.
+
+If a query requires 15 probes, it is no longer an $O(1)$O(1) lookup. It has degraded into an $O(N)$O(N) linear scan. Probing past 15 elements also means we have stepped outside of our initial 64-byte L1 cache line, forcing the CPU to stall while it fetches another cache line from main memory.
+
+We need a way to keep our clusters small, or at least ensure that no single element is pushed unreasonably far from its starting point.
+
+## Distance from Initial Bucket (DIB)
+
+To fix this, we need to track exactly how far an element has wandered from where it **wanted** to be. We call this the **Distance from Initial Bucket**, or **DIB**.
+
+If a key hashes to index `5`, and it gets inserted into index `5`, its DIB is `0`. A DIB of `0` is perfect - it means the element is exactly where it wants to be.
+
+If index `5` was occupied, and the key had to slot into index `6` instead, its DIB is `1`. If `6` was also taken, it would move into slot `7` and it's `DIB` would become `2`.
+
+Let's update our `Slot` struct to store this new metric. Because a DIB of 255 is practically impossible in any properly sized hash table, a single 1-byte integer is more than enough:
+
+### dsa_core/include/dsa/RobinHoodSet.h
+
+```
+#pragma once
+#include <vector>
+#include <cstdint>
+#include <algorithm>
+
+class RobinHoodSet {
+  enum class CellState : uint8_t {
+    Empty,
+    Occupied
+  };
+
+  struct Slot {
+    int Key{0};
+    uint8_t DIB{0}; 
+    CellState State{CellState::Empty};
+  };
+};
+```
+
+### Where did the `Dead` state go?
+
+You may notice we dropped the `Dead` state from our enum. One of the architectural benefits of Robin Hood hashing is that we can implement a deletion strategy that physically shifts elements **backward**, eliminating the need for tombstones. We will cover this mechanic later in the lesson.
+
+Let's construct our new `RobinHoodSet` using the same fundamental array architecture as our previous `FlatHashSet`, carrying over our `Mix64()` hash function.
+
+### dsa_core/include/dsa/RobinHoodSet.h
+
+```
+// ...
+
+class RobinHoodSet {
+// ...
+private:
+  size_t Capacity{16};
+  size_t Mask{15};
+  size_t Size{0};
+  std::vector<Slot> Buffer;
+
+Mix64 Function|Show  uint64_t Mix64(uint64_t x) const {/*...*/}
+
+public:
+  RobinHoodSet() : Buffer(Capacity) {}
+};
+```
+
+## Stealing from the Rich
+
+With our DIB metric in place, we can implement the core mechanic of Robin Hood hashing: **stealing from the rich to give to the poor**. In this context:
+
+- A "rich" element is sitting very close to its optimal bucket (a low DIB).
+- A "poor" element has been forced to walk a long distance (a high DIB).
+
+The goal of Robin Hood hashing is not necessarily to reduce the **average** DIB - it is to reduce the **variance** in the DIB. This makes our probing lengths more consistent:
+
+When we insert a new key, we track its current DIB as we walk down the probe chain. If our incoming key ever encounters a sitting element that has a **lower** DIB than our incoming key's current DIB, we steal its slot and give it to the new key.
+
+We then pick up the evicted element and continue walking through the array to find a new slot for it.
+
+In the following example, we want to add `92` to our container, but we get unlucky as this hashes to the start of a cluster of occupied slots.
+
+In a simple linear probing strategy, our `92` would get inserted into the end of this cluster and have a relatively painful DIB of `4`. But with Robin Hood hashing, we share some pain to drop its DIB to `2`:
+
+This continuous juggling acts as a smoothing function. It prevents any single key from suffering a 15-slot probe sequence. Instead of one key walking 15 slots, the algorithm distributes the pain, trying to make every object's distance from its initial bucket approximately equal.
+
+Let's write the `Insert()` method. We will use `std::swap()` to juggle the `Key` and the `DIB` simultaneously.
+
+### dsa_core/include/dsa/RobinHoodSet.h
+
+```
+// ...
+class RobinHoodSet {
+// ...
+public:
+  void Insert(int key) {
+    // Basic load factor protection
+    if (Size >= (Capacity * 0.7f)) {
+      Grow(); // We'll implement this later
+    }
+
+    size_t Index{Mix64(key) & Mask};
+
+    // We package our incoming data into a temporary Slot
+    Slot Incoming{key, 0, CellState::Occupied};
+
+    while (true) {
+      Slot& Current{Buffer[Index]};
+
+      // We found a completely empty space, drop it in
+      if (Current.State == CellState::Empty) {
+        Current = Incoming;
+        ++Size;
+        return;
+      }
+
+      if (Current.Key == Incoming.Key) {
+        return; // Duplicate check
+      }
+
+      // Robin Hood Swap: Steal from the rich
+      if (Incoming.DIB > Current.DIB) {
+        std::swap(Incoming.Key, Current.Key);
+        std::swap(Incoming.DIB, Current.DIB);
+      }
+
+      // We didn't swap, or we just became the evicted element.
+      // Either way, we must keep walking.
+      Index = (Index + 1) & Mask;
+      Incoming.DIB++;
+    }
+  }
+  // ...
+};
+```
+
+By packaging our `key` and `DIB` into a temporary `Incoming` slot, the `std::swap()` logic becomes simple. The CPU simply exchanges the contents of its local registers with the main memory array, and the loop continues as if nothing happened, blindly carrying the newly evicted victim forward.
+
+## The Early Exit Search
+
+Distributing the variance is great for cache predictability, but the DIB heuristic gives us an even bigger performance superpower: the **early exit**.
+
+In standard linear probing, a search query must walk the array until it finds the key or hits an `Empty` slot. If the array is heavily clustered, a search for a key that doesn't exist (a miss) might have to walk through 15 occupied slots before finally hitting an empty space and returning `false`.
+
+Misses are incredibly expensive in standard open addressing.
+
+With Robin Hood hashing, our array is ordered by DIB variance. If we are searching for a key, and our current search distance is `3`, but we look at the array and see an element with a DIB of `1`, we can instantly stop searching.
+
+Why? Because if our target key was actually in the container, it would stolen this slot. Its DIB of `3` would have caused the element with a DIB of `1` to be evicted.
+
+The physical mechanics of our `Insert()` method guarantee that a key can **never** sit behind an element that is richer than it.
+
+### dsa_core/include/dsa/RobinHoodSet.h
+
+```
+// ...
+class RobinHoodSet {
+// ...
+public:
+  // ...
+  bool Contains(int key) const {
+    size_t Index{Mix64(key) & Mask};
+    uint8_t SearchDIB{0};
+
+    while (true) {
+      const Slot& Current{Buffer[Index]};
+
+      // Miss: We hit an empty space
+      if (Current.State == CellState::Empty) return false;
+
+      // Hit: We found the key!
+      if (Current.Key == key) return true;
+
+      // Early Exit Miss: We are poorer than the sitting element!
+      if (SearchDIB > Current.DIB) {
+        return false;
+      }
+
+      Index = (Index + 1) & Mask;
+      SearchDIB++;
+    }
+  }
+  // ...
+};
+```
+
+This simple `if` statement fundamentally changes the performance profile of the container. Negative queries (misses) no longer have to traverse the entire cluster. They terminate almost instantly, often within the very first L1 cache line fetch.
+
+## Backward Shift Deletion
+
+In the previous lesson, we solved deletions by leaving a `Dead` tombstone in the array. This was necessary because a standard `Empty` slot would prematurely terminate the `Contains()` probe chain for any elements that collided and shifted past it.
+
+Tombstones artificially inflate our load factor, forcing our `Insert()` loop to walk further, and triggering expensive `Grow()` reallocations long before our container is physically full.
+
+Because Robin Hood hashing tracks the exact DIB of every element, we can perform a highly optimized **Backward Shift** deletion, eradicating tombstones from our architecture.
+
+When we want to delete an element, we don't mark it `Dead`. We wipe it to `Empty`.
+
+Then, we look at the element immediately to its right. If that element has a DIB above `0`, meaning it is shifted away from its ideal bucket, we drag it backward into our newly vacated slot and decrement its DIB. We then look at the next element and repeat the process.
+
+We stop shifting backward the moment we encounter an `Empty` slot, or an element with a `DIB == 0`, meaning it is sitting exactly where it wants to be.
+
+### dsa_core/include/dsa/RobinHoodSet.h
+
+```
+// ...
+class RobinHoodSet {
+// ...
+public:
+  // ...
+  void Erase(int key) {
+    size_t Index{Mix64(key) & Mask};
+    uint8_t SearchDIB{0};
+
+    while (true) {
+      Slot& Current{Buffer[Index]};
+
+      // Misses
+      if (Current.State == CellState::Empty) return;
+      if (SearchDIB > Current.DIB) return;
+
+      // We found the target to delete!
+      if (Current.Key == key) {
+        ShiftBackward(Index); 
+        --Size;
+        return;
+      }
+
+      Index = (Index + 1) & Mask;
+      SearchDIB++;
+    }
+  }
+  // ...
+};
+```
+
+The `ShiftBackward()` helper function handles the mechanical cleanup. It acts like a vacuum, sucking the cluster backward to perfectly seal the gap, maintaining perfect cache locality.
+
+### dsa_core/include/dsa/RobinHoodSet.h
+
+```
+// ...
+class RobinHoodSet {
+private:
+  // ...
+  void ShiftBackward(size_t Index) {
+    while (true) {
+      size_t NextIndex{(Index + 1) & Mask};
+      Slot& NextSlot{Buffer[NextIndex]};
+
+      // If the next slot is empty, or sitting exactly
+      // where it wants to be (DIB == 0), we stop shifting.
+      if (NextSlot.State == CellState::Empty || NextSlot.DIB == 0) {
+        Buffer[Index].State = State::Empty;
+        return;
+      }
+
+      // Drag the next element backward into our current gap
+      Buffer[Index] = NextSlot;
+      Buffer[Index].DIB--;
+
+      // Move our gap pointer forward
+      Index = NextIndex;
+    }
+  }
+  // ...
+};
+```
+
+By eliminating tombstones, we guarantee that our array only contains pristine, live data. This ensures our probe lengths stay as short as physically possible and delays expensive heap reallocations as long as possible.
+
+### The `Grow()` Method
+
+Finally, because we no longer have a `Tombstone` counter or `Dead` state to worry about, our reallocation logic is simplified. We iterate through the old array and feed any `Occupied` slots directly into our `Insert()` logic.
+
+### dsa_core/include/dsa/RobinHoodSet.h
+
+```
+// ...
+class RobinHoodSet {
+private:
+  // ...
+  void Grow() {
+    size_t OldCapacity{Capacity};
+    std::vector<Slot> OldBuffer{std::move(Buffer)};
+
+    Capacity *= 2;
+    Mask = Capacity - 1;
+    Buffer.assign(Capacity, Slot{});
+    Size = 0;
+
+    // Physically re-insert data into the new, larger memory block
+    for (size_t i = 0; i < OldCapacity; ++i) {
+      if (OldBuffer[i].State == CellState::Occupied) {
+        Insert(OldBuffer[i].Key);
+      }
+    }
+  }
+  // ...
+};
+```
+
+## Benchmarking
+
+The main strength of Robin Hood Hashing is not that it makes the **average** lookup speed faster. In fact, the average is sometimes slower as checking and updating the `DIB` values adds complexity that doesn't exist in a basic linear probing implementation.
+
+The benefit of Robin Hood Hashing is that it reduces the **variance** of our lookup speeds. By robbing from the rich to give to the poor, our elements' distance from their preferred bucket is much more consistent.
+
+Robin Hood hashing is particularly effective in miss-heavy scenarios - that is, where `Contains()` will usually return `false`. This is thanks to the DIB tracking unlocking the **early exit** strategy we implemented above.
+
+Let's add our `RobinHoodSet` to the benchmarks we created in the previous lesson, which test our containers at 1%, 50%, and 99% miss rates. They insert 2,000,000 randomized elements into each set and run 1,000,000 randomized queries on each test iteration:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <unordered_set>
+#include <vector>
+#include <random>
+#include <algorithm>
+#include <dsa/FlatHashSet.h>
+#include <dsa/RobinHoodSet.h>
+
+const int kNumElements = 2'000'000;
+const int kNumQueries = 1'000'000;
+
+std::vector<int> GenerateData() {
+  std::vector<int> data(kNumElements);
+  std::mt19937 rng(42);
+
+  std::uniform_int_distribution<int> dist(1, 50'000'000); 
+  for (int i = 0; i < kNumElements; ++i) data[i] = dist(rng);
+  return data;
+}
+
+const std::vector<int> Data = GenerateData();
+
+std::vector<int> GenerateQueries(double miss_rate) {
+  std::vector<int> queries;
+  queries.reserve(kNumQueries);
+
+  int misses = kNumQueries * miss_rate;
+  int hits = kNumQueries - misses;
+  
+  for (int i = 0; i < hits; ++i) {
+    queries.push_back(Data[i]);
+  }
+  
+  // Misses (completely out of the insertion bounds)
+  for (int i = 0; i < misses; ++i) {
+    queries.push_back(i + 100'000'000); 
+  }
+  
+  std::mt19937 rng(42);
+  std::shuffle(queries.begin(), queries.end(), rng);
+  
+  return queries;
+}
+
+static void BM_StdSet(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  
+  std::vector<int> queries = GenerateQueries(miss_rate);
+  std::unordered_set<int> set(Data.begin(), Data.end());
+  
+  for (auto _ : state) {
+    for (int query : queries) {
+      benchmark::DoNotOptimize(set.contains(query)); 
+    }
+  }
+}
+
+static void BM_FlatHashSet(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<int> queries = GenerateQueries(miss_rate);
+  
+  FlatHashSet set;
+  for (int val : Data) set.Insert(val);
+  
+  for (auto _ : state) {
+    for (int query : queries) {
+      benchmark::DoNotOptimize(set.Contains(query));
+    }
+  }
+}
+
+static void BM_RobinHood(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<int> queries = GenerateQueries(miss_rate);
+  
+  RobinHoodSet set;
+  for (int val : Data) set.Insert(val);
+  
+  for (auto _ : state) {
+    for (int query : queries) {
+      benchmark::DoNotOptimize(set.Contains(query));
+    }
+  }
+}
+
+#define REGISTER_BENCHMARK(func) BENCHMARK(func) \
+  ->Unit(benchmark::kMillisecond) \
+  ->ArgName("MissRatePct") \
+  ->Arg(1) \
+  ->Arg(50) \
+  ->Arg(99)
+
+REGISTER_BENCHMARK(BM_StdSet);
+REGISTER_BENCHMARK(BM_FlatHashSet);
+REGISTER_BENCHMARK(BM_RobinHood);
+```
+
+```
+---------------------------------------
+Benchmark                           CPU
+---------------------------------------
+BM_StdSet/MissRatePct:1         61.1 ms
+BM_StdSet/MissRatePct:50        74.7 ms
+BM_StdSet/MissRatePct:99        67.0 ms
+
+BM_FlatHashSet/MissRatePct:1    20.1 ms
+BM_FlatHashSet/MissRatePct:50   28.2 ms
+BM_FlatHashSet/MissRatePct:99   31.7 ms
+
+BM_RobinHood/MissRatePct:1      23.0 ms
+BM_RobinHood/MissRatePct:50     29.2 ms
+BM_RobinHood/MissRatePct:99     28.5 ms
+```
+
+## Alternative Strategies
+
+Open addressing's primary clustering problem has other solutions too, most notably **quadratic probing** and **double hashing**. Rather than placing a colliding element in the next adjacent slot, both techniques probe more distant slots when the preferred bucket is taken. This reduces clustering, but at the cost of cache locality and prefetcher-friendliness.
+
+Robin Hood hashing dominated high-performance implementations throughout the last decade and remains popular today, but recent hardware advancements have changed the balance of power. Modern CPUs offer wide **vector registers** capable of comparing 16 elements in parallel within a single instruction, which unlocks some new possibilities.
+
+In the next chapter, we'll use these new hardware capabilities to introduce the new king of hash table design: the **Swiss Table**.
+
+## Complete Code
+
+Here is our complete `RobinHoodSet` example:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we tackled the variance of linear probing by tracking the Distance from Initial Bucket (DIB) and swapping elements on the fly.
+
+This architecture eliminated `Dead` tombstones via backward shifting, kept our cache lines packed with relevant data, and unlocked the **early exit** mechanic to quickly reject invalid queries.
+
+So far, we've been using basic integers as our keys, but in real use cases, we often need our keys to be **strings**. In the next lesson, we'll introduce the problems this creates and how we can solve them.

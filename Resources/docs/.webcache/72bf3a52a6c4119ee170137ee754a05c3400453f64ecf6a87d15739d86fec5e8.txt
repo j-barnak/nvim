@@ -1,0 +1,287 @@
+In the previous lessons, we configured CMake to unlock the full potential of our CPU, and we learned how to write micro-benchmarks that can survive the optimization of a modern compiler.
+
+In this lesson, let's use it to compare two data structures. If you read a standard computer science textbook, you will learn that if you need to insert elements at the start of a collection, a linked list is perfect for this. You just allocate a node and update a pointer - it doesn't matter how many other elements are in the collection - the amount of work remains constant - an $O(1)$O(1) operation.
+
+In contrast, inserting at the front of an array (such as `std::vector`) is an $O(n)$O(n) operation. To make room for the new item, you have to shift every other item in the array to the right. As the array gets larger, the amount of work involved in shifting those items increases:
+
+In this lesson, we are going to run a concrete A/B test between `std::vector` and `std::forward_list`. We will learn how to read the noisy data that the library spits out, how to distinguish between "wall time" and "CPU time," and how to make architectural decisions based on empirical evidence rather than guesses and dogma.
+
+## Reading Benchmarks
+
+When you run a benchmark, you get an output table with several columns. It is important to understand what we are looking at before we start analyzing the numbers.
+
+```
+----------------------------------------------
+Benchmark          Time       CPU   Iterations
+----------------------------------------------
+BM_VectorCopy   71.3 ns   69.8 ns      8960000
+```
+
+### Time vs. CPU
+
+You will notice two timing columns: **Time** (often called Wall Time) and **CPU**.
+
+**Wall Time** is the time that has elapsed on the clock on your wall. If you started the benchmark at 12:00:00 and it finished at 12:00:05, the wall time is 5 seconds. This metric is susceptible to noise. If your OS decides to download a Windows Update, or if you switch context to check Slack, the wall time will spike because the OS likely diverted resources away from your thread.
+
+**CPU Time** is the amount of time the CPU spent *actively executing instructions* for your specific thread. It effectively pauses the stopwatch when the OS swaps your thread out.
+
+For algorithmic micro-benchmarks, **trusting the CPU time** is recommended. It is a purer measure of your code's efficiency, isolated from the noise of the operating system. There are some nuances and exceptions when the algorithm we're testing is multithreaded, but, in general, basing decisions on CPU time is a good default.
+
+### Iterations
+
+This is the sample size. The library automatically runs the loop enough times to get a statistically significant result. If your function is extremely fast (nanoseconds), it might run 10 million times. If it's slow (milliseconds), it might only run 100 times.
+
+## The Contenders
+
+Before we write the code, let's define our candidates.
+
+### Candidate A: `std::vector`
+
+The vector is our champion of **contiguous memory**. It is a solid block of data.
+
+- **Pros**: Excellent cache locality, prefetcher-friendly.
+- **Cons**: Rigid. Inserting at the front requires moving every single byte of data to the right to create a gap.
+
+### Candidate B: `std::forward_list`
+
+The forward list is the C++ standard library's implementation of a **singly linked list**. It is a collection of nodes scattered across the heap, connected by pointers.
+
+- **Pros**: Flexible. Inserting at the front just means creating a new node and pointing it to the old head. Zero data movement.
+- **Cons**: Poor locality. Traversing it requires "pointer chasing" across the heap.
+
+Our experiment will consist of two rounds:
+
+1.  **The Insertion Round:** We will insert items at the front of the container.
+
+2.  **The Traversal Round:** We will iterate through the container and sum the values.
+
+## Round 1: Insertion
+
+Let's test the textbook theory. We will simulate a contrived scenario where we need to generate a collection of 10,000 integers, and we can only do this by inserting one element at a time to the front of the container.
+
+Remember, code outside the loop isn't timed, but it is persistent. If we created our container outside the loop, it would grow bigger between iterations, making our data unreliable. To keep the benchmark stable, we will limit the test to a fixed number of insertions per "batch," resetting the container each time.
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+#include <forward_list>
+
+// The number of items we will insert
+const int ITEM_COUNT = 10000;
+
+static void BM_VectorInsertFront(benchmark::State& state) {
+  for (auto _ : state) {
+    std::vector<int> v;
+
+    for (int i = 0; i < ITEM_COUNT; ++i) {
+      // O(n) insertion - shifting elements
+      v.insert(v.begin(), i);
+    }
+
+    // Prevent DCE
+    benchmark::DoNotOptimize(v.data());
+  }
+}
+BENCHMARK(BM_VectorInsertFront);
+
+static void BM_ListInsertFront(benchmark::State& state) {
+  for (auto _ : state) {
+    std::forward_list<int> l;
+
+    for (int i = 0; i < ITEM_COUNT; ++i) {
+      // O(1) insertion - pointer update
+      l.push_front(i);
+    }
+
+    // Prevent DCE - forward_list doesn't have .data()
+    // so we use the front element
+    benchmark::DoNotOptimize(l.front());
+  }
+}
+BENCHMARK(BM_ListInsertFront);
+```
+
+### The Results
+
+If we run this benchmark on a standard desktop machine, we might see results like this:
+
+```
+---------------------------------
+Benchmark                     CPU
+---------------------------------
+BM_VectorInsertFront   3605769 ns
+BM_ListInsertFront      340053 ns
+```
+
+It seems the theory is correct - the `std::forward_list` is more than 10x faster than the `std::vector` on my machine. The reason is simple mechanics.
+
+- **Vector:** To insert the 5,000th element at the front, the CPU has to copy/move the existing 4,999 integers one slot to the right. It is doing a massive amount of memory shuffling.
+- **List:** To insert the 5,000th element, the memory allocator finds a tiny slot for one node, and we update two pointers. The existing 4,999 nodes are untouched.
+
+## Round 2: Traversal
+
+But we rarely just insert data. We usually insert data *so that we can read it later*.
+
+Let's look at the cost of reading. We will create a benchmark that initializes both containers with 10,000 integers and then iterates through them to calculate a sum.
+
+In this scenario, we want to simulate that we're reading a container that **already** exists. We don't want their construction to be timed, so we do that **outside** of the loop.
+
+### benchmarks/main.cpp
+
+```
+// ...
+
+static void BM_VectorTraverse(benchmark::State& state) {
+  // Setup: Create a large vector
+  std::vector<int> v(ITEM_COUNT);
+  std::fill(v.begin(), v.end(), 1);
+
+  for (auto _ : state) {
+    long long sum = 0;
+
+    // The Algorithm: Linear Scan
+    for (int i : v) {
+      sum += i;
+    }
+
+    benchmark::DoNotOptimize(sum);
+  }
+}
+BENCHMARK(BM_VectorTraverse);
+
+static void BM_ListTraverse(benchmark::State& state) {
+  // Setup: Create a large list
+  std::forward_list<int> l(ITEM_COUNT);
+  std::fill(l.begin(), l.end(), 1);
+
+  for (auto _ : state) {
+    long long sum = 0;
+
+    // The Algorithm: Linear Scan
+    for (int i : l) {
+      sum += i;
+    }
+
+    benchmark::DoNotOptimize(sum);
+  }
+}
+BENCHMARK(BM_ListTraverse);
+
+// ...
+```
+
+```
+---------------------------------
+Benchmark                     CPU
+---------------------------------
+BM_VectorInsertFront   3523284 ns
+BM_ListInsertFront      329641 ns
+BM_VectorTraverse         4813 ns
+BM_ListTraverse          13497 ns
+```
+
+The `std::vector` is around 3**x faster** than the `std::forward_list` at reading data.
+
+### Cache Pressure and Doubly Linked Lists
+
+We used `std::forward_list` (singly linked) here because it is the most efficient list implementation. The standard library also includes `std::list`, which is a **doubly linked list**. It has two pointers per node (`prev` and `next`) allowing both forward and backward traversal.
+
+This increases the memory overhead, which increases the pressure on our memory bandwidth and caches. The larger our elements are, the fewer of them we can work with before our working set no longer fits in a cache.
+
+- A `std::vector<int>` usually requires only 4 bytes per element - just enough for the `int`
+- A `std::forward_list<int>` usually requires 12-16 bytes per element - the `int`, the 64-bit pointer to the next node in the list, and likely 4 bytes of padding
+- A `std::forward_list<int>` usually requires 20-24 bytes per element - the `int`, pointers to both the next **and** previous nodes in the list, and likely 4 bytes of padding
+
+This memory overhead becomes less relevant if the items we're storing are larger. If each element were several megabytes, a few extra bytes for `next` and `prev` pointers aren't noticeable.
+
+### Why is `std::vector` only 3x Faster?
+
+If you're familiar with topics like **caching, locality,** and the **hardware prefetcher**, the relatively modest advantage the `std::vector` has in this experiment might be surprising.
+
+When the CPU iterates the `std::vector`, it is reading a contiguous block of memory. Reading `v[0]` pulls the entire **cache line**, loading adjacent elements like `v[1]` and `v[2]` into the L1 cache for free.
+
+The prefetcher also detects the linear pattern of memory reads and aggressively fetches future data from RAM before the code asks for it.
+
+In theory, when the CPU iterates the `std::forward_list`, it is **pointer chasing**.
+
+1.  Read the current node to get the value and the `next` pointer.
+2.  The `next` pointer points to a random location in the heap.
+3.  The CPU requests that location. It is likely not in the cache.
+4.  **STALL.** The CPU sits idle waiting for RAM.
+5.  Repeat.
+
+The reality, however, isn't quite this bad, particularly in this experiment.
+
+Firstly, the working set of 10,000 integers is quite small - small enough to fit in a CPU cache. And more importantly, the library is pre-warming that cache. The data is already in the cache from a previous iteration of the loop, so we're not actually going to main RAM all that much, if ever.
+
+Secondly, in our linked list, these 10,000 integers create a data set of around 160KB, which fits in the 512KB L2 cache on the test system. The array's more efficient use of space reduces the working set to around 40KB for this data.
+
+However, that memory efficiency isn't quite enough to fit in the 32KB L1 cache in the test system. So, even though the array stores integers with 4x the space efficiency, the arbitrary parameters of this test on this test system can't take full advantage of that. Both examples are still limited to L2.
+
+In the next lesson, we'll learn how to quickly create many different variations of a benchmark, most importantly through modifications of $n$n - the size of our input.
+
+Even though traversing an array and traversing a linked list are both theoretically $O(n)$O(n) algorithms, we'll see that the gulf between the `std::vector` and `std::list` will increase from 3x in this experiment to 30x when $n$n gets big enough to break through our hardware caches.
+
+## The Decision Matrix
+
+So, in this experiment, with this set of data, we found that if we need to create a collection through element-by-element front insertion, the list is ~10x faster. But when we need to read that data back out, the array is ~3x faster.
+
+Which one is better?
+
+It depends on how we're actually using the data; in almost all applications, data is read far more often than it is written. So, unless we have some compelling reason to do otherwise, we should optimize for reading and use `std::vector` in this example.
+
+Consider a game: you might load a level once (inserting thousands of objects), but then you render those objects 60 times per second (reading them). For a one-hour play session, that is 1 write, but over 200,000 reads.
+
+In real-world applications, we also tend to have more flexibility around **when** we load or prepare data. We can often structure our data in advance - perhaps during an initial loading screen when delays are expected and more acceptable. Or even better, we can do our expensive data structuring at compile time and ship it alongside our project, removing the runtime cost entirely.
+
+Demands around reading tend not to give us the same flexibility. When a program needs some data, it generally wants that data as soon as possible.
+
+As a general rule, if you read the data even *slightly* more often than you write it, optimizing for reads is a good default instinct and, when performance matters, arrays are almost always the right choice.
+
+## Handling Variance
+
+Before we close, let's look at our benchmark output again. We might see a variation in numbers if you run it multiple times.
+
+```
+BM_VectorTraverse    2.09 us
+BM_VectorTraverse    2.15 us
+BM_VectorTraverse    2.05 us
+```
+
+This jitter is normal. Background processes, CPU temperature throttling, and OS scheduling all introduce noise. To get a definitive answer, we can ask the library to run the experiment multiple times and give us the statistics.
+
+The executable that the library generates includes support for the `--benchmark_repetitions` flag. Below, we run our benchmarks 10 times:
+
+```
+./build/benchmarks/release/dsa_bench --benchmark_repetitions=10
+```
+
+```
+BM_ListTraverse_mean     14700 ns   14648 ns
+BM_ListTraverse_median   14708 ns   14753 ns
+BM_ListTraverse_stddev    82.1 ns     181 ns
+BM_ListTraverse_cv         0.56 %     1.24 %
+```
+
+The output will now show some additional statistical values. It includes the `mean`, and `median`, which are two different ways to calculate the average runtime across all repetitions.
+
+It also includes the `stddev` (standard deviation), and `cv` (constant of variance), which are statistical measures of how consistent the results are across the repetitions.
+
+Small values indicate our benchmarks reliably report similar results, whilst large values indicate a lot of variance and may indicate our benchmarks are somewhat unpredictable or particularly sensitive to those external effects.
+
+## Summary
+
+In this lesson, we used our benchmarking lab to conduct a scientific investigation. Here are the key points
+
+1.  **Trust CPU Time by Default:** In most cases, we should ignore wall time and focus on CPU time for algorithmic analysis.
+2.  **Lists win at front insertion:** Mechanically, moving pointers is cheaper than moving memory blocks. Linked lists such as `std::forward_list` are excellent for this specific write pattern.
+3.  **Arrays win at traversal:** Contiguous memory allows the hardware prefetcher to hide latency, making arrays like `std::vector` vastly faster for reading.
+4.  **Read vs. write:** Since most programs read data far more often than they perform expensive front-insertions, arrays are usually the correct default choice.
+
+We have now analyzed performance at a specific snapshot in time (10,000 items). But performance is not static. It changes as the data grows.
+
+Does the array's advantage hold up at 1,000,000 items? At 100,000,000 items? What happens when the data becomes too big to fit in the CPU cache?
+
+In the next lesson, we will learn to **map complexity and growth**. We will use the `Range()` feature to help us see this growth, allowing us to assess Big O complexity and spot the moment when our data falls off the "cache cliff."

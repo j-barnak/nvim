@@ -1,0 +1,324 @@
+In the [previous chapter ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/structure-of-arrays), we built `PlayerStorage`, a high-performance container designed around the **structure of arrays (SoA)** layout. We optimized for iteration speed, cache locality, and stable addressing.
+
+When we implemented Boolean columns, such as `m_alive` to support our tombstone system - we used an 8-bit integer:
+
+```
+std::vector<uint8_t> m_alive; // 1 = Alive, 0 = Dead
+```
+
+We used `uint8_t` because it is the smallest addressable type in C++. It consumes **8 bits** of memory. But to store a "true/false" state, we only need **1 bit**. Using a `bool` wouldn't have directly solved this, as it still has the same addressing constraint. This means a `bool` is also 8 bits, with only 1 of them being useful.
+
+Additionally, our systems tend to have a lot of booleans. If we follow our current pattern, we would add a new byte for every single state.
+
+```
+struct Status {
+  bool is_alive;    // 1 byte
+  bool is_friendly; // 1 byte
+  bool is_nearby;   // 1 byte
+};
+// Total size: 4 bytes
+```
+
+Instead, if we use something like a `uint8_t`, and we manipulate the bits individually, we could store all three of these states in a single integer, with room to spare.
+
+```
+uint8_t flags;
+// bit 0: alive
+// bit 1: friendly
+// bit 2: nearby
+// Total size: 1 byte, with room for 5 more states
+```
+
+This isn't just an improvement in terms of cache and memory efficiency. If we handle our booleans in a smarter way, we will unlock many new and interesting capabilities.
+
+In this lesson, we will start by reviewing some of the techniques we can use to work with bits.
+
+## The Problem with Boolean Vectors
+
+The C++ standard library includes a specialization of `std::vector` specifically designed to implement this bit-packing approach: `std::vector<bool>`.
+
+Unlike a `std::vector<int>` or `std::vector<char>`, the Boolean variation of `std::vector` does **not** store `bool` values. Internally, it acts exactly like the bit-packed system we want to build. It groups booleans into chunks (usually 64-bit integers) and uses bitwise operations to access them. It is memory-efficient, but most people hate it.
+
+The problem is that it breaks the promise of the `std::vector` interface. For every other type `T`, `operator[]` on `std::vector<T>` returns a `T&` (a reference). You can take the address of that reference.
+
+For `std::vector<bool>`, `operator[]` cannot return a `bool&` because, as we established, you cannot address a single bit. Instead, it returns a **proxy object** - a temporary helper class that acts like a bool but isn't one.
+
+```
+std::vector<bool> flags(10);
+
+// 'val' is NOT bool. It is std::vector<bool>::reference
+auto val = flags[0];
+```
+
+This inability to address an element within a `std::vector<bool>` limits its usefulness in a moderately complex system. Additionally, in a SoA layout, it only solves the problem for a **single** boolean state. Our records often have multiple boolean states - `Alive`, `Friendly`, `Nearby`, etc.
+
+We don't want the state of each player stored as individual, non-addressable bits in three different `std::vector<bool>` columns. Instead, we'd much prefer to have each player's bits packed together in a normal data type that can have a memory address. We generally use an unsigned integer type for this - something like a `uint8_t`.
+
+Whilst a `uint8_t` is technically a number, we don't treat it as such. We don't care what its numeric value is, and we don't perform any arithmetic on it, like addition or multiplication. We're just using it as a way to store a collection of bits - eight bits, in the case of `uint8_t`.
+
+If each player's flags are a `uint8_t`, this means that the collection of flags for all our players would be in a single SoA column with a type like `std::vector<uint8_t>`. We'll implement that soon, but first we need to understand the machinery of bitwise operators.
+
+## The Bitwise Toolkit
+
+To work with data on the level of individual bits, we have a range of bitwise operators that we can use. The CPU's Arithmetic Logic Unit (ALU) is incredibly fast at these bitwise operations, and can often act upon 64 bits of data in a single clock cycle.
+
+We'll cover the basic operators in this section, and show their practical use cases in the next section.
+
+### Bitwise AND
+
+The bitwise AND operator `&` returns a sequence where a bit is `1` if **both** inputs had a `1` in that same position. You can click the bits in the following example to change the operands:
+
+### Bitwise OR
+
+The `|` operator returns a sequence where a bit is `1` in the output if **either** input had a `1` in that same position:
+
+### Bitwise XOR
+
+The "exclusive or" operator `^` sets a bit to `1` if **either** operand had a `1` in that same position, but **not both**. It's often used for flipping switches, where our right operand specifies the switches we want to flip. If it's on, turn it off. If it's off, turn it on:
+
+### Bitwise NOT
+
+The `~` operator is for **inversion** - it flips every bit. This is a **unary** operator, accepting only one operand:
+
+### Left Shift
+
+We can shift bits to the left using the `<<` operator. The right operand is an integer representing how far we want our bits to be shifted:
+
+The left operand of `<<` is often `1` - the bit sequence `0000 0001`. This pattern is how we create sequences with a single bit enabled. For example, if we wanted to create the bitmask `0000 1000`, we don't need to know which `uint8_t` value it corresponds to - we can just write `1 << 3`.
+
+We can also shift bits to the right using `>>`, although it tends to be less useful.
+
+## Bitwise Recipes
+
+Now that we understand the individual operators, we can combine them to perform useful tasks.
+
+Bit manipulation relies on standard idioms - patterns of code that may look cryptic at first (`flags &= ~mask`), but they're repeatable recipes that become more recognizable with time.
+
+### Defining the Flags
+
+First, we need to define what each bit means in our `uint8_t`. We usually do this with an `enum` or `constexpr` variable.
+
+We prefer `uint8_t` for the backing type if we have 8 flags or fewer, as it saves the most memory. If we need more flags, we can step up to `uint16_t`, `uint32_t`, or `uint64_t`.
+
+```
+#include <cstdint>
+
+namespace PlayerFlags {
+  constexpr uint8_t None     = 0;
+  constexpr uint8_t Friendly = 1 << 0;
+  constexpr uint8_t Alive    = 1 << 1;
+  constexpr uint8_t Nearby   = 1 << 2;
+}
+```
+
+### Setting a Flag
+
+To set a flag, we combine the current state with the mask.
+
+```
+#include <cstdint>
+
+Flags|Shownamespace PlayerFlags {/*...*/}
+
+// Enable a specific flag
+void MoveClose(uint8_t& flags) {
+  // |= is the shorthand for: flags = flags | flag
+  flags |= PlayerFlags::Nearby;
+}
+
+// Enable multiple flags
+void Resurrect(uint8_t& flags) {
+  // We can combine multiple flags with OR before applying them
+  flags |= (PlayerFlags::Friendly | PlayerFlags::Alive);
+}
+
+// Enable any set of flags
+void EnableFlag(uint8_t& flags, uint8_t flag_to_enable) {
+  flags |= flag_to_enable;
+}
+```
+
+### Clearing Flags
+
+To clear a flag, we need to be clever. We can't just AND it with `0`, because that would clear *all* the bits. We want to clear *only* the specific bit.
+
+We do this by **inverting** the mask. If `Alive` is `00000010`, then `~FLAG_ALIVE` is `11111101`.
+
+If we AND the current state with `11111101`, the second bit is forced to 0 (because `anything & 0` is `0`), but the other 7 bits are unchanged (because `anything & 1` is itself).
+
+```
+#include <cstdint>
+
+Flags|Shownamespace PlayerFlags {/*...*/}
+
+// Disable a specific flag
+void MoveAway(uint8_t& flags) {
+  // &= is shorthand for: flags = flags & (~flag)
+  flags &= ~PlayerFlags::Nearby;
+}
+
+// Disable a specific combination of flags
+void Kill(uint8_t& flags) {
+  // 1. Combine the flags: (Friendly | Alive)
+  // 2. Invert the result: ~(Friendly | Alive)
+  // 3. AND it with the current state
+  flags &= ~(PlayerFlags::Friendly | PlayerFlags::Alive);
+}
+
+// Disable any combination of flags
+void ClearFlag(uint8_t& flags, uint8_t flag_to_disable) {
+  flags &= ~flag_to_disable;
+}
+```
+
+### Setting an Exact State
+
+Sometimes we don't want to modify individual bits; we want to overwrite the entire state. For example, when an entity respawns, we might want to reset them to a "clean" state, regardless of what flags they had before. This involves the simple assignment operator `=`
+
+```
+#include <cstdint>
+
+Flags|Shownamespace PlayerFlags {/*...*/}
+
+// Reset all flags to zero
+void Reset(uint8_t& flags) {
+  // Equivalent to: flags = 0
+  flags = PlayerFlags::None;
+}
+
+// Force a specific set of flags, overwriting previous state
+void SetDefaultState(uint8_t& flags) {
+  flags = PlayerFlags::Alive | PlayerFlags::Friendly;
+}
+```
+
+### Checking a Flag
+
+To check a flag, we simply AND the state with the mask. If the result is non-zero, the bit was set.
+
+```
+#include <cstdint>
+
+Flags|Shownamespace PlayerFlags {/*...*/}
+
+// Check a specific flag
+bool IsAlive(uint8_t& flags) {
+  return flags & PlayerFlags::Alive;
+}
+
+// We create a generic version of this function in the next section
+```
+
+### Checking if Multiple Flags are Set
+
+When checking a single flag, we can just use the `&` operator. However, checking multiple flags requires extra care.
+
+If we want to check if a player is **both** `Alive` and `Friendly`, we might be tempted to write:
+
+```
+// This returns true if the player is just Alive OR just Friendly
+flags & (PlayerFlags::Alive | PlayerFlags::Friendly)
+```
+
+Any non-zero integer converts to `true`. If our player is `Alive` (2) but not `Friendly`, the result of the operation is `2`. Since `2` is not `0`, the `if` statement passes.
+
+To check if **all** specified flags are present, we must verify that the result of the operation matches the mask exactly.
+
+```
+#include <cstdint>
+
+Flags|Shownamespace PlayerFlags {/*...*/}
+
+// Check specific flag combination
+bool IsAliveAndNearby(uint8_t& flags) {
+  uint8_t mask = PlayerFlags::Alive | PlayerFlags::Nearby;
+  // Result must be equal to the mask
+  return (flags & mask) == mask;
+}
+
+// Check if all flags in the mask are set
+bool HasAllFlags(uint8_t& flags, uint8_t flags_to_check) {
+  return (flags & flags_to_check) == flags_to_check;
+}
+```
+
+### Checking if Any Required Flag is Set
+
+Sometimes we want to know if **at least one** condition is met. For example, is the player `Friendly` OR `Nearby`?
+
+In this case, we rely on the standard behavior of the bitwise AND. If there is any overlap between our flags and the mask, the result will be non-zero.
+
+```
+#include <cstdint>
+
+Flags|Shownamespace PlayerFlags {/*...*/}
+
+// Check if player is EITHER friendly OR nearby (or both)
+bool IsFriendlyOrNearby(uint8_t& flags) {
+  uint8_t mask = PlayerFlags::Friendly | PlayerFlags::Nearby;
+  return (flags & mask) != 0;
+}
+
+// Check if ANY of the flags in the mask are set
+bool HasAnyFlag(uint8_t& flags, uint8_t flags_to_check) {
+  return (flags & flags_to_check) != 0;
+}
+```
+
+### Checking an Exact State
+
+Occasionally, we need to know if an entity is in a specific state and **only** that state. The most common use case for this is checking if an entity has no flags set at all:
+
+```
+#include <cstdint>
+
+Flags|Shownamespace PlayerFlags {/*...*/}
+
+// Check if the player has NO flags set
+bool IsNeutral(uint8_t& flags) {
+  return flags == PlayerFlags::None;
+  
+  // Alternatively:
+  // return flags == 0;
+}
+
+// Check if the player is ONLY alive (and not friendly, nearby, etc)
+bool IsJustAlive(uint8_t& flags) {
+  return flags == PlayerFlags::Alive;
+}
+```
+
+### Toggling a Flag
+
+Finally, we may want to flip a switch: if a flag is on, turn it off; if it's off, turn it on.
+
+We use the Bitwise XOR (`^`) operator for this. Just like `+=` adds a value to a variable, `^=` applies the XOR operation to the variable.
+
+```
+#include <cstdint>
+
+Flags|Shownamespace PlayerFlags {/*...*/}
+
+// Toggle a specific flag
+void ToggleHostility(uint8_t& flags) {
+  // Equivalent to: flags = flags ^ PlayerFlags::Friendly;
+  flags ^= PlayerFlags::Friendly;
+}
+
+// Toggle any flag
+void ToggleFlag(uint8_t& flags, uint8_t flag_to_toggle) {
+  flags ^= flag_to_toggle;
+}
+```
+
+## Summary
+
+In this lesson, we looked at the raw mechanics of manipulating bits.
+
+1.  **Memory Efficiency**: We saw that standard bool types waste nearly 90% of our memory, whereas bit-packing allows us to store up to 8 states in a single byte.
+2.  **The Bitwise Toolkit**: We learned how to use shifts (`<<`), logical operators (`|`, `&`, `^`), and inversion (`~`) to target specific bits within an integer.
+3.  **The Idioms**: We combined the operators into a set of recipes to set, clear, toggle, and verify aspects of our object's state.
+
+Now that we can pack information densely, we can do more than just save memory; we can process data significantly faster.
+
+In the next lesson, we will apply these bitwise operations to a large data collection. We will learn how to use bitmasks to filter through large groups of entities, selecting specific groups (like "all alive enemies nearby") orders of magnitude faster.

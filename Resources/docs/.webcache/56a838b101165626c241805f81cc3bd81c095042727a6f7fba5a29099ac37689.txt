@@ -1,0 +1,442 @@
+In the previous lesson, we confronted the performance implications of using `std::string` as a key in our flat data structures. We fought back by implementing hash caching to bypass expensive memory comparisons, and we integrated `std::string_view` to execute heterogeneous lookups, eliminating hidden heap allocations.
+
+But the physical footprint of our slot is still huge. Because a `std::string` manages its own internal pointers and capacities, it forces our slot size to balloon past 32 bytes.
+
+As we've learned, the CPU fetches memory from main RAM in chunks known as cache lines - usually 64-bytes. When our slot is 40 bytes after alignment padding, we can only fit a **single slot** into a cache line. Every single step we take during a linear probe requires the processor to stall and fetch a brand new chunk of memory.
+
+Furthermore, if a complex system stores the string `"HealthPotion"` in 10,000 different player inventories, we are duplicating that 24-byte string footprint - and its associated heap-allocated character array - 10,000 separate times. This causes massive memory fragmentation and completely thrashes the bandwidth of the system.
+
+In this lesson, we will solve this by embracing a fundamental data-oriented design philosophy: our performance-critical logic shouldn't know what a string is. We will implement **string interning**, globally deduplicating our strings and transforming them into the raw, 4-byte integer handles that the hardware loves.
+
+## The Philosophy of Handles
+
+We encountered the concept of **handles** earlier in the course when we built [generational indices ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/generational-indices) for our Entity-Component-System. The philosophy here is the same.
+
+A massive string like `"assets/textures/characters/player_diffuse_map.png"` is incredibly heavy. We do not want to pass this 53-character array around our supposedly high-performance systems.
+
+Instead, we want to **intern** that string, storing it in memory exactly **once** in a central, globally accessible vault.
+
+When we deposit the string into the vault, the vault gives us a simple integer receipt - an ID - like `42`. From that moment forward, the rest of our system completely forgets about the string. The rendering pipeline asks for texture `42`. The asset manager loads asset `42`. Our hash sets store the key `42`.
+
+Only when we absolutely need the underlying string do we take our `42` receipt, walk back to the vault, and ask to see the original.
+
+### A Brief History of Interning
+
+String interning is not a new concept. Early Lisp environments in the 1950s used "atoms" to ensure that any two identical symbols were represented by the same pointer in memory, allowing for instant $O(1)$O(1) equality checks.
+
+Modern managed languages like Java and C# maintain a global **string pool** by default. If we hardcode `"Hello"` in ten different files in Java, the virtual machine intercepts them at load time, allocates exactly one string, and points all ten references to that single allocation.
+
+In C++, we only pay for what we use, so the standard does not enforce global interning. We have to build the vault ourselves.
+
+## Designing the String Pool
+
+To build our vault, we will design a `StringPool` class. The pool serves as a two-way translation layer at the boundary of our system. It has two primary responsibilities:
+
+1.  **Ingestion (****`Intern`****)**: We hand it a string we want to store. If the pool has never seen this text before, it interns it and generates a new integer ID. If the pool **has** seen it before, it simply returns the existing integer ID.
+2.  **Retrieval (****`GetString`****)**: We hand it an integer ID, and it returns the original text.
+
+Solving this two-way mapping efficiently needs two data structures- an `IdToString` container that maps handles (integers) to strings, and a `StringToId` container that maps strings to handles.
+
+Retrieval and `IdToString` is the easiest part to solve. If our IDs are generated sequentially (`0`, `1`, `2`, `3`...), we can simply use a `std::vector` to map the ID to the string.
+
+Looking up an ID becomes an instant $O(1)$O(1) array access:
+
+### dsa_core/include/dsa/StringPool.h
+
+```
+#pragma once
+#include <string>
+#include <string_view>
+#include <vector>
+
+class StringPool {
+private:
+  // Maps an integer ID back to the string data
+  std::vector<std::string_view> IdToString;
+
+public:
+  std::string_view GetString(int id) const {
+    return IdToString[id];
+  }
+};
+```
+
+Ingestion is harder. When we call `Intern("HealthPotion")`, the pool needs to search millions of existing strings to see if `"HealthPotion"` is already in the vault.
+
+We can't use a linear scan over our `std::vector` - that'd be an $O(N)$O(N) traversal of slow string comparisons. We also can't keep the container sorted to enable $O(\text{log}N)$O(logN) binary search, as that would invalidate all of the existing handles.
+
+Our `StringToId` structure needs to be a **hash map**.
+
+### The `std::unordered_map` Redemption
+
+Our `IdToString` vector stores `std::string_view` objects. Each `std::string_view` is fundamentally just a pointer to a `std::string` that is physically stored elsewhere.
+
+If that string ever moves to a different physical address, our `std::string_view` will become invalid. We need a guarantee that once a string is inserted into the map, it will never physically move.
+
+Earlier, we saw that the standard library's hash-based containers like `std::unordered_map` resolve collisions using a [separate chaining ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/hash-based-containers) strategy. We learned that this approach isn't great for performance, but it is perfect for pointer stability. And pointer stability is exactly what we need in this scenario:
+
+### dsa_core/include/dsa/StringPool.h
+
+```
+// ...
+#include <unordered_map>
+
+class StringPool {
+private:
+  // Maps a string to its integer ID
+  std::unordered_map<std::string, int> StringToId;
+
+  // ...
+};
+```
+
+Because `std::unordered_map` allocates a dedicated node for every element, the physical `std::string` lives inside that node on the heap. When the map gets too full and needs to rehash, it does **not** need to physically move the strings. It simply allocates a new array of bucket pointers, and re-links the existing nodes into the new buckets.
+
+The nodes themselves never move, so pointers to them, including the internal pointer of a `std::string_view`, are never invalidated:
+
+This means we can safely extract a `std::string_view` pointing to a key inside the map and drop that view into our `IdToString` array.
+
+The performance issues of separate chaining aren't as relevant here. We don't care that much about insertion speed because we'll only call `insert()` once per unique string. That initial interning can often be done outside of any hot loop - even at compile time for all the static strings used in our program.
+
+We also don't care much about lookup speed, because most systems that want to read the string should have the handle. That means those lookups will use the `IdToString` array rather than the `StringToId` map.
+
+## Hashing and Interning
+
+To make our `Intern()` method work, we want to perform a **heterogeneous lookup**. We want to search the map using the `std::string_view` we are handed, without accidentally triggering a `std::string` allocation just to run the search.
+
+From C++20 onwards, we can use heterogeneous lookups in standard library hash sets and maps. However, they require us to explicitly opt in by providing a hash functor that includes operators for the heterogeneous comparisons we want to support, in addition to an `is_transparent` marker.
+
+In this case, we want to support lookups only using `std::string_view`, so our functor would look something like this:
+
+### dsa_core/include/dsa/StringPool.h
+
+```
+// ...
+#include <functional>
+
+// A transparent hash functor that allows std::unordered_map
+// to accept std::string_view queries without allocating
+struct StringHash {
+  using is_transparent = void;
+
+  size_t operator()(std::string_view txt) const {
+    return std::hash<std::string_view>{}(txt);
+  }
+};
+
+// ...
+```
+
+We also need to explicitly provide our comparison function. The standard library implements `==` overloads that are interoperable between `std::string_view` and `std::string`, so our comparator just needs to accept two arguments, `A` and `B`, and return `A == B`.
+
+The standard library provides the `std::equal_to` template, which creates a simple functor that does exactly this.
+
+We can plug the hasher and comparator into our map's third and fourth template arguments:
+
+### dsa_core/include/dsa/StringPool.h
+
+```
+// ...
+
+class StringPool {
+private:
+  std::unordered_map<
+    std::string,
+    int,
+    StringHash,       
+    std::equal_to<>   
+  > StringToId;
+
+  std::vector<std::string_view> IdToString;
+
+public:
+  int Intern(std::string_view str) {
+    // Check if the string already exists.
+    // Thanks to our transparent hash, this search
+    // allocates absolutely zero memory
+    auto it = StringToId.find(str);
+    if (it != StringToId.end()) {
+      return it->second;
+    }
+
+    // The string is new. Calculate what its
+    // ID will be
+    int newId = static_cast<int>(IdToString.size());
+
+    // Emplace it into the map
+    // This allocates a stable Node
+    auto [insertedIt, success] = StringToId.emplace(
+      std::string(str), newId
+    );
+
+    // Grab a stable view to the string sitting
+    // inside the Map Node
+    std::string_view stableView = insertedIt->first;
+
+    // Store the stable view in our
+    // O(1) lookup array
+    IdToString.push_back(stableView);
+
+    return newId;
+  }
+
+  std::string_view GetString(int id) const {
+    return IdToString[id];
+  }
+};
+```
+
+With less than 50 lines of code, we have constructed a globally stable string vault. This concept can be replicated to any data type that we want to optimize similarly - we'd just replace `std::string` with whatever type we want to intern, and `std::string_view` with something that views that type, such as a simple pointer type.
+
+Our [dedicated lesson ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/unordered-maps) on standard library maps provides examples on how to make custom types compatible with hash-based containers.
+
+## Restoring the Integer Hash Set
+
+Now that we have a mechanism to convert complex types to and from integers, we don't need techniques like hash caching. We can just use their pool IDs as our keys - simple integers that the CPU and memory controller love.
+
+This is one of the goals of data-oriented design: we isolate complexity at the boundaries of our system.
+
+When a JSON configuration file is loaded, or a network packet arrives, the parsing subsystem interacts with a `StringPool` or similar mechanism, trading heavy, complex data for simple integer IDs. Once that boundary translation is complete, the core systems - the physics loop, the rendering loop, the hash sets - process nothing but densely packed integers, executing with maximum efficiency.
+
+We translate our fast integers back to the heavy payload data only when necessary:
+
+### dsa_app/main.cpp
+
+```
+#include <iostream>
+#include <dsa/StringPool.h>
+#include <dsa/RobinHoodSet.h>
+
+int main() {
+  StringPool Pool;
+  RobinHoodSet RegisteredUsers;
+
+  // Boundary Ingestion: Translate heavy strings into fast integers
+  int AliceId = Pool.Intern("Alice");
+  int BobId = Pool.Intern("Bob");
+  int CharlieId = Pool.Intern("Charlie");
+
+  // Core Logic: The hash set only sees integers
+  RegisteredUsers.Insert(AliceId);
+  RegisteredUsers.Insert(BobId);
+
+  if (RegisteredUsers.Contains(AliceId)) {
+    // Boundary Output: Translate integer back to the original
+    // slow data only when we need it:
+    std::cout << "User " << Pool.GetString(AliceId)
+              << " is registered.\n";
+  }
+
+  if (!RegisteredUsers.Contains(CharlieId)) {
+    std::cout << "User " << Pool.GetString(CharlieId)
+              << " is not registered.";
+  }
+}
+```
+
+```
+User Alice is registered.
+User Charlie is not registered.
+```
+
+## Benchmarks
+
+As expected, the following benchmarks show our original `RobinHoodSet` using integers representing string pool IDs outperforms `std::unordered_set<std::string>` and the previous lesson's `StringRobinHoodSet` by huge margins.
+
+However, this performance gain excludes the cost of the initial interning. In most scenarios, it's possible to proactively intern our strings so we don't pay the performance cost in our hot loops, but not in all scenarios.
+
+We include an `InternedWorstCase` benchmark below to simulate scenarios where the strings aren't already interned, or they are, but we don't know their IDs. Solving either of these scenarios requires `Intern()` calls to the `StringPool` followed by `Contains()` calls to the `RobinHoodSet`, which is relatively expensive:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <unordered_set>
+#include <vector>
+#include <string>
+#include <random>
+#include <algorithm>
+#include <dsa/RobinHoodSet.h>
+#include <dsa/StringRobinHoodSet.h>
+#include <dsa/StringPool.h>
+
+const int kNumElements = 2'000'000;
+const int kNumQueries = 1'000'000;
+
+std::string GenerateLongString(std::mt19937& rng) {
+  const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz0123456789";
+  std::uniform_int_distribution<int> dist(0, sizeof(charset) - 2);
+
+  std::string s;
+  s.reserve(32);
+  for (int i = 0; i < 32; ++i) s += charset[dist(rng)];
+  return s;
+}
+
+std::vector<std::string> GenerateData() {
+  std::vector<std::string> data(kNumElements);
+  std::mt19937 rng(42);
+  for (int i = 0; i < kNumElements; ++i) {
+    data[i] = GenerateLongString(rng);
+  }
+  return data;
+}
+
+const std::vector<std::string> Data = GenerateData();
+
+std::vector<std::string> GenerateQueries(double miss_rate) {
+  std::vector<std::string> queries;
+  queries.reserve(kNumQueries);
+
+  int misses = kNumQueries * miss_rate;
+  int hits = kNumQueries - misses;
+
+  for (int i = 0; i < hits; ++i) queries.push_back(Data[i]);
+
+  std::mt19937 rng(42);
+  for (int i = 0; i < misses; ++i) {
+    queries.push_back(GenerateLongString(rng));
+  }
+
+  std::shuffle(queries.begin(), queries.end(), rng);
+  return queries;
+}
+
+// Global String Pool for the benchmark
+StringPool GlobalPool;
+
+// Pre-intern the data ahead of the hot path
+std::vector<int> GetInternedData() {
+  std::vector<int> interned;
+  interned.reserve(Data.size());
+  for (const auto& str : Data) {
+    interned.push_back(GlobalPool.Intern(str));
+  }
+  return interned;
+}
+
+const std::vector<int> InternedData = GetInternedData();
+
+static void BM_StdUnorderedSet(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<std::string> queries = GenerateQueries(miss_rate);
+
+  std::unordered_set<std::string> set(Data.begin(), Data.end());
+
+  for (auto _ : state) {
+    for (const auto& query : queries) {
+      benchmark::DoNotOptimize(set.contains(query));
+    }
+  }
+}
+
+static void BM_StringRobinHood(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<std::string> queries = GenerateQueries(miss_rate);
+
+  StringRobinHoodSet set;
+  for (const auto& val : Data) set.Insert(val);
+
+  for (auto _ : state) {
+    for (const auto& query : queries) {
+      benchmark::DoNotOptimize(set.Contains(query));
+    }
+  }
+}
+
+static void BM_InternedRobinHood(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<std::string> queries = GenerateQueries(miss_rate);
+
+  // Pre-intern the queries ahead of the hot loop
+  std::vector<int> internedQueries;
+  internedQueries.reserve(queries.size());
+  for (const auto& q : queries) {
+    internedQueries.push_back(GlobalPool.Intern(q));
+  }
+
+  RobinHoodSet set;
+  for (int id : InternedData) set.Insert(id);
+
+  // The Hot Path: Pure integers
+  for (auto _ : state) {
+    for (int query_id : internedQueries) {
+      benchmark::DoNotOptimize(set.Contains(query_id));
+    }
+  }
+}
+
+static void BM_InternedWorstCase(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<std::string> queries = GenerateQueries(miss_rate);
+
+  RobinHoodSet set;
+  for (int id : InternedData) set.Insert(id);
+
+  // Intentionally NOT pre-interned. Each iteration re-runs
+  // the full string -> intern -> lookup pipeline, which is
+  // the realistic cost when callers do not know the string
+  // ID or whether it is interned
+  for (auto _ : state) {
+    for (const auto& query : queries) {
+      int id = GlobalPool.Intern(query);
+      benchmark::DoNotOptimize(set.Contains(id));
+    }
+  }
+}
+
+#define REGISTER_BENCHMARK(func) BENCHMARK(func) \
+  ->Unit(benchmark::kMillisecond) \
+  ->ArgName("MissRatePct") \
+  ->Arg(1) \
+  ->Arg(50) \
+  ->Arg(99)
+
+REGISTER_BENCHMARK(BM_StdUnorderedSet);
+REGISTER_BENCHMARK(BM_StringRobinHood);
+REGISTER_BENCHMARK(BM_InternedRobinHood);
+REGISTER_BENCHMARK(BM_InternedWorstCase);
+```
+
+```
+---------------------------------------------
+Benchmark                                 CPU
+---------------------------------------------
+BM_StdUnorderedSet/MissRatePct:1       224 ms
+BM_StdUnorderedSet/MissRatePct:50      180 ms
+BM_StdUnorderedSet/MissRatePct:99      219 ms
+
+BM_StringRobinHood/MissRatePct:1       135 ms
+BM_StringRobinHood/MissRatePct:50      130 ms
+BM_StringRobinHood/MissRatePct:99      134 ms
+
+BM_InternedRobinHood/MissRatePct:1    4.72 ms
+BM_InternedRobinHood/MissRatePct:50   4.46 ms
+BM_InternedRobinHood/MissRatePct:99   5.16 ms
+
+BM_InternedWorstCase/MissRatePct:1     294 ms
+BM_InternedWorstCase/MissRatePct:50    220 ms
+BM_InternedWorstCase/MissRatePct:99    239 ms
+```
+
+## Complete Code
+
+Here is the complete implementation of the `StringPool`, alongside our original integer-based `RobinHoodSet`:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we decoupled our underlying data types from our structural processing loops. By implementing a global string vault, we achieved the following:
+
+1.  **Global Deduplication:** Instead of scattering identical 24-byte string footprints and their heap allocations across main memory, we store each unique string exactly once, significantly reducing memory usage and fragmentation.
+2.  **Pointer Stability:** We used `std::unordered_map`'s separate chaining as a feature. Because map nodes never move during a reallocation, we safely mapped fast `std::string_view`s to our centralized strings without fear of dangling pointers.
+3.  **Cache Maximization:** By shrinking our keys back down to 4-byte integers, our data structures reclaimed their maximum cache efficiency, allowing the hardware prefetcher to load 8 slots in a single hardware cycle.
+4.  **Boundary Isolation:** We learned that high-performance systems translate heavy, inefficient data into machine-friendly Handle IDs at the boundaries, leaving the hot loops completely free to work with simple numbers at maximum speed.

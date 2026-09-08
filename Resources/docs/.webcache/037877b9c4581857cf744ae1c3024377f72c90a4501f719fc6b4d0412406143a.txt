@@ -1,0 +1,341 @@
+In the previous lessons, we built elegant, lazy-evaluated pipelines. We learned to stream data through filters and transformations, modifying the values on the fly without ever allocating temporary memory.
+
+Ideally, we would perform *all* our logic this way. We might want to get the names of the top 10 players who are still alive, sorted by score. Our ideal code might look like this:
+
+```
+players
+  | std::views::filter(is_alive)
+  | std::views::sort(by_score) // <--- Ideally? 
+  | std::views::take(10)
+  | std::views::transform(get_name);
+```
+
+Unfortunately, `std::views::sort()` does not exist, and it probably never will.
+
+Up until now, our views have been gentle. The `transform()` view just peeks at a value, changes it in a register, and passes it on. It touches memory lightly.
+
+Sorting is different. To sort a container, we must physically break the data structure apart and reconstruct it. We cannot "lazily" sort a stream - it is a pipeline break.
+
+But we still need to do it sometimes, so in this lesson, we will learn how to pause our pipelines to perform this heavy operation, and how to use weaker algorithms like `partial_sort()` and `nth_element()` to minimize the violence we inflict on our memory bus.
+
+## Using `sort()`
+
+The standard library's sorting algorithm is `std::ranges::sort()`:
+
+```
+#include <vector>
+#include <algorithm>
+
+int main() {
+  std::vector<int> nums{5, 1, 4, 2, 3};
+  std::ranges::sort(nums); // {1, 2, 3, 4, 5}
+}
+```
+
+We can also pass an iterator/sentinel pair:
+
+```
+#include <vector>
+#include <algorithm>
+
+int main() {
+  std::vector<int> nums{5, 1, 4, 2, 3};
+  
+  // Sort the middle three - {5, 1, 2, 4, 3}
+  std::ranges::sort(nums.begin() + 1, nums.end() - 1);
+}
+```
+
+Or we can promote that pair to a view using `std::ranges::subrange`:
+
+```
+#include <vector>
+#include <algorithm>
+
+int main() {
+  std::vector<int> nums{5, 1, 4, 2, 3};
+  
+  // Create a view of the middle three:
+  auto middle = std::ranges::subrange(
+    nums.begin() + 1, nums.end() - 1
+  );
+
+  // Sort that subrange - {5, 1, 2, 4, 3}
+  std::ranges::sort(middle);
+}
+```
+
+## Mutating vs. Non-Mutating
+
+The `sort()` algorithm rearranges the container we provide **in place**. From a hardware perspective, the fact that the array is sorted in place is relatively efficient. We are reusing the memory we already allocated, and the data is likely already hot in the cache.
+
+However, from a software architecture perspective, a function that changes (or "mutates") the data we give it can be annoying. Often, we want to treat our source data as **immutable**. We don't want to shuffle the actual list of players in the game engine just because the UI needs to display a leaderboard.
+
+For those cases, we want a **non-mutating sort** - one that produces a sorted *copy* while leaving the original alone.
+
+### The Copy-Sort Pattern
+
+Implementing this is a two-step process - we copy the data, then we sort the copy:
+
+```
+std::vector<int> sorted = original; // Copy
+std::ranges::sort(sorted);          // Sort
+```
+
+The following code is equivalent, using range-based C++23 techniques. Conceptually, we can think of this as "viewing" the container, immediately materializing that view, and then sorting it:
+
+```
+auto sorted = original | std::ranges::to<std::vector>();
+std::ranges::sort(sorted);
+```
+
+This might seem like a weird approach and, in isolation, it is. But we generally don't sort a container in isolation - we do it as one step of a bigger plan. We can build that plan as a pipeline, which `std::ranges::to()` smoothly integrates with.
+
+The following pipeline gets the names of all players who have a high score, and then sorts that collection of names alphabetically:
+
+```
+// Step 1: Filter and Materialize
+// We filter first to reduce the amount of data we copy and sort
+auto high_scorers = players
+  | std::views::filter([](const Player& p) {
+      return p.score > 1000;
+    })
+  | std::views::transform(&Player::name)
+  | std::ranges::to<std::vector>();
+
+// Step 2: Sort the materialised vector
+// We need to sort by name to get alphabetical order
+std::ranges::sort(high_scorers,
+  [](const Player& a, const Player& b) {
+    return a.name < b.name;
+  }
+);
+```
+
+Notice that we filtered *before* we sorted. This is an important optimization. If we have 1,000 players but only 50 have a high score, filtering first means we only allocate and sort 50 items.
+
+We also made each element smaller by evicting the data we don't care about. We were required to get the names of the players, not the entire `Player` objects. We evicted everything except the `name` using `transform()`.
+
+By the time our data is sent to `sort()` to be shuffled around in memory, there are fewer elements, and each element is smaller.
+
+## Customizing Order
+
+In the example above, we passed a lambda to `sort()`. This is the **comparator** that the algorithm uses internally to decide **how** elements should be sorted. If `comparator(a, b)` returns `true`, then `a` comes before `b` in the sorted output.
+
+### Standard Library Comparators
+
+By default, `sort()` uses `std::ranges::less{}` as its comparator. This is a simple functor that takes two arguments, `a` and `b`, and returns `a < b`. If this is `true`, then `sort()` will place `a` before `b` in the output.
+
+If we want to sort in descending order, we can use the `std::ranges::greater{}` functor:
+
+```
+std::vector<int> nums{1, 2, 3, 4, 5};
+
+// Sort Descending: 5 4 3 2 1
+std::ranges::sort(nums, std::ranges::greater{});
+```
+
+For complex objects, especially ones that don't implement the `<` operator, we usually need custom logic.
+
+The following algorithm organizes people by score, with the highest scores being first. If two or more people have the same score, it sorts those people by name in ascending order (which is alphabetical order, assuming `name` is a `std::string`):
+
+```
+std::ranges::sort(players, [](const Player& a, const Player& b) {
+  // Sort by score (descending)
+  if (a.score != b.score) {
+    return a.score > b.score;
+  }
+  // Tie-breaker: Name (ascending)
+  return a.name < b.name;
+});
+```
+
+Writing these multi-step comparators is tedious and error-prone. In the next lesson, we will see how **projections** allow us to eliminate most of this boilerplate.
+
+## Stable and Unstable Sorts
+
+When we define a custom comparator like the one above, we often include a "tie-breaker" (like sorting by name) to ensure the order is deterministic.
+
+But what if we didn't?
+
+```
+std::ranges::sort(players, [](const Player& a, const Player& b) {
+  // Only check score. Ignore name.
+  return a.score > b.score;
+});
+```
+
+If `Alice` and `Bob` both have a score of 1000, who comes first?
+
+With `sort()`, the answer is **undefined**. Behind the scenes, most standard library implementations use **Introsort** (a mix of QuickSort and HeapSort), which swaps elements across large distances to be as efficient as possible. It does not care about the original order of the data. If Alice was before Bob in the original vector, she might end up after him in the sorted vector.
+
+This property is called **instability**. For simple values like integers, it doesn't matter (a `5` is a `5`). But for complex objects, it might matter a lot.
+
+Imagine a user clicks "Sort by Name" on a leaderboard. Then they click "Sort by Score." They expect players with the *same* score to remain sorted by name. An unstable sort destroys that previous work.
+
+### Using `stable_sort()`
+
+If we need to preserve the relative order of equal elements, we can use `std::ranges::stable_sort()`:
+
+```
+// 1. Sort by Name (Unstable)
+// Unstable is fine here, assuming initial state is random
+std::ranges::sort(players, {}, &Player::name);
+
+// 2. Sort by Score (Stable)
+// If scores are equal, the existing name order is preserved.
+std::ranges::stable_sort(players, std::ranges::greater{}, &Player::score);
+```
+
+### The Cost of Stability
+
+This isn't free - `stable_sort()` typically uses **Merge Sort**. Unlike Introsort, which sorts in place by swapping elements, Merge Sort requires extra memory to organize the data.
+
+Ideally, it allocates a temporary buffer equal to the size of the container - $O(n)$O(n) memory. If your container is massive (gigabytes), this allocation might fail or put pressure on your memory system. If `stable_sort()` cannot allocate enough memory, it falls back to a significantly slower algorithm.
+
+**Rule:** Default to the unstable `sort()`. Only use `stable_sort()` if you have a specific requirement to preserve relative order.
+
+## Do We Really Need to Sort?
+
+Let's go back to the problem we laid out in the introduction:*"get the top 10 players by score."*
+
+The naive solution is to sort the *entire* vector of 10,000 players by score, and then take the first 10.
+
+```
+// Naive approach: Sort everything (O(N log N))
+std::ranges::sort(players, std::ranges::greater{}, &Player::score);
+auto top10 = players | std::views::take(10);
+```
+
+This is wasteful. We are spending CPU cycles perfectly ordering player \#5000 vs. player \#5001. We don't care about them. We only care about the top 10.
+
+The standard library provides weaker algorithms for exactly this purpose.
+
+### Optimization 1: Partial Sorting
+
+This algorithm takes a range and a "middle" iterator. It guarantees that:
+
+1.  The elements from `begin` to `middle` are the smallest elements in the entire range.
+2.  The elements from `begin` to `middle` are **sorted**.
+3.  The rest of the elements (`middle` to `end`) are left in an unspecified order.
+
+The complexity is roughly $O(n\log K)$O(nlogK), where $K$K is the number of elements we are sorting. If $K$K is small (like 10), this is significantly faster than a full sort.
+
+```
+void PrintTop5(std::vector<int>& scores) {
+  // We want the top 5 scores.
+  // Note: Using 'greater' to get largest numbers first.
+
+  std::ranges::partial_sort(
+    scores,
+    scores.begin() + 5, // The cut-off point
+    std::ranges::greater{}
+  );
+
+  // The first 5 elements are now the 5 largest, in order.
+  for(int i = 0; i < 5; ++i) {
+    std::cout << scores[i] << "\n";
+  }
+}
+```
+
+### Optimization 2: Partitioning
+
+There's another small nuance in this "*get the top 10 players by score"* task - do those 10 players need to be in order?
+
+Imagine our goal is to send a notification to those players. Does that mean we need to sort them? Not really - we just care that the players we select **are** in the top 10, but not **where they are** within the top 10.
+
+We can more efficiently use `std::ranges::nth_element()` for this task. It rearranges the container such that:
+
+1.  The element at the `nth` position is the element that *would* be there if the container were fully sorted.
+2.  All elements *before* `nth` are smaller than it.
+3.  All elements *after* `nth` are larger than it.
+
+In other words, it just partitions the data. This runs in $O(n)$O(n) time.
+
+```
+void PrintTop5(std::vector<int>& scores) {
+  // We want the top 5 scores.
+  // Note: Using 'greater' to get largest numbers first.
+
+  std::ranges::nth_element(
+    scores,
+    scores.begin() + 5, // The cut-off point
+    std::ranges::greater{}
+  );
+
+  // The first 5 elements are now the 5 largest,
+  // but not necessarily in order.
+  for(int i = 0; i < 5; ++i) {
+    std::cout << scores[i] << "\n";
+  }
+}
+```
+
+A common use case for this algorithm is to find the median - what the middle value **would be** if the container were sorted, without the overhead of actually sorting it:
+
+```
+void FindMedian(std::vector<int>& scores) {
+  auto middle = scores.begin() + scores.size() / 2;
+
+  // Linear time partitioning
+  std::ranges::nth_element(scores, middle);
+
+  std::cout << "The median score is: " << *middle;
+
+  // begin() to middle are NOT sorted but they are all <= middle
+  // middle to end() are NOT sorted but they are all >= middle
+}
+```
+
+This is typically the "QuickSelect" algorithm. It effectively runs the partitioning step of QuickSort but only recurses into the half that contains our target index, ignoring the other half.
+
+## Rule of Thumb: Pick the Weakest Tool
+
+Sorting is expensive. It thrashes the cache, and it stalls the pipeline. When you think you need to sort, ask yourself exactly how much order you require.
+
+**Do you need the entire range sorted?**
+
+- Yes: Use `std::ranges::sort()`.
+- Yes, and I need "equal" items to preserve their original relative order: Use `std::ranges::stable_sort()`.
+
+**Do you only need the top K items sorted?**
+
+- Yes: Use `std::ranges::partial_sort()`.
+
+**Do you only need the top K items, but don't care about their order?**
+
+- Yes: Use `std::ranges::nth_element()`.
+
+**Do you just need the single minimum and/or maximum item?**
+
+- Yes: Use `std::ranges::min_element()` to get the smallest element, `max_element()` to get the largest, or `minmax_element()` to get both. These are just linear scans.
+
+Always choose the weakest algorithm that solves your problem. The weaker the algorithm, the less work the CPU has to do.
+
+## The Cost of Heavy Data
+
+There is a looming problem we have ignored. In all our examples, we used `int` or simple `Player` structs. In the real world, "Players" might be 2KB objects containing strings, inventory vectors, and physics state.
+
+When `sort()` swaps two of these players, it requires copying a big block of memory. This clogs the memory bandwidth. Furthermore, the CPU cache fills up with this "payload" data when all the sorting algorithm really cares about is the tiny integer `score` key.
+
+We will explore this problem later in the chapter - we will benchmark the cost of sorting "heavy" objects and learn ways to work around it.
+
+### Why not use a Sorted Container?
+
+There are containers like `std::set` and `std::map` that are anatomically designed for order - that order dictates how they physically arrange their elements in memory.
+
+We focus primarily on arrays, as, in most cases, how fast we can iterate through our data is the most important consideration. This is exactly what the memory layout of arrays is optimized for. We don't want to throw that away just because **some** tasks require sorted or partially sorted data.
+
+By using arrays and being proficient at sorting arrays, we have the versatility to maximize iteration speed and cache efficiency during the "hot path" of our application, while still retaining the ability to sort the data on demand when a specific task requires it.
+
+## Summary
+
+In this lesson, we confronted the reality of the pipeline break.
+
+1.  **Sorting is Violence**: It breaks lazy evaluation. You must materialize your view into a container before you can sort it.
+2.  **Use** **`ranges::to()`**: This is the standard way to bridge the gap between a lazy pipeline and an eager sort.
+3.  **Filter First**: Always reduce your dataset to the smallest collection you need *before* paying the cost of materialization and sorting. Use `filter()` to reduce the number of elements, and `transform()` to reduce their size.
+4.  **Strength Reduction**: Don't pay for a full sort if that's not really what you need. A partial sort (`partial_sort`) or a partition (`nth_element`) is sufficient for many problems.
+
+In the next lesson, we will introduce **projections**. We will see how range-based algorithms allow us to pass a simple member pointer like `&Player::score` directly to the sort algorithm, letting the compiler generate the comparator for us.

@@ -1,0 +1,490 @@
+Up to now, we've focused on squeezing every ounce of performance out of a single CPU core. But what happens when the workload outgrows a single machine? In a massive multiplayer game or a globally distributed database, we can have more concurrent connections than a single core can physically process.
+
+We need to distribute the work across a cluster of different threads/cores, or even a cluster of different servers. Additionally, this distribution must be **consistent**. If Player One's active session is being managed by Server B, every single packet Player One sends must be routed to Server B.
+
+This sounds like a similar problem to what we've been solving with hash tables throughout the rest of the chapter. We could hash a key (the Player ID), and map it to a bucket. Except now, each bucket represents a different server.
+
+However, the bitwise masking or modulo math approach - `Hash(PlayerID) % NumServers` - is problematic in this context.
+
+## The Modulo Disaster
+
+Let's look at the modulo approach. If we have 50 servers, we can hash the incoming network packet and use `%` to find its destination:
+
+```
+// A naive distributed routing function
+int GetServerIndex(std::string_view key, int numServers) {
+  size_t hash = HashString(key);
+  return hash % numServers;
+}
+```
+
+This works perfectly when the network is completely static. The math evenly distributes the keys, and every time a request comes in for `"PlayerOne"`, the formula would deterministically route it to the same server.
+
+But networking isn't static. What if we want to add or remove some servers from the pool? Removing servers might be intentional - as our player counts change throughout the day, we may want to distribute them across more or fewer servers.
+
+It may also be unintentional - a server might suddenly crash.
+
+If one server out of 50 dies, we now have around 2.5% of our players trying to interact with an offline server. However, in our modulo-based technique, if we change `numServers` from `50` to `49`, the routing for **almost every single player** also changes:
+
+### dsa_app/main.cpp
+
+```
+#include <iostream>
+#include <vector>
+#include <string>
+
+// A simple string hasher
+uint64_t HashString(const std::string& key) {
+  uint64_t hash = 5381;
+  for (char c : key) hash = ((hash << 5) + hash) + c;
+  return hash;
+}
+
+int main() {
+  const int NumKeys = 100'000;
+  int MigratedKeys = 0;
+
+  for (int i = 0; i < NumKeys; ++i) {
+    std::string key = "Player" + std::to_string(i);
+    uint64_t hash = HashString(key);
+
+    // Where does the key live when we have 50 servers?
+    int oldServer = hash % 50;
+
+    // A single server crashes. Where does the key live now?
+    int newServer = hash % 49;
+
+    if (oldServer != newServer) {
+      MigratedKeys++;
+    }
+  }
+
+  double failureRate = (MigratedKeys / (double)NumKeys) * 100.0;
+  std::cout << "Keys forced to migrate: " << failureRate << "%\n";
+}
+```
+
+```
+Keys forced to migrate: 98.024%
+```
+
+This is known as a **Network Reallocation Spike**, and it is a major source of outages.
+
+Because 98% of the data now hashes to the "wrong" server, 98% of traffic received by each server will be for a player that the server doesn't know about. All of those requests might then try to load the player's data from our database all at once.
+
+Maybe the architecture can handle this, and the network reallocation just causes some disruption and latency. Or maybe the database will melt under the explosion in traffic. What started with a failure in one node can take the entire architecture offline.
+
+Instead, we need a layout that decouples our hash outputs from the server count.
+
+## The Logical Hash Ring
+
+**Consistent Hashing** solves this by mapping both the **keys** and the **servers** onto the same integer space.
+
+Imagine taking all of our possible hash outputs and visualizing those integers as a ring that wraps around.
+
+We then take some way to identify our servers, such as their IP address. We hash those identifiers to generate an integer, and place them onto our ring at that corresponding location. If our cluster had 4 servers, our ring might look something like this:
+
+When a request for `"PlayerOne"` comes in, we hash the string `"PlayerOne"` to find its position on the ring. Then, to figure out which server owns the data, we simply "walk" clockwise around the ring (increasing the integer value) until we hit the first server.
+
+Below, we take `"PlayerOne"`'s hash, and find the first server that hashed to a higher integer, which is Server B:
+
+Now, if Server B crashes and is removed from the ring, we don't recalculate modulo math for the entire network. The only keys affected are the ones that were sitting directly between Server A and Server B.
+
+Those orphaned keys simply continue walking clockwise until they find Server C. The rest of the network is completely untouched. Only the immediate neighbor absorbs the load of the dead machine:
+
+This prevents a complete network reallocation. Server C suddenly becoming responsible for all of Server B's traffic isn't ideal, but we'll see how to distribute the load more fairly later in the lesson. For now, let's implement this initial idea.
+
+## Fast Contiguous Routing
+
+How do we actually build this ring in C++? Even though we are going to map servers and requests to a huge 64-bit integer space, that doesn't mean we need a huge array. We're not actually storing the requests - we're just routing them.
+
+Therefore, all slots between the servers in our ring will be empty - we can just remove them.
+
+This means our ring can be compressed into a much smaller array that only needs to be large enough to store our server nodes. The order of these nodes still needs to be the same in the compressed ring, so we sort this array by the original hash value:
+
+### Implementing the `Ring`
+
+Let's implement this by creating a small `std::vector` of sortable `Node` structs representing our servers. We'll use a basic `int` to identify the servers, which will also be the key for our hash function.
+
+We'll also cache the `uint64_t` hash value as a performance optimization, and we'll implement the `<` operator to allow our nodes to be sorted by this value:
+
+### dsa_core/include/dsa/HashRing.h
+
+```
+#pragma once
+#include <vector>
+#include <string>
+#include <string_view>
+#include <algorithm>
+#include <cstdint>
+
+class HashRing {
+private:
+  struct Node {
+    uint64_t Hash;
+    int ServerId;
+    
+    // Operator overload to allow sorting
+    bool operator<(const Node& other) const {
+      return Hash < other.Hash;
+    }
+  };
+
+  std::vector<Node> Ring;
+};
+```
+
+### Implementing `AddServer()`
+
+Our lightweight 4-byte `ServerId` integer is an internal handle for our nodes that has no real meaning outside of our `HashRing`. In real-world use cases, there would be a more meaningful identifier for our servers, such as their IP address.
+
+To maintain our data-oriented design philosophy, we would not want these heavy and unnecessary `std::string`s disrupting the memory layouts used in the performance-critical paths, which are the `Node`s in this example.
+
+We could [intern those strings ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/string-interning) in a separate global vault, but to keep things simple in this lesson, we'll just store them as a separate `std::vector` within our `HashRing`.
+
+Let's implement our `AddServer()` function, which accepts these strings, creates a corresponding `Node`, and adds it to our `Ring`. It also needs to re-sort the `Ring` after this happens to maintain the relative order. Adding servers to our cluster is a relatively rare action, so keeping this array sorted is inexpensive:
+
+### dsa_core/include/dsa/HashRing.h
+
+```
+// ...
+
+class HashRing {
+private:
+  // ...
+  std::vector<std::string> ServerNames;
+  
+  // A hasher using the Mix64 avalanche effect
+  uint64_t HashString(std::string_view key) const {
+    uint64_t hash = 5381;
+    for (char c : key) hash = ((hash << 5) + hash) + c;
+    hash ^= hash >> 30;
+    hash *= 0xbf58476d1ce4e5b9ULL;
+    hash ^= hash >> 27;
+    hash *= 0x94d049bb133111ebULL;
+    hash ^= hash >> 31;
+    return hash;
+  }
+
+
+public:
+  void AddServer(std::string_view serverName) {
+    int serverId = static_cast<int>(ServerNames.size());
+    ServerNames.emplace_back(serverName);
+
+    uint64_t hash = HashString(serverName);
+    Ring.push_back({hash, serverId});
+    
+    // Keep the contiguous array perfectly sorted
+    std::sort(Ring.begin(), Ring.end());
+  }
+};
+```
+
+### Why not use `std::hash`?
+
+You might wonder why we wrote our own `HashString` function instead of using `std::hash`. In a distributed environment, our hash function might be running on **multiple machines**, and we need the outputs to be deterministic across all of those machines.
+
+The standard does not require that of `std::hash` - it is only guaranteed to be consistent during a single execution of the program. Many implementations intentionally randomize their internal seed on startup.
+
+Additionally, `std::hash` returns a `size_t`, which changes size depending on whether the architecture is 32-bit or 64-bit.
+
+By providing our own algorithm like the approach above, or common open-source options like [MurmurHash3![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://github.com/aappleby/smhasher), we guarantee consistent routing tables across the entire cluster.
+
+### Implementing `RemoveServer()`
+
+For `RemoveServer()` , we need to take the string and find its index in `ServerNames`, which maps directly to the `ServerId` in our `Node` struct. We then need to erase that `Node` in the `Ring`.
+
+### dsa_core/include/dsa/HashRing.h
+
+```
+// ...
+
+class HashRing {
+private:
+  // ...
+public:
+  // ...
+  void RemoveServer(std::string_view serverName) {
+    auto it = std::find(
+      ServerNames.begin(), ServerNames.end(), serverName
+    );
+    if (it == ServerNames.end()) return;
+    
+    int serverId = static_cast<int>(
+      std::distance(ServerNames.begin(), it)
+    );
+
+    // Physically erase the node from the contiguous array
+    std::erase_if(Ring, [serverId](const Node& n) {
+      return n.ServerId == serverId;
+    });
+  }
+};
+```
+
+Using `std::erase_if()` is a little inefficient right now. We know we only have one server to delete, but `std::erase_if()` assumes there may be multiple matching elements. It continues to search the full array even after it finds our server.
+
+We'll leave it there for now, as this behavior will be useful when we add **virtual nodes** in the next section.
+
+### Implementing Routing
+
+To route a packet, we take the key such as `"PlayerOne"`, we hash it, and we then search our array to find the first `Node` whose hash is greater than `"PlayerOne"`'s hash.
+
+Because the `Ring` is sorted by the nodes' hash values, this can be an $O(\text{log}N)$O(logN) binary search and, because the array is relatively small - one `Node` per physical server - $N$N is pretty small, too.
+
+To retrieve the owning server, we can use `std::upper_bound()` binary search function. Because our array represents a ring, if our binary search walks past the very last element in the array, we simply wrap around and return the first element.
+
+### dsa_core/include/dsa/HashRing.h
+
+```
+#pragma once
+#include <vector>
+#include <string>
+#include <string_view>
+#include <algorithm>
+#include <cstdint>
+
+class HashRing {
+private:
+  // ...
+
+public:
+  // ...
+  std::string_view GetOwningServer(std::string_view key) const {
+    if (Ring.empty()) return "";
+
+    uint64_t hash = HashString(key);
+    Node dummy{hash, -1};
+
+    // Binary search the ring for the next node clockwise
+    auto it = std::upper_bound(Ring.begin(), Ring.end(), dummy);
+
+    // If we walked past the end, wrap around to the beginning
+    if (it == Ring.end()) {
+      it = Ring.begin();
+    }
+
+    return ServerNames[it->ServerId];
+  }
+};
+```
+
+## Virtual Nodes and the Hot Key Problem
+
+Our structure works, but there are two remaining problems.
+
+Firstly, hash functions distribute keys randomly, but random does not mean evenly spaced. If we throw 3 servers onto our ring, our hash function might create the following setup:
+
+This would result in Server C being responsible for a disproportionate amount of traffic, whilst Server A is relatively idle.
+
+And the second problem is: what happens if Server B gets removed? All of its traffic gets reallocated to Server C, whilst Server A still has very little to do.
+
+The solution to both of these problems is to introduce **Virtual Nodes (VNodes)**.
+
+Instead of putting each physical server on the ring once, we place many virtual copies of it - perhaps 50 or 100 instances. Each copy will have the same `ServerId`, representing that they map to the same underlying physical server, but they will have a different `Hash`, representing that they have a different position in the ring.
+
+Below, we give our 3 physical servers 50 virtual nodes each, which smooths out the variance. Whilst many of these copies still get lucky or unlucky with their hash, across 50 different hashes, that will average out such that each physical server gets an approximately equal share of the ring:
+
+There are two main ways to generate these 100 different hashes. Some hash functions let us provide the random seed that they use, so we would just use the same key with 100 different seeds.
+
+Alternatively, each VNode can use a different key. For example, if a server was identified by the IP address `50.128.65.59`, the VNodes might append an incrementing number, using keys like `50.128.65.59#1`, `50.128.65.59#2`, `50.128.65.59#3`, and so on. With a hash function that avalanches correctly, these similar keys will scatter our VNodes across our ring.
+
+Let's modify our class to support virtual nodes. We'll set a default of `100` VNodes per physical machine:
+
+### dsa_core/include/dsa/HashRing.h
+
+```
+// ...
+class HashRing {
+private:
+  // ...
+  int VNodes{100}; 
+  
+public:
+  void SetVNodes(int count) { VNodes = count; } 
+
+  void AddServer(std::string_view serverName) {
+    int serverId = static_cast<int>(ServerNames.size());
+    ServerNames.emplace_back(serverName);
+
+    // Generate 100 virtual nodes for this physical server
+    for (int i = 0; i < VNodes; ++i) { 
+      std::string vNodeName = std::string(serverName)   
+                              + "#" + std::to_string(i); 
+      uint64_t hash = HashString(vNodeName); 
+      Ring.push_back({hash, serverId}); 
+    } 
+    
+    std::sort(Ring.begin(), Ring.end());
+  }
+  // ...
+};
+```
+
+## Usage Example
+
+Below, we have an example of our `HashRing` in action. It sends requests from `Player1`, `Player2`, and `Player3` to three different servers. After the machine serving `Player1` is removed, those requests get rerouted to another server.
+
+The other players are not disrupted - their requests are routed to the same server they were previously:
+
+### dsa_app/main.cpp
+
+```
+#include <print> // C++23
+#include <dsa/HashRing.h>
+
+int main() {
+  HashRing ring;
+
+  ring.AddServer("192.168.1.10");
+  ring.AddServer("192.168.1.20");
+  ring.AddServer("192.168.1.30");
+
+  std::string P1{"Player1"};
+  std::string P2{"Player2"};
+  std::string P3{"Player3"};
+
+  std::println("{} -> {}", P1, ring.GetOwningServer(P1));
+  std::println("{} -> {}", P2, ring.GetOwningServer(P2));
+  std::println("{} -> {}", P3, ring.GetOwningServer(P3));
+
+  ring.RemoveServer("192.168.1.20");
+  std::println("\n192.168.1.20 has crashed!\n");
+
+  std::println("{} -> {}", P1, ring.GetOwningServer(P1));
+  std::println("{} -> {}", P2, ring.GetOwningServer(P2));
+  std::println("{} -> {}", P3, ring.GetOwningServer(P3));
+}
+```
+
+```
+Player1 -> 192.168.1.20
+Player2 -> 192.168.1.30
+Player3 -> 192.168.1.10
+
+192.168.1.20 has crashed!
+
+Player1 -> 192.168.1.10
+Player2 -> 192.168.1.30
+Player3 -> 192.168.1.10
+```
+
+## Benchmarking
+
+Let's measure how effective these virtual nodes are at smoothing out the variance in our load balancer.
+
+In this benchmark, we simulate an influx of 1,000,000 requests across a 10-node cluster. We will track the minimum and maximum number of requests handled by a single server. We can use Google Benchmark's custom counters to see how our load is balanced:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+#include <string>
+#include <unordered_map>
+#include <algorithm>
+#include <dsa/HashRing.h>
+
+const int kNumServers = 10;
+const int kNumKeys = 1'000'000;
+
+// Helper to find the busiest and most idle server load counts
+struct LoadStats {
+  int minLoad;
+  int maxLoad;
+};
+
+LoadStats CalculateLoadStats(
+  const std::unordered_map<std::string, int>& loadCounts
+) {
+  LoadStats stats{INT_MAX, INT_MIN};
+  for (const auto& pair : loadCounts) {
+    stats.minLoad = std::min(stats.minLoad, pair.second);
+    stats.maxLoad = std::max(stats.maxLoad, pair.second);
+  }
+  return stats;
+}
+
+static void BM_HashRing_NoVNodes(benchmark::State& state) {
+  HashRing ring;
+  ring.SetVNodes(1); // Force 1 VNode (Naive approach)
+  std::vector<std::string> servers;
+  for (int i = 0; i < kNumServers; ++i) {
+    std::string srv = "Server_" + std::to_string(i);
+    servers.push_back(srv);
+    ring.AddServer(srv);
+  }
+  for (auto _ : state) {
+    std::unordered_map<std::string, int> loadCounts;
+    for (const auto& srv : servers) loadCounts[srv] = 0;
+    for (int i = 0; i < kNumKeys; ++i) {
+      std::string key = "Key_" + std::to_string(i);
+      std::string_view owner = ring.GetOwningServer(key);
+      loadCounts[std::string(owner)]++;
+    }
+    LoadStats stats = CalculateLoadStats(loadCounts);
+    state.counters["Load_Min"] = stats.minLoad;
+    state.counters["Load_Max"] = stats.maxLoad;
+  }
+}
+
+static void BM_HashRing_WithVNodes(benchmark::State& state) {
+  HashRing ring;
+  ring.SetVNodes(100); // 100 VNodes per physical machine
+  std::vector<std::string> servers;
+  for (int i = 0; i < kNumServers; ++i) {
+    std::string srv = "Server_" + std::to_string(i);
+    servers.push_back(srv);
+    ring.AddServer(srv);
+  }
+  for (auto _ : state) {
+    std::unordered_map<std::string, int> loadCounts;
+    for (const auto& srv : servers) loadCounts[srv] = 0;
+    for (int i = 0; i < kNumKeys; ++i) {
+      std::string key = "Key_" + std::to_string(i);
+      std::string_view owner = ring.GetOwningServer(key);
+      loadCounts[std::string(owner)]++;
+    }
+    LoadStats stats = CalculateLoadStats(loadCounts);
+    state.counters["Load_Min"] = stats.minLoad;
+    state.counters["Load_Max"] = stats.maxLoad;
+  }
+}
+
+BENCHMARK(BM_HashRing_NoVNodes);
+BENCHMARK(BM_HashRing_WithVNodes);
+```
+
+```
+-----------------------------------------------------------
+Benchmark                UserCounters...
+-----------------------------------------------------------
+BM_HashRing_NoVNodes     Load_Max=257.325k Load_Min=15.731k
+BM_HashRing_WithVNodes   Load_Max=114.389k Load_Min=89.993k
+```
+
+In a perfectly balanced network, every server would process exactly 100,000 requests. Without virtual nodes, one server got unlucky with its hash and got hammered with over 257,000 requests - almost 26% of the entire network's traffic. Another was allocated less than 1.6% of the traffic.
+
+By giving each physical server 100 hashes through virtual nodes, the variance collapses. The busiest server processes roughly 11% of the traffic, and the quietest processes 9%.
+
+## Complete Code
+
+Here is the complete implementation of our robust, cache-friendly `HashRing` class, featuring virtual nodes:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we expanded the principles of hashing to manage distributed data across a network cluster. We learned that:
+
+1.  **The Reallocation Spike:** Modulo-based routing reallocates most keys to different buckets whenever the bucket count changes. Consistent hashing decouples keys from the bucket count, ensuring only immediate neighbors are affected by events such as a hardware failure taking a server offline.
+2.  **Logical Ring / Physical Array:** We map the theoretical 360-degree hash ring into a tightly packed, sorted `std::vector`, using $O(\text{log}N)$O(logN) binary searches to route keys to their bucket.
+3.  **Data-Oriented Node Structures:** By storing heavy `std::string` data in a separate location and packing our ring with raw 4-byte handles, we maximize the number of nodes the CPU prefetcher can load in a single cycle.
+4.  **Virtual Nodes:** Hash algorithms are random, which naturally leads to clustered hotspots. We eliminate this variance by injecting many virtual nodes per physical machine, statistically balancing load across the network.

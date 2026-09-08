@@ -1,0 +1,408 @@
+In the previous lessons, we used Compare-And-Swap (CAS) loops to build fast data pipelines across CPU cores. But our MPMC queue was a fixed-size ring buffer. What happens when we want to build an unbounded structure, like a dynamically growing stack or list?
+
+When we attempt to apply optimistic concurrency to dynamic memory, we run into a brick wall of hardware realities.
+
+Over the next two lessons, we'll build a lock-free stack that can scale up as much as we want. In this first part, we will focus on the allocation problem. We will build a thread-safe, lock-free memory pool that prevents segmentation faults and defeats the corruption of the ABA problem.
+
+### Recommended Reading
+
+This is a relatively advanced lesson, pulling together many techniques we covered in the previous chapters. To follow along, being particularly comfortable with the following topics is highly recommended:
+
+- Implementing and using an
+  [object pool ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/object-pools-free-lists)
+  , including an implicit free list to track the available slots
+- Implementing custom atomic logic using
+  [compare-and-swap (CAS) ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/cas-optimistic-concurrency)
+- The challenges of working with
+  [lock-free pointers ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/lock-free-pointers-aba)
+- Implementing a container that supports the
+  [MPMC access pattern ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/mpmc-lock-free-queue)
+
+## The Danger of Lock-Free Pointers
+
+If we want to build a lock-free stack, our first instinct is to allocate nodes on the global heap using `new`, and use a CAS loop to swing a `Head` pointer. Let's look at a naive attempt to `Pop()` a node from a standard linked list:
+
+```
+int NaivePop() {
+  Node* Expected = Head.load();
+
+  do {
+    if (Expected == nullptr) return -1;
+
+    // DANGER: If another thread deletes 'Expected' right now,
+    // accessing Expected->Next will trigger a crash
+  } while (!Head.compare_exchange_weak(
+    Expected,
+    Expected->Next 
+  ));
+
+  int Result = Expected->Payload;
+  delete Expected; 
+  return Result;
+}
+```
+
+This code is a ticking time bomb. Between the moment our thread reads `Expected` from memory and the moment we attempt to evaluate `Expected->Next`, we have a **race window**:
+
+Thread 1 blindly reaches across the memory bus to read `Expected->Next`. But `Expected` is pointing to `Node A`, which has been freed by Thread 2's call to `delete`.
+
+The CPU attempts to access an invalid, unmapped memory address. The operating system catches the illegal access, and our application is terminated with a **segmentation fault** (use-after-free).
+
+### Eliminating Use-After-Free
+
+This limitation dictates a golden rule for lock-free programming: **we must never return memory to the operating system if there is even a fractional chance another thread is using it.**
+
+If we never call `delete`, we never unmap the virtual address, and the CPU will never trigger a segmentation fault. To achieve this, we will resurrect the [Object Pool ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/object-pools-free-lists) we built earlier in the course.
+
+By pre-allocating a massive block of memory and managing an implicit free list, the memory remains permanently owned by our application. Even if a node is logically "popped" and returned to the free list, its physical bytes remain mapped and safe for a sleeping thread to read.
+
+## The Lock-Free Object Pool
+
+Let's begin scaffolding our `LockFreePool`. The initial setup is almost identical to the MPMC buffer from the previous lesson. There are only two key changes:
+
+- We don't need to keep track of the `Tail` - we'll always push and pop slots from the `Head` of our free list.
+- We don't need the `Capacity` or `Mask`. The capacity of our object pool will be set in the constructor, which we implement in the next section
+
+Defining our key variables would look something like this:
+
+### dsa_core/include/dsa/LockFreePool.h
+
+```
+#pragma once
+#include <vector>
+#include <atomic>
+#include <new>
+
+template <typename T>
+class LockFreePool {
+private:
+  static constexpr size_t CacheLineSize =
+    std::hardware_destructive_interference_size;
+    
+  static constexpr uint32_t NullIndex = 0xFFFFFFFF;
+
+  struct alignas(CacheLineSize) Slot {
+    T Payload;
+    std::atomic<uint32_t> FreeNext;
+  };
+
+  std::vector<Slot> Buffer;
+  alignas(CacheLineSize) std::atomic<uint32_t> FreeHead{0};
+};
+```
+
+### The Constructor
+
+Our constructor matches the logic of the single-threaded object pool we implemented in the earlier chapter. Every slot is initially free, so we weave our free list through every index in the buffer:
+
+### dsa_core/include/dsa/LockFreePool.h
+
+```
+// ...
+
+template <typename T>
+class LockFreePool {
+private:
+  // ...
+
+public:
+  LockFreePool(size_t Capacity) : Buffer(Capacity) {
+    if (Capacity == 0 || Capacity >= NullIndex) {
+      throw std::invalid_argument("Invalid Capacity");
+    }
+
+    // Because this runs sequentially on boot, we don't
+    // need CAS loops to wire the initial free list
+    for (size_t i = 0; i < Capacity - 1; ++i) {
+      Buffer[i].FreeNext.store(i + 1);
+    }
+    Buffer[Capacity - 1].FreeNext.store(NullIndex);
+  }
+};
+```
+
+## The ABA Problem
+
+By replacing pointers with indices, we have solved the segmentation fault. A thread reading `Buffer[OldFree].FreeNext` will always hit valid memory.
+
+But we have another vulnerability: the **ABA Problem**.
+
+Because we aggressively recycle slots using our internal free list, an index can be allocated, freed, and allocated again in a matter of microseconds. If a thread pauses at the wrong moment, the CAS instruction will be tricked:
+
+Thread 1 just set the data structure's `Head` to Index `1` - an index that currently belongs to the **free list**. Our active data structure and our free list are now permanently cross-linked. Future allocations will overwrite live data, creating infinite loops and destroying the application.
+
+The CAS instruction only compared the 32-bit integer `0`. It saw `0`, and assumed the state of the world had not changed. It didn't realize it was looking at a *brand new* `0`.
+
+### Defeating ABA with Tagged Indices
+
+To defeat ABA, we add a **generation tag** to our indices, just like we did in our Structure-of-Arrays systems [earlier in the course ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/generational-indices).
+
+Every time an index passes through our `FreeHead`, we increment a counter. Instead of asking the CAS if `FreeHead == 0`, we ask if `FreeHead == 0` AND `Generation == 5`.
+
+Let's bundle our index and a tag into a single struct:
+
+### dsa_core/include/dsa/TaggedIndex.h
+
+```
+#pragma once
+#include <cstdint>
+
+constexpr uint32_t NullIndex = 0xFFFFFFFF;
+
+// 64-bit struct perfectly sized for a single hardware register
+struct alignas(8) TaggedIndex {
+  uint32_t Index;
+  uint32_t Tag;
+};
+```
+
+Because our `TaggedIndex` consists of two 32-bit integers and is explicitly 8-byte aligned, a 64-bit CPU can pack this entire struct into a single hardware register. This allows us to perform a native, lock-free CAS on both the index and the version tag simultaneously.
+
+Let's integrate this into our pool. We add a `static_assert` to ensure the compiler hasn't betrayed us by quietly injecting an OS lock to handle the 64-bit struct:
+
+### dsa_core/include/dsa/LockFreePool.h
+
+```
+// ...
+#include <dsa/TaggedIndex.h>
+
+template <typename T>
+class LockFreePool {
+private:
+  // ...
+  static_assert(
+    std::atomic<TaggedIndex>::is_always_lock_free,
+    "Hardware does not support 64-bit lock-free atomics"
+  );
+
+  struct alignas(CacheLineSize) Slot {
+    T Payload;
+    std::atomic<uint32_t> FreeNext;
+  };
+
+  std::vector<Slot> Buffer;
+
+  // FreeHead now tracks both the index and the ABA tag
+  alignas(CacheLineSize) std::atomic<TaggedIndex> FreeHead{{0, 0}};
+
+  // ...
+};
+```
+
+## Implementing the Object Pool API
+
+We can now implement our thread-safe memory management using [optimistic CAS loops ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/cas-optimistic-concurrency).
+
+### Implementing `Allocate()`
+
+To `Allocate()`, we read the current `FreeHead` state. We identify the *next* free slot in the chain. We bundle that next slot with an incremented tag, and attempt to swing the `FreeHead` forward.
+
+### dsa_core/include/dsa/LockFreePool.h
+
+```
+// ...
+
+template <typename T>
+class LockFreePool {
+// ...
+public:
+  // ...
+
+  uint32_t Allocate() {
+    TaggedIndex OldFree = FreeHead.load();
+    TaggedIndex NewFree;
+
+    do {
+      if (OldFree.Index == NullIndex) return NullIndex;
+
+      // Prepare our desired state: the next index,
+      // and an incremented ABA tag
+      NewFree = {
+        Buffer[OldFree.Index].FreeNext.load(),
+        OldFree.Tag + 1
+      };
+
+    } while (!FreeHead.compare_exchange_weak(
+      OldFree,
+      NewFree
+    ));
+
+    return OldFree.Index;
+  }
+};
+```
+
+### Implementing `Free()`
+
+To `Free()` a slot, we do the exact reverse. We take the index we want to return, wire its `FreeNext` value to point to the current `FreeHead`, and use a CAS loop to push it onto the top of the stack, again incrementing the tag to permanently alter its physical signature.
+
+### dsa_core/include/dsa/LockFreePool.h
+
+```
+// ...
+
+template <typename T>
+class LockFreePool {
+// ...
+public:
+  // ...
+
+  void Free(uint32_t TargetIndex) {
+    TaggedIndex OldFree = FreeHead.load();
+    TaggedIndex NewFree;
+
+    do {
+      // Wire the dying slot to point to the current free list
+      Buffer[TargetIndex].FreeNext.store(OldFree.Index);
+
+      // Prepare to push it to the top
+      NewFree = {
+        TargetIndex,
+        OldFree.Tag + 1
+      };
+
+    } while (!FreeHead.compare_exchange_weak(
+      OldFree,
+      NewFree
+    ));
+  }
+
+  // Provide simple access to the payload data
+  T& operator[](uint32_t Index) {
+    return Buffer[Index].Payload;
+  }
+};
+```
+
+### Implementing the `[]` Operator
+
+Finally, let's give users a convenient way to access the payloads they're storing in our pool:
+
+### dsa_core/include/dsa/LockFreePool.h
+
+```
+// ...
+
+template <typename T>
+class LockFreePool {
+// ...
+public:
+  // ...
+
+  // Provide simple access to the payload data
+  T& operator[](uint32_t Index) {
+    return Buffer[Index].Payload;
+  }
+};
+```
+
+## Tuning the Memory Order
+
+Currently, every `std::atomic` operation in our class is implicitly using `std::memory_order_seq_cst`. As we [learned previously ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/memory-ordering), this default setting drops a massive memory fence that completely halts the CPU pipeline across all cores to enforce strict chronological consensus.
+
+If we need to squeeze maximum performance out of the silicon, we can loosen these restrictions using `acquire` and `release` fences, or remove them entirely using `relaxed`.
+
+### Consumer: `Allocate()`
+
+When a thread calls `Allocate()`, it is acting as a **consumer** of the free list. It needs to read `OldFree` and extract `FreeNext` safely.
+
+We use `acquire` to synchronize with the thread that previously freed the slot. This guarantees the CPU will not speculatively read `FreeNext` out of order before we have officially claimed ownership of the `FreeHead`:
+
+### dsa_core/include/dsa/LockFreePool.h
+
+```
+// ...
+
+template <typename T>
+class LockFreePool {
+// ...
+public:
+  // ...
+  uint32_t Allocate() {
+    // Acquire the latest published state of the free list
+    TaggedIndex OldFree = FreeHead.load(
+      std::memory_order_acquire 
+    );
+    TaggedIndex NewFree;
+
+    do {
+      if (OldFree.Index == NullIndex) return NullIndex;
+
+      NewFree = {
+        Buffer[OldFree.Index].FreeNext.load(
+          std::memory_order_relaxed 
+        ),
+        OldFree.Tag + 1
+      };
+
+    } while (!FreeHead.compare_exchange_weak(
+      OldFree, NewFree,
+      std::memory_order_acquire, 
+      std::memory_order_acquire  
+    ));
+
+    return OldFree.Index;
+  }
+  // ...
+};
+```
+
+### Provider: `Free()`
+
+When a thread calls `Free()`, it is acting as a **provider** to the free list. It updates the internal `FreeNext` value, and then publishes the slot globally to the `FreeHead`.
+
+To prevent the CPU from sinking our `FreeNext` write below the atomic CAS (which would cause an allocating thread to read stale data), we use a `release` fence on a successful CAS:
+
+### dsa_core/include/dsa/LockFreePool.h
+
+```
+// ...
+
+template <typename T>
+class LockFreePool {
+// ...
+public:
+  // ...
+  void Free(uint32_t TargetIndex) {
+    TaggedIndex OldFree = FreeHead.load(
+      std::memory_order_relaxed 
+    );
+    TaggedIndex NewFree;
+
+    do {
+      Buffer[TargetIndex].FreeNext.store(
+        OldFree.Index,
+        std::memory_order_relaxed 
+      );
+      NewFree = {TargetIndex, OldFree.Tag + 1};
+
+    } while (!FreeHead.compare_exchange_weak(
+      OldFree, NewFree,
+      std::memory_order_release, 
+      std::memory_order_relaxed  
+    ));
+  }
+  // ...
+};
+```
+
+## Complete Code
+
+Here is the complete implementation of our `LockFreePool`:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we established the foundational bedrock required to build unbounded, lock-free node structures.
+
+1.  **Use-After-Free:** We walked through the race window in naive lock-free loops. Dereferencing a pointer that a suspended thread expects to be valid results in a segmentation fault if another thread deletes it.
+2.  **The Lock-Free Pool:** By wrapping payloads in a `Slot` and managing an implicit free list, we guarantee memory is never physically returned to the OS, neutralizing the use-after-free risk.
+3.  **The ABA Problem:** We explored how rapid index recycling tricks the CAS instruction into corrupting active data structures.
+4.  **Tagged Indices:** By packing a version tag alongside our index into an 8-byte `TaggedIndex` struct, we forced a physical signature change on every allocation, defeating the ABA problem.
+
+In the next lesson, we will put this allocator to work. We will build a highly concurrent LIFO container - the **Treiber Stack**.

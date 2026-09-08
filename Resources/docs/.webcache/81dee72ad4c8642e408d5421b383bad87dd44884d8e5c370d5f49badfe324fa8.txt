@@ -1,0 +1,393 @@
+In previous chapters, we focused on taking existing containers - like `std::vector` - and manipulating them using algorithms, views, and pipelines.
+
+In the rest of the course, we'll focus on creating our own data structure. In this lesson, we start by marrying the performance and cache-efficiency of the **structure of arrays (SoA)** pattern with the clean, familiar ergonomics of working with objects.
+
+We will build a container that *looks* like a collection of objects to consumers, but *acts* like a parallel stream of primitives to the CPU.
+
+## The Ergonomics Problem
+
+We have established that splitting data into parallel arrays (structure of arrays) can drastically improve performance over the more familiar array of structures pattern:
+
+```
+// Array of Structures (AoS)
+struct Player {
+  int id;
+  int score;
+  float health;
+  std::string name;
+}
+
+std::vector<Player> Players;
+```
+
+```
+// Structure of Arrays (SoA)
+struct PlayerStorage {
+  std::vector<int> ids;
+  std::vector<int> scores;
+  std::vector<float> health;
+  std::vector<std::string> names;
+};
+```
+
+Whilst SoA is more performant, it immediately presents a usability problem. We prefer to think of our design in terms of cohesive entities, such as `Player` objects, and our SoA data layout no longer works that way.
+
+### Zip Views
+
+In a [previous lesson ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/composition-and-multiple-ranges), we saw how `std::views::zip` allows us to iterate a collection of parallel arrays simultaneously without managing raw indices.
+
+This would allow us to iterate over our `PlayerStorage` using code that looks something like this:
+
+```
+// std::views::zip requires C++23
+auto players = std::views::zip(ids, scores, health, names);
+
+for (auto [id, score, hp, name] : players) {
+  if (score > 100) {
+    hp += 10;
+  }
+}
+```
+
+While this works, it introduces some friction. Compare that to the object-oriented syntax we are used to:
+
+```
+// The Logical Ideal (AoS Syntax)
+for (auto& player : players) {
+  if (player.score > 100) {
+    player.health += 10;
+  }
+}
+```
+
+This is readable and intuitive. Our goal is to build a container that stores data in the efficient, parallel SoA format, but exposes it via the clean, intuitive OOP syntax. And we want to do this without sacrificing performance
+
+## The Proxy Reference
+
+There are many ways we can do this, but the simplest involves the concept of a **proxy object**.
+
+In a standard array-of-structures like `std::vector<Player>`, when we dereference an iterator, we get a `Player&`. This is a reference to a real block of memory where a `Player` struct exists.
+
+In our SoA container, that `Player` struct does not exist. The `ID` is in one array; the `Score` in another. We cannot return a `Player&` because there is no `Player` to point to.
+
+Instead, we can return a **transient proxy**. This is a lightweight, temporary object that looks and acts like a player, but is actually just a bundle of references pointing to the scattered data.
+
+Let's define this proxy. Note that it uses reference members (`&`), meaning it must be bound to existing data upon construction:
+
+### PlayerStorage.h
+
+```
+#include <vector>
+#include <string>
+
+// The Virtual Object
+// This structure essentially reassembles the user's mental model
+// of a Player from the scattered physical memory
+struct PlayerRef {
+  int& id;
+  int& score;
+  float& health;
+  std::string& name;
+  
+  // We can still have methods and all the other OOP tricks
+  void Heal(float amount) {
+    health += amount;
+  }
+};
+```
+
+## The Storage
+
+Let's set up our structure-of-arrays layout, as well as a basic function demonstrating how we can add a player to our collection.
+
+We're not focused too much on API design here - our first goal is to build the foundations of our system and ensure it is performant. We could add things like encapsulation later, but we'll just keep everything `public` for now, to make it easier to test and experiment on:
+
+### PlayerStorage.h
+
+```
+#include <vector>
+#include <string>
+#include <ranges>
+#include <tuple>
+
+Proxy Object|Showstruct PlayerRef {/*...*/};
+
+class PlayerStorage {
+public:
+  // The Physical Storage (SoA)
+  std::vector<int> m_ids;
+  std::vector<int> m_scores;
+  std::vector<float> m_health;
+  std::vector<std::string> m_names;
+
+  // Add a player by splitting it into components immediately
+  void AddPlayer(int id, int score, float hp, std::string name) {
+    m_ids.push_back(id);
+    m_scores.push_back(score);
+    m_health.push_back(hp);
+    m_names.push_back(std::move(name));
+  }
+};
+```
+
+## The Transformer Pipeline
+
+Now we have our storage (the parallel vectors) and our interface (the `PlayerRef`). We need a bridge to connect them.
+
+We can build this bridge using the composable views we learned about earlier.
+
+1.  **Zip**: Combine the parallel vectors into a single view of tuples.
+2.  **Transform**: Convert the tuples into `PlayerRef` objects.
+
+We will define a helper method, `GetView()`, to construct the pipeline:
+
+```
+// ...
+
+class PlayerStorage {
+public:
+  // ...
+  
+  auto GetView() {
+    return std::views::zip(
+      m_ids, m_scores, m_health, m_names 
+    ) | std::views::transform([](auto&& tuple) {
+          // Unpack the tuple...
+          auto& [id, score, hp, name] = tuple;
+
+          // ...and reassemble into our Proxy
+          return PlayerRef{id, score, hp, name};
+        });
+  }
+};
+```
+
+The return type of this function is incredibly complex. Thankfully, `auto` handles this for us.
+
+These additions mean our `PlayerStorage` has become compatible with range-based for loops and range-based algorithms.
+
+## Consuming the Container
+
+Our system is very basic, but just by implementing the range interface, we've already unlocked a lot of capabilities:
+
+### main.cpp
+
+```
+#include <dsa/PlayerStorage.h>
+#include <iostream>
+#include <algorithm>
+#include <ranges>
+
+int main() {
+  PlayerStorage party;
+  
+  party.AddPlayer(1, 500, 100.0f, "Hero");
+  party.AddPlayer(2, 50, 25.0f, "Sidekick");
+  party.AddPlayer(3, 9000, 150.0f, "Boss");
+
+  // GetView() returns a range, so we can use a range-based for
+  for (PlayerRef p : party.GetView()) {
+    // This looks like standard OOP patterns
+    if (p.score > 100) {
+      p.Heal(10.0f); 
+    }
+  }
+
+  // The proxy works seamlessly with range-based algorithms
+  // We can find the max element by projecting the 'health' member
+  auto toughest = std::ranges::max_element(party.GetView(), {},
+    [](const PlayerRef& p) {
+      return p.health;
+    }
+  );
+  
+  if (toughest != party.end()) {
+    std::cout << "Toughest: " << (*toughest).name << "\n";
+  }
+
+  // We can pipe our container into filters and transforms
+  // This pipeline views the names of high-scoring players
+  auto mvps = party.GetView()
+    | std::views::filter([](const PlayerRef& p) {
+        return p.score > 100;
+      })
+    | std::views::transform([](const PlayerRef& p) {
+        return p.name;
+      });
+
+  std::cout << "MVPs: ";
+  std::ranges::for_each(mvps, [](const std::string& name) {
+    std::cout << name << " ";
+  });
+}
+```
+
+We've completely hidden the ugly SoA layout from consumers. The user writes code that reasons about "Players," but the hardware executes code that streams through parallel arrays of basic primitives.
+
+The previous code showing our system being used confirms that we can deliver an AoS-like experience. Let's now check how well it performs.
+
+## Benchmarking
+
+When we iterate through our collection, our `GetView()` function is creating a `tuple` inside the zip, unpacking it, constructing these `PlayerRef` objects, and passing them to the loop body. That sounds like a lot of work - let's find out how much we're paying for it.
+
+We'll do this using the [benchmarking lab ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/google-benchmark) we set up in an earlier chapter.
+
+We'll benchmark the same algorithm accessing the same data across three different data structures:
+
+1.  `BM_AoS` - the conventional Array of Structures approach.
+2.  `BM_PlayerStorage` - our new system.
+3.  `BM_RawLoop` - accessing the same key data directly through an array, like our `PlayerStorage` does behind the scenes. This is to check how much performance we're losing to provide the friendly `PlayerRef` API.
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <dsa/PlayerStorage.h>
+
+// 1. Original AoS
+struct Player {
+  int id;
+  int score;
+  float health;
+  std::string name;
+};
+
+static void BM_AoS(benchmark::State& state) {
+  int n = state.range(0);
+  std::vector<Player> players(n, Player{1, 2, 3.f, "Name"});
+
+  for (auto _ : state) {
+    float sum = 0.0f;
+    for (const Player& player : players) {
+      sum += player.score;
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+}
+
+// 2. PlayerStorage
+static void BM_PlayerStorage(benchmark::State& state) {
+  int n = state.range(0);
+  PlayerStorage ps;
+  for(int i=0; i<n; ++i) ps.AddPlayer(1, 2, 3.0f, "Name");
+
+  for (auto _ : state) {
+    float sum = 0.0f;
+    for (const PlayerRef player : ps.GetView()) {
+      sum += player.score;
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+}
+
+// 3. Raw Manual Loop
+static void BM_RawLoop(benchmark::State& state) {
+  int n = state.range(0);
+  std::vector<int> scores(n, 2);
+
+  for (auto _ : state) {
+    float sum = 0.0f;
+    for (int i=0; i<n; ++i) {
+      sum += scores[i];
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+}
+
+#define BENCHMARK_STD(func) \
+  BENCHMARK(func) \
+    ->RangeMultiplier(10) \
+    ->Range(10 * 1000, 1000 * 1000) \
+    ->Unit(benchmark::kMillisecond)
+
+BENCHMARK_STD(BM_AoS);
+BENCHMARK_STD(BM_PlayerStorage);
+BENCHMARK_STD(BM_RawLoop);
+```
+
+The original `std::vector<Player>` approach keeps up with small collections, but the inefficient memory layout causes compounding issues as things scale up.
+
+The good news is that our `PlayerStorage` is a big improvement over `BM_AoS`, and it even seems to be equivalent to the abstraction-free `BM_RawLoop` approach:
+
+```
+-----------------------------------
+Benchmark                       CPU
+-----------------------------------
+BM_AoS/10000               0.007 ms
+BM_AoS/100000              0.075 ms
+BM_AoS/1000000              2.25 ms
+BM_PlayerStorage/10000     0.007 ms
+BM_PlayerStorage/100000    0.074 ms
+BM_PlayerStorage/1000000   0.710 ms
+BM_RawLoop/10000           0.008 ms
+BM_RawLoop/100000          0.071 ms
+BM_RawLoop/1000000         0.715 ms
+```
+
+But how can this be a zero-cost abstraction over the direct approach? Our view is delivering `PlayerRef` objects to the consumer on every iteration of the loop - how are we creating these objects for free?
+
+```
+auto GetView() {
+  return std::views::zip(
+    m_ids, m_scores, m_health, m_names 
+  ) | std::views::transform([](auto&& tuple) {
+        auto& [id, score, hp, name] = tuple;
+        return PlayerRef{id, score, hp, name}; // ?? 
+      });
+}
+```
+
+## Scalar Replacement of Aggregates
+
+The secret is, we're **not** creating the objects. Remember the **as-if rule**. Our code is not asking the compiler to create a `PlayerRef` at this point in the code. It's asking the compiler to create a program that behaves **as if** a `PlayerRef` were created at this point in the code.
+
+The compiler avoids creating these objects due to a specific category of optimization called **SROA (Scalar Replacement of Aggregates)**.
+
+Firstly, `PlayerRef` is a simple "aggregate" type - it's just a bag carrying around some data. It doesn't have any constructor logic.
+
+Secondly, let's look at how the consumer is using these conceptual `PlayerRef` objects:
+
+```
+static void BM_PlayerStorage(benchmark::State& state) {
+  int n = state.range(0);
+  PlayerStorage ps;
+  for(int i=0; i<n; ++i) ps.AddPlayer(1, 2, 3.0f, "Name");
+
+  for (auto _ : state) {
+    float sum = 0.0f;
+    for (PlayerRef player : ps.GetView()) {
+      sum += player.score;
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+}
+```
+
+Our `player` never leaves the loop body - it's created at the start of the iteration, and it's destroyed at the end. Between those points, we don't do anything that would require it to be manifested in memory, such as asking for its memory address using `&`.
+
+The compiler recognizes it can create the requested behavior **as if** the object existed, without needing to create it. It can just go directly to the underlying `PlayerStorage` arrays for the data, just as if we were accessing `PlayerStorage.scores` directly.
+
+The `player` is a compile-time ghost that exists only to give consumers the intuitive, object-based API they're familiar with.
+
+## Complete Code
+
+Complete versions of the files we created in this lesson are below. We'll continue working on these in the next lesson:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)benchmarks![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we built the foundations of a domain-specific container, tailored directly for our program's needs.
+
+1.  **The Facade Pattern**: We used a class to hide the complex "physical" memory layout (SoA) behind a simple "logical" API (OOP).
+2.  **Proxy Objects**: We learned that iterators don't have to point to real data. They can yield transient **proxy objects** that act as windows into scattered memory.
+3.  **Range Adaptation**: We used `std::views::zip` and `std::views::transform` to implement the iteration logic without writing any raw iterator code.
+4.  **Zero-Cost Abstraction**: We verified via benchmarking that this high-level abstraction compiles down to the most optimal machine code possible.

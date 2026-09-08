@@ -1,0 +1,476 @@
+In the previous lesson, we established that long-running systems will eventually choke and die if they rely on the global C++ allocator for dynamic lifetimes. External fragmentation splinters the heap, and scattered data triggers massive hardware stalls via TLB misses and page faults.
+
+The industry-standard solution is to ban the use of general-purpose `new` and `delete` in the critical execution path. Instead, we ask the operating system for a massive, contiguous slab of memory when the program boots up, and we take on the responsibility of managing that space ourselves.
+
+In this lesson, we will build the simplest, fastest, and most ruthless memory manager in existence: the **linear allocator**, frequently called an **arena allocator**.
+
+We are going to treat memory exactly as the CPU sees it: an array of raw bytes.
+
+## Bypassing the OS Completely
+
+To build our allocator, we need a dedicated class that holds onto a block of memory. When our `Arena` object is constructed, it will make a single call to the global allocator to grab our physical memory budget. The type we assign to these bytes doesn't particularly matter at this stage. We will use `std::byte`, a modern C++ type specifically designed to represent raw memory, but representing bytes as `char`s or `uint8_t`s is also common:
+
+### dsa_core/include/dsa/Arena.h
+
+```
+#pragma once
+#include <cstddef> // for std::byte, size_t
+#include <new>
+
+class Arena {
+private:
+  std::byte* Buffer; 
+  size_t Capacity;
+
+public:
+  Arena(size_t Size)
+    : Capacity{Size} {
+    // A single, heavy allocation on boot
+    Buffer = new std::byte[Size]; 
+  }
+
+  ~Arena() {
+    delete[] Buffer;
+  }
+
+  // Prevent copying - we don't want multiple arenas
+  // thinking they own the same physical memory
+  Arena(const Arena&) = delete;
+  Arena& operator=(const Arena&) = delete;
+};
+```
+
+Once an `Arena` is constructed, we will own a large, contiguous block of memory. As far as the operating system is concerned, our application is using this memory, even if it is completely empty. The operating system will leave it alone, and no other threads or programs can touch it.
+
+Additionally, as long as the `Size` of our arena is sufficient for our needs, we will never need to ask the OS for any more memory, completely avoiding the performance cost of any further dynamic allocations.
+
+## The Bump Pointer Mechanic
+
+Once our `Arena` has acquired a big block of RAM, it needs a way to distribute chunks of this memory to the other parts of the application that need it. Our `Arena` does not need the expensive algorithm to search for free space, which makes the global C++ allocator so slow. Instead, it can implement a lightweight "bump pointer" mechanic.
+
+We simply keep track of an `Offset` integer that represents how many bytes of our buffer we have handed out so far. When a request comes in, we calculate the current memory address, return it, and bump the offset forward by the requested size.
+
+We'll implement this as a function called `Allocate()`:
+
+### dsa_core/include/dsa/Arena.h
+
+```
+// ...
+
+class Arena {
+private:
+  std::byte* Buffer;
+  size_t Capacity;
+  size_t Offset{0}; 
+
+public:
+  // ...
+
+  void* Allocate(size_t Size) {
+    // Check if we have enough physical space left
+    if (Offset + Size > Capacity) {
+      return nullptr;
+    }
+
+    // Calculate the exact memory address to return
+    void* Result = Buffer + Offset; 
+
+    // Bump the offset forward for the next allocation
+    Offset += Size; 
+
+    return Result;
+  }
+  
+  // ...
+};
+```
+
+Within `Allocate()`, there are no locks. There are no loops. There are no metadata headers being injected into the RAM. It is a single bounds check and an integer addition. This is an $O(1)$O(1) algorithm that executes in roughly 3 CPU cycles. We'll write benchmarks to compare the performance of this to other approaches later in the lesson.
+
+## Implementing Memory Alignment
+
+If we test our `Allocate()` function as it currently exists, it will work most of the time. But eventually, it will cause the CPU to suffer a massive performance penalty or forcefully crash the program with a hardware exception.
+
+As we covered in the previous lesson, the hardware expects that certain data types be aligned in memory. For example, a 4-byte `int` must start at a memory address cleanly divisible by 4. An 8-byte `double` must start at a memory address cleanly divisible by 8.
+
+Imagine we ask our current `Arena` for 3 bytes (perhaps for a small string), and then we immediately ask it for an 8-byte `double`:
+
+```
+// Offset is 0
+void* str = MyArena.Allocate(3);
+// Offset bumps to 3
+
+// Offset is 3. We ask for a double.
+void* num = MyArena.Allocate(8); 
+// The double is placed at memory address Buffer + 3
+```
+
+Because `3` is not cleanly divisible by `8`, our `double` is misaligned.
+
+If a misaligned variable straddles the boundary between two physical 64-byte cache lines, the CPU is forced to perform two separate expensive RAM fetches instead of one, stitching the halves together in the registers to recreate our value.
+
+This degrades performance and, on more rigid architectures, the hardware refuses to do this work entirely and will just crash.
+
+### Automatically Padding the Arena
+
+To fix this, our `Allocate()` function can accept an `Alignment` parameter. Before we return the pointer, we must calculate if the current `Offset` satisfies that alignment. If it doesn't, we must artificially bump the `Offset` forward, injecting dead padding bytes until we hit a clean boundary.
+
+We could do this using standard arithmetic involving the modulo operator `%`, however this approach requires division, which is one of the slowest hardware instructions on the CPU.
+
+Instead, because alignment requirements in C++ are powers of two (2, 4, 8, 16, 32), we can use incredibly fast bitwise arithmetic. The formula to find the next address that meets an alignment requirement is a classic pattern, but it can take some time to understand why it works:
+
+```
+(Offset + Alignment - 1) & ~(Alignment - 1)
+```
+
+We have added it to our `Allocate()` function below, and a step-by-step explanation of the bitwise manipulations is provided in the following section, for those interested:
+
+### dsa_core/include/dsa/Arena.h
+
+```
+// ...
+
+class Arena {
+// ...
+
+public:
+  // ...
+  // We default to the system's maximum fundamental alignment
+  // (usually 8 or 16 bytes) just to be safe.
+  void* Allocate(
+    size_t Size,
+    size_t Alignment = alignof(std::max_align_t) 
+  ) {
+    // 1. Calculate the padding needed to reach the next boundary
+    size_t AlignedOffset =
+      (Offset + Alignment - 1) & ~(Alignment - 1); 
+
+    // 2. Check if the aligned request fits
+    if (AlignedOffset + Size > Capacity) {
+      return nullptr;
+    }
+
+    // 3. Set up the result and bump the offset
+    void* Result = Buffer + AlignedOffset;
+    Offset = AlignedOffset + Size; 
+
+    return Result;
+  }
+  // ...
+};
+```
+
+### Advanced: The Alignment Formula
+
+The expression `(Offset + Alignment - 1) & ~(Alignment - 1)` is a classic, heavily optimized systems programming idiom that executes in a single CPU register cycle.
+
+Let's imagine the case where our `Offset` is $3$3 and we need an `Alignment` of $8$8. In that scenario, we'd want our `AlignedOffset` to be $8$8. Let's walk through how the alignment formula generates that result:
+
+1.  On the left side of the expression, we calculate `(Offset + Alignment - 1)` to push our offset past the current boundary. In our example, this will be $3 + 8 - 1 = 10$3+8−1=10, or `00001010` in binary.
+2.  We want to snap this result *back* to the nearest multiple of `Alignment`. In our case, we want to snap $10$10 back to the nearest multiple of $8$8, which is $8 \times 1 = 8$8×1=8. We will do this by applying a mask to our `00001010` value.
+3.  On the right side of this expression, we calculate `(Alignment - 1)`. This is $8 - 1 = 7$8−1=7 in our example, which in binary is `00000111`.
+4.  We invert this result with the `~` operator to give `11111000`. This is our mask.
+5.  Our expression has now simplified to `00001010 & 11111000`
+6.  This evaluates to `00001000`, which is exactly $8$8.
+
+Feel free to walk through this process with different `Offset` and `Alignment` values to be confident that it generates the expected output in all cases.
+
+### Advanced: Using `std::has_single_bit` and `std::bit_ceil`
+
+Numbers that are powers of two (`1`, `2`, `4`, ...) have a useful property: their binary representation contains only a single bit (`00000001`, `00000010`, `00000100`, ...)
+
+The C++20 `<bit>` library that we introduced [earlier in the course ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/advanced-boolean-techniques) provides some high-performance utilities that allow us to take advantage of this property. For example, if we need to check that a value is a power of two, `std::has_single_bit()` can do that:
+
+```
+#include <bit>
+
+int main() {
+  std::has_single_bit(0); // False (00000000)
+  std::has_single_bit(1); // True  (00000001)
+  std::has_single_bit(2); // True  (00000010)
+  std::has_single_bit(3); // False (00000011)
+  
+  std::has_single_bit(7); // False (00000111)
+}
+```
+
+We could use this in our `Allocate()` function to throw errors on unacceptable `Alignment` values:
+
+```
+// ...
+#include <cassert> 
+#include <bit> 
+
+class Arena {
+// ...
+
+public:
+  // ...
+  void* Allocate(
+    size_t Size,
+    size_t Alignment = alignof(std::max_align_t)
+  ) {
+    assert(std::has_single_bit(Alignment);
+    
+    // ...
+  }
+  // ...
+};
+```
+
+We also have `std::bit_ceil()`, which rounds a value up to the next available power of two:
+
+```
+#include <bit>
+
+int main() {
+  std::bit_ceil(0); // 1 (00000000 -> 00000001)
+  std::bit_ceil(1); // 1 (00000001 -> 00000001)
+  std::bit_ceil(2); // 2 (00000010 -> 00000010)
+  std::bit_ceil(3); // 4 (00000011 -> 00000100)
+  
+  std::bit_ceil(7); // 8 (00000111 -> 00001000)
+  
+  // bit_floor is also available if we need to round
+  // values down to their closest power of two
+  std::bit_floor(7); // 4 (00000111 -> 00000100)
+}
+```
+
+Instead of throwing errors, we could alternatively use `std::bit_ceil()` to silently correct any invalid `Alignment` arguments in our `Allocate()` function:
+
+```
+// ...
+#include <bit> 
+
+class Arena {
+// ...
+
+public:
+  // ...
+  void* Allocate(
+    size_t Size,
+    size_t Alignment = alignof(std::max_align_t)
+  ) {
+    Alignment = std::bit_ceil(Alignment);
+    
+    // ...
+  }
+  // ...
+};
+```
+
+## Using Placement New
+
+Now that our `Arena` securely manages raw, aligned memory, how do we actually put objects into it?
+
+We cannot use the standard `new Player()` syntax, because that hardcodes a call to the global OS allocator. We already have the memory; we just need the compiler to run the `Player` constructor directly on top of our pre-allocated bytes.
+
+We can do this using **Placement New**.
+
+Placement `new` is a specialized C++ syntax that allows us to pass a specific memory address to the `new` operator. The compiler skips the allocation step entirely and instantly invokes the constructor at the target address.
+
+For example, if we wanted to use a memory location stored in a variable called `address` to construct a new `Player` object, passing `42` and `100.0f` to the `Player` constructor, our syntax would look like this:
+
+```
+new (address) Player(42, 100.0f);
+```
+
+A complete example of setting up a new `Arena` and constructing a new `Player` in it might look like this:
+
+### dsa_app/main.cpp
+
+```
+#include <iostream>
+#include <dsa/Arena.h>
+
+struct Player {
+  int ID;
+  float Health;
+
+  Player(int i, float h) : ID{i}, Health{h} {
+    std::cout << "Player " << ID << " spawned.\n";
+  }
+};
+
+int main() {
+  // Grab a 1-Megabyte block from the OS once
+  Arena LevelArena(1024 * 1024);
+
+  // Ask our Arena for the exact bytes needed for a Player
+  void* Memory = LevelArena.Allocate(
+    sizeof(Player),
+    alignof(Player)
+  );
+
+  // Execute the Player constructor inside our Arena memory
+  Player* P1 = new (Memory) Player(42, 100.0f); 
+
+  std::cout << "Health: " << P1->Health;
+
+  return 0;
+}
+```
+
+## The Fast Discard
+
+You might have noticed that our `Arena` class does not have a `Free()` or `Deallocate()` method.
+
+This is an intentional limitation of the arena allocator pattern. If we allowed individual objects to be freed at random times, we would immediately introduce the exact external fragmentation and Swiss-cheese holes from the previous lesson.
+
+We'll implement a more complex allocator soon to deal with dynamic lifetimes, but a linear allocator only moves forward. It cannot free individual objects.
+
+So how do we reclaim memory? When the system that uses our `Arena` is done and no longer needs the objects it put there, we reclaim that memory all at once. When a player finishes the level, or when a renderer completes a frame, or when a web server finishes responding to a request, we simply reset the `Offset` back to `0`:
+
+### dsa_core/include/dsa/Arena.h
+
+```
+// ...
+
+class Arena {
+  // ...
+public:
+  // ...
+
+  void Reset() {
+    Offset = 0; 
+  }
+};
+```
+
+This is what makes the arena pattern so efficient. Deleting 10,000 objects takes the same amount of time as deleting 1 object: a single cycle to assign `0` to an integer. The old data is technically still sitting in RAM, but it doesn't matter. The next time we call `Allocate()`, our bump pointer will happily overwrite the dead bytes with new data.
+
+### The Destructor Trap
+
+There is a severe catch to this mass-deletion strategy. When we call standard `delete P1`, the compiler automatically invokes the `~Player()` destructor before freeing the memory. Because we are bypassing `delete` and simply resetting an integer, ***destructors are never called***.
+
+If our `Player` object is just "Plain Old Data" (POD) - a struct full of floats, integers, and booleans - this is perfectly fine. The data is overwritten, and nothing is lost.
+
+But if our object holds things like a network socket, an open file handle, or an internal `std::vector` that manages its own heap memory, wiping the `Arena` will permanently leak those external resources.
+
+If we place complex objects into an arena that requires additional cleanup, we are responsible for ensuring that the cleanup happens. This usually involves manually calling destructors before resetting the offset:
+
+### dsa_app/main.cpp
+
+```
+#include <iostream>
+#include <dsa/Arena.h>
+
+int main() {
+  Arena LevelArena(1024 * 1024);
+
+  void* Memory = LevelArena.Allocate(
+    sizeof(Player), alignof(Player)
+  );
+  
+  Player* P1 = new (Memory) Player(42, 100.0f);
+
+  // We are done with the level
+  // Manually invoke destructors or any other cleanup logic
+  P1->~Player(); 
+
+  // Reclaim all memory for the next level
+  LevelArena.Reset(); 
+
+  return 0;
+}
+```
+
+Because of this caveat, arena allocators are most frequently used to store completely flat, contiguous data structures that don't require complex teardown logic.
+
+## Benchmarking the Arena
+
+Let's confirm our arena is hitting our performance goals. We will use [Google Benchmark ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/google-benchmark) to pit our custom `Arena` directly against the `new` operator, and against pure stack allocation.
+
+We will create a struct containing 32 bytes of payload data, and allocate it 10,000 times:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <dsa/Arena.h>
+
+struct Entity {
+  uint64_t data[4]; // 32 bytes
+};
+
+static void BM_GlobalAllocator(benchmark::State& state) {
+  for (auto _ : state) {
+    for (int i = 0; i < 10000; ++i) {
+      Entity* e = new Entity();
+      benchmark::DoNotOptimize(e);
+      delete e;
+    }
+  }
+}
+BENCHMARK(BM_GlobalAllocator);
+
+static void BM_ArenaAllocator(benchmark::State& state) {
+  // Pre-allocate enough space for 10,000 entities
+  Arena MyArena(10000 * sizeof(Entity));
+
+  for (auto _ : state) {
+    for (int i = 0; i < 10000; ++i) {
+      void* mem = MyArena.Allocate(
+        sizeof(Entity), alignof(Entity)
+      );
+      Entity* e = new (mem) Entity();
+      benchmark::DoNotOptimize(e);
+    }
+    // Instant O(1) bulk free
+    MyArena.Reset();
+  }
+}
+BENCHMARK(BM_ArenaAllocator);
+
+static void BM_StackAllocation(benchmark::State& state) {
+  for (auto _ : state) {
+    for (int i = 0; i < 10000; ++i) {
+      Entity e;
+      benchmark::DoNotOptimize(e);
+    }
+  }
+}
+BENCHMARK(BM_StackAllocation);
+```
+
+```
+-----------------------------
+Benchmark                 CPU
+-----------------------------
+BM_GlobalAllocator   0.369 ms
+BM_ArenaAllocator    0.016 ms
+BM_StackAllocation   0.012 ms
+```
+
+By eliminating the free-list search algorithms and ditching the per-object hidden metadata headers, our custom `Arena` executes much faster than the global heap.
+
+It achieves stack-like performance without the stack's size and lifecycle constraints. Objects can live in our `Arena` as long as they need to - their lifecycle isn't linked to the functions in which they were created.
+
+Additionally, unlike the global heap, the memory managed by our `Arena` will never externally fragment, regardless of how long the program runs.
+
+## Complete Code
+
+Here is the complete implementation of our `Arena` allocator:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we created a solution to the performance traps of standard dynamic memory:
+
+1.  We constructed an **arena allocator** that bypasses the operating system entirely after an initial bulk allocation.
+2.  We implemented a **bump pointer**, achieving O(1) allocation that executes as fast as stack allocation.
+3.  We accommodated the requirements around **memory alignment**, using fast bitwise arithmetic to pad our pointers and prevent cache-line straddling and CPU faults.
+4.  We used **Placement New** to forcefully execute C++ constructors inside our custom pre-allocated bytes.
+5.  We learned the **fast discard** pattern, instantly reclaiming massive amounts of memory by resetting a single integer, while recognizing the danger of bypassed destructors.
+
+The arena is perfect for data with homogeneous lifespans, like all the physics objects in a single game level or all the JSON nodes in a single web request. But what happens if we need to spawn and despawn individual objects completely unpredictably? The arena cannot do that without fragmenting.
+
+In the next lesson, we will build a custom allocator designed specifically to solve the problem of dynamic entity lifespans: the **object pool** and the **implicit free list**.

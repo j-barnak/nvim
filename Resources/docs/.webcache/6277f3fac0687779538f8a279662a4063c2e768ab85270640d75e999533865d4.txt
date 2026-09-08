@@ -1,0 +1,289 @@
+In the previous lesson, we unlocked the full power of our CPU using **parallel algorithms**. We saw how `std::transform_reduce()` could crunch through massive datasets using every available core.
+
+But we ended with a warning. We looked at a simple `++` operation inside a parallel lambda and noted that it was a ticking time bomb.
+
+```
+int total_weight = 0;
+
+std::for_each(
+  std::execution::par,
+  inventory.begin(),
+  inventory.end(),
+  [&](const auto& item) {
+    total_weight += item.weight;
+  }
+);
+```
+
+When two threads try to modify the same memory address simultaneously, we get a **data race**. Our algorithm can now return the incorrect answer, or our program can crash or corrupt memory in ways that are impossible to debug.
+
+To fix this, we need **synchronization**. We need a way to force threads to wait for their turn. In this lesson, we are going to fix the race condition using the two primary tools: `std::mutex` and `std::atomic`.
+
+We will also measure the **cost** of the fix and discover that thread safety is expensive. We will visualize how locks put threads to sleep, how atomics trigger cache coherency wars inside your CPU, and how a subtle hardware phenomenon called **false sharing** can make our parallel code run slower than a single-threaded loop.
+
+## The Big Hammer: `std::mutex`
+
+The most intuitive way to stop two threads from fighting is **mutual exclusion**. If Thread A is touching the data, Thread B must wait.
+
+The standard library provides `std::mutex` for this purpose. You can think of a mutex as a physical key to a room. Only one person can hold the key at a time. If you want to enter the room (access the data) and the key is missing, you have to stand in the hallway and wait until the current owner comes out and hands it to you.
+
+Here is how we protect our counter using a mutex:
+
+```
+#include <mutex>
+#include <vector>
+#include <execution>
+#include <algorithm>
+
+struct Item { int weight; };
+
+void ProcessInventory(const std::vector<Item>& items) {
+  int total_weight = 0;
+
+  // The Guard Object
+  std::mutex weight_mutex;
+
+  std::for_each(
+    std::execution::par,
+    items.begin(), items.end(),
+    [&](const Item& item) {
+      // Acquire the lock.  If another thread has it,
+      // we block (sleep) here
+      std::lock_guard<std::mutex> lock(weight_mutex);
+
+      // Only one thread can be executing this line at a time
+      total_weight += item.weight;
+
+      // Release the lock - automatically happens
+      // when `lock` goes out of scope thanks to RAII
+    }
+  );
+}
+```
+
+We use `std::lock_guard` (or `std::scoped_lock` in C++17) to manage the mutex.
+
+This is the **RAII** (Resource Acquisition Is Initialization) pattern in action. When the `lock` variable is created, it calls `mutex.lock()`. When the variable is destroyed at the end of the scope, it calls `mutex.unlock()`. This ensures we never accidentally leave the mutex locked.
+
+### The Hardware Cost of Mutexes
+
+This code is now correct. It will never lose data. But mechanically, what happens when a thread hits a locked mutex?
+
+It doesn't just sit there spinning in a loop, checking the flag (usually). That would burn CPU cycles and battery power. Instead, it makes a **system call** to the operating system. It effectively says: *"I cannot proceed. Put me to sleep and wake me up when this mutex is free."*
+
+The OS removes the thread from the CPU core and schedules a different program to run. This is a **context switch**. It involves saving registers, flushing pipelines, and polluting caches. It is an incredibly heavy operation, taking thousands of CPU cycles.
+
+When the mutex is finally unlocked, the OS has to wake the thread up and schedule it back onto a core.
+
+By adding a mutex to a tight loop (like adding integers), we have replaced a single assembly instruction (`ADD`, ~1 cycle) with a potential context switch (~10,000 cycles). We have serialized our "parallel" program and added massive overhead.
+
+## Benchmarking: The Cost of Serialization
+
+Let's prove it, but first, we need to adjust how we assess the output of our benchmarks.
+
+By default, we've been looking at **CPU Time**. This is the amount of time the processor spends actively executing instructions for your code. If the operating system decides to put our thread to sleep because of something else happening on the system, we pause the clock. We shouldn't be penalized for that.
+
+But now, the reason we're being put to sleep is because of something **we** are doing. Our thread is telling the operating system, "I'm locked; put me to sleep". If we have a program that spends 99% of its time sleeping and waiting for locks, the benchmark might report that it is incredibly "efficient" because it uses almost no CPU cycles.
+
+But to the user, the program is frozen.
+
+To measure **contention** - the time wasted waiting for resources - we should switch to using the wall clock time. This measures the actual time elapsed, regardless of whether the CPU was busy or sleeping.
+
+### Applying `UseRealTime()`
+
+To tell Google Benchmark we're mostly interested in clock time, we can add the `->UseRealTime()` modifier:
+
+```
+// Measure the actual elapsed time, including sleep/blocking
+BENCHMARK(BM_MutexContention)->UseRealTime();
+```
+
+The library will then use this metric to decide things such as how many iterations are needed to get a stable result.
+
+### Benchmarking Mutexes
+
+Let's write a benchmark that increments a shared counter 1,000,000 times. We will compare an unsafe version (no lock) against a safe version (mutex), as well as a single-threaded implementation for reference (also safe).
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+#include <mutex>
+#include <execution>
+#include <algorithm>
+
+const std::vector<int> WORK_ITEMS(1000000, 1);
+
+// 1. Single-Threaded (Correct)
+static void BM_Seq(benchmark::State& state) {
+  int counter = 0;
+  for (auto _ : state) {
+    std::for_each(
+      std::execution::seq,
+      WORK_ITEMS.begin(), WORK_ITEMS.end(),
+      [&](int) {
+        counter++; 
+      }
+    );
+  }
+  benchmark::DoNotOptimize(counter);
+}
+
+// 2. Multi-Threaded (Incorrect)
+static void BM_Unsafe(benchmark::State& state) {
+  int counter = 0;
+  for (auto _ : state) {
+    std::for_each(
+      std::execution::par,
+      WORK_ITEMS.begin(),
+      WORK_ITEMS.end(),
+      [&](int) {
+        // Fast, but wrong
+        counter++; 
+      }
+    );
+  } 
+  benchmark::DoNotOptimize(counter);
+}
+
+// 3. Multi-Threaded (Correct - Mutex)
+static void BM_Mutex(benchmark::State& state) {
+  int counter = 0;
+  std::mutex mtx; // The guard
+  
+  for (auto _ : state) {
+    std::for_each(
+      std::execution::par,
+      WORK_ITEMS.begin(),
+      WORK_ITEMS.end(),
+      [&](int) {
+        std::scoped_lock lock(mtx); // Acquire (Bottleneck)
+        counter++;                  // Modify
+      }                             // Release
+    );
+  }
+  benchmark::DoNotOptimize(counter);
+}
+
+#define REGISTER_BENCHMARK(func) \
+  BENCHMARK(func) \
+    ->Unit(benchmark::kMicrosecond) \
+    ->UseRealTime()
+
+REGISTER_BENCHMARK(BM_Seq);
+REGISTER_BENCHMARK(BM_Unsafe);
+REGISTER_BENCHMARK(BM_Mutex);
+```
+
+The mutex version is orders of magnitude slower:
+
+```
+------------------------------------------
+Benchmark                  Time        CPU
+------------------------------------------
+BM_Seq/real_time         251 us     255 us
+BM_Unsafe/real_time     88.7 us    80.6 us
+BM_Mutex/real_time    146845 us   74219 us
+```
+
+This is **contention**. We have all of our threads fighting for 1 lock. At any given moment, 1 thread is working, and the rest are either sleeping, waking up, or trying to acquire the lock. We have taken a parallel machine and forced it to run sequentially, paying a tax for every single operation.
+
+## The Scalpel: `std::atomic`
+
+For simple data types like `int`, `bool`, or pointers, a mutex is overkill. We don't need to put the thread to sleep; we just need to make sure the `ADD` instruction happens **atomically** (all at once).
+
+The C++ standard provides `std::atomic<T>` for this:
+
+```
+#include <algorithm>
+#include <atomic> 
+
+void ProcessInventory() {
+  // Thread-safe integer
+  std::atomic<int> total_weight{0}; 
+
+  std::for_each(
+    std::execution::par,
+    items.begin(),
+    items.end(),
+    [&](const Item& item) {
+      // Safe! No mutex required
+      total_weight += item.weight;
+    }
+  );
+}
+```
+
+When you write `total_weight += item.weight`, the compiler translates this into a special hardware instruction. On x86 CPUs, this is often a `LOCK ADD`.
+
+This instruction tells the CPU: *"Do not let anyone else touch this memory address until I am done adding this number."* It does not involve the operating system. There are no system calls, no sleeping threads, and no context switches. It happens entirely at the silicon level.
+
+### Benchmark: Atomics vs. Mutex
+
+Let's add an atomic test case to our benchmark suite.
+
+### benchmarks/main.cpp
+
+```
+#include <atomic>
+
+// ... 
+
+// 4. Multi-Threaded (Correct - Atomic)
+static void BM_Atomic(benchmark::State& state) {
+  std::atomic<int> counter{0};
+  
+  for (auto _ : state) {
+    std::for_each(
+      std::execution::par,
+      WORK_ITEMS.begin(), WORK_ITEMS.end(),
+      [&](int) {
+        // Hardware-level synchronization
+        counter++; 
+      }
+    );
+  }
+}
+
+// ...
+
+BENCHMARK(BM_Atomic)->UseRealTime();
+```
+
+```
+------------------------------------------
+Benchmark                 Time         CPU
+------------------------------------------
+BM_Seq/real_time        246 us      236 us
+BM_Unsafe/real_time    89.8 us     82.2 us
+BM_Mutex/real_time   158793 us   105469 us
+BM_Atomic/real_time    7384 us     7224 us
+```
+
+The atomic version is much faster than the mutex version. But it is also much slower than `BM_Unsafe`'s incrementing of a regular, non-atomic `int`.
+
+If they both use a single CPU instruction to increment the number, why is the atomic version much slower? We'll cover this in the next lesson.
+
+Preview
+
+### Lock-Free Programming
+
+In this chapter, we treat `std::atomic` as a simple replacement for basic numeric types like `int`, even relying on familiar operators like `++` and `+=`. However, behind the scenes, the implementations of these atomic operators are doing something completely different from their standard `int` counterparts.
+
+Later in the course, we have a dedicated chapter that explores lock-free programming, which revisits `std::atomic` and uses its low-level API in a much deeper way. When we return to atomics, we will cover:
+
+- **Atomic Structs:** How to create `std::atomic` versions of more complex entities, like a combined `Health` and `Mana` struct, and the hardware limitations involved.
+- **Compare-And-Swap (CAS):** How to build our own custom atomic logic using optimistic concurrency and the `compare_exchange_weak()` function.
+- **Out-of-Order Execution:** How modern CPUs actively reorder our compiled instructions to optimize performance, and how `std::atomic` disables this reordering to protect our concurrent logic from data races.
+- **Memory Fences:** How to inform `std::atomic` when specific instruction reordering is compatible with our logic, thereby re-enabling CPU performance optimizations safely.
+
+## Summary
+
+In this lesson, we moved from simply running code in parallel to ensuring that the code is actually correct.
+
+1.  We saw that without synchronization, we can create a **race condition**. Parallel modifications to shared memory result in data corruption.
+2.  We can guarantee safety by **locking data** using `std::mutex`, putting threads to sleep until they can acquire the key. But the cost of operating system calls makes it incredibly slow for fine-grained tasks.
+3.  By using special **atomic CPU instructions** through `std::atomic`, we avoided the OS scheduler entirely. This provided a massive speedup over mutexes, but is still significantly slower than the unsafe version and slower than even the single-threaded implementation. Why does a single hardware instruction cost so much?
+
+In the next lesson, we will look more closely at the physical cache lines inside our CPU. We will explore **Cache Coherency**, the **MESI Protocol**, and how the physical layout of our data can cause our cores to fight each other in a phenomenon known as **False Sharing**.

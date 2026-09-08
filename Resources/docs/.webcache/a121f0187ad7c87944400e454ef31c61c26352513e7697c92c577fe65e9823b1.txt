@@ -1,0 +1,399 @@
+In our previous lesson, we learned how to distribute massive workloads across a network of physical servers using a **hash ring**. We successfully decoupled our data from the hardware, ensuring our architecture could scale infinitely.
+
+But distributed architectures introduce a new class of problems: **aggregation**. If a load balancer spreads millions of web requests across 50 different servers, how do we answer simple, global questions like: *"How many unique users visited our platform today?"*
+
+In this lesson, we explore why giving an exact answer to this question is often prohibitively expensive, and how we can trade exactness for a tiny, efficient algorithm called **HyperLogLog**.
+
+## Cardinality
+
+The number of unique elements in a collection is usually referred to as its **cardinality**.
+
+For containers designed to enforce uniqueness, like a `std::unordered_set`, calculating cardinality is a simple $O(1)$O(1) operation. Every element in the container is unique, so the cardinality is identical to the `size()` of the container.
+
+However, many systems do **not** enforce uniqueness, meaning the cardinality can be smaller than the size. For example, a `std::unordered_multiset` allows duplicate values:
+
+In real world applications, we might have a network load balancer streaming web requests, or an analytics system tracking the actions of all of our players. These systems are firehoses of duplicate data.
+
+If Player One performs 50,0000 actions, and we track those actions in a multiset, its `size()` will increase by `50000`. But that 50,000 tells us absolutely nothing about the underlying cardinality. It doesn't tell us if we have one extremely active player, or thousands of relatively inactive players.
+
+## The Count-Distinct Problem
+
+To find the exact cardinality of a data stream, we have to filter out the duplicates. To know if an incoming string like `"PlayerOne"` is a duplicate, the system must remember every single unique string it has ever seen.
+
+We might tackle this by adding an extra `std::unordered_set` to our system, pipe all of our streaming data through it, and let its underlying logic reject the duplicate keys. Then, any time we need to know the cardinality of our main `unordered_multiset`, we can just check the `size()` of the linked `unordered_set`.
+
+However, if our application receives 100 million unique visitors, our `std::unordered_set` will grow to 100 million individual nodes. Even if we use our [hash caching techniques ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/string-keys-and-hash-caching) to shrink those values down to 64-bit integer hashes, we're still dealing with a huge blob of data. With alignment padding and allocator overhead, this will easily span over 2GB of RAM.
+
+Worse, to determine the global cardinality of traffic shared across 50 servers, we would have to send those 50 massive hash sets over the network to a central aggregator. This saturates our bandwidth and then forces that machine to churn through 100GB of data to answer a simple numeric question.
+
+## Probabilistic Counting and Leading Zeros
+
+When physical limits prevent us from remembering exact state, we can switch to **probabilistic data structures**. These techniques trade accuracy for efficiency. In most real world scenarios, if a reported size or cardinality is 99% accurate, that's usually good enough.
+
+If we can implement a technique that gives us 99% accuracy at a fraction of the resource cost, that's a good trade. HyperLogLog gives us these 99% accurate cardinality estimates, and it does this with almost zero memory footprint.
+
+This is possible because it doesn't need to store the values it has previously seen. To count how many unique items we have seen without actually storing them, we can rely on the **avalanche effect** of a good hash function. If we hash an incoming string like `"PlayerOne"`, the resulting 64-bit integer is a randomized sequence of 1s and 0s.
+
+Because each bit has a 50% chance to be `0` and a 50% chance to be `1`, we can predict how our hashes will be distributed. For example:
+
+- Approximately 50% of all hashes will start with a `0`.
+- Approximately 25% of all hashes will start with `00`.
+- Approximately 12.5% of all hashes will start with `000`, and so on.
+
+Flipping a coin and getting heads 10 times in a row is incredibly rare. In binary, generating a hash with 10 leading zeros is equally rare - it only happens 1 in $2^{10}$210 times. In other words, we'd likely need to hash around 1,024 unique values before we saw a hash with 10 leading zeros.
+
+Therefore, if we simply keep track of the **maximum** number of leading zeros we have ever seen, we can estimate how many unique values we have hashed:
+
+We're explaining the concepts using small sets of values here, but because this method relies on statistical probabilities, it works best with large quantities of data. If a server has only processed 5 unique users, the sample size is far too small to yield a reliable statistical distribution. This means the cardinality estimates will be inaccurate.
+
+However, when we are processing huge volumes of data, this probabilistic approach means we no longer need gigabytes of RAM. We can theoretically estimate the cardinality of datasets spanning billions of values using a single integer that tracks the highest zero-count we've ever seen.
+
+Only one out of every billion hashes will start with 30 leading zeros so, if our max zeros integer is `30`, we estimate that our algorithm has hashed $2^{30}$230 (a billion) unique values.
+
+### Sparse Representation and HLL++
+
+Production implementations that must support data sets across a wide spectrum of sizes will typically use HyperLogLog (HLL) as part of a hybrid approach, often called **HLL++**.
+
+For small quantities of data, the system simply operates like a regular container, storing the hashed integers directly and providing exact cardinality values. It is only when this container fills up and exceeds a specific memory threshold that it transitions into the probabilistic structure we are building here.
+
+## Stochastic Averaging
+
+However, relying on a single global "maximum zero" count is too volatile. If the very first string we hash gets astronomically lucky and produces 20 leading zeros, our single-byte tracker would estimate we have $2^{20}$220 (a million) users, ruining our accuracy.
+
+To fix this variance, we use **stochastic averaging**. Instead of maintaining one global counter, we maintain thousands of independent counters. In HyperLogLog implementations, these counters are usually called **registers**.
+
+Each incoming value gets routed to one of these registers, and updates the register if that value's hash has more leading zeroes than anything that register has previously seen. When estimating the overall cardinality, we'd then use the average of these registers.
+
+The industry standard for HyperLogLog assigns each hash to one of $2^{14}$214 registers - 16,384 different counters. To implement this, we hash each value we receive to a 64-bit integer. We then slice that hash into two pieces:
+
+1.  We use the **first 14 bits** as our array index, routing the hash to one of our $2^{14}$214 registers.
+2.  We count the leading zeros on the **remaining 50 bits**, and we update that specific register if the new count is higher than its current value.
+
+Because those 50 bits can never have more than 50 leading zeros, a simple 8-bit `uint8_t` is sufficient for each register. So, our layout can be a contiguous `std::vector<uint8_t>` containing exactly 16,384 elements:
+
+### dsa_core/include/dsa/HyperLogLog.h
+
+```
+#pragma once
+#include <vector>
+#include <string_view>
+#include <cstdint>
+#include <functional>
+
+class HyperLogLog {
+private:
+  // We use 14 bits for the index (2^14 = 16,384 buckets)
+  static constexpr int Precision = 14;
+  static constexpr int NumBuckets = 1 << Precision;
+
+  // A contiguous 16KB array of 8-bit registers
+  std::vector<uint8_t> Registers;
+
+public:
+  HyperLogLog() {
+    // Initialize our 16KB array with zeros
+    Registers.assign(NumBuckets, 0);
+  }
+};
+```
+
+## 64-Bit Avalanching
+
+HyperLogLog requires every single bit to be well-randomized. The probabilistic counting assumes around 50% of bits will be `0`, and 50% will be `1`. However, the standard library does **not** require this of `std::hash`.
+
+Implementations of `std::hash` are sometimes optimized just to ensure avalanching in the context of bucket allocations within a hash-based container, rather than guaranteeing randomness across all 64 bits.
+
+To deal with this, our string hasher can use `std::hash` for the initial conversion to a 64-bit integer, but then apply the MurmurHash3-style technique we introduced earlier in the chapter:
+
+### dsa_core/include/dsa/HyperLogLog.h
+
+```
+// ...
+
+class HyperLogLog {
+private:
+  // ...
+
+  // Combines std::hash with a MurmurHash3-style
+  // finalizer so the result has full 64-bit avalanche
+  static uint64_t StringHasher(std::string_view key) {
+    uint64_t h = std::hash<std::string_view>{}(key);
+    h ^= h >> 33;
+    h *= 0xff51afd7ed558ccdULL;
+    h ^= h >> 33;
+    h *= 0xc4ceb9fe1a85ec53ULL;
+    h ^= h >> 33;
+    return h;
+  }
+  
+  // ...
+};
+```
+
+## Using `std::countl_zero`
+
+In the past, counting leading zeros required a slow, sequential `while` loop, shifting bits one by one. But this operation is so fundamental to so many algorithms that modern CPU manufacturers hardwired it directly into the silicon. On x86 architectures, this is the `lzcnt` (Leading Zero Count) instruction. On ARM, it is `clz` (Count Leading Zeros)
+
+As of C++20, the standard library provides a portable wrapper, granting access to this hardware instruction using `std::countl_zero` from the `<bit>` header. Let's use it to implement our `Insert()` method:
+
+### dsa_core/include/dsa/HyperLogLog.h
+
+```
+// ...
+#include <bit> 
+#include <algorithm> 
+
+class HyperLogLog {
+// ...
+public:
+  // ...
+  void Insert(std::string_view key) {
+    uint64_t hash = StringHasher(key);
+
+    // Extract the top 14 bits to find our physical index
+    // We shift right by (64 - 14) = 50 bits
+    size_t index = hash >> (64 - Precision);
+
+    // Extract the bottom 50 bits for zero-counting
+    // We shift left by 14 to erase the index bits
+    uint64_t remainder = hash << Precision;
+
+    // Trigger the single-cycle hardware instruction
+    // If the remainder is 0, we treat it as 1 leading zero
+    // to prevent mathematical errors in the formula later
+    uint8_t zeros = (remainder == 0)
+      ? 1
+      : std::countl_zero(remainder) + 1;
+
+    // Update the bucket, keeping only the highest value
+    Registers[index] = std::max(Registers[index], zeros);
+  }
+};
+```
+
+## The Harmonic Mean
+
+To actually use our `HyperLogLog`, we need an `Estimate()` method that aggregates our 16,384 registers into a single cardinality number.
+
+If we used a standard average, a single outlier would ruin everything. If just one register saw a hash with 30 leading zeros, it would estimate that it has seen a billion unique users - $2^{30}$230 different hashes - to encounter such a result. Even after averaging it across the 16,384 registers, the single result would still massively skew our cardinality estimate.
+
+To fix this, the HyperLogLog algorithm uses the [harmonic mean![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://en.wikipedia.org/wiki/Harmonic_mean). Instead of averaging the raw numbers directly, it averages their fractions. It treats a zero-count of 5 as $1/2^{5}$1/25, and a zero-count of 30 as $1/2^{30}$1/230.
+
+Because $1/2^{30}$1/230 is a microscopically small fraction, the massive outlier contributes almost nothing to the total sum, neutering its ability to skew the result. The harmonic mean naturally smooths our array into a reliable, consistent aggregate.
+
+To implement this, we sum these fractions and then multiply the result by a predefined scaling constant that was derived by the algorithm's creators to maximize the accuracy of the estimate based on the number of buckets we're using:
+
+### dsa_core/include/dsa/HyperLogLog.h
+
+```
+// ...
+#include <cmath> 
+#include <cstdint> 
+
+class HyperLogLog {
+// ...
+public:
+  // ...
+  double Estimate() const {
+    double sum = 0.0;
+
+    for (int i = 0; i < NumBuckets; ++i) {
+      // Calculate 1.0 / 2^(Registers[i]) using a bitwise shift
+      sum += 1.0 / (uint64_t{1} << Registers[i]);
+    }
+
+    // The standard HyperLogLog correction constant (Alpha)
+    // designed specifically for large bucket counts
+    const double Alpha = 0.7213 / (1.0 + 1.079 / NumBuckets);
+
+    // Finalize the harmonic mean calculation
+    return Alpha * NumBuckets * NumBuckets / sum;
+  }
+};
+```
+
+Because our entire container is a flat 16KB `std::vector`, it fits completely inside the CPU's L1 cache. The hardware prefetcher will instantly pull the entire data structure into the silicon, executing the loop in microseconds
+
+## HLL Merging
+
+The true superpower of HyperLogLog reveals itself when we return to our distributed network. If we have 50 servers processing millions of web requests, each server maintains its own 16KB `HyperLogLog` locally. How do we find the total global unique visitors across our whole system?
+
+If we were using exact `std::unordered_set`s, we would have to serialize gigabytes of raw strings, blast them across the network, and force a central aggregator to painfully ingest and deduplicate every single set.
+
+With HyperLogLog, each server simply transmits its tiny 16KB byte array to the aggregator. To merge them, the aggregator does not need to unpack strings or recalculate hashes. It simply takes Server A's array and Server B's array, and finds the `std::max()` of each bucket.
+
+Let's add this `Merge()` capability to our class:
+
+### dsa_core/include/dsa/HyperLogLog.h
+
+```
+// ...
+class HyperLogLog {
+// ...
+public:
+  // ...
+  void Merge(const HyperLogLog& other) {
+    // A cache-friendly, sequential loop over two parallel arrays
+    for (size_t i = 0; i < NumBuckets; ++i) {
+      Registers[i] = std::max(Registers[i], other.Registers[i]);
+    }
+  }
+};
+```
+
+## Usage Example
+
+Let's see our class in action. We will simulate 150,000 users sending 2,000,000 events to a cluster of two servers, each server handling 1,000,000 events.
+
+To demonstrate our merging capability, we will create some cross-server duplicates. That is, some users will hit both servers. `ServerA` will process `User_1` through `User_100000`. `ServerB` will process `User_50001` through `User_150000`. This creates a 50,000-user overlap.
+
+Our `HyperLogLog` lets us quickly approximate the cardinality of each server individually (100,000) as well as the global cardinality (150,000) by merging the tiny 16KB data structures from both servers:
+
+### dsa_app/main.cpp
+
+```
+#include <iostream>
+#include <string>
+#include <random>
+#include <dsa/HyperLogLog.h>
+
+// A helper function to blast a server with duplicate events
+void SimulateTraffic(
+  HyperLogLog& server, 
+  int startUser, 
+  int endUser
+) {
+  std::mt19937 rng(42);
+  std::uniform_int_distribution<int> dist(startUser, endUser);
+  
+  // Simulate 1,000,000 incoming requests
+  for (int i = 0; i < 1'000'000; ++i) {
+    server.Insert("User_" + std::to_string(dist(rng)));
+  }
+}
+
+int main() {
+  HyperLogLog ServerA;
+  HyperLogLog ServerB;
+
+  // Server A handles traffic from 100,000 unique users
+  SimulateTraffic(ServerA, 1, 100'000);
+
+  // Server B handles traffic from 100,000 unique users
+  // including a 50k overlap with ServerA
+  SimulateTraffic(ServerB, 50'001, 150'000);
+
+  // Expected Local Cardinality: 100,000
+  std::cout << "Server A Local Estimate: " 
+            << int(ServerA.Estimate()) << "\n";
+  std::cout << "Server B Local Estimate: " 
+            << int(ServerB.Estimate()) << "\n";
+
+  // The Central Aggregator merges the two 16KB arrays
+  HyperLogLog Global;
+  Global.Merge(ServerA);
+  Global.Merge(ServerB);
+
+  // Expected Global Cardinality: 150,000
+  std::cout << "Global Cluster Estimate: " 
+            << int(Global.Estimate());
+}
+```
+
+```
+Server A Local Estimate: 100582
+Server B Local Estimate: 100179
+Global Cluster Estimate: 150496
+```
+
+## Benchmarking
+
+Let's benchmark `std::unordered_set` against our `HyperLogLog`.
+
+We will simulate a network firehose receiving 10,000,000 requests. To model a real-world scenario with heavy duplication, we will constrain our random generator to a small pool of 100,000 unique values.
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <unordered_set>
+#include <vector>
+#include <string>
+#include <random>
+#include <dsa/HyperLogLog.h>
+
+const int kTotalEvents = 10'000'000;
+const int kUniqueUsers = 100'000;
+
+std::vector<std::string> GenerateStream() {
+  std::vector<std::string> stream;
+  stream.reserve(kTotalEvents);
+  std::mt19937 rng(42);
+
+  // Constrain the RNG to force massive duplication
+  std::uniform_int_distribution<int> dist(1, kUniqueUsers);
+
+  for (int i = 0; i < kTotalEvents; ++i) {
+    stream.push_back("User_" + std::to_string(dist(rng)));
+  }
+  return stream;
+}
+
+const std::vector<std::string> DataStream = GenerateStream();
+
+static void BM_ExactSet(benchmark::State& state) {
+  for (auto _ : state) {
+    std::unordered_set<std::string> set;
+    for (const auto& user : DataStream) {
+      set.insert(user);
+    }
+    benchmark::DoNotOptimize(set.size());
+  }
+}
+
+static void BM_HyperLogLog(benchmark::State& state) {
+  for (auto _ : state) {
+    HyperLogLog hll;
+    for (const auto& user : DataStream) {
+      hll.Insert(user);
+    }
+    benchmark::DoNotOptimize(hll.Estimate());
+  }
+}
+
+BENCHMARK(BM_ExactSet)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_HyperLogLog)->Unit(benchmark::kMillisecond);
+```
+
+```
+----------------------------
+Benchmark                CPU 
+----------------------------
+BM_ExactSet           531 ms
+BM_HyperLogLog       73.9 ms
+```
+
+With the exact set, every time a new unique user arrives, it allocates a node on the heap. Every time a duplicate arrives, it has to traverse the linked list and run a slow comparison just to realize it shouldn't allocate anything. Additionally, it consumes excessive memory and causes further bottlenecks if we need to transfer and merge this data for aggregation.
+
+The `HyperLogLog` processes all 10 million much faster, and has a small, predictable 16KB footprint regardless of how much data it sees. The accuracy of the estimate will typically hover within 1-2% of the true cardinality (100,000 in this example), making its probabilistic nature virtually indistinguishable for large-scale analysis.
+
+## Complete Code
+
+Here is the complete implementation of our `HyperLogLog`:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we discovered that maintaining exact state at scale is often impossible due to the constraints of system memory and performance goals. We learned that:
+
+1.  **The Cost of Duplicates:** To find the cardinality of a large data set, naive solutions must allocate and remember every unique element they process, resulting in gigabytes of cache-thrashing bloat.
+2.  **Probabilistic Counting:** By hashing strings and tracking the maximum streak of leading zeros, we can deduce the scale of our dataset with high accuracy.
+3.  **Silicon Intrinsics:** Replacing a sequential zero-counting `while` loop with C++20's `<bit>` header allows the compiler to invoke single-cycle hardware instructions like `lzcnt`.
+4.  **Fast Merging:** HyperLogLog guarantees a static 16KB contiguous layout, allowing us to aggregate data across a massive cluster of subsets using a simple `std::max` loop.

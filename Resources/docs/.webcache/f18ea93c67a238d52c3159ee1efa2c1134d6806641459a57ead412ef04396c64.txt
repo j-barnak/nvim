@@ -1,0 +1,536 @@
+In the previous lessons, we used open addressing to create data structures that packed our keys into contiguous cache lines. This allowed the CPU to quickly glide over our data without any pointer-chasing disruptions.
+
+However, we used simple 32-bit integers as our keys. In real-world use cases, we often want our keys to be more complex types, particularly **strings**, but this introduces a massive layer of complexity. Strings vary in length; they allocate their own memory, and they are expensive to hash and compare.
+
+In this lesson, we will learn how to alleviate this using **hash caching** and **heterogeneous lookups**.
+
+## The Structure of `std::string`
+
+To understand why strings are so hostile to open-addressed hash tables, we have to look at how they are physically constructed in memory.
+
+A `std::string` is not just a sequence of characters; it is a class that manages dynamic memory. Conceptually, a string is very similar to a `std::vector` of individual alphabetic characters. On most modern 64-bit standard library implementations, the `std::string` class consists of three internal components:
+
+- An 8-byte pointer to the array of characters
+- An 8-byte integer tracking the current size - the integer returned by the `size()` method.
+- An 8-byte integer tracking the allocated capacity - the integer returned by the `capacity()` method.
+
+This gives the `std::string` a footprint of 24 bytes (often padded to 32 bytes by the compiler).
+
+For comparison, the `Slot` we've been using so far contained a 4-byte `int`, a 1-byte `DIB`, and a 1-byte `State`. With alignment padding, it took only 8 bytes of RAM. Because a CPU cache line is 64 bytes, a single hardware fetch pulled **8 slots** into the L1 cache simultaneously. Our probe sequences were practically free.
+
+If we blindly swap our integer out for a `std::string`, our new `Slot` structure will balloon to 32 bytes, plus the `DIB` and `State`, padding out to **40 or 48 bytes** depending on the compiler's alignment rules.
+
+We can now only fit one `Slot` per cache line. Every single step we take during a linear probe now requires the CPU to halt and fetch a brand new cache line from main memory.
+
+## The Return of Pointer Chasing
+
+Worse than the structural bloat is the mechanical cost of hashing and comparing strings. During our `Contains()` probe sequence, we have to compare the key we are searching for against the key sitting in the array slot. With integers, `Current.Key == key` is a single-cycle ALU instruction.
+
+With strings, the `==` operator triggers a functional cascade:
+
+1.  It checks if the string sizes match.
+2.  If they do, the CPU must follow the string's internal pointer out into the global heap to read the actual characters.
+3.  It performs a byte-by-byte memory comparison until it finds a difference or verifies a match.
+
+If a collision cluster forces us to probe past 5 elements, we aren't just walking past 5 slots in our array. We are dereferencing 5 completely separate pointers, fetching 5 disjointed character arrays from arbitrary locations on the heap, and running expensive memory comparison operations on them.
+
+We have accidentally rebuilt the exact pointer-chasing nightmare that we've been trying to avoid.
+
+### Small String Optimization (SSO)
+
+Modern implementations of `std::string` use a trick called **Small String Optimization (SSO)**. If our string is very short (typically 15 characters or less), the class repurposes the 8-byte capacity integer and the 8-byte pointer to store the characters directly inside the class instance itself.
+
+This avoids a heap allocation. However, the strings we need to store routinely exceed 15 characters, meaning we cannot rely on SSO to save us. In most real-world scenarios, a string relies on a pointer to the global heap.
+
+## The Naive String Implementation
+
+Let's begin refactoring our Robin Hood set to accept strings so we can see the damage. We will swap our integer key for a `std::string`, and we will replace our custom `Mix64()` integer hasher with the standard library's `std::hash<std::string>`.
+
+### dsa_core/include/dsa/StringRobinHoodSet.h
+
+```
+#pragma once
+#include <vector>
+#include <string>
+#include <cstdint>
+#include <algorithm>
+#include <functional>
+
+class StringRobinHoodSet {
+  enum class CellState : uint8_t {
+    Empty,
+    Occupied
+  };
+
+  struct Slot {
+    std::string Key; 
+    uint8_t DIB{0};
+    CellState State{CellState::Empty};
+  };
+
+private:
+  size_t Capacity{16};
+  size_t Mask{15};
+  size_t Size{0};
+  std::vector<Slot> Buffer;
+
+  // Use the standard library string hasher
+  std::hash<std::string> StringHasher; 
+
+  void Grow() {
+    size_t OldCapacity{Capacity};
+    std::vector<Slot> OldBuffer{std::move(Buffer)};
+
+    Capacity *= 2;
+    Mask = Capacity - 1;
+    Buffer.assign(Capacity, Slot{});
+    Size = 0;
+
+    for (size_t i = 0; i < OldCapacity; ++i) {
+      if (OldBuffer[i].State == CellState::Occupied) {
+        // Because std::string manages dynamic memory, we use
+        // std::move to steal the heap pointer, rather than
+        // performing an expensive deep copy.
+        Insert(std::move(OldBuffer[i].Key)); 
+      }
+    }
+  }
+
+public:
+  StringRobinHoodSet() : Buffer(Capacity) {}
+
+  // ...
+};
+```
+
+Moving a `std::string` using `std::move()` simply copies the 24-byte footprint and nullifies the original, preventing a deep-copy of the heap-allocated character array.
+
+Let's implement the `Insert()` and `Contains()` methods exactly as we did for integers, but using our new `StringHasher`:
+
+### dsa_core/include/dsa/StringRobinHoodSet.h
+
+```
+// ...
+class StringRobinHoodSet {
+// ...
+public:
+  // ...
+  void Insert(std::string key) {
+    if (Size >= (Capacity * 0.7f)) Grow();
+
+    // Hash the entire string to a 64-bit integer
+    size_t Index{StringHasher(key) & Mask}; 
+    Slot Incoming{std::move(key), 0, CellState::Occupied};
+
+    while (true) {
+      Slot& Current{Buffer[Index]};
+
+      if (Current.State == CellState::Empty) {
+        Current = std::move(Incoming);
+        ++Size;
+        return;
+      }
+
+      // This is an expensive memcmp!
+      if (Current.Key == Incoming.Key) return; 
+
+      if (Incoming.DIB > Current.DIB) {
+        std::swap(Incoming.Key, Current.Key);
+        std::swap(Incoming.DIB, Current.DIB);
+      }
+
+      Index = (Index + 1) & Mask;
+      Incoming.DIB++;
+    }
+  }
+
+  bool Contains(const std::string& key) const {
+    size_t Index{StringHasher(key) & Mask};
+    uint8_t SearchDIB{0};
+
+    while (true) {
+      const Slot& Current{Buffer[Index]};
+
+      if (Current.State == CellState::Empty) return false;
+
+      // Expensive memory comparison
+      if (Current.Key == key) return true; 
+
+      if (SearchDIB > Current.DIB) return false;
+
+      Index = (Index + 1) & Mask;
+      SearchDIB++;
+    }
+  }
+};
+```
+
+We now have a functional string-based Robin Hood set. But when a collision occurs, that `Current.Key == key` instruction inside the `while` loop forces the CPU to abandon its contiguous array, jump to the heap, and run a byte-by-byte comparison on two character arrays.
+
+If we have to step past 4 occupied slots to find our target, we perform 4 completely useless string comparisons, thrashing the cache every single time.
+
+## Optimization 1: Hash Caching
+
+To solve this, we can defer the string comparison until we are certain it is worth the cost. We can do this using a technique called **hash caching**.
+
+When we hash a string, we generate a massive, random 64-bit integer. Right now, we immediately crush that 64-bit integer using our bitwise `Mask` to find our starting array index, and then we throw the full hash away.
+
+Instead of throwing it away, we could store the full 64-bit hash directly inside the `Slot` alongside the string:
+
+### dsa_core/include/dsa/StringRobinHoodSet.h
+
+```
+// ...
+class StringRobinHoodSet {
+  // ...
+  struct Slot {
+    std::string Key;
+    size_t Hash{0}; 
+    uint8_t DIB{0};
+    CellState State{CellState::Empty};
+  };
+  // ...
+};
+```
+
+Storing an 8-byte `size_t` increases the physical size of our `Slot`, but not across any meaningful breakpoint. We could only store one `Slot` per cache line before, and an 8-byte increase doesn't change that.
+
+However, it does allow us to almost entirely bypass the pointer chasing.
+
+When we are probing for a key, we first compare the full 64-bit hash of the string we are searching for against the `Hash` stored inside the slot. Because a hash is just an integer, `Current.Hash == Incoming.Hash` executes in a single CPU cycle.
+
+In almost all practical scenarios, if two 64-bit hashes match, it is almost certain that the underlying data also matches. Even if we were storing 100 million strings, there is only around a 0.027% chance that two of them would share the same 64-bit hash. Because of this, in many high-performance systems, a hash match is considered a "good enough" guarantee that the underlying data matches.
+
+However, if we want to be certain, we can still take the expensive leap to main memory to perform the full `std::string` comparison to verify that the hash match wasn't just an incredible coincidence.
+
+Let's update our `Insert()` and `Contains()` methods to use hash caching as the initial test, and then a follow-up check of the underlying string just to be 100% sure:
+
+### dsa_core/include/dsa/StringRobinHoodSet.h
+
+```
+// ...
+class StringRobinHoodSet {
+// ...
+public:
+  void Insert(std::string key) {
+    if (Size >= (Capacity * 0.7f)) Grow();
+
+    // Calculate the hash once and store it
+    size_t Hash{StringHasher(key)}; 
+    size_t Index{Hash & Mask};
+
+    // Package the hash into the incoming slot
+    Slot Incoming{std::move(key), Hash, 0, CellState::Occupied}; 
+
+    while (true) {
+      Slot& Current{Buffer[Index]};
+
+      if (Current.State == CellState::Empty) {
+        Current = std::move(Incoming);
+        ++Size;
+        return;
+      }
+
+      // Fast Path: Check the cached integer hash first
+      if (Current.Hash == Incoming.Hash) { 
+        // Slow Path: Only compare strings if hashes match
+        if (Current.Key == Incoming.Key) return; 
+      }
+
+      if (Incoming.DIB > Current.DIB) {
+        std::swap(Incoming.Key, Current.Key);
+        std::swap(Incoming.Hash, Current.Hash); 
+        std::swap(Incoming.DIB, Current.DIB);
+      }
+
+      Index = (Index + 1) & Mask;
+      Incoming.DIB++;
+    }
+  }
+
+  bool Contains(const std::string& key) const {
+    size_t Hash{StringHasher(key)}; 
+    size_t Index{Hash & Mask};
+    uint8_t SearchDIB{0};
+
+    while (true) {
+      const Slot& Current{Buffer[Index]};
+
+      if (Current.State == CellState::Empty) return false;
+
+      // Fast Path: Compare integer hashes
+      if (Current.Hash == Hash) { 
+        // Slow Path: Chase the pointer to the heap
+        if (Current.Key == key) return true; 
+      }
+
+      if (SearchDIB > Current.DIB) return false;
+
+      Index = (Index + 1) & Mask;
+      SearchDIB++;
+    }
+  }
+};
+```
+
+## Optimization 2: Heterogeneous Lookups
+
+Our search sequence is fast again, but we have a silent performance leak hidden in our API. Our `Contains()` method expects a `std::string&` as its parameter.
+
+Often, if someone wants to check if `"PlayerOne"` is in the set, they will pass a `char*` literal rather than a `std::string`:
+
+```
+// This is not a std::string - it's a char*
+Set.Contains("PlayerOne");
+```
+
+Because our function demands a `std::string` reference, the compiler might silently construct a temporary `std::string` on the caller's behalf. It allocates memory on the heap, copies the `"PlayerOne"` characters into it, passes the reference to our function, and then destroys the allocation when the function returns.
+
+We might be triggering a hidden heap allocation simply to ask a yes/no question.
+
+### The `std::string_view` Solution
+
+To fix this, we should decouple our container's internal storage (`std::string`) from its query interface. C++17 added `<string_view>` , which helps us establish a non-owning, zero-allocation window into whatever character data the user provides. We cover [string views ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/string-views) in detail in the previous course.
+
+By updating our query methods to accept `std::string_view`, users can pass string literals, raw `const char*` buffers, or actual `std::string` objects. In all cases, the compiler constructs a lightweight view containing just a pointer and a length, completely bypassing the heap allocator.
+
+Permitting a container of one type, such as `std::string`, to be queried using a key of a different type, such as `std::string_view`, is known as **Heterogeneous Lookup**:
+
+### dsa_core/include/dsa/StringRobinHoodSet.h
+
+```
+// ...
+#include <string_view> 
+// ...
+
+class StringRobinHoodSet {
+// ...
+public:
+  // Accept a string_view to prevent hidden allocations
+  bool Contains(std::string_view key) const { 
+
+    // Wait, how do we hash a string_view?
+    // size_t Hash{StringHasher(key)};
+  }
+};
+```
+
+We hit a minor snag. Our container is built around `std::hash<std::string>`. We cannot pass a `std::string_view` into it.
+
+We could create a separate `std::hash<std::string_view>`, but we must guarantee that hashing a `std::string("Apple")` and hashing a `std::string_view("Apple")` produce the **same output**. If they produce different hashes, our `Current.Hash == Hash` check will fail, and we will never find our data.
+
+Fortunately, this requirement was predicted when `std::string_view` was designed. The standard requires it to have a transparent hashing solution that guarantees identical outputs for identical character sequences, regardless of the wrapper type.
+
+We can simply replace `std::hash<std::string>` with a generic `std::hash<std::string_view>`, and we use it to hash both our incoming `std::string` objects during insertion, and our `std::string_view` keys during lookups:
+
+### dsa_core/include/dsa/StringRobinHoodSet.h
+
+```
+// ...
+class StringRobinHoodSet {
+// ...
+private:
+  // ...
+  // Change our hasher to natively accept string_views
+  std::hash<std::string_view> Hasher; 
+
+public:
+  void Insert(std::string key) {
+    // ...
+    // key implicitly converts to string_view, producing
+    // a universal, comparable 64-bit hash
+    size_t Hash{Hasher(key)}; 
+    // ...
+  }
+
+  bool Contains(std::string_view key) const { 
+    // Produce the exact same hash without allocating memory
+    size_t Hash{Hasher(key)}; 
+    size_t Index{Hash & Mask};
+    uint8_t SearchDIB{0};
+
+    while (true) {
+      const Slot& Current{Buffer[Index]};
+
+      if (Current.State == CellState::Empty) return false;
+
+      if (Current.Hash == Hash) {
+        // Current.Key (std::string) implicitly compares
+        // cleanly against key (std::string_view)
+        if (Current.Key == key) return true; 
+      }
+
+      if (SearchDIB > Current.DIB) return false;
+
+      Index = (Index + 1) & Mask;
+      SearchDIB++;
+    }
+  }
+  // ...
+};
+```
+
+With hash caching and heterogeneous lookups implemented, our `Contains()` query is now a completely allocation-free, cache-friendly operation.
+
+## Benchmarking
+
+Let's test our optimizations. We will benchmark three containers:
+
+1.  `std::unordered_set<std::string>`: The standard library baseline.
+2.  `NaiveStringRobinHoodSet`: Our Robin Hood implementation without hash caching, passing `const std::string&`. This is our implementation from the previous lesson, updated to use `std::string` keys hashed using `std::hash()` rather than `int` keys hashed with `Mix64()`. It is available in the Complete Code section below for reference.
+3.  `OptimizedStringRobinHoodSet`: Our implementation from this lesson, including hash caching and `std::string_view`.
+
+To ensure we are bypassing small string optimization, we will generate large, 32-character strings.
+
+As with our previous benchmarks, we will insert 2,000,000 of them, and then perform batches of 1,000,000 random queries at 1%, 50%, and 99% miss rates:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <unordered_set>
+#include <vector>
+#include <string>
+#include <random>
+#include <algorithm>
+#include <dsa/StringRobinHoodSet.h>
+#include <dsa/NaiveStringRobinHoodSet.h>
+
+const int kNumElements = 2'000'000;
+const int kNumQueries = 1'000'000;
+
+// Generate long strings to defeat SSO
+std::string GenerateLongString(std::mt19937& rng) {
+  const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz0123456789";
+  std::uniform_int_distribution<int> dist(0, sizeof(charset) - 2);
+
+  std::string s;
+  s.reserve(32);
+  for (int i = 0; i < 32; ++i) s += charset[dist(rng)];
+  return s;
+}
+
+std::vector<std::string> GenerateData() {
+  std::vector<std::string> data(kNumElements);
+  std::mt19937 rng(42);
+  for (int i = 0; i < kNumElements; ++i) {
+    data[i] = GenerateLongString(rng);
+  }
+  return data;
+}
+
+const std::vector<std::string> Data = GenerateData();
+
+std::vector<std::string> GenerateQueries(double miss_rate) {
+  std::vector<std::string> queries;
+  queries.reserve(kNumQueries);
+
+  int misses = kNumQueries * miss_rate;
+  int hits = kNumQueries - misses;
+
+  for (int i = 0; i < hits; ++i) queries.push_back(Data[i]);
+
+  std::mt19937 rng(42);
+  for (int i = 0; i < misses; ++i) {
+    queries.push_back(GenerateLongString(rng));
+  }
+
+  std::shuffle(queries.begin(), queries.end(), rng);
+  return queries;
+}
+
+static void BM_StdUnorderedSet(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<std::string> queries = GenerateQueries(miss_rate);
+
+  std::unordered_set<std::string> set(Data.begin(), Data.end());
+
+  for (auto _ : state) {
+    for (const auto& query : queries) {
+      benchmark::DoNotOptimize(set.contains(query));
+    }
+  }
+}
+
+static void BM_NaiveRobinHood(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<std::string> queries = GenerateQueries(miss_rate);
+
+  NaiveStringRobinHoodSet set;
+  for (const auto& val : Data) set.Insert(val);
+
+  for (auto _ : state) {
+    for (const auto& query : queries) {
+      benchmark::DoNotOptimize(set.Contains(query));
+    }
+  }
+}
+
+static void BM_OptimizedRobinHood(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<std::string> queries = GenerateQueries(miss_rate);
+
+  StringRobinHoodSet set;
+  for (const auto& val : Data) set.Insert(val);
+
+  for (auto _ : state) {
+    for (const auto& query : queries) {
+      benchmark::DoNotOptimize(set.Contains(query));
+    }
+  }
+}
+
+#define REGISTER_BENCHMARK(func) BENCHMARK(func) \
+  ->Unit(benchmark::kMillisecond) \
+  ->ArgName("MissRatePct") \
+  ->Arg(1) \
+  ->Arg(50) \
+  ->Arg(99)
+
+REGISTER_BENCHMARK(BM_StdUnorderedSet);
+REGISTER_BENCHMARK(BM_NaiveRobinHood);
+REGISTER_BENCHMARK(BM_OptimizedRobinHood);
+```
+
+```
+---------------------------------------------
+Benchmark                                 CPU
+---------------------------------------------
+BM_StdUnorderedSet/MissRatePct:1       414 ms
+BM_StdUnorderedSet/MissRatePct:50      422 ms
+BM_StdUnorderedSet/MissRatePct:99      406 ms
+
+BM_NaiveRobinHood/MissRatePct:1        320 ms
+BM_NaiveRobinHood/MissRatePct:50       305 ms
+BM_NaiveRobinHood/MissRatePct:99       312 ms
+
+BM_OptimizedRobinHood/MissRatePct:1    160 ms
+BM_OptimizedRobinHood/MissRatePct:50   160 ms
+BM_OptimizedRobinHood/MissRatePct:99   164 ms
+```
+
+## Complete Code
+
+Here is the complete implementation of our `StringRobinHoodSet` using hash caching and transparent heterogeneous lookups with the help of `std::string_view`:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we discovered that dropping a complex data type like a `std::string` into a tightly optimized memory layout can instantly destroy its performance. We learned that:
+
+1.  **Strings are fat**: A `std::string` consumes 32+ bytes, drastically reducing the number of slots we can fit into a cache line.
+2.  **Strings chase pointers**: Standard comparisons force the CPU to follow pointers into the heap, causing pipeline stalls.
+3.  **Hash Caching**: By spending 8 bytes of structural padding to store the pre-calculated integer hash, we can bypass complex data comparisons entirely.
+4.  **Heterogeneous Lookups**: By separating our internal storage (`std::string`) from our API (`std::string_view`), we eliminated hidden, temporary heap allocations.
+
+However, even with these optimizations, we're still losing quite a lot of performance compared to when we were using simple integer keys. String objects still live out on the heap, and in a complex program, storing the same strings multiple times adds up to a lot of wasted memory.
+
+In the next lesson, we will explore **string interning**, a pattern that allows us to deduplicate strings and storing them in a dedicated, global vault. This lets us represent the strings using cheap, 4-byte integer handles that the CPU loves so much.

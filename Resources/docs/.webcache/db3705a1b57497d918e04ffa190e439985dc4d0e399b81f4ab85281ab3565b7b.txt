@@ -1,0 +1,417 @@
+Earlier in the course, we introduced concurrency as a way to unlock the massive parallel computing power of modern hardware. We learned how to dispatch work across multiple CPU cores, and we discovered how easily those cores can corrupt shared memory if we don't synchronize them.
+
+In this chapter, we will build on these topics, learning how to build our own custom atomic transactions. In this first lesson, we will review the hardware traps we previously uncovered, and we will introduce the low-level standard library tools required to take absolute control of our execution context.
+
+## The Journey So Far
+
+If we write a basic sequence of function calls, the operating system places our program on a single CPU core. That core executes the instructions linearly. By offloading work to another thread, we are asking the operating system to schedule our code on a second, physically distinct core.
+
+```
+void Sequential() {
+  // Core 1 - Do TaskA then TaskB
+  TaskA();
+  TaskB();
+}
+
+void Concurrent() {
+  // Core 2 - Do TaskA
+  auto task = std::async(TaskA);
+  
+  // Core 1 - Do TaskB whilst waiting for TaskA
+  TaskB();
+  task.wait();
+}
+```
+
+The operating system can now assign multiple CPU cores to our program, allowing the work to be completed faster:
+
+### The Task Abstraction
+
+We initially implemented this parallel execution using `std::async()` and execution policies like `std::execution::par`. These are high-level ***Task*** abstractions.
+
+When we use `std::async()`, we don't manually create a thread. We simply package up a function and hand it to the C++ standard library. The standard library decides how to run it - often using a hidden thread pool - and hands us back a `std::future` object so we can eventually retrieve the result.
+
+This high-level approach is fantastic for data processing, but it abstracts away the machine. When multiple tasks attempt to touch the same memory address, we run into data races. To fix those races, we introduced synchronization.
+
+### The Synchronization Bottleneck
+
+The most intuitive way to synchronize threads is the `std::mutex`. It acts as a physical lock on a room. If Thread A is in the room, Thread B must wait outside. While a `std::mutex` makes our code perfectly safe, it is extremely harmful to performance.
+
+When a thread encounters a locked mutex, it doesn't just pause for a microsecond. It makes a heavy system call to the operating system. It effectively says, "I cannot proceed. Put me to sleep and wake me up when this lock is free."
+
+The OS removes the thread from the CPU core in an operation called a **context switch**. It saves all the CPU registers, flushes the execution pipeline, and schedules a completely different program to run. This takes thousands of CPU cycles. When the mutex finally unlocks, the OS has to do all of that work in reverse to wake our thread back up.
+
+By adding a `std::mutex` to a tight parallel loop, we take a multi-core machine and force it to run sequentially, paying a massive performance tax for every single iteration. One of the goals of creating high-performance systems is to find ways to implement concurrency using **lock-free** designs. Modern hardware and the standard library's `std::atomic` template can help with this.
+
+### Hardware-Level Synchronization
+
+To reclaim our performance, we abandoned the operating system's lock and dropped down to the hardware level using `std::atomic`.
+
+When we declare a variable as `std::atomic<int>`, the compiler translates our standard C++ math operations into specialized hardware instructions that prevent memory corruption without the performance cost of locks like `std::mutex`:
+
+```
+#include <mutex>
+#include <atomic>
+
+// The Slow Way (OS Context Switch)
+std::mutex DataLock;
+int SlowCounter{0};
+
+void UpdateSlowly() {
+  std::lock_guard<std::mutex> guard(DataLock);
+  SlowCounter++; 
+}
+
+// The Fast Way (Native Hardware Instruction)
+std::atomic<int> FastCounter{0};
+
+void UpdateFast() {
+  FastCounter++; 
+}
+```
+
+These native hardware instructions tell the CPU to perform the math directly at the memory level in a single, indivisible step. There are no system calls, no context switches, and no threads put to sleep. But as we learned, even hardware-level synchronization comes with a hidden physical cost.
+
+## The Physical Tax and Cache Coherency
+
+The cores on our CPU do not exist in a vacuum. They share a massive, complex memory bus, and they each have their own local L1 and L2 caches.
+
+When Thread A executes an atomic instruction to modify `FastCounter`, it doesn't just update its own local cache. It must broadcast a signal across the hardware, telling all other CPU cores that their cached copies of that data are now stale and invalid.
+
+### The MESI Protocol
+
+To manage this chaos, modern CPUs use cache coherency protocols, the most common being the MESI protocol. MESI stands for Modified, Exclusive, Shared, and Invalid.
+
+When Core A wants to write to a variable, it issues a "Read For Ownership" request on the internal hardware bus. All other cores receive this request and transition their copies of that memory line to the ***Invalid*** state. Core A then modifies the data, transitioning its local copy to the ***Modified*** state.
+
+If Core B suddenly needs to read that variable, it checks its cache, sees the Invalid flag, and suffers a cache miss. It must halt its execution pipeline and wait for Core A to flush the modified data back out to main memory (or transfer it directly via the L3 cache).
+
+This constant negotiation and stalling across the hardware bus is called ***cache ping-pong***.
+
+It is the reason why atomic operations, while vastly faster than a `std::mutex`, are still significantly slower than raw, unsynchronized math on a single thread.
+
+### False Sharing
+
+The reality of cache coherency leads us a frustrating hardware phenomenon in parallel programming: **false sharing**.
+
+Memory is not moved around the CPU byte by byte. It is moved in 64-byte chunks called ***cache lines***. The MESI protocol does not track ownership of individual variables; it tracks ownership of the entire 64-byte line.
+
+Because of this, two independent cores can end up fighting over memory they aren't even logically sharing.
+
+Imagine Thread A is incrementing a variable called `Score`, and Thread B is incrementing a variable called `Time`. These variables have nothing to do with each other. But if the compiler places them side-by-side in memory, they will physically reside on the same 64-byte cache line.
+
+Every time Thread A updates `Score`, the CPU invalidates the entire cache line, forcing Thread B to stall. The cores will thrash the memory line back and forth, crippling your parallel throughput, even though the logic of your program contains no shared state.
+
+### The Padding Trade-off
+
+To defeat false sharing, we take manual control over the physical layout of our structs. We use the `alignas()` specifier to inject dead space - or **padding** - into our objects, forcibly pushing independent variables onto separate cache lines.
+
+To ensure our code is portable across different CPU architectures (which may have 64-byte or 128-byte cache lines), we use the `std::hardware_destructive_interference_size` constant provided by the standard library:
+
+```
+#include <atomic>
+#include <new>
+
+// These variables share a cache line. Two threads
+// modifying them will cause massive hardware stalls.
+struct BadStats {
+  std::atomic<int> Score; 
+  std::atomic<int> Time; 
+};
+
+// We force the compiler to add dead space, ensuring Score
+// and Time live on completely different cache lines.
+struct GoodStats {
+  alignas(std::hardware_destructive_interference_size) 
+    std::atomic<int> Score; 
+
+  alignas(std::hardware_destructive_interference_size) 
+    std::atomic<int> Time; 
+};
+```
+
+This alignment physically isolates the atomic variables:
+
+This represents a classic engineering trade-off. We are intentionally inflating the size of our objects in memory - wasting RAM and cache capacity - to eliminate contention and maximize our parallel throughput.
+
+This physical reality - that performance is dictated by cache line behavior and hardware-level synchronization - is the foundation of everything we will build in this new chapter. But to build advanced, highly tuned concurrent systems, we need to leave the `std::async()` task abstraction behind.
+
+## Tasks vs. Threads
+
+Up to this point, we have implemented concurrency in two main ways - both from the perspective of individual tasks:
+
+- When the task can be performed using a standard library algorithm like `std::transform`, those algorithms often allow us to specify an execution policy like `std::execution::par`. This signals to the algorithm that it can safely use concurrent logic to complete its task.
+- When we have some custom logic implemented as a function, wrapping that function in `std::async()` signals to the compiler that it can safely be executed on a different thread.
+
+These are simple to use, but they don't give us much control. We don't know exactly when the task will start, what CPU core it will run on, or how the underlying thread is managed.
+
+### The Thread Pool Illusion
+
+Behind the scenes, `std::async()` and parallel implementations of standard library algorithms are usually backed by a thread pool. Spinning up a new operating system thread is a heavy operation. It requires the OS to allocate a new call stack, set up thread-local storage, and register the thread with the scheduler.
+
+If we created a brand new OS thread every time we wanted to do a tiny piece of asynchronous math, the setup cost would overshadow the computation time. Thread pools solve this by spinning up a set number of threads at application launch, keeping them asleep, and waking them up to process our `std::async()` tasks as they arrive.
+
+### Manual Execution Contexts
+
+In high-performance architecture, there are many scenarios where a pooled task is insufficient.
+
+If we are writing a game engine, we need a dedicated Audio Engine running in an infinite loop, constantly pushing buffers to the sound card. If we are writing a server, we need a dedicated Network Listener constantly polling a socket for incoming connections.
+
+We don't want these infinite loops sitting in a thread pool, permanently blocking worker threads that are meant to be processing temporary tasks. We need to carve out a permanent, dedicated slice of the CPU. For this, we use a `std::thread`.
+
+A `std::thread` is an **execution context**. It is a direct handle to the operating system's low-level thread API (like `pthreads` on Linux or Windows Threads). When we instantiate one, we are demanding that the OS immediately create a new, dedicated worker sequence.
+
+Here is a side-by-side comparison of how they operate:
+
+```
+#include <future>
+#include <thread>
+
+void ProcessData(){};
+
+void UsingAsync() {
+  // Submit a task. The standard library decides
+  // how and when this runs behind the scenes
+  std::future<void> task{std::async(ProcessData)};
+
+  // Block until the task is complete
+  task.wait();
+}
+
+void UsingThread() {
+  // Directly command the OS to create a new thread
+  // and begin executing the function immediately
+  std::thread worker{ProcessData};
+
+  // Block until the OS reports the thread is complete
+  worker.join();
+}
+```
+
+Instead of waiting on a `std::future`, we call the `join()` method directly on the thread object. This puts the calling thread to sleep until the worker thread has finished its execution and the operating system has safely destroyed it.
+
+## The Danger of Detached Threads
+
+Dropping down to raw `std::thread` objects give us ultimate control over the hardware, but it entirely removes the safety rails that `std::async()` provided. What happens if a `std::thread` object goes out of scope before we call `join()`?
+
+Mechanically, the operating system is still running the worker thread in the background. But our C++ program has just destroyed the `std::thread` object that acted as the handle to control it. We have created a detached, orphaned execution context.
+
+This is a dangerous scenario. The orphaned thread might still be trying to read or write to variables that belonged to the function that just went out of scope. If the main thread continues executing and deallocates that memory, the orphaned thread will cause silent memory corruption or segmentation faults.
+
+### Crashing and `std::terminate()`
+
+Because orphaned threads are so dangerous, the C++ standard takes a harsh, unforgiving stance. If a `std::thread` destructor fires while the thread is still "joinable" (meaning we haven't called `join()` or explicitly detached it), the standard dictates that our program needs to crash. This crash is implemented through a call to `std::terminate()`, which we cover in more detail [here ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/terminate-noexcept).
+
+The bug usually isn't as obvious as simply forgetting to type `worker.join()`. It is almost always hidden behind complex control flow or exception handling:
+
+```
+#include <print>
+#include <thread>
+#include <stdexcept>
+#include <chrono>
+
+void NetworkListener() {
+  std::println("NetworkListener started. Working...");
+  std::this_thread::sleep_for(std::chrono::seconds(2));
+  std::println("NetworkListener finished");
+}
+
+bool InitializePorts() {
+  std::println("Attempting to initialize ports... failed!");
+  return false; 
+}
+
+void StartServer() {
+  std::thread listener{NetworkListener}; 
+
+  if (!InitializePorts()) {
+    std::fflush(stdout);
+    return;
+  }
+  
+  // Unreachable if InitializePorts() returns false
+  listener.join(); 
+}
+
+int main() {
+  StartServer();
+}
+```
+
+In this scenario, the `listener` object is destroyed when `StartServer()` returns early, and because it was never joined, it takes the entire application down with it:
+
+```
+NetworkListener started. Working...
+Attempting to initialize ports... failed!
+terminate called without an active exception
+Program returned: 139
+```
+
+## C++20's `std::jthread`
+
+This strict requirement has caused countless production outages over the years. To solve this, C++20 introduced `std::jthread`, which stands for **joining thread**.
+
+The `std::jthread` is a modern wrapper that applies standard RAII (Resource Acquisition Is Initialization) mechanics to execution contexts. It behaves exactly like a `std::thread`, giving us direct control over the OS. There is only one key difference: if a `std::jthread` goes out of scope, its destructor does not crash the program. Instead, it calls `join()`.
+
+This means that it blocks the current execution path until the worker thread finishes. We can fix our crashing server by simply swapping the type:
+
+```
+#include <print>
+#include <thread>
+#include <stdexcept>
+#include <chrono>
+
+NetworkListener Function (Unchanged|Showvoid NetworkListener() {/*...*/}
+
+InitializePorts Function (Unchanged|Showvoid InitializePorts() {/*...*/}
+
+void StartServer() {
+  std::thread  listener{NetworkListener};
+  std::jthread listener{NetworkListener};
+
+  if (!InitializePorts()) {
+    std::fflush(stdout);
+    return;
+    // std::jthread's destructor will call join()
+    // at this point, blocking until the worker
+    // thread completes
+  }
+  
+  // Optional, as std::jthread's destructor would
+  // automatically call join() at this point anyway
+  listener.join(); 
+}
+
+Main Function (Unchanged|Showint main() {/*...*/}
+```
+
+```
+NetworkListener started. Working...
+Attempting to initialize ports... failed!
+NetworkListener finished
+Program returned: 0
+```
+
+In code using `std::jthread`, it's common to not call `join()` at all, and instead just let the destructor do it. The following program spins up 4 threads and waits for them all to complete:
+
+```
+#include <chrono>
+#include <print>
+#include <thread>
+
+void WorkerThread(int ThreadID, int SleepTimer) {
+  std::this_thread::sleep_for(
+    std::chrono::milliseconds(SleepTimer)
+  );
+
+  std::println(
+    "Thread {} completed after {}ms",
+    ThreadID, SleepTimer
+  );
+}
+
+int main() {
+  std::println("Creating some threads");
+  
+  {
+    std::jthread t1(WorkerThread, 1, 400);
+    std::jthread t2(WorkerThread, 2, 200);
+    std::jthread t3(WorkerThread, 3, 300);
+    std::jthread t4(WorkerThread, 4, 100);
+    // All 4 destructors are called here, blocking
+    // execution until all the workers are done
+  }
+
+  std::println("All threads completed safely");
+
+  return 0;
+}
+```
+
+```
+Creating some threads
+Thread 4 completed after 100ms
+Thread 2 completed after 200ms
+Thread 3 completed after 300ms
+Thread 1 completed after 400ms
+All threads completed safely
+```
+
+### Cooperative Cancellation and `std::stop_token`
+
+There is one flaw with the `std::jthread` destructor calling `join()` and blocking execution until the worker function completes: what if it **never** completes? What if our `NetworkListener()` was implemented as an infinite loop?
+
+If the worker thread never naturally returns, the `join()` call inside the destructor will block forever. We've traded a crash for a permanent deadlock.
+
+To handle this, `std::jthread` introduces the concept of **cooperative cancellation**. The function we supply to a `std::jthread` can accept a `std::stop_token` as the first argument. When the `std::jthread` destructor fires, it updates that token to signal that we're trying to shut down the thread, so we'd like the function to stop running.
+
+It is then up to our function logic to occasionally check for this request using the token's`stop_requested()` method. If it returns `true`, our function should gracefully end and return control:
+
+```
+#include <thread>
+#include <iostream>
+#include <chrono>
+
+// The worker function accepts a std::stop_token
+void AudioEngine(std::stop_token token) { 
+  // We check the token on every iteration of our loop.
+  // If it returns false, no shutdown has been requested,
+  // so we continue running
+  while (!token.stop_requested()) { 
+    std::cout << "Processing audio buffers...\n";
+    std::this_thread::sleep_for(
+      std::chrono::milliseconds(100)
+    );
+  }
+  
+  // Once it returns true, our loop ends and we shut down
+  std::cout << "Stop requested. Shutting down audio engine\n";
+}
+
+void RunGame() {
+  std::jthread engine{AudioEngine};
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+  // The 'engine' goes out of scope here. It signals the
+  // stop_token then calls join(), waiting for the AudioEngine
+  // to exit.
+}
+
+int main() {
+  RunGame();
+  std::cout << "Shutting down game";
+}
+```
+
+```
+Processing audio buffers...
+Processing audio buffers...
+Processing audio buffers...
+Stop requested. Shutting down audio engine
+Shutting down game
+```
+
+This creates a safe, self-managing execution context. The main thread's `std::jthread` signals the shutdown through the `std::stop_token`, and then joins the worker thread. This pauses main thread execution until the worker thread acknowledges the signal and returns. Once that happens, the block ends and the main thread can safely continue executing.
+
+### When to Use Which
+
+With `std::async`, parallel algorithms, `std::thread`, and `std::jthread` all available in the standard library, it can be confusing to know which tool to reach for. Here is the typical advice when using the standard library options:
+
+- **Default to tasks:** If you are crunching data, sorting arrays, or performing temporary "bursts" of work, use a standard library algorithm with an execution policy like `std::execution::par`. If the task requires some custom logic, create a function and use the `std::async` task abstraction.
+- **Use** **`std::jthread`** **for more permanent workers:** If you need a long-lived, dedicated background loop - like an audio engine or a network listener - create a `std::jthread`.
+- **Avoid** **`std::thread`** **if possible:** In C++20 and beyond, there is almost no legitimate reason to use a raw `std::thread`. C++20's `std::jthread` is a safer option with zero performance overhead.
+
+## Summary
+
+In this lesson, we re-grounded our understanding of concurrency, reviewed the key hardware mechanics that dictate performance, and learned how to manage OS-level execution contexts.
+
+- We reviewed the concurrency topics we covered previously, remembering that cores share a memory bus and that modifying data triggers cache coherency protocols (MESI) that stall execution.
+- We reviewed how padding our structs with `alignas` defeats false sharing, trading RAM for parallel throughput.
+- We established the difference between submitting a pooled task via `std::async()` and directly managing the OS scheduler via a thread object.
+- We saw how allowing a raw `std::thread` to go out of scope without calling `join()` triggers an immediate `std::terminate()`.
+- We fixed the crash risk using C++20's `std::jthread`, which automatically signals a `std::stop_token` and safely joins the worker thread upon destruction.
+
+Now that we know how to directly spin up dedicated execution contexts, we need a faster way for them to communicate than relying on slow `std::mutex` locks.
+
+In the next lesson, we will look at how `std::atomic` interacts with complex C++ structs. We will learn how to explicitly command the CPU to move data between main RAM and local registers, and we will discover how physical hardware limitations can cause a severe corruption known as ***data tearing***.

@@ -1,0 +1,416 @@
+In the previous lesson, we successfully integrated Google Benchmark into our CMake build system. We created a test executable, linked our library, and wrote a simple function to measure the speed of copying a `std::vector`.
+
+If you ran that benchmark in `Release` mode, you might have noticed something suspicious. The numbers might have been incredibly fast - perhaps too fast.
+
+When we write production code, the compiler is our best friend. It acts like a ruthless editor, analyzing our code and deleting anything that doesn't contribute to the final output. It rearranges instructions to hide latency, pre-calculates math, and removes variables that are never read.
+
+When we write benchmarks, however, the compiler becomes our adversary.
+
+Benchmarks, by their nature, are often "useless" code. We calculate values we don't need, loop over data we don't use, and create objects just to destroy them. To the compiler, this looks like garbage. And because we enabled optimization in our CMake configuration, the compiler will aggressively try to delete our benchmark entirely.
+
+If we aren't careful, we won't be measuring our algorithm; we will be measuring how good the compiler is at deleting our algorithm.
+
+In this lesson, we will dissect the anatomy of a benchmark. We will learn how to use "optimization barriers" to trick the compiler into doing the work we actually want to measure.
+
+## The `benchmark::State` Loop
+
+Every benchmark test is centered around a `while` loop driven by the `benchmark::State` object.
+
+```
+static void BM_MyBenchmark(benchmark::State& state) {
+  // 1. SETUP (Not timed)
+  // ...
+
+  // 2. THE LOOP (Timed)
+  for (auto _ : state) {
+    // ... code to measure ...
+  }
+
+  // 3. TEARDOWN (Not timed)
+  // ...
+}
+```
+
+Mechanically, `state` acts as an iterator. The library determines how many iterations ($n$n) are required to get a statistically significant result. It might run the loop 100 times or 100,000,000 times, depending on how fast the code inside the loop is.
+
+### Setup and Teardown
+
+An important feature of this structure is that **only the code inside the loop is timed**.
+
+This allows us to separate the *cost of initialization* from the *cost of execution*. For example, if we want to measure how fast we can sort a vector, we don't want to include the time it takes to create the vector in our measurement.
+
+However, we must be careful. The memory and objects created in the setup phase (outside the loop) persist across all iterations. If we create an array outside of the loop and then add items to it inside the loop, or make any other changes, those changes will persist. This means our array will get bigger after every iteration of our loop, which will create misleading results.
+
+### Cache Warming
+
+An additional property we should note is that the library attempts to run our tests in a "hot cache" scenario. This means it runs a few untimed iterations of the loop initially to try to fill the cache with the data our algorithm needs.
+
+This is an optimistic case, but it's a sensible default as, in most real-world use cases, our algorithms are working with data already in the cache. However, this behavior can hide the effects of memory latency for algorithms that aren't so lucky - those that have to perform a "cold start".
+
+It might also be an optimistic measurement for algorithms that run infrequently enough that the data they need is no longer in the cache, or those that run in a dynamic system where many other parts of the program are also fighting for limited cache space.
+
+## Protecting the Output (Preventing DCE)
+
+The biggest threat to benchmark validity is **Dead Code Elimination (DCE)**. Let's look at the vector copy benchmark we wrote in the previous lesson:
+
+```
+static void BM_VectorCopy(benchmark::State& state) {
+  std::vector<int> src(1000, 42);
+
+  for (auto _ : state) {
+    // We create 'copy'...
+    std::vector<int> copy{src};
+
+    // ...and then we do nothing with it.
+    // The scope ends, and 'copy' is destroyed.
+  }
+}
+```
+
+In this code, `copy` is a local variable. It is never printed. It is never returned. It has no impact on the outside world.
+
+A smart compiler looking at this in `Release` mode might conclude: *"Creating this vector involves allocating memory and copying integers. But since the vector is destroyed immediately and no one sees the data, I can just skip the allocation and the copy. The program's behavior will be identical."*
+
+If the compiler makes this decision, our loop becomes empty, and our benchmark becomes useless.
+
+### The Fix: `benchmark::DoNotOptimize()`
+
+To solve this, we need to lie to the compiler. We need to tell it: *"I am going to use this value later, even if you can't see where."*
+
+Google Benchmark provides a helper function for this: `benchmark::DoNotOptimize(value)`.
+
+Under the hood, this uses inline assembly to create an artificial "read" dependency. It forces the compiler to calculate the value and place it into a CPU register or memory address, because the assembly block claims it might read it.
+
+So, if we want to protect our `copy` variable:
+
+```
+benchmark::DoNotOptimize(copy)
+```
+
+But annoyingly, the inner workings of `std::vector` is also being subject to the same scrutiny.
+
+The compiler now reasons, *"Okay, it looks like* *`copy`* *is being used, but is the stuff* ***inside the*** *copy being used? Can I delete some of that?"*
+
+Our algorithm isn't actually reading the data we're copying, and the optimizer might notice.
+
+In a more realistic scenario, we would use that data to simulate the type of work our program might be doing in the real world. But, if we don't want to, we can just pass it to `benchmarkDoNotOptimize()` to fake it:
+
+### benchmarks/main.cpp
+
+```
+static void BM_VectorCopy(benchmark::State& state) {
+  std::vector<int> src(1000, 42);
+
+  for (auto _ : state) {
+    std::vector<int> copy{src};
+
+    benchmark::DoNotOptimize(copy.data()); 
+  }
+}
+```
+
+Now, the data we copied into the vector looks like its getting used, so the compiler will leave it alone.
+
+### The "As-If" Rule
+
+It perhaps seems weird that a compiler would behave this way. We've asked for an array to be created, and the compiler is outputting a program that simply isn't doing what we asked.
+
+This behavior falls under a blanket understanding called the **as-if rule**. With a few exceptions, it allows compilers to perform any code modification they choose, as long as it doesn't change the observable behavior of the program.
+
+This means when our code requests an array to be created, this isn't interpreted as an instruction to "create this array". It's interpreted as an instruction to "create a program that behaves **as if** this array were created".
+
+To implement that instruction, the compiler decides to create the array in most situations. However, the as-if rule gives it broad leeway to find alternative approaches that optimize performance.
+
+## Preventing Constant Folding
+
+Dead code elimination isn't the only trick the compiler has. It also excels at **constant folding**.
+
+If your benchmark involves simple math or logic with hardcoded numbers, the compiler might calculate the result at *compile time* and replace your code with the final answer.
+
+Consider this simple benchmark:
+
+```
+static void BM_Math(benchmark::State& state) {
+  for (auto _ : state) {
+    int a = 10;
+    int b = 20;
+    int c = a + b;
+    benchmark::DoNotOptimize(c);
+  }
+}
+```
+
+We successfully protected the output `c` using `DoNotOptimize(c)`. However, the inputs `a` and `b` are constants - they are known at compile time.
+
+The compiler sees `10 + 20`. It knows the answer is `30`. It will likely delete the addition instruction entirely and simply replace it with `30`. We are no longer benchmarking the `+` operator - we are benchmarking `DoNotOptimize(30)`.
+
+To benchmark the math itself, we must force the compiler to also treat the inputs as unknown values. We can use `DoNotOptimize()` on the inputs as well:
+
+```
+static void BM_Math(benchmark::State& state) {
+  int a = 10;
+  int b = 20;
+
+  for (auto _ : state) {
+    // Tell the compiler: "assume these values are needed/unknown"
+    benchmark::DoNotOptimize(a);
+    benchmark::DoNotOptimize(b);
+    int c = a + b;
+    benchmark::DoNotOptimize(c);
+  }
+}
+```
+
+Now the compiler cannot assume `a` and `b` are `10` and `20` inside the loop, because `DoNotOptimize()` acts as a barrier that might have modified them (from the compiler's paranoid perspective). It is forced to evaluate the `+` operator and emit the corresponding `ADD` instruction to be included in our benchmark.
+
+One of the problems with `DoNotOptimize()` is a performance cost. And, in a tiny benchmark like this, the cost of using `DoNotOptimize()` will dwarf the cost of the thing we're actually trying to measure.
+
+As our benchmarks get larger, the cost of `DoNotOptimize()` becomes relatively less important, but it's worth being mindful of when we're measuring very fast operations.
+
+## Controlling Memory (Clobbers)
+
+There is a third, more advanced optimization that can distort benchmarks: **Loop Invariant Code Motion**.
+
+If your loop reads from a memory address that never changes (like a global variable or a heap allocation outside the loop), the compiler might decide to read that memory *once* before the loop starts, store the value in a CPU register, and then reuse that register for every iteration.
+
+This is a fantastic optimization for production code. It saves expensive trips to the cache or other memory.
+
+But what if you *want* to measure the cost of reading the data? What if you are benchmarking a memory-bound algorithm and the compiler optimizes away the memory access?
+
+### The Fix: `benchmark::ClobberMemory()`
+
+Google Benchmark provides a "big hammer" called `benchmark::ClobberMemory()`.
+
+This function emits a compiler barrier instruction. It effectively tells the compiler: *"Assume that all memory in the entire system has been modified."*
+
+When the compiler encounters this, it is forced to flush any values it is holding in registers back to memory and reload them from memory for the next instruction. It destroys the compiler's knowledge of the state of RAM.
+
+Let's look at a scenario where we might need this. Suppose we want to measure the latency of accessing a single integer in a vector repeatedly.
+
+```
+static void BM_VectorRead(benchmark::State& state) {
+  std::vector<int> data(1000, 42);
+  int* ptr = data.data();
+
+  for (auto _ : state) {
+    // Optimization: The compiler sees that *ptr
+    // never changes. It might load *ptr into a
+    // register outside the loop and just read
+    // the register here.
+    int value = *ptr;
+    benchmark::DoNotOptimize(value);
+  }
+}
+```
+
+To force a reload:
+
+```
+static void BM_VectorRead(benchmark::State& state) {
+  std::vector<int> data(1000, 42);
+  int* ptr = data.data();
+
+  for (auto _ : state) {
+    int value = *ptr;
+    benchmark::DoNotOptimize(value);
+
+    // Force the compiler to forget what 
+    // it knows about memory 
+    benchmark::ClobberMemory();
+  }
+}
+```
+
+Using `ClobberMemory()` is expensive and heavy-handed. It prevents *all* memory optimizations across the barrier. Use it only when you specifically need to defeat load/store optimizations to measure memory throughput or latency. For most algorithmic benchmarks (sorting, searching), `DoNotOptimize()` on the result is sufficient.
+
+## Re-benchmarking
+
+Now that we understand the tools, let's revisit our `BM_VectorCopy` benchmark from the previous lesson.
+
+We likely had a valid benchmark simply because the copy constructor of `std::vector` is complex enough that the compiler might not have been confident to delete it entirely.
+
+However, let's not rely on maybe - let's ensure our test is robust:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+
+// The Vector Copy Benchmark (Now Protected)
+static void BM_VectorCopy(benchmark::State& state) {
+  std::vector<int> src(1000, 42);
+
+  for (auto _ : state) {
+    std::vector<int> copy{src};
+
+    // Prevent Dead Code Elimination
+    benchmark::DoNotOptimize(copy.data()); 
+  }
+}
+BENCHMARK(BM_VectorCopy);
+```
+
+Remember to rebuild the benchmark before running it:
+
+```
+cmake --build --preset release
+```
+
+Previously, on the machine on which the benchmark was run, the CPU time was 71.1ns
+
+We'd expect our new benchmark to be similar (indicating that the compiler wasn't optimizing away our algorithm) or slower (indicating that it was, which we've now fixed).
+
+```
+-----------------------
+Benchmark           CPU
+-----------------------
+BM_VectorCopy   73.2 ns
+```
+
+This is within the margin of error, so the compiler probably wasn't doing any optimizations in my case. But if that changes under a different configuration or a future version of the compiler gets more aggressive, our benchmark will now remain stable.
+
+## Practical Example: Preallocation
+
+We now have a useful lab environment to play around with different ideas. For example, a frequently cited claim about memory is that heap allocation is expensive. We can now test that theory experimentally.
+
+What would happen if we just preallocated a big block of memory in advance, which our algorithms could use and reuse as needed?
+
+Let's simulate our preallocation by creating a big array outside of the loop, where it is not timed. Then, within our loop, we'll copy our new data into it:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+#include <cstring> // for std::memcpy 
+
+BM_VectorCopy (Unchanged)|Showstatic void BM_VectorCopy(benchmark::State&) {/*...*/}
+
+// Raw Memory Copy
+static void BM_Memcpy(benchmark::State& state) {
+  std::vector<int> src(1000, 42);
+  std::vector<int> dst(1000); // Pre-allocate memory
+
+  for (auto _ : state) {
+    // Measure pure byte-copying speed
+    std::memcpy(
+      dst.data(), src.data(), src.size() * sizeof(int)
+    );
+
+    // Prevent optimization
+    benchmark::DoNotOptimize(dst.data()); 
+  }
+}
+BENCHMARK(BM_Memcpy);
+```
+
+It turns out that most of the work done in `BM_VectorCopy()` wasn't copying - it was allocation and related bookkeeping. Copying bytes into memory that we've already allocated is much faster:
+
+```
+-----------------------
+Benchmark           CPU
+-----------------------
+BM_VectorCopy   69.8 ns
+BM_Memcpy       32.2 ns
+```
+
+We're using `std::memcpy()` purely as an example here. In most C++ cases, copy assignment (our first approach) is what should be used. It is slower, but that's because it's doing useful things, such as calling constructors and destructors.
+
+The raw byte-level copy works in this case because the underlying bytes just represent a bunch of `int` values, which are trivially copyable. This wouldn't work with a more complex type.
+
+Note also that copying the data **within** a `std::vector` is **not** the same as copying the `std::vector`. The data might be trivially copyable, but the `std::vector` isn't:
+
+```
+std::vector<int> src(1000, 42);
+std::vector<int> dst(1000);
+
+// This is safe
+std::memcpy(
+  dst.data(), src.data(), src.size() * sizeof(int)
+);
+
+// This is NOT safe
+std::memcpy(&dst, &src, sizeof(std::vector<int>));
+```
+
+## Complete Code
+
+Here is the complete state of `benchmarks/main.cpp`, incorporating all the techniques we have covered.
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+#include <cstring> // for std::memcpy
+
+// Benchmark 1: Standard Vector Copy
+// Measures allocation + copy cost
+static void BM_VectorCopy(benchmark::State& state) {
+  // Setup outside the loop
+  std::vector<int> src(1000, 42);
+
+  for (auto _ : state) {
+    // The operation being timed
+    std::vector<int> copy{src};
+
+    // Prevent Dead Code Elimination
+    // If we didn't do this, the compiler might delete
+    // the copy entirely since 'copy' is never used.
+    benchmark::DoNotOptimize(copy.data());
+  }
+}
+BENCHMARK(BM_VectorCopy);
+
+// Benchmark 2: Baseline Memcpy
+// Measures pure memory bandwidth (L1 Cache)
+static void BM_Memcpy(benchmark::State& state) {
+  std::vector<int> src(1000, 42);
+  std::vector<int> dst(1000);
+
+  for (auto _ : state) {
+    std::memcpy(
+      dst.data(), src.data(), src.size() * sizeof(int)
+    );
+
+    // Prevent optimization
+    benchmark::DoNotOptimize(dst.data());
+  }
+}
+BENCHMARK(BM_Memcpy);
+
+// Benchmark 3: Math with Barriers
+// Measures the cost of an ADD instruction,
+// ensuring inputs aren't constant-folded.
+static void BM_MathAdd(benchmark::State& state) {
+  int a = 10;
+  int b = 20;
+
+  for (auto _ : state) {
+    // Prevent Constant Folding on Inputs
+    // Force compiler to treat 'a' and 'b' as
+    // unknown runtime values
+    benchmark::DoNotOptimize(a);
+    benchmark::DoNotOptimize(b);
+    int c = a + b;
+    benchmark::DoNotOptimize(c);
+  }
+}
+BENCHMARK(BM_MathAdd);
+```
+
+## Summary
+
+In this lesson, we learned that benchmarking is an adversarial process. We must actively fight the compiler to ensure our tests are valid.
+
+1.  **The State Loop**: Google Benchmark uses an iterator-based loop to batch execution and calculate statistics. Only code inside the loop is timed.
+2.  **The** **`DoNotOptimize`** **Helper**: We use this to prevent **dead code elimination**. It acts as a black hole that forces the compiler to materialize values we otherwise wouldn't use.
+3.  **Inputs Matter**: We must also protect inputs to prevent **Constant Folding**, where the compiler calculates the answer before the program even runs.
+4.  **The** **`ClobberMemory`** **Helper**: We learned about this heavy-duty barrier for forcing memory reloads, though we use it sparingly.
+
+We now have a reliable build system and a reliable way to write tests. But when we run these tests, we get a wall of text: `74.1 ns`, `12.5 ns`, `CPU time`, `Wall time`.
+
+What do these numbers actually mean? Why does the time change if I run Spotify in the background? And how do I know if a 5ns difference is real or just statistical noise?
+
+In the next lesson, we will learn to **analyze benchmark data**. We will explore the difference between CPU Time and Wall Time, understand variance, and establish a methodology for comparing "Algorithm A" against "Algorithm B" with confidence.

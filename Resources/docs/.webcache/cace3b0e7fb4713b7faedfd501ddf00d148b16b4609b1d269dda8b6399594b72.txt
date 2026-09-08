@@ -1,0 +1,414 @@
+In the previous lessons, we scaled our programs **out**. We took a task, broke it into pieces, and distributed those pieces across multiple CPU cores using threads.
+
+But what happens inside a single core? If you inspect the assembly code generated for most C++ logic, you will see a lot of "scalar" instructions. You load one number, add another number to it, and store the result. One instruction, one piece of data. This is **SISD** (Single Instruction, Single Data).
+
+Modern CPUs, however, are capable of much more. They contain massive registers - 128, 256, or even 512 bits wide - that can hold multiple numbers at once. They have special instructions that can perform math on all those numbers simultaneously. This is **SIMD** (Single Instruction, Multiple Data).
+
+If you are processing `float`s one by one on a CPU capable of processing 8 at a time, you are leaving 87% of your hardware idle. In this lesson, we are going to look at how to unlock this hidden potential.
+
+## The Hardware Reality
+
+In a standard scalar operation, we use general-purpose registers (like `rax` or `rdi` on x86). These hold a single value:
+
+```
+// 1. Load 'a' into a floating point register
+float a = 1.0f;
+
+// 2. Add 'b' to it
+float b = 2.0f;
+
+// 3. Result is one float
+float c = a + b;
+```
+
+However, your CPU also has a bank of **vector** registers. On x86-64 processors, these have evolved over time, but the broad progression looks something like this:
+
+- **SSE (Streaming SIMD Extensions):** 128-bit registers.
+- **AVX (Advanced Vector Extensions):** 256-bit registers.
+- **AVX-512:** 512-bit registers.
+
+If we're working with 32-bit numbers, such as a typical `int` or `float`, these registers can hold 4, 8, or 16 values simultaneously.
+
+When we use SIMD instructions, we might load 4 floats into a single register. We load another 4 floats into a second register. Then, we issue a single vector instruction to process them all in parallel.
+
+## Auto-Vectorization
+
+We want this speed, but we don't necessarily want to write assembly language or use complex intrinsic functions to get it. Ideally, we want our compiler to look at our standard C++ loop, realize the iterations are independent, and generate SIMD instructions automatically.
+
+This is called **Auto-Vectorization**.
+
+Let's look at a loop that transforms a collection to its square roots:
+
+```
+void Sqrt(float* data, int count) {
+  for (int i = 0; i < count; ++i) {
+    data[i] = std::sqrt(data[i]);
+  }
+}
+```
+
+If we compile this with optimizations enabled (`-O2` or `-O3`), the compiler is smart enough to see that `data[0]`, `data[1]`, etc., can be processed in chunks.
+
+Instead of generating a loop that increments `i` by 1, it generates a loop that increments `i` by 4, 8, or 16, loads all those values into a single register, calculates their square roots in a single cycle, and stores them back.
+
+### Benchmarking Auto-Vectorization
+
+Let's see an example of how we might benchmark the performance we gain from vectorization. We will write two versions of a function. One allows the compiler to do its job. The other asks the compiler to avoid vectorization:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+#include <random>
+
+// Generate 1 million floats
+std::vector<float> GetData() {
+  std::vector<float> data(1000000);
+  std::fill(data.begin(), data.end(), 1.0f);
+  return data;
+}
+
+const std::vector<float> DATA = GetData();
+
+void ScalarAlgorithm(float* data, int count) {
+// Disable vectorization of the next loop
+#if defined(__clang__)
+  #pragma clang loop vectorize(disable)
+#elif defined(__GNUC__)
+  #pragma GCC optimize ("no-tree-vectorize")
+#elif defined(_MSC_VER)
+  #pragma loop(no_vector)
+#endif
+  for (size_t i = 0; i < count; ++i) {
+    data[i] = std::sqrt(data[i]);
+  }
+}
+
+
+void VectorAlgorithm(float* data, int count) {
+  for (int i = 0; i < count; ++i) {
+    data[i] = std::sqrt(data[i]);
+  }
+}
+
+static void BM_Scalar(benchmark::State& state) {
+  std::vector<float> data = DATA;
+  for (auto _ : state) {
+    ScalarAlgorithm(data.data(), data.size());
+    benchmark::DoNotOptimize(data.data());
+  }
+}
+
+static void BM_Vector(benchmark::State& state) {
+  std::vector<float> data = DATA;
+  for (auto _ : state) {
+    VectorAlgorithm(data.data(), data.size());
+    benchmark::DoNotOptimize(data.data());
+  }
+}
+
+#define BENCHMARK_STD(func) \
+  BENCHMARK(func) \
+    ->Unit(benchmark::kMillisecond)
+
+BENCHMARK_STD(BM_Scalar);
+BENCHMARK_STD(BM_Vector);
+```
+
+In compute-constrained environments, vectorization should unlock significant performance benefits:
+
+```
+-------------------------------
+Benchmark       Time        CPU
+-------------------------------
+BM_Scalar    1.41 ms    1.41 ms
+BM_Vector   0.323 ms   0.315 ms
+```
+
+The speedup we can expect here depends on a few factors. Most notably, the size of the vector registers our system supports (whether they can process 4, 8, or 16 floats concurrently) and the nature of the processing work we're doing.
+
+If the work isn't compute-heavy, you may not see the full benefit of vectorization. This is because, as we get better at making full use of the CPU, the memory bus struggles to deliver data as quickly as we can process it. This means our performance bottleneck is increasingly likely to shift away from the CPU and towards memory bandwidth.
+
+Like with multithreading, vectorization is most powerful when the CPU is doing a lot of work for every byte it requests.
+
+## Why Auto-Vectorization Fails
+
+If the compiler is so smart, why do we need to learn this? Why can't we just enable `-O3` and call it a day?
+
+Because the compiler is **conservative**. It will only vectorize a loop if it can prove with certainty that doing so is safe. If there is even a 0.01% chance that vectorizing will change the result of our program, it will default to the slow, safe scalar version.
+
+We'll cover two of the main enemies of auto-vectorization in this lesson: **data layout** and **aliasing**.
+
+### The Data Layout Constraint (AoS vs. SoA)
+
+SIMD instructions love **contiguous** memory. They load 256 bits starting from address `X`. They expect to find `Data[0]`, `Data[1]`, `Data[2]`, ... `Data[7]` sitting right next to each other.
+
+This brings us back yet again to a concept we touched on earlier: **Array of Structures (AoS)** vs. **Structure of Arrays (SoA)**.
+
+In standard C++ OOP, we usually bundle data together:
+
+```
+struct Particle {
+  float x, y, z;
+  float r, g, b;
+  float life;
+  // ...
+};
+
+std::vector<Particle> particles;
+```
+
+In memory, this looks like: `[x, y, z, ...], [x, y, z, ...], ...`
+
+Now, imagine we want to update the `x` position of every particle: `p.x += velocity`.
+
+To vectorize this, the CPU needs to load a collection of our `x`s into a single register. But they aren't next to each other. They are separated by `y`, `z`, `r`, `g`, `b`, and `life`. This is a **strided** memory access pattern.
+
+### The Gather and Scatter Penalty
+
+Modern CPUs *do* have instructions to handle non-contiguous memory, called **Gather** (load from scattered addresses) and **Scatter** (store to scattered addresses).
+
+However, these are not magic. The memory controller still has to fetch different cache lines. While a Gather instruction is faster than a raw scalar loop, it is often 2x-4x slower than a contiguous load. If we want maximum performance, we must fix our data layout.
+
+This is yet another reason that the Structure-of-Arrays (SoA) layout is preferred when performance is critical:
+
+```
+struct Particles {
+  std::vector<float> x;
+  std::vector<float> y;
+  std::vector<float> z;
+  // ...
+};
+```
+
+Now, all the `x` values are packed tightly in memory: `[x0, x1, x2, x3, x4, x5, x6, x7, ...]`. A single memory read can load a cache line full of `x` values. Large chunks of this data - potentially even the entire 512 bit cache line - can then be processed in a single vector instruction.
+
+### The Aliasing Problem
+
+The second major blocker is **pointer aliasing**. Consider this function:
+
+```
+void AddArrays(float* a, float* b, float* result, int count) {
+  for (int i = 0; i < count; ++i) {
+    result[i] = a[i] + b[i];
+  }
+}
+```
+
+This looks perfectly safe to vectorize. But the compiler has to ask a paranoid question: what if `result` overlaps with `a` and/or `b`?
+
+For example, what if we called the function like this:
+
+```
+AddArrays(arr, arr, arr + 1, 4);
+```
+
+Our memory layout would look like this, where `a` and `b` overlap, and `c` partially overlaps:
+
+```
+a:      [0, 1, 2, 3]
+b:      [0, 1, 2, 3]
+result:    [?, ?, ?, ?] <- starts at a[1]
+```
+
+In this example, vectorization would change the `result` we get. Without vectorization:
+
+- Iteration 1: Read `a[0] = 0`, `b[0] = 0`. Add them. Write `0` to `result[0]` (which is `a[1]` and `b[1]`).
+- Read `a[1] = 0`, `b[1] = 0`. Add them. Write `0` to `result[1]` (which is `a[2]` and `b[2]`).
+
+This continues, and the calculated `result` would be `[0, 0, 0, 0]`.
+
+With vectorization, we'd read `a[0..3] = [0, 1, 2, 3]` and `b[0..3] = [0, 1, 2, 3]`. Adding them in a single operation would calculate an incorrect `result` given how the loop was written: `[0, 2, 4, 6]`.
+
+Because the compiler likely cannot see the caller's code (especially across translation units), it must assume the worst and generate safe, slow code.
+
+## Handling Overlapping and Misaligned Data
+
+We can tell the compiler, "Trust me, these arrays do not overlap." To do this, we can use the `__restrict` keyword in MSVC, or `__restrict__` in GCC/Clang.
+
+If we care about portability, this is usually implemented as a macro that switches its definition based on the compiler:
+
+```
+#if defined(__GNUC__) || defined(__clang__)
+  #define RESTRICT __restrict__
+#elif defined(_MSC_VER)
+  #define RESTRICT __restrict
+#else
+  #define RESTRICT
+#endif
+
+void AddArrays(
+  float* RESTRICT a,
+  float* RESTRICT b,
+  float* RESTRICT result,
+  int count
+) {
+  for (int i = 0; i < count; ++i) {
+    result[i] = a[i] + b[i];
+  }
+}
+```
+
+By marking the pointers as `RESTRICT`, we promise that for the lifetime of this scope, the memory pointed to by `result` will not be accessed by any other pointer (like `a` or `b`). This gives the compiler the green light to vectorize aggressively.
+
+### Using `std::assume_aligned`
+
+While `RESTRICT` handles overlap, there is another subtle check the compiler does: **alignment**.
+
+Vector instructions are faster if the memory address is a multiple of the vector width (e.g., 32-byte alignment for AVX). If the compiler doesn't know the alignment, it generates "peeling" loops to handle the unaligned start of the array or uses slower unaligned load instructions.
+
+If we know the alignment, we can use `std::assume_aligned` from C++20 to inform the compiler and unlock the last bit of performance:
+
+```
+#include <memory>
+
+void AddArrays(
+  float* RESTRICT a, 
+  float* RESTRICT b, 
+  float* RESTRICT result, 
+  int count
+) {
+  // Promise that pointers are aligned to 32 bytes 
+  // (32 bytes = 256 bits, the width of an AVX register)
+  auto a_ptr = std::assume_aligned<32>(a);
+  auto b_ptr = std::assume_aligned<32>(b);
+  auto res_ptr = std::assume_aligned<32>(result);
+
+  for (int i = 0; i < count; ++i) {
+    res_ptr[i] = a_ptr[i] + b_ptr[i];
+  }
+}
+```
+
+Before C++20, this can be done using the `__builtin_assume_aligned` (GCC/Clang) or `__assume` intrinsics (MSVC)
+
+## Unsequenced Execution Policies
+
+In our earlier lesson, we introduced execution policies like `std::execution::seq` and `std::execution::par`. Sequential execution (`seq`) is the default, and it disables **both** multithreading and vectorization. Parallel (`par`) enables multithreading, but disables vectorization.
+
+There are two more policies we can now introduce: `unseq` and `par_unseq` which, as you might expect, permits the algorithm to use vectorization.
+
+### Unsequenced: `std::execution::unseq`
+
+This policy is the standard library's way of asking for vectorization **without** multithreading.
+
+When you use `unseq`, you are giving the library permission to execute the loop iterations in any order or overlapping in time, on a **single thread**. This is the semantic requirement for SIMD:
+
+```
+#include <execution>
+#include <algorithm>
+#include <vector>
+
+void Process(std::vector<float>& data) {
+  std::transform(
+    std::execution::unseq,
+    data.begin(), data.end(),
+    data.begin(),
+    [](float x) { return std::sqrt(x); }
+  );
+}
+```
+
+Note that `unseq` does **not** use multiple cores. It runs on the calling thread. It essentially acts as a standard-compliant hint to the compiler to turn on auto-vectorization and implies the `RESTRICT` contract (assumes no aliasing within the container).
+
+### Parallel Unsequenced: `std::execution::par_unseq`
+
+This is the ultimate "go fast" mode. It allows the algorithm to split the work across multiple threads (cores) and, within each thread, use vector instructions (SIMD) to process chunks of data.
+
+```
+std::transform(
+  std::execution::par_unseq,
+  data.begin(), data.end(),
+  data.begin(),
+  [](float x) { return std::sqrt(x); }
+);
+```
+
+If we're running on a system with 8 cores, AVX support (8 floats wide) and aren't constrained by memory bandwidth, this can complete up to \$8 \times 8 = 64\$ times faster than using `std::transform()` with the default execution policy (`seq`).
+
+### Warnings for `unseq`
+
+Just like `par` requires thread safety, `unseq` has its own safety requirements. Because a single instruction modifies multiple values, you cannot write code that depends on the order of execution within a small window.
+
+For example, you generally cannot use `std::mutex` or allocate memory inside a function passed to `unseq`. If a vector lane pauses to acquire a lock, it halts the entire register processing, potentially causing deadlocks or massive stalls.
+
+As a rule of thumb, functions passed to `unseq` algorithms should be "pure" math or logic. Input \> Math \> Output. No locks, no I/O, no heap allocation.
+
+## Practical Example
+
+The following code assumes we have a large set of 3D points we want to translate. The points are stored in a structure-of-arrays (SoA) layout. Our translation function flags these parallel arrays as non-overlapping using `RESTRICT`. We then use `std::for_each()` to update them, passing `par_unseq` to flag the operation (our lambda) as being safe to both parallelize and vectorize:
+
+```
+#include <vector>
+#include <algorithm>
+#include <execution>
+
+struct PointsSoA {
+  std::vector<float> x;
+  std::vector<float> y;
+  std::vector<float> z;
+};
+
+void TranslatePoints(
+  PointsSoA& points,
+  float dx, float dy, float dz
+) {
+  auto indices = std::views::iota(0, points.x.size());
+  
+  float* RESTRICT x_ptr = points.x.data();
+  float* RESTRICT y_ptr = points.y.data();
+  float* RESTRICT z_ptr = points.z.data();
+  
+  std::for_each(
+    std::execution::par_unseq,
+    indices.begin(), indices.end(),
+    [=](size_t i) {
+      x_ptr[i] += dx;
+      y_ptr[i] += dy;
+      z_ptr[i] += dz;
+    }
+  );
+}
+```
+
+It can take some experimentation to write code that automatically vectorizes. As we add more abstractions, compilers can have an increasingly difficult time recognizing what is safe. If we need to be completely certain that our code will use vectorization, we need to use explicit techniques.
+
+## Explicit Vectorization
+
+Auto-vectorization is fragile. The compiler looks at your loop and thinks, "Can I safely prove this works in parallel?" If the answer is anything less than a 100% "Yes," it reverts to scalar code. Common things that break auto-vectorization include:
+
+1.  **Branching:** `if` statements inside the loop. We'll introduce **branchless programming techniques** as a workaround for this in a future chapter.
+2.  **Complex Dependencies:** Accessing `data[i-1]` while writing `data[i]`.
+3.  **Function Calls:** Calling a function that isn't inlined or known to the compiler.
+4.  **Aliasing Ambiguity:** Even with `__restrict`, sometimes the compiler just isn't sure.
+
+When the compiler can't help us, we can move to **explicit vectorization**. That involves writing code that directly maps to vector registers. We don't cover it in this course, but we'll briefly introduce it here.
+
+Explicit vectorization involves using **intrinsics** - ugly, assembly-like functions provided by CPU vendors:
+
+```
+// Tied to x86 AVX processors
+__m256 a = _mm256_load_ps(arr_a);
+__m256 b = _mm256_load_ps(arr_b);
+__m256 c = _mm256_add_ps(a, b);
+_mm256_store_ps(result, c);
+```
+
+If we wrote that, we could be sure that our program would use vectorization on x86 AVX processors, but our code wouldn't work on any other architecture. We would have to adjust it for every platform we want to support.
+
+To help with this, there are several popular libraries that wrap common intrinsics, making our code more portable. Popular options include [Highway![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://github.com/google/highway) and [Xsimd![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://github.com/xtensor-stack/xsimd). Standard library implementations (`std::simd`) are also expected from C++26.
+
+## Summary
+
+In this lesson, we drilled down into the single core to find more performance.
+
+1.  **SISD vs. SIMD**: Standard code uses a fraction of the CPU's width. SIMD uses wide registers to process 4, 8, or 16 values in a single cycle.
+2.  **Auto-Vectorization**: The compiler can write SIMD code for us, but it is fragile.
+3.  **Data Layout**: Array of Structs (AoS) scatters data, complicating vectorization. Structure of Arrays (SoA) packs data, unlocking its full potential.
+4.  **Aliasing**: The compiler assumes arrays might overlap. We use `__restrict` to promise they don't.
+5.  **Policies**: `std::execution::unseq` allows vectorization on a single thread; `par_unseq` combines threads and vectorization.
+
+We now have the complete toolkit for safe, high-performance concurrency. We know how to map work across threads, how to use SIMD vectorization within a single core, and how to safely navigate the hardware's memory architecture.
+
+In the next chapter, we leave pure logic behind and focus entirely on data layout. We will begin building our custom Structure-of-Arrays (SoA) framework, transforming how we structure objects to feed these powerful CPU cores.

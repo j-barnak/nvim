@@ -1,0 +1,530 @@
+In the previous lesson, we saw that the C++ standard library's `std::unordered_set` and `std::unordered_map` uses a technique called **separate chaining** to resolve hash collisions. When two keys hash to the same bucket, it allocates a new linked list node on the heap and chains them together.
+
+This pointer-chasing architecture hurts our CPU's cache locality. Every lookup is a roll of the dice that frequently ends in a pipeline stall while the processor waits to fetch a scattered node from main memory.
+
+To solve this, we have to ditch the linked list. We are going to build a **flat set**, relying on a data-oriented technique known as **open addressing**.
+
+## Bypassing the Heap
+
+The core philosophy of a flat set is simple: **no external nodes**. Every piece of data we care about must live directly inside a single, tightly packed array.
+
+Instead of an array of pointers, we allocate an array of `Slot` structs. Each slot will hold the actual `Key` we are storing, alongside a small state variable to tell us if the slot is currently in use. We'll be adding a third state soon, so we'll use an `Enum` for this rather than a `bool`:
+
+### dsa_core/include/dsa/FlatHashSet.h
+
+```
+#pragma once
+#include <vector>
+#include <cstdint>
+
+class FlatHashSet {
+  enum class CellState : uint8_t {
+    Empty,
+    Occupied
+  };
+
+  struct Slot {
+    int Key{0};
+    CellState State{CellState::Empty};
+  
+    // If we were making a hash map instead of a set, 
+    // we would put the payload in this struct, too:
+    // PayloadType Payload;
+  };
+
+private:
+  std::vector<Slot> Buffer;
+  size_t Capacity{16};
+  size_t Mask{15};
+  size_t Size{0};
+
+Mix64 Function|Show  uint64_t Mix64(uint64_t x) const {/*...*/}
+
+public:
+  // Initialize our contiguous block of memory
+  FlatHashSet() : Buffer(Capacity) {}
+};
+```
+
+Because our `Slot` struct contains a 4-byte integer and a 1-byte enum, alignment padding will round its size up to 8 bytes. When we ask the CPU to look at `Buffer[0]`, it doesn't just fetch one slot; the memory controller pulls in the entire cache line - usually a 64-byte chunk.
+
+This means we also get the next 7 slots loaded into the cache, completely for free. This will be useful for our **linear probing**.
+
+## Linear Probing
+
+By forcing everything into a flat array, we still have to handle collisions. If `"Apple"` hashes to index `5`, and `"Mango"` also hashes to index `5`, where do we put `"Mango"`?
+
+For a flat map, the answer is simple. We check index `5`. If it's occupied, we take one step to the right and check index `6`. If index `6` is occupied, we check index `7`. We continue walking linearly down the array until we find an `Empty` slot.
+
+This mechanical shift is called **linear probing**:
+
+### dsa_core/include/dsa/FlatHashSet.h
+
+```
+// ...
+class FlatHashSet {
+// ...
+public:
+  FlatHashSet() : Buffer(Capacity) {}
+
+  void Insert(int key) {
+    size_t Index{Mix64(key) & Mask};
+
+    while (true) {
+      Slot& Current{Buffer[Index]};
+
+      // If we find an empty slot, claim it!
+      if (Current.State == CellState::Empty) {
+        Current.Key = key;
+        Current.State = CellState::Occupied;
+        ++Size;
+        return;
+      }
+
+      // Prevent duplicate keys
+      if (
+        Current.State == CellState::Occupied &&
+        Current.Key == key
+      ) {
+        return;
+      }
+
+      // Step one slot to the right.
+      // The mask handles the wrap-around back to 0.
+      Index = (Index + 1) & Mask;
+    }
+  }
+};
+```
+
+At first glance, this `while` loop might seem slow, but as we've seen many times, iterating through slots of a contiguous array is much faster than dereferencing even a single pointer to the heap. Because of the 64-byte cache line, checking the next 6 slots requires zero trips to main RAM.
+
+Furthermore, if the prefetcher detects us looping linearly through memory, it will proactively start streaming the next cache lines into the L1 cache before our `while` loop even asks for them.
+
+### Fast Lookups
+
+To check if our container has a key, we execute the same walk.
+
+We hash the query to get our starting index, and walk forward until we either find the key or we hit an `Empty` slot. If we hit an `Empty` slot, we know that the key does not exist, so we can end our search and return `false`.
+
+### dsa_core/include/dsa/FlatHashSet.h
+
+```
+// ...
+class FlatHashSet {
+// ...
+public:
+  // ...
+  bool Contains(int key) const {
+    size_t Index{Mix64(key) & Mask};
+
+    while (true) {
+      const Slot& Current{Buffer[Index]};
+
+      // We hit a blank space. The chain is broken.
+      if (Current.State == CellState::Empty) {
+        return false;
+      }
+
+      if (
+        Current.State == CellState::Occupied &&
+        Current.Key == key
+      ) {
+        return true;
+      }
+
+      Index = (Index + 1) & Mask;
+    }
+  }
+};
+```
+
+## Tombstone Deletions
+
+We have one problem remaining: how can we implement deletion? We can't just reset the slot to `Empty` - that would break our `Contains()` function. Imagine the following sequence of events:
+
+1.  `42` hashes to index `5`. It gets inserted there.
+2.  `99` hashes to index `5`. It collides with `42`, so it slides right and gets inserted at index `6`.
+3.  We delete `42` from the set, resetting index `5` to `Empty`.
+
+If we now call `Contains(99)`, the function will hash to index `5`. It will see that index `5` is `Empty`, and it will immediately return `false`.
+
+To fix this, we cannot just wipe slots clean. We have to leave a [tombstone ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/tombstones) behind. To do this, we can add a `Dead` state to our enum. When we delete an item, we simply mark it as `Dead`:
+
+### dsa_core/include/dsa/FlatHashSet.h
+
+```
+// ...
+
+// ...
+class FlatHashSet {
+  enum class CellState : uint8_t {
+    Empty,
+    Occupied,
+    Dead 
+  };
+  // ...
+public:
+  // ...
+  void Erase(int key) {
+    size_t Index{Mix64(key) & Mask};
+
+    while (true) {
+      Slot& Current{Buffer[Index]};
+
+      // The key was never in the set
+      if (Current.State == CellState::Empty) return;
+
+      // We found it! Mark it dead, but leave the
+      // slot physically intact
+      if (
+        Current.State == CellState::Occupied &&
+        Current.Key == key
+      ) {
+        Current.State = CellState::Dead;
+        --Size;
+        return;
+      }
+
+      Index = (Index + 1) & Mask;
+    }
+  }
+};
+```
+
+Our `Contains()` loop will now skip over `Dead` slots and continue searching down the chain.
+
+### Recycling Dead Slots
+
+If our array starts filling up with `Dead` slots, our probe chains will grow artificially long, and we'll eventually run out of space. We should actively reuse `Dead` slots when inserting new keys, so let's update our `Insert()` method.
+
+If we wanted our container to support duplicate keys, this would be relatively straightforward - we'd just drop the key into the first `Dead` or `Empty` slot our linear probe finds.
+
+But if we want to prevent duplicate keys, we cannot use the first `Dead` slot we find. We have to continue walking the chain until we hit an `Empty` slot to verify the key isn't already hiding further down the line as a duplicate:
+
+### dsa_core/include/dsa/FlatHashSet.h
+
+```
+// ...
+#include <limits>
+
+// ...
+
+class FlatHashSet {
+private:
+  // ...
+  static constexpr size_t InvalidIndex{
+    std::numeric_limits<size_t>::max()
+  };
+  
+public:
+  void Insert(int key) {
+    size_t Index{Mix64(key) & Mask};
+
+    // Remember the first grave we walk over
+    size_t FirstDead{InvalidIndex}; 
+
+    while (true) {
+      Slot& Current{Buffer[Index]};
+
+      if (
+        Current.State == CellState::Occupied &&
+        Current.Key == key
+      ) {
+        return;
+      }
+
+      // Rememberthe first dead slot, but keep walking
+      if (Current.State == CellState::Dead) {
+        if (FirstDead == InvalidIndex) FirstDead = Index;
+      }
+
+      if (Current.State == CellState::Empty) {
+        // Use the dead slot if we found one,
+        // otherwise use this empty slot
+        size_t Target = (FirstDead != InvalidIndex)
+          ? FirstDead
+          : Index;
+
+        Buffer[Target].Key = key;
+        Buffer[Target].State = CellState::Occupied;
+        ++Size;
+        return;
+      }
+
+      Index = (Index + 1) & Mask;
+    }
+  }
+  // ...
+};
+```
+
+## The Load Factor and Reallocation
+
+Because our flat set does not allocate external heap nodes, our `Capacity` is a hard physical limit. If we try to insert 16 items into an array of 16 slots, the array will become 100% full.
+
+If the array is 100% full, there are no `Empty` slots left. Our `while(true)` loops will spin infinitely, completely locking up the CPU.
+
+Even before we hit 100%, performance drops off a cliff. If the array is 95% full, massive, contiguous blocks of occupied memory will form. We call this **primary clustering**. An insertion might have to probe past 100 unrelated items just to find a single open space, effectively degrading our $O(1)$O(1) lookup into an $O(N)$O(N) linear scan.
+
+The typical benchmark for open-addressed hash tables is to establish a maximum load factor of around **70%**.
+
+When the number of occupied slots (plus the number of `Dead` tombstones clogging up the pipeline) reaches 70% of our capacity, we should pause execution, allocate an array double the size, and rehash everything into it. Let's create a `Grow()` function to implement this:
+
+### dsa_core/include/dsa/FlatHashSet.h
+
+```
+// ...
+class FlatHashSet {
+private:
+  // ...
+  size_t Tombstones{0}; 
+  
+  // ...
+
+  void Grow() {
+    size_t OldCapacity = Capacity;
+    std::vector<Slot> OldBuffer = std::move(Buffer);
+
+    // Double the capacity and recalculate the mask
+    Capacity *= 2;
+    Mask = Capacity - 1;
+    Buffer.assign(Capacity, Slot{});
+
+    // Reset our counters. Grow() will purge the graveyard
+    Size = 0;
+    Tombstones = 0;
+
+    // Physically re-insert only the Live slots
+    for (size_t i = 0; i < OldCapacity; ++i) {
+      if (OldBuffer[i].State == CellState::Occupied) {
+        Insert(OldBuffer[i].Key);
+      }
+    }
+  }
+  // ...
+};
+```
+
+Remember that we're using the bitwise mask trick, which requires our capacity to always be a power of 2. By doubling `16` to `32`, `64`, and so on, we guarantee the bitwise logic never breaks.
+
+We now simply inject a load-factor check at the very beginning of our `Insert()` method:
+
+### dsa_core/include/dsa/FlatHashSet.h
+
+```
+// ...
+class FlatHashSet {
+// ...
+public:
+  // ...
+  void Insert(int key) {
+    // If Live Data + Dead Data > 70% of Capacity, reallocate
+    if ((Size + Tombstones) >= (Capacity * 0.7f)) {
+      Grow();
+    }
+
+    // ...
+  }
+  // ...
+};
+```
+
+The `Erase()` method creates a new tombstone, so it should increment the `Tombstones` counter:
+
+### dsa_core/include/dsa/FlatHashSet.h
+
+```
+// ...
+class FlatHashSet {
+// ...
+public:
+  void Erase(int key) {
+    // ...
+    if (
+      Current.State == CellState::Occupied &&
+      Current.Key == key
+    ) {
+      Current.State = CellState::Dead;
+      --Size;
+      ++Tombstones; 
+      return;
+    }
+    // ...
+  }
+};
+```
+
+Finally, `Insert()` should decrement the `Tombstones` counter if it's recycling a tombstone slot:
+
+### dsa_core/include/dsa/FlatHashSet.h
+
+```
+// ...
+class FlatHashSet {
+// ...
+public:
+  void Insert(int key) {
+    // ...
+
+    while (true) {
+      // ...
+
+      if (Current.State == CellState::Empty) {
+        // ...
+        ++Size;
+        
+        // If we are replacing a tombstone, decrement the counter
+        if (Target == FirstDead) --Tombstones;
+        
+        return;
+      }
+
+      // ...
+    }
+  }
+};
+```
+
+## Benchmarking
+
+We have written a lot of raw mechanical logic. Let's prove that the hardware prefers this over the standard library's pointer chains.
+
+We will run a benchmark comparing `std::unordered_set` against our custom `FlatHashSet`. We'll populate both with 2,000,000 items, and blast them with batches of 1,000,000 randomized `Contains()` queries.
+
+The lookup performance of a hash container can have different performance characteristics depending on "miss rate" - that is, what percentage of our `Contains()` calls are for a key that is **not** in the collection.
+
+The following tests measure our performance at three different miss rates - 1%, 50%, and 99%:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <unordered_set>
+#include <vector>
+#include <random>
+#include <algorithm>
+#include <dsa/FlatHashSet.h>
+
+const int kNumElements = 2'000'000;
+const int kNumQueries = 1'000'000;
+
+std::vector<int> GenerateData() {
+  std::vector<int> data(kNumElements);
+  std::mt19937 rng(42);
+
+  std::uniform_int_distribution<int> dist(1, 50'000'000); 
+  for (int i = 0; i < kNumElements; ++i) data[i] = dist(rng);
+  return data;
+}
+
+const std::vector<int> Data = GenerateData();
+
+std::vector<int> GenerateQueries(double miss_rate) {
+  std::vector<int> queries;
+  queries.reserve(kNumQueries);
+
+  int misses = kNumQueries * miss_rate;
+  int hits = kNumQueries - misses;
+  
+  for (int i = 0; i < hits; ++i) {
+    queries.push_back(Data[i]);
+  }
+  
+  // Misses (completely out of the insertion bounds)
+  for (int i = 0; i < misses; ++i) {
+    queries.push_back(i + 100'000'000); 
+  }
+  
+  std::mt19937 rng(42);
+  std::shuffle(queries.begin(), queries.end(), rng);
+  
+  return queries;
+}
+
+static void BM_StdSet(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  
+  std::vector<int> queries = GenerateQueries(miss_rate);
+  std::unordered_set<int> set(Data.begin(), Data.end());
+  
+  for (auto _ : state) {
+    for (int query : queries) {
+      benchmark::DoNotOptimize(set.contains(query)); 
+    }
+  }
+}
+
+static void BM_FlatHashSet(benchmark::State& state) {
+  double miss_rate = state.range(0) / 100.0;
+  std::vector<int> queries = GenerateQueries(miss_rate);
+  
+  FlatHashSet set;
+  for (int val : Data) set.Insert(val);
+  
+  for (auto _ : state) {
+    for (int query : queries) {
+      benchmark::DoNotOptimize(set.Contains(query));
+    }
+  }
+}
+
+#define REGISTER_BENCHMARK(func) BENCHMARK(func) \
+  ->Unit(benchmark::kMillisecond) \
+  ->ArgName("MissRatePct") \
+  ->Arg(1) \
+  ->Arg(50) \
+  ->Arg(99)
+
+REGISTER_BENCHMARK(BM_StdSet);
+REGISTER_BENCHMARK(BM_FlatHashSet);
+```
+
+```
+---------------------------------------
+Benchmark                           CPU
+---------------------------------------
+BM_StdSet/MissRatePct:1         65.3 ms
+BM_StdSet/MissRatePct:50        76.4 ms
+BM_StdSet/MissRatePct:99        69.4 ms
+
+BM_FlatHashSet/MissRatePct:1    21.9 ms
+BM_FlatHashSet/MissRatePct:50   32.0 ms
+BM_FlatHashSet/MissRatePct:99   37.0 ms
+```
+
+Both containers use algorithms that would be classified as $O(1)$O(1), but the physical constant factor of our simple `FlatHashMap` is already much faster than a highly optimized implementation of separate chaining.
+
+We'll continue evolving our open addressing implementation in the next lesson, upgrading it to use **Robin Hood hashing**.
+
+### Pointer Stability
+
+Remember, one of the key advantages of the secondary chaining approach is that it maintains **pointer stability**.
+
+When we obtain a pointer or reference to a value inside a `std::unordered_map`, that pointer remains valid through insertions, removals, and even complete rehashes of the container.
+
+Our `FlatHashSet` does not have this safety net. If we hand out a reference to `FlatHashSet[5]`, and then someone calls `Insert()`, it might trigger a `Grow()`. The underlying vector will reallocate, the old memory block will be destroyed, and our system is now holding a dangling pointer.
+
+In the next lesson, we'll switch out our linear probing for a **Robin Hood** strategy that trades away even more pointer stability for additional speed.
+
+In these systems, we should generally pass values by copy, or develop a habit of always getting a fresh reference or pointer from the container rather than trying to save and reuse ones that can become stale.
+
+## Complete Code
+
+Here is our complete `FlatHashSet`, using open addressing and linear probing:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we moved away from heap-allocated nodes and built a pure array-driven implementation.
+
+By storing our data contiguously, we allowed the CPU's hardware prefetcher to do the heavy lifting, pulling entire sequences of probing slots into the L1 cache simultaneously. We handled deletions using `Dead` tombstones, and protected our query performance by enforcing a 70% load factor capacity.
+
+Linear probing is fast, but it is highly susceptible to **variance**. If our array starts to cluster, one unlucky query might have to probe past 20 items before finding its target. In the next lesson, we will implement a clever swapping heuristic known as **Robin Hood Hashing** to forcibly smooth out this variance and keep our probe lengths short and efficient.

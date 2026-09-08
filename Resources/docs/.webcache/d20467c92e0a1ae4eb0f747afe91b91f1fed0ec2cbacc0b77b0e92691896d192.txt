@@ -1,0 +1,206 @@
+In the first half of this course, we stripped away the abstractions of object-oriented programming and flattened everything into contiguous memory. By packing data into dense `std::vector` arrays, we spoon-fed the CPU's hardware prefetcher, virtually eliminating cache misses and maximizing throughput.
+
+But contiguous arrays are not the answer to every engineering problem. We will now start to look at problems that are best solved with non-contiguous data layouts, such as lists, trees, and graphs. Conceptually, these data structures are collections of nodes - chunks of memory that we link together using pointers:
+
+These designs immediately make our memory layout more complex. With data stored in a contiguous structure like a `std::vector`, we are managing a large, single block of contiguous memory. However, with a linked structure, there are typically many smaller blocks of memory that we need to allocate and keep track of. In the simplest implementation of a linked list, for example, every single element in the collection gets its own dedicated chunk of memory.
+
+So, before we can design high-performance linked data structures, we'll spend the first two lessons understanding the main problems of allocating and working with lots of discrete blocks of memory:
+
+- Each dynamic allocation of memory has a significant performance cost.
+- Each block of memory we allocate requires additional bookkeeping, which increases memory demands.
+- Allocating and deallocating memory causes memory fragmentation, which degrades the performance of our program over time.
+
+## Stack and Heap Allocation
+
+Memory allocated for our local variables is typically placed on the **stack**. The stack is a continuous block of memory managed automatically by the compiler. When a function is called, the stack pointer is simply moved to make room for its variables. When the function finishes, the pointer moves back, instantly freeing that memory:
+
+```
+void FastFunction() {
+  // Memory is automatically reserved on the stack
+  int x{42};
+
+  // Do work...
+
+  // Memory is automatically reclaimed when the function returns
+}
+```
+
+Stack allocation is incredibly fast because it only requires basic pointer arithmetic. However, stack space is limited, and the memory only lives for the duration of the function call. If we need memory that persists beyond the function's scope, or if we need a large amount of memory, we must allocate it on the **heap**.
+
+We use the `new` keyword to dynamically request memory from the heap, and `delete` to free it:
+
+```
+void SlowFunction() {
+  // Ask the global allocator for memory on the heap
+  int* x = new int{42}; 
+
+  // Do work...
+
+  // We must explicitly free the memory when we are done
+  delete x;
+}
+```
+
+This simple `new` keyword invokes a highly complex function call to a general-purpose memory allocator.
+
+The operating system manages the physical RAM in your machine. However, the operating system does not care about our 4-byte integer. The OS manages memory in large, fixed-size chunks called **pages** - typically 4KB (4096 bytes).
+
+If we ask the OS for memory, it will hand us an entire 4KB page. It is then up to our program to divide that page into usable pieces. This subdivision is the job of the C++ runtime allocator.
+
+When we call `new`, the allocator must look at its current pool of pages and run an algorithm to find a gap of unused memory that is perfectly sized to fit our request. It has to scan internal data structures, check availability, carve out the requested bytes, and update its records.
+
+If it can't find a suitable location, it must pause our application, perform an expensive system call to ask the OS for another 4KB page, and then resume. This is a heavy, expensive process.
+
+## Benchmarking the Heap
+
+Let's quantify the cost using Google Benchmark.
+
+We will write tests where we allocate 1,000 integers in different ways. The first test allocates them on the stack, the second allocates them contiguously on the heap using `std::vector`, and the third allocates them as individual chunks of memory using 1,000 `new` calls:
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+
+static void BM_StackAllocation(benchmark::State& state) {
+  for (auto _ : state) {
+    int data[1000];
+    benchmark::DoNotOptimize(data);
+  }
+}
+BENCHMARK(BM_StackAllocation);
+
+static void BM_HeapAllocation(benchmark::State& state) {
+  for (auto _ : state) {
+    std::vector<int> data(1000);
+    benchmark::DoNotOptimize(data);
+  }
+}
+BENCHMARK(BM_HeapAllocation);
+
+static void BM_MultipleHeapAllocation(benchmark::State& state) {
+  for (auto _ : state) {
+    for (int i = 0; i < 1000; ++i) {
+      int* p = new int;
+      benchmark::DoNotOptimize(p);
+      delete p;
+    }
+  }
+}
+BENCHMARK(BM_MultipleHeapAllocation);
+```
+
+```
+------------------------------------
+Benchmark                        CPU
+------------------------------------
+BM_StackAllocation           1.28 ns
+BM_HeapAllocation            5441 ns
+BM_MultipleHeapAllocation   33551 ns
+```
+
+Our `BM_StackAllocation` benchmark requests space for 1,000 integers on the stack, and is effectively instantaneous.
+
+The `BM_HeapAllocation` benchmark uses a `std::vector`, which dynamically allocates space for 1,000 integers on the heap. This triggers the heavy search algorithm we described above.
+
+The `BM_MultipleHeapAllocation` benchmark uses `new` to individually allocate 1,000 integers. Even though it allocates the exact same number of useful bytes as the `std::vector`, it takes significantly longer. Whilst some optimizations are possible in simple cases like this, as a general rule, the performance cost of heap allocation is paid **per allocation**, not per byte.
+
+## Hidden Metadata and Chunk Headers
+
+Let's cover this internal bookkeeping some more by considering the mechanics of `delete`. When we ask the allocator to free our memory, we pass it a pointer. Notice that we do **not** tell it how many bytes to free:
+
+```
+Player* p = new Player();
+// ...
+delete p;
+```
+
+How does the allocator know if `p` points to a 16-byte object or a 1024-byte object?
+
+It knows because it secretly recorded that information when it created the object. The global allocator doesn't just give you the memory you asked for; it allocates extra memory to store its own bookkeeping data. This is called the **chunk header**, containing the size of the allocation, flags indicating if the block is free or in use, and sometimes padding to ensure CPU alignment rules are met.
+
+If we are allocating a large 10-megabyte array of objects, a 16-byte hidden header is a meaningless rounding error. But in the context of a linked data structure where each of our objects might be a discrete node, there are many more chunks of memory involved, and therefore many more chunk headers.
+
+If each node is 16 bytes, and the allocator attaches a 16-byte header to each of them, we have instantly doubled our memory footprint.
+
+### The `sizeof` Operator
+
+It is worth noting that the `sizeof` operator will never reveal this hidden metadata. If we call `sizeof(Node)`, the compiler evaluates this at compile-time based purely on your class or struct definition. The chunk header is a runtime construct added dynamically by the allocator.
+
+The only way to see this physical memory waste is by profiling the application's total memory consumption at the OS level.
+
+## The Global Allocator and Thread Contention
+
+The complex search algorithm and administrative overhead of `new` is bad, but in the modern era of multi-core CPUs, there is another problem.
+
+In our previous lessons on parallelism, we learned about the dangers of data races. If two threads attempt to modify the same data at the same time, the program will crash or be corrupted.
+
+The heap is a globally shared resource, so the dangers of concurrency apply with memory allocation, too. The allocator manages a complex web of internal "free lists" to keep track of which memory blocks are available. If multiple threads search the free list and claim the same block of memory, the system is doomed.
+
+To prevent this, general-purpose allocators are forced to use locks - usually a Mutex (Mutual Exclusion) lock around the allocation logic. When a thread calls `new`, it acquires the lock, runs the search algorithm, claims the memory, updates the bookkeeping, and then releases the lock.
+
+If another thread tries to allocate memory during that process, the OS is forced to put it to sleep while it waits in line for the allocator.
+
+In the following benchmark, we update our dynamic allocation of 1,000 integers to be a multithreaded algorithm using `std::async`. We split the work across four separate threads, hoping to speed it up:
+
+```
+#include <benchmark/benchmark.h>
+#include <future> 
+
+Single Theaded Implementation (Unchanged)|Showstatic void BM_SingleThread(benchmark::State&) {/*...*/}
+
+static void BM_MultiThread(benchmark::State& state) {
+  for (auto _ : state) {
+    auto allocate_work = []() {
+      for (int i = 0; i < 250; ++i) {
+        int* p = new int;
+        benchmark::DoNotOptimize(p);
+        delete p;
+      }
+    };
+
+    // Launch 4 asynchronous tasks to share the 1,000 allocations
+    auto t1 = std::async(std::launch::async, allocate_work);
+    auto t2 = std::async(std::launch::async, allocate_work);
+    auto t3 = std::async(std::launch::async, allocate_work);
+    auto t4 = std::async(std::launch::async, allocate_work);
+
+    t1.wait();
+    t2.wait();
+    t3.wait();
+    t4.wait();
+  }
+}
+
+// We use MeasureProcessCPUTime() to capture the total CPU effort across all threads
+BENCHMARK(BM_MultiThread)->MeasureProcessCPUTime();
+```
+
+Even though we now have four cores working on the problem, the contention and synchronization overhead usually make the process take even longer than a single-threaded implementation:
+
+```
+--------------------------------------------------
+Benchmark                         Time         CPU
+--------------------------------------------------
+BM_SingleThread               36129 ns    36098 ns
+BM_MultiThread/process_time   44490 ns   123460 ns
+```
+
+### Custom Allocators
+
+Earlier, we saw how we could resolve multithread contention by having each thread work on local data owned exclusively by that thread, and then synchronize that data with other threads only when needed. This was the pattern underlying MapReduce and similar techniques.
+
+A similar concept can be applied to memory, too. Modern allocators like [TCMalloc![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://github.com/google/tcmalloc) or [jemalloc![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://github.com/jemalloc/jemalloc) can mitigate contention by giving each thread its own mini-heap to work with, transferring memory ownership between threads only when synchronization is required.
+
+However, any general-purpose allocator is inherently constrained by a need to be flexible. It doesn't know if we're writing code to run on a supercomputer or an electric toothbrush. It has no idea what kind of data we are storing, how long it will live, or what our performance requirements are. It needs to work reasonably well across all of these dimensions and more.
+
+But in our projects, we don't need maximum flexibility. We are usually allocating memory to implement a specific feature within a specific domain. We will have a pretty good idea of the type of systems our program will run on, what our data looks like, and how it will be used. Therefore, we can often do a better job than the general-purpose allocators. We'll see how to create custom allocators in this chapter.
+
+## Summary
+
+In this lesson, we established the fundamental rules of dynamic memory that will govern the rest of this course.
+
+1.  Dynamic allocation is a heavy algorithmic search through the OS's available memory pages.
+2.  The global allocator inflates your memory footprint by attaching hidden metadata headers to every single allocation.
+3.  The heap is a global resource protected by locks. Multithreaded systems that spam `new` will stall and idle their CPU cores.
+
+We have proven that the global allocator is slow and explained why. However, there is a secondary, much more destructive consequence of using `new` and `delete` over long periods of time. Even if we perfectly `delete` every object we create and have zero memory leaks, our program will still eventually choke and die. In the next lesson, we will explore the silent killer of long-running applications: **memory fragmentation**.

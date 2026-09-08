@@ -1,0 +1,285 @@
+In the previous lesson, we declared `std::vector` the winner over `std::forward_list` for traversal speed. We based this on a benchmark running with 10,000 elements.
+
+Relying on a single data point is dangerous. An algorithm might look incredibly fast with small collections because the data fits entirely inside your CPU's L2 cache. But what happens if we have millions or billions of items?
+
+Does the performance scale linearly, or does it degrade exponentially? Does it hit a "resource wall" where the memory subsystem gets overwhelmed?
+
+In this lesson, we will use Google Benchmark's automation tools to run our code across a spectrum of input sizes. This will allow us to check the theoretical **big O** complexity and reveal the physical **hardware cliffs** that theory ignores.
+
+## Automated Scaling with `Range()`
+
+Manually rewriting your benchmark to test size `100`, then `200`, then `400` is tedious. To help with this, Google Benchmark provides the `->Range()` modifier.
+
+Instead of hardcoding a constant like `ITEM_COUNT`, we pass a range of inputs to our test. Inside the benchmark function, we access the current input size using `state.range(0)`.
+
+Let's modify our list traversal benchmark to test sizes from 8 elements up to around 134 million elements:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <forward_list>
+#include <numeric> // for int64_t
+
+static void BM_ListTraverse(benchmark::State& state) {
+  int64_t n = state.range(0);
+
+  // Now using n instead of 10,000
+  std::forward_list<int> l(n);
+  std::fill(l.begin(), l.end(), 1);
+
+  for (auto _ : state) {
+    long long sum = 0;
+    for (int i : l) {
+      sum += i;
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+}
+
+// Range: 8 items up to ~134 Million items
+BENCHMARK(BM_ListTraverse)->Range(8, 8 << 24);
+```
+
+The `8 << 24` syntax is a **bit shift**, which is a commonly used way of expressing large powers of two. `8 << 24` is equivalent to $8 \times 2^{24}$8×224.
+
+If we run our benchmark now, we'll see `BM_ListTraverse()` tested with a wide range of list sizes:
+
+```
+-----------------------------------------
+Benchmark                             CPU
+-----------------------------------------
+BM_ListTraverse/8                 4.26 ns
+BM_ListTraverse/64                54.7 ns
+BM_ListTraverse/512                516 ns
+BM_ListTraverse/4096              5859 ns
+BM_ListTraverse/32768            71498 ns
+BM_ListTraverse/262144          627790 ns
+BM_ListTraverse/2097152       28125000 ns
+BM_ListTraverse/16777216     218750000 ns
+BM_ListTraverse/134217728   1828125000 ns
+```
+
+## Determining Big O Complexity
+
+Now that we have a dataset spanning multiple magnitudes of size, we can ask the library to analyze the trend.
+
+We can add the `->Complexity()` modifier to our benchmark registration. This tells the library to perform a **regression analysis** on the results. It attempts to fit the data to known complexity curves such as $O(n)$O(n), $O(n^{2})$O(n2), $O(\log n)$O(logn), and tells us which one fits best.
+
+To help with this, each benchmark needs to tell the library what value of $n$n we're actually using. This can be done through the `state.SetComplexityN()` function.
+
+In our case, we're directly using `state.range(0)` to control the size of our list, so we can just echo that back to the library:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <forward_list>
+
+static void BM_ListTraverse(benchmark::State& state) {
+  int64_t n = state.range(0);
+  state.SetComplexityN(n);
+  
+  std::forward_list<int> l(n);
+  std::fill(l.begin(), l.end(), 1);
+
+  for (auto _ : state) {
+    long long sum = 0;
+    for (int i : l) {
+      sum += i;
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+}
+
+BENCHMARK(BM_ListTraverse)
+  ->Range(8, 8 << 24)
+  ->Complexity();
+```
+
+When you run this, the output table changes. At the bottom, you will see a summary section:
+
+```
+-----------------------------------------
+Benchmark                             CPU
+-----------------------------------------
+BM_ListTraverse/8                 4.20 ns
+BM_ListTraverse/64                53.0 ns
+BM_ListTraverse/512                500 ns
+BM_ListTraverse/4096              5625 ns
+BM_ListTraverse/32768            71498 ns
+BM_ListTraverse/262144          585938 ns
+BM_ListTraverse/2097152       28125000 ns
+BM_ListTraverse/16777216     223958333 ns
+BM_ListTraverse/134217728   1812500000 ns
+BM_ListTraverse_BigO             13.50 N
+BM_ListTraverse_RMS                  1 %
+```
+
+The `BM_ListTraverse_BigO` value of $13.42N$13.42N shows the library detected **linear complexity**, or $O(n)$O(n), as expected. The time to traverse our list scales linearly with the length of the list. $13.5$13.5 represents the scaling factor - each new item in our list increases the scan time by around $13.5$13.5 nanoseconds on this machine.
+
+The `RMS` (root mean square) value is the error rate. We have a very low RMS at 1%, meaning the benchmark is very confident in this answer. A high RMS (e.g., 40%) means the data is erratic, and the big O classification might be wrong.
+
+## The Hardware Cliff
+
+Let's do some more analysis on our benchmark. We'll calculate **the time per element** of our previous results:
+
+$$\text{Time~Per~Element} = \frac{\text{Total~CPU~Time}}{n}$$Time Per Element=nTotal CPU Time​
+
+| Element Count               | Time Per Element |
+|-----------------------------|------------------|
+| `BM_ListTraverse/8`         | 0.525 ns/element |
+| `BM_ListTraverse/64`        | 0.828 ns/element |
+| `BM_ListTraverse/512`       | 0.977 ns/element |
+| `BM_ListTraverse/4096`      | 1.373 ns/element |
+| `BM_ListTraverse/32768`     | 2.182 ns/element |
+| `BM_ListTraverse/262144`    | 2.235 ns/element |
+| `BM_ListTraverse/2097152`   | 13.41 ns/element |
+| `BM_ListTraverse/16777216`  | 13.35 ns/element |
+| `BM_ListTraverse/134217728` | 13.51 ns/element |
+
+### Using `SetItemsProcessed()`
+
+This table was calculated manually, but if we tell the library how many items we processed, it will add an "items per second" column to our output, which will report similar results.
+
+The number of items we processed will depend on how often the library decides to run the loop. We can get that via `state.iterations()` **after** the loop has completed:
+
+```
+static void BM_ListTraverse(benchmark::State& state) {
+  // ...
+  
+  // This should go AFTER the loop to ensure
+  // state.iterations() returns the correct count
+  state.SetItemsProcessed(state.iterations() * n);
+}
+```
+
+### Hardware Cliffs
+
+Despite the supposedly $O(n)$O(n) algorithm, the time per element isn't as linear as we might expect. We see a gradual degradation in performance as our list gets larger, and it then falls off a cliff somewhere between `n = 262,144` and `n = 2,097,152`.
+
+If you're familiar with hardware caches and temporal locality, you might recognize why we see this falloff in performance as our data gets larger, and then a sudden cliff at a specific breaking point. The issue is that, as our working sets get larger, they no longer fit into the various levels of our CPU caches.
+
+In my case, the large falloff from $2ns$2ns to $13ns$13ns happens when the working set cannot fit in the machine's L3 cache, so the algorithm starts hitting main RAM. Each element in our linked list requires 16 bytes of cache space - 4 bytes for the primary data we're storing (an `int`, in this case), 8 bytes for the pointer to the next node in the list, and 4 bytes of padding.
+
+Even if the library didn't report the size of our caches, we could infer what they are based on when these performance falloffs happen. The system I'm running the tests on has 16MB of L3 cache. We can only fit around a million of these 16-byte nodes in this cache, and we see the results jumping from $2ns$2ns to $13ns$13ns when $n$n crosses that boundary.
+
+## Analyzing `std::vector`
+
+Let's bring our `std::vector` version back, and do the same analysis:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+
+static void BM_VectorTraverse(benchmark::State& state) {
+  int64_t n = state.range(0);
+  state.SetComplexityN(n);
+  std::vector<int> v(n);
+  std::fill(v.begin(), v.end(), 1);
+
+  state.SetComplexityN(n);
+
+  for (auto _ : state) {
+    long long sum = 0;
+    for (int i : v) {
+      sum += i;
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+}
+
+BENCHMARK(BM_VectorTraverse)
+  ->Range(8, 8 << 24)
+  ->Complexity();
+```
+
+Building and running the benchmark generates the following output on my machine:
+
+```
+-----------------------------------------
+Benchmark                             CPU
+-----------------------------------------
+BM_VectorTraverse/8               5.16 ns
+BM_VectorTraverse/64              33.8 ns
+BM_VectorTraverse/512              249 ns
+BM_VectorTraverse/4096            1925 ns
+BM_VectorTraverse/32768          14997 ns
+BM_VectorTraverse/262144        122414 ns
+BM_VectorTraverse/2097152       983099 ns
+BM_VectorTraverse/16777216     8680556 ns
+BM_VectorTraverse/134217728   69602273 ns
+BM_VectorTraverse_BigO            0.52 N
+BM_VectorTraverse_RMS                0 %
+```
+
+Again, the library has determined the algorithm is linear, this time with a $0.52$0.52 scaling factor. Much better than our linked list's $13.5$13.5
+
+Let's check the CPU time per element:
+
+| Element Count                 | Time Per Element |
+|-------------------------------|------------------|
+| `BM_VectorTraverse/8`         | 0.645 ns/element |
+| `BM_VectorTraverse/64`        | 0.528 ns/element |
+| `BM_VectorTraverse/512`       | 0.486 ns/element |
+| `BM_VectorTraverse/4096`      | 0.470 ns/element |
+| `BM_VectorTraverse/32768`     | 0.458 ns/element |
+| `BM_VectorTraverse/262144`    | 0.467 ns/element |
+| `BM_VectorTraverse/2097152`   | 0.469 ns/element |
+| `BM_VectorTraverse/16777216`  | 0.517 ns/element |
+| `BM_VectorTraverse/134217728` | 0.519 ns/element |
+
+Our `std::vector` is much more consistent than our `std::forward_list`, but why?
+
+Firstly, each of our elements is smaller. The contiguous memory layout means a `std::vector<int>` can store each element as a simple `int`, whilst a `std::forward_list<int>` needs to use an intermediate "node" structure that stores the `int` as well as the pointer to the next node.
+
+We've gone from each element being a 16KB node to each element being a 4KB `int`. This more efficient use of memory means each cache can store many more elements before it becomes full, and we reach a performance cliff. But we still can't fit 134 million integers in the cache, so that's not the whole story.
+
+The second advantage of reading from arrays is that the **hardware prefetcher** can remove those cliffs entirely. It can see our linear access pattern and predict what we'll need in the future. It fetches data from RAM in the background before we even ask for it. A linked list gives the prefetcher no clues about what memory address will be needed next, so it hits the wall at full speed.
+
+## Sharing Configuration using Macros
+
+The Google Benchmark library offers a lot of configuration options using the `->` syntax. For example:
+
+```
+static void BM_One(benchmark::State& state) {/*...*/}
+
+BENCHMARK(BM_One)
+  // Display times in milliseconds
+  ->Unit(benchmark::kMillisecond)
+  // Range from 1 to 1,000,000 in multiples of 10
+  ->RangeMultiplier(10)
+  ->Range(1, 1000 * 1000)
+  // Assess asymptotic complexity
+  ->Complexity()
+```
+
+When we want to compare the results of multiple benchmarks, we generally want them all to use the same configuration. Creating a macro can help with this:
+
+```
+static void BM_One(benchmark::State& state) {/*...*/}
+static void BM_Two(benchmark::State& state) {/*...*/}
+static void BM_Three(benchmark::State& state) {/*...*/}
+
+#define BENCHMARK_STD(func) \ 
+  BENCHMARK(func) \ 
+    ->Unit(benchmark::kMillisecond) \ 
+    ->RangeMultiplier(10) \ 
+    ->Range(1, 1000 * 1000) \ 
+    ->Complexity() 
+
+BENCHMARK_STD(BM_One);
+BENCHMARK_STD(BM_Two);
+BENCHMARK_STD(BM_Three);
+```
+
+## Summary
+
+In this lesson, we learned that performance is not a single number; it is a curve. Here are the key takeaways:
+
+1.  **`->Range()`**: We use this to stress-test our algorithms across orders of magnitude.
+2.  **`->Complexity()`**: We can automate the calculation of Big O, allowing us to verify if our implementation matches our theoretical expectations.
+3.  **The Hardware Cliff**: We discovered that $O(n)$O(n) is not always a flat line. When data grows beyond the capacity of the L3 cache, "time per element" spikes dramatically, especially for pointer-based structures like linked lists.
+4.  **Scalability Limits**: We saw that `std::forward_list` is performant for small $n$n, but struggles with large $n$n due to memory latency, whereas `std::vector` remains resilient due to prefetching.

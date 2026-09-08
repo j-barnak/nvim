@@ -1,0 +1,399 @@
+In the previous lesson on `std::async`, we learned how to manually spawn tasks to use the extra cores on our system. But coordinating and managing that work to sort an array, for example, requires a lot of effort.
+
+Instead, we'd much rather just call `std::sort()` and tell it "you can do this sorting in parallel". C++17 introduced **execution policies** to solve this. These allow us to pass a simple flag - `std::execution::par` - to standard algorithms, automatically unlocking multithreaded performance.
+
+But there are some catches. Firstly, as we've seen, concurrency is risky. The standard library algorithms don't use it by default because they don't know if the functions we provide (like comparison lambdas) are thread-safe. That responsibility is on us.
+
+Secondly, execution policies are only available with iterator-based algorithms for now. The C++20 ranges library generally doesn't support it. This isn't a technical limit - it just hasn't been done yet, so it will likely come later.
+
+## The Execution Policies
+
+The `<execution>` header provides definitions of policies that control how an algorithm runs.
+
+The default execution policy is `std::execution::seq` (sequenced). The algorithm runs on the calling thread. It is safe, deterministic, and simple.
+
+If we want to change the execution policy, we provide it as the first argument. Below, we give `std::sort()` the green light to sort our container across multiple threads using `std::execution::par`:
+
+```
+#include <vector>
+#include <algorithm>
+#include <execution> // for execution policies 
+
+void SortData(std::vector<int>& data) {
+  // Note this is std::sort, not std::ranges::sort
+  std::sort(
+    std::execution::par,// Parallel execution 
+    data.begin(),
+    data.end()
+    // 4th argument can be comparator if needed
+  );
+}
+```
+
+### SIMD and Vectorization
+
+In addition to `seq` and `par`, we also have `unseq` and `par_unseq` execution options available. These unsequenced variations use SIMD (Single Instruction, Multiple Data) techniques, which we cover later in the course.
+
+### The Pipeline Break Pattern
+
+To combine the composability of views with the power of execution policies, we use the same three-step architecture we covered before.
+
+We perform the quick work that is best done single-threaded as a composition of views, which we materialize into memory. For the heavy lifting, we then direct all the hardware we can get to that memory using a parallel algorithm.
+
+1.  **Prepare (Lazy)**: Use C++20 Views to filter, transform, and project your data. This reduces the dataset size to just what we need.
+
+2.  **Materialize**: Flush the view into a container like `std::vector`. This pays the cost of allocation but arranges the data perfectly for the hardware.
+
+3.  **Execute (Parallel)**: Run the heavy algorithm on the contiguous container using `std::execution::par`.
+
+We can then start a new view pipeline on that transformed data if we need to do some more work.
+
+Let's look at an example. We have a collection of players, and we want to get all the players on the red team (ID 1) sorted by their score:
+
+```
+#include <vector>
+#include <ranges>
+#include <algorithm>
+#include <execution>
+
+struct Player {
+  int id;
+  int team_id;
+  float mmr;
+};
+
+std::vector<Player> GetTopRedTeamPlayers(
+  const std::vector<Player>& all_players,
+  auto&& policy = std::execution::seq
+) {
+  // STEP 1: PREPARE (Lazy)
+  // Filter down to just Team Red.
+  // No memory is allocated here; it's just a view.
+  auto red_team = all_players 
+    | std::views::filter([](const Player& p) { 
+      return p.team_id == 1; 
+    })
+    // STEP 2: MATERIALIZE
+    // We cannot sort a lazy filter view in parallel. We
+    // must copy the matching data into a memory location
+    | std::ranges::to<std::vector>();
+
+  // STEP 3: EXECUTE (Parallel)
+  // Now we have a vector, we can blast through it with all cores
+  // Note: Standard algorithms (std::sort) support policies
+  // Range-based algorithms do not yet support them
+  std::sort(
+    policy,
+    red_team.begin(),
+    red_team.end(),
+    [](const Player& a, const Player& b) {
+      return a.mmr > b.mmr;
+    }
+  );
+
+  return red_team;
+}
+
+Benchmarks|Show
+```
+
+This pattern is the sweet spot. If we filtered eagerly (without views), we would allocate temporary memory for the filter step. If we sorted serially (without policies), we would waste most of our CPU power.
+
+By combining them, we filter efficiently and then throw the raw weight of the hardware at the sorting problem.
+
+With small amounts of work, the overhead of managing threads tends to be larger than just doing the work on a single core. But, as things scale up, the benefits of concurrency pull ahead:
+
+```
+--------------------------------------------
+Benchmark                    Time        CPU
+--------------------------------------------
+BM_Sequential/1000       0.010 ms   0.010 ms
+BM_Sequential/10000      0.338 ms   0.337 ms
+BM_Sequential/100000      5.05 ms    5.00 ms
+BM_Sequential/1000000     48.8 ms    48.3 ms
+BM_Sequential/10000000     532 ms     531 ms
+BM_Parallel/1000         0.020 ms   0.017 ms
+BM_Parallel/10000        0.209 ms   0.190 ms
+BM_Parallel/100000        1.54 ms    1.44 ms
+BM_Parallel/1000000       15.3 ms    15.0 ms
+BM_Parallel/10000000       151 ms     148 ms
+```
+
+## Parallel Algorithms in Practice
+
+Sorting is the most obvious use case for parallelism, but it isn't the only one. The standard library provides parallel versions for almost all the algorithms we discussed previously.
+
+For example, the basic `std::for_each()` algorithm supports execution policies, allowing us to quickly parallelize any basic iteration work.
+
+However, in the real world, the next most common heavy tasks that we need to do are transformations and data reduction, which we have dedicated algorithms for.
+
+### Parallel Transform - `std::transform()`
+
+If you have a massive array of entities (like particles in a particle system) and need to perform a heavy calculation on every element, parallel transform is ideal:
+
+```
+#include <execution>
+#include <algorithm>
+#include <vector>
+#include <cmath>
+
+void UpdateParticles(
+  std::vector<float>& positions,
+  auto&& policy = std::execution::seq
+) {
+  // Simulate heavy physics math for particles
+  std::transform(
+    policy,
+    positions.begin(), positions.end(), // Input
+    positions.begin(), // Output (in-place)
+    [](float x) {
+      // Simulate complex turbulence or gravity
+      return std::sin(x) * std::cos(x) * 42.0f;
+    }
+  );
+}
+
+Benchmarks|Show
+```
+
+This is the ideal parallization problem. Each particle calculation is independent. The library simply slices the vector into $N$N chunks (where $N$N is your core count) and lets each core run independently.
+
+```
+--------------------------------------------
+Benchmark                    Time        CPU
+--------------------------------------------
+BM_Sequential/1000       0.016 ms   0.017 ms
+BM_Sequential/10000      0.161 ms   0.163 ms
+BM_Sequential/100000      1.60 ms    1.61 ms
+BM_Sequential/1000000     16.0 ms    16.0 ms
+BM_Sequential/10000000     158 ms     156 ms
+BM_Parallel/1000         0.060 ms   0.056 ms
+BM_Parallel/10000        0.089 ms   0.082 ms
+BM_Parallel/100000       0.209 ms   0.195 ms
+BM_Parallel/1000000       1.15 ms    1.09 ms
+BM_Parallel/10000000      10.0 ms    10.0 ms
+```
+
+### Parallel Reduce - `std::reduce()`
+
+We previously learned about `std::ranges::fold_left()`, and the older `std::accumulate()`. These algorithms are inherently **sequential**. If our operator were basic addition, for example, then these algorithms would strictly process `A + B`, then that result `+ C`, then that result `+ D`.
+
+This strict order prevents parallelism. To sum a vector in parallel, we might want core 1 to sum the first half, core 2 to sum the second half, and then combine the two subtotals. For this, we use `std::reduce()`.
+
+The key difference is that `std::reduce()` can chop the data anywhere and combine it in any order it wants. This unlocks parallelism, but it also means that the operator we use needs to be **associative** and **commutative**.
+
+By default, `std::reduce()` uses the `+` operator, which is usually associative and commutative. For most data types, `(A+B)+C`, `A+(B+C)`, `C+(A+B)`, and every other permutation will return the same answer.
+
+But we can customize the operator that `std::reduce()` uses, so we need to ensure whatever we provide meets those requirements. We provide a custom operator in the form of a function as the last argument.
+
+The following function uses multithreading to calculate the sum of all numbers in a collection:
+
+```
+#include <execution>
+#include <numeric> // for std::reduce
+#include <vector>
+
+int CalculateTotalXP(const std::vector<int>& player_xp_values) {
+  // Parallel summation of all XP in the game
+  return std::reduce(
+    // Execution policy
+    std::execution::par,
+    
+    // Range to reduce
+    player_xp_values.begin(),
+    player_xp_values.end(),
+    
+    // Initial value
+    0,
+    
+    // Operator
+    std::plus<int>()
+  );
+}
+```
+
+## The Map-Reduce Pattern
+
+In data science and big data processing, the **map-reduce** pattern is legendary. You map a transformation over a dataset and then reduce the results. Many problems can be expressed in this way, and once we do that, we can use map-reduce to solve them:
+
+- Want to calculate a shopping bill? Map every item in the cart to its subtotal (`price * quantity`), then reduce those subtotals to a single final cost using `+`.
+- Want to check if a list of tasks is complete? Map every task to a `true` or `false` boolean, then reduce to a single boolean using `&&` to ensure the job is done.
+- Want to find the hottest day? Map every daily weather record to its temperature, then reduce the list to the maximum value using an operator like `std::max`.
+
+### Using `transform()` and `reduce()`
+
+We already introduced the two algorithms for this - `transform()` (which is the C++ equivalent of map) and `reduce()`.
+
+Let's use this process to calculate the **total inventory weight** for a player. We have a collection of `InventorySlot`s where each slot has an `item_count` and a `weight_per_item`.
+
+We transform each slot to its corresponding weight, giving us an array of numbers. We then reduce that array to the combined sum:
+
+```
+#include <numeric>
+#include <vector>
+#include <execution>
+
+struct InventorySlot {
+  int item_count;
+  double weight_per_item;
+};
+
+double CalculateTotalWeightSeparate(
+  const std::vector<InventorySlot>& inventory,
+  auto&& policy = std::execution::seq
+) {
+  // Map: Calculate weight for each slot
+  // Temporary storage for the weights
+  std::vector<double> weights(inventory.size());
+  std::transform(
+    policy,
+    inventory.begin(),
+    inventory.end(),
+    weights.begin(),
+    [](const InventorySlot& slot) {
+      return slot.item_count * slot.weight_per_item;
+    }
+  );
+  
+  // Reduce: Sum all weights
+  return std::reduce(
+    policy,
+    weights.begin(),
+    weights.end()
+  );
+}
+
+Benchmarks|Show
+```
+
+Unfortunately, parallelism often can't help with this two-step approach, because the bottleneck isn't the CPU - it's the memory bandwidth wasted on the temporary storage between the two steps:
+
+```
+-----------------------------------------------------
+Benchmark                             Time        CPU
+-----------------------------------------------------
+BM_Sequential_Separate/100000     0.065 ms   0.066 ms
+BM_Sequential_Separate/1000000     3.66 ms    3.52 ms
+BM_Sequential_Separate/10000000    35.6 ms    36.2 ms
+BM_Parallel_Separate/100000       0.154 ms   0.143 ms
+BM_Parallel_Separate/1000000       2.72 ms    2.72 ms
+BM_Parallel_Separate/10000000      32.6 ms    32.0 ms
+```
+
+Ideally, we want to perform the transformation *just in time*, as we are reducing, without storing the intermediate results.
+
+### Using `transform_reduce()`
+
+C++17 included a solution to this problem in the form of `std::transform_reduce()`. As the name suggests, this combines both the `transform()` and `reduce()` functions, making it the standard library's implementation of MapReduce.
+
+The fully featured overload takes 6 arguments:
+
+1.  An execution policy.
+2.  An iterator to the start of the input range.
+3.  An iterator for the end of the input range
+4.  An initial value (seed).
+5.  The **reduce** operation to combine results.
+6.  The **transform** ("map") operation processes individual elements.
+
+Let's replace our previous attempt with this new function:
+
+```
+#include <numeric>
+#include <vector>
+#include <execution>
+
+struct InventorySlot {
+  int item_count;
+  double weight_per_item;
+};
+
+double CalculateTotalWeight(
+  const std::vector<InventorySlot>& inventory,
+  auto&& policy = std::execution::seq
+) {
+  return std::transform_reduce(
+    policy,
+    inventory.begin(), inventory.end(), // Range
+    
+    0.0, // Initial Value (Seed)
+
+    // Reduce Operation - sum the weights
+    std::plus{},
+
+    // Transform Operation - get the weight per slot
+    [](const InventorySlot& slot) {
+      return slot.item_count * slot.weight_per_item;
+    }
+  );
+}
+
+Previous Code|Show
+Benchmarks|Show
+```
+
+We perform millions of multiplications and additions, fully utilizing the CPU, while reading from memory only once. This can have massive performance benefits over using `transform()` and `reduce()` separately:
+
+```
+----------------------------------------------------
+Benchmark                            Time        CPU
+----------------------------------------------------
+BM_Sequential_Separate/100000    0.066 ms   0.066 ms
+BM_Sequential_Separate/1000000    3.45 ms    3.45 ms
+BM_Parallel_Separate/100000      0.161 ms   0.150 ms
+BM_Parallel_Separate/1000000      2.26 ms    2.25 ms
+BM_Sequential/100000             0.074 ms   0.073 ms
+BM_Sequential/1000000            0.833 ms   0.837 ms
+BM_Parallel/100000               0.065 ms   0.059 ms
+BM_Parallel/1000000              0.149 ms   0.138 ms
+```
+
+## Bandwidth vs. Compute
+
+You might be tempted to add `std::execution::par` to every algorithm in your codebase. This is a mistake. Parallelism is not magic. It adds overhead. Creating threads, distributing work, and synchronizing results take time.
+
+More importantly, you are often limited not by CPU time but rather by **memory bandwidth**.
+
+If your algorithm is lightweight (like summing integers), your single core can likely process data faster than your RAM can deliver it. Adding 7 more cores doesn't make RAM faster; it just means you have 8 cores fighting over the same memory bus. The performance might barely improve, or even get worse due to **contention**, which we cover in the next lesson.
+
+Parallelism shines when the work is **compute-bound**. This means the CPU works hard for every byte it reads.
+
+## Data Races
+
+When using `std::execution::par`, we are responsible for the thread safety of the arguments we provide. The library guarantees that its algorithm's internal logic is safe and that each iteration provides distinct element access to our lambdas.
+
+However, it can't guarantee that what we're actually doing within that lambda is safe. If we tell an algorithm to execute in parallel using `std::execution::par` but provide a lambda that is not thread-safe, then our program will not work correctly:
+
+```
+double CalculateTotalWeight(
+  const std::vector<InventorySlot>& inventory
+) {
+  int count = 0;
+  return std::transform_reduce(
+    std::execution::par,
+    inventory.begin(), inventory.end(),
+    0.0,
+    std::plus{},
+    [](const InventorySlot& slot) {
+      ++count;
+      return slot.item_count * slot.weight_per_item;
+    }
+  );
+}
+```
+
+Behind the scenes, this innocent-looking `++count` is a read \> modify \> write sequence. It is totally safe in a single thread, but what if two threads read the `count` before either of them writes it back? They both read `42`, they both increment what they read to `43`, and they write `43` back.
+
+The result is that one of the increments is lost, and our final `count` will be lower than the actual number of items processed. In the next lesson, we'll pick up some more tools that can help us manage these problems.
+
+## Summary
+
+In this lesson, we scaled our algorithms from a single core to the entire CPU.
+
+1.  **Execution Policies**: We learned that passing `std::execution::par` to standard algorithms unlocks automatic multithreading.
+2.  **Map-Reduce**: We used `std::transform_reduce()` to perform complex data processing in a single parallel pass, avoiding the memory overhead of intermediate containers.
+3.  **Compute Bound**: We recognized that parallelism is not a magic bullet. It only speeds up tasks that are CPU-heavy. For simple tasks, memory bandwidth is the bottleneck, and adding threads can make things worse.
+4.  **Thread Safety**: We saw that standard algorithms assume our logic is thread-safe. Side effects in parallel lambdas lead to race conditions.
+
+We have now covered how to run code concurrently using `std::async()` and `std::execution::par`. However, we have also uncovered a new danger: shared state. As soon as two threads try to touch the same memory, chaos ensues.
+
+In the next lesson, we will tackle **synchronization**. We will explore **mutexes**, **locks**, and **atomics**, learning how to coordinate our threads safely.

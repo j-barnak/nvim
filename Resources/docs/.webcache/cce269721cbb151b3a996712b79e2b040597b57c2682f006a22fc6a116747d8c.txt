@@ -1,0 +1,627 @@
+In the previous lesson, we implemented $O(1)$O(1) deletions using the **swap-and-pop** idiom. By swapping the victim with the last element in the array and popping the back, we avoided the $O(n)$O(n) memory shifting associated with `std::vector::erase()`.
+
+However, deleting objects is dangerous. Any external system - a scoreboard, an AI controller, or a physics engine - that held a reference to the deleted object is now out of date. Additionally, any system that held a reference to an object that was moved as a side effect of the deletion is also out of date.
+
+This is the **index invalidation** problem. In dynamic systems where entities are created and destroyed frequently, raw indices (and raw pointers) are unsafe.
+
+Over the next two lessons, we will solve this. We will trade some of our raw memory density for safety. We will implement **tombstones** to stabilize our indices in this lesson, and then upgrade them to **generational indices** to solve the "ABA Problem" in the next lesson.
+
+## The Starting Point
+
+We will continue working on the `PlayerStorage` we constructed in the previous lesson.
+
+To recap, this system uses multiple `std::vector` columns to store data. It exposes a `PlayerRef` proxy object for convenience. It currently uses **swap-and-pop** for deletion.
+
+If you're following along from previous lessons, you can continue to use your container. A simplified version is provided below:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+#pragma once
+#include <vector>
+#include <string>
+#include <ranges>
+#include <tuple>
+#include <array>
+
+struct PlayerRef {
+  int& id;
+  int& score;
+  float& health;
+  std::string& name;
+};
+
+class PlayerStorage {
+public:
+  // Structure of Arrays storage
+  std::vector<int> m_ids;
+  std::vector<int> m_scores;
+  std::vector<float> m_health;
+  std::vector<std::string> m_names;
+
+  void AddPlayer(
+    int id, int score, float hp, std::string name
+  ) {
+    m_ids.push_back(id);
+    m_scores.push_back(score);
+    m_health.push_back(hp);
+    m_names.push_back(std::move(name));
+  }
+
+  // THE PROBLEM: This changes indices!
+  void EraseAt(size_t index) {
+    if (index >= m_ids.size()) return;
+
+    // Swap-and-Pop
+    m_ids[index] = m_ids.back();
+    m_ids.pop_back();
+    m_scores[index] = m_scores.back();
+    m_scores.pop_back();
+    m_health[index] = m_health.back();
+    m_health.pop_back();
+    m_names[index] = std::move(m_names.back());
+    m_names.pop_back();
+  }
+
+  auto GetView() {
+    return std::views::zip(
+      m_ids, m_scores, m_health, m_names
+    ) | std::views::transform([](auto&& tuple) {
+          auto& [id, score, hp, name] = tuple;
+          return PlayerRef{id, score, hp, name};
+        });
+  }
+};
+```
+
+## The Instability Problem
+
+Let's visualize exactly why swap-and-pop is dangerous for long-term references.
+
+Imagine we have a `Scoreboard` class that wants to track the "MVP". It stores the index of the player:
+
+```
+class Scoreboard {
+  int mvp_index = -1;
+public:
+  void SetMVP(int index) { mvp_index = index; }
+  void PrintMVP(PlayerStorage& ps) {
+    // Dangerous access!
+    std::cout << ps.m_names[mvp_index];
+  }
+};
+```
+
+This is problematic because we have no idea if the underlying data that `mvp_index` represents has changed. For example:
+
+1.  We add Alice at index `0`.
+2.  We add Bob at index `1`.
+3.  We set the Scoreboard MVP to index `0` (Alice).
+4.  We call `EraseAt(0)` to remove Alice. This swaps "Bob" (from index `1`) into index `0`.
+5.  The `Scoreboard` now thinks Bob is the MVP.
+
+If we want to support external references, we have two choices to solve this problem.
+
+### Proactive Solutions
+
+Every time we move memory, we could notify every system that might be storing a reference to it that its reference is now stale. This is quite complex to set up, and it's very easy to mess up. If someone adds code that stores an index, but neglects to also listen to the notifications, we have a bug.
+
+### Reactive Solutions
+
+Instead, when some external system requests access to something in our collection, we could have a mechanism to detect if their request is "stale" and react appropriately.
+
+We will implement a reactive, stable-addressing system here, which is more resilient. We'll use the two most common strategies - **tombstones** and **generational indices**.
+
+## Tombstones
+
+The simplest way to achieve stable addressing is to simply **stop moving data**.
+
+When a deletion request is received, we don't physically delete the object or swap it. Instead, we just add a special marker (a "tombstone") in its place to designate the item as logically dead.
+
+This means the entities in our collection will no longer move around when elements are deleted, but our collection will also contain holes:
+
+### Implementing Tombstones
+
+We will add a new column to keep track of whether each player is alive: `m_alive`.
+
+However, there is some unexpected complexity with using arrays of booleans, particularly in an SoA layout. We'll cover this in the next chapter, but for now, let's just use a small numeric type like `uint8_t`. A value of `0` will represent `false` (dead) whilst `1` will represent `true` (alive):
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+class PlayerStorage {
+public:
+  // New column for liveness tracking
+  // 1 = Alive, 0 = Dead/Tombstone
+  std::vector<uint8_t> m_alive;
+
+  // ...
+
+  void AddPlayer(
+    int id, int score, float hp, std::string name
+  ) {
+    m_ids.push_back(id);
+    m_scores.push_back(score);
+    m_health.push_back(hp);
+    m_names.push_back(std::move(name));
+
+    // Mark as alive
+    m_alive.push_back(1);
+  }
+
+  void EraseAt(size_t index) {
+    if (index >= size()) return;
+
+    // Tombstoning: Just mark it as dead
+    m_alive[index] = 0;
+  }
+};
+```
+
+By removing the swap-and-pop logic, the player at index `0` remains there forever. Even if Alice is "deleted," the slot at index `0` is simply marked dead. Bob stays at index `1`. The indices are **stable**.
+
+### Iterating over Tombstones
+
+Stability comes at a cost. Our `GetView()` function, which we use to iterate over the players, currently iterates over *everything*. If we use it now, we will include players that we promised we would erase.
+
+We need to update `GetView()` to filter out the tombstones. Our view-based pipeline makes this easy - we just insert a `std::views::filter()` step to filter out the "dead" players:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+class PlayerStorage {
+public:  
+  // ...
+  auto GetView() {
+    return std::views::zip(
+      m_ids, m_scores, m_health, m_names, m_alive
+    )
+    // Filter out the tombstones
+    | std::views::filter([](const auto& tuple) {
+        // The last element of the tuple is 'm_alive'
+        // tuple structure is based on zip arguments order
+        // Indexing starts at 0, so the 5th element is at index 4
+        const auto& is_alive = std::get<4>(tuple);
+        return is_alive == 1;
+      })
+    // Transform into Proxy
+    | std::views::transform([](auto&& tuple) {
+        auto& [id, score, hp, name, alive] = tuple;
+        return PlayerRef{id, score, hp, name};
+      });
+  }
+  // ...
+};
+```
+
+## Safe Random Access
+
+Now that we have stable indices, we can expose an API for random access. However, because a slot might contain a tombstone, we cannot just return `PlayerRef`. The index that is being requested might map to a tombstone, which we're claiming has been erased.
+
+We can handle this in a few ways, with the typical options being either **exceptions** or the use of a **result type** - a simple container that holds either a value or an error.
+
+The standard library's implementation of a result type is `std::expected`, added in C++23. It's a template where the first argument is what we'll return in the "expected" case (where the function call was successful) and the second is what we'll return in the unexpected case (where the function call was unsuccessful).
+
+Below, we add a `GetPlayer()` method that returns the `PlayerRef` if the requested index is valid, or a `std::string` explaining the error if it wasn't:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+#include <expected> // For std::expected (C++23)
+
+class PlayerStorage {
+public:
+  // ...
+  std::expected<PlayerRef, std::string> GetPlayer(size_t i) {
+    if (i >= m_ids.size()) {
+      return std::unexpected("Index out of bounds");
+    }
+
+    if (m_alive[i] == 0) {
+      return std::unexpected("Player is dead (Tombstone)");
+    }
+
+    return PlayerRef{
+      m_ids[i],
+      m_scores[i],
+      m_health[i],
+      m_names[i]
+    };
+  }
+};
+```
+
+### The Cost of Tombstones
+
+This is clean, simple, and keeps our addresses stable, but there is an overhead associated with the filtering. We introduce techniques to make filtering much faster later in the chapter, but clogging our system up with these tombstones will always carry a cost.
+
+Additionally, if our system is regularly adding new entities but not physically deleting the old ones, we have a very obvious memory leak. In real-world applications, this could be solved by having a coordinated "clean up" event where our tombstones get cleared out, and associated systems can be notified that their indices or pointers are no longer valid.
+
+This might happen every few seconds in a dynamic system, or as an end-of-day process in a slower system where memory grows more slowly. Some contexts also naturally provide opportune moments to perform clean up. For example, a player completing a level in a video game and then loading the next is the perfect opportunity to do cleanup tasks.
+
+However, if these tombstones are a problem, and we don't have an obvious way to get rid of them, we need to reuse the slots. An immediate problem arises if we try to do this - *how do we even know where the free slots are?*
+
+## Reusing Memory: The Free List
+
+The simplest way to find an empty slot is to just scan for it. When `AddPlayer()` is called, we could loop through the `m_alive` vector from the beginning, looking for the first `0`:
+
+```
+size_t find_free_slot() {
+  for (size_t i = 0; i < m_alive.size(); ++i) {
+    if (m_alive[i] == 0) {
+      return i; // Found one!
+    }
+  }
+  return m_alive.size(); // None found, append
+}
+```
+
+This works, but it means that adding a player, which should be a fast operation, now becomes an $O(n)$O(n) problem. As our container grows, adding new players gets slower and slower. Is there an $O(1)$O(1) way to find a free slot?
+
+The efficient solution is to maintain a list of all the indices that are currently "dead." This is called a **free list**, where each element in the collection is the index of a free slot within our system.
+
+When we delete a player, we push their index onto the list, where it becomes the new head. When we need a new slot, we pop an index from the free list and use it.
+
+There's no need for the free list to be contiguous. We're only ever interested in the "next" free slot, so we just interact with the head of the list. We could just add a linked list, such as a `std::forward_list` to our system to keep track of this, but we can be a little more efficient.
+
+## Implicit Linked Lists
+
+Before we allocate more space to our system, we should ask if it's really needed.
+
+- If our collection is full, meaning there are no tombstones, we don't need the space. Our free list would be empty.
+- If our collection contains tombstones, we already have enough space for our list. We can just place the nodes of our list in the gaps left by the "dead" entities.
+
+Instead of creating a new linked list, we can just choose one of the columns - let's say `m_ids` - and create an **implicit linked list** within those gaps. We then just need to add a single integer to our container to store which index is the next free slot, or `-1` if there are no further slots:
+
+We can choose any of our arrays (except `m_alive`) for this embedded list. We selected `m_ids` here as we need to store integers, and `m_ids` is a `std::vector<int>` which makes things easier. We'll discuss alternatives later in the section.
+
+### Implementing the Implicit Free List
+
+First, we need a member variable in `PlayerStorage` to act as the "head" of our linked list. We'll initialize it to some sentinel value that indicates that the list is empty.
+
+We can't use `0` for this, because `0` is a valid index representing the first player in our system. If we're using `int` as our index type, a typical "sentinel" value we can use instead is `-1`. We cover unsigned index types such as `size_t` later in the section.
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+// ...
+
+class PlayerStorage {
+public:
+  // Head of the implicit linked list of free slots
+  int m_next_free_slot = -1;
+  
+  // ...
+};
+```
+
+Next, we update `EraseAt()`. When a player is deleted, their index becomes the new head of the free list. We repurpose their `m_ids` slot to point to the *old* head.
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+class PlayerStorage {
+public:
+  // ...
+  void EraseAt(size_t index) {
+    if (index >= size() || m_alive[index] == 0) return;
+
+    m_alive[index] = 0; // Mark as dead
+
+    // Repurpose the ID slot to be a link in the
+    // free list chain
+    m_ids[index] = m_next_free_slot;
+
+    // This index is now the newest free slot
+    m_next_free_slot = index;
+  }
+};
+```
+
+Finally, we update `AddPlayer()`. It now checks the free list first. If the free list is not empty, it pops an index off the list and reuses that slot. If the list is empty, it expands the collection using `push_back()`.
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+class PlayerStorage {
+public:
+  // ...
+  void AddPlayer(int id, int score, float hp, std::string name) {
+    if (m_next_free_slot != -1) {
+      // A free slot is available
+      // 1. Read it from the free list
+      int index_to_use = m_next_free_slot;
+
+      // 2. "Pop" it off the the free list by updating
+      // the head to the next link in the chain
+      m_next_free_slot = m_ids[index_to_use];
+
+      // 3. Overwrite the slot with new data
+      m_ids[index_to_use] = id;
+      m_scores[index_to_use] = score;
+      m_health[index_to_use] = hp;
+      m_names[index_to_use] = std::move(name);
+      
+      // 4. The slot is no longer a tombstone
+      m_alive[index_to_use] = 1;
+    } else {
+      // No free slots available, so we create create
+      // a new slot at the end
+      m_ids.push_back(id);
+      m_scores.push_back(score);
+      m_health.push_back(hp);
+      m_names.push_back(std::move(name));
+      m_alive.push_back(1);
+    }
+  }
+};
+```
+
+With these changes, `AddPlayer()` is now an efficient $O(1)$O(1) operation again.
+
+### I have more than 2 billion items
+
+In the previous example, we used `int` for our indices and `-1` as our sentinel to indicate the "end of the list." This works perfectly fine for most applications, as the maximum value of an `int` is around 2 billion.
+
+But what if we're managing more entities than this, and we need larger indices? We usually prefer `size_t` for this, which is guaranteed to address the full range of an array. This type is slightly larger (usually 8 bytes, whilst `int` is usually 4), and the memory footprint of our indices will become important later.
+
+Additionally, this type is **unsigned, meaning** we cannot use `-1` as our sentinel. Instead, we can use the maximum possible value of the type. The standard library provides `std::numeric_limits` for this:
+
+```
+// ...
+#include <limits> // for std::numeric_limits
+
+// ...
+class PlayerStorage {
+  // The sentinel is the largest possible number
+  size_t SENTINEL = std::numeric_limits<IndexType>::max();
+
+  IndexType m_next_free_slot = SENTINEL;
+
+  // ...
+
+  void AddPlayer(...) {
+    if (m_next_free_slot != SENTINEL) {
+       // ... 
+    }
+  }
+};
+```
+
+### I don't have an integer column
+
+Our indices need to be integers, but what if we're unlucky and don't have an integer column?
+
+Remember, this implicit linked list technique is just a small optimization at the expense of complexity. Performance is not the only thing that matters, and the complexity cost ramps up when we don't have a column that can naturally store our indices. It's totally reasonable to just add a dedicated list, such as a `std::forward_list` to our system to keep things simple.
+
+However, if we wanted to force the issue, then as long as a column has enough bits to store what we need, we can put our data there even if there is a type mismatch:
+
+```
+#include <vector>
+#include <bit>
+#include <cstdint>
+
+// A 4-byte struct
+struct Color {
+  uint8_t r, g, b, a;
+};
+
+struct ParticleStorage {
+  // Don't abuse floating point numbers for
+  // this technique. This creates additional
+  // risks (NaN patterns, denormal values) 
+  std::vector<float> m_x; 
+  std::vector<double> m_y; 
+  
+  // The column we will abuse for the free list
+  // Assuming sizeof(int) == sizeof(Color)
+  std::vector<Color> m_color;
+  
+  // 1 = Alive, 0 = Dead
+  std::vector<uint8_t> m_alive;
+  
+  int m_next_free = -1;
+};
+```
+
+We can do this using `std::memcpy()` or ideally, if our types have the same size, C++20 added `std::bit_cast`. This lets us interprets the raw bits into any type we want. Below, we use our 4-byte `Color` column as an `int` when maintaining our free list:
+
+```
+void EraseAt(ParticleStorage& ps, int index) {
+  // Sanity checks
+  if (index >= ps.m_alive.size()) return;
+  if (ps.m_alive[index] == 0) return;
+  
+  // Mark as dead
+  ps.m_alive[index] = 0;
+
+  // Cast the current head (int) to Color
+  Color next_node = std::bit_cast<Color>(
+    ps.m_next_free
+  );
+
+  // Store in the Color column
+  ps.m_color[index] = next_node;
+
+  // Update the head to point to this new hole
+  ps.m_next_free = index;
+}
+
+void AddParticle(ParticleStorage& ps) {
+  if (ps.m_next_free != -1) {
+    // A free slot is available
+    int index_to_use = ps.m_next_free;
+
+    // Retrieve the hidden 'next' pointer from
+    // the Color column
+    Color stored_val = ps.m_color[index_to_use];
+    int next_node_index = std::bit_cast<int>(stored_val);
+
+    // Update the system head
+    ps.m_next_free = next_node_index;
+
+    // Initialize actual data
+    ps.m_color[index_to_use] = {255, 0, 0, 255}; 
+    ps.m_x[index_to_use] = 0.0f;
+    ps.m_y[index_to_use] = 0.0f;
+    
+    // Mark as Alive
+    ps.m_alive[index_to_use] = 1;
+        
+  } else {
+    // No slots available - create a new slot
+    ps.m_color.push_back({255, 0, 0, 255});
+    ps.m_x.push_back(0.0f);
+    ps.m_y.push_back(0.0f);
+    ps.m_alive.push_back(1);
+  }
+}
+```
+
+## Complete Code
+
+Here is a complete version of `PlayerStorage.h` incorporating the tombstones, the free list, and the implicit linked list logic we implemented in this lesson:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+#pragma once
+#include <vector>
+#include <string>
+#include <ranges>
+#include <tuple>
+#include <array>
+#include <expected>
+#include <limits>
+
+struct PlayerRef {
+  int& id;
+  int& score;
+  float& health;
+  std::string& name;
+};
+
+class PlayerStorage {
+public:
+  // Data columns
+  std::vector<int> m_ids;
+  std::vector<int> m_scores;
+  std::vector<float> m_health;
+  std::vector<std::string> m_names;
+
+  // Lifecycle columns
+  // 1 = Alive, 0 = Dead
+  std::vector<uint8_t> m_alive;
+
+  // Free List Head
+  // We use -1 to indicate "End of List"
+  // or "No free slots"
+  int m_next_free_slot = -1;
+
+  void AddPlayer(
+    int id, int score, float hp, std::string name
+  ) {
+    if (m_next_free_slot != -1) {
+      // REUSE PATH
+      // Grab the index
+      int index = m_next_free_slot;
+
+      // Update head to point to the next free slot
+      // The 'next' index is stored inside m_ids
+      m_next_free_slot = m_ids[index];
+
+      // Overwrite data
+      m_ids[index] = id;
+      m_scores[index] = score;
+      m_health[index] = hp;
+      m_names[index] = std::move(name);
+      
+      // Mark alive
+      m_alive[index] = 1;
+    } else {
+      // APPEND PATH
+      m_ids.push_back(id);
+      m_scores.push_back(score);
+      m_health.push_back(hp);
+      m_names.push_back(std::move(name));
+
+      // Mark alive
+      m_alive.push_back(1);
+    }
+  }
+
+  void EraseAt(size_t index) {
+    // Safety checks
+    if (index >= m_ids.size()) return;
+    if (m_alive[index] == 0) return; // Already dead
+
+    // 1. Mark as dead (Tombstone)
+    m_alive[index] = 0;
+
+    // 2. Add to Free List
+    // Store the old head in this slot
+    m_ids[index] = m_next_free_slot;
+    
+    // Make this slot the new head
+    m_next_free_slot = static_cast<int>(index);
+  }
+
+  // Safe Random Access
+  std::expected<PlayerRef, std::string> GetPlayer(size_t i) {
+    if (i >= m_ids.size()) {
+      return std::unexpected("Index out of bounds");
+    }
+    if (m_alive[i] == 0) {
+      return std::unexpected("Player is dead");
+    }
+
+    return PlayerRef{
+      m_ids[i], m_scores[i], m_health[i], m_names[i]
+    };
+  }
+
+  auto GetView() {
+    return std::views::zip(
+      m_ids, m_scores, m_health, m_names, m_alive
+    )
+    // Filter out tombstones
+    | std::views::filter([](const auto& tuple) {
+        const auto& alive = std::get<4>(tuple);
+        return alive == 1;
+      })
+    // Project into PlayerRef
+    | std::views::transform([](auto&& tuple) {
+        auto& [id, score, hp, name, alive] = tuple;
+        return PlayerRef{id, score, hp, name};
+      });
+  }
+};
+```
+
+## Summary
+
+In this lesson, we updated our deletion logic to stop moving objects around in memory, thereby implementing **stable addressing**.
+
+1.  **Tombstones:** We stopped shifting memory. By marking deleted slots as "dead" (`m_alive`), we ensure that index `5` always refers to the same physical slot in memory.
+2.  **Free Lists:** To optimize our memory use and prevent memory leaks (holes that never get filled), we implemented a free list.
+3.  **Implicit Lists:** We don't need a separate container for the free list. We can store the linked list nodes inside the empty holes of our existing data columns, saving memory.
+4.  **Result Types:** We used `std::expected` to provide a safe random-access API that rejects requests for "dead" indices.
+
+With stable addressing, objects remain in the same slot throughout their lifecycle. However, by recycling the slots of dead objects, we have reintroduced a new problem.
+
+Previously, if an external system held a reference to index `5` (Alice), and we deleted Alice, we could reject future requests for that slot because there was a tombstone there - `m_alive[5]` was `0`.
+
+But if we recycle that slot to add a new player, Bob, `m_alive[5]` becomes `1`. The external system, still holding "index 5", thinks it is pointing to Alice. When they ask us for that slot, we no longer can tell if their reference is stale. We give them Bob.
+
+This is the **ABA Problem**. In the next lesson, we will solve this by upgrading our indices to **generational handles**.

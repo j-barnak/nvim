@@ -1,0 +1,352 @@
+Previously, we've been building a **structure of arrays (SoA)** container, using a collection of players in a video game. Conceptually, this has been like a table in a database. Our parallel arrays, with names like `score`, and `health`, have been columns. Each player has been in a row in that table.
+
+But we can only get so far with a single table. Realistic systems need multiple tables, and our systems need ways to efficiently pull data from multiple tables.
+
+For example, let's imagine we're making a game world, full of entities with different capabilities. Some entities might need to emit audio, and some might need to show up as a "nearby" radar icon. If we added the fields to support these capabilities to our SoA, we would waste massive amounts of memory and bandwidth for entities that don't need them.
+
+In this chapter, we are going to break our monolithic SoA apart. We will build a relational storage system that allows us to represent entities of a wide variety of types, without sacrificing the contiguous memory layout that gives us raw speed.
+
+## The Problem of Optional Data
+
+Let's look at how we might add optional data to our entities. We'll start with a basic `EntityStorage` class that uses the SoA techniques we've become accustomed to.
+
+For now, each entity will have a name, and we'll use a simple `int` index to identify it:
+
+### dsa_core/include/dsa/EntityStorage.h
+
+```
+#pragma once
+#include <vector>
+#include <string>
+
+class EntityStorage {
+public:
+  std::vector<std::string> m_names;
+
+  int Add(std::string name) {
+    m_names.push_back(std::move(name));
+    return int(m_names.size() - 1);
+  }
+};
+```
+
+Let's imagine we need to implement two different systems, each requiring optional data on our entities:
+
+1.  **Audio:** A component containing data helpful for emitting audio. We'll assume only ~10% of entities make noise.
+2.  **Proximity:** A component used to mark which entities are close to a player. It contains data useful for the additional work we need to do with those entities, such as network synchronization. We'll assume only ~10% of entities will be close enough to need this additional data at any given time.
+
+### The Object-Oriented Approach
+
+With object-oriented programming, we traditionally model reality using class hierarchies. We might build `Player`, `Monster`, and `Foliage` classes, sharing a base class like `GameObject` and overriding `virtual` methods.
+
+We could then represent our world as an array of `GameObject` pointers, using runtime polymorphism to get dynamic behaviors for our optional systems:
+
+```
+struct GameObject {
+  // Most entities don't need audio, but they
+  // can override this if they do
+  virtual void PlayAudio() {}
+  
+  // ...
+};
+
+struct World {
+  void ProcessAudio() {
+    for (auto Entity : Entities) {
+      // Pointer chasing
+      Entity->PlayAudio();
+    }
+  }
+
+  std::vector<GameObject*> Entities;
+};
+```
+
+This is elegant, but has a heavy performance cost. When the CPU chases a pointer to an object allocated somewhere in the heap, the prefetcher has no idea what memory address is coming next. It stalls, sitting idle for hundreds of cycles, waiting for main RAM to deliver the data.
+
+We thrash the cache and waste the physical capabilities of our hardware. And when most of our entities don't emit audio, most of that work is for nothing.
+
+### The Pointer-Chasing Approach
+
+If we instead try to adapt this object-oriented mindset to our SoA `EntityStorage`, we typically handle optional data through pointers. If an entity has audio, the pointer will point to an audio component. If not, the pointer is null:
+
+### dsa_core/include/dsa/EntityStorage.h
+
+```
+#pragma once
+#include <vector>
+#include <string>
+#include <memory> // for std::unique_ptr 
+
+struct AudioComponent {
+  float volume;
+  float pitch;
+  float pan;
+};
+
+class EntityStorage {
+public:
+  std::vector<std::string> m_names;
+  std::vector<std::unique_ptr<AudioComponent>> m_audio; 
+
+  int Add(std::string name) {
+    m_names.push_back(std::move(name));
+
+    // No audio by default, but can be added using function below
+    m_audio.push_back(nullptr); 
+
+    return int(m_names.size() - 1);
+  }
+
+  void AddAudioToEntity(int index) {
+    m_audio[index] = std::make_unique<AudioComponent>(); 
+  }
+};
+```
+
+This is simple. It saves RAM because we don't store a load of data we don't need for the 90% of entities that don't have audio. The pointer-chasing may be costly, but we'll benchmark it shortly.
+
+### The Data-Oriented Approach
+
+Instead of pointers, what if we strictly optimize our memory footprint? We can create a separate container dedicated to exactly one type of optional data.
+
+Let's implement our proximity functionality using a data-oriented design, using the familiar SoA layout. We'll call our container `ProximityStorage`:
+
+### dsa_core/include/dsa/ProximityStorage.h
+
+```
+#pragma once
+#include <vector>
+#include <string>
+
+class ProximityStorage {
+public:
+  std::vector<float> m_distance;
+  std::vector<float> m_angle;
+  std::vector<float> m_occlusion;
+
+  int Add(float distance, float angle, float occlusion) {
+    m_distance.push_back(distance);
+    m_angle.push_back(angle);
+    m_occlusion.push_back(occlusion);
+    return int(m_distance.size() - 1);
+  }
+};
+```
+
+If we have ten thousand entities in our world, but only a thousand of them are close enough to need proximity data, those thousand records sit packed shoulder-to-shoulder. If an entity doesn't need it, it simply doesn't exist in the pool.
+
+There currently isn't anything linking an entity in `EntityStorage` to its proximity data in `ProximityStorage`. We'll do that in the next lesson, but for now, we're just interested in comparing the performance of these approaches.
+
+### Static Reflection (C++26)
+
+This `ProximityStorage` looks very similar to our `EntityStorage`. In a complex project, we'd likely have many more similar-looking SoA containers. Rather than duplicating all this code, we'd typically generalize this with advanced use of templates, preprocessor macros, or other code generators.
+
+The template approach would be preferred, but it currently isn't possible without giving up some control over the final API.
+
+However, **static reflection**, coming in C++26, closes this gap. Once fully implemented, it will support things like this:
+
+```
+#include <dsa/SoAGenerator>
+
+// Define our columns
+struct ProximitySchema {
+  float m_distance;
+  float m_angle;
+  float m_occlusion;
+};
+
+struct PlayerSchema {
+  std::string name;
+  float health;
+
+  void Heal(int amount) {
+    health += amount;
+  }
+};
+
+int main() {
+  // We can now create SoAs at compile time:
+  auto ProximityStorage = CreateSoA<ProximitySchema>();
+  auto PlayerStorage = CreateSoA<PlayerSchema>();
+
+  // The template can implement standardized functions...
+  PlayerStorage.add("Goblin", 100);
+  // ...and standard interfaces:
+  for (PlayerRef Player : PlayerStorage) {
+    // We can detect and use custom variable names:
+    std::cout << Player.name;
+    // And we can even inject custom functions:
+    Player.Heal(50);
+  }
+}
+```
+
+## Comparing Performance
+
+Let's set up three benchmarks that test our approaches across a range of collection sizes \$n\$. We're estimating that around 10% of our entities will have each of these optional components, so our benchmarks are as follows:
+
+- `BM_VirtualDispatch`: A traditional object-oriented approach. A vector of \$n\$ `GameObject` pointers, where roughly 10% are instantiated as an `AudioObject` subclass that overrides a `virtual` method.
+- `BM_PointerChasing`: An `EntityStorage` containing \$n\$ records, where roughly 10% allocate a pointer to an `AudioComponent`.
+- `BM_ContiguousSoA`: A flat, data-oriented `ProximityStorage` containing only the \$n / 10\$ records that actually exist.
+
+Each approach will process the same amount of meaningful data, and our system will perform the same basic accumulation work on each underlying layout:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <random>
+#include <memory>
+#include <dsa/EntityStorage.h>
+#include <dsa/ProximityStorage.h>
+
+// OOP Hierarchy for benchmarking
+struct GameObject {
+  virtual ~GameObject() = default;
+  virtual float GetVolume() const { return 0.0f; }
+};
+
+struct AudioObject : public GameObject {
+  float volume = 1.0f;
+  float pitch = 1.0f;
+  float pan = 0.0f;
+  float GetVolume() const override { return volume; }
+};
+
+static void BM_VirtualDispatch(benchmark::State& state) {
+  int n = state.range(0);
+  std::vector<std::unique_ptr<GameObject>> entities;
+  entities.reserve(n);
+
+  std::mt19937 rng(42);
+  std::uniform_int_distribution<int> dist(0, 9);
+  for (int i = 0; i < n; ++i) {
+    if (dist(rng) == 0) {
+      entities.push_back(std::make_unique<AudioObject>());
+    } else {
+      entities.push_back(std::make_unique<GameObject>());
+    }
+  }
+
+  for (auto _ : state) {
+    float total_volume = 0.0f;
+    for (const auto& entity : entities) {
+      total_volume += entity->GetVolume();
+    }
+    benchmark::DoNotOptimize(total_volume);
+  }
+}
+
+static void BM_PointerChasing(benchmark::State& state) {
+  int n = state.range(0);
+  EntityStorage es;
+
+  std::mt19937 rng(42);
+  std::uniform_int_distribution<int> dist(0, 9);
+  for (int i = 0; i < n; ++i) {
+    es.Add("Player");
+    if (dist(rng) == 0) {
+      es.AddAudioToEntity(i);
+    }
+  }
+
+  for (auto _ : state) {
+    float total_volume = 0.0f;
+    for (const auto& audio_ptr : es.m_audio) {
+      if (audio_ptr) {
+        total_volume += audio_ptr->volume;
+      }
+    }
+    benchmark::DoNotOptimize(total_volume);
+  }
+}
+
+static void BM_ContiguousSoA(benchmark::State& state) {
+  int n = state.range(0) / 10;
+  ProximityStorage ps;
+
+  for (int i = 0; i < n; ++i) {
+    ps.Add(1.0f, 0.0f, 0.0f);
+  }
+
+  for (auto _ : state) {
+    float total_distance = 0.0f;
+    for (float dist : ps.m_distance) {
+      total_distance += dist;
+    }
+    benchmark::DoNotOptimize(total_distance);
+  }
+}
+
+#define BENCHMARK_CONFIG(name) \
+  BENCHMARK(name) \
+    ->RangeMultiplier(10) \
+    ->Range(100'000, 10'000'000) \
+    ->Unit(benchmark::kMillisecond)
+
+BENCHMARK_CONFIG(BM_VirtualDispatch);
+BENCHMARK_CONFIG(BM_PointerChasing);
+BENCHMARK_CONFIG(BM_ContiguousSoA);
+```
+
+```
+--------------------------------------
+Benchmark                          CPU
+--------------------------------------
+BM_VirtualDispatch/100000     0.185 ms
+BM_VirtualDispatch/1000000     2.05 ms
+BM_VirtualDispatch/10000000    25.4 ms
+BM_PointerChasing/100000      0.112 ms
+BM_PointerChasing/1000000      1.19 ms
+BM_PointerChasing/10000000     18.6 ms
+BM_ContiguousSoA/100000       0.007 ms
+BM_ContiguousSoA/1000000      0.071 ms
+BM_ContiguousSoA/10000000     0.837 ms
+```
+
+The traditional object-oriented and pointer-based approaches fail on three fronts:
+
+1.  **Excessive Iteration**: We're forced to iterate through the entire collection of entities, evaluating and discarding 90% of them.
+2.  **Branch Misprediction & Indirect Calls:** Whether evaluating a null check using `if (audio_ptr)` or looking up a function address in a virtual table using `entity->GetVolume()`, the CPU cannot reliably predict the outcome. These effectively random checks lead to frequent pipeline flushes.
+3.  **Cache Misses:** When an entity *does* have the optional data, we must chase a pointer to a random memory address in the heap. The prefetcher can't anticipate this, resulting in massive stalls due to memory latency.
+
+The data-oriented `ContiguousSoA` approach wins because it *only* processes data that exists, and it does so in a straight line with zero pointer indirection or virtual dispatch overhead.
+
+## The ECS Pattern
+
+We have just demonstrated the mechanical foundation of the **Entity-Component-System (ECS)** architecture.
+
+Instead of relying just on **inheritance**, ECS relies on **composition**. There are many variations of this pattern, but a typical implementation looks something like this:
+
+- **Entities** are simple, lightweight objects that uniquely identify an entity in our world. This is generally done using a basic integer, or a handle that includes a
+  [generational index ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/generational-indices)
+  .
+- **Components** are the data associated with an entity. If an entity has the ability to play audio, that means that there is an audio component that is linked to that entity in some way. That audio component might contain variables like what audio file is currently being played and its volume.
+- **Systems** implement functionality. For example, our audio system might iterate over all the audio components and analyze their variables to determine what the player should currently hear.
+
+Our application loop would then update (or "tick") all of our systems on every iteration:
+
+```
+int main() {
+  // ...
+  while (isRunning) {
+    PhysicsSystem.Update();
+    AudioSystem.Update();
+    // ...
+  }
+  // ...
+}
+```
+
+If all of our systems can access and process the data they need quickly enough, the incremental, ticking nature of our program is effectively invisible. When iterations of this loop happen every few milliseconds, the program feels like it is running and responding to user input immediately, in "real time".
+
+## Component Pools
+
+When we add a system to our program, it needs access to the data in our components. We do not store an entity's components together in memory. Instead, components live in dedicated ***component pools***. A component pool is simply a container, exactly like our `ProximityStorage`, dedicated to exactly one type of component.
+
+By storing our data in this manner, our audio or proximity systems can process all of their required components with the full efficiency of working with contiguous, SoA data:
+
+However, our approach currently has an obvious gap: it has no concept of **ownership**. We have a pool of entities in `EntityStorage`, and a pool of components in `ProximityStorage`. An entity can't "own" a component because there is nothing linking components and entities together.
+
+We'll set up that connective tissue in the next lesson, using **sparse sets**.

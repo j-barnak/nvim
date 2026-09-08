@@ -1,0 +1,271 @@
+In the previous lesson, we solved the problem of **index invalidation** by implementing stable addressing. By using tombstones (`m_alive`) instead of shifting memory, we ensured that index `5` always points to the same physical slot in RAM.
+
+To keep our memory usage efficient, we implemented a **free list**. This allows us to recycle the slots of deleted players. If you delete the player at index `5`, that slot is marked as available. The next time you add a player, the system puts the new data into index `5`.
+
+This efficiency introduces a new problem.
+
+## The ABA Problem
+
+When we reuse a slot that previously held a different entity, we create the **ABA problem**.
+
+1.  Slot `5` holds "Alice". An external system, like a `Scoreboard` holds a reference to index `5`.
+2.  We delete Alice. Slot `5` becomes a tombstone.
+3.  We add "Bob". The system reuses the empty slot `5` for Bob.
+
+Now, the scoreboard still holds index `5`. It thinks that is the index for Alice, but it is actually pointing at Bob.
+
+## Generational Indices (Handles)
+
+To solve the ABA problem, we need to add a dimension of **time** to our addressing.
+
+We don't just want to point to "Slot 5". We want to point to "Slot 5, allocation number 1". When Bob takes over Slot 5, he becomes "Slot 5, allocation number 2". When a system asks us for data, we provide both the index and allocation number - a small struct typically called a **handle**. When they later make a request to change some data, their request includes the handle to identify what entity they want to update.
+
+In our previous example, the `Scoreboard` wouldn't just use index `5` to access the slot - they'd use the handle `(5, 1)`. Our system will see that index `5` is actually at version `2`. We will know immediately: *slot* *`5`* *does not have the person you think.*
+
+This technique is called **generational indices**
+
+### The Handle Structure
+
+A handle is a simple structure containing the **index** (where the data is) and the **generation** (the version of the data).
+
+### dsa_core/include/dsa/PlayerHandle.h
+
+```
+struct PlayerID {
+  int index;
+  int generation;
+};
+```
+
+### Implementing Generations in SoA
+
+We need to add a `m_generations` column to our `PlayerStorage`. This vector stores the *current* generation of each slot.
+
+- When a player is added to a fresh slot, that slot is generation `0`.
+- When a player is *deleted*, we increment the generation of that slot.
+
+Let's refactor `PlayerStorage` to support this:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+struct PlayerID {
+  int index;
+  int generation;
+};
+
+// ...
+
+class PlayerStorage {
+public:
+  std::vector<int> m_generations;  // Version control
+  // ...
+
+  // AddPlayer now returns a handle to the added player
+  PlayerID AddPlayer(
+    int id, int score, float hp, std::string name
+  ) {
+    if (m_next_free_slot != -1) {
+      int index = m_next_free_slot;
+      m_next_free_slot = m_ids[index];
+
+      m_ids[index] = id;
+      m_scores[index] = score;
+      m_health[index] = hp;
+      m_names[index] = std::move(name);
+      m_alive[index] = 1;
+      
+      // Current generation is safe to use as long as it was
+      // incremented when erasing the previous player
+      return PlayerID{index, generation};
+    } else {
+      // No free slots available, push to the to the end instead
+      int index = static_cast<int>(m_ids.size());
+
+      m_ids.push_back(id);
+      m_scores.push_back(score);
+      m_health.push_back(hp);
+      m_names.push_back(std::move(name));
+      m_alive.push_back(1);
+      
+      // Initialize new slot generation
+      m_generations.push_back(0);
+      return PlayerID{index, 0};
+    }
+  }
+  
+  void EraseAt(size_t index) {
+    if (index >= m_ids.size() || m_alive[index] == 0) return;
+    m_alive[index] = 0;
+    m_ids[index] = m_next_free_slot;
+    m_next_free_slot = index;
+    
+    // This invalidates all existing handles pointing to this slot 
+    m_generations[index]++; 
+  }
+};
+```
+
+### Validating Access
+
+Now we can implement truly safe access functions. When external code wants to identify a player within our system, it provides a `PlayerID` handle, which we can check the `generation` of before taking action.
+
+Below, we apply this to the `Erase()` method, but any function our system provides to let the outside world access our update our players would use similar techniques:
+
+### dsa_core/include/dsa/PlayerStorage.h
+
+```
+// ...
+
+class PlayerStorage {
+public:
+  // ...
+  
+  // Returns true on success
+  bool Erase(PlayerID id) {
+    // Bounds check
+    if (id.index < 0 || id.index >= m_ids.size()) return false;
+    // Generation Check
+    if (m_generations[id.index] != id.generation) return false;
+    
+    // All good - proceed with deletion
+    m_alive[id.index] = 0;
+    m_ids[id.index] = m_next_free_slot;
+    m_next_free_slot = id.index;
+    m_generations[id.index]++;
+    
+    return true;
+  }
+};
+```
+
+## What About the `PlayerRef`?
+
+We can add generation checks to all of our functions, but we still have these `PlayerRef` proxies which contain references. If someone requests a `PlayerRef` from our system, saves it, and then uses it again later, those references may have become stale.
+
+There are several ways we can deal with this. The two most common are simply enforcing usage discipline as best we can, or to invert control.
+
+### Usage Discipline
+
+The most common approach is simply **discipline**. We treat `PlayerRef` the same way we would treat things like an iterator, or views that include iterators. **The Rule: Store Handles, Use Refs.**
+
+Remember, our proxy is just another type - we can structure it any way we want. We can replace our raw data access with getters and setters that contain custom logic, and those functions can even call back to the `PlayerStorage` if needed.
+
+We can also use the preprocessor to ensure all these additional checks only happen in development builds. In release mode, they can be removed, returning us to our small, zero-cost abstraction:
+
+```
+#if defined(_DEBUG)
+  #define ENABLE_GENERATION_CHECKS 1
+#endif
+
+struct PlayerRef {
+  // In Debug: Accessors check validity
+  // In Release: Accessors are simple inlined pointer dereferences
+  int& id() { Validate(); return *m_id_ptr; }
+  int& score() { Validate(); return *m_score_ptr; }
+  float& health() { Validate(); return *m_health_ptr; }
+  std::string& name() { Validate(); return *m_name_ptr; }
+  
+private:
+  // Pointers to the actual data in the PlayerStorage's vectors
+  int* m_id_ptr;
+  int* m_score_ptr;
+  float* m_health_ptr;
+  std::string* m_name_ptr;
+  
+  // In Debug: Add additional fields to support validation checks
+#if ENABLE_GENERATION_CHECKS
+  const int* m_current_generation_ptr;
+  int m_expected_generation;
+#endif
+
+  // In Debug: Run validation checks on all data access
+  // In Release: This compiles away to nothing
+  inline void Validate() const {
+#if ENABLE_GENERATION_CHECKS
+    if (*m_current_generation_ptr != m_expected_generation) {
+      throw std::runtime_error("Stale PlayerRef Access");
+    }
+#endif
+  }
+  
+  friend class PlayerStorage;
+  
+  PlayerRef(
+    int* id_p, int* score_p,
+    float* health_p, std::string* name_p,
+    const int* current_gen_p, int expected_gen
+  ) : m_id_ptr(id_p), m_score_ptr(score_p),
+      m_health_ptr(health_p), m_name_ptr(name_p)
+      // In Debug: Construct additional fields
+#if ENABLE_GENERATION_CHECKS
+      , m_current_generation_ptr(current_gen_p)
+      , m_expected_generation(expected_gen)
+#endif
+    {}
+};
+```
+
+### Inverting Control
+
+We can also prevent retention by inverting control. Rather than providing an object for consumers to apply logic to outside of our system, they can instead provide the logic to our system, and we control how it is applied. That might look something like this:
+
+```
+// Usage example
+storage.Modify(some_player_handle, [](PlayerRef p) {
+  p.health -= 10;
+  p.score += 100;
+});
+```
+
+We could implement it like this:
+
+```
+class PlayerStorage {
+public:
+  // ...
+  
+  // Instead of returning Ref, accept a visitor
+  // Return true if the modification was successful
+  bool Modify(PlayerID id, auto&& visitor) {
+    // 1. Validate Handle (Bounds + Generation)
+    if (id.index >= size() || 
+        m_generations[id.index] != id.generation || 
+        m_alive[id.index] == 0
+    ) {
+      return false; // Handle invalid
+    }
+
+    // 2. Create the View
+    PlayerRef ref {
+      m_ids[id.index], m_scores[id.index], 
+      m_health[id.index], m_names[id.index] 
+    };
+
+    // 3. Apply the provided logic
+    visitor(ref);
+    
+    return true;
+  }
+};
+```
+
+In this pattern, we also often provide a `ForEach()` function to replace iteration, further reinforcing that we don't expect `PlayerRef` proxies to be stored outside of our system. Consumers provide the logic, and our system applies the function to all of our entities:
+
+```
+storage.ForEach([](PlayerRef p) {
+  std::cout << p.name << '\n';
+});
+```
+
+## Summary
+
+In this lesson, we fully addressed the problem of address stability by implementing generational indices and handles.
+
+This involves adding a version number (`m_generations`) to every slot, letting us distinguish between "Slot 5 (Alice)" and "Slot 5 (Bob)".
+
+To interact with the system, we provide consumers with **handles** that encapsulate the `{Index, Generation}` pair into a `PlayerID` struct, providing a safe, persistent reference to our entities.
+
+This pattern - **generational indices into a structure of arrays -** gives us a stable, high-performance foundation to build on.

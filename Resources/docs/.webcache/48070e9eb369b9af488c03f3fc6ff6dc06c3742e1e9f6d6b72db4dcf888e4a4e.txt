@@ -1,0 +1,387 @@
+In the previous lesson, we fixed our data races using `std::atomic`. We successfully prevented data corruption, but we paid a performance tax. Even though an atomic increment is a single CPU instruction, our benchmark showed it was slower than doing the work on a single thread.
+
+This seems counter-intuitive. If we have 8 cores working in parallel, shouldn't we be 8 times faster?
+
+The problem is that our cores do not live in isolation. They share a memory system. When one core modifies a value, it must inform the other cores that their view of the world is now outdated.
+
+In this lesson, we are going to look at the physical cost of that communication. We will explore **cache coherency**, discover how **false sharing** can make parallel code slower than sequential code, and learn how to use **padding** and better algorithm design to restore our performance.
+
+## Cache Coherency and Ping-Pong
+
+To understand the cost of atomics, we have to talk about **cache coherency**.
+
+Modern CPUs have per-core caches (L1/L2). This means that copies of the same underlying values can exist in multiple caches. If Core A modifies `counter`, the copy in Core B's cache will now be out of date.
+
+To keep the contents of each core's cache consistent with one another and with main memory, CPUs coordinate on which core currently "owns" a cache line and which cores have stale, invalid data.
+
+1.  Core A wants to update `counter`.
+2.  It sends a message on the internal bus: *"I am modifying address 0x1234. Invalidate your copies!"*
+3.  Core B receives the message and marks its cache line as invalid.
+4.  Core A modifies the value.
+5.  Core B wants to update `counter`. It sees its cache is invalid.
+6.  It has to ask Core A to flush the new value back to main memory (or transfer it directly between cores).
+7.  Core B pulls the latest data in and updates it, invalidating Core 1's copy.
+
+This loop and constant negotiation continue until the algorithm is complete, slowing the work to a crawl and saturating the internal bandwidth of the CPU with these messages.
+
+This is called **cache ping-pong**:
+
+Advanced
+
+### Modified, Exclusive, Shared, Invalid (MESI)
+
+Most modern systems use MESI-based protocols to manage cache coherency between cores. MESI comes from the four states that a cache line can be in:
+
+- **Modified**: This core has modified the cache line, but hasn't written that value back to main memory yet. If another core tries to read the value, this core will intercept the request and update main memory just in time, or it will provide the value directly using a cache-to-cache transfer.
+- **Exclusive**: Only this core has a copy of the cache line, and it matches main memory.
+- **Shared**: The cache line matches main memory, but multiple cores may have a copy.
+- **Invalid**: The cache line is stale, and the latest value must be fetched from main memory or another cache before it can be used.
+
+Transitions between these states are managed by internal communication within the CPU. For example, if a core currently has a `Shared` cache line and wants to modify a value, it emits a **Read For Ownership (RFO)** request.
+
+This prompts all other cores to transition their copies to the `Invalid` state, and the core that made the RFO request will have its `Shared` copy upgraded to the `Exclusive` state. That core can then safely modify the value, which will transition the copy to the `Modified` state.
+
+More information on the MESI protocol is available on [Wikipedia![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://en.wikipedia.org/wiki/MESI_protocol).
+
+Atomic operations deliberately enforce these ownership transitions and ordering guarantees to ensure thread safety, but they can make multithreaded solutions slower than a single core working on the problem.
+
+We'll see ways to alleviate this later in the lesson, but first, let's introduce **false sharing** - another form of this same underlying problem.
+
+## False Sharing
+
+Cache ping-pong is bad, but at least it happens because we are actually sharing data. There is a more frustrating version of this problem where we pay the penalty even when the threads are using **different** data. This is called **false sharing**.
+
+Recall that memory is loaded in **cache lines** (typically 64 bytes). The hardware cannot track ownership of a single byte; it tracks ownership of the entire 64-byte line.
+
+Imagine we have a struct with two atomic counters, operated on by two different threads.
+
+```
+struct Stats {
+  // Bytes 0-3 (assuming 4-byte int):
+  std::atomic<int> thread_a_counter;
+  // Bytes 4-7:
+  std::atomic<int> thread_b_counter;
+};
+```
+
+These two integers sit right next to each other in memory. They share the **same cache line**.
+
+1.  Thread A increments `thread_a_counter`. The CPU invalidates the *entire* 64-byte line in Thread B's cache.
+2.  Thread B tries to increment `thread_b_counter`. It sees the line is invalid (cache miss). It has to wait for Thread A to flush the data.
+3.  Thread B increments its variable. This invalidates the line in Thread A's cache.
+
+The threads are logically independent. They are touching different variables. But physically, they are fighting over the same 64-byte plot of land, so our performance is still crippled by cache ping-pong.
+
+We'll cover two ways to solve this in the rest of this lesson. Let's first look at the most direct solution - we can just spread the values out so they can't be on the same cache line.
+
+### Alignment and Padding
+
+We can use an **alignment specifier** to inform the compiler of our type's required memory layout. The following forces our variables to be positioned at memory addresses that are multiples of 64, our cache line size.
+
+This means our `a` and `b` variables cannot be on the same cache line, so an algorithm working on `a` cannot play cache ping pong with an algorithm working on `b`:
+
+```
+struct Stats {
+  // Bytes 0-3:
+  alignas(64) std::atomic<int> a;
+   
+  // Bytes 4-63: 
+  // Padding added by compiler
+    
+  // Bytes 64-67:
+  alignas(64) std::atomic<int> b;
+  
+  // Bytes 68-127: 
+  // Tail padding added by compiler
+};
+```
+
+The "tail padding" is added because the compiler assumes there is always **another** object immediately following it in memory. It means when a collection of `Stats` objects are packed into an array; the memory layout would look like this:
+
+### Portable Padding
+
+What if we're targeting architectures that use different cache line sizes? Apple's M-series chips often use **128-byte** cache lines. If we write code that pads variables by 64 bytes and run it on a Mac, we will still suffer from false sharing because both variables will fit into that larger 128-byte line.
+
+To solve this portably, C++17 introduced a specific constant in the `<new>` header, the succinctly named `std::hardware_destructive_interference_size`.
+
+This constant tells us the **minimum offset** required between two objects to ensure they do not share a cache line. Conversely, its sibling `std::hardware_constructive_interference_size` tells us the **maximum size** of contiguous memory that is guaranteed to fit *within* a single cache line.
+
+We use `destructive` to help build layouts that put things on different cache lines, thereby reducing false sharing. We use `constructive` to help build layouts that keep things on the same cache line, thereby improving spatial locality.
+
+We talk about these conflicting goals later in the lesson and how to bypass them with some clever algorithm design.
+
+But for now, let's just increase the size of our objects to fix the false sharing problem. We can combine `destructive` with the `alignas` specifier to force the compiler to position our variables on different cache lines, regardless of the architecture we compile for:
+
+```
+#include <new>
+#include <atomic>
+
+struct Stats {
+  alignas(std::hardware_destructive_interference_size)
+    std::atomic<int> a;
+
+  alignas(std::hardware_destructive_interference_size)
+    std::atomic<int> b;
+};
+```
+
+### Compiler Support and Fallbacks
+
+Because this value must be a compile-time constant, it represents the compiler's *best guess* for the target architecture. Some compilers/standard libraries (older GCC versions, for example) do not implement this feature due to ABI compatibility concerns.
+
+If we know the platforms we're targeting and they have a consistent cache line, we can just hardcode the value - eg `64`. If we want to use the standard library helpers with a fallback, we can wrap them in a macro:
+
+```
+#include <new>
+#include <atomic>
+
+// Feature test macro 
+#ifdef __cpp_lib_hardware_interference_size 
+  // It's supported - use the standard library: 
+  using std::hardware_destructive_interference_size; 
+#else 
+  // Not supported - fallback to something else: 
+  constexpr std::size_t hardware_destructive_interference_size = 64; 
+#endif 
+
+struct Stats {
+  alignas(std::hardware_destructive_interference_size)
+  alignas(hardware_destructive_interference_size)
+    std::atomic<int> a;
+    
+  alignas(std::hardware_destructive_interference_size)
+  alignas(hardware_destructive_interference_size)
+    std::atomic<int> b;
+};
+```
+
+## Benchmarking False Sharing
+
+Let's reproduce the false sharing problem in isolation so we can confirm it's real, and then confirm our alignment fixes it. We will create two counters. In the "bad" case, they are adjacent. In the "good" case, we push them apart.
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <future>
+#include <new>
+
+struct BadPadding {
+  std::atomic<int> a;
+  std::atomic<int> b;
+};
+
+struct GoodPadding {
+  alignas(std::hardware_destructive_interference_size)
+    std::atomic<int> a;
+  alignas(std::hardware_destructive_interference_size)
+    std::atomic<int> b;
+};
+
+static void BM_FalseSharing(benchmark::State& state) {
+  BadPadding stats;
+  for (auto _ : state) {
+    // Launch two async tasks that run continuously
+    auto f1 = std::async(std::launch::async, [&](){
+      for(int i=0; i<100000; ++i) stats.a++;
+    });
+    auto f2 = std::async(std::launch::async, [&](){
+      for(int i=0; i<100000; ++i) stats.b++;
+    });
+    
+    // Wait for both to finish
+    f1.wait();
+    f2.wait();
+  }
+}
+
+static void BM_NoSharing(benchmark::State& state) {
+  GoodPadding stats;
+  for (auto _ : state) {
+    auto f1 = std::async(std::launch::async, [&](){
+      for(int i=0; i<100000; ++i) stats.a++;
+    });
+    auto f2 = std::async(std::launch::async, [&](){
+      for(int i=0; i<100000; ++i) stats.b++;
+    });
+    
+    f1.wait();
+    f2.wait();
+  }
+}
+
+
+#define REGISTER_BENCHMARK(func) \
+  BENCHMARK(func) \
+    ->Unit(benchmark::kMicrosecond) \
+    ->UseRealTime()
+
+REGISTER_BENCHMARK(BM_FalseSharing);
+REGISTER_BENCHMARK(BM_NoSharing);
+```
+
+Eliminating the contention means even our simple two-thread example can work through the iterations in a fraction of the time:
+
+```
+---------------------------------------------
+Benchmark                      Time       CPU
+---------------------------------------------
+BM_FalseSharing/real_time   1526 us   69.1 us
+BM_NoSharing/real_time       460 us   10.2 us
+```
+
+### The Cost of Isolation
+
+Of course, making our objects physically larger in memory is a trade-off. As we talked about earlier in the course, tightly packing data has many advantages, particularly in single-threaded performance.
+
+When we apply `alignas(64)`, we're optimizing in the exact opposite direction. We're inflating the size of our data with unnecessary gaps.
+
+1.  **Wasted Cache Capacity:** A 32KB L1 cache can hold 8,000 packed integers. It can only hold 500 aligned integers. We have shrunk our effective cache size by a factor of 16.
+2.  **Wasted Bandwidth:** When the CPU fetches a cache line from RAM, it transfers 64 bytes. In a packed array of integers, the transfer brings in 16 useful items. In an aligned array, it brings in 1 useful item and 60 bytes of air.
+
+In real-world scenarios, we can often mitigate against this, particularly in array-of-structure layouts. Those structures carry around other variables, so the memory isn't entirely wasted. We can just strategically place the "payload" data (variables less important to our algorithms) in the gaps between our "key" data.
+
+These objects are the same size as the previous ones, and they still have plenty of space left over:
+
+```
+struct GoodPadding {
+  // Line 1 (Bytes 0-63)
+  alignas(64) std::atomic<int> a;
+  int some;
+  float other;
+  double stuff;
+  // Padding injected by compiler...
+
+  // Line 2 (Bytes 64-127)
+  alignas(64) std::atomic<int> b;
+  int yet;
+  float more;
+  double things;
+  // Tail padding injected by compiler...
+};
+```
+
+But there is still a fundamental tension: layouts optimized for concurrency are sometimes suboptimal for single-threaded tasks. But if we're a little smarter with our algorithm design, we can often eliminate that tension.
+
+## Avoiding Synchronization
+
+So, mutexes are slow (system calls). Atomics are fast, but still slow compared to unsynchronized access (cache coherency). False sharing is a silent performance killer. Padding can fix it, but it has big trade-offs.
+
+The best way to synchronize threads is **not to**.
+
+Instead of having all threads fight over a shared counter, we can give each thread its own counter. Let them work in isolation, incrementing their local counters with maximum speed and zero contention. Then, at the very end, sum the local results into the global total.
+
+Fortunately, we don't have to write this algorithm. It is exactly how `std::reduce()` and `std::transform_reduce()` works:
+
+```
+// ...
+
+// 5. Multi-Threaded (Correct - Reduce)
+// No shared state, no locks, no atomics
+// Threads work on local data in registers and only synchronize 
+// once at the very end to merge results.
+static void BM_Reduce(benchmark::State& state) {
+  int counter = 0;
+  for (auto _ : state) {
+    counter = std::reduce(
+      std::execution::par,
+      WORK_ITEMS.begin(), WORK_ITEMS.end(),
+      0
+    );
+  }
+  benchmark::DoNotOptimize(counter);
+}
+
+// ...
+
+REGISTER_BENCHMARK(BM_Reduce);
+```
+
+We'll likely find this solution outperforms every other variation we walked through, even the fast-but-wrong `BM_Unsafe`:
+
+```
+-------------------------------------------
+Benchmark                  Time         CPU
+-------------------------------------------
+BM_Seq/real_time         248 us      252 us
+BM_Unsafe/real_time     84.8 us     77.0 us
+BM_Mutex/real_time    153993 us   109375 us
+BM_Atomic/real_time      253 us     97.8 us
+BM_Reduce/real_time     61.6 us     55.3 us
+```
+
+## Complex Reductions
+
+Let's finish off with a more complex example. So far, our reductions have been to a single number. More commonly, we want to analyze a collection and return a more detailed report containing many pieces of information.
+
+A common but flawed approach is to create a type representing the shape of the report and have all threads share an instance, updating it as they work. To handle the data race, mutexes or atomics are added, introducing locks and contention.
+
+Instead, we can use the familiar MapReduce pattern via `std::transform_reduce()` in a slightly more advanced way. The transform/map step takes our original data and puts it in the report format, carrying each element's partial contribution to the overall stats. The reduce step then combines all of those reports.
+
+Below, we have an array of `InventorySlot` objects representing the player's inventory, and we generate a report of both the total weight and total item count:
+
+```
+#include <numeric>
+#include <vector>
+#include <execution>
+
+struct InventorySlot {
+  int item_count;
+  double weight_per_item;
+};
+
+// The "Result" type we want to produce
+struct InventoryReport {
+  int total_items = 0;
+  double total_weight = 0.0;
+};
+
+InventoryStats CalculateStats(
+  const std::vector<InventorySlot>& inventory
+) {
+  return std::transform_reduce(
+    std::execution::par,
+    inventory.begin(), inventory.end(),
+
+    // 1. Initial Value - an empty report
+    InventoryReport{},
+
+    // 2. Reduce Operation (Combine two reports)
+    // This runs thread-locally first, then merges globally.
+    [](const InventoryReport& a, const InventoryReport& b) {
+      return InventoryReport{
+        a.total_items + b.total_items,
+        a.total_weight + b.total_weight
+      };
+    },
+
+    // 3. Transform Operation (Slot -> Report)
+    // Converts raw data into our report format
+    [](const InventorySlot& slot) {
+      return InventoryReport{
+        slot.item_count,
+        slot.item_count * slot.weight_per_item
+      };
+    }
+  );
+}
+```
+
+We have effectively turned a synchronization problem into a data transformation problem. We aren't updating a report; we are reducing a stream of values. By changing our perspective, we eliminate the need for hardware contention.
+
+1.  **No Locks:** The intermediate `InventoryReport` objects are created on the stack of the worker threads. They are private to that thread. No mutexes or atomics are needed.
+2.  **Cache Friendly:** The CPU cores are crunching numbers in their local registers and accessing data in their local L1/L2 caches.
+3.  **Scalable:** The threads only communicate when they need to merge their partial `InventoryReport` with another thread's result.
+
+## Summary
+
+In this lesson, we learned that multithreading is not just about logic; it is also about data layout.
+
+1.  **Cache Coherency:** We learned that CPU cores must negotiate ownership of memory lines (MESI). This "bus traffic" slows down processing significantly when multiple threads contend for the same data.
+2.  **False Sharing:** We discovered that threads can contend for the same cache line even if they are modifying different variables.
+3.  **Padding:** We can use `alignas` to forcibly separate data in memory, eliminating false sharing at the cost of memory usage.
+4.  **Reduction:** The ideal solution is to avoid synchronization as much as possible. By using `std::reduce()` or `std::transform_reduce()`, we allow threads to work on local registers (zero contention) and only merge results at the very end.
+
+We now know how to safely distribute work across multiple cores, and we understand the physical memory layout required to prevent those cores from fighting each other. But what about the performance *within* a single core?
+
+In the next lesson, we will look at **vectorization**. We will learn how to use SIMD (Single Instruction, Multiple Data) registers to process 4, 8, or even 16 numbers in a single CPU cycle, unlocking the full throughput of the hardware.

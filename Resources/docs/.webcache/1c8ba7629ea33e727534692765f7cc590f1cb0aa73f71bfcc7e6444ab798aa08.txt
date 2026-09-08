@@ -1,0 +1,603 @@
+In the previous lessons, we proved that splitting our data into relational component pools and joining them with Bitmasks is efficient for the hardware. It keeps our memory contiguous and our caches hot.
+
+However, the code required to use these systems is currently a disaster. The rest of the course will focus on taking these efficient algorithms and hiding them behind a friendly interface that makes our ECS easy and safe for others to use.
+
+To add a component to an entity, we currently have to manually add the data to the specific storage class, manually calculate which bit corresponds to that component, and manually update the entity's signature:
+
+```
+int alice = entities.Add("Alice");
+proximity.Add(alice, 1.0f, 2.0f, 3.0f);
+entities.RegisterComponent(alice, 1 << 0);
+audio.Add(alice, 4.0f, 5.0f, 6.0f);
+entities.RegisterComponent(alice, 1 << 1);
+```
+
+Aside from being annoying to use, it is also prone to errors. If we change the order of our bits, or if we forget to register a component after adding data, our system breaks.
+
+In this lesson, we are going to use templates to automate this wiring. We will build a **registry** that manages our storage systems, and an **entity handle** that allows us to write expressive code like this:
+
+```
+world.CreateEntity("Alice")
+  .AddComponent<Proximity>(1.0f, 2.0f, 3.0f)
+  .AddComponent<Audio>(4.0f, 5.0f, 6.0f);
+```
+
+In the next lesson, we'll allow our component pools to be queried using an API that looks like this:
+
+```
+// Get all the entities that have both a proximity
+// and audio component
+auto noisy_neighbors = world.GetView<Proximity, Audio>();
+
+for (auto [entity, prox, audio] : noisy_neighbors) {
+  std::print(
+    "Processing audio for {} (distance = {}, volume = {})",
+    entity.name, prox.distance, audio.volume
+  );
+}
+```
+
+We will achieve this with **zero overhead**. The compiler will do all the heavy lifting at compile time, leaving us with the same machine code as the manual versions.
+
+### Recommended Reading
+
+The systems we create in the next two lessons will be extremely flexible. When a new component type is added in the future, the code we write here will also support that type.
+
+The trade-off is that the code will use a lot of advanced, compile-time techniques. If you're not familiar with these techniques, the code examples will likely be difficult to follow. The sections below have links to recommended reading which introduce the concepts.
+
+## The Registry
+
+**Recommended Reading**: [Class Templates ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/class-templates), [Function Templates ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/function-templates), [Template Specialization ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/template-specialization)
+
+Currently, our `EntityStorage`, `ProximityStorage`, and `AudioStorage` are just loose variables floating around in `main()`. There is no single object that "owns" the game state.
+
+We need a central hub. In most ECS implementations, this is called the **registry** or the **world**.
+
+### Component Type Traits
+
+The immediate problem with implementing a component-centric API like `AddComponent<Audio>` is that the idea of a "component" is entirely conceptual. There is no type called `AudioComponent` or `Audio`. We have `AudioStorage`, but that has a different meaning - that is, a pool of components, not an individual component.
+
+Consumers shouldn't care how our components are stored, and we don't want our API to be `AddComponent<AudioStorage>`. So, let's create a utility that we can use behind the scenes to map friendly component categories like `Audio` to their underlying storage, like `AudioStorage`.
+
+We'll need this mapping in a few places, so we'll create a standalone type trait. We don't actually need an `Audio` type for any reason other than to support this API. It has no data, and we'll never instantiate it, so it can just be a **tag** - an empty struct that is used only to convey information at compile time:
+
+### dsa_core/include/dsa/Registry.h
+
+```
+#pragma once
+#include "AudioStorage.h"
+#include "ProximityStorage.h"
+
+// Base implementation just echos back the same type,
+// but we can add specializations later
+template <typename T>
+struct StorageFor {
+  // StorageFor<T>::Type returns T
+  using Type = T;
+};
+
+// Specializations
+struct Audio {}; // Tag
+template <>
+struct StorageFor<Audio> {
+  // StorageFor<Audio>::Type returns AudioStorage
+  using Type = AudioStorage;
+};
+
+struct Proximity {}; // Tag
+template <>
+struct StorageFor<Proximity> {
+  // StorageFor<Proximity>::Type returns ProximityStorage
+  using Type = ProximityStorage;
+};
+```
+
+We'll see how this is practically useful in the next section, but here is an example of how a hypothetical `AddComponent()` function template might use this to understand what type of pool it needs to interact with:
+
+```
+#include <dsa/Registry.h>
+
+template <typename ComponentType>
+void AddComponent() {
+  using PoolType = typename StorageFor<ComponentType>::Type;
+  // ...
+}
+
+int main() {
+  // PoolType within AddComponent will be AudioStorage
+  AddComponent<Audio>();
+
+  // PoolType within AddComponent will be ProximityStorage
+  AddComponent<Proximity>();
+}
+```
+
+### Tracking Component Pools
+
+**Recommended Reading**: [Tuples ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/class-templates)
+
+To help the registry keep track of all our component pools, we will make heavy use `std::tuple`.
+
+A `std::tuple` is a fixed-size collection. Unlike a `std::ector`, the size of the collection is known at **compile time**. This allows the compiler to calculate the memory offset of every storage system during the build process, eliminating the need for runtime lookups.
+
+Another important property of `std::tuple` that it is **heterogeneous** - each entry can have a different type. Each of our component pools has a different type (`AudioStorage`, `ProximityStorage`, etc) so we'll need this.
+
+Let's define our `Registry` class. It will hold our main `EntityStorage` and a tuple containing our component storages.
+
+### dsa_core/include/dsa/Registry.h
+
+```
+#pragma once
+#include <tuple>
+#include "EntityStorage.h"
+#include "AudioStorage.h"
+#include "ProximityStorage.h"
+
+template <typename T>
+struct StorageFor {
+  using Type = T;
+};
+
+struct Audio {};
+template <>
+struct StorageFor<Audio> {
+  using Type = AudioStorage;
+};
+
+struct Proximity {};
+template <>
+struct StorageFor<Proximity> {
+  using Type = ProximityStorage;
+};
+
+class Registry {
+public:
+  EntityStorage entities;
+
+  std::tuple<
+    ProximityStorage,
+    AudioStorage
+  > components;
+};
+```
+
+### Accessing Storage by Type
+
+Now that our storages are wrapped in a tuple, we can no longer access them by name. We have to access them by type or index using `std::get()`. That would look something like the following:
+
+```
+#include <tuple> // for std::get
+#include "Registry.h"
+
+int main() {
+  Registry World;
+  AudioStorage& pool = std::get<AudioStorage>(World.components);
+}
+```
+
+This isn't too bad, but our ideal API might look more like this:
+
+```
+#include "Registry.h"
+
+int main() {
+  AudioStorage& pool = World.GetStorage<Audio>();
+}
+```
+
+We already have our `StorageFor` type trait that maps components like `Audio` to the corresponding `AudioStorage` type.
+
+Let's use this within a new `GetStorage<T>()` that implements the `std::get()` logic behind the scenes. Note that `StorageFor()` returns the **type** of the component pool, whilst `GetStorage()` returns the pool itself - the actual **object** that our world is using to store the components:
+
+### dsa_core/include/dsa/Registry.h
+
+```
+// ...
+
+class Registry {
+public:
+  // ...
+
+  template <typename T>
+  auto& GetStorage() {
+    using StorageType = typename StorageFor<T>::Type;
+    return std::get<StorageType>(components);
+  }
+};
+```
+
+This might look like a search operation, but it isn't. The `std::get()` access resolves at compile time. If we ask for `Audio`, the compiler knows exactly where that object lives inside the tuple (e.g., "Offset 0"). The resulting assembly instruction is a direct memory access.
+
+### Example Usage
+
+With these changes, our code can now grab a reference to each pool that is in use:
+
+### dsa_app/main.cpp
+
+```
+#include <dsa/EntityStorage.h>
+#include <dsa/ProximityStorage.h>
+#include <dsa/AudioStorage.h>
+#include <dsa/Registry.h>
+
+int main() {
+  EntityStorage entities;
+  ProximityStorage proximity;
+  AudioStorage audio;
+  Registry GameWorld;
+  
+  // Adding entities
+  int alice = GameWorld.entities.Add("Alice");
+  
+  // Adding Components
+  GameWorld.GetStorage<Proximity>().Add(alice, 1.0f, 2.0f, 3.0f);
+}
+```
+
+This has made creating our world much easier, but has made interacting with it even more complex. Let's fix that next.
+
+## The Entity Handle
+
+Now that we have a `World`, we need a friendly way to interact with the entities inside it.
+
+When we called `entities.Add()` in previous lessons, it returned an `int` (the index). It doesn't know about the `World` it belongs to, and it doesn't have any methods to add components.
+
+We will wrap this integer in a lightweight `EntityHandle` struct. Previously, this idea of a **handle** is what let us implement generational indexing.
+
+We could do that again here, but in this section, we're focusing on adding friendly functions to our handle that simplify interactions with our registry.
+
+### dsa_core/include/dsa/EntityHandle.h
+
+```
+#pragma once
+#include "Registry.h"
+
+struct EntityHandle {
+  Registry* world;
+  int id;
+
+  // We will add methods here soon...
+};
+```
+
+We need to update our `Registry` class to return this handle when we create an entity:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Perfect Forwarding
+
+**Recommended Reading**: [Variadic Functions ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/variadic-functions), [Fold Expressions ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/fold-expressions), [Perfect Forwarding ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/pro-cpp/forwarding)
+
+We want to add a method to `EntityHandle` that allows us to add a component to the entity. The syntax we want is:
+
+```
+handle.AddComponent<Audio>(1.0f, 2.0f, 3.0f);
+```
+
+The arguments `(1.0f, 2.0f, 3.0f)` need to be passed from our handle to the `AudioStorage::Add()` function.
+
+If we were writing this for just one type, it would look like this:
+
+```
+void AddAudio(float v, float p, float pan) {
+  world->GetStorage<Audio>().Add(id, v, p, pan);
+}
+```
+
+But we want this to work for *any* storage system, which might take *any* number of arguments. Some arguments might be large objects, and we do **not** want to copy them unnecessarily as we pass them through our handle.
+
+To solve this, we use **variadic templates** and **perfect forwarding**.
+
+1.  **Variadic Templates (****`typename... Args`****)**: This tells the compiler "This function accepts any number of arguments of any type."
+2.  **Forwarding References (****`Args&&...`****)**: This allows the function to accept both temporary objects - like `3.0f` or `std::string("Hello")` - and existing variables.
+3.  **Perfect Forwarding using** **`std::forward`**: This casts the arguments back to their original value category (l-value or r-value) when passing them to the final destination.
+
+This ensures that if we pass a temporary object, it gets **moved** all the way to the destination storage. If we pass a variable by reference, it stays a reference.
+
+### dsa_core/include/dsa/EntityHandle.h
+
+```
+#pragma once
+#include "Registry.h" 
+
+struct EntityHandle {
+  Registry* world;
+  int id;
+
+  template <typename ComponentType, typename... Args>
+  EntityHandle& AddComponent(Args&&... args) {
+    // Get the storage system, eg Audio -> AudioStorage
+    auto& storage = world->GetStorage<ComponentType>();
+
+    // Call .Add() on that storage
+    // We pass our ID, followed by the forwarded arguments
+    storage.Add(id, std::forward<Args>(args)...);
+
+    // Return *this to allow chaining
+    // eg .AddComponent<A>(...).AddComponent<B>(...)
+    return *this;
+  }
+};
+```
+
+This is a zero-overhead abstraction. At compile time, the `AddComponent()` function effectively vanishes. The compiler sees `AddComponent()` calls `GetStorage()` (which is just an offset) and then calls `Add()`. It inlines the whole chain. The resulting assembly is indistinguishable from calling `audio.Add(id, ...)` directly.
+
+### Example Usage
+
+Finally, we have our goal API:
+
+```
+#include <dsa/Registry.h>
+
+int main() {
+  Registry GameWorld;
+  
+  // Before:
+  int alice = GameWorld.entities.Add("Alice");
+  GameWorld.GetStorage<Proximity>().Add(alice, 1.0f, 2.0f, 3.0f);
+  GameWorld.GetStorage<Audio>().Add(alice, 4.0f, 5.0f, 6.0f);
+  
+  // After:
+  GameWorld.CreateEntity("Alice")
+    .AddComponent<Proximity>(1.0f, 2.0f, 3.0f)
+    .AddComponent<Audio>(4.0f, 5.0f, 6.0f);
+  
+  // If we want to save a handle for future interactions:
+  EntityHandle Bob = GameWorld.CreateEntity("Bob");
+  
+  // ...
+  
+  Bob.AddComponent<Audio>(7.0f, 8.0f, 9.0f);
+}
+```
+
+## Signatures
+
+One thing remains - we need to update our entity's signature when a key component is added.
+
+Previously, we required that to be done manually. A system needed to `Add()` a component to the corresponding pool, and then notify the `EntityStorage` that a key component was added through a `RegisterComponent()` function:
+
+```
+// Update AudioStorage
+audio.Add(alice, 4.0f, 5.0f, 6.0f);
+// Update EntityStorage
+entities.RegisterComponent(alice, 1 << 1);
+```
+
+We now have a registry to manage these cross-storage updates. We can have `AddComponent()` update both `EntityStorage` and the corresponding component pool, like `AudioStorage`, automatically.
+
+As a reminder, to update a bit, we provide the entity ID and the component's bit to `EntityStorage::RegisterComponent()`:
+
+```
+// ...
+
+class EntityStorage {
+public:
+  // ...
+  void RegisterComponent(int entity_id, uint8_t bit) {
+    if (entity_id < m_signatures.size()) {
+      m_signatures[entity_id] |= bit;
+    }
+  }
+};
+```
+
+But how do we know which bit corresponds to `AudioStorage`?
+
+```
+#pragma once
+#include "World.h"
+
+struct EntityHandle {
+  World* world;
+  int id;
+
+  template <typename ComponentType, typename... Args>
+  EntityHandle& AddComponent(Args&&... args) {
+    auto& storage = world->GetStorage<ComponentType>();
+    storage.Add(id, std::forward<Args>(args)...);
+    
+    world->entities.RegisterComponent(id, /* ?? */);
+    
+    return *this;
+  }
+};
+```
+
+There are two approaches we can use for this. We can specify which bit corresponds to each component, or we can automatically assign bits to component types based on their position in our `std::tuple`.
+
+### Option 1: Custom Signatures
+
+Individually assigning pools to bits gives us the ability to **exclude** component types from the signature. Remember, these signatures are a performance optimization to allow systems to more quickly determine if a player has a specific key component.
+
+If we add all of our components to this signature, the signature gets physically larger, reducing cache efficiency. If a component isn't in the signature, we can still find out if an entity has it by traversing the component pool's sparse array.
+
+Again, we can use a **trait** to define these mappings at compile time. By default, a component has no bit (`-1`). We only specialize the trait for the "hot" components that need to be part of the signature optimization.
+
+In this example, we'll assume `Proximity` is a key component, but `Audio` is less frequently queried, so will be excluded from the signature:
+
+### dsa_core/include/dsa/Registry.h
+
+```
+// ...
+
+// Default: Component is not in the signature
+template <typename T>
+struct BitmaskFor {
+  static constexpr int value = -1;
+};
+
+// Proximity is Bit 0
+template <>
+struct BitmaskFor<Proximity> {
+  static constexpr int value = 0;
+};
+
+class Registry {
+  // ...
+};
+```
+
+We can then update our `EntityHandle` to check this trait at compile time using `if constexpr`. If the value is valid (not `-1`), we update the signature in the `EntityStorage`:
+
+### dsa_core/include/dsa/EntityHandle.h
+
+```
+// ...
+
+struct EntityHandle {
+  Registry* world;
+  int id;
+
+  template <typename ComponentType, typename... Args>
+  EntityHandle& AddComponent(Args&&... args) {
+    auto& storage = world->GetStorage<ComponentType>();
+    storage.Add(id, std::forward<Args>(args)...);
+
+    // Update signature (if applicable)
+    constexpr int bit = BitmaskFor<ComponentType>::value;
+    if constexpr (bit != -1) {
+      world->entities.RegisterComponent(id, 1 << bit);
+    }
+
+    return *this;
+  }
+};
+```
+
+### Option 2: Automated Signatures
+
+For many projects, we just want every component to have a bit. Since our registry already defines the order of our components in its `std::tuple`, we can simply use that order to assign our bits.
+
+- Index `0` in the tuple, maps to bit `0` in the signature
+- Index `1` in the tuple, maps to bit `1` in the signature, and so on
+
+We want to implement this using an API that can be used like:
+
+```
+int bit = Registry::GetBitIndex<Proximity>();
+```
+
+So, we'd map `Proximity` to `ProximityStorage` using our previous type trait, and we then find the index of `ProximityStorage` within the `std::tuple` that stores all of our component pools.
+
+Unfortunately, `std::tuple` still has no built-in way to tell us where a given type lives.
+
+The usual solution involves a recursively-defined type trait, shown below. Don't worry if it looks baffling - most people don't write this code - we just ritualistically copy and paste it into any project where `std::tuple` is involved:
+
+### dsa_core/include/dsa/Registry.h
+
+```
+// ...
+
+// Helper to find the index of T in a Tuple
+template <typename T, typename Tuple>
+struct TupleIndex;
+
+// Base Case: Found it at the start
+template <typename T, typename... Types>
+struct TupleIndex<T, std::tuple<T, Types...>> {
+  static constexpr int value = 0;
+};
+
+// Recursive Case: It's not the first one, look in the rest
+template <typename T, typename U, typename... Types>
+struct TupleIndex<T, std::tuple<U, Types...>> {
+  static constexpr int value = 1 + TupleIndex<
+    T, std::tuple<Types...>
+  >::value;
+};
+
+// ...
+```
+
+We can now use this to implement our `GetBitIndex()` function template. We'll also alias our complex `std::tuple` type name with a `using` statement, so we can easily refer to it in multiple places:
+
+### dsa_core/include/dsa/Registry.h
+
+```
+// ...
+
+class Registry {
+public:
+  // ...
+  using ComponentTuple = std::tuple<
+    ProximityStorage,
+    AudioStorage
+  >;
+  
+  ComponentTuple components;
+
+  template <typename T>
+  static constexpr int GetBitIndex() {
+    // Get the storage type (e.g. Audio -> AudioStorage)
+    using StorageType = typename StorageFor<T>::Type;
+    
+    // Find the index of AudioStorage in the tuple (1)
+    return TupleIndex<StorageType, ComponentTuple>::value;
+  }
+  // ...
+};
+```
+
+And now, finally, our `EntityHandle` can ask the `Registry` what bit corresponds to the component it is trying to add:
+
+### dsa_core/include/dsa/EntityHandle.h
+
+```
+// ...
+
+struct EntityHandle {
+  // ...
+  template <typename ComponentType, typename... Args>
+  EntityHandle& AddComponent(Args&&... args) {
+    auto& storage = world->GetStorage<ComponentType>();
+    storage.Add(id, std::forward<Args>(args)...);
+
+    // Automatically calculate the bit
+    constexpr int bit = Registry::GetBitIndex<ComponentType>();
+    world->entities.RegisterComponent(id, 1 << bit);
+
+    return *this;
+  }
+};
+```
+
+We'll stick with option 2 in this example, as it makes our future work slightly easier. We'll explain why that is in the next lesson.
+
+## Complete Code
+
+A complete version of the example we created in this lesson is provided below:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+We have transformed a brittle, manual system into a friendly, error-proof API. Here are the key points:
+
+1.  **The Registry**: We grouped our unrelated storage systems into a single compile-time list managed by a `std::tuple`. This gives us type-safe access without runtime overhead.
+2.  **Entity Handles**: We created a lightweight object to facilitate interaction with our system in an intuitive, entity-centric way.
+3.  **Perfect Forwarding**: We used `typename... Args` and `std::forward` to pass arguments through our handle directly to the underlying storage, ensuring no unnecessary copies are made.
+4.  **Automated Signatures**: We used the tuple index to automatically assign unique bitmasks to each component.
+
+We have solved the "insertion" problem - adding data is now clean and easy.
+
+But we still have the "query" problem. Our `ProximityAudioSystem` from the previous lesson required a monstrous 50-line function just to join data from two of our component pools.
+
+Joining data is a pretty common requirement across systems, so we'll standardize it. In the next lesson, we'll let systems grab what they need using a view-based API like this:
+
+```
+auto noisy_neighbors = world.GetView<Proximity, Audio>();
+for (auto [entity, prox, audio] : noisy_neighbors) {
+  // ...
+}
+```

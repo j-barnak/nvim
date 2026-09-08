@@ -1,0 +1,289 @@
+One of the most common ways of connecting storage systems in a performant way is the **sparse set** pattern. These are designed for **optional one-to-one** relationships, where a record in one collection can be linked to **zero or one** record in another collection.
+
+We cover one-to-many patterns later in the chapter, but for our use case, sparse sets are perfect. They offer $O(1)$O(1) lookup - that is, if we have a proximity component (an index in our `ProximityStorage`) we can quickly find the entity that "owns" the component (the index in the `EntityStorage`).
+
+This is the case in both directions - if we have the index in our `EntityStorage`, we can find if that entity has a related record in `ProximityStorage`, and retrieve that record if so.
+
+Sparse sets also offer $O(1)$O(1) insertion and deletion. We can create and remove these links in constant time.
+
+## The Architecture
+
+A sparse set connects two storage systems together using two arrays:
+
+1.  **The Sparse Array**, whose size corresponds to how many entities we have. That is, the number of records in our `EntityStorage`.
+2.  **The Dense Array,** whose size corresponds to how many components we have of a specific type. For example, the number of records in a component pool such as `ProximityStorage`.
+
+For example, if our world had eight entities (with IDs from `0` to `7`) and two proximity components (with IDs `0` and `1`), then the sizes of our dense and sparse arrays would be `8` and `2` respectively:
+
+The relationship between an entity and a proximity component is established by the values in the array slots.
+
+For example, if entity `5` owned the proximity component `0`, then `sparse[5]` would contain the value `0`, and `dense[0]` would contain `5`, effectively linking those two records together.
+
+The sparse array gets its name from the fact that it typically contains a lot of empty space - gaps that are created every time an entity does **not** have a corresponding component.
+
+If an entity does not have a proximity component, we place some sentinel value such as `-1` in that entity's slot within the sparse array:
+
+We then simply repeat this pattern for every other type of component. Our audio component pool would have its own sparse set. That would be a sparse array representing the same entities, whose values map to indicies of a dense array corresponding to components within `AudioStorage`, or `-1` if that entity does not have an audio component.
+
+### Isn't the Sparse Array Wasting Memory?
+
+Yes. If there are 1,000,000 rows in the `EntityStorage`, the `sparse` array must have 1,000,000 slots, even if only 5 entities have the component.
+
+This is the trade-off. We trade memory to gain fast reading, writing, and deleting. If we use 4-byte indices like a typical `int`, a 1,000,000-entity collection only costs ~4MB of RAM. This is generally a good tradeoff.
+
+If we have a lot of entities and memory is a problem, there are variations like **paged sparse sets**, but a basic hash map like `std::unordered_map<int, int>` also works. It has slightly slower operations but better memory efficiency. If we need bidirectional lookups, we can use two of them.
+
+## Implementing the Sparse Set
+
+In our case, we're trying to model a situation where only some entities have proximity components. So, the "sparse" array corresponds to rows in the `EntityStorage`, whilst the "dense" array will match the row count of the `ProximityStorage`.
+
+We'll need multiple sparse sets as we add more systems and relationships between them, so we'll create a dedicated type for this. We'll use basic `int` indices to keep things simple and memory efficient, but this could also be `size_t` or a template type if we need to support larger collections:
+
+### dsa_core/include/dsa/SparseSet.h
+
+```
+#pragma once
+#include <vector>
+
+class SparseSet {
+public:
+  // Maps Entity -> Proximity Component
+  std::vector<int> m_sparse;
+  
+  // Maps Proximity Component -> Entity
+  std::vector<int> m_dense;
+  
+  // What value is the "sentinel" in the sparse array?
+  static constexpr int null_id = -1;
+  
+  // If m_sparse[42] == null_id , then entity 42 does
+  // not have a proximity component
+
+  // Does a specific entity have a component?
+  bool contains(int entity_id) const {
+    if (entity_id >= m_sparse.size()) return false;
+    return m_sparse[entity_id] != null_id;
+  }
+};
+```
+
+## Handling Insertion
+
+To create a link between an entity and a proximity component, our sparse set needs to update its arrays.
+
+The indices we're being asked to link may be outside the bounds of our arrays. For example, if our sparse array currently has a size of `5` (entities `0`, `1`, `2`, `3`, and `4`) and a request is made to add a component to entity `7`, we need to resize it.
+
+Conceptually, this means that entities `5` and `6` probably exist too - our sparse set just hasn't seen them before because those entities don't have the component type we're tracking.
+
+This means that, in addition to increasing the size of `m_sparse` to support `m_sparse[7]`, we also must fill any intermediate slots that are created by that resizing with our sentinal value `-1`:
+
+We may want to consider how we should respond if we receive a request that would create gaps in our supposedly "dense" array, too. We could throw an exception or use a result type like `std::expected` but, to keep our examples focused on the key concepts, we'll just assume our inputs are always valid:
+
+### dsa_core/include/dsa/SparseSet.h
+
+```
+#pragma once
+#include <vector>
+
+class SparseSet {
+public:
+  // ...
+
+  // Create a link between the two storage systems
+  void insert(int entity_id, int dense_index) {
+    if (entity_id >= m_sparse.size()) {
+      // Grow our array, and assign each new index to the sentinel
+      m_sparse.resize(entity_id + 1, null_id);
+    }
+    m_sparse[entity_id] = dense_index;
+
+    if (dense_index >= m_dense.size()) {
+      // Grow our array
+      m_dense.resize(dense_index + 1);
+    }
+    m_dense[dense_index] = entity_id;
+  }
+};
+```
+
+### Using the `SparseSet`
+
+Let's use this to let our `ProximityStorage` keep track of which entities own each of the components.
+
+We'll add a `SparseSet` for this, and we'll also update our `Add()` function to receive the entity ID that this new component is for:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)benchmarks![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Handling Deletions
+
+This is the most error-prone and confusing part of the process, especially if we want to use the swap-and-pop idiom. This requires a carefully coordinated set of steps:
+
+1.  We need to delete a record from the dense array using swap and pop
+2.  This invalidates **two** indices in the sparse array, so those need to be updated
+3.  We need to actually delete the component from our `ProximityStorage`, again using pop and swap.
+
+Let's start with our dense array:
+
+### dsa_core/include/dsa/SparseSet.h
+
+```
+// ...
+
+class SparseSet {
+public:
+  // ...
+  int remove(int entity_id) {
+    // Which component needs to be "deleted"?
+    int deleted_index = m_sparse[entity_id];
+    // Which component will replace it? (the last one)
+    int last_entity = m_dense[m_dense.size() - 1];
+    // Swap
+    m_dense[deleted_index] = last_entity;
+    // Pop
+    m_dense.pop_back();
+    
+    // ...more coming soon
+    
+    return deleted_index;
+  }
+};
+```
+
+Our sparse array is up next. Whichever entity owned the last component needs to be aware that we just swapped it. Also, the entity that initially requested their component be removed needs to be updated to confirm that this happened:
+
+### dsa_core/include/dsa/SparseSet.h
+
+```
+// ...
+
+class SparseSet {
+public:
+  // ...
+  int remove(int entity_id) {
+    // Swap and pop the dense array (proximity components)
+    int deleted_index = m_sparse[entity_id];
+    int last_entity = m_dense[m_dense.size() - 1];
+    m_dense[deleted_index] = last_entity;
+    m_dense.pop_back();
+    
+    // Update the sparse array (entities)
+    m_sparse[last_entity] = deleted_index;
+    m_sparse[entity_id] = null_id;
+    
+    // ...more coming soon
+  }
+};
+```
+
+These `SparseSet` updates have just removed the relationship - we still need to remove the component in our `ProximityStorage`. To help with this, our `SparseSet` can return the index that it just swapped and popped:
+
+### dsa_core/include/dsa/SparseSet.h
+
+```
+// ...
+
+class SparseSet {
+public:
+  // ...
+  int remove(int entity_id) {
+    // Swap and pop the dense array (proximity components)
+    int deleted_index = m_sparse[entity_id];
+    int last_entity = m_dense[m_dense.size() - 1];
+    m_dense[deleted_index] = last_entity;
+    m_dense.pop_back();
+    
+    // Update the sparse array (entities)
+    m_sparse[last_entity] = deleted_index;
+    m_sparse[entity_id] = null_id;
+
+    return deleted_index; 
+  }
+};
+```
+
+Over in our `ProximityStorage`, we can finally integrate everything. We ask the `SparseSet` to erase the relationship, and we use its return value to swap and pop the corresponding component:
+
+### dsa_core/include/dsa/ProximityStorage.h
+
+```
+// ...
+
+class ProximityStorage {
+public:
+  // ...
+  void Remove(int entity_id) {
+    if (!m_map.contains(entity_id)) return;
+
+    // Update the map and get the index of the gap we need to fill
+    int index = m_map.remove(entity_id); 
+
+    // Perform the Swap-and-Pop on the data
+    // We swap the back element into the 'index' slot...
+    std::swap(m_distance[index], m_distance.back());
+    // ...and then pop the back element
+    m_distance.pop_back();
+    
+    // Repeat for all columns
+    std::swap(m_angle[index], m_angle.back());
+    m_angle.pop_back();
+    
+    std::swap(m_occlusion[index], m_occlusion.back());
+    m_occlusion.pop_back();
+  }
+};
+```
+
+## Bringing It All Together
+
+We now have two storage systems, with some basic bookkeeping that links them together behind the scenes:
+
+### dsa_app/main.cpp
+
+```
+#include <dsa/EntityStorage.h>
+#include <dsa/ProximityStorage.h>
+
+int main() {
+  EntityStorage entities;
+  ProximityStorage proximity;
+  
+  // Create a player
+  int alice = entities.Add("Alice");
+  
+  // Player is close
+  proximity.Add(alice, 1.0f, 2.0, 3.0f);
+  
+  // Not any more
+  proximity.Remove(alice);
+}
+```
+
+In the next lesson, we'll strengthen these capabilities further, letting us get the data we need in a cohesive and joined-up way, regardless of what underlying storage system it's coming from.
+
+## Complete Code
+
+A complete version of the example code is below:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)benchmarks![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+We have successfully transitioned from a single monolithic storage system to a flexible composition of systems.
+
+- **SoA** provides the fastest possible iteration speed but lacks flexibility for optional data.
+- **Memory Indirection** using techniques like `vector<unique_ptr>` handles optional data but destroys performance via cache misses and branch mispredictions.
+- **Sparse Sets** bridge the gap. They allow us to keep data packed in contiguous arrays while providing a mapping between storage systems.

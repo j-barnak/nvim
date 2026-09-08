@@ -1,0 +1,488 @@
+In our [previous lesson ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/linear-arena-allocators), we built an arena allocator. By grabbing a massive chunk of RAM upfront and using a simple bump pointer, we achieved allocation speeds that rivaled the call stack, completely bypassing the operating system and eliminating external fragmentation.
+
+But the arena allocator has a big limitation: it is strictly linear. It only moves forward. This makes it perfect for data where everything dies at the exact same time. For example, loading a level in a game engine, processing a single web request, or decoding a single frame of video. When the job is done, we reset the bump pointer to zero, reclaiming all the memory at once.
+
+But what if we need to manage objects with unpredictable, dynamic lifespans?
+
+Imagine a network server handling thousands of client connections, or a game spawning hundreds of bullets. Connections drop randomly. Bullets hit walls and despawn. If we use an arena, we have no way to reclaim the memory of a single dead bullet.
+
+To solve the problem of dynamic lifespans, we need an allocator that can reuse dead memory. We need an **object pool**.
+
+## The Limitations of the Heap
+
+Before we build our custom pool, let's briefly revisit why we can't just use standard `new` and `delete` for this problem.
+
+If we spawn and despawn thousands of entities at random times using the global allocator, we will trigger the exact [memory fragmentation ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/memory-fragmentation) crisis we discussed earlier. The global heap manages chunks of memory of all different sizes. When an 8-byte object, a 64-byte object, and a 1024-byte object all die at random intervals, the heap becomes a Swiss cheese of physical gaps.
+
+If we ask the heap for 64 bytes, it might have to laboriously scan thousands of tiny 8-byte gaps before it finds a contiguous hole large enough to satisfy our request. This destroys performance, thrashes the CPU's TLB, and eventually results in an out-of-memory crash when the gaps become too splintered to use.
+
+The secret to defeating external fragmentation is completely removing the concept of "different sizes".
+
+## The Fixed-Size Block Allocator
+
+If we restrict an allocator so that it only ever hands out blocks of the exact same size, external fragmentation becomes impossible.
+
+This is conceptually quite similar to an array, and implementing it will reuse concepts we covered earlier - particularly the lesson on [tombstones and free lists ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/tombstones) where we managed gaps in an otherwise contiguous block of memory. Whilst an object in our memory block can "die" and leave a gap, the very next time we need to allocate space for a new object, it will fit into that gap perfectly, eliminating the degrading effects of fragmentation.
+
+This is the core mechanic of an **Object Pool** (also known as a Fixed-Size Block Allocator). Instead of having one massive, general-purpose heap, we can create many pools dedicated to specific object types. We create a pool for `Player` structs, a pool for `NetworkPacket` structs, and a pool for `Particle` structs.
+
+Let's begin scaffolding our `Pool` class. This initial step is essentially the same as our `Arena` from the previous lesson. The key difference is that we want to conceptually subdivide our pool into smaller, fixed-size blocks. We will use templates so that these blocks can be sized precisely for the type of object our `Pool` will be storing based on the `sizeof` the type `T`:
+
+### dsa_core/include/dsa/Pool.h
+
+```
+#pragma once
+#include <cstddef>
+#include <new>
+
+template <typename T>
+class Pool {
+private:
+  std::byte* Buffer;
+  size_t Capacity;
+
+public:
+  Pool(size_t Size) : Capacity{Size} {
+    // We allocate a single, massive block of raw bytes
+    // sized exactly to fit 'Size' number of 'T' objects.
+    Buffer = new std::byte[Capacity * sizeof(T)]; 
+  }
+
+  ~Pool() {
+    delete[] Buffer;
+  }
+
+  // Prevent copying
+  Pool(const Pool&) = delete;
+  Pool& operator=(const Pool&) = delete;
+};
+```
+
+### Memory Pools and Slab Allocators
+
+In our example, each `Pool` stores only one type of object, identified by the `T` template parameter. However, the techniques from this lesson can also be applied to store different types of objects in the same pool. At a low level, the **type** of object stored in each slot doesn't matter - only the **size** does. For example, if we create a pool where each slot is 32 bytes, then anything that is 32 bytes or smaller can be stored in each slot.
+
+These type-agnostic implementations are often called **memory pools** or **slab allocators**. Whilst an object pool is typically dedicated to a specific **type** of object, a memory pool is instead dedicated to a specific **size class** of object. We might have a memory pool for objects no larger than 32 bytes, a memory pool for objects no larger than 64 bytes, one for 128 bytes, and so on.
+
+Our `Pool` now has the raw physical memory it needs. The next challenge is the hardest part: how do we keep track of which blocks are currently in use, and which blocks are free?
+
+## The Implicit Free List
+
+To maximise performance, we want our object pools to support $O(1)$O(1) allocation, $O(1)$O(1) deallocation, and ***zero*** overhead bytes for tracking which slots are free. To achieve this, we use the same **implicit free list** technique we introduced [earlier in the course ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/tombstones) to track which slots were tombstones in a Structure-of-Arrays (SOA) system.
+
+In that lesson, we used the dead space in one of our arrays to store the **index** of the next free position in our system. This time, we will use the dead space in our object pool to store the **memory address** of the next free position.
+
+In the following example, we have a 5-slot pool. Slots `0` and `2` are allocated, so our implicit free list links through slots `1`, `3`, and `4`. The final node in our free list links to a `nullptr`, $\varnothing$∅, indicating that the list ends there:
+
+This design requires zero extra bytes of memory to track our free slots, because we are recycling the memory that we already own. Furthermore, because a linked list acts as a stack (Last-In, First-Out), both allocating a block and freeing a block are purely $O(1)$O(1) operations involving just two pointer reassignments.
+
+### The Pointer Casting Magic
+
+To implement this, we have to cast our memory types. We need a way to look at a raw chunk of `std::byte`s and treat it as a pointer.
+
+Let's define a tiny struct inside our pool called `Node`. This struct contains nothing but a pointer to another `Node`. This is the link in our chain. We will also add a `Head` pointer to track the very first available free slot in our pool:
+
+### dsa_core/include/dsa/Pool.h
+
+```
+template <typename T>
+class Pool {
+private:
+  struct Node { 
+    Node* Next; 
+  }; 
+
+  std::byte* Buffer;
+  size_t Capacity;
+  Node* Head{nullptr}; 
+
+  // ...
+};
+```
+
+### The Minimum Size Constraint
+
+Because we are going to overwrite dead memory with a `Node*` pointer, the physical size of our object `T` must be at least large enough to hold a memory address.
+
+On modern 64-bit architectures, a pointer is exactly 8 bytes. Therefore, if we try to create a `Pool<bool>` or a `Pool<char>`, where `sizeof(T)` is only 1 byte, we won't have enough physical space to write our 8-byte `Next` pointer. The write would spill over and corrupt the adjacent block in the array.
+
+We should prevent this at compile-time using a `static_assert`:
+
+```
+// ...
+
+template <typename T>
+class Pool {
+  // Ensure the type is large enough to hold our free-list pointer
+  static_assert(sizeof(T) >= sizeof(void*)); 
+  // ...
+};
+```
+
+If we truly need a pool for tiny 1-byte objects, the allocator must artificially pad `BlockSize` to 8 bytes to ensure the free list functions safely. This additional overhead would be an example of **internal fragmentation**. In this lesson, we will assume our `T` objects are complex structs that are inherently larger than 8 bytes.
+
+### Initializing the Free List
+
+When our `Pool` is first constructed, the entire `Buffer` is empty. Every single slot is available. We must manually thread our implicit free list through the entire array so that the `Head` pointer knows where all the slots are. This is an expensive, $O(n)$O(n) operation, but we only need to do it once - when we first create our pool, outside of the main application loop.
+
+We do this by walking through the raw byte array, chunk by chunk, and using `reinterpret_cast` to temporarily view each chunk as a `Node`. We then set its `Next` pointer to the memory address of the chunk immediately following it:
+
+### dsa_core/include/dsa/Pool.h
+
+```
+// ...
+
+template <typename T>
+class Pool {
+// ...
+public:
+  Pool(size_t Size) : Capacity{Size} {
+    Buffer = new std::byte[Capacity * sizeof(T)];
+
+    // 1. The Head starts at the very first block
+    Head = reinterpret_cast<Node*>(Buffer); 
+
+    // 2. Thread the pointer chain through the memory
+    Node* Current = Head; 
+
+    // We loop up to Capacity - 1, linking each block
+    // to the one sequentially ahead of it
+    for (size_t i = 0; i < Capacity - 1; ++i) { 
+      // Calculate the physical memory address of the next block
+      std::byte* NextAddress = Buffer + ((i + 1) * sizeof(T)); 
+
+      // Cast the raw bytes into our Node overlay, and link it
+      Current->Next = reinterpret_cast<Node*>(NextAddress); 
+
+      // Move forward for the next iteration
+      Current = Current->Next; 
+    } 
+
+    // 3. The final block points to nothing, terminating the list
+    Current->Next = nullptr; 
+  }
+  // ...
+};
+```
+
+At the end of the constructor, our `Buffer` is physically just an array of raw bytes, but logically, it is a perfectly connected linked list of pointers waiting to be consumed.
+
+## Implementing Allocation
+
+With our free list fully threaded, allocating a block of memory is incredibly fast.
+
+When the application asks for memory, we don't search for anything - we just look at the `Head` pointer. The `Head` pointer *is* the memory address of the first available free slot.
+
+We check the current `Head` pointer, update `Head` to point to whatever the next free slot is in the chain, and return the original value to the user:
+
+### dsa_core/include/dsa/Pool.h
+
+```
+// ...
+
+template <typename T>
+class Pool {
+// ...
+public:
+  // ...
+  void* Allocate() {
+    // If Head is null, the pool is completely full
+    if (Head == nullptr) {
+      return nullptr;
+    }
+
+    // Grab the free block at the top of the stack
+    Node* FreeBlock = Head; 
+
+    // Update Head to point to the NEXT available block in the chain
+    Head = Head->Next; 
+
+    // Return the physical memory address to the caller
+    return FreeBlock; 
+  }
+  // ...
+};
+```
+
+The moment we return `FreeBlock`, the user will overwrite the memory at that address with their `Player` or `Enemy` data. Our `Node* Next` pointer that was living inside that space is destroyed and replaced by their data.
+
+We don't need the tracking pointer anymore because the block is active. The tracking information naturally melts away as the block is consumed.
+
+## Implementing Deallocation
+
+When an entity dies, and the application returns the memory to the pool, we perform the exact reverse operation.
+
+We take the memory address of the dead object, cast it back into our `Node` overlay, and push it onto the top of the `Head` stack.
+
+Because we are dealing with a simple singly-linked list, pushing an item to the front of the list takes two pointer assignments:
+
+### dsa_core/include/dsa/Pool.h
+
+```
+// ...
+
+template <typename T>
+class Pool {
+// ...
+public:
+  // ...
+  void Free(void* DeadObject) {
+    if (DeadObject == nullptr) return;
+
+    // 1. Force the dead memory block to act as a Node
+    Node* RecycledBlock = reinterpret_cast<Node*>(DeadObject); 
+
+    // 2. Point its Next pointer to the current top of the stack
+    RecycledBlock->Next = Head; 
+
+    // 3. Update the Head so this block is now the top of the stack
+    Head = RecycledBlock; 
+  }
+  // ...
+};
+```
+
+We have just successfully recycled memory with zero allocations and zero searches. This pool can run for five hours or five years, spawning and despawning millions of objects, and it will never fragment, and it will never trigger a call to the operating system.
+
+## Integrating with C++ Constructors
+
+Our `Allocate()` and `Free()` methods deal purely with raw `void*` memory addresses. But in modern C++, we don't want to work with raw memory; we prefer objects.
+
+Just like we did with the [arena allocator ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/linear-arena-allocators), we can execute the object's constructor inside our pre-allocated memory bytes using **Placement New**.
+
+To make our `Pool` ergonomic and easy to use, we will wrap the raw memory manipulation inside two high-level template methods: `Spawn()` and `Despawn()`.
+
+### The `Spawn` Method
+
+Our `Spawn()` method will ask the pool for a raw memory address, and then invoke Placement `new` to construct the object.
+
+To ensure we can pass any arguments into the `T` object's constructor (like `health`, `position`, or `name`), we will use variadic templates and `std::forward()`. This allows our `Spawn` method to perfectly forward whatever arguments the caller provides directly into the underlying constructor:
+
+### dsa_core/include/dsa/Pool.h
+
+```
+#pragma once
+#include <cstddef>
+#include <new>
+#include <utility>  // for std::forward
+
+template <typename T>
+class Pool {
+  // ...
+
+public:
+  // ...
+
+  // Accept any number of arguments of any type
+  template <typename... Args> 
+  T* Spawn(Args&&... args) { 
+    void* Memory = Allocate();
+    if (!Memory) return nullptr;
+
+    // Use Placement New to construct the object exactly
+    // where our free list pointer used to be.
+    return new (Memory) T(std::forward<Args>(args)...); 
+  }
+
+  // ...
+};
+```
+
+### The `Despawn` Method
+
+When it is time to destroy an object, we cannot simply use the global `delete` keyword, because the memory belongs to our pool, not the OS.
+
+Instead, we should manually invoke the object's destructor to clean up any internal resources it might hold, and then pass its raw memory address back to our `Free()` method so it can be re-linked into the free list:
+
+### dsa_core/include/dsa/Pool.h
+
+```
+// ...
+
+template <typename T>
+class Pool {
+// ...
+public:
+  // ...
+
+  void Despawn(T* Instance) { 
+    if (!Instance) return;
+
+    // 1. Manually call the destructor to clean up the object
+    Instance->~T(); 
+
+    // 2. Recycle the raw memory bytes
+    Free(Instance); 
+  }
+};
+```
+
+## Testing the API
+
+The application developer can now use `Spawn()` and `Despawn()` exactly like they would use `new` and `delete`, but with orders of magnitude better performance and zero risk of fragmentation.
+
+Let's test our new memory architecture with a simple `Player` struct:
+
+### dsa_app/main.cpp
+
+```
+#include <iostream>
+#include <dsa/Pool.h>
+
+struct Player {
+  int ID;
+  float Health;
+
+  Player(int i, float h) : ID{i}, Health{h} {
+    std::cout << "Player " << ID << " spawned.\n";
+  }
+
+  ~Player() {
+    std::cout << "Player " << ID << " destroyed.\n";
+  }
+};
+
+int main() {
+  // Pre-allocate space for 5 players exactly ONCE
+  Pool<Player> PlayerPool(5);
+
+  // Spawn some players using our custom allocator
+  Player* p1 = PlayerPool.Spawn(1, 100.0f); 
+  Player* p2 = PlayerPool.Spawn(2, 85.5f); 
+
+  // Despawn p1. Its memory is immediately recycled
+  // and threaded back into the free list.
+  PlayerPool.Despawn(p1); 
+
+  // Spawning p3 will instantly reuse the exact physical
+  // memory block that p1 just vacated.
+  Player* p3 = PlayerPool.Spawn(3, 50.0f); 
+
+  return 0;
+}
+```
+
+```
+Player 1 spawned.
+Player 2 spawned.
+Player 1 destroyed.
+Player 3 spawned.
+```
+
+If you were to print the physical memory addresses of these pointers, you would see that `p1` and `p3` share the exact same memory address. The free list recycled the gap with zero overhead.
+
+### Advanced: Free List Shuffling
+
+While our object pool is incredibly fast, it is important to understand how its physical layout degrades over time.
+
+When the pool is first initialized, the free list is perfectly sequential. Block 0 points to Block 1, which points to Block 2. If we allocate 100 objects immediately, they will be perfectly contiguous in RAM, maximizing the CPU's cache prefetcher.
+
+However, after hours of running, objects die at random times. Block 85 might die, then Block 12, then Block 99. The free list stack now points from 99 -\> 12 -\> 85. The next three allocations we perform will jump randomly backward and forward across our physical buffer.
+
+We have lost perfect spatial locality. The order of our allocations has become randomized.
+
+However, this random access is strictly bounded within our single, pre-allocated memory chunk. Unlike the global heap, where random pointers might span gigabytes of virtual memory and trigger TLB misses, our pool ensures that even randomized pointers remain physically close together. If our pool is 1 Megabyte, the entire data structure easily fits into the CPU's L2 or L3 cache. Even when fully shuffled, iterating over the active elements is still dramatically faster than traversing a fragmented heap.
+
+In scenarios where perfect sequential access is important or required (like feeding data into SIMD registers), programs will periodically run a "compaction" algorithm that restores perfect contiguous order. These are fairly expensive and invalidate pointers, so they are generally done only at opportune times - perhaps during loading screens.
+
+## Benchmarking the Pool
+
+Let's benchmark our implementation against the global allocator. To ensure we are testing the true cost of dynamic lifespans, we will simulate "churn". We will allocate 10,000 objects, then delete them in a randomized order to simulate a chaotic application state, and then allocate them again.
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+#include <algorithm>
+#include <random>
+#include <dsa/Pool.h>
+
+// A realistic 64-byte entity
+struct Entity {
+  uint64_t data[8];
+};
+
+// Generate a random deletion sequence to simulate churn
+std::vector<int> GetRandomIndices(int count) {
+  std::vector<int> indices(count);
+  for (int i = 0; i < count; ++i) indices[i] = i;
+  std::mt19937 g(42);
+  std::ranges::shuffle(indices, g);
+  return indices;
+}
+
+static void BM_GlobalHeap_Churn(benchmark::State& state) {
+  std::vector<int> destroyOrder = GetRandomIndices(10000);
+  std::vector<Entity*> active(10000);
+
+  for (auto _ : state) {
+    // 1. Allocate 10,000 entities
+    for (int i = 0; i < 10000; ++i) {
+      active[i] = new Entity();
+    }
+
+    // 2. Destroy them in random order
+    for (int idx : destroyOrder) {
+      delete active[idx];
+    }
+  }
+}
+BENCHMARK(BM_GlobalHeap_Churn);
+
+static void BM_ObjectPool_Churn(benchmark::State& state) {
+  std::vector<int> destroyOrder = GetRandomIndices(10000);
+  std::vector<Entity*> active(10000);
+
+  // Pre-allocate the physical memory once
+  Pool<Entity> MyPool(10000);
+
+  for (auto _ : state) {
+    // 1. Allocate 10,000 entities in O(1) time
+    for (int i = 0; i < 10000; ++i) {
+      active[i] = MyPool.Spawn();
+    }
+
+    // 2. Destroy them in random order in O(1) time
+    for (int idx : destroyOrder) {
+      MyPool.Despawn(active[idx]);
+    }
+  }
+}
+BENCHMARK(BM_ObjectPool_Churn);
+```
+
+```
+------------------------------------
+Benchmark                        CPU
+------------------------------------
+BM_GlobalHeap_Churn         0.852 ms
+BM_ObjectPool_Churn         0.041 ms
+```
+
+By bypassing the OS locks, eliminating chunk metadata, and using an implicit free list to recycle space instantly, our Object Pool executes the exact same workload over 20 times faster than the global heap.
+
+Additionally, the global heap will continue to get slower the longer the application runs, as the random deletion pattern inevitably fragments the free space. The performance of our `Pool` will remain relatively consistent by comparison.
+
+## Complete Code
+
+Here is the complete implementation of our implicit free list Object Pool:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we tackled the complex problem of dynamic lifespans in systems programming:
+
+1.  We established that **Fixed-Size Block Allocators** eliminate external fragmentation by enforcing uniform block sizes.
+2.  We learned the technique of pointer casting to build an **Implicit Free List**, embedding our tracking data inside the unused memory bytes for zero-overhead tracking.
+3.  We used **Placement New** and **explicit destructor calls** to wrap our raw byte manipulation inside a safe, high-level `Spawn()` and `Despawn()` API.
+4.  We benchmarked our custom pool against the global heap, proving our memory management easily outperforms the general-purpose allocators.
+
+In the next chapter, we will focus on building linked data structures on top of these foundations.

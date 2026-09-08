@@ -1,0 +1,297 @@
+In the previous lesson, we introduced **projections**. We saw how they allow us to write clean, expressive code like this:
+
+```
+std::ranges::sort(players, {}, &Player::score);
+```
+
+Syntactically, this is perfect. It tells the reader exactly what is happening: we are ordering players based on their score. However, physically, this line of code might be hiding a performance nightmare.
+
+When we think about sorting, we tend to focus on the set of all required **comparisons** - the $O(n\log n)$O(nlogn) logic. But sorting also involves **movement**. To sort the vector, the CPU must physically swap the elements in memory.
+
+If `Player` is a large structure with a lot of data, and swapping two players involves reading and writing hundreds of bytes. We are clogging the memory bus with massive payloads just to organize them based on a tiny 4-byte integer.
+
+In this lesson, we will use **proxy sorting** to sort lightweight references instead of heavy objects, and we will introduce the **structure of arrays (SoA)** design, a radical shift in data layout that aligns perfectly with how hardware actually works.
+
+## The Hardware Reality: Cache Thrashing
+
+Projections are a useful syntactic abstraction. They make our code cleaner, safer, and less repetitive. However, they **do not** fix the underlying hardware problem of sorting complex objects.
+
+When we write `sort(players, {}, &Player::score)`, we are conceptually sorting integers. But mechanically, we are reading cache lines and moving `Player` objects.
+
+Let's look at the memory implications using the `Player` struct we defined earlier. These objects are too large to fit on a cache line, so for every comparison of two players by score, the CPU must fetch two different cache lines. More than 90% of that is junk data - we're reading two full cache lines (likely 64 bytes each) to read a single `int` (likely 4 bytes) within each one.
+
+And once we perform the comparison, we still need to physically reorder the objects. The more data we have on our `Player` class, the more demanding this movement is.
+
+In general, projection simplifies the *logic*, but the *data layout* is still inefficient. Our algorithms only care about the key we're currently using, but we have a load of additional payload data coming along for the ride, clogging up our hardware.
+
+### Benchmark: The Cost of Fat Objects
+
+Let's prove this with a benchmark, using the lab we set up in an [earlier course ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/google-benchmark). We will sort `std::vector<Player>` using a projection to access the `score` (an `int`) on the structures, and compare it to sorting an equally sized array that would contain just the scores - a `std::vector<int>`.
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <vector>
+#include <algorithm>
+#include <ranges>
+
+struct FatPlayer {
+  // Potential Keys
+  int id;
+  int score;
+  float health;
+
+  // Heavy Payload
+  std::string name;
+  std::vector<std::string> inventory;
+  char padding[1024];
+};
+
+// 1. Sorting the full objects
+static void BM_SortObjects(benchmark::State& state) {
+  int n = state.range(0);
+  std::vector<FatPlayer> v(n);
+
+  for (auto _ : state) {
+    // Make a copy to sort
+    std::vector<FatPlayer> copy = v;
+
+    // The Projection makes the syntax easy...
+    std::ranges::sort(copy, {}, &FatPlayer::score);
+
+    benchmark::DoNotOptimize(copy.data());
+  }
+}
+
+// 2. Sorting just the keys
+static void BM_SortKeys(benchmark::State& state) {
+  int n = state.range(0);
+  std::vector<int> v(n);
+
+  for (auto _ : state) {
+    std::vector<int> copy = v;
+
+    // Sorting pure integers
+    std::ranges::sort(copy);
+
+    benchmark::DoNotOptimize(copy.data());
+  }
+}
+
+BENCHMARK(BM_SortObjects)->Range(1024, 65536);
+BENCHMARK(BM_SortKeys)->Range(1024, 65536);
+```
+
+The results will likely show that sorting the objects is **orders of magnitude** slower, due to the memory bandwidth required to move the payloads during the swap operations and cache thrashing during the comparison operations.
+
+With these test parameters, my machine sorts the scores 500-600x faster than it sorts the players by score:
+
+```
+----------------------------------
+Benchmark                      CPU
+----------------------------------
+BM_SortObjects/1024      239955 ns
+BM_SortObjects/4096      941265 ns
+BM_SortObjects/32768    9033203 ns
+BM_SortObjects/65536   19301471 ns
+BM_SortKeys/1024            462 ns
+BM_SortKeys/4096           1842 ns
+BM_SortKeys/32768         13811 ns
+BM_SortKeys/65536         30762 ns
+```
+
+We can unlock these performance gains by adopting the **structure of arrays** pattern that we'll introduce later in the lesson.
+
+However, implementing this represents a huge change in how we create and design our programs. Let's first introduce **proxy-sorting**, which is less heavy-handed and good enough for many cases.
+
+## Proxy Sort
+
+If we find ourselves needing to sort a collection of heavy objects based on a small key, and performance is critical, we should avoid sorting the objects directly if possible.
+
+Instead, we can use the **proxy sort** pattern, sometimes historically called the **Schwartzian Transform**.
+
+We implement it by creating a lightweight array of **indices** or **pointers** to elements in the original, heavy array. We then sort that lightweight proxy using a projection that looks up the value in the original heavy array.
+
+This keeps the heavy payloads in place and only shuffles tiny integers around in memory.
+
+We then have this intermediate proxy that lets us indirectly interact with our original container as if it were sorted. For example, `proxy[0]` returns the **index** of the player with the lowest score, so `players[proxy[0]]` returns that player.
+
+We can even create a **view** that makes the intermediate proxy effectively invisible to consumers, allowing them to use our container as if it were sorted, but without the upfront cost of actually sorting it.
+
+### Implementing Proxy Sort
+
+Projections make this pattern incredibly ergonomic to implement. We simply capture the `players` reference in our lambda and use it to map the index `i` to `players[i].score`.
+
+### benchmarks/main.cpp
+
+```
+// ...
+#include <numeric> // for std::iota
+
+// ...
+
+// 3. Proxy sort
+static void BM_ProxySort(benchmark::State& state) {
+  int n = state.range(0);
+  std::vector<FatPlayer> players(n);
+
+  for (auto _ : state) {
+    // 1. Create indices {0, 1, 2, ... N-1}
+    // This is inside the loop because allocation of indices
+    // is part of the cost we must pay to use proxy sort
+    std::vector<int> proxy(n);
+    std::iota(proxy.begin(), proxy.end(), 0);
+    
+    // 2. Sort the INDICES
+    // The projection looks up the score in the heavy array
+    // The heavy array is accessed read-only, which is also
+    // good for cache sharing if threaded
+    std::ranges::sort(proxy, {}, [&](int i) {
+      return players[i].score;
+    });
+    
+    benchmark::DoNotOptimize(proxy.data());
+  }
+}
+
+BENCHMARK(BM_ProxySort)->Range(1024, 65536);
+```
+
+```
+----------------------------------
+Benchmark                      CPU
+----------------------------------
+BM_SortObjects/1024      239955 ns
+BM_SortObjects/4096      878514 ns
+BM_SortObjects/32768    9583333 ns
+BM_SortObjects/65536   19003378 ns
+BM_SortKeys/1024            443 ns
+BM_SortKeys/4096           1800 ns
+BM_SortKeys/32768         14753 ns
+BM_SortKeys/65536         29506 ns
+BM_ProxySort/1024           963 ns
+BM_ProxySort/4096          3749 ns
+BM_ProxySort/32768        41992 ns
+BM_ProxySort/65536        92072 ns
+```
+
+We can now access our sorted data indirectly through our `proxy`. Here are some examples:
+
+```
+int index_of_player_with_lowest_score = proxy[0];
+
+const FatPlayer& worst_player = players[proxy[0]];
+
+int lowest_score = players[proxy[0]].score;
+
+// Iterate our heavy array in sorted order:
+for (int index : proxy) {
+  const FatPlayer& player = players[index];
+  // ...
+}
+```
+
+If we'll be using the proxy a lot, we can upgrade it to a view, which makes it easier to work with and unlocks all the usual composability patterns:
+
+```
+auto sorted_view = std::views::transform(proxy, [&](int i) {
+  return players[i];
+});
+
+const FatPlayer& worst_player = sorted_view[0];
+
+int lowest_score = sorted_view[0].score;
+
+// Iterate our heavy array in sorted order:
+for (const FatPlayer& player : sorted_view) {
+  // ...
+}
+
+// Iterate the first 3 sorted players
+for (const FatPlayer& player : sorted_view | std::views::take(3)) {
+  // ...
+}
+```
+
+Our `proxy` array is tiny and contiguous, so it is highly cache-efficient. However, our original `players` array isn't really sorted, so when we iterate it with our proxy, we incur a cost.
+
+Behind the scenes, our view is jumping to indices within `players` with a pattern that looks predictable in software: `players[proxy[0]]`, `players[proxy[1]]`, `players[proxy[2]]`.
+
+However, this pattern looks random to most hardware prefetchers when the proxy indirection is resolved: `players[19537]`, `players[37682]`, `players[831]`.
+
+This is fine for some light reading or for use with an algorithm that is going to jump around in memory anyway, such as binary search.
+
+### Software Prefetching using Intrinsics
+
+Hardware prefetchers are getting more sophisticated at recognizing our memory access patterns, but they still struggle with proxy access patterns like `players[proxy[0]]`, `players[proxy[1]]`, `players[proxy[2]]`.
+
+However, there are software-based techniques that we can use to give the CPU hints - "*I'm going to read this cache line soon; you might want to prefetch it."*
+
+These are not part of the C++ standard, and we don't cover them in detail in this course, but the following are worth investigating if you want to learn more:
+
+- `MM_PREFETCH` in [x86![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.intel.com/content/www/us/en/docs/fortran-compiler/developer-guide-reference/2025-0/mm-prefetch.html)
+- `__builtin_prefetch` in [GCC/Clang![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://gcc.gnu.org/onlinedocs/gcc/Other-Builtins.html#index-_005f_005fbuiltin_005fprefetch)
+- `PreFetchCacheLine` in [Windows![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://learn.microsoft.com/en-us/windows/win32/api/winnt/nf-winnt-prefetchcacheline)
+
+## Structure of Arrays
+
+Our struggle with `FatPlayer` reveals an inconvenient truth about modern hardware: CPUs hate big objects. They love simple primitives.
+
+When we group data into a `class` or `struct`, we are grouping it for *our* mental convenience, not the computer's. We think of a "Player" as a coherent entity. The computer sees it as a chaotic mix of `ints`, `floats`, and strings that probably shouldn't be loaded at the same time.
+
+We can do a lot to bridge that gap - we can use `std::ranges::partial_sort()` and `std::ranges::nth_element()` to avoid full sorts, we can use `std::views::filter()` and `std::views::transform()` to reduce the data we're sending, we can use tricks like proxy sorting as a compromise.
+
+But what if we hit a wall? We might need to go back to first principles and structure the data in the way the hardware wants to consume it. Instead of an array of structures (AoS), we could use a structure of arrays (SoA):
+
+```
+Player Struct|Showstruct Player {/*...*/};
+
+// Array of structures
+std::vector<Player> Players;
+
+// Structure of arrays
+struct PlayerStorage {
+  std::vector<int> ids;
+  std::vector<int> scores;
+  std::vector<float> health;
+  std::vector<std::string> names;
+};
+```
+
+At first glance, this `PlayerStorage` looks like it would be a nightmare to use. However, with good software design, we can keep this unintuitive representation completely hidden.
+
+We can still provide an API that uses a friendly `Player` type, alongside functions that can accept or return data in that format. Our `PlayerStorage` might not directly store `Player` instances in this new system, but it still has all the data it needs to recreate one when required.
+
+This seems like a daunting task, but the next lesson will cover some useful techniques that can simplify things, and in a future chapter, we'll implement an SoA container like `PlayerStorage` for real.
+
+### Performance vs Complexity
+
+Performance is only one aspect of good software design - we also care about simplicity, readability, and maintainability. These often conflict with performance. The SoA pattern might be faster, but it's also more complex.
+
+More complex systems take longer to build and are more likely to contain bugs. They're also more difficult to read and understand, which adds even more time and bugs over the life of the project.
+
+If we look back at our original benchmark, sorting 65,000 fat objects took 18 milliseconds. That might be too slow in some contexts, but if we're doing that work as part of a loading phase or as an asynchronous task, 18ms is effectively instant - it is indistinguishable from 0ms.
+
+Even if 18ms is too slow for our use case, we don't need to immediately jump to SoA.
+
+- We could rethink our design to make the full sort unnecessary
+- We could move the work to a less performance-critical part of our program
+- We could reduce the data in some way
+- We could use a proxy sort or a similar trick
+
+We might also consider storing our data in a different type of container. Arrays are a good default choice for most things, as their contiguous nature is predictable and cache-efficient, but that rigid structure is also what makes them so expensive to sort.
+
+Containers like **binary search trees** have slower iteration speed but are extremely fast to sort. Binary search trees are available in the standard library as `std::set`, `std::multiset`, `std::map`, and `std::multimap`.
+
+## Summary
+
+In this lesson, we looked past the syntax of `std::ranges::sort()` and analyzed the physical cost of moving data.
+
+1.  **The Bandwidth Problem**: We learned that the work involved in sorting data goes beyond the $nlogn$nlogn comparisons - it also involves movement. Sorting large objects kills performance because we waste cache lines on data we aren't using.
+2.  **Proxy Sort**: By creating a temporary vector of indices and sorting *that* (using a projection to look up the scores), we can avoid moving the heavy objects entirely.
+3.  **Data-Oriented Design**: We saw that the ultimate optimization is to stop grouping data by "object" and start grouping it by "property." The **structure of arrays** layout eliminates padding and ensures that, when the CPU loads scores, it loads *only* scores. But, this comes at a heavy complexity cost that may not be worth paying
+
+We can now filter, transform, and slice single ranges of data. But real-world data is rarely isolated. We often need to process **two** arrays simultaneously - for example, combining a list of "Names" with a list of "Scores."
+
+In the next lesson, we will learn about `std::views::zip` and `std::views::enumerate`, solving the problem of how to loop over multiple containers at once.

@@ -1,0 +1,435 @@
+In the [previous lesson ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/ring-buffer), we solved the physical bottlenecks of traditional queues by eliminating data movement. By bending a contiguous array into a circle and manipulating `Head` and `Tail` indices, we built a fast, zero-allocation data pipeline.
+
+But our implementation had a serious limitation: it was only safe if executed on a single thread.
+
+When we use queues for data flow, we are almost always moving data between independent systems running on different CPU cores. For example, a dedicated networking thread fetches packets from a socket, and a dedicated simulation thread reads those packets to update the game state.
+
+If we simply share our standard `RingBuffer` between two threads, both threads will attempt to read and write to the same memory addresses simultaneously, resulting in torn data, corrupted indices, and an inevitable crash.
+
+The instinctual solution is to wrap the queue in a `std::mutex`. But as we learned in our [concurrency chapter ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/synchronization-atomics), relying on the operating system to put threads to sleep creates huge latency spikes. If our audio thread gets put to sleep because the network thread is holding the lock, our users will hear a glaring audio pop.
+
+In this lesson, we will rebuild our ring buffer from the previous lesson into a **Single-Producer Single-Consumer (SPSC) Lock-Free Queue**. We will use raw silicon mechanics to move data safely across CPU cores without ever triggering an OS context switch.
+
+## The Two-Core Pipeline
+
+An SPSC architecture is one of the simplest and most useful concurrency patterns to implement. It allows us to easily and safely split work across two threads, each assigned to a specific role:
+
+- The **Producer** thread is the only thing allowed to write/push payload data, and it is the only thing allowed to update the `Tail` index.
+- The **Consumer** thread is the only thing allowed to read/pop the payload data, and it is the only thing allowed to update the `Head` index.
+
+If we strictly follow these rules, we do **not** need complex `compare_exchange_weak()` (CAS) loops.
+
+We'll implement a more complex Multiple-Producer Multiple-Consumer (MPMC) queue in the next lesson that **does** use CAS, but for now, to safely share the `Head` and `Tail` across two cores, we just need to upgrade them from standard integers like `size_t` to atomics like `std::atomic<size_t>`.
+
+Other than that key difference, the member variables we'll need and the constructor are identical to the `RingBuffer` from the previous lesson:
+
+### dsa_core/include/dsa/SpscQueue.h
+
+```
+#pragma once
+#include <vector>
+#include <cstdint>
+#include <bit>
+#include <stdexcept>
+#include <atomic> 
+
+template <typename T>
+class SpscQueue {
+private:
+  std::vector<T> Buffer;
+  size_t Capacity;
+  size_t Mask;
+
+  std::atomic<size_t> Head{0}; 
+  std::atomic<size_t> Tail{0}; 
+  
+public:
+  SpscQueue(size_t RequestedCapacity) {
+    if (!std::has_single_bit(RequestedCapacity)) {
+      throw std::invalid_argument(
+        "Capacity must be a power of 2"
+      );
+    }
+    Capacity = RequestedCapacity;
+    Mask = Capacity - 1;
+    Buffer.resize(Capacity);
+  }
+};
+```
+
+### False Sharing
+
+This code is thread-safe, but this memory layout will introduce a notable performance bottleneck. In our [lesson on cache coherency ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/cache-coherency-false-sharing), we introduced the silent performance killer known as **false sharing**.
+
+The CPU loads memory into its L1 cache in chunks called **cache lines**, which are 64 bytes on most modern systems (or 128 bytes on Apple Silicon). Because `Head` and `Tail` are declared right next to each other, they will almost certainly be packed into the same physical cache line, meaning our two cores will try to share the same block of memory.
+
+Every time a core updates the cache line, it needs to notify the other core that its copy is now stale and invalid. This constant fight over the same cache line causes pipeline stalls and saturates the internal memory bus with these invalidation messages. This is called **cache ping-pong**, and it massively degrades performance.
+
+### Padding
+
+To fix this, we force the compiler to inject dead padding bytes between our atomics, spacing them out enough to guarantee they land on separate physical cache lines.
+
+We can do this using the `alignas` keyword combined with the: `std::hardware_destructive_interference_size` constant. This constant queries the target CPU architecture and returns the exact cache line size required to prevent false sharing:
+
+### dsa_core/include/dsa/SpscQueue.h
+
+```
+// ...
+// for std::hardware_destructive_interference_size
+#include <new> 
+
+template <typename T>
+class SpscQueue {
+private:
+  std::vector<T> Buffer;
+  size_t Capacity;
+  size_t Mask;
+  
+  // Extract the exact cache line size for
+  // the target machine
+  static constexpr size_t CacheLineSize = 
+    std::hardware_destructive_interference_size; 
+
+  // Force Head to the start of a fresh cache line
+  std::atomic<size_t> Head{0}; 
+  alignas(CacheLineSize) std::atomic<size_t> Head{0}; 
+
+  // Force Tail to the start of the NEXT cache line
+  std::atomic<size_t> Tail{0}; 
+  alignas(CacheLineSize) std::atomic<size_t> Tail{0}; 
+
+  // ...
+};
+```
+
+Core A (running the producer) can now take exclusive ownership of the cache line containing the `Tail` variable, never to be harassed by another core wanting to share it. Meanwhile, Core B (running the consumer) gets the `Head` cache line all to itself.
+
+## The Synchronization Contract
+
+With our physical layout secured, we can implement the logic. We need to translate our single-threaded `Push()` and `Pop()` from the previous lesson into a lock-free Publisher-Consumer contract. Now that `Head` and `Tail` are atomics, we can do this using the `load()` and `store()` methods provided by the `std::atomic` API that [we covered earlier ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/atomic-api-and-data-tearing).
+
+We do that below, but first, let's also review the [memory order ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/memory-ordering) we want to use when loading and storing these values. By default, `load()` and `store()` enforces **sequential consistency**, represented in the standard library as `std::memory_order_seq_cst`. This works, but forces the compiler will inject full memory fences that flush the entire CPU pipeline on every operation, reducing performance.
+
+We know how our `Head` and `Tail` will be used, and we know that we'll be enforcing the SPSC restriction, so we can interject here and improve upon the default. By relaxing the memory ordering constraints to only what we need, we give the CPU's out-of-order execution engine more room to optimize and improve our system's performance.
+
+### Implementing `Push()`
+
+When the producer calls `Push()`, three things must happen:
+
+1.  It must read the consumer's `Head` to ensure the buffer isn't full.
+2.  It must write the payload data to the `Buffer` array in RAM.
+3.  It must update the `Tail` to publish the new data.
+
+If the CPU or the compiler reorders step 3 to happen **before** step 2, the `Tail` increments before the payload actually reaches RAM. The consumer might wake up, see the new `Tail`, read the array, and consume uninitialized garbage.
+
+We should therefore use a **release fence** when storing the `Tail`. This guarantees that all memory writes (our payload) sitting physically above the `store()` instruction are committed to RAM before the index is updated:
+
+### dsa_core/include/dsa/SpscQueue.h
+
+```
+// ...
+
+template <typename T>
+class SpscQueue {
+  // ...
+
+public:
+  // ...
+  
+  // This is called ONLY by the Producer thread
+  bool Push(const T& Value) {
+    // Because WE (the producer) own the Tail, we
+    // are the only thread modifying it. Therefore,
+    // reading it can be relaxed
+    size_t CurrentTail = Tail.load(
+      std::memory_order_relaxed
+    );
+
+    // We do NOT own the Head. We must acquire the
+    // latest value written by the Consumer to ensure
+    // we don't overwrite a payload they are currently
+    // reading
+    size_t CurrentHead = Head.load(
+      std::memory_order_acquire
+    );
+
+    // Check if the queue is full (sacrificing 1 slot
+    // as before)
+    if (((CurrentTail + 1) & Mask) == CurrentHead) {
+      return false;
+    }
+
+    // Write the payload to standard, non-atomic
+    // RAM.  We (the producer) are the only thing
+    // allowed to do this
+    Buffer[CurrentTail] = Value;
+
+    // Publish the Tail
+    // The release fence ensures the payload write
+    // is fully visible to other threads before the
+    // Tail index is updated
+    Tail.store(
+      (CurrentTail + 1) & Mask,
+      std::memory_order_release
+    );
+
+    return true;
+  }
+};
+```
+
+Notice the care taken with our `load()` operations. Because this is an SPSC queue, the single producer thread has exclusive rights to update the `Tail`. It can read its own variable using `memory_order_relaxed`, which translates to raw assembly with zero fence overhead.
+
+### Implementing `Pop()`
+
+The consumer executing `Pop()` sits on the other side of this contract.
+
+It must check the `Tail` to ensure there is data to read. It must use an **acquire fence** to synchronize with the producer's release. This guarantees that if the consumer sees the new `Tail`, the CPU is forbidden from reading the payload data from cache until the producer's payload writes have fully traversed the memory bus.
+
+### dsa_core/include/dsa/SpscQueue.h
+
+```
+// ...
+
+template <typename T>
+class SpscQueue {
+  // ...
+
+public:
+  // ...
+  
+  // This is called ONLY by the Consumer thread
+  bool Pop(T& OutValue) {
+    // We (the consumer) own the Head, so reading
+    // it is totally safe and relaxed
+    size_t CurrentHead = Head.load(
+      std::memory_order_relaxed
+    );
+
+    // We do NOT own the Tail. We must acquire
+    // it to synchronize with the Producer's
+    // release fence
+    size_t CurrentTail = Tail.load(
+      std::memory_order_acquire
+    );
+
+    // Check if the queue is empty
+    if (CurrentHead == CurrentTail) {
+      return false;
+    }
+
+    // Read the payload from standard RAM
+    OutValue = Buffer[CurrentHead];
+
+    // Publish the Head
+    // The release fence guarantees our read
+    // is fully complete before the Producer
+    // is allowed to overwrite this slot
+    Head.store(
+      (CurrentHead + 1) & Mask,
+      std::memory_order_release
+    );
+
+    return true;
+  }
+};
+```
+
+Let's walk through the sequence of a producer pushing data to the queue, and the consumer then popping that data:
+
+## Usage Example
+
+We can now safely split our production and consumption of data across two cores. Below, we have a thread producing audio samples, another thread consuming the samples, and our lock-free `SpscQueue` acting as a buffer between them.
+
+This is almost identical to the usage example in the previous lesson - we've just replaced our `RingBuffer` container with our new `SpscQueue`, and our producer and consumer are now running concurrently, on different threads:
+
+### dsa_app/main.cpp
+
+```
+#include <print> // C++23
+#include <mutex>
+#include <thread>
+
+#include <dsa/RingBuffer.h>
+#include <dsa/SpscQueue.h>
+
+int main() {
+  RingBuffer<int> AudioStream(1024);
+  SpscQueue<int> AudioStream(1024);
+
+  auto audio_producer = [&]() {
+    for (int i = 1; i <= 5; ++i) {
+      std::println("Producing sample {}", i);
+      while (!AudioStream.Push(i)) {}
+    }
+  };
+
+  auto audio_consumer = [&]() {
+    int sample;
+    int count = 0;
+
+    while (count < 5) {
+      if (AudioStream.Pop(sample)) {
+        std::println("Playing sample {}", sample);
+        ++count;
+      }
+    }
+  };
+  
+  audio_producer(); 
+  std::jthread t1(audio_producer);
+  audio_consumer(); 
+  std::jthread t2(audio_consumer);
+}
+```
+
+```
+Producing sample 1
+Playing sample 1
+Producing sample 2
+Playing sample 2
+Producing sample 3
+Producing sample 4
+Playing sample 3
+Producing sample 5
+Playing sample 4
+Playing sample 5
+```
+
+## Benchmarking
+
+We have successfully built a lock-free pipeline. It requires no OS involvement, no dynamic memory allocation, and isolates cache lines.
+
+Let's pit it against a traditional multithreaded queue. We will wrap the standard library's `std::queue` in a `std::mutex`. We will then spawn two asynchronous threads: one pushing 10 million integers, and one pulling 10 million integers:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <queue>
+#include <mutex>
+#include <thread>
+#include <dsa/SpscQueue.h>
+
+// A thread-safe wrapper around std::queue
+template <typename T>
+class MutexQueue {
+  std::queue<T> Q;
+  std::mutex Mtx;
+public:
+  void Push(const T& val) {
+    std::lock_guard<std::mutex> lock(Mtx);
+    Q.push(val);
+  }
+  bool Pop(T& out) {
+    std::lock_guard<std::mutex> lock(Mtx);
+    if (Q.empty()) return false;
+    out = Q.front();
+    Q.pop();
+    return true;
+  }
+};
+
+static void BM_MutexQueue(benchmark::State& state) {
+  for (auto _ : state) {
+    MutexQueue<int> MQ;
+
+    auto producer = [&] {
+      for (int i = 0; i < 10'000'000; ++i) {
+        MQ.Push(i);
+      }
+    };
+
+    auto consumer = [&] {
+      int count = 0;
+      int val;
+      while (count < 10'000'000) {
+        if (MQ.Pop(val)) {
+          count++;
+          benchmark::DoNotOptimize(val);
+        }
+      }
+    };
+
+    // std::jthread automatically joins on destruction (RAII)
+    std::jthread t1(producer);
+    std::jthread t2(consumer);
+  }
+}
+BENCHMARK(BM_MutexQueue)->Unit(benchmark::kMillisecond);
+
+static void BM_LockFreeSpsc(benchmark::State& state) {
+  for (auto _ : state) {
+    // Capacity must be a power of 2
+    SpscQueue<int> LFQ(1024 * 1024);
+
+    auto producer = [&] {
+      for (int i = 0; i < 10'000'000; ++i) {
+        // Spin if full
+        while (!LFQ.Push(i)) {}
+      }
+    };
+
+    auto consumer = [&] {
+      int count = 0;
+      int val;
+      while (count < 10'000'000) {
+        if (LFQ.Pop(val)) {
+          count++;
+          benchmark::DoNotOptimize(val);
+        }
+      }
+    };
+
+    // std::jthread automatically joins on destruction (RAII)
+    std::jthread t1(producer);
+    std::jthread t2(consumer);
+  }
+}
+BENCHMARK(BM_LockFreeSpsc)->Unit(benchmark::kMillisecond);
+```
+
+```
+-----------------------------------
+Benchmark            Time       CPU
+-----------------------------------
+BM_MutexQueue      441 ms   4.69 ms
+BM_LockFreeSpsc   80.3 ms   1.41 ms
+```
+
+The `std::mutex` version causes the operating system to constantly intervene. Core A grabs the lock. Core B tries to read, hits the locked mutex, and is forcefully put to sleep by the OS. Core A releases the lock, and the OS burns thousands of cycles waking Core B back up.
+
+Our `SpscQueue` completely bypasses the operating system. The cores communicate strictly by syncing L1 cache lines over the internal hardware bus via our acquire/release fences. It processes the 10 million items over 5 times faster in these tests.
+
+## Preview: MPMC Queues
+
+Our `SpcsQueue` is fast, but what happens if we break the SPSC rule? What if we have a pool of three network threads, and they are **all** trying to `Push()` packets into our queue simultaneously?
+
+Let's walk through the exact hardware execution path if Thread 1 and Thread 2 both call `Push()` at the same nanosecond:
+
+The queue has lost data, but it doesn't know it. The `Tail` successfully incremented from `4` to `5`, so the consumer will happily read the corrupted payload and continue, oblivious to the fact that a packet was permanently erased.
+
+To build a **Multi-Producer Multi-Consumer (MPMC)** queue, standard atomic `load()` and `store()` operations are no longer sufficient. If multiple threads are fighting over the same index, they must "claim" the index before they are allowed to write to the payload array.
+
+We will explore how to solve this exact collision using **Compare-and-Swap (CAS)** loops and **Sequence Tickets** in the next lesson.
+
+## Complete Code
+
+Here is the complete implementation of our thread-safe, lock-free `SpscQueue`:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we created a lock-free pipeline to safely stream data across independent CPU cores.
+
+1.  We introduced the **single-producer single-consumer** model, which prevents multiple threads from attempting to modify the same index at the same time.
+2.  We defeated **false sharing** by padding our `Head` and `Tail` atomics using `alignas`, isolating them onto separate physical cache lines to prevent MESI invalidation ping pong.
+3.  We improved the publisher-consumer contract using **half-fences** (`acquire` and `release`) to guarantee our memory writes were fully visible without stalling the pipeline with full `seq_cst` flushes.
+4.  We acknowledged the problem with this implementation when multiple producers or multiple consumers try to use our ring buffer concurrently

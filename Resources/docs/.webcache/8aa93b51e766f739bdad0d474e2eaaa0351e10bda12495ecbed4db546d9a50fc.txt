@@ -1,0 +1,863 @@
+In the [previous lesson ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/spsc-lock-free-queue), we built a fast data pipeline spanning two CPU cores. By padding our `Head` and `Tail` atomics to avoid false sharing, and by using `acquire` and `release` fences, we created lock-free synchronization.
+
+But our implementation relied on a strict rule: **Single-Producer, Single-Consumer (SPSC)**. The design assumes only one thread would ever update the `Tail` variable, and only one thread would ever update the `Head`.
+
+In many highly parallel systems, this rule is impossible to enforce. If we are building a global job scheduler for a thread pool, we might have 16 threads finishing tasks and attempting to `Push()` new jobs onto the queue at the same time.
+
+In this lesson, we will upgrade our ring buffer to support **Multiple-Producer, Multiple-Consumer (MPMC)** environments. We will use Compare-And-Swap (CAS) loops to claim indices, and we will introduce **Sequence Tickets** to synchronize the chaotic transfer of physical payloads.
+
+### The Cost of Unrestricted Concurrency
+
+Over the next three lessons in this chapter, we will build data structures that safely allow any number of threads to fight over them simultaneously. We are moving into the realm of unrestricted, chaotic concurrency.
+
+But just because something is possible doesn't mean it is a good design. As we covered in the previous concurrency chapters, one of the primary goals of high-performance multithreaded architecture is to reduce synchronization as much as possible. Using thread-local storage and isolating data to individual threads remains the most effective way to do that.
+
+Lock-free data structures do not magically solve the physical realities of hardware contention. Additionally, the defensive logic required to support unrestricted concurrency makes simple algorithms like `Push()` and `Pop()` significantly more complex and computationally expensive than their single-threaded or SPSC counterparts.
+
+However, some systems, like global job schedulers, thread pools, or work-stealing algorithms, genuinely require a container that supports full, unbridled multithreading. For those unavoidable bottlenecks, using a full Multi-Producer Multi-Consumer (MPMC) design is often unavoidable.
+
+### Recommended Reading
+
+This is a relatively advanced lesson, pulling together many techniques we covered in the previous chapters. To follow along, being particularly comfortable with the following topics is recommended:
+
+- Implementing a
+  [basic ring buffer ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/ring-buffer)
+  and an
+  [SPSC ring buffer ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/spsc-lock-free-queue)
+- The
+  [Read-Modify-Write trap ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/atomic-api-and-data-tearing)
+  and how to prevent it using `std::atomic`.
+- Implementing custom atomic logic using
+  [compare-and-swap (CAS) ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/cas-optimistic-concurrency)
+- Optimizing the
+  [memory ordering ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/memory-ordering)
+  around atomic instructions.
+
+## From SPSC to MPMC
+
+Let's look at why our previous SPSC code to understand why it breaks if we allow multiple producers to use it. In the SPSC queue, our push logic looked like this:
+
+```
+bool Push(const T& Value) {
+  // Relaxed read: safe ONLY if we are the only producer
+  size_t CurrentTail = Tail.load(); 
+
+  // check if full ...
+
+  Buffer[CurrentTail] = Value; 
+
+  // update tail ...
+}
+```
+
+If multiple threads run this function concurrently, they might all execute the `load()` instruction before any of them writes to the `Buffer`.
+
+If producers running on Thread 1 and Thread 2 both read `Tail` at the same time, they will both get the same index (e.g., `4`). Thread 1 writes its data to `Buffer[4]`. One microsecond later, Thread 2 blindly writes its data to `Buffer[4]`. Thread 1's data is permanently erased from memory.
+
+Our `Pop()` function would have similar problems if multiple consumers were trying to use it concurrently.
+
+To prevent these collisions, reading a `Tail` or `Head` index is no longer enough. A thread must **claim** the index.
+
+### The Atomic Index Claim
+
+To claim an index, we can rely on the silicon's native capability to read and modify a memory address in a single, indivisible step. We do this using the optimstic [Compare-And-Swap (CAS) loop ![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtYXJyb3ctdXAtcmlnaHQgbWwtMC41IGgtNCB3LTQiIGZpbGw9Im5vbmUiIGhlaWdodD0iMjQiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld2JveD0iMCAwIDI0IDI0IiB3aWR0aD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTcgN2gxMHYxMCI+PC9wYXRoPjxwYXRoIGQ9Ik03IDE3IDE3IDciPjwvcGF0aD48L3N2Zz4=)](https://www.studyplan.dev/dsa/cas-optimistic-concurrency) we covered in earlier lessons.
+
+Instead of just loading the `Tail`, we optimistically attempt to push it forward. If another thread snuck in and claimed our expected index, the CPU rejects our update, hands us the fresh `Tail` index, and we loop around to try again.
+
+The final logic will be more complicated, but a basic CAS loop for claiming a `Tail` index would look like this:
+
+```
+size_t ExpectedTail;
+
+do {
+  ExpectedTail = Tail.load();
+
+  // Attempt to claim ExpectedTail by swinging the
+  // Tail forward.  If another thread has updated,
+  // ExpectedTail, our CAS fails, ExpectedTail is
+  // automatically updated to the latest value,
+  // and the loop spins around and tries again
+} while (!Tail.compare_exchange_weak( 
+  ExpectedTail,                       
+  ExpectedTail + 1                    
+));                                   
+
+// If the CAS succeeds, our loop ends and we 
+// exclusively own ExpectedTail. We can now 
+// safely write to Buffer[ExpectedTail]
+```
+
+### The Race to the Payload
+
+By using CAS, we can safely claim a slot, but that's not the biggest challenge. The more complex problem is **the Race to the Payload**. Just because Thread 1 successfully claimed index `4` and advanced the `Tail` to `5`, does not mean Thread 1 has **finished writing its data** into physical RAM.
+
+Imagine Thread 1 executes its CAS instruction and claims index `4`. Immediately, the OS suspends Thread 1. The `Tail` is now officially `5`. Thread 2 (a Consumer) wakes up, checks the `Tail`, sees that it is `5`, and assumes indices `0` through `4` are ready to read. It pops index `4` and reads the payload.
+
+But Thread 1 is asleep. It hasn't written the payload yet. Thread 2 just consumed uninitialized garbage data. Claiming an index is no longer enough. We need a way to synchronize the *exact moment* the payload data is fully written to memory and safe to read.
+
+## The Sequence Ticket Pattern
+
+To solve the payload race, we need a way to lock every single slot in our buffer independently. We can achieve this by giving every slot its own dedicated **Sequence Ticket**.
+
+Instead of just trusting the global `Head` and `Tail` counters, threads must physically inspect the sequence ticket of the specific slot they want to use. This ticket tells us exactly which "lap" the slot is currently on, and whether it is ready for a producer or a consumer.
+
+One key difference between an MPMC circular queue and our previous versions is that our `Head` and `Tail` counters will no longer "wrap around" to `0`. Instead, we just let them keep counting up towards infinity. This creates a pattern where we have **generations** (or laps) around our circle.
+
+For example, imagine we use a ring buffer with a `Capacity` of 4 slots. Then, our `Head` and `Tail` would increment with the following pattern:
+
+- **Lap 1:** Tickets 0, 1, 2, 3
+- **Lap 2:** Tickets 4, 5, 6, 7
+- **Lap 3:** Tickets 8, 9, 10, 11
+
+When a producer wants to push data, it first reads the global `Tail` counter. Let's say it reads `4`. This means the producer wants to claim ticket `4`. After using modulo math or the bitwise masking techniques, it will know that ticket `4` corresponds to slot `0` of the second lap around our buffer.
+
+But in a concurrent system, multiple producers might read a `Tail` of `4` at around the same time, and all of them will rush to slot `0`. How do they negotiate who gets to write? And how do we prevent them from overwriting data that no consumer has read yet?
+
+### The Producer (+1) and Consumer (+Capacity) Dance
+
+The access in each slot alternates between a producer and a consumer, so we can update the ticket in those slots accordingly to keep track of who has visited it. When a producer finishes writing to a slot, we increment the ticket by `1`. When a consumer looks at that slot, if the ticket is incremented, it knows a producer has populated it, and the data is ready to be consumed.
+
+When the consumer finishes processing the data, it resets the slot for the next producer, which will be on the next lap around the circle. So, for example, if we look at slot `0` of our 4-slot buffer, then the ticket starts at `0`, is incremented to `1` when a producer has finished populating it, and then set to `4` when a consumer has finished processing it.
+
+The next producer increments it to `5`, the next consumer resets it to `8`, and so on.
+
+Below, we illustrate this pattern with a single producer and single consumer (SPSPC), and we'll explain how this helps us in MPMC scenarios in the next section.
+
+## The Diff Calculation
+
+So, once we have our producers and consumers dutifully updating our sequence tickets using this agreed pattern, how does that help us?
+
+Because we are in a heavily parallel environment, threads will frequently look at tickets at the wrong time. A producer might read `Head` as `4`, calculate that it corresponds to slot `0` in the buffer, but by the time they read what's in that slot, something could have changed.
+
+To figure out what to do, threads calculate the **difference** between the number on the ticket and the number they expected to see.
+
+### For Producers (Pushing Data)
+
+A producer expects the ticket to exactly match the global `Tail` it just read. It calculates the difference using the formula `Diff = Ticket - Tail`
+
+- **If** **`Diff == 0`** **(Perfect Match):** The ticket is waiting for us. We fire our CAS instruction to try to claim the slot by incrementing the global `Tail`. If the CAS succeeds, the slot is ours, and we can write our data. If it failed, another producer beat us to updating the tail. We need to start again - figure out what slot the new `Tail` corresponds to, read its ticket, and recalculate the `Diff`.
+- **If** **`Diff < 0`** **(Queue is Full):** The ticket is behind us. If we want ticket `4`, but the ticket says `1`, it means the consumers haven't finished reading Lap 1 yet. The buffer is effectively full, so we abort the push.
+- **If** **`Diff > 0`** **(We are Stale):** The ticket is ahead of us. If we want ticket `4`, but the ticket already says `5`, it means another producer is way ahead of us - they've already claimed the slot, written their data and clicked the ticket forward. Our expected `Tail` is stale, so we must reload the global `Tail` and try again.
+
+### For Consumers (Popping Data)
+
+A consumer expects the ticket to be exactly one step ahead of the global `Head` it just read, because the producer adds 1 when it finishes writing. Therefore, it uses the formula `Diff = Ticket - (Head + 1)`
+
+- **If** **`Diff == 0`** **(Perfect Match):** The producer has finished writing. We fire our CAS instruction to officially claim the slot by incrementing the `Head` index. If it succeeds, the slot is ours, and we can process the data. If it failed, another consumer beat us to the slot, and we need to retry using the latest `Head`.
+- **If** **`Diff < 0`** **(Queue is Empty):** The ticket hasn't been clicked forward yet. If we want to read ticket `0`, but the ticket still says `0`, a producer hasn't finished writing yet. The queue is effectively empty, so we abort the pop.
+- **If** **`Diff > 0`** **(We are Stale):** The ticket is ahead of us. Another consumer beat us - they've already read this data and pushed the ticket forward for the next lap. Our expected `Head` is stale, so we must reload the global `Head` and loop around to try again.
+
+### The Unsigned Trap
+
+Most of the time, we'll want to store our `Head` and `Tail` indicies as **unsigned** integers, such as `size_t`. This creates a problem: unsigned integers cannot be negative, so our `Diff < 0` check will always fail. If our calculation results in a negative `Diff`, it underflows and wraps around to a massive positive number.
+
+To solve this, we can cast the variables to `intptr_t` before performing the subtraction. The `intptr_t` type is a **signed** integer guaranteed to be the same bit-width as a memory pointer on the target system, which makes it the same size as `size_t`.
+
+## Establishing the Class Foundations
+
+Now that we understand the sequence ticket mechanics conceptually, let's establish our class structure.
+
+We will stop treating our buffer as just an array of `T` payloads. Instead, we bundle the payload alongside a `std::atomic<size_t>` sequence integer to act as our sequence ticket. We will call this bundle a `Cell`:
+
+### dsa_core/include/dsa/MpmcQueue.h
+
+```
+#pragma once
+#include <vector>
+#include <cstdint>
+#include <atomic>
+#include <new>
+#include <bit>
+
+template <typename T>
+class MpmcQueue {
+private:
+  static constexpr size_t CacheLineSize =
+    std::hardware_destructive_interference_size;
+
+  // Bundle the data with an atomic sequence ticket
+  struct alignas(CacheLineSize) Cell {
+    std::atomic<size_t> Sequence;
+    T Payload;
+  };
+
+  std::vector<Cell> Buffer;
+  size_t Capacity;
+  size_t Mask;
+
+  alignas(CacheLineSize) std::atomic<size_t> Head{0};
+  alignas(CacheLineSize) std::atomic<size_t> Tail{0};
+  // ...
+};
+```
+
+Notice the `alignas(CacheLineSize)` on the `Cell` struct. If we didn't pad the cell, `Buffer[0]` and `Buffer[1]` would likely share the same physical 64-byte cache line in RAM. If Thread 1 is writing to slot 0 and Thread 2 is writing to slot 1, the CPU cores would thrash the cache line back and forth, crippling performance via false sharing.
+
+By padding the cell to the cache line size (usually 64 bytes), every slot gets its own dedicated cache line, even when the payload type `T` is small.
+
+### The Constructor
+
+When we initialize our queue, we also need to initialize our sequence tickets for the first lap by pre-filling every cell's ticket with its starting physical index:
+
+### dsa_core/include/dsa/MpmcQueue.h
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  MpmcQueue(size_t RequestedCapacity) {
+    if (!std::has_single_bit(RequestedCapacity)) {
+      throw std::invalid_argument(
+        "Capacity must be power of 2"
+      );
+    }
+    Capacity = RequestedCapacity;
+    Mask = Capacity - 1;
+    Buffer.resize(Capacity);
+
+    // Initialize the tickets for Lap 1
+    for (size_t i = 0; i < Capacity; ++i) {
+      Buffer[i].Sequence.store(i);
+    }
+  }
+};
+```
+
+### Preventing Exceptions
+
+Lock-free structures that need to copy or move data typically restrict support to only types that cannot `throw` during these actions, as it makes the implementation much easier and safer.
+
+We can assert our template type `T` meets this requirement with the help of a type trait:
+
+### dsa_core/include/dsa/LockFreeStack.h
+
+```
+// ...
+#include <type_traits> 
+
+template <typename T>
+class MpmcQueue {
+private:
+  // Guarantee exception safety to prevent memory leaks
+  static_assert(
+    std::is_nothrow_copy_assignable_v<T>,
+    "Type T must not throw to guarantee exception safety"
+  );
+
+  // ...
+};
+```
+
+If we used move semantics in our container, we'd also want to add `std::is_nothrow_move_assignable_v<T>` to this safety checks.
+
+## Implementing `Push()`
+
+Let's write the `Push()` function step-by-step. This is where we combine our CAS index claim with the sequence ticket logic.
+
+### Step 1: Inspecting the Ticket
+
+We need three things to implement our `Push()` algorithm, which we'll store in the following variables:
+
+- `ExpectedTail` - the `Tail` value that we're trying to claim
+- `TargetCell` - the slot within our `Buffer` that this tail corresponds to, based on our bitwise masking logic
+- `Seq` - the sequence ticket within that cell
+
+Let's start by retrieving this data:
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  // ...
+  bool Push(const T& Value) {
+    Cell* TargetCell;
+    size_t ExpectedTail;
+
+    do {
+      ExpectedTail = Tail.load();
+      TargetCell = &Buffer[ExpectedTail & Mask];
+
+      // Read the ticket to determine the cell's state
+      size_t Seq = TargetCell->Sequence.load();
+
+      // ...
+    } while (true);
+
+    // ...
+  }
+};
+```
+
+### Step 2: Claiming the Index
+
+Now that we have everything we need, we calculate the difference between our sequence ticket and our expected tail and react to it using the logic we outlined earlier in the lesson.
+
+A producer expects the ticket to exactly match the global `Tail` it just read, so it calculates the difference using the formula `Diff = Ticket - ExpectedTail`
+
+- **If** **`Diff == 0`** **(Perfect Match):** The ticket is waiting for us. We fire our CAS instruction to try to claim the slot by incrementing the global `Tail`. If the CAS succeeds, the slot is ours, and we can write our data. If it failed, another producer beat us to updating the tail. We need to start again - figure out what slot the new `Tail` corresponds to, read its ticket, and recalculate the `Diff`.
+- **If** **`Diff < 0`** **(Queue is Full):** The ticket is behind us. If we want ticket `4`, but the ticket says `1`, it means the consumers haven't finished reading Lap 1 yet. The buffer is effectively full, so we abort the push.
+- **If** **`Diff > 0`** **(We are Stale):** The ticket is ahead of us. If we want ticket `4`, but the ticket already says `5`, it means another producer is way ahead of us - they've already claimed the slot, written their data and clicked the ticket forward. Our expected `Tail` is stale, so we must reload the global `Tail` and try again.
+
+Remember, `Seq` and `ExpectedTail` are **unsigned** integers, so we need to cast them to a signed type like `intptr_t` to make our `Diff < 0` check work. Combining all of these steps in code looks like this:
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  // ...
+  bool Push(const T& Value) {
+    // ...
+
+    do {
+      // ...
+
+      // Does the ticket match our expected tail?
+      intptr_t Diff = (intptr_t)Seq - (intptr_t)ExpectedTail;
+
+      if (Diff == 0) {
+        // Yes! It's our turn. Attempt to claim the index.
+        if (Tail.compare_exchange_weak(
+          ExpectedTail,
+          ExpectedTail + 1
+        )) {
+          break; // We successfully claimed the slot!
+        }
+      } else if (Diff < 0) {
+        // The ticket is behind us. The queue is full.
+        return false;
+      }
+
+      // If Diff > 0, another thread won. Loop restarts and
+      // ExpectedTail reloads.
+    } while (true);
+
+    // We exclusively own TargetCell if we get here
+    // ...
+  }
+};
+```
+
+### Step 3: Publishing the Payload
+
+Once we break out of the loop, we exclusively own `TargetCell`. We can safely write our data to it.
+
+After writing the data, we must advance the ticket so the consumer knows the data is ready. We advance the ticket to `ExpectedTail + 1`.
+
+### dsa_core/include/dsa/MpmcQueue.h
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  // ...
+  bool Push(const T& Value) {
+    // ...
+    do {
+      // ...
+    } while (true);
+
+    // We exclusively own TargetCell at this point
+
+    // Write the payload to memory
+    TargetCell->Payload = Value;
+
+    // Advance the ticket for the Consumer
+    TargetCell->Sequence.store(ExpectedTail + 1);
+
+    return true;
+  }
+};
+```
+
+## Implementing `Pop()`
+
+Let's implement the `Pop()` function step-by-step. It follows a fairly similar pattern to the `Push()` implementation, with the key differences being that we're working with the `Head` instead of the `Tail`, and we treat the sequence ticket `Seq` slightly differently.
+
+### Step 1: Waiting for the Producer
+
+Again, we'll start by gathering the key values we need. This is the same as our `Push()` logic, except they're based on the `Head` rather than the `Tail`. We'll store them in three variables:
+
+- `ExpectedHead` - the `Head` value that we're trying to claim
+- `TargetCell` - the slot within our `Buffer` that this head corresponds to, based on our bitwise masking logic
+- `Seq` - the sequence ticket within that cell
+
+Collecting these variables would look something like this:
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  // ...
+  bool Pop(T& OutValue) {
+    Cell* TargetCell;
+
+    // Pop cares about the Head rather than the tail
+    size_t ExpectedHead;
+
+    do {
+      ExpectedHead = Head.load();
+      TargetCell = &Buffer[ExpectedHead & Mask];
+
+      // Read the ticket
+      size_t Seq = TargetCell->Sequence.load();
+
+      // ...
+    } while (true);
+
+    // ...
+  }
+};
+```
+
+### Step 2: Claiming the Read Index
+
+Then, we implement the `Diff` calculation and logic we described previously.
+
+A consumer expects the ticket to be exactly one step ahead of the global `Head` it just read (because the producer adds 1 when it finishes writing). It uses the formula `Diff = Ticket - (ExpectedHead + 1)`
+
+- **If** **`Diff == 0`** **(Perfect Match):** The producer has finished writing. We fire our CAS instruction to officially claim the slot by incrementing the `Head` index. If it succeeds, the slot is ours, and we can process the data. If it failed, another consumer beat us to the slot, and we need to retry using the latest `Head`.
+- **If** **`Diff < 0`** **(Queue is Empty):** The ticket hasn't been incremented yet. If the `Head` is slot `5`, but the ticket still says `5` in that slot, a producer hasn't finished writing to it yet. The queue is effectively empty, so we abort the pop.
+- **If** **`Diff > 0`** **(We are Stale):** The ticket is ahead of us. Another consumer beat us - they've already read this data and pushed the ticket forward for the next lap. Our expected `Head` is stale, so we must reload the global `Head` and loop around to try again.
+
+Implementing it in code would look something like below. The key difference compared to the `Pop()` logic is that we expect the sequence ticket to have been incremented relative to the head - that is, we want it to equal `ExpectedHead + 1`:
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  // ...
+  bool Pop(T& OutValue) {
+    // ...
+    do {
+      // ...
+
+      // The consumer expects the ticket to be exactly Head + 1
+      // (which is what the producer sets it to after writing)
+      intptr_t Diff = (intptr_t)Seq - (intptr_t)(ExpectedHead + 1);
+
+      if (Diff == 0) {
+        // The data is ready! Attempt to claim the read index.
+        if (Head.compare_exchange_weak(
+          ExpectedHead,
+          ExpectedHead + 1
+        )) {
+          break; // We successfully claimed the slot!
+        }
+      } else if (Diff < 0) {
+        // The ticket hasn't advanced yet. The queue is empty.
+        return false;
+      }
+
+    } while (true);
+
+    // We exclusively own TargetCell at this point
+    // ...
+  }
+};
+```
+
+### Step 3: Extracting and Resetting
+
+Once we claim the cell, we safely copy the payload into our `OutValue`.
+
+Finally, we advance the ticket for the *next generation* of producers. We do this in the same way we did with `Push()`, except we reset the ticket based on the `Capacity` of the buffer rather than simply incrementing it by `1`. This prepares the slot for a new producer to use it on the next lap around our circle:
+
+### dsa_core/include/dsa/MpmcQueue.h
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  // ...
+  bool Pop(T& OutValue) {
+    // ...
+
+    do {
+      // ...
+    } while (true);
+
+    // We exclusively own TargetCell at this point
+
+    // Safely read the payload from memory
+    OutValue = TargetCell->Payload;
+
+    // Reset the ticket for the next generation
+    TargetCell->Sequence.store(ExpectedHead + Capacity);
+
+    return true;
+  }
+};
+```
+
+## Tuning the Memory Order
+
+Up to this point, we have used the default memory ordering (`std::memory_order_seq_cst`) for all our atomic operations. While this is safe, it forces the CPU to issue heavy memory barriers for every single read and write, reducing the performance of our lock-free queue.
+
+To address this, we can manually tune the memory fences using `acquire`, `release`, and `relaxed` ordering. Let's revisit each of our functions and optimize them.
+
+### Optimizing the Constructor
+
+In the constructor, we initialize the sequence tickets for Lap 1. Because this happens before any threads are spawned or have access to the queue, no other threads can possibly race with these writes. Therefore, we can safely use `std::memory_order_relaxed`:
+
+### dsa_core/include/dsa/MpmcQueue.h
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  MpmcQueue(size_t RequestedCapacity) {
+    // ...
+    // Initialize the tickets for Lap 1
+    for (size_t i = 0; i < Capacity; ++i) {
+      Buffer[i].Sequence.store(i, std::memory_order_relaxed); 
+    }
+  }
+  // ...
+};
+```
+
+### Optimizing `Push()`
+
+In `Push()`, we perform several atomic operations. We need to carefully establish a memory contract with the consumer to prevent data races on the payload.
+
+- **Loading the Tail**: We load the global `Tail` index and attempt to increment it via CAS. Since the sequence ticket acts as our true synchronization guard for the payload, the `Tail` itself doesn't need to synchronize memory around it. We can use `std::memory_order_relaxed` for both the `load` and the `compare_exchange_weak()`.
+- **Reading the Ticket**: We should use `std::memory_order_acquire` when loading the sequence ticket. This half-fence tells the CPU: *"Absolutely no memory reads that appear below this line are allowed to float above it."* This prevents the CPU from speculatively pre-fetching the cell's payload before we have officially verified the ticket.
+- **Writing the Ticket**: After writing the payload, we advance the ticket to signal the consumer. We should use `std::memory_order_release`. This tells the CPU: *"Absolutely no memory writes that appear above this line are allowed to sink below it."* If we relaxed this, the CPU might update the ticket *before* it flushes the payload to RAM, causing a consumer to read uninitialized garbage.
+
+Implementing it would look like this:
+
+### dsa_core/include/dsa/MpmcQueue.h
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  // ...
+  bool Push(const T& Value) {
+    Cell* TargetCell;
+    size_t ExpectedTail;
+
+    do {
+      ExpectedTail = Tail.load(std::memory_order_relaxed); 
+      TargetCell = &Buffer[ExpectedTail & Mask];
+
+      // Read the ticket with an acquire fence
+      size_t Seq = TargetCell->Sequence.load(
+        std::memory_order_acquire 
+      );
+
+      intptr_t Diff = (intptr_t)Seq - (intptr_t)ExpectedTail;
+
+      if (Diff == 0) {
+        if (Tail.compare_exchange_weak(
+          ExpectedTail,
+          ExpectedTail + 1,
+          std::memory_order_relaxed 
+        )) {
+          break;
+        }
+      } else if (Diff < 0) {
+        return false;
+      }
+    } while (true);
+
+    TargetCell->Payload = Value;
+
+    // Advance the ticket with a release fence
+    TargetCell->Sequence.store(
+      ExpectedTail + 1,
+      std::memory_order_release 
+    );
+
+    return true;
+  }
+  // ...
+};
+```
+
+### Optimizing `Pop()`
+
+`Pop()` follows the exact same memory contract as `Push()`, just mirrored for reading.
+
+- **Loading the Head**: Just like the `Tail`, the `Head` index purely governs contention between consumers, not the payload synchronization. We use `std::memory_order_relaxed` for loading and CAS.
+- **Reading the Ticket**: We use `std::memory_order_acquire` to read the ticket. This ensures that the payload is fully synchronized from RAM *after* the ticket confirms the data is ready.
+- **Writing the Ticket**: After copying the payload out, we reset the ticket for the next generation of producers. We use `std::memory_order_release` to guarantee our payload read is completely finished before the green light is shown to future producers.
+
+We can implement it like this:
+
+### dsa_core/include/dsa/MpmcQueue.h
+
+```
+// ...
+
+template <typename T>
+class MpmcQueue {
+  // ...
+public:
+  // ...
+  bool Pop(T& OutValue) {
+    Cell* TargetCell;
+    size_t ExpectedHead;
+
+    do {
+      ExpectedHead = Head.load(std::memory_order_relaxed); 
+      TargetCell = &Buffer[ExpectedHead & Mask];
+
+      // Read the ticket with an acquire fence
+      size_t Seq = TargetCell->Sequence.load(
+        std::memory_order_acquire 
+      );
+
+      intptr_t Diff = (intptr_t)Seq - (intptr_t)(ExpectedHead + 1);
+
+      if (Diff == 0) {
+        if (Head.compare_exchange_weak(
+          ExpectedHead,
+          ExpectedHead + 1,
+          std::memory_order_relaxed 
+        )) {
+          break;
+        }
+      } else if (Diff < 0) {
+        return false;
+      }
+    } while (true);
+
+    OutValue = TargetCell->Payload;
+
+    // Reset the ticket with a release fence
+    TargetCell->Sequence.store(
+      ExpectedHead + Capacity,
+      std::memory_order_release 
+    );
+
+    return true;
+  }
+  // ...
+};
+```
+
+## Usage Example
+
+We can now safely expand our architecture from two cores to an entire thread pool. Below, we spawn 2 producers and 2 consumers to interact with our `MpmcQueue` simultaneously:
+
+### dsa_app/main.cpp
+
+```
+#include <print>
+#include <thread>
+#include <dsa/MpmcQueue.h>
+
+int main() {
+  MpmcQueue<int> JobQueue(1024);
+
+  auto producer = & {
+    for (int i = 1; i <= 3; ++i) {
+      int job_id = (producer_id * 100) + i;
+      std::println(
+        "Producer {} queued job {}",
+        producer_id, job_id
+      );
+      while (!JobQueue.Push(job_id)) {}
+    }
+  };
+
+  auto consumer = & {
+    int job_id;
+    int count = 0;
+
+    while (count < 3) {
+      if (JobQueue.Pop(job_id)) {
+        std::println(
+          "Consumer {} finished job {}",
+          consumer_id, job_id
+        );
+        ++count;
+      }
+    }
+  };
+
+  std::jthread p1(producer, 1);
+  std::jthread p2(producer, 2);
+  std::jthread c1(consumer, 1);
+  std::jthread c2(consumer, 2);
+}
+```
+
+The exact order of the output will vary on every run, but the hardware will flawlessly route every job from the producers to the consumers without any dropped jobs or data races:
+
+```
+Producer 1 queued job 101
+Producer 2 queued job 201
+Consumer 1 finished job 101
+Producer 1 queued job 102
+Consumer 2 finished job 201
+Producer 2 queued job 202
+Consumer 1 finished job 102
+Producer 1 queued job 103
+Consumer 2 finished job 202
+Consumer 1 finished job 103
+Producer 2 queued job 203
+Consumer 2 finished job 203
+```
+
+## Benchmarking
+
+Let's test the performance of our queue. We will create 8 producer threads and 8 consumer threads to pit our lock-free `MpmcQueue` against a `std::queue` protected by a `std::mutex`:
+
+### benchmarks/main.cpp
+
+```
+#include <benchmark/benchmark.h>
+#include <queue>
+#include <mutex>
+#include <thread>
+#include <vector>
+#include <dsa/MpmcQueue.h>
+
+// A thread-safe wrapper around std::queue
+template <typename T>
+class MutexQueue {
+  std::queue<T> Q;
+  std::mutex Mtx;
+public:
+  void Push(const T& val) {
+    std::lock_guard<std::mutex> lock(Mtx);
+    Q.push(val);
+  }
+  bool Pop(T& out) {
+    std::lock_guard<std::mutex> lock(Mtx);
+    if (Q.empty()) return false;
+    out = Q.front();
+    Q.pop();
+    return true;
+  }
+};
+
+static void BM_MutexMPMC(benchmark::State& state) {
+  for (auto _ : state) {
+    MutexQueue<int> MQ;
+    std::vector<std::jthread> threads;
+
+    // 8 Producers
+    for (int t = 0; t < 8; ++t) {
+      threads.emplace_back([&] {
+        for (int i = 0; i < 1'000'000; ++i) {
+          MQ.Push(i);
+        }
+      });
+    }
+
+    // 8 Consumers
+    for (int t = 0; t < 8; ++t) {
+      threads.emplace_back([&] {
+        int count = 0;
+        int val;
+        while (count < 1'000'000) {
+          if (MQ.Pop(val)) count++;
+        }
+      });
+    }
+  }
+}
+BENCHMARK(BM_MutexMPMC)->Unit(benchmark::kMillisecond);
+
+static void BM_LockFreeMPMC(benchmark::State& state) {
+  for (auto _ : state) {
+    MpmcQueue<int> LFQ(1024 * 1024);
+    std::vector<std::jthread> threads;
+
+    // 8 Producers
+    for (int t = 0; t < 8; ++t) {
+      threads.emplace_back([&] {
+        for (int i = 0; i < 1'000'000; ++i) {
+          while (!LFQ.Push(i)) {} // Spin if full
+        }
+      });
+    }
+
+    // 8 Consumers
+    for (int t = 0; t < 8; ++t) {
+      threads.emplace_back([&] {
+        int count = 0;
+        int val;
+        while (count < 1'000'000) {
+          if (LFQ.Pop(val)) count++;
+        }
+      });
+    }
+  }
+}
+BENCHMARK(BM_LockFreeMPMC)->Unit(benchmark::kMillisecond);
+```
+
+```
+------------------------------------
+Benchmark             Time       CPU
+------------------------------------
+BM_MutexMPMC       1450 ms   8200 ms
+BM_LockFreeMPMC     310 ms   2410 ms
+```
+
+In the `std::mutex` benchmark, 16 threads are endlessly colliding with the operating system's locks. The OS frantically context-switches, flushing registers and putting threads to sleep.
+
+In the `MpmcQueue`, the OS is completely unaware of the contention. The threads remain awake, spinning locally in their CAS loops and efficiently negotiating cache-line ownership via the hardware bus. It processes the same workload 4 times faster in these tests.
+
+### The Scaling Caveats
+
+While our MPMC queue is better than a mutex, it is important to understand its limitations. If we compare the throughput of this MPMC queue to the throughput of our SPSC queue from the previous lesson, the SPSC queue will win every time.
+
+In our SPSC queue, the producer owned the `Tail` cache line exclusively. In this MPMC queue, 8 producers are fighting for ownership of the `Tail` cache line to execute their CAS loops. This hardware contention causes cache ping-ponging on the silicon bus, wasting CPU cycles.
+
+Furthermore, "optimistic spinning" (like our `while (!LFQ.Push(i))` loop) burns 100% of the CPU core's power while it waits.
+
+Because of this, architectural pragmatism is required. If you need to route data from 4 threads to 1 thread, it is often faster to create 4 independent SPSC queues than to force them all into 1 MPMC queue. Reserve the heavy MPMC architecture for truly many-to-many communication networks that must share the same queue, like global job schedulers.
+
+## Complete Code
+
+Here is the complete implementation of our bounded lock-free `MpmcQueue`:
+
+### Files
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_core![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtZm9sZGVyIG1yLTIgdGV4dC1tdXRlZC1mb3JlZ3JvdW5kIiBmaWxsPSJub25lIiBoZWlnaHQ9IjE2IiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjIiIHZpZXdib3g9IjAgMCAyNCAyNCIgd2lkdGg9IjE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMCAyMGEyIDIgMCAwIDAgMi0yVjhhMiAyIDAgMCAwLTItMmgtNy45YTIgMiAwIDAgMS0xLjY5LS45TDkuNiAzLjlBMiAyIDAgMCAwIDcuOTMgM0g0YTIgMiAwIDAgMC0yIDJ2MTNhMiAyIDAgMCAwIDIgMloiPjwvcGF0aD48L3N2Zz4=)dsa_app![](data:image/svg+xml;base64,PHN2ZyBhcmlhLWhpZGRlbj0idHJ1ZSIgY2xhc3M9Imx1Y2lkZSBsdWNpZGUtY2hldnJvbi1yaWdodCIgZmlsbD0ibm9uZSIgaGVpZ2h0PSIxNiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiB2aWV3Ym94PSIwIDAgMjQgMjQiIHdpZHRoPSIxNiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOSAxOCA2LTYtNi02Ij48L3BhdGg+PC9zdmc+)
+
+Select a file to view its content
+
+## Summary
+
+In this lesson, we tackled the immense complexity of synchronizing many-to-many communication channels without OS locks.
+
+- **The Index Claim:** We used atomic `compare_exchange_weak()` (CAS) loops to safely allow multiple threads to contend for and claim indices from the `Head` and `Tail` counters.
+- **The Payload Race:** We discovered that simply claiming an index is insufficient, as the thread hasn't actually written its data yet. We solved this using **Sequence Tickets** to synchronize the physical payload transfer per slot.
+- **Generational Wrap-Around:** We allowed our `Head` and `Tail` integers to grow toward infinity, creating a natural generation tag that seamlessly manages the ring buffer's wrap-around logic.
+- **Padded Cells:** We bundled the payload and the atomic ticket into a `Cell` struct, and aligned it to the CPU's cache line size to prevent false sharing and bus thrashing between adjacent array slots.
+- **Memory Fences:** We optimized the memory order. The producer relies on an `acquire` fence to check the ticket, and a `release` fence to publish the payload. The consumer relies on the exact opposite to safely consume the data.
