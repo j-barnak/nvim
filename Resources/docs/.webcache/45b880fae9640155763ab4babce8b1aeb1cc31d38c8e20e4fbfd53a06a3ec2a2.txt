@@ -1,0 +1,530 @@
+![](https://smunix.github.io/dev.stephendiehl.com/fun/img/titles/parsing.png)
+
+# Parsing
+
+## Parser Combinators
+
+For parsing in Haskell it is quite common to use a family of libraries known as *parser combinators* which let us compose higher order functions to generate parsers. Parser combinators are a particularly expressive pattern that allows us to quickly prototype language grammars in an small embedded domain language inside of Haskell itself. Most notably we can embed custom Haskell logic inside of the parser.
+
+## NanoParsec
+
+So now let's build our own toy parser combinator library which we'll call **NanoParsec** just to get the feel of how these things are built.
+
+``` haskell
+{-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
+
+module NanoParsec where
+
+import Data.Char
+import Control.Monad
+import Control.Applicative
+```
+
+Structurally a parser is a function which takes an input stream of characters and yields a parse tree by applying the parser logic over sections of the character stream (called *lexemes*) to build up a composite data structure for the AST.
+
+``` haskell
+newtype Parser a = Parser { parse :: String -> [(a,String)] }
+```
+
+Running the function will result in traversing the stream of characters yielding a value of type `a` that usually represents the AST for the parsed expression, or failing with a parse error for malformed input, or failing by not consuming the entire stream of input. A more robust implementation would track the position information of failures for error reporting.
+
+``` haskell
+runParser :: Parser a -> String -> a
+runParser m s =
+  case parse m s of
+    [(res, [])] -> res
+    [(_, rs)]   -> error "Parser did not consume entire stream."
+    _           -> error "Parser error."
+```
+
+Recall that in Haskell the String type is defined to be a list of `Char` values, so the following are equivalent forms of the same data.
+
+``` haskell
+"1+2*3"
+['1', '+', '2', '*', '3']
+```
+
+We advance the parser by extracting a single character from the parser stream and returning in a tuple containing itself and the rest of the stream. The parser logic will then scrutinize the character and either transform it in some portion of the output or advance the stream and proceed.
+
+``` haskell
+item :: Parser Char
+item = Parser $ \s ->
+  case s of
+   []     -> []
+   (c:cs) -> [(c,cs)]
+```
+
+A bind operation for our parser type will take one parse operation and compose it over the result of second parse function. Since the parser operation yields a list of tuples, composing a second parser function simply maps itself over the resulting list and concat's the resulting nested list of lists into a single flat list in the usual list monad fashion. The unit operation injects a single pure value as the result, without reading from the parse stream.
+
+``` haskell
+bind :: Parser a -> (a -> Parser b) -> Parser b
+bind p f = Parser $ \s -> concatMap (\(a, s') -> parse (f a) s') $ parse p s
+
+unit :: a -> Parser a
+unit a = Parser (\s -> [(a,s)])
+```
+
+As the terminology might have indicated this is indeed a Monad (also Functor and Applicative).
+
+``` haskell
+instance Functor Parser where
+  fmap f (Parser cs) = Parser (\s -> [(f a, b) | (a, b) <- cs s])
+
+instance Applicative Parser where
+  pure = return
+  (Parser cs1) <*> (Parser cs2) = Parser (\s -> [(f a, s2) | (f, s1) <- cs1 s, (a, s2) <- cs2 s1])
+
+instance Monad Parser where
+  return = unit
+  (>>=)  = bind
+```
+
+Of particular importance is that this particular monad has a zero value (`failure`), namely the function which halts reading the stream and returns the empty stream. Together this forms a monoidal structure with a secondary operation (`combine`) which applies two parser functions over the same stream and concatenates the result. Together these give rise to both the Alternative and MonadPlus class instances which encode the logic for trying multiple parse functions over the same stream and handling failure and rollover.
+
+The core operator introduced here is the (`<|>`) operator for combining two optional paths of parser logic, switching to the second path if the first fails with the zero value.
+
+``` haskell
+instance MonadPlus Parser where
+  mzero = failure
+  mplus = combine
+
+instance Alternative Parser where
+  empty = mzero
+  (<|>) = option
+
+combine :: Parser a -> Parser a -> Parser a
+combine p q = Parser (\s -> parse p s ++ parse q s)
+
+failure :: Parser a
+failure = Parser (\cs -> [])
+
+option :: Parser a -> Parser a -> Parser a
+option  p q = Parser $ \s ->
+  case parse p s of
+    []     -> parse q s
+    res    -> res
+```
+
+Derived automatically from the Alternative typeclass definition are the `many` and `some` functions. Many takes a single function argument and repeatedly applies it until the function fails and then yields the collected results up to that point. The `some` function behaves similar except that it will fail itself if there is not at least a single match.
+
+``` haskell
+-- | One or more.
+some :: f a -> f [a]
+some v = some_v
+  where
+    many_v = some_v <|> pure []
+    some_v = (:) <$> v <*> many_v
+
+-- | Zero or more.
+many :: f a -> f [a]
+many v = many_v
+  where
+    many_v = some_v <|> pure []
+    some_v = (:) <$> v <*> many_v
+```
+
+On top of this we can add functionality for checking whether the current character in the stream matches a given predicate ( i.e is it a digit, is it a letter, a specific word, etc).
+
+``` haskell
+satisfy :: (Char -> Bool) -> Parser Char
+satisfy p = item `bind` \c ->
+  if p c
+  then unit c
+  else (Parser (\cs -> []))
+```
+
+Essentially this 50 lines code encodes the entire core of the parser combinator machinery. All higher order behavior can be written on top of just this logic. Now we can write down several higher level functions which operate over sections of the stream.
+
+`chainl1` parses one or more occurrences of `p`, separated by `op` and returns a value obtained by a recursing until failure on the left hand side of the stream. This can be used to parse left-recursive grammar.
+
+``` haskell
+oneOf :: [Char] -> Parser Char
+oneOf s = satisfy (flip elem s)
+
+chainl :: Parser a -> Parser (a -> a -> a) -> a -> Parser a
+chainl p op a = (p `chainl1` op) <|> return a
+
+chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
+p `chainl1` op = do {a <- p; rest a}
+  where rest a = (do f <- op
+                     b <- p
+                     rest (f a b))
+                 <|> return a
+```
+
+Using `satisfy` we can write down several combinators for detecting the presence of specific common patterns of characters ( numbers, parenthesized expressions, whitespace, etc ).
+
+``` haskell
+char :: Char -> Parser Char
+char c = satisfy (c ==)
+
+natural :: Parser Integer
+natural = read <$> some (satisfy isDigit)
+
+string :: String -> Parser String
+string [] = return []
+string (c:cs) = do { char c; string cs; return (c:cs)}
+
+token :: Parser a -> Parser a
+token p = do { a <- p; spaces ; return a}
+
+reserved :: String -> Parser String
+reserved s = token (string s)
+
+spaces :: Parser String
+spaces = many $ oneOf " \n\r"
+
+digit :: Parser Char
+digit = satisfy isDigit
+
+number :: Parser Int
+number = do
+  s <- string "-" <|> return []
+  cs <- some digit
+  return $ read (s ++ cs)
+
+parens :: Parser a -> Parser a
+parens m = do
+  reserved "("
+  n <- m
+  reserved ")"
+  return n
+```
+
+**And that's about it!** In a few hundred lines we have enough of a parser library to write down a simple parser for a calculator grammar. In the formal Backus–Naur Form our grammar would be written as:
+
+``` haskell
+number = [ "-" ] digit { digit }.
+digit  = "0" | "1" | ... | "8" | "9".
+expr   = term { addop term }.
+term   = factor { mulop factor }.
+factor = "(" expr ")" | number.
+addop  = "+" | "-".
+mulop  = "*".
+```
+
+The direct translation to Haskell in terms of our newly constructed parser combinator has the following form:
+
+``` haskell
+data Expr
+  = Add Expr Expr
+  | Mul Expr Expr
+  | Sub Expr Expr
+  | Lit Int
+  deriving Show
+
+eval :: Expr -> Int
+eval ex = case ex of
+  Add a b -> eval a + eval b
+  Mul a b -> eval a * eval b
+  Sub a b -> eval a - eval b
+  Lit n   -> n
+
+int :: Parser Expr
+int = do
+  n <- number
+  return (Lit n)
+
+expr :: Parser Expr
+expr = term `chainl1` addop
+
+term :: Parser Expr
+term = factor `chainl1` mulop
+
+factor :: Parser Expr
+factor =
+      int
+  <|> parens expr
+
+infixOp :: String -> (a -> a -> a) -> Parser (a -> a -> a)
+infixOp x f = reserved x >> return f
+
+addop :: Parser (Expr -> Expr -> Expr)
+addop = (infixOp "+" Add) <|> (infixOp "-" Sub)
+
+mulop :: Parser (Expr -> Expr -> Expr)
+mulop = infixOp "*" Mul
+
+run :: String -> Expr
+run = runParser expr
+
+main :: IO ()
+main = forever $ do
+  putStr "> "
+  a <- getLine
+  print $ eval $ run a
+```
+
+Now we can try out our little parser.
+
+``` bash
+$ runhaskell parsec.hs
+> 1+2
+3
+> 1+2*3
+7
+```
+
+**Generalizing String**
+
+The limitations of the String type are well-known, but what is particularly nice about this approach is that it adapts to different stream types simply by adding an additional parameter to the Parser type which holds the stream type. In its place a more efficient string data structure (`Text`, `ByteString`) can be used.
+
+``` haskell
+newtype Parser s a = Parser { parse :: s -> [(a,s)] }
+```
+
+For the first couple of simple parsers we will use the String type for simplicity's sake, but later we will generalize our parsers to use the `Text` type. The combinators and parsing logic will not change, only the lexer and language definition types will change slightly to a generalized form.
+
+## Parsec
+
+Now that we have the feel for parser combinators work, we can graduate to the full Parsec library. We'll effectively ignore the gritty details of parsing and lexing from now on. Although an interesting subject parsing is effectively a solved problem and the details are not terribly important for our purposes.
+
+The *Parsec* library defines a set of common combinators much like the operators we defined in our toy library.
+
+| Combinator | Description                                                                                                                                           |
+|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `char`     | Match the given character.                                                                                                                            |
+| `string`   | Match the given string.                                                                                                                               |
+| `<|>`      | The choice operator tries to parse the first argument before proceeding to the second. Can be chained sequentially to generate a sequence of options. |
+| `many`     | Consumes an arbitrary number of patterns matching the given pattern and returns them as a list.                                                       |
+| `many1`    | Like many but requires at least one match.                                                                                                            |
+| `sepBy`    | Match a arbitrary length sequence of patterns, delimited by a given pattern.                                                                          |
+| `optional` | Optionally parses a given pattern returning its value as a Maybe.                                                                                     |
+| `try`      | Backtracking operator will let us parse ambiguous matching expressions and restart with a different pattern.                                          |
+| `parens`   | Parses the given pattern surrounded by parentheses.                                                                                                   |
+
+**Tokens**
+
+To create a Parsec lexer we must first specify several parameters about how individual characters are handled and converted into tokens. For example some tokens will be handled as comments and simply omitted from the parse stream. Other parameters include indicating what characters are to be handled as keyword identifiers or operators.
+
+``` haskell
+langDef :: Tok.LanguageDef ()
+langDef = Tok.LanguageDef
+  { Tok.commentStart    = "{-"
+  , Tok.commentEnd      = "-}"
+  , Tok.commentLine     = "--"
+  , Tok.nestedComments  = True
+  , Tok.identStart      = letter
+  , Tok.identLetter     = alphaNum <|> oneOf "_'"
+  , Tok.opStart         = oneOf ":!#$%&*+./<=>?@\\^|-~"
+  , Tok.opLetter        = oneOf ":!#$%&*+./<=>?@\\^|-~"
+  , Tok.reservedNames   = reservedNames
+  , Tok.reservedOpNames = reservedOps
+  , Tok.caseSensitive   = True
+  }
+```
+
+**Lexer**
+
+Given the token definition we can create the lexer functions.
+
+``` haskell
+lexer :: Tok.TokenParser ()
+lexer = Tok.makeTokenParser langDef
+
+parens :: Parser a -> Parser a
+parens = Tok.parens lexer
+
+reserved :: String -> Parser ()
+reserved = Tok.reserved lexer
+
+semiSep :: Parser a -> Parser [a]
+semiSep = Tok.semiSep lexer
+
+reservedOp :: String -> Parser ()
+reservedOp = Tok.reservedOp lexer
+
+prefixOp :: String -> (a -> a) -> Ex.Operator String () Identity a
+prefixOp s f = Ex.Prefix (reservedOp s >> return f)
+```
+
+**Abstract Syntax Tree**
+
+In a separate module we'll now define the abstract syntax for our language as a datatype.
+
+``` haskell
+module Syntax where
+
+data Expr
+  = Tr
+  | Fl
+  | Zero
+  | IsZero Expr
+  | Succ Expr
+  | Pred Expr
+  | If Expr Expr Expr
+  deriving (Eq, Show)
+```
+
+**Parser**
+
+Much like before our parser is simply written in monadic blocks, each mapping a set of patterns to a construct in our `Expr` type. The toplevel entry point to our parser is the `expr` function which we can parse with by using the Parsec function `parse`.
+
+``` haskell
+prefixOp s f = Ex.Prefix (reservedOp s >> return f)
+
+
+-- Prefix operators
+table :: Ex.OperatorTable String () Identity Expr
+table = [
+    [
+      prefixOp "succ" Succ
+    , prefixOp "pred" Pred
+    , prefixOp "iszero" IsZero
+    ]
+  ]
+
+
+-- if/then/else
+ifthen :: Parser Expr
+ifthen = do
+  reserved "if"
+  cond <- expr
+  reservedOp "then"
+  tr <- expr
+  reserved "else"
+  fl <- expr
+  return (If cond tr fl)
+
+-- Constants
+true, false, zero :: Parser Expr
+true  = reserved "true"  >> return Tr
+false = reserved "false" >> return Fl
+zero  = reservedOp "0"   >> return Zero
+
+expr :: Parser Expr
+expr = Ex.buildExpressionParser table factor
+
+factor :: Parser Expr
+factor =
+      true
+  <|> false
+  <|> zero
+  <|> ifthen
+  <|> parens expr
+
+contents :: Parser a -> Parser a
+contents p = do
+  Tok.whiteSpace lexer
+  r <- p
+  eof
+  return r
+```
+
+The toplevel function we'll expose from our Parse module is `parseExpr` which will be called as the entry point in our REPL.
+
+``` haskell
+parseExpr s = parse (contents expr) "<stdin>" s
+```
+
+## Evaluation
+
+Our small language gives rise to two syntactic classes, values and expressions. Values are in *normal form* and cannot be reduced further. They consist of `True` and `False` values and literal numbers.
+
+``` haskell
+isNum Zero     = True
+isNum (Succ t) = isNum t
+isNum _        = False
+
+isVal :: Expr -> Bool
+isVal Tr = True
+isVal Fl = True
+isVal t | isNum t = True
+isVal _ = False
+```
+
+The evaluation of our languages uses the `Maybe` applicative to accommodate the fact that our reduction may halt at any level with a Nothing if the expression being reduced has reached a normal form or cannot proceed because the reduction simply isn't well-defined. The rules for evaluation are a single step by which an expression takes a single small step from one form to another by a given rule.
+
+``` haskell
+eval' x = case x of
+  IsZero Zero               -> Just Tr
+  IsZero (Succ t) | isNum t -> Just Fl
+  IsZero t                  -> IsZero <$> (eval' t)
+  Succ t                    -> Succ <$> (eval' t)
+  Pred Zero                 -> Just Zero
+  Pred (Succ t) | isNum t   -> Just t
+  Pred t                    -> Pred <$> (eval' t)
+  If Tr  c _                -> Just c
+  If Fl _ a                 -> Just a
+  If t c a                  -> (\t' -> If t' c a) <$> eval' t
+  _                         -> Nothing
+```
+
+At the toplevel we simply apply `eval'` repeatedly until either a value is reached or we're left with an expression that has no well-defined way to proceed. The term is "stuck" and the program is in an undefined state.
+
+``` haskell
+nf x = fromMaybe x (nf <$> eval' x)
+
+eval :: Expr -> Maybe Expr
+eval t = case nf t of
+  nft | isVal nft -> Just nft
+      | otherwise -> Nothing -- term is "stuck"
+```
+
+## REPL
+
+The driver for our simple language simply invokes all of the parser and evaluation logic in a loop feeding the resulting state to the next iteration. We will use the [haskeline](http://hackage.haskell.org/package/haskeline) library to give us readline interactions for the small REPL. Behind the scenes haskeline is using readline or another platform-specific system library to manage the terminal input. To start out we just create the simplest loop, which only parses and evaluates expressions and prints them to the screen. We'll build on this pattern in each chapter, eventually ending up with a more full-featured REPL.
+
+The two functions of note are the operations for the `InputT` monad transformer.
+
+``` haskell
+runInputT :: Settings IO -> InputT IO a -> IO a
+getInputLine :: String -> InputT IO (Maybe String)
+```
+
+When the user enters an `EOF` or sends a `SIGQUIT` to input, `getInputLine` will yield `Nothing` and can handle the exit logic.
+
+``` haskell
+process :: String -> IO ()
+process line = do
+  let res = parseExpr line
+  case res of
+    Left err -> print err
+    Right ex -> print $ runEval ex
+
+main :: IO ()
+main = runInputT defaultSettings loop
+  where
+  loop = do
+    minput <- getInputLine "Repl> "
+    case minput of
+      Nothing -> outputStrLn "Goodbye."
+      Just input -> (liftIO $ process input) >> loop
+```
+
+## Soundness
+
+Great, now let's test our little interpreter and indeed we see that it behaves as expected.
+
+``` bash
+Arith> succ 0
+succ 0
+
+Arith> succ (succ 0)
+succ (succ 0)
+
+Arith> iszero 0
+true
+
+Arith> if false then true else false
+false
+
+Arith> iszero (pred (succ (succ 0)))
+false
+
+Arith> pred (succ 0)
+0
+
+Arith> iszero false
+Cannot evaluate
+
+Arith> if 0 then true else false
+Cannot evaluate
+```
+
+Oh no, our calculator language allows us to evaluate terms which are syntactically valid but semantically meaningless. We'd like to restrict the existence of such terms since when we start compiling our languages later into native CPU instructions these kind errors will correspond to all sorts of nastiness (segfaults, out of bounds errors, etc). How can we make these illegal states unrepresentable to begin with?
+
+## Full Source
+
+- [NanoParsec](https://github.com/sdiehl/write-you-a-haskell/blob/master/chapter3/parsec.hs)
+- [Calculator](https://github.com/sdiehl/write-you-a-haskell/tree/master/chapter3/calc)

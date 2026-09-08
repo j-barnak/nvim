@@ -827,6 +827,20 @@ if mode == "content":
                            "table.sec-table"):
             t.decompose()
 
+    if opt("wyah"):
+        # Write You a Haskell (Stephen Diehl, smunix mirror): the chapter body
+        # opens with a hidden <div style="display:none"> holding a MathJax
+        # \newcommand macro preamble, which otherwise renders as a wall of LaTeX
+        # at the top of the text. Drop every display:none block. Code is
+        # <pre class="sourceCode haskell"> (or bash); reduce the class to the
+        # bare language so it fences as haskell/bash instead of "sourceCode".
+        for d in el.select('div[style*="display:none"], div[style*="display: none"]'):
+            d.decompose()
+        for p in el.select("pre.sourceCode"):
+            lang = next((c for c in (p.get("class") or []) if c in ("haskell", "bash")), None)
+            if lang:
+                p["class"] = [lang]
+
     if opt("coqdoc"):
         # Software Foundations (coqdoc HTML): #main is alternating
         # <div class="doc"> prose and <div class="code"> Coq listings. Each code

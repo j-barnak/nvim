@@ -2516,6 +2516,7 @@ local pick_studyplan_cpp = frozen_web_provider("studyplan-pro-cpp", "Pro C++> ")
 local pick_studyplan_dsa = frozen_web_provider("studyplan-dsa", "DSA> ")
 local pick_lyah = frozen_web_provider("lyah", "LYAH> ")
 local pick_sf = frozen_web_provider("software-foundations-lf", "Software Foundations> ")
+local pick_wyah = frozen_web_provider("write-you-a-haskell", "Write You a Haskell> ")
 local pick_lazyfoo_sdl3 = frozen_web_provider("lazyfoo-sdl3", "SDL3> ")
 local pick_qemu_internals = frozen_web_provider("qemu-internals", "QEMU> ")
 local pick_jit_series = frozen_web_provider("jit-series", "JIT> ")
@@ -3335,6 +3336,7 @@ local WEB_BOOKS = {
 	{ title = "Data Structures & Algorithms (studyplan.dev)", key = "studyplan-dsa", run = pick_studyplan_dsa },
 	{ title = "Learn You a Haskell for Great Good!", key = "lyah", run = pick_lyah },
 	{ title = "Software Foundations: Logic Foundations", key = "software-foundations-lf", run = pick_sf },
+	{ title = "Write You a Haskell (Stephen Diehl)", key = "write-you-a-haskell", run = pick_wyah },
 	{ title = "LazyFoo SDL3 Tutorials", key = "lazyfoo-sdl3", run = pick_lazyfoo_sdl3 },
 	{ title = "QEMU Internals (Airbus Seclab)", key = "qemu-internals", run = pick_qemu_internals },
 	{ title = "JIT (Series)", key = "jit-series", run = pick_jit_series },
@@ -3548,6 +3550,7 @@ LOCATION["studyplan-pro-cpp"] = { index = "studyplan-pro-cpp/index.tsv", unit = 
 LOCATION["studyplan-dsa"] = { index = "studyplan-dsa/index.tsv", unit = "chapter" }
 LOCATION["lyah"] = { index = "lyah/index.tsv", unit = "chapter" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
+LOCATION["write-you-a-haskell"] = { index = "write-you-a-haskell/index.tsv", unit = "chapter" }
 LOCATION["lazyfoo-sdl3"] = { index = "lazyfoo-sdl3/index.tsv", unit = "chapter" }
 LOCATION["qemu-internals"] = { index = "qemu-internals/index.tsv", unit = "chapter" }
 LOCATION["jit-series"] = { index = "jit-series/index.tsv", unit = "chapter" }
