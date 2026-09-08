@@ -1851,6 +1851,12 @@ local function make_versioned(name, spec)
 						return require("config.src").open(
 							name .. "/" .. version, src_url, nil, spec.excl, version, spec.submodules)
 					end
+					-- docs_mode "latest": docs live in a separate repo not tagged
+					-- per release (wiki/website/book) or generated from headers, so
+					-- only the SOURCE is versioned; docs open at their tip.
+					if spec.docs_mode == "latest" and spec.docs_fn then
+						return spec.docs_fn()
+					end
 					if spec.docs_mode == "doxygen" then
 						return pick_doxygen_at(name, version, spec)
 					end
@@ -1969,8 +1975,13 @@ local SRC_URLS = {
 }
 -- Providers whose useful source is a different repo than their doc set: aya's
 -- docs are the book, but "explore the source" means the crate itself.
-local GS_OVERRIDE = {
-	aya = "https://github.com/aya-rs/aya",
+local GS_OVERRIDE = {}
+-- Providers whose docs are latest-only (a separate untagged wiki/website/book or
+-- doxygen-from-headers) but whose SOURCE is versioned: :Src from the docs cannot
+-- know which release you want, so it points you at the version picker instead.
+local SRC_WARN = {
+	sdl2 = true, sdl3 = true, frida = true, aya = true,
+	bap = true, libdrgn = true, sfml = true,
 }
 -- Providers browsed per release tag: gs must resolve the source to the SAME tag
 -- as the docs being read. The kernel keeps its own branch below because it also
@@ -2026,6 +2037,11 @@ gs_source = function(dir)
 	-- First path segment under the docs cache is the provider name (simple
 	-- providers live at <name>/master, others at <name>/… or <name>/<ver>).
 	local name = dir:match("/docs/([^/]+)")
+	if name and SRC_WARN[name] then
+		return vim.notify(
+			"Source for " .. name .. " is versioned; open it with :V then \"Explore source\".",
+			vim.log.levels.INFO)
+	end
 	if name == "books" then
 		-- Books share the "books" segment; resolve the per-book repo by slug.
 		local slug = dir:match("/docs/books/[^/]+/([^/]+)")
@@ -3883,24 +3899,32 @@ local providers = {
 	{ name = "bpftrace", key = "bpftrace", run = register_versioned("bpftrace", vspec(simple.bpftrace, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "bpftrace" })) },
 	{ name = "eBPF ABI reference (helpers / kfuncs / maps / program types)", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
 	{ name = "eBPF (Cilium Reference: architecture, XDP, tc, toolchain)", key = "cilium", run = make_simple("cilium", simple.cilium) },
-	{ name = "Aya", key = "aya", run = pick_aya },
+	{ name = "Aya", key = "aya", run = register_versioned("aya", { src_url = "https://github.com/aya-rs/aya", tagre = "aya-v[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^aya%-v%d", label = "Aya", docs_mode = "latest", docs_fn = pick_aya }) },
 	{ name = "drgn", key = "drgn", run = register_versioned("drgn", vspec(simple.drgn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "drgn" })) },
 	{
 		name = "libdrgn",
 		key = "libdrgn",
-		run = function()
-			pick_doxygen("libdrgn", "https://github.com/osandov/drgn", "/libdrgn", "/libdrgn", "drgn.h")
-		end,
+		run = register_versioned("libdrgn", {
+			src_url = "https://github.com/osandov/drgn", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+",
+			label = "libdrgn", docs_mode = "latest",
+			docs_fn = function()
+				pick_doxygen("libdrgn", "https://github.com/osandov/drgn", "/libdrgn", "/libdrgn", "drgn.h")
+			end,
+		}),
 	},
 	{
 		name = "SFML",
 		key = "sfml",
-		run = function()
-			pick_doxygen("sfml", "https://github.com/SFML/SFML", "/include", "/include", "*.hpp *.h *.inl")
-		end,
+		run = register_versioned("sfml", {
+			src_url = "https://github.com/SFML/SFML", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+",
+			label = "SFML", diskpat = "^%d", docs_mode = "latest",
+			docs_fn = function()
+				pick_doxygen("sfml", "https://github.com/SFML/SFML", "/include", "/include", "*.hpp *.h *.inl")
+			end,
+		}),
 	},
-	{ name = "SDL2", key = "sdl2", run = make_simple("sdl2", simple.sdl2) },
-	{ name = "SDL3", key = "sdl3", run = make_simple("sdl3", simple.sdl3) },
+	{ name = "SDL2", key = "sdl2", run = register_versioned("sdl2", { src_url = "https://github.com/libsdl-org/SDL", tagre = "release-2\\.[0-9]+\\.[0-9]+", diskpat = "^release%-2", label = "SDL2", docs_mode = "latest", docs_fn = make_simple("sdl2", simple.sdl2) }) },
+	{ name = "SDL3", key = "sdl3", run = register_versioned("sdl3", { src_url = "https://github.com/libsdl-org/SDL", tagre = "release-3\\.[0-9]+\\.[0-9]+", diskpat = "^release%-3", label = "SDL3", docs_mode = "latest", docs_fn = make_simple("sdl3", simple.sdl3) }) },
 	{ name = "OpenGL", key = "opengl", run = make_simple("opengl", simple.opengl) },
 	{ name = "AFL++", key = "aflpp", run = register_versioned("aflpp", vspec(simple.aflpp, "v[0-9]+\\.[0-9]+[a-z]?", { label = "AFL++", submodules = true })) },
 	-- AFL++ vendored submodules, each also reachable on its own. The three that
@@ -3944,10 +3968,10 @@ local providers = {
 	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
 	{ name = "Haskell (Hoogle)", key = "haskell", run = pick_haskell },
 	{ name = "Rust reference", key = "rust", run = pick_rust },
-	{ name = "Frida", key = "frida", run = make_simple("frida", simple.frida) },
+	{ name = "Frida", key = "frida", run = register_versioned("frida", { src_url = "https://github.com/frida/frida", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "Frida", docs_mode = "latest", docs_fn = make_simple("frida", simple.frida) }) },
 	{ name = "Triton", key = "triton", run = register_versioned("triton", vspec(simple.triton, "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Triton" })) },
 	{ name = "angr", key = "angr", run = register_versioned("angr", vspec(simple.angr, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "angr" })) },
-	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") },
+	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = register_versioned("bap", { src_url = "https://github.com/BinaryAnalysisPlatform/bap", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "BAP", docs_mode = "latest", docs_fn = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") }) },
 	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI" })) },
 	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone" })) },
 	{ name = "Binary Ninja API", key = "binja", run = register_versioned("binja", vspec(simple.binja, "v[0-9]+\\.[0-9]+\\.[0-9]+-stable", { label = "Binary Ninja API", diskpat = "^v%d" })) },
