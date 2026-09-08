@@ -413,7 +413,17 @@ elif [ "$4" = book ] && [ "$SLUG" = reverse-engineering-for-beginners ]; then
       }
       for (k in best) print k"\t"best[k]
     }' "$OUT/.all.tsv" \
-    | sort -t"$(printf '\t')" -k1,1n -s > "$OUT/.ch.tsv"
+    | sort -t"$(printf '\t')" -k1,1n -s \
+    | awk -F'\t' 'BEGIN{OFS="\t"}
+        # "SIMD" (section 1.36) begins partway down page 535, whose top holds
+        # the tail of "LARGE_INTEGER structure case" (its RtlLargeIntegerAdd C
+        # listing and the little-endian wrap-up). Page-granular splitting put
+        # all of page 535 in the SIMD file, so LARGE_INTEGER dangled mid-sentence
+        # ("...what we can find in Windows Research Kernel:") and SIMD opened with
+        # foreign content. Give SIMD a cut_anchor on its printed heading so page
+        # 535 is shared: LARGE_INTEGER keeps everything up to the heading and SIMD
+        # starts at it.
+        $2=="SIMD"{print $1,$2,"1.36 SIMD"; next} {print}' > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
   # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
   # no title pattern can find them; the split follows the outline's shape.
