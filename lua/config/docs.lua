@@ -181,8 +181,21 @@ local function docs_toc()
 			if num then
 				depth = select(2, num:gsub("%.", "")) + 1
 				title = num .. "  " .. sect
-			elseif L:match("^%s*%u[%u][%u &/,()'-]*$") then
-				depth, title = 1, L -- man-page section header (NAME, SEE ALSO, …)
+			else
+				-- RISC-V (and other asciidoc-set) specs number their sections
+				-- "9.1. Base Vector Architecture": the number ends in a dot and is
+				-- followed by a SINGLE space, so the Intel form above (no trailing
+				-- dot, two spaces) matches none of them and every RISC-V chapter's
+				-- TOC came up empty. Require an internal dot ("9.1", not a bare
+				-- "1.") so ordered-list items in prose are not swept in, allow the
+				-- trailing dot, and take a title that starts with a letter or digit.
+				local rnum, rsect = L:match("^%s*(%d+%.[%d.]*%d)%.?%s+([%u%d].*)$")
+				if rnum then
+					depth = select(2, rnum:gsub("%.", "")) + 1
+					title = rnum .. "  " .. rsect
+				elseif L:match("^%s*%u[%u][%u &/,()'-]*$") then
+					depth, title = 1, L -- man-page section header (NAME, SEE ALSO, …)
+				end
 			end
 		end
 		if title then
