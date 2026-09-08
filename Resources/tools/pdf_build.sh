@@ -96,6 +96,27 @@ book_fix() {
 pre_fix() {
   if [ -n "$SSAFIX" ] && [ -f "$SSAFIX" ]; then awk -f "$SSAFIX"; else cat; fi
 }
+# caption_fix: pdftotext -layout preserves each line's absolute x-position, so a
+# figure/listing/table caption that is centred (or set in a page column) in the
+# source lands with a wide, page-position-dependent run of leading spaces
+# ("                    Listing 1.102: GCC 4.8.1"). Prose and code already sit at
+# the left margin, so these floating captions are the one visible formatting
+# inconsistency. Left-align them. The trigger is deliberately narrow to protect
+# prose: the line, once trimmed, must OPEN with "Listing|Figure|Table|Algorithm|
+# Example <number>:" - a figure number followed by a COLON. That colon is what
+# separates a real caption from an inline reference that merely begins a wrapped
+# line. Captions come in two punctuations - "Listing 1.102: GCC 4.8.1" (colon)
+# and "Table 4. Instruction interface signals" (dot) - so after the figure
+# number an optional ":" or "." may appear, then the TITLE. The title must start
+# with an upper-case letter, a digit or "(": that is what tells a caption from an
+# inline reference that opens a wrapped line, because a reference continues in
+# lower case ("Table 5.3 shows the sections", "Table 2-19 summarizes ..."). Body
+# text and code never open this way, so every other line passes through unchanged.
+caption_fix() {
+  awk '{ t=$0; sub(/^[ \t]+/,"",t)
+         if (t ~ /^(Listing|Figure|Table|Algorithm|Example) [0-9][-0-9A-Za-z.,\/]*[:.]?[ ]+[A-Z0-9(]/) print t
+         else print $0 }'
+}
 cut_anchor() {
   if [ -z "$1" ] && [ -z "$2" ]; then cat; return; fi
   awk -v s="$1" -v e="$2" '
@@ -178,6 +199,7 @@ emit() {
     | cut_anchor "$4" "$5" \
     | relocate_footnote_in_code \
     | book_fix \
+    | caption_fix \
     | cat -s > "$OUT/$n $f.txt"
 }
 # Book mode ($4=book): pick chapter/part/appendix boundaries from the outline by
