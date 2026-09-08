@@ -1391,9 +1391,9 @@ local simple = {
 	},
 	llvm = {
 		url = "https://github.com/llvm/llvm-project",
-		sparse = "/llvm/docs",
+		sparse = "/llvm/docs /clang/docs /clang-tools-extra/docs /lld/docs /lldb/docs /flang/docs /mlir/docs /polly/docs /bolt/docs /compiler-rt/docs /libc/docs /libcxx/docs /libunwind/docs /openmp/docs",
 		marker = "llvm/docs",
-		browse = "/llvm/docs",
+		browse = "",
 		exts = "-e rst -e md",
 		prompt = "LLVM> ",
 	},
@@ -1484,9 +1484,7 @@ local simple = {
 		-- Upstream /docs/*.md are just redirect stubs to docs.qiling.io; the real,
 		-- runnable documentation is the example scripts, so browse those.
 		url = "https://github.com/qilingframework/qiling",
-		sparse = "/examples",
-		marker = "examples",
-		browse = "/examples",
+		sparse = "/docs /examples", marker = "docs", browse = "",
 		exts = "-e py -e md -e rst -e txt",
 		prompt = "Qiling example> ",
 	},
@@ -1963,6 +1961,12 @@ end
 -- Non-`simple` providers whose docs still have a real upstream source repo, so
 -- gs works from them too (doxygen libs, sqlite, rust, ghidra, the bap wiki).
 local SRC_URLS = {
+	libnyx = "https://github.com/nyx-fuzz/libnyx",
+	["nyx-packer"] = "https://github.com/nyx-fuzz/packer",
+	["qemu-libafl-bridge"] = "https://github.com/AFLplusplus/qemu-libafl-bridge",
+	["coresight-trace"] = "https://github.com/AFLplusplus/coresight-trace",
+	["grammar-mutator"] = "https://github.com/AFLplusplus/Grammar-Mutator",
+	["kvm-nyx"] = "https://github.com/nyx-fuzz/KVM-Nyx",
 	libdrgn = "https://github.com/osandov/drgn",
 	sfml = "https://github.com/SFML/SFML",
 	sqlite = "https://github.com/sqlite/sqlite",
@@ -3930,14 +3934,15 @@ local providers = {
 	-- AFL++ vendored submodules, each also reachable on its own. The three that
 	-- publish release tags get a version picker (source-only, docs_mode "none");
 	-- the branch-tracked rest open source at their default branch.
-	{ name = "AFL++: qemuafl", key = "qemuafl", run = register_versioned("qemuafl", { url = "https://github.com/AFLplusplus/qemuafl", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemuafl", docs_mode = "none" }) },
-	{ name = "AFL++: unicornafl", key = "unicornafl", run = register_versioned("unicornafl", { url = "https://github.com/AFLplusplus/unicornafl", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "unicornafl", docs_mode = "none" }) },
-	{ name = "AFL++: QEMU-Nyx", key = "qemu-nyx", run = register_versioned("qemu-nyx", { url = "https://github.com/nyx-fuzz/QEMU-Nyx", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "QEMU-Nyx", docs_mode = "none" }) },
-	{ name = "AFL++: libnyx", key = "libnyx", run = src_only("libnyx", "https://github.com/nyx-fuzz/libnyx") },
-	{ name = "AFL++: packer", key = "nyx-packer", run = src_only("nyx-packer", "https://github.com/nyx-fuzz/packer") },
-	{ name = "AFL++: qemu-libafl-bridge", key = "qemu-libafl-bridge", run = src_only("qemu-libafl-bridge", "https://github.com/AFLplusplus/qemu-libafl-bridge") },
-	{ name = "AFL++: coresight-trace", key = "coresight-trace", run = src_only("coresight-trace", "https://github.com/AFLplusplus/coresight-trace") },
-	{ name = "AFL++: grammar-mutator", key = "grammar-mutator", run = src_only("grammar-mutator", "https://github.com/AFLplusplus/Grammar-Mutator") },
+	{ name = "AFL++: qemuafl", key = "qemuafl", run = register_versioned("qemuafl", { url = "https://github.com/AFLplusplus/qemuafl", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemuafl", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc" }) },
+	{ name = "AFL++: unicornafl", key = "unicornafl", run = register_versioned("unicornafl", { url = "https://github.com/AFLplusplus/unicornafl", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "unicornafl", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc" }) },
+	{ name = "AFL++: QEMU-Nyx", key = "qemu-nyx", run = register_versioned("qemu-nyx", { url = "https://github.com/nyx-fuzz/QEMU-Nyx", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemu-nyx", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc" }) },
+	{ name = "AFL++: libnyx", key = "libnyx", run = make_simple("libnyx", { url = "https://github.com/nyx-fuzz/libnyx", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "libnyx> " }) },
+	{ name = "AFL++: packer", key = "nyx-packer", run = make_simple("nyx-packer", { url = "https://github.com/nyx-fuzz/packer", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "nyx-packer> " }) },
+	{ name = "AFL++: qemu-libafl-bridge", key = "qemu-libafl-bridge", run = make_simple("qemu-libafl-bridge", { url = "https://github.com/AFLplusplus/qemu-libafl-bridge", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "qemu-libafl-bridge> " }) },
+	{ name = "AFL++: coresight-trace", key = "coresight-trace", run = make_simple("coresight-trace", { url = "https://github.com/AFLplusplus/coresight-trace", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "coresight-trace> " }) },
+	{ name = "AFL++: grammar-mutator", key = "grammar-mutator", run = make_simple("grammar-mutator", { url = "https://github.com/AFLplusplus/Grammar-Mutator", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "grammar-mutator> " }) },
+	{ name = "Nyx: KVM-Nyx", key = "kvm-nyx", run = make_simple("kvm-nyx", { url = "https://github.com/nyx-fuzz/KVM-Nyx", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "kvm-nyx> " }) },
 	{ name = "Python", key = "python", run = make_simple("python", simple.python) },
 	{ name = "LLVM", key = "llvm", run = register_versioned("llvm", vspec(simple.llvm, "llvmorg-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LLVM", diskpat = "^llvmorg%-%d" })) },
 	{ name = "Xen", key = "xen", run = register_versioned("xen", vspec(simple.xen, "RELEASE-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Xen", diskpat = "^RELEASE%-%d" })) },
