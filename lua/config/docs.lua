@@ -2970,12 +2970,16 @@ local function pick_unicorn()
 				pick_files(d .. "/samples", "-e c -e h", "Unicorn samples> ")
 			end
 		end
-		local found = resolve_docs("unicorn/master", "docs")
+		-- Marker is "bindings" (not "docs"): an older Unicorn clone fetched only
+		-- docs+samples, and keying on "docs" would treat that stale tree as complete
+		-- so the bindings/tests views came up empty. Requiring "bindings" makes such
+		-- a clone miss the cache and re-fetch with the full sparse set below.
+		local found = resolve_docs("unicorn/master", "bindings")
 		if found then return go(found) end
 		if not have("git") then
 			return vim.notify("git is needed to fetch the Unicorn source", vim.log.levels.WARN)
 		end
-		ensure_repo(data_root .. "/unicorn/master", UNICORN_URL, UNICORN_SPARSE, "docs", go)
+		ensure_repo(data_root .. "/unicorn/master", UNICORN_URL, UNICORN_SPARSE, "bindings", go)
 	end
 	last_picker = pick_unicorn
 	fzf().fzf_exec({
