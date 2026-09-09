@@ -1,0 +1,2749 @@
+                    Chapter 13
+    Synchronization and State
+
+“The future influences the present just as much as the past.”
+   Friedrich Nietzsche
+
+Introduction
+Up to this point, most of the vulnerabilities you’ve seen occur in a lone synchronous
+code path; that is, each vulnerability can be traced from a single entry point to an end-
+point. However, most modern software responds asynchronously to external triggers
+such as UNIX signals, Windows events, or thrown exceptions. Asynchronous execution
+is even more common with the growing popularity of multithreaded programming, in
+which different threads of execution share the same address space. These multithread-
+ing and multiprocessing applications introduce unique security vulnerabilities that
+occur when an attacker can manipulate the state of concurrent instances of execution.
+This chapter shows you how to understand and identify the complex vulnerabilities that
+result from security oversights in this type of state manipulation.
+
+Certain types of operations require atomicity—that is, they must happen in an
+uninterruptible sequence. Errors can occur when applications fail to enforce atomicity
+requirements between concurrent instances of execution. To understand this issue,
+imagine two processes sharing a memory segment—one process writing to it and one
+reading from it, as shown in Figure 13-1.
+
+                      Shared memory
+                           block
+
+    Writer                                          Reader
+   process                                          process
+
+Figure 13-1   Shared memory between two processes
+
+     The reader process could be interrupted while copying data out of the memory
+segment by the writer process, which places alternative data at the location being
+read from. Likewise, the writer process could be interrupted by the reader when it’s
+only half finished writing data into the shared memory segment. In both situations,
+the shared memory segment is said to be in an inconsistent state because it’s halfway
+through an operation that should have been atomic between the two processes.
+     OSs provide synchronization primitives that address concurrent programming
+requirements. Atomic access to resources is often controlled through a mutual exclu-
+sion (mutex) primitive. When a thread attempts to access the shared resource, it must
+first acquire the mutex. Acquiring a mutex means that other processes or threads
+attempting to acquire the same mutex are blocked (waiting) until the owner releases
+the mutex. Acquiring ownership of a mutex may also be referred to as locking or hold-
+ing; releasing ownership of a mutex may be referred to as unlocking or signaling.
+
+     Unfortunately, complex locking requirements can make it difficult to use synchro-
+nization APIs correctly. Additionally, code with concurrency issues exhibits symptoms
+infrequently, with error conditions that often appear random and non-repeatable. This
+combination of factors makes concurrency issues extremely difficult to identify and
+trace. As a result, it’s easy for errors of this nature to go undiagnosed for a long time,
+simply because the bug can’t be reproduced with what appears to be identical input.The
+following sections cover the basic problems that concurrent programming introduces so
+that you can relate this material to more concrete vulnerabilities later in the chapter.
+
+Reentrancy and Asynchronous-Safe Code
+The first step in understanding concurrency issues involves familiarizing yourself
+with the concept of reentrancy. Reentrancy refers to a function’s capability to work
+correctly, even when it’s interrupted by another running thread that calls the same
+function. That is, a function is reentrant if multiple instances of the same function
+can run in the same address space concurrently without creating the potential for
+inconsistent states. Take a look at an example of a non-reentrant function:
+struct list *global_list;
+int global_list_count;
+
+int list_add(struct list *element)
+{
+     struct list *tmp;
+
+     if(global_list_count > MAX_ENTRIES)
+          return -1;
+
+     for(list = global_list; list->next; list = list->next);
+
+     list->next = element;
+     element->next = NULL;
+     global_list_count++;
+
+     return 0;
+}
+
+     For this example, assume that there is a list_init()function that initializes the
+list with a single member, so that a NULL pointer dereference doesn’t occur in the
+list_add() function. This function adds an element to the list as it should, but it’s
+not a reentrant function. If it’s interrupted by another running thread that calls
+
+list_add() as well, both instances of the function simultaneously modify the
+global_list and global_list_count variables, which produces unpredictable
+results. For a function to be reentrant, it must not modify any global variables or
+shared resources without adequate locking mechanisms in place. Here’s another
+example of a function that handles global data in a non-reentrant manner:
+struct CONNECTION
+{
+      int sock;
+      unsigned char *buffer;
+      size_t bytes_available, bytes_allocated;
+} client;
+
+size_t bytes_available(void)
+{
+      return client->bytes_available;
+}
+
+int retrieve_data(char *buffer, size_t length)
+{
+      if(length < bytes_available())
+             memcpy(buffer, client->buffer, length);
+      else
+             memcpy(buffer, client->buffer, bytes_available());
+
+      return 0;
+}
+
+    The retrieve_data() function reads some data from a global structure into a des-
+tination buffer. To make sure it doesn’t overflow the destination buffer, the length
+parameter is validated against how many bytes are available in the data buffer received
+from a client. The code is fine in a single uninterruptible context, but what happens if
+you interrupt this function with another thread that changes the state of the client
+CONNECTION structure? Specifically, you could make it so that bytes_available()
+returned a value less than length initially, and then interrupt it before the memcpy()
+operation with a function that changes client->bytes_available to be larger than
+length. Therefore, when program execution returned to retrieve_data(), it would
+copy an incorrect number of bytes into the buffer, resulting in an overflow.
+
+    As you can see, synchronization issues can be quite subtle, and even code
+that appears safe at a glance can suddenly become unsafe when it’s placed in an
+interruptible environment such as a multithreaded application. This chapter
+covers several vulnerability types that are a direct result of using non-reentrant
+functions when reentrancy is required.
+
+Race Conditions
+A program is said to contain a race condition if the outcome of an operation is
+successful only if certain resources are acted on in an expected order. If the
+resources aren’t used in this specific order, program behavior is altered and the
+result becomes undefined. To understand this problem, consider a program that
+contains several threads—a producer thread that adds objects to a queue and
+multiple consumers that take objects from the queue and process them, as
+shown in the following code:
+
+struct element *queue;
+
+int queueThread(void)
+{
+    struct element *new_obj, *tmp;
+
+    for(;;)
+    {
+         wait_for_request();
+
+         new_obj = get_request();
+
+         if(queue == NULL)
+         {
+              queue = new_obj;
+              continue;
+         }
+
+         for(tmp = queue; tmp->next; tmp = tmp->next)
+              ;
+
+         tmp->next = new_obj;
+    }
+}
+
+int dequeueThread(void)
+{
+      for(;;)
+      {
+          struct element *elem;
+
+          if(queue == NULL)
+                continue;
+
+          elem = queue;
+          queue = queue->next;
+
+          .. process element ..
+      }
+}
+
+    The problem with this code is it modifies a shared structure without any locking
+to ensure that other threads don’t also modify or access the same structure simulta-
+neously. Imagine, for example, that dequeueThread() is running in one thread, and
+executes the following instruction:
+elem = queue;
+
+    The structure is in an inconsistent state if the thread is interrupted after this
+code runs but before updating the queue variable to point to the next element. This
+state results in two threads de-queuing the same element and simultaneously
+attempting to operate on it.
+
+Starvation and Deadlocks
+Starvation can happen when a thread or set of threads never receives ownership of
+a synchronization object for some reason, so the threads are prevented from doing
+the work they’re supposed to do. Starvation can be the result of a thread waiting to
+acquire ownership of too many objects or other threads with a higher priority con-
+stantly hogging the CPU, thus not allowing the lower priority thread to ever be
+scheduled for execution.
+    Deadlocks are another problem encountered frequently in concurrent
+programming. They occur when two or more threads are using multiple
+synchronization objects at once but in a different order. In this situation, a lock
+is used to avoid a race condition, but the locks are acquired in an unexpected
+
+order, such that two threads of execution are waiting for locks that can never be
+released because it’s owned by the other thread. The following code shows a
+simple example:
+Int thread1(void)
+{
+    lock(mutex1);
+
+    .. code ..
+
+    lock(mutex2);
+
+    .. more code ..
+
+    unlock(mutex2);
+    unlock(mutex1);
+
+    return 0;
+}
+
+int thread2(void)
+{
+    lock(mutex2);
+
+    .. code ..
+
+    lock(mutex1);
+
+    .. more code ..
+
+    unlock(mutex2);
+    unlock(mutex1);
+
+    return 0;
+}
+
+   This example has two threads that use mutex1 and mutex2 but in a different
+order, and both threads lock them simultaneously. This is a recipe for disaster! The
+problem can be best understood by playing out a sample scenario:
+       1. thread1 locks mutex1.
+       2. thread2 interrupts and locks mutex2.
+       3. thread2 tries to lock mutex1, but it’s held by thread1, so thread2 blocks.
+       4. thread1 resumes running and attempts to lock mutex2, but thread2 holds it,
+          so thread1 blocks.
+    Both threads are now unable to continue because they are waiting on a condi-
+tion that can never be satisfied. For a deadlock to be possible, four conditions need
+to exist:
+      ■ Mutual exclusion—The program needs to require exclusive access to a resource.
+
+      ■ Hold and wait—A thread or process needs to lock one resource and then wait
+       for another.
+      ■ No preemption—An external entity can’t force a thread or process to relinquish
+       ownership of a resource.
+      ■ Circular wait—Threads or processes wait on synchronization objects in a circular
+       fashion. That is, thread1 might wait on a resource from thread2, which is wait-
+       ing on a resource from thread3, which is waiting on a resource from thread1.
+     If all four conditions exist in a program, there’s the possibility for deadlock.
+Deadlock might also occur if a thread or process neglects to release a resource when
+it’s supposed to because of a programming error.
+
+Process Synchronization
+Concurrent programming requires the use of process synchronization services the
+kernel exposes to userland applications. Both UNIX and Windows provide these
+services; however, they differ greatly in their implementation and semantics.
+The following sections present both the UNIX and Windows synchronization APIs
+and their fundamental synchronization primitives.
+
+System V Process Synchronization
+Chapter 10, “UNIX II: Processes,” introduced the System V IPC mechanisms available
+in most UNIX OSs, which includes three objects that are visible in the kernel name-
+space and can be used by unrelated processes to interact with each other: semaphores,
+message queues, and shared memory segments. This discussion focuses on sema-
+phores, as they are most relevant in discussions of synchronization.
+
+        Note
+        Shared memory segments have some relevance in synchronization,
+        as processes sharing a memory segment must ensure that mutually
+        exclusive access is achieved correctly so that the shared memory
+        segment isn’t accessed when it’s in an inconsistent state. However,
+        the issue of synchronization isn’t the shared memory itself, but the
+        mechanisms put in place to access that object (as is the case for any
+        other shared resource). Therefore, shared memory isn’t discussed
+        further in this section.
+
+Semaphores
+A semaphore is a locking device that uses a counter to limit the number of
+instances that can be acquired. This counter is decremented every time the
+semaphore is acquired and incremented every time a semaphore is released.
+When the count is zero, any attempts to acquire the semaphore cause
+the caller to block.
+    Semaphores are represented by IDs in the System V IPC API. System V also
+allows semaphores to be manipulated in sets, which are arrays of semaphores
+that programmers create to group related semaphores into one unit. The func-
+tions for manipulating semaphores and semaphore sets are described in the fol-
+lowing paragraphs.
+    The semget() function creates a new semaphore set or obtains an existing sem-
+aphore set:
+int semget(key_t key, int nsems, int semflg)
+
+   A new semaphore set is created if the value of key is IPC_PRIVATE or if the
+IPC_CREAT flag is set in semflg. An existing semaphore set is accessed by supplying
+the corresponding key for the first parameter; an error is returned if the key does not
+match an existing semaphore. If both the IPC_CREAT and IPC_EXCL flags are set and a
+semaphore with the same key already exists, an error is returned instead of a new
+semaphore being created.
+    The nsems parameter indicates how many semaphores should exist in the
+specified set; if a single semaphore is used, a value of 1 is supplied. The semflg
+parameter is used to indicate what access permissions the semaphore set should
+have, as well as the following arguments:
+    ■ IPC_CREAT—Create a new set if one doesn’t exist already.
+
+    ■ IPC_EXCL—Create a new semaphore set, or return an error if one already
+     exists.
+
+      ■ IPC_NOWAIT—Return with an error if the request is required to wait for the
+       resource.
+   The low nine bits of semflg provide a standard UNIX permission mask for
+owner, group, and world. The read permission allows semaphore access, write
+provides alter permission, and execute is not used.
+   The semop() function performs an operation on selected semaphores in the
+semaphore set referenced by semid:
+int semop(int semid, struct sembuf *sops, unsigned nsops)
+
+    The sops array contains a series of sembuf structures that describe operations to
+be performed on specific semaphores in the set. This function is used primarily to
+wait on or signal a semaphore, depending on the value of sem_op in each structure.
+The value of sem_op has the following effects:
+      ■ If the sem_op parameter is greater than 0, it is added to the internal integer in
+        the semaphore structure, which is effectively the same as issuing multiple sig-
+        nals on the semaphore.
+      ■ If the sem_op value is equal to 0, the process waits (is put to sleep) until the
+        semaphore value becomes 0.
+      ■ If the sem_op value is less than 0, that value is added to the internal integer in
+        the semaphore structure. Because sem_op is negative, the operation is really a
+        subtraction. This operation is like issuing multiple waits on the semaphore
+        and may put the process to sleep.
+    The semctl() function is used to perform a control operation on the semaphore
+referenced by semid:
+int semctl(int semid, int semnum, int cmd, ...)
+
+      The cmd value can be one of the following:
+      ■ IPC_STAT—Copy the semaphore structure stored in the kernel to a user space
+       buffer. It requires read privileges to the semaphore.
+      ■ IPC_SET—Update the UID, GID, or mode of the semaphore set. It requires the
+       caller to be a super-user or the creator of the set.
+      ■ IPC_RMID—Remove the semaphore set. It requires super-user privileges or for
+        the caller to be the creator of the set.
+      ■ SETALL—Set the integer value in all semaphores in the set to be a specific value.
+
+      ■ SETVAL—Set a specific semaphore in the semaphore set to be a specific value.
+
+    A number of other operations can be performed, but they aren’t relevant to this
+discussion. Interested readers can refer to the semctl() man page.
+
+Windows Process Synchronization
+The Win32 API provides objects that can synchronize a number of threads in a single
+process, as well as objects that can be used for synchronizing processes on a system.
+There are four interprocess synchronization objects: mutexes (Mutex or Mutant),
+events (Event), semaphores (Semaphore), and waitable timers (WaitableTimer). Each
+object has a signaled state in which it can be acquired and an unsignaled state in
+which an attempt to acquire it will force the caller to wait on a corresponding release.
+Sychronization objects can be created as named or unnamed objects and, as with all
+securable objects, are referenced with the HANDLE data type.
+
+         Note
+         Windows uses a single namespace for all mutexes, events,
+         semaphores, waitable timers, jobs, and file-mappings. So no
+         instances of these six object types can share the same name. For
+         example, an attempt to create a mutex named MySync fails if a sema-
+         phore named MySync already exists.
+
+Wait Functions
+All windows synchronization objects are acquired (waited on) by the same set of
+functions. These functions put the calling process to sleep until the waited-on
+object is signaled. Some objects may also be modified by a call to a wait function.
+For example, with a mutex, the caller gains ownership of the object after successful
+completion of a wait function. Because the wait functions are common to all syn-
+chronization objects, it’s best to discuss them before the objects themselves.
+    The WaitForSingleObject() function waits on a synchronization object
+specified by hHandle for a maximum period of time specified by dwMilliseconds:
+DWORD WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds)
+
+     The following function works the same way as WaitForSingleObject(), except
+it has an additional parameter, bAlertable:
+
+DWORD WaitForSingleObjectEx(HANDLE hHandle, DWORD dwMilliseconds,
+                                     BOOL bAlertable)
+
+   This parameter indicates that the process is alertable (that is, an I/O
+completion routine or asynchronous procedure call (APC) can be run after
+successful return from this function). This parameter is irrelevant for the
+purposes of this discussion.
+
+         Note
+         APCs are a common Windows idiom in I/O and IPC routines. At the
+         most basic level, they are callback routines that can be scheduled to
+         run at the earliest convenient time for the process. The earliest con-
+         venient time is when the process is alertable (waiting on an object)
+         and is running userland-level code (i.e., it isn’t in the middle of per-
+         forming a system call). For more information on APCs, see Microsoft
+         Windows Internals 4th Edition by Mark Russinovich and David
+         Solomon (Microsoft Press, 2004).
+
+    The following function is similar to the WaitForSingleObject() function, except
+it waits on multiple objects that are specified as an array of handles (lpHandles) with
+nCount elements:
+
+DWORD WaitForMultipleObjects(DWORD nCount, const HANDLE *lpHandles,
+                                     BOOL bWaitAll,
+                                     DWORD dwMilliseconds)
+
+    If bWaitAll is set to TRUE, this function waits for all objects specified in the
+lpHandles array to be signaled; otherwise, it waits for just one of the objects to be sig-
+naled before returning. Like WaitForSingleObject(), the dwMilliseconds parameter
+defines the maximum amount of time the function should wait before returning.
+    The following function works the same way as WaitForMultipleObjects(),
+except it has an additional parameter, bAlertable:
+DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE *lpHandles,
+                                          BOOL bWaitAll,
+                                          DWORD dwMilliseconds,
+                                          BOOL bAlertable)
+
+    As with WaitForSingleObjectEx(), this parameter indicates that an I/O com-
+pletion routine or APC can be run after successful return from this function.
+
+Mutex Objects
+Windows provides an implementation of the standard mutex synchronization prim-
+itive. When a thread locks a mutex, other threads that attempt to lock the mutex are
+put to sleep until it is released. After it has been released, one of the waiting threads
+will be awakened and acquire the mutex. There are three API functions specifically
+for creating and managing mutexes.
+     The CreateMutex() function is used to create a new mutex:
+
+HANDLE CreateMutex(LPSECURITY_ATTRIBUTES lpMutexAttributes,
+                       BOOL bInitialOwner, LPCSTR lpName)
+
+    The lpMutexAttributes parameter describes security attributes for the mutex
+being created. Setting the bInitialOwner parameter to TRUE creates the mutex in a
+locked state and grants the caller initial ownership. The final parameter, lpName,
+passes the object’s name or NULL for an unnamed mutex. If a mutex with the same
+name already exists, that existing mutex is returned to the caller instead of a new
+one. When an existing mutex is opened the bInitialOwner parameter is ignored.
+    The following function opens an existing mutex object:
+HANDLE OpenMutex(DWORD dwDesiredAccess,
+                     BOOL bInheritHandle, LPCSTR lpName)
+
+    The dwDesiredAccess parameter describes what access rights the caller is
+requesting. The bInheritHandle parameter describes whether this handle should
+be inherited across a CreateProcess() call, and the lpName parameter is the name
+of the mutex to open.
+    The ReleaseMutex() function signals the mutex so that other threads waiting
+on it can claim ownership of it (lock it):
+
+BOOL ReleaseMutex(HANDLE hMutex)
+
+    A thread using this function must own the mutex and have the
+MUTEX_MODIFY_STATE access right to perform this operation. The current owner of a
+mutex can repeatedly acquire it without ever blocking. However, the mutex is not
+released until the number of calls to Release mutex equals the number of times the
+mutex was acquired by the current owner. In the discussion on “IPC Object Score-
+boards” later in this chapter, you see exactly how this can be an issue.
+
+Event Objects
+An event object is used to inform another thread or process that an event has
+occurred. Like a mutex, an event object is always in a signaled or nonsignaled state.
+When it’s in a nonsignaled state, any thread that waits on the event is put to sleep
+until it becomes signaled. An event differs from a mutex in that it can be used to
+broadcast an event to a series of threads simultaneously. In this case, a thread
+doesn’t have exclusive ownership of the event object.
+    Event objects can be further categorized into two subtypes: manual-reset events
+and auto-reset events. A manual-reset event is one in which the object stays in a sig-
+naled state until a thread manually sets it to a nonsignaled state. An auto-reset
+event is one that’s automatically set to a nonsignaled state after a waiting thread is
+
+woken up. Creating and manipulating an event requires using the functions
+described in the following paragraphs.
+     The CreateEvent() function is used to create a new event object with the secu-
+rity attributes described by the lpEventAttributes parameter:
+HANDLE CreateEvent(LPSECURITY_ATTRIBUTES lpEventAttributes,
+                         BOOL bManualReset, BOOL bInitialState,
+                         LPCSTR lpName)
+
+    The bManualReset parameter indicates whether the object is manual-reset or
+auto-reset; a value of TRUE creates a manual-reset object and a value of FALSE
+creates an auto-reset object. The bInitialState parameter indicates the initial state
+of the event; a value of TRUE sets the object to a signaled state and a value of FALSE
+sets it to a nonsignaled state. Finally, lpName indicates the name of the event object
+being created or NULL for an unnamed event. Like mutexes, passing the name of
+an existing event object causes it to be opened instead.
+    The OpenEvent() function works in the same way OpenMutex() does, except it
+opens a previously created event rather than a mutex:
+HANDLE OpenEvent(DWORD dwDesiredAccess, BOOL               bInheritHandle,
+➥ LPCSTR lpName)
+
+   The SetEvent() function sets an event to a signaled state. The caller must have
+EVENT_MODIFY_STATE access rights to use this function:
+
+BOOL SetEvent(HANDLE hEvent)
+
+      The ResetEvent() function sets an event to a nonsignaled state:
+BOOL ResetEvent(HANDLE hEvent)
+
+    This function is used only for manual-reset events because they require threads
+to reset the event to a nonsignaled state. This function also requires that the caller
+has EVENT_MODIFY_STATE access rights for the event.
+
+Semaphore Objects
+As in other operating systems, semaphores are used to allow a limited number of
+threads access to some shared object. A semaphore maintains a count initialized to
+the maximum number of acquiring threads. This count is decremented each time a
+wait function is called on the object. When the count becomes zero, the object is no
+longer signaled, so additional threads using a wait function on the object are blocked.
+The functions for dealing with semaphores are described in the following paragraphs.
+    The CreateSemaphore() function creates a new semaphore or opens an existing
+semaphore if one with the same name already exists:
+
+HANDLE CreateSemaphore(LPSECURITY_ATTRIBUTES lpAttributes,
+                           LONG lInitialCount, LONG lMaximumCount,
+                           LPCSTR lpName)
+
+     The lInitialCount parameter indicates the initial value of the semaphore
+counter. This value must be between 0 and lMaximumCount (inclusive). If the value is
+0, the semaphore is in a nonsignaled state; otherwise, it’s in a signaled state when
+initialized. The lMaximumCount parameter specifies the maximum number of
+threads that can simultaneously wait on this object without blocking.
+     The OpenSemaphore() function opens an existing semaphore and works in the
+same way that OpenMutex() and OpenEvent() do:
+HANDLE OpenSemaphore(DWORD dwDesiredAccess, BOOL bInheritable,
+                           LPCSTR lpName)
+
+   The ReleaseSemaphore() function increments the semaphore count by the
+amount specified in lReleaseCount:
+BOOL ReleaseSemaphore(HANDLE hSemaphore, LONG lReleaseCount,
+                         LPLONG lpPreviousCount)
+
+    This function fails if lReleaseCount causes the semaphore to exceed its inter-
+nal maximum count. The lpPreviousCount stores the previous count held by the
+semaphore before this function call. Usually, a call to this function leaves the sem-
+aphore in a signaled state because the resulting count is greater than zero.
+
+Waitable Timer Objects
+A waitable timer, or timer, is used to schedule threads for work at a later time by
+becoming signaled after a time interval has elapsed. There are two types of waitable
+timers: manual-reset and synchronization timers. A manual-reset timer remains sig-
+naled until it’s manually reset to a nonsignaled state. A synchronization timer stays
+signaled until a thread completes a wait function on it. In addition, any waitable
+timer can be a periodic timer—a timer that’s automatically reactivated each time the
+specified interval expires. The functions for dealing with waitable timers are
+described in the following paragraphs.
+    The CreateWaitableTimer() function works the same way other Create*()
+functions do:
+HANDLE CreateWaitableTimer(LPSECURITY_ATTRIBUTES lpAttributes,
+                               BOOL bManualReset, LPCSTR lpName)
+
+    The bManualReset parameter specifies whether the timer should be a manual-
+reset timer or synchronization timer. A value of TRUE indicates it’s a manual-reset
+timer, and a value of FALSE indicates it’s a synchronization timer.
+    The OpenWaitableTimer() function is used to open an existing named waitable
+timer object. It works the same way other Open*() functions do:
+HANDLE OpenWaitableTimer(DWORD dwDesiredAccess,
+➥ BOOL bInheritable, LPCSTR lpName)
+
+   The SetWaitableTimer() function is responsible for initializing a waitable timer
+with a time interval:
+BOOL SetWaitableTimer(HANDLE hTimer, const LARGE_INTEGER *pDueTime,
+                           LONG lPeriod,
+                           PTIMERAPCROUTINE pfnCompletionRoutine,
+                           LPVOID lpArgToCompletionRoutine,
+                           BOOL fResume)
+
+    The pDueTime parameter specifies the interval for the timer to be signaled after,
+and the lPeriod parameter specifies whether this timer should be reactivated after
+the time interval has elapsed. A value larger than 0 indicates it should, and a value
+of 0 indicates that it should signal only once. The next two parameters are a pointer
+to an optional completion routine that’s called after the timer is signaled and an
+argument for that completion routine. The routine is queued as a user-mode APC.
+Finally, the fResume parameter indicates that the system should recover out of sus-
+pend mode if it’s in suspend when the timer is activated.
+    The following function deactivates an active timer:
+BOOL CancelWaitableTimer(HANDLE hTimer)
+
+    The caller must have TIMER_MODIFY_STATE access to the object for this function
+to succeed.
+
+Vulnerabilities with Interprocess Synchronization
+Now that you’re familiar synchronization primitives, you can begin to explore what
+types of vulnerabilities could occur from incorrect or unsafe use of these primitives.
+
+Lack of Use
+Obviously, there’s a problem when synchronization objects are required but not
+used. In particular, if two processes are attempting to access a shared resource, a
+race condition could occur. Take a look at a simple example:
+
+char *users[NUSERS];
+int curr_idx = 0;
+
+DWORD phoneConferenceThread(SOCKET s)
+{
+    char *name;
+
+    name = readString(s);
+
+    if(name == NULL)
+         return 0;
+
+    if(curr_idx >= NUSERS)
+         return 0;
+
+    users[curr_idx] = name;
+
+    curr_idx++;
+
+    .. more stuff ..
+}
+
+    Say a daemon accepted connections on a listening socket, and each new con-
+nection caused a thread to be spawned, running the code shown in the example.
+Clearly, there is a problem with modifying the users and curr_idx variables with-
+out using synchronization objects. You can see that the function is not reentrant
+due to its handling of global variables; so calling this function in multiple concur-
+rent threads will eventually exhibit unexpected behavior due to not accessing the
+global variables atomically. A failure to use synchronization primitives in this
+instance could result in an overflow of the users array, or cause a name to unexpect-
+edly overwritten in the users array.
+    When you’re auditing code that operates on an improperly locked shared
+resource, it’s important to determine the implications of multiple threads accessing
+that resource. In reality, it’s quite uncommon for developers to disregard concur-
+rency issues and not use any form of synchronization objects. However, developers
+can make mistakes and forget to use synchronization primitives in unexpected or
+infrequently traversed code paths. The “Threading Vulnerabilities” section later in
+this chapter presents an example of this issue in the Linux kernel.
+
+Incorrect Use of Synchronization Objects
+Misusing synchronization objects can also cause problems. These types of errors
+generally occur because developers don’t fully understand the API or fail to check
+when certain exceptional conditions occur, such as not checking for return values. To
+determine when this error has been made, you need to cross-check synchronization
+API calls with how they appear in the program, and then determine whether they
+correspond with the developer’s intentions. The following code shows an example of
+incorrect use of a synchronization function. First, there’s a function to initialize a
+program containing multiple threads. One thread reads requests from a network and
+adds jobs to a global queue, and a series of threads read jobs from the queue and
+process them.
+HANDLE queueEvent, jobThreads[NUMTHREADS+1];
+struct element *queue;
+HANDLE queueMutex;
+SOCKET fd;
+
+DWORD initJobThreads(void)
+{
+      int i;
+
+      queueEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+
+      if(queueEvent == NULL)
+           return -1;
+
+      queueMutex = CreateMutex(NULL, FALSE, NULL);
+
+      for(i = 0; i < NUMTHREADS; i++)
+      {
+           jobThreads[i] = CreateThread(NULL, 0, processJob,
+                                           NULL, 0, NULL);
+
+           if(jobThreads[i] == NULL)
+           {
+                 ..    error handle ..
+           }
+      }
+
+    jobThreads[i] = CreateThread(NULL, 0, processNetwork,
+                           NULL, 0, NULL);
+
+    if(jobThreads[i] == NULL)
+    {
+         .. error handle ..
+    }
+
+    return 0;
+}
+
+   After the initJobThreads() function is done, the processJob() and
+processNetwork() functions are responsible for doing the actual work. They use
+mutex objects to ensure mutually exclusive access to the queue resource and an
+event to wake up threads when the queue contains elements that need to be
+dequeued and processed.
+   Their implementations are shown in the following code:
+DWORD processJob(LPVOID arg)
+{
+    struct element *elem;
+
+    for(;;)
+    {
+         WaitForSingleObject(queueMutex, INFINITE);
+         if(queue == NULL)
+              WaitForSingleObject(queueEvent, INFINITE);
+
+         elem = queue;
+         queue = queue->next;
+
+         ReleaseMutex(queueMutex);
+         .. process element ..
+    }
+
+    return 0;
+}
+
+DWORD processNetwork(LPVOID arg)
+{
+      struct element *elem, *tmp;
+      struct request *req;
+
+      for(;;)
+      {
+          req = readRequest(fd);
+
+          if(req == NULL)        // bad request
+                 continue;
+
+          elem = request_to_job_element(req);
+
+          HeapFree(req);
+
+          if(elem == NULL)
+                 continue;
+
+          WaitForSingleObject(queueMutex, INFINITE);
+
+          if(queue == NULL)
+          {
+                 queue = elem;
+                 SetEvent(queueEvent);
+          }
+          else
+          {
+                 for(tmp = queue; tmp->next; tmp = tmp->next)
+                    ;
+                 tmp->next = elem;
+          }
+
+          ReleaseMutex(queueMutex);
+      }
+
+      return 0;
+}
+
+    Do you see the problem with this code? Look at the way the event object is
+initialized:
+queueEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+
+    Setting the second parameter to TRUE indicates the object is a manual-reset event.
+However, by reading the code, you can tell that the developer intended to use an auto-
+matic-reset event, because after the first time the event is signaled, the manual-reset
+event remains in that state forever, even when the queue is empty. The incorrect use of
+CreateEvent() in this example leads to a NULL pointer dereference in processJob(),
+as a successful return from WaitForSingleObject() indicates that the queue is not
+empty. Astute readers might notice an additional flaw: This code is vulnerable to dead-
+lock. If the queue is empty when processJob() runs, the running thread calls Wait-
+ForSingleObject(), which puts the caller to sleep until the processNetwork()
+function signals the event object. However, the processJob() routine waiting on the
+event is holding the queueMutex lock. As a result, processNetwork() can never enter,
+thus resulting in deadlock.
+    As you can see, errors resulting from incorrect use of synchronization objects
+are quite easy to make, especially when a multitude of objects are used. Creating a
+program without deadlocking and race conditions can be tricky; often the logic just
+isn’t obvious, as shown in the previous example. In “IPC Object Scoreboards” later
+in this chapter, you learn a technique that utilizes scoreboards to track IPC object
+use. These scoreboards can help you determine how each object is used and
+whether there’s a possibility it’s being misused.
+
+Squatting with Named Synchronization Objects
+Chapter 11 introduced Windows namespace squatting, which occurs when a rogue
+application creates a named object before the real application can. This type of
+attack is a serious consideration for named synchronization objects. Imagine, for
+example, a program with the following code during its initialization:
+int checkForAnotherInstance(void)
+{
+     HANDLE hMutex;
+
+     hMutex = OpenMutex(MUTEX_ALL_ACCESS, FALSE, “MyProgram”);
+
+     if(hMutex == NULL)
+           return 1;
+
+      CloseHandle(hMutex);
+      return 0;
+}
+
+   The checkForAnotherInstance() function is called in the early stages of a pro-
+gram invocation. If it returns 1, the process exits because another instance of the
+program is already running.
+
+        Note
+        Synchronization objects are often used to prevent multiple instances
+        of a program from running on a single host.
+
+    Say you run another process that creates a mutex named MyProgram and holds
+the lock indefinitely. In this case, the checkForAnotherInstance() function always
+returns 1, so any attempt to start this application fails. If this mutex is created in the
+global namespace, it prevents other users in a Terminal Services or XP environment
+from starting the application as well.
+    In addition to creating objects for the purpose of preventing an application from
+running correctly, a rogue application might be able to take possession of an object
+that another application created legitimately. For example, consider a scenario in
+which a process creates a global object and a number of other processes later
+manipulate this object. Processes attempting to manipulate the object do so by wait-
+ing on a mutex, as shown in this example:
+int modifyObject(void)
+{
+      HANDLE hMutex;
+      DWORD status;
+
+      hMutex = OpenMutex(MUTEX_MODIFY_STATE, FALSE, “MyMutex”);
+
+      if(hMutex == NULL)
+          return -1;
+
+      status = WaitForSingleObject(hMutex, INFINITY);
+
+      if(status == WAIT_TIMEOUT)
+          return -1;
+
+      .. modify some global object ..
+
+    ReleaseMutex(hMutex);
+}
+
+    What’s the problem with this code? What if a rogue application also opens
+MyMutex and holds onto it indefinitely? The other waiting processes are left sleeping
+indefinitely, thus unable to complete their tasks.
+    You can also cause denial-of-service conditions in UNIX programs that bail out
+when an attempt to initialize a semaphore set fails or when the value of IPC_PRIVATE is
+not passed as the key parameter to semget(). For example, look at the following code:
+int initialize_ipc(void)
+{
+    int semid;
+
+    semid = semget(ftok(“/home/user/file”, ‘A’), 10,
+                        IPC_EXCL|IPC_CREAT | 0644);
+
+    if(semid < 0)
+         return -1;
+
+    return semid;
+}
+
+    This code creates a semaphore set with ten semaphores. Because IPC_CREAT and
+IPC_EXCL are defined, semget() returns an error if a semaphore with the same key
+already exists. If you create a set beforehand, the initialize_ipc() function
+returns an error and the program never starts.
+
+        Note
+        Notice the use of the ftok() function. Ostensibly, it’s used to generate
+        keys for use with IPC, but this function doesn’t guarantee key unique-
+        ness. In fact, a brief examination of the source code in glibc shows that
+        if you supply the same arguments, you generate the same key value, or
+        you could determine the key value it generates easily.
+
+     If the IPC_EXCL flag isn’t supplied, you can still cause semget() to fail by
+initializing a semaphore set with restrictive permissions. You could also initialize a
+semaphore set with the same key but fewer semaphores in it, which also causes
+semget() to return an error.
+
+Other Squatting Issues
+So far, the squatting issues discussed usually result in a denial of service by not
+allowing a process access to an object. Squatting can also occur by taking advantage
+of a nuance of how the CreateEvent(), CreateMutex(), CreateSemaphore(), and
+CreateWaitableTimer() functions work. When called with a non-NULL name
+parameter, these functions check to see whether the specified name already exists. If
+it does, the existing object is returned to the caller instead of creating a new object.
+The only way to tell that an existing object is returned rather than a new one
+is for the developer to call GetLastError(), check whether the error is
+ERROR_ALREADY_EXISTS, and then handle that case specifically. Failure to do so can
+result in some interesting situations. If an existing object is returned, several parame-
+ters to the Create*() functions are ignored. For example, the CreateMutex() func-
+tion takes three parameters: the security attributes structure describing access rights
+to the object, a Boolean value indicating whether the caller initially holds the lock,
+and the name of the object. If the named mutex already exists, the first two parame-
+ters are ignored! To quote from the MSDN’s CreateMutex() function description:
+      If lpName matches the name of an existing named mutex, this function
+      requests the MUTEX_ALL_ACCESS access right. In this case, the bIni-
+      tialOwner parameter is ignored because it has already been set by the creating
+      process. If the lpMutexAttributes parameter is not NULL, it determines whether
+      the handle can be inherited, but its security-descriptor member is ignored.
+   Interesting. So if the ERROR_ALREADY_EXISTS value isn’t checked for using
+GetLastError(), it’s possible for an attacker to create a mutex with the same
+name before the real application does. This can undermine the security attributes
+that would otherwise be placed on the object because they are ignored when the
+application calls the CreateMutex() function. Furthermore, consider any code
+that calls CreateMutex() with the bInitialOwner parameter passed as
+TRUE. The caller might manipulate a shared object under the assumption
+that it holds the mutex lock, when in fact it doesn’t, thus resulting in a race
+condition. Here is an example.
+int modifyObject(HANDLE hObject)
+{
+      HANDLE hMutex;
+
+      hMutex = CreateMutex(NULL, TRUE, “MyMutex”);
+
+      if(hMutex == NULL)
+           return -1;
+
+    .. modify object pointed to by hObject ..
+
+    ReleaseMutex(hMutex);
+}
+
+    The bInitialOwner parameter passed to CreateMutex() is set to TRUE to indicate
+that this process should have initial ownership of the lock. However, there’s no call to
+GetLastError() to check for ERROR_ALREADY_EXISTS; therefore, it’s possible that the
+returned mutex is a preexisting object. In this case, the bInitialOwner value is
+ignored, so this process would not in fact hold the lock for hMutex, and any access of
+hObject is subject to race conditions.
+    The other synchronization object creation functions have similar issues. The
+security attributes parameter—and potentially other parameters—are ignored if the
+named object already exists. For example, the lInitialCount and lMaximumCount
+parameters for CreateSemaphore() are ignored if an existing object is returned
+because those parameters are initialized by the original creator of the object. Ignor-
+ing these parameters might make it possible to create a semaphore with a different
+maximum count than the application expects, which might cause it to work incor-
+rectly. In fact, if an arbitrarily large maximum count is set, the semaphore provides
+no mutual exclusion at all, again resulting in a race condition. Similarly, with an
+event object, the bManualReset and bInitialState parameters are ignored if a previ-
+ously created object is returned. Therefore, a program initializing an event object as
+an auto-reset object could instead receive a manual-reset object, which stays signaled
+so that multiple processes receive the event instead of just one, when the process is
+expecting it to be delivered to only a single process or thread.
+    Another thing to keep in mind with squatting issues is that if you create the object,
+you’re free to change it whenever you like and in whatever way you choose. If you cre-
+ate an event or waitable timer object that’s subsequently returned to a privileged appli-
+cation through the use of CreateEvent() or CreateWaitableTimer(), you can
+arbitrarily signal those objects whenever you like. For instance, the owner of an event
+can generate a signal by calling the SetEvent() function at any time. This call could be
+dangerous when a process is expecting that the receipt of an event signal is acknowl-
+edgement that some object transaction has taken place, when in fact it hasn’t.
+    Semaphore sets in UNIX (and other System V IPC objects) are vulnerable to
+similar squatting issues, but only to a limited extent because of the way the API
+works. A process creating a semaphore should use the IPC_CREAT and IPC_EXCL
+flags or the IPC_PRIVATE value for a key. Doing so guarantees that a new semaphore
+has been created. If the process supplies a key value and neglects to use the
+IPC_EXCL flag, it might mistakenly get access to an existing semaphore set. Here’s
+an example of a vulnerable call:
+
+int semid;
+
+semid = semget(ftok(“/home/user/file”, ‘A’), 10,
+                    IPC_CREAT | 0644);
+
+    This call to semget() takes an existing semaphore set if one exists with the same
+key and creates a new one only if one does not exist. If the semaphore set does
+already exist, it must have at least as many semaphore objects in the set as the second
+argument indicates. If it doesn’t, an error is returned. There are still some interesting
+possibilities related to what you can do to the semaphore set at the same time another
+process is using it because you’re the owner of the semaphore.
+
+         Note
+         If permissions are relaxed enough, such as everyone having
+         full modify privileges to the semaphore created by a privileged
+         process, the same attacks described in the following sections are
+         also possible.
+
+     Semaphore sets are not like file descriptors. When a semaphore set is open,
+it’s not persistently linked to the application. Instead, a semaphore ID is
+returned to the caller, and every subsequent use of the semaphore set involves
+looking up that ID in the global namespace. Therefore, if you have sufficient
+access to the semaphore set (as you do if you’re the creator), you can do anything
+you want to it between accesses by the privileged process using the malicious
+semaphore set. For example, it would be possible to delete the set or re-create it
+after semget() returns in the privileged process with a smaller number of sema-
+phore objects. You could also manually reset all semaphore integers in the set to
+arbitrary values, thus causing race conditions in the privileged process. There-
+fore, when auditing applications that make use of semaphores, the flags used in
+semget() are quite important.
+
+         Note
+         In case you’re wondering what happens when IPC_EXCL is set and
+         IPC_CREAT isn’t, this is invalid and doesn’t cause a new semaphore
+         set to be created. The semget() function just returns an error.
+
+Synchronization Object Scoreboards
+As you have seen, it is relatively easy to misuse synchronization APIs, and inadver-
+tently render a program vulnerable to a denial-of-service or race condition. When
+you’re auditing for these vulnerabilities, it’s best to keep a record of likely problems
+
+resulting from improper use of these IPC synchronization mechanisms, so that you
+can refer back to it at later stages of the code audit. The audit logs described in
+previous chapters don’t address many of the details associated with concurrency
+vulnerabilities. Instead, you can use synchronization object scoreboards, which are
+a small logs providing the security-relevant details of a synchronization object:
+where it was instantiated, how it was instantiated, where it’s used, and where it’s
+released. Table 13-1 shows an example of this scoreboard.
+
+Table 13-1
+Synchronization Object Scoreboard
+Object name                              MyMutex
+Object type                              mutex
+Use                                      Used for controlling access to the shared resource
+                                         hObject (declared in main.c line 50). This object
+                                         can have only one thread accessing it at a time
+                                         (whether it’s a reader or a writer).
+Instantiated                             open_mutex(), util.c, line 139
+Instantiation parameters                 OpenMutex(NULL, TRUE, “MyMutex”)
+Object permissions                       Default
+Used by                                  writer_task(), writer.c, line 139
+                                         reader_task(), reader.c, line 158
+Protects                                 A linked list, queue, declared in main.c, line 76
+Notes                                    This mutex uses a static name, and the code doesn’t
+                                         check GetLastError() when OpenMutex()
+                                         returns. A squatting attack is possible.
+                                         Possible race condition in reader.c line 140, where
+                                         one of the code paths fails to lock the mutex before
+                                         operating on hObject.
+
+    As you can see, this scoreboard technique provides a concise summary of the
+object’s use and purpose. You can note any observations about the way the object is
+instantiated or used and possibly follow up later. Not only does this scoreboard aid you
+as a quick reference when encountering new code that deals with the synchronization
+object, but later changes to the codebase can be checked against your summary to
+ensure that the object is used correctly.
+
+Lock Matching
+Another effective tool for auditing synchronization objects is lock matching. Lock
+matching is simply the process of checking synchronization objects to ensure that
+for every lock on an object, there’s no path where a corresponding unlock can’t
+occur. Obviously, this technique is applicable only to a subset of objects—those
+
+that require signaling after they have been waited on. So this technique would be
+applicable primarily to semaphores and mutexes. If a path is found where a wait
+doesn’t have a complementary signal on the same object, deadlock could occur.
+
+          Note
+          If a thread exits in Windows while owning an object, the system
+          normally allows another waiting thread to take ownership of the
+          object. However, if the thread does not exit cleanly—normally a
+          result of a TerminateThread() call—the objects are not properly
+          released and deadlock can occur.
+
+      A simple example helps demonstrate lock matching in action:
+struct element *queue;
+HANDLE hMutex;
+int fd;
+
+int networkThread(void)
+{
+      struct element *elem;
+
+      for(;;)
+      {
+           elem = read_request(fd);
+
+           WaitForSingleObject(hMutex, INFINITY);
+
+           add_to_queue(queue, elem);
+
+           ReleaseMutex(hMutex);
+      }
+
+      return 0;
+}
+
+int processThread(void)
+{
+
+    struct element *elem;
+
+    for(;;)
+    {
+          WaitForSingleObject(hMutex);
+          elem = remove_from_queue(queue);
+
+          if(elem == NULL) // nothing in queue
+              continue;
+
+          ReleaseMutex(hMutex);
+
+          process_element(elem);
+
+    }
+
+    return 0;
+}
+
+    The processThread() function contains a path where hMutex isn’t signaled
+after it’s waited on. If elem is NULL when processThread() runs, it jumps back
+to the top of the for loop, failing to call ReleaseMutex(). The next call to
+WaitForSingleObject() doesn’t cause this process deadlock, however, because
+the calling thread owns the mutex. Instead, it prevents the number of release
+calls from ever being equal to the number of wait calls. This means no other
+process or thread can ever acquire this mutex because the calling thread never
+releases it.
+    Be aware when performing lock matching checks to ensure that nonobvious
+paths don’t exist where an object might never be released. For example, can a
+signal interrupt a thread that holds a lock and then reenter the program at some
+other point?
+
+Signals
+UNIX programs often interact with their environment and other programs
+through the use of signals. Signals are software interrupts that the kernel raises
+in a process at the behest of other processes, or as a reaction to events that occur
+in the kernel.
+
+         Note
+         The Windows POSIX subsystem is capable of dealing with signals as
+         well, but they are primarily a UNIX feature.
+
+    Each process defines how to handle its incoming signals by choosing to associ-
+ate one of the following actions with a signal:
+      ■ Ignoring the signal—A process can ignore a signal by informing the kernel
+        that it wants to ignore the signal. Two signals can’t be ignored: SIGKILL and
+        SIGSTOP. SIGKILL always kills a process, and SIGSTOP
+        always stops a process.
+      ■ Blocking the signal—A process can postpone handling a signal by blocking it, in
+        which case the signal is postponed until the process unblocks it. As with
+        blocking, the SIGKILL and SIGSTOP signals can’t be blocked.
+      ■ Installing a signal handler—A process can install a signal handler, which is a
+        function called when a signal is delivered. This function is called completely
+        asynchronously: When a signal is delivered, the execution context of a process
+        is suspended, and a new one is created where execution starts in the desig-
+        nated signal handler function. When that handler returns, execution resumes
+        where it left off.
+    If a process doesn’t indicate specifically how it deals with a particular signal,
+then a default action will be taken. Table 13-2 lists the signals provided by a typical
+POSIX-compliant implementation and the default actions associated with those sig-
+nals. This table is taken from the Linux signal(7) man page.
+
+Table 13-2
+Signals and Their Default Actions
+Signal Number       Signal Name        Meaning                             Default Action
+1                   SIGHUP             Hang up from controlling terminal   Terminate
+2                   SIGINT             Interrupt                           Terminate
+3                   SIGQUIT            Quit                                Core dump
+4                   SIGILL             Illegal instruction                 Core dump
+5                   SIGTRAP            Software trap                       Core dump
+6                   SIGABRT            Abort                               Core dump
+7                   SIGEMT             EMT instruction                     Terminate
+8                   SIGFPE             Floating point exception            Core dump
+9                   SIGKILL            Kill                                Terminate
+10                  SIGBUS*            Data bus error                      Core dump
+
+11                SIGSEGV          Segmentation fault                  Core dump
+12                SIGSYS*          Invalid system call parameter       Core dump
+13                SIGPIPE          Write to a pipe when there’s no     Terminate
+                                   process to read from it
+14                SIGALRM          Alarm                               Terminate
+15                SIGTERM          Terminate                           Terminate
+16                SIGURG           Urgent data on I/O channel          Ignore
+17                SIGSTOP          Stop process                        Stop
+18                SIGTSTP          Interactive stop                    Stop
+19                SIGCONT          Continue                            Continue a
+                                                                       stopped process
+20                SIGCHLD          Child exited                        Ignored
+21                SIGTTIN          Background read attempt from        Stop
+                                   terminal
+22                SIGTTOU          Background write attempt from       Stop
+                                   terminal
+23                SIGIO            I/O available or completed          Terminate
+24                SIGXCPU          CPU time limit exceeded             Core dump
+25                SIGXFSZ          File size limit exceeded            Core dump
+26                SIGVTALRM        Virtual time alarm                  Terminate
+27                SIGPROF          Profiling time alarm                Terminate
+28                SIGWINCH         Window size change                  Ignored
+29                SIGINFO          Information request                 Terminate
+30                SIGUSR1          User-defined signal                 Ignored
+31                SIGUSR2          User-defined signal                 Ignored
+
+     Note that the numbers assigned to signals might vary among operating
+systems and architectures, and not all signals are available on all architectures. For
+example, SIGBUS isn’t defined for machines with an Intel architecture, but is
+defined for machines with a Sun SPARC architecture. If a signal isn’t defined for a
+specific architecture, it might be ignored instead of performing the default action
+listed in Table 13-2.
+     Each process has a signal mask, which is a bitmask describing which
+signals should be blocked by a process and which signals should be delivered.
+A process can block a signal by altering this signal mask, as you see shortly in
+“Handling Signals.”
+     Signal handling is an important part of many UNIX applications. Although sig-
+nals are a fairly simple mechanism, there are some subtleties to dealing with them
+correctly when implementing software. So before you move on to signal-related
+problems, the following sections briefly describe the signal API.
+
+Sending Signals
+The kill() system call is used to send a signal to a process. You can test whether
+processes are present by killing them with signal zero or by trying an invalid signal
+and looking for a permission denied message.
+    To send a signal to a process in Linux and Solaris, the sender must be the
+superuser or have a real or effective user ID equal to the receiver’s real or saved set
+user ID. However, a sender can always send SIGCONT to a process in its session.
+    To send a signal to a process in the BSD OSs, the sender must be the superuser,
+or the real or effective user IDs must match the receiver’s real or effective user IDs.
+Note that this means a daemon that temporarily assumes the role of an unprivi-
+leged user with seteuid() opens itself to signals being delivered from that user.
+    Earlier versions of Linux had the same behavior as BSD. For example, if the
+Network File System (NFS) userland daemon temporarily set its effective user ID to
+that of a normal user, that normal user could send signals to the daemon and
+potentially kill it. This is what precipitated the introduction of file system user IDs
+(FSUIDs) in Linux. They are now largely redundant in Linux because temporarily
+assuming an effective user ID no longer exposes a daemon to signals.
+    FTP daemons are another good example of a situation in which a daemon running
+as root assumes the effective user permissions of a nonprivileged user. If a normal user
+logs in to an FTP daemon, the daemon uses that user’s effective user ID so that it can
+perform file system interaction safely. On a BSD system, therefore, if that same user is
+logged in to a shell, he or she can send signals to the daemon and kill it. In previous
+versions, this had more significant consequences, as a core dump often contained
+password information from the system authentication database.
+    OpenBSD has a unique restriction: A nonroot user can send only the following
+signals to a setuid or setgid process: SIGKILL, SIGINT, SIGTERM, SIGSTOP, SIGTTIN,
+SIGTTOU, SIGTSTP, SIGHUP, SIGUSR1, SIGUSR2, and SIGCONT.
+
+Handling Signals
+There are a number of ways to instruct a process how to respond to a signal.
+First, the signal() function is used to set a routine for installing a handler to
+deal with the specified signal. The semantics from the man page are shown in
+the following prototype:
+#include <signal.h>
+
+typedef void (*sighandler_t)(int);
+
+sighandler_t signal(int signum, sighandler_t handler);
+
+    The signum parameter indicates what signal to handle, and the handler argument
+indicates the routine that should be called for this signal. The signal() function
+returns the old handler for the specified signal. Instead of specifying a new
+signal-handling routine, the developer can elect to specify one of two constants for
+the handler parameter: SIG_IGN if the signal should be ignored and SIG_DFL if the
+default action should be taken when a signal is received.
+
+       Note
+       The default action varies depending on what signal is received. For
+       example, the default action for SIGSEGV is to create a core image and
+       terminate the process. The default action for SIGSTOP is to place the
+       current process in the background. The default actions for each sig-
+       nal were presented earlier in Table 13-2.
+
+     Developers can also set handlers via the sigaction() interface, which has the
+following prototype:
+
+#include <signal.h>
+
+int sigaction(int sig, const struct sigaction          *act,
+
+                struct sigaction *oact);
+
+    This interface enables you to set and retrieve slightly more detailed attributes
+for each signal an application handles. These attributes are supplied in the form of
+the sigaction structure, which is roughly defined like this:
+
+struct sigaction {
+
+     void        (*sa_handler)(int);
+
+     void        (*sa_sigaction)(int, siginfo_t *, void *);
+     sigset_t    sa_mask;
+
+     int         sa_flags;
+}
+
+    The exact structure definition varies slightly between implementations. Basi-
+cally, there are two function pointers: one to a signal handler (sa_handler) and one
+to a signal catcher (sa_sigaction). Developers set one or the other to be called upon
+receipt of the specified signal.
+
+         Note
+         Which handler is called from the sigaction structure—the handler
+         (sa_handler) or the catcher (sa_sigaction)? It depends on the
+         sa_flags member in the structure. If the SA_SIGINFO flag is set,
+         sa_sigaction is called. Otherwise, sa_handler is called. In reality,
+         because you are supposed to specify only one and can’t define both,
+         often these two structure members are coded as a union, so defining
+         one overrides a previous definition of the other.
+
+    The sa_mask field describes a set of signals that should be blocked while the
+signal handler is running, and the sa_flags member describes some additional
+behavioral characteristics for how to handle the signal, which are mentioned in
+“Signal Vulnerabilities” later in this chapter.
+    The following function is used to change the process signal mask so that
+previously blocked signals can be delivered or to block the delivery of certain signals:
+int sigprocmask(int how, const sigset_t *set, sigset_t *oset)
+
+    The how argument specifies how the set parameter should be interpreted and
+can take one of three values:
+      ■ SIG_BLOCK—Indicates that the set parameter contains a set of signals to be
+       added to the process signal mask
+      ■ SIG_UNBLOCK—Indicates that the set parameter contains a set of signals to be
+        unblocked from the current signal mask
+      ■ SIG_SETMASK—Indicates that the set parameter should replace the current sig-
+        nal mask
+    The oset parameter is filled in with the previous signal mask of the process.
+    In addition to these functions, you can make a multitude of other signal-related
+library calls. Only the ones to declare signal handlers and set actions are described
+in the following sections.
+
+Jump Locations
+On UNIX systems, you can return to a point in a program from any other point in a
+program contingent on a certain condition. To do this, you use setjmp(),
+longjmp(), sigsetjmp(), and siglongjmp(). Although these functions aren’t
+part of the signal API, they are quite relevant, as they are often used in
+signal-handling routines to return to a certain location in the program in order to
+continue processing after a signal has been caught.
+
+    The setjmp() function is used to designate a point in the program to which exe-
+cution control is returned when the longjmp() function is called:
+int setjmp(jmp_buf env)
+void longjmp(jmp_buf env, int val)
+
+    The context the program is in when setjmp() is called is restored when
+returned to via longjmp()—that is, the register contents are reset to the state they
+were in when setjmp() was originally called, including the program counter and
+stack pointer, so that execution can continue at that point. A return value of 0 indi-
+cates a direct call of setjmp(), and a value of nonzero indicates that execution has
+returned to this point from a longjmp(). The val parameter supplied to longjmp()
+indicates what setjmp() returns when longjmp() is called. Because longjmp()
+hands execution off to a different part of the program, it doesn’t return. Here’s an
+example of these two functions in action:
+jmp_buf env;
+
+int process_message(int sock)
+{
+    struct pkt_header header;
+
+    for(;;)
+    {
+         if(setjmp(env) != 0)
+              log(“Invalid request received, ignoring message”);
+
+         if(read_packet_header(sock, &header)) < 0)
+              return -1;
+
+         switch(header.type)
+         {
+              case USER:
+                   parse_username_request(sock);
+                   break;
+
+              case PASS:
+                   parse_password_request(sock);
+
+                  break;
+
+              case OPEN:
+                  parse_openfile_request(sock);
+                  break;
+
+              case QUIT
+                  parse_quit_request(sock);
+                  break;
+
+              default:
+                  log(“invalid message”);
+                  break;
+          }
+      }
+}
+
+    Say you had a function such as the one in this example, and then several func-
+tions deep from the parse_openfile_request(), you had the following function for
+opening a file on the system:
+int open_file_internal(unsigned char *filename)
+{
+      if(strstr(filename, “../”))
+          longjmp(env, 1);
+      ... open file ...
+}
+
+    In this case, the longjmp() call causes the program to restart execution at the
+location of the corresponding setjmp() function, in process_message(). The
+setjmp() function will return a nonzero value—in this case, 1 because 1 was speci-
+fied as the second parameter to longjmp().
+    There are also two other very similar functions sigsetjmp() and siglongjmp()
+that are used to achieve a similar effect except that they take process signal masks
+into consideration as well. This is achieved through the savesigs parameter passed
+to sigsetjmp():
+int sigsetjmp(sigjmp_buf env, int savesigs)
+int siglongjmp(sigjmp_buf env, int val)
+
+   If the savesigs value is nonzero, the signal mask of the process at the time
+sigsetjmp() is called is also saved so that when siglongjmp() is called, it can be
+restored. In the next section, you see why mixing these functions with signal han-
+dlers is a dangerous practice.
+
+Signal Vulnerabilities
+A signal-handling routine can be called at any point during program execution,
+from the moment the handler’s installed until the point it’s removed. Therefore, any
+actions that take place between those two points in time can be interrupted.
+Depending on what the signal handler does, this interruption could turn out to be a
+security vulnerability. To understand the text in this section, you must be familiar
+with the term asynchronous-safe (sometimes referred to as async-safe, or signal-
+safe). An asynchronous-safe function is a function that can safely and correctly run
+even if it is interrupted by an asynchronous event, such as a signal handler or inter-
+rupting thread. An asynchronous-safe function is by definition reentrant, but has
+the additional property of correctly dealing with signal interruptions. Generally
+speaking, all signal handlers need to be asynchronous-safe; the reasons why will
+become clear throughout this section.
+
+Basic Interruption
+The first problem with handling signals occurs when the handler relies on some
+sort of global program state, such as the assumption that global variables are initial-
+ized when in fact they aren’t. Listing 13-1 presents a short example.
+Listing 13-1
+char *user;
+
+int cleanup(int sig)
+{
+     printf(“caught signal! Cleaning up..\n”);
+     free(user);
+     exit(1);
+}
+
+int main(int argc, char **argv)
+{
+     signal(SIGTERM, cleanup);
+     signal(SIGINT, cleanup);
+
+     ... do stuff ...
+
+      process_file(fd);
+      free(user);
+      close(fd);
+      printf(“bye!\n”);
+      return 0;
+}
+
+int process_file(int fd)
+{
+      char buffer[1024];
+
+      ... read from file into buffer ...
+
+      user = malloc(strlen(buffer)+1);
+      strcpy(user, buffer);
+
+      ... do stuff ...
+
+      return 0;
+}
+
+    The problem with this code is that cleanup() can be called at any time after it’s
+installed to handle the SIGTERM and SIGINT signals. If either signal is sent to the
+process before process_file() is called, the user variable isn’t initialized. This isn’t
+much of a problem because the initial value is NULL. However, what if a signal is
+delivered after free(user) and before the program exits? The user variable is deallo-
+cated with the free() function twice! That’s definitely not good. You would be in
+even more trouble if the signal handler didn’t exit the program because a signal
+could be sent during the strcpy() operation to free the buffer being copied into. The
+function would continue to copy data into a free heap chunk, which can lead to
+memory corruption and possibly arbitrary code execution.
+    In order to see how a bug of this nature might look in production code, take a
+look at a real-world example: OpenSSH. The following signal-handling routine is
+installed in OpenSSH in the main() function. It is called when OpenSSH receives
+an alarm signal (SIGALRM), the intention being to limit the amount of time a con-
+necting client has to complete a successful login:
+grace_alarm_handler(int sig)
+{
+
+       /* XXX no idea how fix this signal handler */
+
+       if (use_privsep && pmonitor != NULL && pmonitor->m_pid > 0)
+           kill(pmonitor->m_pid, SIGALRM);
+
+       /* Log error and exit. */
+       fatal(“Timeout before authentication for %s”, get_remote_ipaddr());
+}
+
+    Most of this code is not that interesting, except for the call to fatal(). If you
+examine the implementation of fatal() in the OpenSSH source code, you can
+see it calls the cleanup_exit() function, which in turn calls do_cleanup() to
+deallocate global structures and exit the process. The do_cleanup() implementa-
+tion is shown.
+void
+do_cleanup(Authctxt *authctxt)
+{
+       static int called = 0;
+
+       debug(“do_cleanup”);
+
+       /* no cleanup if you’re in the child for login shell */
+       if (is_child)
+           return;
+
+       /* avoid double cleanup */
+       if (called)
+           return;
+       called = 1;
+
+       if (authctxt == NULL)
+           return;
+#ifdef KRB5
+    if (options.kerberos_ticket_cleanup &&
+          authctxt->krb5_ctx)
+          krb5_cleanup_proc(authctxt);
+#endif
+
+       ... more stuff ...
+
+       /*
+        * Cleanup ptys/utmp only if privsep is disabled
+        * or if running in monitor.
+        */
+       if (!use_privsep || mm_is_monitor())
+             session_destroy_all(session_pty_cleanup2);
+}
+
+    As you can see, the do_cleanup() function is somewhat reentrant, because it
+checks whether it has already been called, and if it has, it just returns immediately.
+This prevents fatal() from calling itself, or being interrupting by a signal that
+results in a call to fatal(), such as the grace_alarm_handler() function. However,
+any functions called in do_cleanup() are also required to be reentrant if they’re
+called elsewhere in the program. If any called function is not reentrant, then it
+would be possible for the vulnerable function to be interrupted by the SIGALRM
+signal, which will eventually lead to the same non-reentrant function being invoked
+again. Now take a look at the krb5_cleanup_proc() function:
+void
+krb5_cleanup_proc(Authctxt *authctxt)
+{
+       debug(“krb5_cleanup_proc called”);
+       if (authctxt->krb5_fwd_ccache) {
+             krb5_cc_destroy(authctxt->krb5_ctx, authctxt->krb5_fwd_ccache);
+             authctxt->krb5_fwd_ccache = NULL;
+       }
+       if (authctxt->krb5_user) {
+             krb5_free_principal(authctxt->krb5_ctx,
+                authctxt->krb5_user);
+             authctxt->krb5_user = NULL;
+       }
+       if (authctxt->krb5_ctx) {
+             krb5_free_context(authctxt->krb5_ctx);
+             authctxt->krb5_ctx = NULL;
+       }
+}
+
+    This function simply frees a series of elements and sets them to NULL, thus
+preventing potential double-free scenarios. However, the krb5_user element is a
+structure composed of a number of pointers to strings designated by the client and
+limited by how much input OpenSSH accepts, which is quite a lot. The Kerberos
+library essentially frees these pointers one by one in a loop. After the krb5_user
+element is cleaned up, the authctxt->krb5_user element is set to NULL. Although
+this makes the function less susceptible to reentrancy problems, it is still not
+entirely safe. If this function were to be interrupted while deallocating the individ-
+ual strings contained within krb5_user, then it is possible that krb5_user could be
+accessed when it is in an inconsistent state.
+    The krb5_user variable is filled out by krb5_parse_name(), which is called by
+auth_krb5_password() when authenticating clients using Kerberos authentication.
+The auth_krb5_password() implementation is shown:
+int
+auth_krb5_password(Authctxt *authctxt, const char *password)
+{
+      krb5_error_code problem;
+      krb5_ccache ccache = NULL;
+      int len;
+
+      temporarily_use_uid(authctxt->pw);
+
+      problem = krb5_init(authctxt);
+      if (problem)
+          goto out;
+
+      problem = krb5_parse_name(authctxt->krb5_ctx,
+          authctxt->pw->pw_name,
+                 &authctxt->krb5_user);
+      if (problem)
+         goto out;
+#ifdef HEIMDAL
+      problem = krb5_cc_gen_new(authctxt->krb5_ctx,
+         &krb5_mcc_ops, &ccache);
+      if (problem)
+         goto out;
+
+      problem = krb5_cc_initialize(authctxt->krb5_ctx, ccache,
+          authctxt->krb5_user);
+      if (problem)
+          goto out;
+
+      restore_uid();
+
+      problem = krb5_verify_user(authctxt->krb5_ctx,
+          authctxt->krb5_user, ccache, password, 1, NULL);
+
+      ... more stuff ...
+
+ out:
+      restore_uid();
+
+      if (problem) {
+          if (ccache)
+                 krb5_cc_destroy(authctxt->krb5_ctx, ccache);
+
+          ... more stuff ...
+
+          krb5_cleanup_proc(authctxt);
+
+          if (options.kerberos_or_local_passwd)
+                 return (-1);
+          else
+                 return (0);
+      }
+      return (authctxt->valid ? 1 : 0);
+}
+
+    When an error occurs at any point during the auth_krb5_password() func-
+tion, krb5_cleanup_proc() is called. This error normally occurs when krb5_ver-
+ify_user() is called for a user lacking valid credentials. So, what would happen if
+krb5_cleanup_proc() is in the process of freeing thousands of strings when
+the signal timeout occurs? The signal handler is called, which in turn calls
+krb5_cleanup_proc() again. This second call to krb5_cleanup_proc() receives
+
+the krb5_user element, which is not NULL because it’s already in the middle of
+processing; so krb5_cleanup_proc() once again starts deallocating all of the
+already deallocated string elements in this structure, which could lead to
+exploitable memory corruption.
+
+Non-Returning Signal Handlers
+Non-returning signal handlers are those that never return execution control back to
+the interrupted function. There are two ways this can happen—the signal handler
+can explicitly terminate the process by calling exit(), or the signal handler can
+return to another part of the application using longjmp(). It’s generally safe for a
+longjmp() to simply terminate the program. However, a signal handler that uses
+longjmp() to return to another part of the application is very unlikely to be com-
+pletely asynchronous-safe, because any of the code reachable via the signal handler
+must be asynchronous-safe as well. This section will focus on the various problems
+that can arise from attempting to restart execution using the longjmp() function.
+     To see this in action, consider the Sendmail SMTP server signal race vulnerability.
+It occurs when reading e-mail messages from a client. The collect() function respon-
+sible for reading e-mail messages is shown in part:
+
+void
+collect(fp, smtpmode, hdrp, e, rsetsize)
+       SM_FILE_T *fp;
+       bool smtpmode;
+       HDR **hdrp;
+       register ENVELOPE *e;
+       bool rsetsize;
+{
+       ... other declarations ...
+       volatile time_t dbto;
+
+       ...
+
+       dbto = smtpmode ? TimeOuts.to_datablock : 0;
+
+       /*
+       **    Read the message.
+       **
+       **      This is done using two interleaved state machines.
+
+      **       The input state machine is looking for things like
+      **       hidden dots; the message state machine is handling
+      **       the larger picture (e.g., header versus body).
+      */
+
+      if (dbto != 0)
+      {
+           /* handle possible input timeout */
+           if (setjmp(CtxCollectTimeout) != 0)
+           {
+                if (LogLevel > 2)
+                    sm_syslog(LOG_NOTICE, e->e_id,
+                           “timeout waiting for input from %s
+                                 during message collect”,
+                           CURHOSTNAME);
+                errno = 0;
+                if (smtpmode)
+                {
+                    /*
+                    **   Override e_message in usrerr() as this
+                    **   is the reason for failure that should
+                    **   be logged for undelivered recipients.
+                    */
+
+                    e->e_message = NULL;
+                }
+                usrerr(“451 4.4.1 timeout waiting for input
+                    during message collect”);
+                goto readerr;
+           }
+           CollectTimeout = sm_setevent(dbto, collecttimeout,
+                dbto);
+      }
+
+    This block of code essentially sets up a handler for the SIGALRM signal,
+which is called when dbto seconds has elapsed. Sendmail uses an event abstrac-
+tion instead of just using signals, but the call to sm_setevent()instructs Sendmail
+
+to call the collecttimeout() function when the time dbto indicates has expired.
+Notice the setjmp() call, indicating that you return to this function later. When
+the corresponding longjmp() occurs, you can see that you log some kind of
+message and then jump to readerr, which logs some sender information and
+then returns to the main Sendmail SMTP processing code. Now look at how
+collecttimeout() works:
+
+static void
+collecttimeout(timeout)
+    time_t timeout;
+{
+    int save_errno = errno;
+
+    /*
+    **   NOTE: THIS CAN BE CALLED FROM A SIGNAL HANDLER. DO NOT ADD
+    **      ANYTHING TO THIS ROUTINE UNLESS YOU KNOW WHAT YOU ARE
+    **      DOING.
+    */
+    if (CollectProgress)
+    {
+           /* reset the timeout */
+           CollectTimeout = sm_sigsafe_setevent(timeout,
+                collecttimeout, timeout);
+           CollectProgress = false;
+    }
+    else
+    {
+           /* event is done */
+           CollectTimeout = NULL;
+    }
+
+    /* if no progress was made or problem resetting event,
+         die now */
+    if (CollectTimeout == NULL)
+    {
+           errno = ETIMEDOUT;
+           longjmp(CtxCollectTimeout, 1);
+
+      }
+      errno = save_errno;
+}
+
+    In certain cases, the collecttimeout() function can issue a call to longjmp(),
+which will return back into collect(). This alone should be setting off alarm bells in
+your head; the presence of this longjmp() call virtually guarantees that this function
+isn’t asynchronous-safe because you already know that the target of the jump winds
+up back in the main SMTP processing code. So if this signal-handling routine is called
+when any non-asynchronous-safe operation is being conducted, and you can reach
+that code again from the SMTP processing code, you have a bug. As it turns out, there
+are a few non-asynchronous-safe operations; the most dangerous is the logging
+function sm_syslog():
+sm_syslog(level, id, fmt, va_alist)
+      int level;
+      const char *id;
+      const char *fmt;
+      va_dcl
+#endif /* __STDC__ */
+{
+      static char *buf = NULL;
+      static size_t bufsize;
+      char *begin, *end;
+      int save_errno;
+      int seq = 1;
+      int idlen;
+      char buf0[MAXLINE];
+      char *newstring;
+      extern int SyslogPrefixLen;
+      SM_VA_LOCAL_DECL
+
+      ... initialization ...
+
+      if (buf == NULL)
+      {
+          buf = buf0;
+          bufsize = sizeof buf0;
+
+    }
+
+    ... try to fit log message in buf, else reallocate it
+         on the heap
+
+    if (buf == buf0)
+         buf = NULL;
+    errno = save_errno;
+}
+
+     This code might need a little explanation because it has been edited to fit the
+page. The sm_syslog() function has a static character pointer buf, which is initial-
+ized to NULL. On function entry, it is immediately set to point to a stack buffer. If
+the message being logged is too large, a bigger buffer on the heap is allocated to
+hold the log message. In this case, the heap buffer is retained for successive calls to
+sm_syslog(), since buf is static. Otherwise, buf is just set back to NULL and uses a
+stack buffer again next time. So, what would happen if you interrupt this function
+with collecttimeout()? The call to longjmp() in collecttimeout() would
+invalidate part of the stack (remember, longjmp() resets program stack and frame
+pointers to what they were when setjmp() was called), but the static buf variable
+isn’t reset to NULL—it points to an invalidated region of the stack. Therefore, the
+next time sm_syslog() is called, buf is not NULL (indicating that a heap buffer has
+been allocated, although in this case buf is really pointing to a stack location), so the
+log message is written to the wrong part of the stack!
+     When you are attempting to evaluate whether code is asynchronous-safe, you
+must account for the entire state of the program—not just global variables. The state
+of the program can also include static variables, privilege levels, open and closed
+file descriptors, the process signal mask, and even local stack variables. This last
+item might seem counter-intuitive since stack variables only have a local scope
+inside the function that declares them. However, consider the fact that a function
+might be interrupted at any point during execution by a signal, and then a different
+part of the function is returned to through the use of longjmp(). In this scenario, it
+is possible that stack variables used by that function are not in an expected state.
+     A security researcher from the FreeBSD project named David Greenman pointed
+out a perfect example of exploiting a state change bug in WU-FTPD v2.4, which
+is detailed in a mail he sent to the bugtraq security mailing list (archived at
+http://seclists.org/bugtraq/1997/Jan/0011.html). Essentially, the program installed
+two signal handlers, one to handle SIGPIPE and one to handle SIGURG. The SIGPIPE
+handler is shown in Listing 13-2.
+
+Listing 13-2
+Signal Race Vulnerability in WU-FTPD
+static void
+lostconn(signo)
+    int signo;
+{
+
+      if (debug)
+          syslog(LOG_DEBUG, “lost connection”);
+      dologout(-1);
+}
+
+/*
+ * Record logout in wtmp file
+ * and exit with supplied status.
+ */
+void
+dologout(status)
+     int status;
+{
+
+    if (logged_in) {
+        (void) seteuid((uid_t)0);
+        logwtmp(ttyline, “”, “”);
+#if defined(KERBEROS)
+        if (!notickets && krbtkfile_env)
+            unlink(krbtkfile_env);
+#endif
+    }
+    /* beware of flushing buffers after a SIGPIPE */
+    _exit(status);
+}
+
+   Upon receipt of a SIGPIPE signal, the process sets its effective user ID to 0, logs
+some information, and then exits. Here’s the SIGURG handler:
+static void
+myoob(signo)
+    int signo;
+{
+      char *cp;
+
+       /* only process if transfer occurring */
+       if (!transflag)
+           return;
+       cp = tmpline;
+       if (getline(cp, 7, stdin) == NULL) {
+           reply(221, “You could at least say goodbye.”);
+           dologout(0);
+       }
+       upper(cp);
+       if (strcmp(cp, “ABOR\r\n”) == 0) {
+           tmpline[0] = ‘\0’;
+           reply(426, “Transfer aborted. Data connection closed.”);
+           reply(226, “Abort successful”);
+           longjmp(urgcatch, 1);
+       }
+       if (strcmp(cp, “STAT\r\n”) == 0) {
+           if (file_size != (off_t) -1)
+                  reply(213, “Status: %qd of %qd bytes transferred”,
+                     byte_count, file_size);
+           else
+                  reply(213, “Status: %qd bytes transferred”,
+                     byte_count);
+       }
+}
+...
+void
+send_file_list(whichf)
+       char *whichf;
+{
+...
+       if (setjmp(urgcatch)) {
+           transflag = 0;
+           goto out;
+       }
+
+     Upon receipt of a SIGURG signal (which can be delivered by sending a TCP
+segment with the URG flag set in the TCP header), some data is read. If it’s ABOR\r\n,
+the process calls longjmp() to go back to another part of the program, which even-
+tually goes back to the main processing loop for receiving FTP commands. It’s pos-
+sible for a SIGPIPE to occur while handling the data connection, and then be
+interrupted after it has set the effective user ID to 0 but before it calls exit() by a
+SIGURG signal. In this case, the program returns to the main processing loop with an
+effective user ID of 0, thus allowing users to modify files with root privileges.
+     Another problem with signal handlers that use longjmp() to return back into
+the program is a situation where the jump target is invalid. For setjmp() and
+sigsetjmp() to work correctly, the function that calls them must still be on the
+runtime execution stack at any point where longjmp() or siglongjmp() is called
+from. This is a requirement because state restoration performed by longjmp() is
+achieved by restoring the stack pointer and frame pointer to the values they had
+when setjmp() was invoked. So, if the original function has since terminated, the
+stack pointer and frame pointer restored by longjmp() point to undefined data on
+the stack. Therefore, if a longjmp() can be activated at any point after the function
+that calls setjmp() has returned, the possibility for exploitation exists. Take a look
+at a modified version of the process_message() example used earlier in this section:
+jmp_buf env;
+
+void pipe_handler(int signo)
+{
+      longjmp(env);
+}
+
+int process_message(int sock)
+{
+      struct pkt_header header;
+      int err = ERR_NONE;
+
+      if(setjmp(env) != 0)
+      {
+          log(“user disconnected!”);
+          err = ERR_DISCONNECTED;
+              goto cleanup;
+      }
+
+    signal(SIGPIPE, pipe_handler);
+
+    for(;;)
+    {
+
+           if(read_packet_header(sock, &header)) < 0)
+                  return ERR_BAD_HEADER;
+
+              switch(header.type)
+              {
+              case USER:
+                  parse_username_request(sock);
+                  break;
+
+              case PASS:
+                  parse_password_request(sock);
+                  break;
+
+              case OPEN:
+                  parse_openfile_request(sock);
+                  break;
+
+              case QUIT
+                  parse_quit_request(sock);
+                  goto cleanup;
+
+              default:
+                  log(“invalid message”);
+                  break;
+              }
+    }
+
+cleanup:
+    signal(SIGPIPE, SIG_DFL);
+
+    return err;
+}
+
+    In this example, longjmp() is called when a SIGPIPE is received, which you
+can safely assume that users are able to generate in any parsing functions for the
+different commands, as the program might be required to write some data back to
+the client. However, this code has a subtle error: If read_packet_header() returns
+less than 0, the SIGPIPE handler is never removed, and process_message()
+returns. So, if a SIGPIPE is delivered to the application later, pipe_handler() calls
+longjmp(), which returns to the process_message() function. Because
+process_message() is no longer on the call stack, the stack and frame pointers
+point to stack space used by some other part of the program, and memory corrup-
+tion most likely occurs.
+    To summarize, signal handlers with longjmp() calls require special attention
+when auditing code for the following reasons:
+      ■ The signal handler doesn’t return, so it’s highly unlikely that it will be asyn-
+        chronous-safe unless it exits immediately.
+      ■ It might be possible to find a code path where the function that did the
+        setjmp() returns, but the signal handler with the longjmp() isn’t removed.
+      ■ The signal mask might have changed, which could be an issue if sigsetjmp()
+
+        and siglongjmp() aren’t used. If they are, does restoring the old signal mask
+        cause problems as well?
+      ■ Permissions might have changed (as in the WU-FTPD example).
+
+      ■ Program state might have changed such that the state of variables that are
+        valid when setjmp() is originally called but not necessarily when longjmp() is
+        called.
+
+Signal Interruption and Repetition
+The bug presented in WU-FTPD introduces an interesting concept: The signal han-
+dler itself can also be interrupted, or it can be called more than once. An interesting
+paper by Michael Zalewski, “Delivering Signals for Fun and Profit,” describes these
+two related attacks (available at www.bindview.com/Services/Razor/Papers/
+2001/signals.cfm).
+    Sometimes developers will construct signal handlers with the expectation that
+they are only executed once, or not at all. If a signal handler may be invoked more
+than once due to the delivery of multiple signals, the handler may inadvertently
+perform an operation multiple times that is really only safe to perform once. As an
+example, consider the cleanup() function presented in Listing 13-1 at the begin-
+ning of this section; it can be invoked by the delivery of either a SIGTERM or a
+SIGINT signal. As such, it would be possible to deliver a SIGTERM signal to the
+process followed rapidly by a SIGINT signal, and thus have it execute multiple
+times, resulting in deallocating the user variable more than once. When you’re
+
+auditing instances of sigaction(), note that the combination of the SA_ONESHOT
+and SA_RESETHAND flags indicate that the signal handler is used only once, and then
+the default action for that signal is restored.
+
+        Note
+        The signal() function behaves a little differently in Linux than it
+        does on BSD systems; when a signal handler is installed with the
+        signal() function in Linux, after the signal is triggered once, the
+        default action is restored for that signal. Conversely, BSD systems
+        leave the signal handler defined by the user in place until it’s explic-
+        itly removed. So the program behaves a little differently depending
+        on whether it runs on Linux or BSD, which might determine
+        whether a signal handler is vulnerable to attacks such as those
+        detailed previously.
+
+    The second problem that can arise is that a signal handler itself can be inter-
+rupted by another signal, which might cause problems if the signal handler isn’t
+asynchronous-safe. A signal handler can be interrupted only if a signal is delivered
+to the process that’s not blocked. Typically, a process blocks signals by using the
+sigprocmask() function (except for SIGKILL and SIGSTOP, which can’t be caught or
+blocked). With this function, developers can define a set of signals in the form of
+a sigset_t argument that describes all signals that should be blocked while the
+handler is running. If a process receives a signal while it’s blocked, the kernel
+makes a note of the signal and delivers it to the process after it’s unblocked.
+    In addition, when a signal handler is running, certain signals can be implicitly
+blocked, which might affect whether a signal handler can be interrupted. In a signal
+handler installed with signal(), the signal the handler catches is blocked for the
+period of time the signal handler is running. So, for example, a signal handler
+installed to handle SIGINT can’t be interrupted by the delivery of another SIGINT
+while it’s running. This is also the case with sigaction(), except when the
+SA_NODEFER flag is supplied in the sa_flags member of the sigaction structure.
+The sigaction() function also enables developers to supply additional signals that
+are blocked for the duration of the signal-handling routine by supplying them in the
+sa_mask field of the sigaction structure.
+    Therefore, when you’re evaluating whether a signal can be interrupted by another
+signal, you need to establish what the process’s signal mask is when the handler is
+running. It’s quite common for signal handlers to be interruptible by other signals; for
+example, a SIGINT handler might be interrupted by a SIGALRM signal. Again returning
+to our cleanup() example from Listing 13-1, you would be able to interrupt the han-
+dler that has caught SIGINT by sending a SIGTERM at the appropriate time, thus having
+the cleanup() function interrupt itself because it’s the handler for both.
+
+    One nasty problem that tends to catch developers off-guard is the use of library
+functions within a signal handler. In “Delivering Signals for Fun and Profit,”
+Zalewski talks about libc functions that are and are not asynchronous-safe. The
+complete list of functions guaranteed to be asynchronous-safe by POSIX standards
+is shown (taken from the OpenBSD signal(3) man page):
+Base Interfaces:
+
+_exit(), access(), alarm(), cfgetispeed(), cfgetospeed(),
+cfsetispeed(), cfsetospeed(), chdir(), chmod(), chown(),
+close(), creat(), dup(), dup2(), execle(), execve(),
+fcntl(), fork(), fpathconf(), fstat(), fsync(), getegid(),
+geteuid(), getgid(), getgroups(), getpgrp(), getpid(),
+getppid(), getuid(), kill(), link(), lseek(), mkdir(),
+mkfifo(), open(), pathconf(), pause(), pipe(), raise(),
+read(), rename(), rmdir(), setgid(), setpgid(), setsid(),
+setuid(), sigaction(), sigaddset(), sigdelset(),
+sigemptyset(), sigfillset(), sigismember(), signal(),
+sigpending(), sigprocmask(), sigsuspend(), sleep(), stat(),
+sysconf(), tcdrain(), tcflow(), tcflush(), tcgetattr(),
+tcgetpgrp(), tcsendbreak(), tcsetattr(), tcsetpgrp(),
+time(), times(), umask(), uname(), unlink(), utime(),
+wait(), waitpid(), write()
+
+Real-time Interfaces:
+
+aio_error(), clock_gettime(), sigpause(), timer_getoverrun(),
+aio_return(), fdatasync(), sigqueue(), timer_gettime(),
+aio_suspend(), sem_post(), sigset(), timer_settime()
+
+ANSI C Interfaces:
+
+strcpy(), strcat(), strncpy(), strncat(), and perhaps
+some others
+
+Extension Interfaces:
+
+strlcpy(), strlcat(), syslog_r()
+
+    Everything else is considered not safe. Notice the lack of some commonly used
+functions in this list: syslog(), malloc(), free(), and the printf() functions. Sig-
+nal handlers that use any functions not listed here are potentially at risk. Exactly
+what level of risk they are exposed to depends on the function they use and its
+implementation specifics; a signal handler that interrupts a malloc() or free() and
+then calls malloc() or free() is at risk of corrupting the heap because it might be
+in an inconsistent state when the signal handler is called. Many of the functions not
+included in the safe list use these heap functions internally.
+    Although functions manipulating the system heap might initially appear to be
+the most major concern, it’s much less of a problem than it used to be. Many libc
+implementations now contain some sort of concurrency controls over the system
+heap that prevent more than one heap function from being entered at a time. Still, a
+signal handler that uses the heap in an unsafe manner should be flagged, as you
+can’t assume the system will handle concurrency correctly, especially when you
+don’t know what system the software is running on.
+
+Signals Scoreboard
+A signal function contains the special property that it can run at any time from
+installation to removal, so you need to give signal handlers special attention. The pro-
+cedure for auditing a signal-handling function involves an extra step on top of the
+standard code-auditing practices you have already learned in this book. Specifically,
+you need to assess whether the signal function is asynchronous-safe. As you have
+learned, asynchronous-safe isn’t quite the same as thread safe. In fact, sometimes
+thread APIs aren’t asynchronous-safe; for example, in PThreads, the use of a mutex
+data type in a signal handler can cause the program to become deadlocked! When
+examining a signal handler, therefore, you might find it helpful to record some basic
+statistics on your analysis of the function, as shown in Table 13-3. These logs are sim-
+ilar to the Synchronization Scoreboards introduced earlier in this chapter.
+     When you’re determining the risk level associated with a signal handler running
+at a certain time, you should user your scoreboard to help identify any issues. First,
+attempt to locate non-reentrant functions called while the signal handler is installed.
+This means finding functions that have static variables or that modify global vari-
+ables or resources without any sort of locking mechanisms.
+
+Table 13-3
+Signal Handler Scoreboard
+Function name                                     Alrmhandler
+Location                                          src/util.c, line 140
+Signal                                            SIGALRM
+Installed                                         src/main.c, line 380
+                                                                              continues...
+
+Table 13-3    Continued
+Signal Handler Scoreboard
+Removed                                                    Never
+Unsafe library functions used                              malloc(), free(), syslog()
+Notes   This function is used to handle a network
+        timeout from reading data. By default, it
+        occurs after three minutes of inactivity.
+        Interesting if you can interrupt read_data()
+        in src/net.c, particularly when the buffer
+        length is updated but before the buffer has been
+        reallocated.
+
+   Next, you should look for signal handlers using the longjmp() and
+siglongjmp() functions. They cause the signal handler to never return and practi-
+cally guarantee that the signal handler is not asynchronous-safe unless it jumps to a
+location that immediately exits. Also, remember the point from the “Jump Loca-
+tions” section earlier in this chapter: When setjmp() is returned to from a
+longjmp(), the context of the process might be much different than it was when the
+function containing the setjmp() was originally called. Stack variable values might
+have changed, and global variables and shared resources are likely to have changed.
+However, it’s quite easy for developers to make assumptions about the state of a
+variable based on conditions when the function was originally called. When you
+encounter a signal handler that uses the *jmp() functions, it’s definitely worth not-
+ing and attempting to verify whether any of the five conditions listed in the “Signal
+Vulnerabilities” section can result in a vulnerability in the program.
+
+Threads
+Multithreaded programs also suffer from reentrancy problems in much the same
+way as signal handlers and processes dealing with global resources, but to a larger
+extent. Code in a multithreaded application can be interrupted at any point, so it
+needs to be coded carefully to avoid race and deadlock conditions. Bugs in software
+related to thread races are often subtle and hard to debug because the program
+seems to work fine most of the time, but one out of every hundred tries or so, it
+behaves differently. Often these bugs can turn out to be security problems because
+the race condition might result in memory corruption or other equally undesirable
+program behavior. In multithreaded environments, you might question how much of
+a security problem synchronization issues are. After all, with signals, attackers can
+try to send well-timed signals specifically to trigger a bug, but what about threads?
+The truth is that attackers may or may not be able to influence the program enough
+to trigger a threading error; it depends on what the program does. Usually, however,
+it’s safe to assume attackers can trigger it or give the program such a heavy workload
+
+that it’s likely to be triggered. After the error occurs, they can probably cause enough
+damage to bring the program down or have it violate security policies in some way.
+    OS Thread APIs contain functionality for developers to create programs that
+can safely execute concurrent threads of execution in the same address space. Both
+Windows and UNIX provide robust threading APIs with similar semantics and
+potential for multithreaded programming issues. As such, both APIs are covered in
+examples throughout this section. Before you examine the examples, the following
+sections introduce you to these APIs.
+
+        Note
+        There are multiple threading interfaces for UNIX environments, the
+        primary one being PThreads (POSIX threads), which is what’s used
+        in this section.
+
+PThreads API
+The PThreads API enables developers to design thread-safe code that avoids race
+conditions by defining two data types that can be used as synchronization objects:
+mutexes and condition variables.
+
+Mutexes in PThreads
+A mutex in PThreads is similar in principle to the mutexes in Windows, except it
+isn’t globally visible. It’s used to ensure that a shared resource is being operated on
+by only one thread at a time.
+
+        Note
+        Actually, a PThreads mutex is more like a critical section provided
+        by Windows (covered in “Windows API” later in this chapter).
+
+    The PThreads API provides a mutex data type (pthread_mutex_t) for controlling
+access to code that isn’t allowed to be interrupted by other threads, commonly
+referred to as “critical sections.” The pthread_mutex_t type is manipulated with the
+functions described in the following paragraphs.
+    The pthread_mutex_init() function initializes a mutex data type:
+
+int pthread_mutex_init(pthread_mutex_t *mutex,
+➥ const pthread_mutex_attr_t *attr)
+
+    The attr parameter specifies attributes that can modify the mutex’s behavior.
+These attributes aren’t covered in this chapter because they aren’t relevant to the
+issues discussed. This function must be called before a mutex is used.
+
+         Note
+         Instead of calling the pthread_mutex_init() function, a developer
+         can just initialize the mutex with default values manually, typically
+         with the constant PTHREAD_MUTEX_INITIALIZER. A variation of
+         PThreads for Linux, called LinuxThreads, has two other initializers:
+         PTHREAD_RECURSIVE_INTIALIZER_NP and PTHREAD_ERRORCHECK_
+         MUTEX_NP, which initialize the mutex with different attributes.
+
+      The following function is used to lock the mutex:
+int pthread_mutex_lock(pthread_mutex_t *mutex)
+
+    If the mutex is already locked, the thread calling this function goes to sleep until
+the lock is released.
+    The pthread_mutex_trylock() function is identical to pthread_mutex_lock(),
+except it returns immediately to the caller with an error if the mutex is already
+locked:
+int pthread_mutex_trylock(pthread_mutex_t *mutex)
+
+      The following function unlocks a mutex that was locked with
+pthread_mutex_lock() or pthread_mutex_unlock():
+
+int pthread_mutex_unlock(pthread_mutex_t *mutex)
+
+   The following function destroys a mutex; it’s called after the program no longer
+needs the mutex:
+int pthread_mutex_destroy(pthread_mutex_t *mutex)
+
+Condition Variables
+PThreads provides another synchronization object, the condition variable
+(pthread_cond_t), which is used to indicate to waiting threads that a certain
+condition has been met. In this respect, condition variables are similar to a localized
+version of the Windows events (localized because condition variables aren’t globally
+accessible). The functions for manipulating a condition variable are described in the
+following paragraphs.
+     The pthread_cond_init() function is used for initializing a condition variable
+before use:
+int pthread_cond_init(pthread_cond_t *cond,
+➥ pthread_condattr_t *attr);
+
+    The attr parameter supplies optional parameters that can modify the condition
+variable’s behavior. They aren’t relevant to this discussion, so for more information,
+consult the PThreads documentation.
+
+       Note
+       Like pthread_mutex_init(), a developer can choose to initialize a
+       condition variable with default attributes instead of calling this
+       function, typically with the PTHREAD_COND_INITIALIZER constant.
+
+   The following function is used to wake up a thread waiting on a condition variable:
+int pthread_cond_signal(pthread_cond_t *cond)
+
+   If multiple variables are waiting on the condition, only one of the threads is
+awakened, which is similar to how auto-reset events function in Windows.
+   The pthread_cond_broadcast() function acts like pthread_cond_signal(),
+except it wakes up all threads waiting on a condition variable, not just one:
+int pthread_cond_broadcast(pthread_cond_t *cond)
+
+   This behavior is similar to how manual-reset events function in Windows.
+   The pthread_cond_wait() function is used to wait on a condition variable:
+int pthread_cond_wait(pthread_cond_t *cond,
+➥ pthread_mutex_t *mutex)
+
+    The mutex specified by the second argument is atomically unlocked for the dura-
+tion of time the thread is blocking during the wait on the condition variable. After
+the condition variable is signaled, this function relocks the mutex before returning.
+    The following function basically the same as pthread_cond_wait(), except it
+waits only the amount of time indicated by the abstime parameter:
+int pthread_cond_timedwait(pthread_cond_t *cond,
+➥ pthread_mutex_t *mutex, const struct timespec *abstime)
+
+    The pthread_cond_destroy() function simply destroys the specified condition
+variable:
+int pthread_cond_destroy(pthread_cond_t *cond)
+
+Windows API
+The Windows API for thread synchronization is a little more complicated than
+PThreads. The Windows API provides a broad range of synchronization objects that
+
+a multithreaded process can use to ensure that shared resources are accessed safely.
+You’ve already seen most of these objects in the “Windows IPC Synchronization
+Objects” section earlier in this chapter. However, there are a few thread-specific
+synchronization primitives, the most important of which being critical section,
+which will be discussed here.
+
+          Note
+          Even though the IPC objects were introduced as interprocess
+          synchronization objects, they can be used to synchronize threads, so
+          the previous material on using those objects also applies to a single
+          multithreaded process.
+
+Critical Sections
+A critical section (declared in code as CRITICAL_SECTION data type) can be used to
+provide mutually exclusive access to a shared resource by acting as a locking mech-
+anism in the same way a mutex object does. Like a mutex, a critical section has a
+binary state—locked or unlocked—and can be locked by only one thread at a time.
+The key differences between a mutex object and a critical section is that a critical
+section can be accessed only by threads of a single process; they are never globally
+visible or accessible. This is because a critical section isn’t a true Windows object;
+it’s simply a data structure that creates a Windows synchronization primitive if
+necessary. Being a local data structure makes it faster than a mutex and explains
+why it can be used only between threads in the same process. Therefore, critical
+sections don’t use the wait functions discussed earlier. Instead, the functions
+described in the following paragraphs are used for manipulating a critical section.
+     The following function populates the CRITICAL_SECTION data structure; it must
+be called before any use of the CRITICAL_SECTION:
+void InitializeCriticalSection(
+            LPCRITICAL_SECTION lpCriticalSection)
+
+    The following function initializes a CRITICAL_SECTION as well as setting the
+spin count:
+BOOL InitializeCriticalSectionAndSpinCount(
+            LPCRITICAL_SECTION lpCriticalSection,
+            DWORD dwSpinCount)
+
+    The spin count affects performance but not synchronization, so it’s irrelevant to
+this discussion.
+    The following function acquires the lock for a CRITICAL_SECTION data structure:
+
+void EnterCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
+
+     If the lock is owned by another thread, calling this function causes this thread
+to block until the lock is available. This means the owning thread doesn’t block on a
+call to this function. However, every call to EnterCriticalSection() must be
+paired with a call to LeaveCriticalSection(); otherwise, the critical section
+remains locked and deadlock can occur. This function is equivalent to the
+pthread_mutex_lock() function from the PThreads API.
+     The following function attempts to obtain the lock for the specified
+CRITICAL_SECTION data structure:
+
+BOOL TryEnterCriticalSection(
+          LPCRITICAL_SECTION lpCriticalSection)
+
+     If it’s unlocked, this function locks it and returns successfully; otherwise,
+it returns FALSE. Calling this function doesn’t cause the calling thread to block, as
+EnterCriticalSection() does. Like EnterCriticalSection(), every
+successful acquiring of a critical section must have a corresponding call to
+LeaveCriticalSection(); otherwise, deadlock can occur. This function is similar
+to the pthread_mutex_trylock() function in the PThreads API.
+     The LeaveCriticalSection() function unlocks the given CRITICAL_SECTION
+data structure:
+void LeaveCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
+
+   Any other threads waiting on the critical section are awakened so that one of
+them can take ownership of it.
+   The following function deletes a critical section and releases any associated
+memory and kernel objects:
+void DeleteCriticalSection(LPCRITICAL_SECTION
+➥ lpCriticalSection)
+
+Threading Vulnerabilities
+Now that you’re familiar with the threading models available in UNIX and
+Windows, you can begin to look at practical examples of the synchronization
+problems discussed at the beginning of this chapter. Basically, threading issues
+are caused by incorrect use of synchronization objects. With race conditions, it’s
+usually because some code that operates on a shared resource isn’t correctly syn-
+chronized. For deadlock and starvation issues, it’s usually because locking
+devices are used improperly.
+
+    Note that you can approach auditing threading vulnerabilities in a similar fashion
+to auditing IPC synchronization objects. That is, you can construct a scoreboard noting
+the use of the locking mechanisms and keep notes of potentially dangerous situations.
+
+Race Conditions
+As stated previously, a race condition occurs when the successful outcome of an
+operation depends on whether the threads are scheduled for running in a certain
+order. Neglecting to use mutexes or semaphores in appropriate places causes race
+conditions because you can’t guarantee a thread won’t be interrupted in the middle
+of modifying or accessing a shared resource.
+    Auditing code to find potential vulnerabilities of this nature is a three-step process:
+       1. Identify shared resources that are acted on by multiple threads.
+       2. Determine whether the appropriate locking mechanism has been selected.
+       3. Examine the code that modifies this resource to see whether appropriate
+          locking mechanisms have been neglected or misused.
+    Although this process sounds straightforward, it’s often trickier than it seems
+because of the complexity of multithreaded programming. For this reason, the follow-
+ing sections explain in more detail how to perform each step in a systematic fashion.
+Identify Shared Resources
+This step is probably the easiest. Any thread synchronization objects are used for one
+primary reason: threads must access resources atomically. To identify the shared
+resources being operated on, you simply need to read the code and note accesses to
+global variables and any objects that aren’t local to the thread or process, such as a
+HANDLE to a global object. Usually, these accesses stand out because the point of
+worker threads is to operate on a resource. For example, a multithreaded server
+process might consist of one thread accepting connections from remote nodes and
+adding received requests to a queue. Then another set of threads takes objects from
+that queue and processes them on behalf of the client. In this case, the shared
+resource is obviously the queue where requests are being added to and taken from.
+Ensure That Appropriate Locking Mechanisms Are Used
+There’s no point in using a synchronization object if it’s not appropriate for the
+shared resource that needs to be protected. Therefore, you must evaluate the devel-
+opers’ choice of synchronization primitive so that you can determine whether it
+meets the intended requirements. Here are some common reasons for providing
+synchronization for a resource:
+      ■ A resource can be operated on by only one thread at a time, no matter what
+       it’s doing. Generally, a mutex or critical section is necessary.
+      ■ A resource can be read from by multiple threads. In this case, a semaphore
+       might be most appropriate.
+
+    ■ A queue resource has multiple threads adding to it and removing elements
+     from it. In this case, a mutex or critical section seems most appropriate
+     because every thread is actually writing to the queue by unlinking elements
+     from it or linking elements to it.
+    Obviously, these three reasons are simple guidelines and aren’t true for all
+situations. For instance, this list doesn’t consider the need for signaling consumer
+threads that data is available. Because these requirements can vary so much, you need
+to be careful to evaluate the locking mechanisms developers select. This evaluation
+requires understanding the purpose the locking mechanism is supposed to serve and
+attempting to locate situations in which the mechanism might not behave as intended.
+Examine Accesses to the Object
+The whole point of locking mechanisms is to allow an object to be modified in an
+atomic fashion. A race condition can occur when locking mechanisms aren’t used in
+correctly when accessing shared resources or aren’t used at all. The most obvious race
+conditions happen when no locking objects are used, as shown in the following code:
+struct element *queue;
+int fd;
+
+void *job_task(void *arg)
+{
+    struct element *elem;
+    struct timespec ts;
+
+    ts.tv_sec = 1;
+    ts.tv_nsec = 0;
+
+    for(;;)
+    {
+          if(queue == NULL)
+          {
+              nanosleep(&ts, NULL);
+              continue;
+          }
+
+          elem = queue;
+
+          queue = queue->next;
+
+          .. process element ..
+      }
+
+      return NULL;
+}
+
+void *network_task(void *arg)
+{
+      struct element *elem, *tmp;
+      struct request *req;
+
+      for(;;)
+      {
+          req = read_request(fd);
+
+          if(req == NULL)        // bad request
+                 continue;
+
+          elem = request_to_job_element(req);
+
+          free(req);
+
+          if(elem == NULL)
+                 continue;
+
+          if(queue == NULL)
+                 queue = elem;
+          else
+          {
+                 for(tmp = queue; tmp->next; tmp = tmp->next)
+                    ;
+                 tmp->next = elem;
+          }
+      }
+
+    return NULL;
+}
+
+     Imagine you have a program containing multiple threads: one thread running
+the network_task() function and multiple threads running the job_task() func-
+tion. Because there are no locks around any code that acts on the queue variable, it’s
+possible that a thread can operate on queue when it’s in an inconsistent state
+because the previously running thread was interrupted while operating on queue.
+Furthermore, when the previous thread commences running again, it might have
+outdated data in local variables, such as pointers to elements that have been
+dequeued and processed by another thread already. In reality, this kind of blatant
+failure to use locking mechanisms is quite rare. You’ll probably encounter it only in
+code that was previously developed for a single-threaded application and migrated
+to a multithreaded application without careful review of all the components. You
+might also run into this problem when code is imported from a library that wasn’t
+developed for a multithreaded environment, such as a single-threaded Java library
+that’s later incorporated into a multithreaded Java servlet.
+     Sometimes locks are instantiated correctly but used incorrectly, which can also
+result in race conditions. Here’s a modified version of the previous example:
+struct element *queue;
+pthread_mutex_t queue_lock;
+pthread_cond_t queue_cond;
+int fd;
+
+void *job_task(void *arg)
+{
+    struct element *elem;
+
+    pthread_mutex_init(&queue_lock, NULL);
+
+    for(;;)
+    {
+          pthread_mutex_lock(&queue_lock);
+
+          if(queue == NULL)
+                   pthread_cond_wait(&queue_cond, &queue_lock);
+
+          elem = queue;
+
+          queue = queue->next;
+
+          pthread_mutex_unlock(&queue_lock);
+
+          .. process element ..
+      }
+
+      return NULL;
+}
+
+void *network_task(void *arg)
+{
+      struct element *elem, *tmp;
+      struct request *req;
+
+      pthread_mutex_init(&queue_lock, NULL);
+
+      for(;;)
+      {
+          req = read_request(fd);
+
+          if(req == NULL)      // bad request
+                   continue;
+
+          elem = request_to_job_element(req);
+
+          free(req);
+
+          if(elem == NULL)
+                continue;
+
+          pthread_mutex_lock(&queue_lock);
+
+          if(queue == NULL)
+          {
+
+               queue = elem;
+               pthread_cond_broadcast(&queue_cond);
+          }
+           else
+           {
+               for(tmp = queue; tmp->next; tmp = tmp->next)
+                           ;
+               tmp->next = elem;
+           }
+
+          pthread_mutex_unlock(&queue_lock);
+     }
+}
+
+     This example uses more locking mechanisms to ensure that the queue is accessed
+by only one thread, but there’s still a problem: Each thread reinitializes queue_lock by
+calling pthread_mutex_init(). In effect, this allows multiple threads to obtain multi-
+ple locks, so it’s not guaranteed that each thread can operate on the queue in an
+atomic fashion.
+     After you’ve determined that locks are used and the correct synchronization
+object is in place, you can begin to examine code that accesses a shared resource. This
+process involves ensuring that a lock is acquired for the synchronization primitive
+before accessing the resource, and then the primitive is signaled after the operation
+has been completed. This second point is worth keeping in mind because a code path
+could exist in which a synchronization primitive is never unlocked. This code path
+invariably leads to deadlock, discussed in the next section.
+     Paul Starzets, a security researcher with iSec, discovered a major race condition
+vulnerability in the Linux kernel’s sys_uselib() system call. (Remember that kernels
+are multithreaded, too.) Starzets pointed out that the sys_brk() function is required
+to hold a semaphore lock specific to a process memory descriptor list (called
+mmap_sem) because it adds an element to the structure by using vma_link(). However,
+in the load_elf_binary() function that sys_uselib() uses, this semaphore is
+released before sys_brk() is called, as shown in Listing 13-3. The down_write() func-
+tion is used to wait on a lock, and the up_write() function is used to release it.
+Listing 13-3
+Race Condition in the Linux Kernel’s Uselib()
+static int load_elf_library(struct file *file)
+{
+       down_write(&current->mm->mmap_sem);
+
+          error = do_mmap(file,
+                        ELF_PAGESTART(elf_phdata->p_vaddr),
+                        (elf_phdata->p_filesz +
+                         ELF_PAGEOFFSET(elf_phdata->p_vaddr)),
+                        PROT_READ | PROT_WRITE | PROT_EXEC,
+                        MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE,
+                        (elf_phdata->p_offset -
+                         ELF_PAGEOFFSET(elf_phdata->p_vaddr)));
+          up_write(&current->mm->mmap_sem);
+          if (error != ELF_PAGESTART(elf_phdata->p_vaddr))
+                 goto out_free_ph;
+
+          elf_bss = elf_phdata->p_vaddr + elf_phdata->p_filesz;
+          padzero(elf_bss);
+
+          len = ELF_PAGESTART(elf_phdata->p_filesz +
+              elf_phdata->p_vaddr + ELF_MIN_ALIGN - 1);
+          bss = elf_phdata->p_memsz + elf_phdata->p_vaddr;
+          if (bss > len)
+                 do_brk(len, bss - len);
+
+     Using some inventive exploitation techniques, Starzets demonstrated how to
+leverag this bug for root access on a vulnerable system. You can find more information
+on this vulnerability at www.isec.pl/vulnerabilities/isec-0021-uselib.txt.
+     Return value checking is another important part of ensuring that a program is
+thread safe. Of course, checking return values is always important in preventing
+vulnerabilities, multithreaded or not, but this guideline especially applies to multi-
+threaded programming. One interesting variation on thread race conditions is a
+failure to correctly check return values to make sure the API is functioning as
+expected. Take a look at the following code:
+DWORD processJob(LPVOID arg)
+{
+      struct element *elem;
+
+      for(;;)
+      {
+
+          WaitForSingleObject(hMutex, MAX_TIME);
+
+          if(queue == NULL)
+
+                WaitForSingleObject(queueEvent, MAX_TIME);
+
+           elem = queue;
+           queue = queue->next;
+
+           ReleaseMutex(hMutex);
+
+           .. process element ..
+     }
+
+     return 0;
+}
+
+    Assume the processJob() function is run by multiple threads, as in the previous
+examples. Notice that the WaitForSingleObject() function’s return value is ignored in
+both instances it’s called. As you have seen previously, this function can return for a
+number of reasons, including when the maximum time limit to wait has been
+exceeded. Therefore, if MAX_TIME elapses before the mutex is released, this function
+could begin operating on queue when it doesn’t actually own the mutex, or it operates
+on queue when the queueEvent object hasn’t been signaled.
+
+Deadlocks and Starvation
+Starvation and deadlock cause a task to never be completed because a thread can never
+be scheduled for execution. The “Windows IPC Synchronization Objects” section
+included an example of a deadlock that resulted from waiting on an event object while
+maintaining ownership of a mutex object. This prevented another thread from signal-
+ing the necessary event. Deadlocks can be addressed in the Win32 API by using the
+WaitForMultipleObjects() function to wait for an entire set of synchronization
+objects to become signaled. However, this approach might create its own issues and
+result in starvation. These situations are hard to evaluate when auditing code; however,
+you should note if bWaitAll is set to true, and the number of objects is quite large. You
+also need to consider situations in which it’s impossible or nearly impossible to have all
+objects that are being waited on signaled.
+    Deadlocks also happen in UNIX threaded programs. In PThreads, deadlocks are
+more likely to occur from the use of multiple mutexes, as shown in this simple example:
+struct interface *interfaces[MAX_INTERFACES];
+
+int packet_process(int num)
+{
+
+      struct interface *in = interfaces[num];
+      struct packet *pkt;
+
+      for(;;)
+      {
+          pthread_mutex_lock(in->lock);
+
+          pthread_cond_wait(in->cond_arrived, in->lock);
+
+          pkt = dequeue_packet(in);
+
+          if(needs_forwarding(pkt))
+          {
+                int destnum;
+                struct interface *dest;
+
+                destnum = find_dest_interface(pkt);
+                dest = interfaces[destnum];
+
+                pthread_mutex_lock(dest->lock);
+                enqueue_packet(pkt, dest);
+                pthread_mutex_unlock(dest->lock);
+
+              in->stats[FORWARDED]++;
+
+                pthread_mutex_unlock(in->lock);
+
+                continue;
+          }
+
+          pthread_mutex_unlock(in->lock);
+
+          .. process packet ..
+      }
+}
+
+    This example shows a classic deadlock situation: Two locks can be held by a single
+thread, and another thread can acquire the same locks in a different order. In this
+
+                                        Summary
+
+example, there’s a thread for each network interface to handle dequeuing and dealing
+with arriving packets. If the packet needs to be forwarded, it’s added to another queue.
+There’s the potential, however, for two competing threads to cause a deadlock in this
+code. The following sequence of events describes how deadlock might occur:
+     1. Thread #1 locks interface[1] and dequeues a packet.
+     2. Thread #2 interrupts, locks interface[2], and dequeues a packet.
+     3. Thread #2 identifies a packet destined for interface[1], so
+        pthread_mutex_lock(dest->lock) puts thread #2 to sleep because thread
+        #1 holds the lock.
+     4. Thread #1 regains the processor. It realizes it needs to forward a packet to
+        interface[2], so pthread_mutex_lock(dest->lock) puts thread #1 to sleep
+        because thread #2 holds the lock.
+     Now both threads are unable to do anything because they are waiting on each
+other to release a lock to continue their work.
+     When auditing code for deadlocks, you need to evaluate whether multiple prim-
+itives are locked and held simultaneously by more than one thread. Then you must
+consider whether those threads can lock primitives in a different order to create a
+condition like the one in the previous example. Most threading mechanisms include
+timed waiting functions or use functions that return immediately if a lock is
+unavailable, which might mitigate the threat of deadlocks. However, a timeout that
+results in terminating the program might be noteworthy as a denial of service in
+itself, particularly if the service doesn’t restart.
+
+Summary
+A lot of complexity is introduced when a program can share resources among con-
+current threads or processes. Serious issues can occur when an application fails to
+handle concurrent access to shared resources. This failure can result in execution
+entities interfering with each other and ultimately corrupting the program to the
+point of a successful compromise—either by exploitation for elevated privileges or
+bringing the program to a grinding halt.
+    You’ve examined problems in dealing with multiple execution instances
+simultaneously operating on shared resources, including issues with process and
+thread synchronization, and signal handling in UNIX environments. Identifying
+these issues can be extremely difficult and requires detailed analysis of the appli-
+cation’s concurrent programming elements. However, you should now be familiar
+with the techniques necessary to perform a thorough and effective assessment of
+vulnerabilities that occur due to synchronization issues.
+
+This page intentionally left blank
+     PART III
+SOFTWARE VULNERABILITIES
+      IN PRACTICE
+This page intentionally left blank

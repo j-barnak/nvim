@@ -1,0 +1,2468 @@
+Chapter11
+
+Instruction Selection
+
+ABSTRACT
+The compiler’s front end and optimizer both operate on the code in its
+IR form. To create executable code, the compiler must rewrite the IR into
+the processor’s instruction set. This process is called instruction selection.
+Because a typical processor provides multiple ways to express most com-
+putations, the selector must choose the best sequence from among multiple
+implementations.
+
+This chapter introduces two distinct approaches to instruction selection. The
+first builds on peephole optimization, a classic late-stage code-improvement
+technique. The second uses tree-pattern matching algorithms to find a set of
+operations that implement the IR program. Both approaches are supported
+by reliable tools. Both have found widespread use in real compilers.
+
+KEYWORDS
+Instruction Selection, Tree-Pattern Matching, Peephole Optimization
+
+11.1 INTRODUCTION
+
+To translate a program from an intermediate representation, such as an ab-
+stract syntax tree or a low-level linear code, into executable form, the com-
+piler must map each IR construct into an equivalent construct in the target
+processor’s instruction set. Depending on the relative levels of abstraction
+in the IR and the target machine’s instruction set architecture (ISA), this
+translation can involve elaborating details that are hidden in the IR program
+or it can involve combining multiple IR operations into a single machine in-
+struction. The specific choices that the compiler makes have a direct impact
+on the overall efficiency of the compiled code.
+
+The complexity of instruction selection derives from the large number of
+ways that a typical ISA can implement even simple operations. In the 1970s,
+the DEC PDP/11 had a compact instruction set; thus, a good compiler such
+as the BLISS-11 compiler could perform instruction selection with a simple
+hand-coded pass. As processor ISAs expanded, the number of possible ways
+to implement a given sequence of IR operations grew unmanageable. This
+explosion led to systematic approaches for instruction selection, such as
+those presented in this chapter, and tools that implement them.
+
+
+
+Conceptual Roadmap
+
+Instruction selection, which maps code in the compiler’s IR into code in
+the target ISA, is a pattern-matching problem. At its simplest, the compiler
+could provide a single assembly code sequence for each IR operation. The
+resulting compiler would produce correct, albeit template-like, code that
+might make poor use of the target machine’s resources. Better approaches
+consider multiple code sequences for each IR operation, along with the op-
+eration’s context, to choose the sequence that has the lowest expected cost.
+
+This chapter presents two approaches to instruction selection: the first based
+on peephole optimization and the second based on tree-pattern matching.
+The former approach translates the compiler’s IR into a low-level linear IR,
+systematically improves that IR, and then maps the improved IR into the
+target machine’s ISA. The latter approach represents both the compiler’s IR
+and the target machine’s ISA with tree patterns and uses pattern matching
+to find an implementataion of the IR program in the target machine’s ISA.
+Each of these techniques can produce high-quality code that is tailored to
+the local context. Each has been incorporated into tools that take a target
+machine description and produce a working instruction selector.
+
+A Few Words About Time
+
+The instruction selector, itself, runs at compile time to translate the IR pro-
+gram created by the front end and optimizer into code expressed in the target
+machine’s ISA. The code produced by selection may not be a valid assembly
+program; in many compilers, the postselection code still assumes an unlim-
+ited supply of virtual registers. The register allocator, which runs after the
+instruction selector at compile time, completes the task of mapping the code
+into the target ISA’s register set.
+
+Many compilers use description-based instruction selectors, based on either
+peephole optimization (see Section 11.3) or tree-pattern matching (see Sec-
+tion 11.4). With these tools the compiler writer creates, at design time, de-
+scriptions of the compiler’s IR and the target ISA. At build time, a back-end
+generator analyzes these descriptions and produces code for the instruction
+selector, which is then compiled and included in the compiler. This chapter
+focuses on the compile-time algorithms used to perform selection.
+
+Overview
+
+Systematic approaches to code generation make it easier to retarget a com-
+piler. The goal is to minimize the effort needed to port the compiler to a new
+processor. Ideally, the front end and the optimizer need minimal changes,
+and much of the back end can be reused as well. This strategy makes good
+
+
+
+SELECTION, SCHEDULING, AND ALLOCATION
+The three major processes in the back end are instruction selection,
+scheduling, and register allocation. All three processes have a direct impact
+on the quality of the generated code, and they all interact with each other.
+
+Selection directly changes the scheduling problem. Selection dictates both
+the time required for an operation and the functional units on which it can
+execute. Scheduling might affect instruction selection. If the code generator
+can implement an IR operation with either of two assembly operations, and
+those operations use different resources, the code generator might need to
+understand the final schedule to ensure the best choice.
+
+Selection interacts with register allocation in several ways. If the target
+processor has a uniform register set, then the instruction selector can
+assume an unlimited supply of registers and rely on the allocator to insert
+the loads and stores needed to fit the values into the register set. If, on the
+other hand, the target machine has complex register use rules, then the
+selector may need to pay close attention to specific physical registers. This
+can complicate selection and predetermine some or all of the allocation
+decisions. In this situation, the code generator might use a coroutine to
+perform local register allocation during instruction selection.
+
+Keeping selection, scheduling, and allocation separate—to the extent
+possible—can simplify the implementation, testing, and debugging of each
+process. However, since each of these processes can constrain the others,
+the compiler writer must be aware of the interactions to ensure that
+separation of these processes does not harm code quality.
+
+use of the investment in building, debugging, and maintaining the reusable
+parts of the compiler.
+
+Much of the responsibility for handling diverse targets rests on the instruc-
+In practice, a new language may need some
+new operations in the IR. The goal, how-
+ever, is to extend the IR, rather than to
+reinvent it.
+
+tion selector. A typical compiler uses a common IR for all targets and, to
+the extent possible, for all the source languages that it supports. It optimizes
+the IR based on a set of assumptions that hold true on most, if not all, target
+machines. Finally, it uses a back end in which the compiler writer has tried
+to isolate and extract the target-dependent details.
+
+While the scheduler and register allocator need target-dependent informa-
+tion, good design can isolate that knowledge into a concrete description
+of the target machine and its ISA. Such a description might include register-
+set sizes; a description of each operation; the number, capabilities, and op-
+eration latencies of the functional units; memory alignment restrictions; and
+the procedure-call convention. The algorithms for scheduling and allocation
+
+
+
+are then parameterized by those system characteristics and reused across
+different ISAs and systems.
+
+Thus, the key to compiler retargetability lies in the implementation of the
+instruction selector. The selector consumes the compiler’s IR and produces
+assembly code for the target machine. A retargetable instruction selector
+consists of a pattern-matching engine coupled to information about the IR,
+the ISA, and the mapping between them.
+
+If we can automate the construction of the matching engine, then specifica-
+A back-end generator is sometimes called a
+code-generator generator.
+tion-driven construction of instruction selectors can follow the same basic
+model as scanners and parsers. In those systems, the compiler writer creates
+a description of the syntax and the actions to be taken; she then invokes a
+scanner generator or parser generator to build the actual compiler compo-
+nent. In a similar way, the compiler writer can create a description of the
+target machine and invoke a back-end generator to construct an instruction
+selector. The generator runs offline at build time.
+
+This approach moves the cost and complexity of instruction selection into
+the back-end generator. Just as in LR parsing, we can afford to use algo-
+rithms in the generator that require more time than the algorithms that run
+at compile time. In fact, tool-based instruction selectors can be extremely
+efficient at compile time.
+
+A second key to compiler retargetability is to isolate machine-dependent
+code to the greatest extent possible. Ideally, all machine-dependent code
+should appear in the instruction selector, scheduler, and register alloca-
+tor; unfortunately, the reality almost always falls short of this ideal. Some
+machine-dependent details creep, unavoidably, into earlier parts of the com-
+piler. For example, the alignment restrictions on activation records (ARs)
+may differ among target machines, changing offsets for values stored in
+ARs. The compiler may need to represent features such as predicated exe-
+cution, branch delay slots, and multiword memory operations explicitly if
+it is to make good use of them. Still, pushing target-dependent details into
+instruction selection can reduce the number of changes to other parts of the
+compiler that are needed to port it to a new target processor.
+
+As a design question, the compiler writer must decide how much customiza-
+tion of the code should occur in the compiler’s back end. Our belief is that
+the instruction selector should find a good local mapping from the code that
+the optimizer produced into the target machine’s instruction set. Primary re-
+sponsibility for efficiency rests with the compiler’s optimizer, not its back
+end. Logic and experience suggest that we separate the goal of optimizing
+computation from the goal of mapping that computation efficiently onto the
+target machine.
+
+
+
+This chapter examines two approaches used to build instruction selectors.
+The next section explores background issues in instruction selection and
+introduces the example used throughout the chapter. The two subsequent
+sections present different ways to apply pattern-matching techniques to
+transform IR sequences to assembly sequences. Section 11.3 presents an
+approach based on ideas from peephole optimization. Section 11.4 explores
+an approach based on matching tree patterns against trees. Both of these
+methods are description based. The compiler writer creates a description of
+the target ISA; a tool then constructs a selector for use at compile time. Both
+methods have been used in successful portable compilers.
+
+11.2 BACKGROUND
+
+Instruction selection rewrites the code from IR form into target machine
+code. If the IR and the ISA have similar levels of abstraction, then this
+translation may be straightforward—as with rewriting ILOC code to run
+on a simple RISC machine. If the IR is more abstract than the ISA, then the
+selector must supply additional detail—as with mapping a near-source AST
+onto a commodity microprocessor. Finally, if the IR is less abstract than the
+ISA, as with GCC’s register-transfer language, then the selector may need
+to combine multiple IR operations into a single target machine operation.
+
+The compiler writer’s goals come into play, as well. The compiler writer
+must confront the tradeoff between complexity in the compiler’s back end
+and the performance of the compiled code. It takes a more complex compiler
+to produce customized and optimized code than to produce slower template-
+like code. In an appropriate context, either approach might make sense.
+
+Chapter 5 discussed the issues that arise when the compiler translates source
+code into an initial IR. Instruction selection differs from IR generation in
+two major ways. First, IR generation should produce a version of the pro-
+gram that compiles and optimizes well, while instruction selection should
+produce a version that runs well. Second, the compiler writer has control
+over the design of the IR, which can simplify the task of mapping source
+code into IR; the target ISA is a fixed language, designed by other people
+and bound by limited resources. Because of these differences, code genera-
+tion in a compiler’s back end uses more complex approaches and algorithms
+than does IR generation in its front end.
+
+The complexity of instruction selection arises not from a particular method-
+ology or algorithm, but rather, from the nature of the underlying problem—a
+processor typically provides multiple ways to implement an IR construct,
+each with its own costs and its own restrictions. The code generator must
+choose among these alternatives based on knowledge of operation costs and
+
+
+
+CODE THAT RUNS WELL VERSUS OPTIMIZES WELL
+The difference between generating IR early in the compiler and generating
+assembly code late in the compiler lies in the intended use of the code. The
+IR form of the program targets optimization and code generation. The
+assembly code version targets fast execution. To see how these different use
+cases drive the compiler to different code sequences, consider the following
+abstracted loop.
+
+for i = 1 to 1000
+for j = 1 to 1000
+... A[i,j] ...
+
+Section 7.3.2 showed two ways to compute the address of A[i,j], assuming
+that A is dimensioned as A[low1:high1, low2:high2] and stored in row-major
+order starting at @A:
+
+(1)
+@A + (i − low1) × len2 × w + (j − low2) × w
+
+(2)
+@A + (i × len2 × w) + (j × w)
+− (low1 × len2 × w + low2 × w).
+
+Polynomial (1) uses fewer operations; it will execute more quickly than the
+latter one. Polynomial (2) separates out subexpressions that depend on i
+and j, plus a term that contains only constants. A good optimizer might
+move the i term out of the inner loop and evaluate the constant term at
+compile time. Thus, formula (1) runs well while formula (2) optimizes well.
+
+surrounding context. Done well, this process should produce efficient code
+that is customized to fit well with the surrounding operations.
+
+Specification-based tools can move most of the complexity of generating
+customized instruction sequences from compile time back into design time
+and build time. Such tools automatically construct efficient and effective
+instruction selectors that manage the complexity of context in both the IR
+and the ISA. They can simplify construction of an effective compiler back
+end, in much the same way that scanner generators and parser generators
+simplify front-end construction.
+
+11.2.1 The Impact of ISA Design on Selection
+
+Much of the complexity of instruction selection arises directly from prop-
+Remember that ILOC, used for the exam-
+ples, is an extremely simple case.
+erties of a typical target machine ISA. Two factors that cause an explo-
+sion in the number of cases that the selector must consider are: duplicate
+
+
+
+mechanisms to accomplish a single task and the proliferation of address
+modes in memory and arithmetic operations.
+
+Features such as these complicate instruction selection, because they add
+context, they add complexity, and they add choices. Automated techniques
+for building instruction selection arose, in large part, as a response to in-
+creasing processor complexity. By specifying the IR to ISA mapping in
+a more concise way and algorithmically expanding that specification into
+code, the tools simplify the task of building efficient and powerful selectors.
+
+Duplicate Implementations
+
+If the target ISA provided just one way to perform each IR operation, the
+compiler could simply rewrite each IR operation with the equivalent se-
+quence of machine operations. In most contexts, however, a target machine
+provides multiple ways to implement each IR construct.
+
+Consider a simple copy operation ri → rj. Assume that the target proces-
+sor uses ILOC as its native instruction set. ILOC is simple, but even it
+exposes the complexity of code generation. The obvious implementation
+of ri → rj uses i2i ri ⇒ rj; such a register-to-register copy is typically one
+of the least-expensive operations that a processor provides. However, other
+implementations abound. These include,
+
+addI ri,0
+⇒ rj
+subI
+ri,0 ⇒ rj
+multI
+ri,1 ⇒ rj
+divI ri,1
+⇒ rj
+lshiftI ri,0 ⇒ rj
+rshiftI ri,0 ⇒ rj
+and
+ri,ri ⇒ rj
+orI
+ri,0 ⇒ rj
+xorI
+ri,0 ⇒ rj
+
+Still more possibilities exist. If the processor has a register whose value is
+always 0, another set of operations works, using add, sub, lshift, rshift,
+For example, the ARM V8 has a dedicated
+zero register, XZR.
+or, and xor. If we consider two-operation sequences, the set is even larger.
+
+A programmer would discount most, if not all, of these alternatives.
+A register-to-register copy operation, such as i2i, is simple, fast, and
+obvious. An automated process, however, may need to consider all the pos-
+sibilities and their costs. The fact that an ISA can accomplish an effect in
+multiple ways makes instruction selection harder. Even ILOC, a particularly
+simple ISA, has many ways to perform a copy operation.
+
+Address Modes
+
+The arithmetic operations listed as variants for a copy operation all assumed
+a register-to-register addressing model. Some ISAs provide variant opera-
+tors that get one or more of their operands from memory. Other operators,
+such as load and store, always address memory. To improve efficiency, ISAs
+introduce address modes that encode common address computations.
+
+
+
+RISC, CISC, AND INSTRUCTION SELECTION
+Early proponents of RISC architectures suggested that RISC ISAs would lead
+to simpler compilers. Early RISC machines, such as the IBM 801, had many
+fewer address modes than contemporary CISC machines such as DEC’s
+VAX-11 series. They featured register-to-register operations, with separate
+load and store operations to move data between registers and memory. By
+contrast, the VAX-11 offered both register and memory operands; many
+operations were supported in both two-address and three-address forms.
+
+The RISC machines did simplify instruction selection. They offered fewer
+ways to implement a given operation. They had fewer restrictions on register
+use. However, their load-store architectures increased the importance of
+register allocation.
+
+By contrast, CISC machines have operations that encapsulate more complex
+functionality into a single operation. To make effective use of these
+operations, the selector must recognize larger patterns over larger code
+fragments. This effect increases the importance of systematic instruction
+selection; the automated techniques described in this chapter are more
+important for CISC machines, but equally applicable to RISC machines.
+
+ILOC provides multiple address modes for load and store.
+
+Operation
+Meaning
+
+load
+r1
+⇒ r2
+MEMORY(r1)⇒ r2
+loadAI
+r1, c2 ⇒ r3
+MEMORY(r1 + c2) ⇒ r3
+loadAO
+r1, r2 ⇒ r3
+MEMORY(r1 + r2) ⇒ r3
+loadI
+c1
+⇒ r2
+c1 ⇒ r2
+
+Store operations support the address-immediate (AI) and address-offset (AO)
+modes. Arithmetic and logical operations also support an immediate (I)
+mode that reads one operand as a literal constant embedded in the instruc-
+tion stream.
+
+Real processors often support a larger and more complex set of address
+modes. Examples include memory-to-memory arithmetic operators, one or
+two address operations that overwrite some of their input arguments, and
+operations with implicit arguments, such as the top of a hardware-supported
+runtime stack. The selector should make effective use of all the address
+modes that the ISA supports.
+
+Similar issues arise in control-flow operations. Branches and jumps may sup-
+port absolute addresses, program-counter relative addresses, and addresses
+
+
+
+of different bit-lengths. These operations have different lengths; they may
+take different numbers of cycles. Because the selection of the best form of
+branch or jump depends on multiple factors, including the distance and di-
+rection from source to destination, selecting branch address modes requires
+painstaking care.
+
+Level of Abstraction
+
+The individual operations in ILOC have a relatively low level of abstraction.
+Modern processors often provide a mix of low-level operations and more
+complex operations. For example:
+
+■
+A string-move operation allows the code to easily specify a complex
+sequence that includes an implicit iterative loop.
+
+■
+A procedure-call operation might automate large parts of the call se-
+quence, including management of caller-saves registers.
+
+■
+A floating-point multiply-add operation might use fewer cycles and
+fewer registers to compute (ri × rj) + rk than the individual multiply and
+add operations.
+
+■
+A load-multiple or store-multiple operation might move values into or
+out of several contiguous registers.
+
+Operations such as these can require the instruction selector to synthesize
+several low-level operations into one higher-level operation.
+
+Register Use
+
+Processors constrain register use in idiosyncratic ways (see Section 13.2.4).
+For example, on the IA-32, a 16-bit signed
+integer multiply reads one argument from
+
+AX and writes its 32-bit result into AX and DX.
+Operations may expect one or more operands in designated locations. On
+some processors, double-precision values must be stored in a pair of single-
+precision floating-point registers that begin with an even-numbered register.
+The use of a destructive one-address or two-address operation can overwrite
+the value of one of its arguments, which complicates their allocation and use
+(see Section 4.4).
+
+Costs
+
+Each operation has its own cost. Most modern machines implement sim-
+ple operations, such as an addition or a shift, as single-cycle operations.
+Other operations, such as a load or a divide, may take longer. The latency of
+multiplication and division may depend on the bit patterns in the operands.
+The latency of a memory operation depends on many factors, including the
+detailed current state of the processor’s memory system. The latency of a
+branch may depend on how well the processor can predict its outcome.
+
+
+
+In most cases, the compiler writer wants the back end to produce code that
+runs quickly. However, other metrics are possible. For example, if the final
+code will run on a battery-powered device, the compiler might consider the
+typical energy consumption of each operation; individual operations con-
+sume different amounts of energy. A compiler that tries to optimize for
+energy may use radically different costs than would one optimizing for
+speed. Similarly, if code space is critical, the compiler writer might assign
+costs based solely on sequence length. Alternatively, the compiler writer
+Since a shorter code sequence fetches fewer
+bytes from RAM, reducing code space may
+also reduce energy consumption.
+might simply exclude from consideration all multioperation sequences that
+achieve the same effect as a single-operation sequence.
+
+While instruction selection can play an important role in determining code
+quality, the compiler writer must keep in mind the enormous size of the
+search space that the instruction selector might explore. Even moderately
+sized instruction sets can produce search spaces that contain millions of
+states. Clearly, the compiler cannot afford to explore such spaces exhaus-
+tively. The techniques that we describe explore the space of alternative code
+sequences in a disciplined fashion and either limit their searches or precom-
+pute enough information to make a deep search efficient.
+
+11.2.2 Motivating Example
+
+The discussions of instruction selection via peephole optimization and tree-
+pattern matching use the same example to motivate, explain, and explore
+the issues. In both cases, we examine how to generate code for the simple
+assignment statement: a ← b - 2 × c. Fig. 11.1 shows the example in two dif-
+This example first appeared in Fig. 4.1
+on page 163.
+ferent IRs. Panel (a) shows the statement in quadruple form; the discussion
+of peephole-based instruction selection starts from this IR. Panel (b) shows
+a low-level AST for the statement; the discussion of tree-pattern matching
+uses this IR.
+
+The example uses three variables, each with a different kind of address com-
+putation: a is a local variable that resides at offset 4 from the ARP; b is a
+call-by-reference parameter that resides at offset –16 from the ARP; and c
+is a global variable.
+
+The address computation for c is complex. The value resides at offset 12
+from a global label. Because the label resolves to a full-length address, the
+resolved address is stored in some global constant pool. The constant pool
+starts at @CP and the offset in the pool is given by @G. We assume that @CP is
+too large for an immediate field in an add or sub, but small enough for the
+immediate field in a loadI.
+
+
+
+■ FIGURE 11.1 Low-Level IRs for a ← b - 2 × c.
+
+Because the example consists of a single source-level statement, it contains
+no control flow. Thus, we will assume that any condition-code values de-
+fined by the operations are unused and therefore dead.
+
+Quadruples
+
+Fig. 11.1(a) shows the example code expressed in classic quadruple form.
+Variable names appear as references, with additional detail available in
+the symbol table. Operations are simple three-address code. A compiler-
+generated temporary name is used to carry the result of the multiply into the
+subtraction. The order of the quadruples encodes the execution order.
+
+This representation has little explicit detail. It assumes a symbol table that
+contains type and location data for the named values (see Sections 4.5
+and 5.4). As we will see in Section 11.3, the peephole instruction selec-
+tor will immediately expand this code to make all of the necessary details
+explicit and exposed in the IR code itself.
+
+Low-Level AST
+
+To expose enough detail for instruction selection, the AST shown in
+Fig. 11.1(b) has a low-level of abstraction. Several of the nodes in the tree
+need further explanation.
+
+Constant values are represented by three distinct kinds of nodes:
+
+■
+A NUM node represents a constant that fits into the immediate field of a
+three-operand immediate instruction (e.g., multI or loadAI).
+
+■
+A CON node, not shown in this example, represents a constant that is small
+enough to fit in a loadI, but too large for a NUM.
+
+
+
+■
+A LAB node represents a relocatable symbol, typically an assembly-level
+label used for either code or data.
+
+The distinction between these kinds of constants is critical to instruction se-
+lection. A value in a CON or LAB node cannot appear as an immediate operand
+in a multI operation. A value represented by a LAB node is assumed to be too
+large to fit in a loadI operation; the compiler stores such values into a con-
+stant pool in memory, located at @CP.
+
+Two other nodes in this tree have nonobvious meanings. A VAL node repre-
+sents a value known to reside in a register, such as the ARP in rarp, or the
+result of evaluating a common subexpression identified by the optimizer.
+A ◆ node signifies a level of indirection; its child is an address and it pro-
+duces the value stored at that address.
+
+The low-level detail in the AST allows the instruction selector to tailor its
+decisions to specific context. The subtrees that describe the address expres-
+sions for a, b, and c all look similar; as we shall see, they generate distinctly
+different code due to the specific base addresses and offsets. By tailoring the
+final assembly code to context, the compiler can produce efficient code for
+each subtree.
+
+11.2.3 Ad-Hoc Matching
+
+The compiler writer can construct an instruction selector around a hand-
+written, ad-hoc matcher. Such a selector would recognize individual IR
+constructs or small sets of related constructs and map them directly into
+the assembly language (ASM) of the target machine. For a tree-based IR,
+this approach might result in a simple postorder walk, similar to the syntax-
+driven translation schemes of Chapter 5. For a linear IR, the compiler writer
+might produce a selector that makes a linear scan over the IR and emits code
+for each operation.
+
+Instruction selectors built around ad-hoc matching tend to produce uniform,
+template-like code. To take better advantage of the target machine’s ISA
+requires the aggregation of context from the IR program. The selector can
+only make effective use of complex address modes if it builds up some rep-
+resentation, implicit or explicit, of the address computation; it can use that
+model to choose the best load or store operation. The selector can only
+make use of immediate-mode operations if it understands, even in limited
+ways, the flow of constant values through the code and the magnitudes of
+those values.
+
+Finally, ad-hoc matching provides little, if any, support for retargeting the
+compiler to another processor. Portability is a key rationale for isolating
+
+
+
+the instruction selector both from optimization and from register allocation
+and instruction scheduling. A tool-based approach to specification-driven
+instruction selectors should simplify the task of retargeting the compiler to
+a new processor or system.
+
+SECTION REVIEW
+An instruction selector rewrites the IR code into the target machine’s
+assembly code. It must, for each IR construct, choose an efficient
+assembly-language implementation, tailored to the surrounding context.
+The selector itself must run quickly.
+
+Instruction selection is hard because of the sheer number of choices that
+the selector confronts. It must choose from multiple operations. It must
+make effective use of the target’s address modes. It must model any
+restrictions on processor resource use and ensure that the generated code
+respects them. Because each choice affects the runtime efficiency of the
+compiled code, the selector plays a critical role in application performance.
+
+REVIEW QUESTIONS
+1.
+Enumerate as many ways as you can in ILOC to set register ri to contain
+the integer value one.
+
+2.
+Consider an operation move ri ⇒ rk that copies four bytes from memory
+address ri to memory address rk at a cost of one more cycle than the
+equivalent load operation. What advantages might such an operation
+present?
+
+11.3 SELECTION VIA PEEPHOLE OPTIMIZATION
+
+Peephole optimization is a late-stage optimization technique developed
+in the 1960s and 1970s. Some compilers use peephole optimization as a
+paradigm for instruction selection. They use a selector that translates the IR
+program into a low-level IR (LLIR), applies systematic local optimization to
+the LLIR, and then uses matching to map the LLIR into target machine in-
+structions. The local optimization builds up the knowledge needed to target
+effectively processor features such as address modes. It also systematically
+eliminates minor inefficiencies that optimization at a higher level of abstrac-
+tion might miss.
+
+
+
+11.3.1 Peephole Optimization
+
+The basic premise of peephole optimization is simple: the compiler can ef-
+ficiently find local improvements by examining short sequences of adjacent
+operations. This premise seems to contradict the earlier assertion that the
+optimizer has done its job well. The distinction is subtle. When peephole
+optimization finds an opportunity, it is often at a lower level of abstraction
+than the IR exposed to the optimizer.
+
+As originally proposed, a peephole optimizer ran as the compiler’s last pass.
+It both read and wrote assembly code (ASM). The optimizer moved a sliding
+window, or “peephole,” over the code. At each step, it examined the oper-
+ations in the window, looking for specific patterns that it could improve.
+When it recognized a pattern, it would rewrite the code with a better in-
+struction sequence. The combination of a limited pattern set and a limited
+window made these optimizers fast.
+
+A classic example pattern is a store followed by a load from the same loca-
+tion. The load can be replaced by a copy operation.
+
+storeAI r1
+⇒ rarp, 8
+
+loadAI
+rarp, 8 ⇒ r15
+⇒
+storeAI r1 ⇒ rarp, 8
+
+i2i
+r1 ⇒ r15
+
+Inefficiencies similar to this one often result from statement-by-statement
+translation and from other optimizations, such as dead-code elimination or
+constant folding. Other patterns amenable to improvement by peephole op-
+timization include simple algebraic identities, such as:
+
+subI r2,0
+⇒ r7
+mult r4,r7 ⇒ r10
+⇒
+mult r4, r2 ⇒ r10
+
+and cases where the target of a branch is, itself, a branch:
+
+jumpI → L10
+
+L10:
+jumpI → L11
+⇒
+jumpI → L11
+
+L10:
+jumpI → L11
+
+If this eliminates the last branch to L10, then the block at L10 becomes un-
+reachable and can be eliminated. Unfortunately, proving that the operation
+at L10 is unreachable takes more analysis than is typically available during
+peephole optimization (see Section 10.2.2).
+
+Early peephole optimizers used a limited set of hand-coded patterns. They
+used exhaustive search to match the patterns but ran quickly because they
+
+
+
+used a small number of patterns and a small window size—typically two or
+three operations.
+
+Peephole optimization has progressed beyond matching a small number of
+patterns. More complex ISAs created more opportunities that led to a more
+systematic approach to optimization. Modern peephole optimizers improve
+the code through systematic application of symbolic interpretation and sim-
+plification.
+
+A peephole instruction selector builds on that philosophy. It breaks the
+selection process into three distinct tasks: expansion, simplification, and
+matching.
+
+Structurally, this system looks like a compiler. It takes as input the com-
+We carefully say “resembles” because the
+instruction selector may produce code that
+uses virtual registers rather than physical
+registers.
+
+piler’s IR; it produces as output code that resembles the target machine’s
+assembly language (ASM). Assume that the selector processes one basic
+block at a time.
+
+The expander rewrites the IR into a sequence of low-level IR (LLIR) op-
+erations that capture all of the block’s effects—at least, all of those that
+affect program behavior. For example, if add ri, rj ⇒ rk sets the condition
+code, then the LLIR code must both assign ri + rj to rk and set the condition
+code to the correct value. Typically, the expander rewrites operations in a
+template-driven pass that ignores context.
+
+The simplifier makes a pass over the LLIR. It slides a small window over the
+
+LLIR—say three to four operations. Within the window, it tries to improve
+the code by systematic application of four transformations: forward substi-
+tution, algebraic simplification, evaluation of constant-valued expressions,
+and elimination of dead effects, such as the creation of unused condition
+codes. It subjects all the details in the LLIR code to a uniform level of local
+optimization.
+
+The matcher compares the simplified LLIR against a pattern library, looking
+for the pattern that best captures all the effects in the LLIR. The final code
+sequence may produce effects beyond those required by the LLIR sequence;
+for example, it might create new, albeit dead, condition-code values. It must,
+however, preserve the effects needed for correctness. It cannot eliminate a
+live value, regardless of whether the value is stored in memory, in a register,
+or in an implicitly set location such as the condition code.
+
+
+
+Op
+Arg1
+Arg2
+Result
+
+×
+2
+c
+t1
+
+-
+b
+t1
+a
+
+Expand
+⇒
+
+r1
+← 2
+
+r2
+← @CP
+
+r3
+← @G
+
+r4
+← r2 + r3
+
+r5
+← M(r4)
+
+r6
+← 12
+
+r7
+← r5 + r6
+
+r8
+← M(r7)
+
+r9
+← r1 × r8
+
+r10 ← 16
+
+r11 ← rarp - r10
+
+r12 ← M(r11)
+
+r13 ← M(r12)
+
+r14 ← r13 - r9
+
+r15 ← 4
+
+r16 ← rarp + r15
+
+M(r16) ← r14
+
+⇓
+Simplify
+loadI
+2
+⇒ r1
+
+loadI
+@CP
+⇒ rt1
+
+loadAI
+rt1, @G
+⇒ r5
+
+loadAI
+r5, 12
+⇒ r8
+
+mult
+r1,r8
+⇒ r9
+
+subI
+rarp, 16 ⇒ rt2
+
+load
+rt2
+⇒ r12
+
+load
+r12
+⇒ r13
+
+sub
+r13,r9
+⇒ r14
+
+storeAI r14
+⇒ rarp,4
+
+Match
+⇐
+
+r1
+← 2
+
+r5
+← M(@CP + @G)
+
+r8
+← M(r5 + 12)
+
+r9
+← r1 × r8
+
+r12 ← M(rarp - 16)
+
+r13 ← M(r12)
+
+r14 ← r13 - r9
+
+M(rarp + 4) ← r14
+
+■ FIGURE 11.2 Expand, Simplify, and Match Applied to the Example.
+
+Fig. 11.2 summarizes how this approach might work on the example from
+Fig. 11.1(a). It begins, in the upper left, with the code expressed as quadru-
+ples. They compute a ← b - 2 × c. The expander creates the LLIR program
+Recall that a is at ARP + 4, b is at
+ARP − 16, and c is at offset 12 from @G.
+shown in the upper right corner. The simplifier reduces this code to pro-
+duce the LLIR code in the bottom right corner. From this LLIR program,
+the matcher builds the ILOC program shown in the lower left. This final
+program uses ten operations to implement a ← b - 2 × c.
+
+
+
+r1 ← 2
+
+r2 ← @CP
+
+r3 ← @G
+
+r2 ← @CP
+
+r3 ← @G
+
+r4 ← r2 + r3
+
+r4 ← @CP + @G
+
+r5 ← M(r4)
+
+r6 ← 12
+
+r5 ← M(@CP + @G)
+
+r6 ← 12
+
+r7 ← r5 + r6
+
+Sequence 1
+Sequence 2
+Sequence 3
+Sequence 4
+
+r5 ← M(@CP + @G)
+
+r7 ← r5 + 12
+
+r8 ← M(r7)
+
+r5 ← M(@CP + @G)
+
+r8 ← M(r5 + 12)
+
+r9 ← r1 × r8
+
+r8 ← M(r5 + 12)
+
+r9 ← r1 × r8
+r10 ← 16
+
+r9 ← r1 × r8
+r10 ← 16
+
+r11 ← rarp - r10
+
+Sequence 5
+Sequence 6
+Sequence 7
+Sequence 8
+
+r9 ← r1 × r8
+r11 ← rarp - 16
+
+r12 ← M(r11)
+
+r9 ← r1 × r8
+r12 ← M(rarp - 16)
+
+r13 ← M(r12)
+
+r12 ← M(rarp - 16)
+
+r13 ← M(r12)
+
+r14 ← r13 - r9
+
+r13 ← M(r12)
+
+r14 ← r13 - r9
+r15 ← 4
+
+Sequence 9
+Sequence 10
+Sequence 11
+Sequence 12
+
+r14 ← r13 - r9
+r15 ← 4
+
+r16 ← rarp + r15
+
+r14 ← r13 - r9
+r16 ← rarp + 4
+
+M(r16) ← r14
+
+r14 ← r13 - r9
+M(rarp + 4) ← r14
+
+M(rarp + 4) ← r14
+
+Sequence 13
+Sequence 14
+Sequence 15
+Sequence 16
+
+■ FIGURE 11.3 Sequences Produced by the Simplifier.
+
+11.3.2 The Simplifier
+
+The simplifier forms the heart of the peephole process. To begin, it fills the
+window from the LLIR stream. Next, it tries to forward substitute defined
+values into uses later in the window. It applies algebraic simplification and
+constant folding. If any of these transformations make one of the operations
+in the window dead, it eliminates the dead operation and pulls a new one
+into the bottom of the window.
+
+When the simplifier cannot further improve the code in the window, it emits
+the first operation in the window and pulls a new operation into the bot-
+tom of the window. This action “slides” the window down the block, one
+operation at a time.
+
+Fig. 11.3 shows the contents of the simplifier’s window at each step of
+the example. It assumes a three-operation window. Sequence 1 shows the
+window with the first three operations. No simplification is possible. The
+simplifier emits r1 ← 2 and discards it. Next, it moves the fourth operation,
+which defines r4, into the bottom of the window to create sequence 2.
+
+
+
+In sequence 2, the simplifier can forward substitute both r2 and r3 into the
+1
+r1
+← 2
+
+6
+r5
+← M(@CP + @G)
+
+7
+r8
+← M(r5 + 12)
+
+10
+r9
+← r1 × r8
+
+11
+r12
+← M(rarp - 16)
+
+12
+r13
+← M(r12)
+
+15
+r14
+← r13 - r9
+
+16
+M(rarp + 4) ← r14
+
+Code Emitted by the Simplifier
+
+addition, which makes the definitions of r2 and r3 both dead. The simpli-
+fier discards them and rolls the next two operations into the window. In
+sequence 3, it folds the definition of r4 into the load, discards the definition
+of r4, and rolls the next operation into the window. The process continues in
+this manner. The table in the margin shows the operations that the simplifier
+emits, along with the number of the sequence after which the operation is
+emitted. The final code shown in Fig. 11.2 consists of precisely these emit-
+ted operations.
+
+Several issues affect the peephole selector’s ability to improve code. The
+ability to detect when a value is dead plays a critical role in simplification.
+The size of the peephole window limits the optimizer’s ability to combine
+related operations. For example, a larger window would let the simplifier
+fold the constant 2 into the multiply operation. The handling of control-flow
+operations determines what happens at block boundaries.
+
+Recognizing Dead Values
+
+When the simplifier confronts a sequence similar to the one shown in the
+r12 ← 2
+
+r14 ← r12 + r12
+margin, it can rewrite the uses of r12 in the addition with 2 and evaluate the
+addition. It cannot, however, eliminate the definition of r12 unless it knows
+that r12 is dead after its uses in the add operation. Thus, the ability to recog-
+nize when a value is dead plays a critical role in the simplifier’s operation.
+
+The compiler can compute LIVEOUT sets for each block and then, in a back-
+Live analysis is discussed in Sections 8.6.1
+and 9.2.2.
+ward pass over the block, track which values are live at each operation. As
+an alternative, it can use the insight that underlies the semipruned SSA form;
+it can identify names that are used in more than one block and consider any
+such name live on exit from each block. This latter strategy avoids the ex-
+pense of live analysis; it will correctly identify any value that is strictly local
+to the block where it is defined. All of the effects introduced by the expander
+are strictly local, so this cheaper approach should work well.
+
+Given either LIVEOUT sets or the set of global names, the expander can
+This analysis should be interleaved with the
+expansion so that it produces its results for
+the LLIR code.
+mark last uses in the LLIR. Two observations make this possible. First, the
+expander can process a block from bottom to top; the expansion is a sim-
+ple template-driven process. Second, as it walks the block from bottom to
+top, the expander can build a set of values that are live at each operation,
+LIVENOW.
+
+The computation of LIVENOW is simple. The expander sets the initial value
+for LIVENOW equal to either the LIVEOUT set for the block or the set of
+global names. The algorithm iterates over the operations, from the bot-
+tom of the block to its top. At each operation, ri ← rj op rk, it deletes ri
+
+
+
+from LIVENOW and adds rj and rk. This algorithm produces, at each step,
+a LIVENOW set that is as precise as the initial information used at the bottom
+of the block.
+
+On a machine that uses a condition code to control conditional branches,
+many operations set the condition code’s value. In a typical block, many
+of those condition code values are dead. The expander must insert explicit
+assignments to the condition code. The simplifier must understand when
+the condition code’s value is dead because extraneous assignments to the
+condition code may prevent the matcher from generating some instruction
+sequences.
+
+For example, consider the computation ri × rj + rk. If both × and + set the
+rt1 ← ri × rj
+cc ← f×(ri, rj)
+
+rt2 ← rt1 + rk
+cc ← f+(rt1, rk)
+
+LLIR for ri × rj + rk
+
+condition code, the two-operation sequence might generate the LLIR shown
+in the margin. The first assignment to cc is dead. If the simplifier eliminates
+that assignment, it can combine the other operations into a multiply-add
+operation, assuming that the ISA includes such an instruction. If it cannot
+eliminate cc ← f×(ri, rj), however, the matcher will not use multiply-add
+because it does not set cc twice.
+
+Physical Versus Logical Windows
+
+The discussion, so far, has focused on a window containing adjacent oper-
+ations in the LLIR. This notion has a nice physical intuition and makes the
+concept concrete. However, adjacent operations in the LLIR may not operate
+on the same values. In fact, as target machines offer more instruction-level
+parallelism, a compiler’s front end and optimizer must generate IR programs
+that have more independent and interleaved computations to keep the target
+machine’s functional units busy. In this case, the peephole selector may find
+very few opportunities for improving the code.
+
+To improve this situation, the peephole selector can use a logical window
+rather than a physical window. With a logical window, it considers opera-
+tions that are connected by the flow of values within the code—that is, it
+considers together operations that define and use the same value. This cre-
+ates the opportunity to combine and simplify related operations, even if they
+are not adjacent in the code.
+
+During expansion, the optimizer can link each definition with the next use of
+its value in the block. The simplifier uses these links to fill its window. When
+the simplifier reaches operation i, it constructs a window for i by pulling in
+operations linked to i’s result. Using a logical window within a block can
+make the simplifier more effective, reducing both the compile time required
+and the number of operations remaining after simplification.
+
+
+
+In the example, the simplifier cannot fold the constant two into the multiply
+operation because the two operations are never in the window together. In a
+simplifier with a logical window, the multiply and the immediate load would
+be in the window together, so the simplifier could substitute the value two
+into the multiply, and eliminate the immediate load operation.
+
+We can extend this idea to multiple blocks. The compiler can attempt to
+simplify operations that are logically adjacent, even if they are in differ-
+ent blocks. Using multiple blocks requires a global analysis to determine
+which uses each definition can reach, such as reaching definitions from
+Section 9.2.4. Additionally, the simplifier must recognize that one defini-
+tion may reach multiple uses, and one use might refer to values computed
+by several distinct definitions. Thus, the simplifier cannot simply combine
+the defining operation with one use and leave the remaining operations
+stranded. It must either limit its consideration to simple situations, such as
+a single definition and a single use or multiple uses with a single definition,
+or it must perform detailed analysis to determine whether a combination is
+both safe and profitable. Restricting the logical window to an extended basic
+block avoids some of these complications.
+
+11.3.3 The Matcher
+
+The final component of a peephole selector is the matching phase that maps
+an arbitrary LLIR sequence onto the target machine’s ISA. Peephole se-
+lectors have used different technologies to implement the matcher, ranging
+from parsers adapted to the task to ad-hoc code. The choice between these
+approaches depends heavily on the size and complexity of the target instruc-
+tion set and the availability of tools.
+
+The goal for a generated instruction selector is to reduce the amount of work
+needed to retarget a compiler. With a specification-driven matcher, the com-
+piler writer creates a description of the ISA and its relationship to the LLIR;
+the build-time generator then constructs the matcher that runs at compile
+time. The compiler writer must ensure that (1) the description covers the
+full set of possible LLIR sequences and (2) the description makes good use
+of the target ISA, including its address modes and specialized operations.
+
+With a hand-coded matcher, the compiler writer modifies the matcher di-
+rectly so that it emits the appropriate target ISA operations. That task sounds
+daunting; however, the differences between processor ISAs are typically
+smaller than the similarities between them. Logical and arithmetic opera-
+tions function in similar ways across most architectures; the differences lie
+in the way they name operands and their side effects on system state (such
+as setting a condition code).
+
+
+
+Several important compiler systems have used peephole selectors. The
+Gnu compiler system, GCC, uses an LLIR called register-transfer language
+(RTL) for some optimizations and for code generation. The back end uses a
+peephole selector to convert RTL into target-machine ASM. The matcher
+interprets the RTL as trees and uses a tree-pattern matcher built from a
+target-machine description. By contrast, the matcher in Davidson’s VPO
+The parser must handle the ambiguities
+introduced by the presence of multiple
+ways to implement a given LLIR sequence.
+uses a parser that treats the LLIR as a linear form and emits target-machine
+code as it parses. It builds the selector from a description of the target ISA
+and from its own knowledge of the LLIR used in the system.
+
+These peephole-based systems have two fundamental strengths.
+
+■
+Systematic late-stage simplification lets the compiler eliminate ineffi-
+ciencies left behind by earlier phases in the translation.
+
+■
+Forward substitution and constant folding expose opportunities to map
+
+LLIR sequences into processor address modes.
+
+The net result is a final program that executes fewer operations and takes
+better advantage of the target machine’s instruction set.
+
+SECTION REVIEW
+Peephole optimization can form the basis of a fast and effective instruction
+selector. A peephole selector consists of a template-driven expander that
+translates the compiler’s IR into a more detailed low-level IR; a simplifier that
+uses forward substitution, algebraic simplification, constant propagation,
+and dead-code elimination within a small, moving window; and a matcher
+that maps the optimized low-level IR onto the target ISA.
+
+The strength of this approach lies in the simplifier; it removes interoperation
+inefficiencies introduced in the translation process. It focuses on
+opportunities that involve local values; many of those opportunities are
+hidden at earlier stages of translation. The resulting improvements can be
+surprising. The final matching phase is straightforward; technologies
+ranging from hand-coded matchers to LR parsers have been used.
+
+REVIEW QUESTIONS
+
+1.
+Sketch an algorithm for the simplifier. What is the algorithm’s complex-
+ity? How does peephole-window size affect the time bound?
+
+2.
+How might you extend the simplifier so that it uses the algebraic iden-
+tities from Fig. 8.3 to improve the LLIR code?
+
+
+
+11.4 SELECTION VIA TREE-PATTERN MATCHING
+
+Another way to attack the complexity of instruction selection is with tree-
+pattern matching tools. To transform code generation into a tree-pattern
+matching problem, both the IR form of the program and the target machine’s
+instruction set must be expressed as trees. The compiler can use a low-level
+
+AST as a detailed model of the code being compiled. It can use similar trees
+to represent the operations available on the target processor. For example,
+
+ILOC’s addition operations might be modeled by operation trees like those
+shown in the margin for add and addI. By systematically matching such op-
+eration trees, or pattern trees, with subtrees of an AST, the compiler can
+discover all the potential implementations for the subtree.
+
+Given a low-level AST for the code and a collection of operation trees for the
+target ISA, the matcher constructs a tiling of the AST with operation trees.
+A tile is a pair, ⟨x,y⟩, where x is a node in the AST and y is the root of an
+operation tree. A tiling is a set of pairs that meet the following constraints:
+
+1. The set of tiles covers every AST node.
+
+2. The root of each operation tree overlays a leaf in another operation tree,
+unless it overlays the root of the AST.
+
+3. Where two operation trees overlap, they are compatible; that is, they
+agree in both storage class and value type.
+
+4. The overlap between any two operation trees in the set occurs at a single
+node.
+
+A set of pairs that meets these criteria is a tiling; it implements the AST.
+
+The presence of a pair ⟨x, y⟩ in the tiling indicates that the AST subtree
+rooted at x can be implemented by the operation tree rooted at y. Unless x is
+a leaf, the choice of y will depend on finding implementations for subtrees
+of x that work with y. To build a tiling, the compiler must ensure that both
+the entire tree and each of its subtrees can be implemented by the specified
+set of operation trees.
+
+Given a tiling that implements an AST, the compiler can generate assembly
+code in a bottom-up walk over the AST. Thus, the key to making practical
+instruction selectors based on tree-pattern matching lies in algorithms that
+find good tilings for an AST. Tools exist for several different techniques:
+tree matching, text matching, and bottom-up rewrite systems (BURSs). The
+tools associate costs with operation trees and produce minimal-cost tilings.
+This section focuses on tree matching, but the insights carry over to text
+matching and BURSs.
+
+
+
+11.4.1 Representing Trees
+
+We need a notation to describe both ASTs and tree patterns. Prefix notation
+is well-suited to this task. For example, the add operation shown in the mar-
+gin is + (Regi, Regj) in prefix form, and the addI operation is + (CONi, Regj).
+This same notation works for both low-level ASTs that represent executable
+code and the pattern trees that represent target-machine operations. The ex-
+amples in this chapter limit themselves to integer operations. Extending the
+rules to other data types adds many new patterns, but few new insights.
+
+The operands of a subtree are either subtrees or leaves. Subtrees are ex-
+pressed in prefix notation, as with the multiply subtree in the AST shown in
+the margin: + (× (CON2, Regy), Regx). Leaves are assigned symbolic names that
+encode information about the type and storage location of the operand. For
+example, Regi indicates a value that resides in a register and CONj indicates
+a constant value. In an AST, labels such as VAL, NUM, LAB, and CON provide
+more detailed information (see page 585). Subscripts are added to names
+for uniqueness. We can rewrite the AST from Fig. 11.1(b) into prefix form:
+
+←
+(+ (VAL1, NUM1),
+
+- (◆ (◆ (- (VAL2, NUM2))), × (NUM3,◆ (+ (LAB1, NUM4)))))
+
+While the drawing of the tree may be more intuitive, this linear prefix form
+contains precisely the same information.
+
+Throughout this section, we will assume that the IR uses virtual names;
+that is, the supply of names is unlimited (see Section 1.4). After selection,
+a register allocator will map the virtual names onto the target machine’s
+limited set of physical registers (see Chapter 13).
+
+11.4.2 Rewrite Rules
+
+To build an instruction selector based on tree-pattern matching, the com-
+piler writer creates a set of rewrite rules that maps the AST into the target
+machine’s ISA. Each rule consists of a tree pattern, a code template, and
+an associated cost. These tree patterns describe the structure of the AST.
+Fig. 11.4 shows the ILOC subset that we will use in the ongoing examples.
+
+The patterns resemble productions in a context-free grammar (CFG). Each
+pattern has a left-hand side (LHS) and a right-hand side (RHS); as in a CFG,
+the LHS and RHS are separated by the derives symbol, →. The drawing
+in the margin shows the tree for a three-register add and its corresponding
+pattern. The labels give names to the various definitions and uses. The in-
+put arguments are Reg1 and Reg2, respectively. The output of the operation
+is Reg0.
+
+
+
+Arithmetic Operations
+Memory Operations
+
+add
+r1, r2 ⇒ r3
+store
+r1
+⇒ r2
+addI
+r1, c2 ⇒ r3
+storeAO
+r1
+⇒ r2, r3
+sub
+r1, r2 ⇒ r3
+storeAI
+r1
+⇒ r2, c3
+subI
+r1, c2 ⇒ r3
+loadI
+c1
+⇒ r3
+rsubI
+r2, c1 ⇒ r3
+load
+r1
+⇒ r3
+mult
+r1, r2 ⇒ r3
+loadAO
+r1, r2 ⇒ r3
+multI
+r1, c2 ⇒ r3
+loadAI
+r1, c2 ⇒ r3
+
+■ FIGURE 11.4 The ILOC Subset.
+
+Some symbols appear exclusively on the RHS of patterns. These symbols
+are analogous to the terminal symbols in a CFG; they represent concrete
+symbols that can be leaves in a tree. Other symbols appear on either the
+LHS or RHS of a pattern. These symbols are analogous to the nontermi-
+nal symbols in a CFG; they are syntactic variables used to tie productions
+together into sequences.
+
+A rule set consists of a collection of related rules that, together, can tile a
+tree. Fig. 11.5 shows a rule set for the low-level AST that we described in
+Section 11.2.2. Each rule represents a small AST. For example, rule 8 was
+shown earlier in the margin. Its RHS describes the + node and its children.
+The rule’s LHS corresponds to the label on the + node, Reg0 in the margin
+drawing.
+
+Rule 19 deals with a common problem: the code needs to load a constant
+Rule 19 is too simple. In practice, the com-
+piler might place the constant pool at a
+known offset from the procedure’s entry
+point. The prolog code could either load @CP
+to a register or store it in the local data area.
+
+value that is too large to accommodate in a load immediate operation. The
+code template suggests one way to solve the problem. It assumes that each
+procedure has a unique, statically initialized constant pool, and it represents
+the start of that constant pool with the symbol @CP. Further, it assumes that @L
+is the positive offset of LAB1 from @CP. With these assumptions, the emitted
+code loads @CP into a register and uses it as the base address for a loadAI
+operation.
+
+The rules in Fig. 11.5 describe the set of potential ASTs for a list of assign-
+ments. Not all the rules produce code. For example, rules 0 and 1 create an
+ordered list of Stmt, the nonterminal symbol for an assignment statement.
+Rules 20 through 23 handle address mode selection and rule 24 is used in
+immediate-mode operations.
+
+Interactions between the patterns, encoded through the use of LHS symbols,
+define the ways in which subtrees can combine. For example, productions 5
+through 20 each have Reg on their LHS. Thus, each of those rules describes
+a subtree that can rewrite a Reg.
+
+
+
+Production
+Cost
+Code Template
+
+0
+Goal → Goal Stmt
+0
+
+1
+Goal → Stmt
+0
+
+2
+Stmt →
+← (Reg1,Reg2)
+3
+store
+r2 ⇒ r1
+
+3
+Stmt →
+← (T11,Reg2)
+3
+storeAO r2 ⇒ T1.r1,T1.r2
+
+4
+Stmt →
+← (T21,Reg2)
+3
+storeAI r2 ⇒ T2.r,T2.n
+
+5
+Reg
+→ ◆ (Reg1)
+3
+load
+r1 ⇒ rnew
+
+6
+Reg
+→ ◆ (T11)
+3
+loadAO
+T1.r1,T1.r2 ⇒ rnew
+
+7
+Reg
+→ ◆ (T21)
+3
+loadAI
+T2.r,T2.n ⇒ rnew
+
+8
+Reg
+→ + (Reg1,Reg2)
+1
+add
+r1,r2 ⇒ rnew
+
+9
+Reg
+→ + (Reg1,T32)
+1
+addI
+r1,T3 ⇒ rnew
+
+10
+Reg
+→ + (T31,Reg2)
+1
+addI
+r2,T3 ⇒ rnew
+
+11
+Reg
+→ - (Reg1,Reg2)
+1
+sub
+r1,r2 ⇒ rnew
+
+12
+Reg
+→ - (Reg1,T32)
+1
+subI
+r1,T3 ⇒ rnew
+
+13
+Reg
+→ - (T31,Reg2)
+1
+rsubI
+r2,T3 ⇒ rnew
+
+14
+Reg
+→ × (Reg1,Reg2)
+2
+mult
+r1,r2 ⇒ rnew
+
+15
+Reg
+→ × (Reg1,T32)
+2
+multI
+r1,T3 ⇒ rnew
+
+16
+Reg
+→ × (T31,Reg2)
+2
+multI
+r2,T3 ⇒ rnew
+
+17
+Reg
+→ CON1
+1
+loadI
+CON1 ⇒ rnew
+
+18
+Reg
+→ NUM1
+1
+loadI
+NUM1 ⇒ rnew
+
+19
+Reg
+→ LAB1
+4
+loadI
+@CP ⇒ rnew1
+loadAI
+rnew1,@L ⇒ rnew2
+20
+Reg
+→ VAL1
+0
+
+21
+T1
+→ + (Reg1,Reg2)
+0
+
+22
+T2
+→ + (Reg1,T32)
+0
+
+23
+T2
+→ + (T31,Reg2)
+0
+
+24
+T3
+→ NUM1
+0
+
+■ FIGURE 11.5 Rewrite Rules for Tiling the Low-Level Tree with ILOC.
+
+The LHS symbols encode knowledge about the type and storage class of the
+values that they represent. For example, a Reg represents a value in a register.
+A Reg might result from a subtree that produces an integer value stored in a
+register, as in rules 5 through 16. It might also result from a CON, a NUM, or a
+LAB, through productions 17, 18, and 19. Rule 20 provides a way to convert a
+VAL node to a Reg—essentially, it names the value. The VAL might be a global
+value, such as the ARP, or it might be the result of a computation performed
+in a disjoint subtree, such as a redundant expression found by the optimizer.
+
+
+
+T1 and T2 represent addresses—values that can be computed in address
+modes such as loadAO and loadAI. T3 represents a NUM used directly as an
+immediate operand.
+
+Finally, note that the rule set is ambiguous. Rules 9 and 22 have the same
+RHS, as do rules 10 and 23. Those pairs have different purposes and differ-
+ent costs. Rule 9 represents an explicit, general purpose add operation, while
+rule 22 represents an add operation done by the memory address hardware.
+
+Cost Estimates
+
+Each rule has a cost; that cost should provide a realistic estimate of the
+Some systems only allow fixed costs. Oth-
+ers let the costs vary during matching to
+reflect prior choices.
+runtime cost of executing the code in the template. Fig. 11.5 assumes that
+addition and subtraction require one cycle, multiplication takes two, and
+memory operations need three cycles, a reasonable estimate for a hit in the
+first-level data cache. Rules that generate no code, such as rule 22, have zero
+cost. The cost estimates will drive choices among alternative rules.
+
+A full rule set might have multiple rules that require more than one target-
+machine operation, as rule 19 does. The tree-matching algorithm sees such
+a rule as a single pattern. As long as the cost estimates are accurate, the
+presence of multiple-operation sequences should not complicate matters.
+
+Building a Rule Set
+
+A common strategy in constructing a rule set is to begin with a minimal
+set of rules that covers the tree. That is, the compiler writer can derive a
+set of rules that has a pattern for every node in the AST and a correct code
+sequence for each pattern. Once that rule set has been designed, tested, and
+debugged, the compiler writer can add rules with patterns that use special-
+ized operations to handle more complex cases.
+
+Restrictions on the Rule Set
+
+To simplify the code in the tree-pattern matcher, we restrict the rule set in
+two ways. First, each pattern includes at most one operator. Any multiop-
+erator rule can be rewritten into a sequence of single-operator rules.
+
+Consider two possible rule sets for an ILOC storeAO operation, shown in
+This special case matters if the hardware
+can compute the sum in the address unit, as
+in storeAO.
+Fig. 11.6. Panel (a) shows a single rule, ← (+ (Reg1,Reg2),Reg3). It special-
+izes the general store operation described by rule 2 for the case when the
+address is the sum of two registers. Panel (b) shows two single-operator pat-
+terns that together tile the same subtree. To create the single-operator rules,
+the compiler writer introduced a new name, T1, that appears only in the ad-
+dress computation of a storeAO or a loadAO. The rules in panel (a) and (b)
+are equivalent; they tile the same set of LLIR subtrees.
+
+
+
+■ FIGURE 11.6 Single-Operator Patterns Versus Multioperator Patterns.
+
+The restriction to single-operator rules greatly simplifies the code for the
+tree-pattern matcher. To match the pattern in panel (a), the matcher must
+inspect both the + node and the ← node together, or it must carry along
+explicit state to track such matches. Either approach adds complexity and
+cost to the implementation.
+
+With the two single-operator patterns in panel (b), the matcher makes purely
+local decisions. The AST subtree + (Reg,Reg) matches both the general rule
+that describes an add (rule 8) and the rule that describes a T1 (rule 21). Mov-
+ing up to that subtree’s parent, the matcher can produce matches to each of
+rule 2, for the left child’s label as a Reg, and rule 3, for the left child’s label
+as a T1.
+
+The key to making single operator rules produce the desired results for com-
+plex target-machine operations lies in the cost structure of the rule set. With
+single operator patterns, the sum of the costs of the single operator rules
+should equal the cost of the complex instruction. If the cost of the operation
+is one cycle and it takes two patterns to match it, then they can be assigned
+arbitrary nonnegative costs that sum to one, such as 1
+
+2 and 1
+
+2, or 1
+
+4 and 3
+
+4, or 0
+and 1. This approach ensures that a low-cost match generates the instruction
+sequence with lowest local cost.
+
+The second restriction we impose is that leaves in the tree appear only in
+singleton rules, such as rules 17 to 20 and 24. Again, the intent is to simplify
+the tree-pattern matcher. For the situation where a NUM needs to move into a
+Notice that rule 18 has a code template, but
+rule 24 does not.
+register, rule 18, Reg ← NUM, accomplishes the task. When the NUM can appear
+as an immediate field, it matches rule 24, T3 ← NUM. Here, T3 is an LHS
+symbol that only appears in an immediate field of an operation such as addI
+or loadAI. If the target ISA supported multiple distinct lengths of immediate
+operands, the rule set would include an LHS symbol for each length.
+
+This second restriction avoids special case code in the tree-pattern matcher.
+When the matcher considers the children of an operator, it can assume that
+
+
+
+■ FIGURE 11.7 A Simple Tree Rewrite Sequence.
+
+those children have already been annotated with type and cost information
+by the singleton rules. The code for operators remains simple and uniform.
+
+Either one or both of these restrictions can be discarded, at the cost of addi-
+tional complexity in the tree-pattern matcher. In a hand-coded matcher, this
+simplicity leads to efficient matchers. An automatically generated, table-
+driven scheme may have different cost tradeoffs.
+
+11.4.3 Computing Tilings
+
+Given a rule set that maps the compiler’s IR onto the target machine’s ISA,
+the instruction selector must map a specific AST into an instruction se-
+quence. To do this, a tree-pattern matching code generator constructs a tiling
+of the AST with the tree-patterns from the rule set. Several techniques for
+constructing such a tiling exist; they are similar in concept but vary in detail.
+
+To help us understand tiling, consider the AST shown in the margin, a sub-
+tree from Fig. 11.1(b). It describes a memory operation that loads a word
+from the address at offset 12 from the label @G. Using the rules from
+Fig. 11.5, we can find a sequence of rules that tiles the tree.
+
+Fig. 11.7 shows one way to tile this AST. The figure treats the rules as
+rewrites to the tree. As shown in panel (a), rule 19 matches the LAB node.
+Rule 19 rewrites the LAB as a Reg, shown in panel (b). Rule 24 matches the
+
+NUM node and rewrites it as a T3 to produce the AST shown in panel (c). One
+of the matches for +(Reg,T3) in panel (c) is rule 9, which rewrites that sub-
+tree as a Reg, as shown in panel (d). Rule 5 matches the AST in panel (d) and
+rewrites it as a single Reg node, not shown. We denote this rewrite sequence
+as ⟨19,24,9,5⟩; order in the sequence matches the order of rule application.
+
+Rules 19 and 24 can be applied in either order. Thus, the sequence
+⟨19,24,9,5⟩ produces the same tiling as ⟨24,19,9,5⟩. The diagram in the
+margin summarizes those sequences.
+
+
+
+■ FIGURE 11.8 The Set of All Tilings for the Example Subtree.
+
+This tiling implements the AST; it meets the four criteria defined on
+page 596. It covers each AST node with one or two operation-tree nodes.
+The root of each pattern tree overlaps with a leaf in its parent. For example,
+the root of 19 is a leaf in 9. The connections between patterns are compati-
+ble and limited to one node in each subtree. Where two operation-tree nodes
+cover an AST node, the connected nodes have the same nonterminal label.
+Thus, this tiling implements the AST.
+
+Given a valid tiling, the selector generates code using the templates associ-
+ated with each rule. The code template consists of zero or more operations
+that, together, implement the subtree covered by the rule. For example, the
+sequence ⟨19,24,9,5⟩ implies four operations. Rule 19 produces a loadI fol-
+lowed by a loadAI; rule 24 generates no code; rule 9 generates an addI; and
+rule 5 generates the load. The resulting code appears in the second column
+of Fig. 11.8, with abstract register names to create the flow of values. Note
+that ⟨24,19,9,5⟩ produces the same code, because rule 24 produces no code.
+In general, sequences that differ in the order of rule application may gener-
+ate the operations in a different order.
+
+Choosing Among Multiple Tilings
+
+Eight different sequences implement the example AST. Fig. 11.8 shows all
+The sequences that use both rules 18 and 19
+would generate the two loadIs in different
+orders for ⟨18,19⟩ and ⟨19,18⟩.
+eight sequences; those that differ only in order appear together. The top row
+shows the tilings. The middle row shows the code generated by each tiling
+and its cost. The bottom row shows the sequences for each tiling.
+
+
+
+Tile(n)
+/ * n is an AST node * /
+
+if n is a leaf then
+
+Match(n,* ) ← { rules that implement n }
+
+else if n is a unary node then
+
+Tile(child(n))
+
+Match(n,*) ← ∅
+/ * Clear n’s Match sets * /
+
+for each rule r where operator(r) = operator(n) do
+
+if (child(r), child(n)) are compatible then
+
+add r to Match(n, class(r))
+
+else if n is a binary node then
+
+Tile(left(n))
+
+Tile(right(n))
+
+Match(n,*) ← ∅
+/ * Clear n’s Match sets * /
+
+for each rule r where operator(r) = operator(n) do
+
+if (left(r), left(n)) and (right(r), right(n)) are compatible then
+
+add r to Match(n, class(r))
+
+■ FIGURE 11.9 Compute All Matches to Tile an AST.
+
+To emit code, the instruction selector must choose one sequence. The obvi-
+ous choice is to take the low-cost sequence. If the cost estimates for the rules
+reflect actual runtime costs, then the low-cost sequence should be fastest.
+Note that the costs can reflect properties other than execution speed. For
+example, in an application where code space is critical, a cost metric that
+reflects the byte-length of the code sequence might be appropriate.
+
+A Tiling Algorithm
+
+Fig. 11.9 shows a simple recursive algorithm that computes the set of
+matches for each node in the tree. To keep the exposition simple, the al-
+gorithm assumes that the AST and the rule set consist of nodes with either
+zero, one, or two operands.
+
+This restriction allows the algorithm to deal with just three kinds of tree-
+patterns: a binary node and its two children, a unary node and its child, or a
+leaf node. This limitation keeps the matcher small and efficient.
+
+Tile annotates each node with a vector of rules that match the subtree
+rooted at that node. The vector has one element for each LHS symbol in
+the rule set. By design, each LHS symbol in the rule set corresponds to a
+⟨storage class,type⟩ pair. For a node n, the row Match(n,*) contains all of the
+rules that can implement the subtree rooted at n. Match(n,c) shows all of the
+rules that can implement the subtree rooted at n, to produce a result in c.
+
+
+
+For a leaf node, the set of matches can be precomputed. In our example
+Reg
+Stmt
+T1
+T2
+T3
+
+18
+24
+
+Match Set for NUM Node
+
+rule set, a NUM node always has the Match set shown in the margin. The rules
+provide one way to rewrite NUM as a Reg, with rule 18, and one way to rewrite
+a NUM as a T3, with rule 24. Each leaf node has its own vector.
+
+For a unary node n, Tile first recurs on n’s child to discover the ways it can
+be implemented. It then examines each rule r that implements n’s operator.
+If the child has an implementation that is compatible with r marked in its
+
+Match set, then Tile adds r to Match(n, class(r)), where class(r) denotes the
+
+LHS symbol of rule r.
+
+To test compatibility between rule r and the implementations for AST node
+
+n’s child, the algorithm uses a simple test based on the definition of compat-
+ibility: the rule and the AST must agree on the operator and on the storage
+class and value type of the child. Given an AST subtree o1(x) and a tree pat-
+tern o2(y), the two are compatible if and only if (1) the operators in o1 and
+o2 are the same; and (2) Match(x, class(y)) is nonempty. The first condition
+ensures that the tree pattern and the AST subtree use the same operation.
+The second ensures that the child in the AST can be implemented with a
+rule that produces the kind of value that rule r uses.
+
+For a binary node n, Tile follows the same plan as for a unary node. It recurs
+on both the left and right children in the AST. It tests compatibility between
+the left child in the AST and the corresponding term in rule r and the right
+child in the AST and the corresponding term in r. If r uses the same operator
+as n and r is compatible with the tilings computed for n’s children, then Tile
+adds r to Match(n, class(r)).
+
+A Worked Example
+
+Fig. 11.10 shows the results of applying Tile to our continuing example.
+Panel (a) shows the AST for a ←b - 2 × c. Nodes in the AST are annotated
+with their postorder numbers; Tile traverses the tree in postorder. Panel (d)
+shows all of the matches that Tile finds for each node. Superscripts on the
+rule numbers indicate the lowest cost for each entry. The low-cost entry in
+the row is set in bold text.
+
+To gain a feel for the algorithm, consider the subtree that starts with node 13,
+which is the example from Fig. 11.8. In postorder, Tile will compute the
+
+Match sets for nodes 10 and 11. As leaves, these are precomputed sets. The
+only rule that applies to a LAB is rule 19, which rewrites LAB with Reg. The
+table entry reflects that fact. Similarly, the entry for node 11 is the Match
+set shown earlier, which indicates that rule 18 rewrites a NUM into a Reg, and
+rule 24 rewrites a Num into a T3.
+
+
+
+■ FIGURE 11.10 Results of Running Tile on the Low-Level AST for a ←b - 2 × c.
+
+
+
+For node 12, Tile finds four possibilities. It can produce a Reg for the addition,
+using either rule 8 or rule 9. It can produce a T1 using rule 21, or it can
+produce a T2 using rule 22. As shown in Fig. 11.8, each of those choices
+dictates specific matches for nodes 10 and 11.
+
+Finally, for node 13, Tile finds three choices: rules 5, 6, and 7. Each of these
+rewrites the subtree with a Reg. A top-down walk in the AST subtree, choos-
+ing a compatible set of rules from Match will generate the sequences shown
+in Fig. 11.8.
+
+Accounting for Costs
+
+Given the set of matches and the costs for each rule, the compiler can
+compute the least cost choice in each category, during a simple postorder
+traversal. It accumulates costs for each category, bottom up, by determining
+the cost for a specific rule choice as the rule’s own cost, plus the cost of the
+choices at subtrees that the rule requires. The matcher can compute the cost
+for each rule choice and keep the smallest one for each category.
+
+The cost computation can be folded into Tile, as shown in Fig. 11.11. The
+code is a straightforward extension of Fig. 11.9.
+
+The table in Fig. 11.10(d) shows where, during the matching process,
+choices occur. Consider node 3. Two patterns match the subtree to produce
+a value of type Reg. Rule 8 has a total cost of 2: 1 for itself, plus 0 for a
+Reg at node 1 and 1 for a Reg at node 2. Rule 9 has a total cost of 1: 1 for
+itself, plus 0 for a Reg at node 1 and 0 for a T3 at node 2. The cost-driven
+algorithm will keep the match to rule 9. In addition to these matches for Reg,
+one pattern matches the subtree to produce each of T1 and T2. The low-cost
+among these matches for node 3 is rule 22, which produces a T2.
+
+By the time the matcher finishes, it has annotated each node with the rule
+that produces the low-cost match. These matches are shown in Fig. 11.10(b).
+The instruction selector can then emit code in a bottom-up, postorder pass
+over the tree. Fig. 11.10(c) shows the resulting code, with appropriate reg-
+ister names used to tie together the various code templates.
+
+This process yields, at each point, a rule choice that produces a minimal cost
+Local optimality
+A scheme in which the compiler has no
+better alternative, at each point in the code,
+is considered locally optimal.
+code sequence in some local neighborhood in the tree. The literature refers
+to this property as local optimality.
+
+Local optimality does not guarantee that the solution is optimal from a
+broader perspective, such as the entire procedure or the entire program. In
+general, compilers cannot efficiently consider all the details that would be
+necessary to achieve global optimality.
+
+
+
+Tile(n)
+/ * n is a node in an AST * /
+
+if n is a leaf node then
+
+Match(n,* ).rule ← { low-cost rule that matches n, in each class }
+
+Match(n,* ).cost ← { corresponding cost }
+
+else if n is a unary node then
+
+Tile(child(n))
+
+Match(n ,*).rule ← invalid
+
+Match(n ,*).cost ← largest integer
+
+for each rule r where operator(r) = operator(n) do
+
+if (child(r), child(n)) are compatible then
+
+NewCost ← RuleCost(r) + Match(child(n),class(child(r))).cost
+
+if (Match(n,class(r)).cost > NewCost) then
+
+Match(n,class(r)).rule ← r
+
+Match(n,class(r)).cost ← NewCost
+
+else if n is a binary node then
+
+Tile(left(n))
+
+Tile(right(n))
+
+Match(n ,*).rule ← invalid
+
+Match(n ,*).cost ← largest integer
+
+for each rule r where operator(r) = operator(n) do
+
+if (left(r), left(n)) and (right(r), right(n)) are compatible then
+
+NewCost ← RuleCost(r) + Match(left(n), class(left(r))).cost
+
++ Match(right(n), class(right(r))).cost
+
+if (Match(n,class(r)).cost > NewCost) then
+
+Match(n,class(r)).rule ← r
+
+Match(n,class(r)).cost ← NewCost
+
+■ FIGURE 11.11 Compute Low-Cost Matches to Tile an AST.
+
+Notice how different the final code is for the three variable references. The
+store to a, at offset 4 from the ARP, folds completely into a single storeAI
+operation. The load from b, a call-by-reference parameter whose pointer
+is 16 bytes before the ARP requires a subI and two load operations; the
+address-offset address mode only handles positive offsets, and the call-by-
+reference binding leads to an extra load. Finally, the load from c, a global
+variable stored at offset 12 from a label, requires a loadI to find the con-
+stant pool, followed by two loadAI operations. The first loadAI fetches the
+address of the label stored at @CP + @G, and the second fetches the value at
+offset 12 from that address. At the source level, all three references look
+textually similar; the code generated for them is not.
+
+
+
+TREE-PATTERN MATCHING ON QUADS?
+The terms used to describe these techniques—tree-pattern matching and
+peephole optimization—contain implicit assumptions about the kinds of IR
+to which they can be applied. The description of tree-pattern matching
+selectors implies that the selector operates on a tree-shaped IR. Similarly,
+peephole optimizers were first proposed as a final assembly-to-assembly
+improvement pass. The idea of a moving instruction window strongly
+suggests a linear, low-level IR for a peephole selector.
+
+Both techniques can be adapted to fit most IRs. A compiler can interpret a
+low-level linear IR like ILOC as trees. Each operation becomes a tree node;
+the edges are implied by the reuse of operands. Similarly, if the compiler
+assigns a name to each node, it can interpret trees as a linear form by
+performing a postorder treewalk. A clever implementor can adapt the
+methods presented in this chapter to a wide variety of actual IRs.
+
+As a final point, notice that the tree-pattern matching selector folds the con-
+stant two into the multiply operation. Recall that the peephole selector was
+unable to perform that rewrite because the assignment of two to r1 and the
+use of r1 in the multiply were too far apart for the simplifier to see the oppor-
+tunity. By contrast, the tree-pattern matcher encodes the fact that the subtree
+has a constant value and carries it along in the set of possible matches to the
+point where the decision between a mult and a multI occurs.
+
+11.4.4 Tools
+
+As we have seen, a tree-oriented, bottom-up approach can produce efficient
+instruction selectors. There are several ways that the compiler writer can
+implement code generators based on these principles.
+
+1. The compiler writer can hand code a matcher, similar to Tile, that explic-
+itly checks for matching rules as it tiles the tree. A careful implemen-
+tation can limit the set of rules examined at each node. This avoids the
+large table and leads to a compact code generator.
+
+2. Since the problem is finite, the compiler writer can encode it as a finite
+tree-matching automaton, similar to a DFA. In this scheme, the lookup
+table encodes the automaton’s transition function and implicitly incor-
+porates all the required state information. Multiple systems have used
+this approach, often called a bottom-up rewrite system (BURS).
+
+3. The grammar-like form of the rules suggests using parsing techniques,
+extended to handle the highly ambiguous grammars that result from ma-
+chine descriptions, and to choose least-cost parses.
+
+
+
+4. If the compiler linearizes the tree into prefix form, it can use a string-
+matching algorithm to find the potential matches.
+
+Practical tools implement each of the last three approaches. The compiler
+writer creates a description of a target machine’s instruction set, and a gen-
+erator creates executable code from the description.
+
+The automated tools differ in details. The cost per emitted instruction varies.
+Some are faster, some are slower; none is slow enough to have a major im-
+pact on the speed of the resulting compiler. The approaches allow different
+cost models. Some systems restrict the compiler writer to a fixed cost for
+each rule; in return, they can perform some or all of the analysis during ta-
+ble generation. Others allow more general cost models where costs may vary
+during matching; these systems must manipulate those costs during instruc-
+tion selection. In general, however, all these approaches produce instruction
+selectors that are both efficient and effective.
+
+SECTION REVIEW
+Instruction selection via tree-pattern matching uses trees to represent both
+operations in the code and operations on the target machine. The compiler
+writer creates a library of tree patterns that map constructs in the compiler’s
+IR into operations on the target machine. Each pattern consists of a small IR
+pattern-tree, a code template, and a cost. In a single pass, the selector finds
+a locally optimal tiling for the tree. A second postorder walk generates the
+corresponding code from the templates associated with the tiles.
+
+Several technologies have been used to implement tiling passes. These
+include hand-coded matchers, automata-based matchers, parser-based
+matchers operating on ambiguous grammars, and linear matchers based
+on algorithms for fast string matching. All of these technologies have
+worked well in one or more systems. The resulting instruction selectors run
+quickly and produce high-quality code.
+
+REVIEW QUESTIONS
+
+1.
+Tree-pattern matching seems natural for use in a compiler with a tree-
+like IR. How might sharing in the tree—that is, using a directed acyclic
+graph (DAG) rather than a tree—affect the algorithm?
+
+2.
+The examples used a fixed cost for each pattern. How might the com-
+piler use the ability to model costs dynamically?
+
+Hint: Can the compiler recognize when
+pipelined loads can overlap?
+
+
+
+11.5 ADVANCED TOPICS
+
+Both tree-pattern matching and peephole instruction selectors have been de-
+signed for compile-time efficiency. Both techniques are limited, however,
+by the set of patterns that the compiler writer provides. To find the best
+such patterns, the compiler writer might consider using search techniques
+to discover the patterns.
+
+The idea is simple. Combinations of instructions sometimes have surpris-
+ing effects. Because the results are unexpected, they are rarely foreseen by
+a compiler writer and, therefore, are not included in the specification pro-
+duced for a target machine. Automatic discovery can reveal new patterns.
+
+Two distinct approaches that use exhaustive search to discover new patterns
+have appeared in the literature. The first has a peephole system discover new
+patterns as it compiles code. The second applies a brute-force search to the
+space of possible instructions.
+
+11.5.1 Learning Peephole Patterns
+
+To speed up peephole optimization, several systems have replaced the sim-
+plifier with a pattern-driven rewrite engine. The rewrite engine still operates
+over a small sliding window. It simply uses a library of patterns to recognize
+opportunities within the window rather than exploring all of the possible
+substitutions in each successive window. This approach decreases the time
+spent on simplification, but introduces a tradeoff between the size of the
+pattern set and the quality of the resulting code.
+
+The tradeoff pits the compiler writer’s time, spent developing the pattern set,
+against the quality of code that the instruction selector generates. A larger
+pattern set can perform more simplifications, but takes longer to write. A
+smaller pattern set can perform fewer simplifications, but takes less time to
+write.
+
+Davidson and Fraser built a system that combined a fast pattern-driven
+simplifier with an exhaustive simplifier [126]. The compiler writer would
+provide an initial set of patterns to port the instruction selector to a new
+machine.
+
+One effective way to generate the explicit pattern table needed by a fast,
+pattern-matching, peephole selector is to pair it with an optimizer that has
+a symbolic simplifier. Each time the simplifier discovers an improvement,
+it records both the initial sequence and the simplified sequence. A postpass
+checks these discovered patterns to ensure general applicability and records
+them for subsequent use.
+
+
+
+By running the symbolic simplifier on a training set of applications, the
+compiler can discover most of the patterns it needs. Then, the compiler can
+use the table as the basis of a fast pattern-matching selector. This lets the
+compiler writer expend computer time during design to speed up routine
+use of the compiler. It greatly reduces the complexity of the patterns that
+must be specified.
+
+Increasing the interaction between the two simplifiers can further improve
+code quality. At compile time, the fast pattern matcher will encounter some
+LLIR pairs that match no pattern in its table. When this occurs, it can invoke
+the symbolic simplifier to search for an improvement, bringing the power
+of search to bear only on the LLIR pairs for which it has no preexisting
+pattern.
+
+To make this approach practical, the symbolic simplifier should record both
+successes and failures. This strategy allows it to reject previously seen LLIR
+pairs without the overhead of symbolic interpretation. When it succeeds in
+improving a pair, it should add the new pattern to the selector pattern table,
+so that future instances of that pair will be handled by the more efficient
+mechanism.
+
+This learning approach to generating patterns has several advantages. It ap-
+plies effort only on previously unseen LLIR pairs. It compensates for holes
+in the training set’s coverage of the target machine. It provides the thorough-
+ness of the more expensive system while preserving most of the speed of the
+pattern-directed system.
+
+In using this approach, however, the compiler writer must determine when
+the symbolic optimizer should update the pattern tables and how to ac-
+commodate those updates. Allowing an arbitrary compilation to rewrite the
+pattern table for all users seems unwise; synchronization and security is-
+sues are sure to arise. Instead, the compiler writer might opt for periodic
+updates—storing the newly found patterns and releasing them as part of an
+update to the compiler.
+
+11.5.2 Generating Instruction Sequences
+
+The learning approach has an inherent bias: it assumes that the low-level pat-
+terns should guide the search for an equivalent instruction sequence. Some
+compilers have taken an exhaustive approach to the same basic problem.
+Instead of trying to synthesize the desired instruction sequence from a low-
+level model, they adopt a generate-and-test approach.
+
+The idea is simple. The compiler, or compiler writer, identifies a short se-
+quence of assembly-language instructions that should be improved. The
+
+
+
+compiler then generates all of the assembly-language sequences of cost one,
+substituting the original arguments into the generated sequence. It tests each
+one to determine if it has the same effect as the target sequence. When it
+has exhausted all sequences of a given cost, it increments the cost of the
+sequences and continues. This process continues until (1) it finds an equiva-
+lent sequence, (2) it reaches the cost of the original target sequence, or (3) it
+reaches an externally imposed limit on either cost or compile time.
+
+While this approach is inherently expensive, the mechanism used for testing
+equivalence has a strong impact on the time required to test each candidate
+sequence. A formal approach, using a low-level model of machine effects,
+is clearly needed to screen out subtle mismatches, but a faster test can catch
+the gross mismatches that occur most often. If the compiler simply gener-
+ates and executes the candidate sequence, it can compare the results against
+those obtained from the target sequence. This simple approach, applied to a
+few well-chosen inputs, should eliminate most of the inapplicable candidate
+sequences with a low-cost test.
+
+This approach is, obviously, too expensive to use routinely or to use for large
+code fragments. In some circumstances, however, it merits consideration. If
+the application writer or the compiler can identify a small, performance-
+critical section of code, the gains from an outstanding code sequence might
+justify the cost of exhaustive search. For example, in some embedded appli-
+cations, the performance-critical code consists of a single inner loop. Using
+exhaustive search for small code fragments—to improve speed or space—
+may be worthwhile.
+
+Similarly, exhaustive search has been applied as part of the process of re-
+targeting a compiler to a new architecture. This application uses exhaustive
+search to discover particularly efficient implementations for IR sequences
+that the compiler routinely generates. Since the cost is incurred when the
+compiler is ported, the compiler writer can justify the use of search by amor-
+tizing that cost over the many compilations that are expected to use the new
+compiler.
+
+11.6 SUMMARY AND PERSPECTIVE
+
+At its heart, instruction selection is a pattern-matching problem. The dif-
+ficulty of instruction selection depends on the level of abstraction of the
+compiler’s IR, the complexity of the target machine, and the quality of code
+desired from the compiler. In some cases, a simple treewalk approach will
+produce adequate results. For harder instances of the problem, however,
+the systematic search conducted by either tree-pattern matching or peep-
+hole optimization can yield better results. Creating a handcrafted treewalk
+
+
+
+instruction selector that achieves the same results would take much more
+work. While these two approaches differ in almost all their details, they
+share a common vision—the use of pattern matching to find a good code
+sequence among the myriad sequences possible for any given IR program.
+
+Peephole selectors systematically simplify the IR program and match what
+remains against a set of patterns for the target machine. Because they lack
+explicit cost models, no argument can be made for their optimality. They
+generate code for a computation with the same effects as the IR program,
+rather than a literal implementation of the IR program. By contrast, tree-
+pattern matchers discover low-cost tilings by taking the low-cost choice
+at each decision point. The resulting code implements the computation
+specified by the IR program. Because of this subtle distinction in the two
+approaches, we cannot directly compare the claims for their quality. In prac-
+tice, excellent results have been obtained with each approach.
+
+The practical benefits of these techniques have been demonstrated in real
+compilers. Both GCC and LCC run on many distinct platforms. The former
+uses a peephole selector; the latter uses tree-pattern matching. The use of
+automated tools in both systems has made them easy to understand, easy to
+retarget, and, ultimately, widely accepted in the community.
+
+Equally important, the reader should recognize that both families of au-
+tomatic pattern matchers can be applied to other problems in compilation.
+Peephole optimization originated as a technique for improving the final code
+produced by a compiler. In a similar way, the compiler can apply tree-pattern
+matching to recognize and rewrite computations in an AST. BURS tech-
+nology can provide a particularly efficient way to recognize and improve
+simple patterns, including the algebraic identities recognized by value num-
+bering.
+
+CHAPTER NOTES
+
+Most early compilers used hand-coded, ad-hoc techniques to perform in-
+struction selection [27]. With sufficiently small instruction sets, or large
+enough compiler teams, this worked. For example, the BLISS-11 com-
+piler generated excellent code for the PDP/11, with its limited repertoire
+of operations [368]. The small instruction sets of early computers and mini-
+computers let researchers and compiler writers ignore some of the problems
+that arise on modern machines.
+
+For example, Sethi and Ullman [321], and, later, Aho and Johnson [6], con-
+sidered the problem of generating optimal code for expression trees. Aho,
+Johnson, and Ullman extended their ideas to expression DAGs [7]. Com-
+
+
+ChapterNotes
+615
+
+pilers based on this work used ad-hoc methods for the control structures.
+Ertl showed how to use tree parsing to find optimal code sequences for
+
+DAGs [153].
+
+In the late 1970s, two distinct trends in architecture brought the problem of
+instruction selection to the forefront of compiler research. The move from
+16- to 32-bit architectures precipitated an explosion in the number of opera-
+tions and address modes that the compiler had to consider. For a compiler to
+explore even a large fraction of the possibilities, it needed a more formal and
+powerful approach. At the same time, the nascent Unix operating system be-
+gan to appear on multiple platforms. This sparked a natural demand for C
+compilers and increased interest in retargetable compilers [217]. The ability
+to easily retarget the instruction selector plays a key role in determining the
+ease of porting a compiler to new architectures. These two trends started
+a flurry of research on instruction selection that started in the 1970s and
+continued well into the 1990s [78,79,143,170,176,297,298].
+
+The success of automation in scanning and parsing made specification-
+driven instruction selection an attractive idea. Glanville and Graham
+mapped the pattern matching of instruction selection onto table-driven
+parsing [170,175,177]. Ganapathi and Fischer attacked the problem with
+attribute grammars [166].
+
+The first peephole optimizer appears to be McKeeman’s system [268]. Bag-
+well [31], Wulf et al. [368], and Lamb [246] describe early peephole sys-
+tems. The cycle of expand, simplify, and match described in Section 11.3.1
+comes from Davidson’s work [125,128]. Kessler also worked on deriving
+peephole optimizers directly from low-level descriptions of target architec-
+tures [233]. Fraser and Wendt adapted peephole optimization to perform
+instruction selection [164,165]. The machine learning approach described
+in Section 11.5.1 was described by Davidson and Fraser [126].
+
+Tree-pattern-matching code generators grew out of early work in table-
+driven code generation [10,46,177,195,249] and in tree-pattern matching
+[83,204]. Pelegrí-Llopart formalized many of these notions in the theory of
+
+BURS [290]. Subsequent authors built on this work to create a variety of im-
+plementations, variations, and table-generation algorithms [162,163,297].
+The Twig system combined tree-pattern matching and dynamic program-
+ming [3,346].
+
+Massalin proposed the exhaustive approach described in Section 11.5.2
+[265]. It was applied in a limited way in the GCC compiler by Granlund
+and Kenner [180].
+
+
+
+EXERCISES
+
+1.
+A peephole selector must deal with control-flow operations that include
+Section 11.3
+conditional branches, jumps, and labeled statements.
+
+a.
+What should a peephole selector do when it brings a conditional
+branch into the optimization window?
+
+b.
+Is the situation different when it encounters a jump?
+
+c.
+What happens with a labeled operation?
+
+d.
+What can the optimizer do to improve this situation?
+
+2.
+Peephole selectors simplify the code as they select a concrete implemen-
+tation for it. Assume that the peephole selector runs before instruction
+scheduling and register allocation and that the selector can use an un-
+limited set of virtual register names.
+
+a.
+Can the selector change the demand for registers?
+
+b.
+Can the selector change the set of opportunities for code reordering
+that are available to the scheduler?
+
+3.
+Build a low-level AST for each of the following expressions, using the
+Section 11.4
+tree in Fig. 11.1 as a model:
+
+a.
+y ← a × b + c × d
+
+b.
+w ← a × b × c - 7
+
+Assume that a is at offset 8 from the ARP; b and c are in registers (rb
+and rc); d is at offset 12 in the constant pool (which is at @CP); w is at
+offset 12 from the ARP; and y is held in a register (ry).
+
+Use the rules from Fig. 11.5 to tile these trees.
+
+4.
+In any treewalk instruction selection scheme, the compiler must choose
+an evaluation order for the subtrees. That is, at some binary node n, does
+it evaluate the left or the right subtree first?
+
+a.
+Does the choice of order affect the number of registers required to
+evaluate the entire subtree?
+
+b.
+How can this choice be incorporated into the bottom-up tree-pattern
+matching schemes?
+
+5.
+The algorithm in Fig. 11.9 restricts rules to a single operator.
+
+a.
+Modify that algorithm so that it can correctly process two-operator
+rules such as Reg → ◆ (+ (Reg1, NUM2)).
+
+b.
+How do your changes affect the running time of the algorithm?
+
+
+
+

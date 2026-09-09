@@ -1,0 +1,61 @@
+# #2: Socket Activation (Part 2)
+
+It has been way too long since I posted the [first episode](http://0pointer.de/blog/projects/socket-activation.html) of my *systemd for Developers* series. Here's finally the second part. Make sure you read the first episode of the series before you start with this part since I'll assume the reader grokked the wonders of socket activation.
+
+#### Socket Activation, Part II
+
+This time we'll focus on adding socket activation support to real-life software, more specifically the CUPS printing server. Most current Linux desktops run CUPS by default these days, since printing is so basic that it's a must have, and must just work when the user needs it. However, most desktop CUPS installations probably don't actually see more than a handful of print jobs each month. Even if you are a busy office worker you'll unlikely to generate more than a couple of print jobs an hour on your PC. Also, printing is not time critical. Whether a job takes 50ms or 100ms until it reaches the printer matters little. As long as it is less than a few seconds the user probably won't notice. Finally, printers are usually peripheral hardware: they aren't built into your laptop, and you don't always carry them around plugged in. That all together makes CUPS a perfect candidate for lazy activation: instead of starting it unconditionally at boot we just start it on-demand, when it is needed. That way we can save resources, at boot and at runtime. However, this kind of activation needs to take place transparently, so that the user doesn't notice that the print server was not actually running yet when he tried to access it. To achieve that we need to make sure that the print server is started as soon at least one of three conditions hold:
+
+1.  A local client tries to talk to the print server, for example because a GNOME application opened the printing dialog which tries to enumerate available printers.
+2.  A printer is being plugged in locally, and it should be configured and enabled and then optionally the user be informed about it.
+3.  At boot, when there's still an unprinted print job lurking in the queue.
+
+Of course, the desktop is not the only place where CUPS is used. CUPS can be run in small and big print servers, too. In that case the amount of print jobs is substantially higher, and CUPS should be started right away at boot. That means that (optionally) we still want to start CUPS unconditionally at boot and not delay its execution until when it is needed.
+
+Putting this all together we need four kind of activation to make CUPS work well in all situations at minimal resource usage: socket based activation (to support condition 1 above), hardware based activation (to support condition 2), path based activation (for condition 3) and finally boot-time activation (for the optional server usecase). Let's focus on these kinds of activation in more detail, and in particular on socket-based activation.
+
+##### Socket Activation in Detail
+
+To implement socket-based activation in CUPS we need to make sure that when sockets are passed from systemd these are used to listen on instead of binding them directly in the CUPS source code. Fortunately this is relatively easy to do in the CUPS sources, since it already supports launchd-style socket activation, as it is used on MacOS X (note that CUPS is nowadays an Apple project). That means the code already has all the necessary hooks to add systemd-style socket activation with minimal work.
+
+To begin with our patching session we check out the CUPS sources. Unfortunately CUPS is still stuck in unhappy Subversion country and not using git yet. In order to simplify our patching work our first step is to use `git-svn` to check it out locally in a way we can access it with the usual git tools:
+
+    git svn clone http://svn.easysw.com/public/cups/trunk/ cups
+
+This will take a while. After the command finished we use the wonderful `git grep` to look for all occurences of the word "launchd", since that's probably where we need to add the systemd support too. This reveals [scheduler/main.c](http://svn.easysw.com/public/cups/trunk/scheduler/main.c) as main source file which implements launchd interaction.
+
+Browsing through this file we notice that two functions are primarily responsible for interfacing with launchd, the appropriately named `launchd_checkin()` and `launchd_checkout()` functions. The former acquires the sockets from launchd when the daemon starts up, the latter terminates communication with launchd and is called when the daemon shuts down. systemd's socket activation interfaces are much simpler than those of launchd. Due to that we only need an equivalent of the `launchd_checkin()` call, and do not need a checkout function. Our own function `systemd_checkin()` can be implemented very similar to `launchd_checkin()`: we look at the sockets we got passed and try to map them to the ones configured in the CUPS configuration. If we got more sockets passed than configured in CUPS we implicitly add configuration for them. If the CUPS configuration includes definitions for more listening sockets those will be bound natively in CUPS. That way we'll very robustly listen on all ports that are listed in either systemd or CUPS configuration.
+
+Our function `systemd_checkin()` uses `sd_listen_fds()` from `sd-daemon.c` to acquire the file descriptors. Then, we use `sd_is_socket()` to map the sockets to the right listening configuration of CUPS, in a loop for each passed socket. The loop corresponds very closely to the loop from `launchd_checkin()` however is a lot simpler. [Our patch so far looks like this.](http://0pointer.de/public/cups-patch-core.txt)
+
+Before we can test our patch, we add [sd-daemon.c](http://cgit.freedesktop.org/systemd/plain/src/sd-daemon.c) and [sd-daemon.h](http://cgit.freedesktop.org/systemd/plain/src/sd-daemon.h) as drop-in files to the package, so that `sd_listen_fds()` and `sd_is_socket()` are available for use. After a few minimal changes to the `Makefile` we are almost ready to test our socket activated version of CUPS. The last missing step is creating two unit files for CUPS, one for the socket ([cups.socket](http://0pointer.de/public/cups.socket)), the other for the service ([cups.service](http://0pointer.de/public/cups.service)). To make things simple we just drop them in `/etc/systemd/system` and make sure systemd knows about them, with `systemctl daemon-reload`.
+
+Now we are ready to test our little patch: we start the socket with `systemctl start cups.socket`. This will bind the socket, but won't start CUPS yet. Next, we simply invoke `lpq` to test whether CUPS is transparently started, and yupp, this is exactly what happens. We'll get the normal output from `lpq` as if we had started CUPS at boot already, and if we then check with `systemctl status cups.service` we see that CUPS was automatically spawned by our invocation of `lpq`. Our test succeeded, socket activation worked!
+
+##### Hardware Activation in Detail
+
+The next trigger is hardware activation: we want to make sure that CUPS is automatically started as soon as a local printer is found, regardless whether that happens as *hotplug* during runtime or as *coldplug* during boot. Hardware activation in systemd is done via udev rules. Any udev device that is tagged with the `systemd` tag can pull in units as needed via the `SYSTEMD_WANTS=` environment variable. In the case of CUPS we don't even have to add our own udev rule to the mix, we can simply hook into what systemd already does out-of-the-box with rules shipped upstream. More specifically, it ships a udev rules file with the following lines:
+
+    SUBSYSTEM=="printer", TAG+="systemd", ENV{SYSTEMD_WANTS}="printer.target"
+    SUBSYSTEM=="usb", KERNEL=="lp*", TAG+="systemd", ENV{SYSTEMD_WANTS}="printer.target"
+    SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ENV{ID_USB_INTERFACES}=="*:0701??:*", TAG+="systemd", ENV{SYSTEMD_WANTS}="printer.target"
+
+This pulls in the target unit `printer.target` as soon as at least one printer is plugged in (supporting all kinds of printer ports). All we now have to do is make sure that our CUPS service is pulled in by `printer.target` and we are done. By placing `WantedBy=printer.target ` line in the `[Install]` section of the service file, a `Wants` dependency is created from `printer.target` to `cups.service` as soon as the latter is enabled with `systemctl enable`. The indirection via `printer.target` provides us with a simple way to use `systemctl enable` and `systemctl disable` to manage hardware activation of a service.
+
+##### Path-based Activation in Detail
+
+To ensure that CUPS is also started when there is a print job still queued in the printing spool, we write a simple [`cups.path`](http://0pointer.de/public/cups.path) that activates CUPS as soon as we find a file in `/var/spool/cups`.
+
+##### Boot-based Activation in Detail
+
+Well, starting services on boot is obviously the most boring and well-known way to spawn a service. This entire excercise was about making this unnecessary, but we still need to support it for explicit print server machines. Since those are probably the exception and not the common case we do not enable this kind of activation by default, but leave it to the administrator to add it in when he deems it necessary, with a simple command (`ln -s /lib/systemd/system/cups.service /etc/systemd/system/multi-user.target.wants/` to be precise).
+
+So, now we have covered all four kinds of activation. To finalize our patch we have a closer look at the `[Install]` section of [`cups.service`](http://0pointer.de/public/cups.service), i.e. the part of the unit file that controls how `systemctl enable cups.service` and `systemctl disable cups.service` will hook the service into/unhook the service from the system. Since we don't want to start cups at boot we do not place `WantedBy=multi-user.target` in it like we would do for those services. Instead we just place an `Also=` line that makes sure that [`cups.path`](http://0pointer.de/public/cups.path) and [`cups.socket`](http://0pointer.de/public/cups.socket) are automatically also enabled if the user asks to enable `cups.service` (they are enabled according to the `[Install]` sections in those unit files).
+
+As last step we then integrate our work into the build system. In contrast to SysV init scripts systemd unit files are supposed to be distribution independent. Hence it is a good idea to include them in the upstream tarball. Unfortunately CUPS doesn't use Automake, but Autoconf with a set of handwritten Makefiles. This requires a bit more work to get our additions integrated, but is not too difficult either. [And this is how our final patch looks like](http://0pointer.de/public/cups-0001-systemd-add-systemd-socket-activation-and-unit-files.patch), after we commited our work and ran `git format-patch -1` on it to generate a pretty git patch.
+
+The next step of course is to get this patch integrated into the upstream and Fedora packages (or whatever other distribution floats your boat). To make this easy I have prepared [a patch for Tim that makes the necessary packaging changes for Fedora 16](http://0pointer.de/public/cups-0001-Add-socket-activation-patch.patch), and includes the patch intended for upstream linked above. Of course, ideally the patch is merged upstream, however in the meantime we can already include it in the Fedora packages.
+
+Note that CUPS was particularly easy to patch since it already supported launchd-style activation, patching a service that doesn't support that yet is only marginally more difficult. (Oh, and we have no plans to offer the complex launchd API as compatibility kludge on Linux. It simply doesn't translate very well, so don't even ask... ;-))
+
+And that finishes our little blog story. I hope this quick walkthrough how to add socket activation (and the other forms of activation) to a package were interesting to you, and will help you doing the same for your own packages. If you have questions, our IRC channel `#systemd` on freenode and our [mailing list](http://lists.freedesktop.org/mailman/listinfo/systemd-devel) are available, and we are always happy to help!

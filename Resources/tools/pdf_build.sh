@@ -87,6 +87,49 @@ fi
 # book_fix: an optional per-slug repair stage for code listings whose source
 # text layer is baked-in OCR damage (see $FIXAWK below). It is a plain `cat` for
 # every book that sets no $FIXAWK, so the other 31 books are untouched.
+# mutool_furniture: strip Engineering a Compiler's page header (mutool -F txt
+# emits one page per form feed). Each page opens with a running head and a bare
+# folio, in either order: recto "<N.M> <Section>" then the folio, verso the folio
+# then "CHAPTER <N> <Title>" (appendices use "APPENDIX <A> <Title>"). They are the
+# only furniture and sit at the very top, so drop a line only while still in the
+# first two non-empty lines of a page AND it looks like a folio (a bare arabic or
+# roman numeral) or one of those running heads. The first real content line ends
+# the scan, so nothing below the header is ever touched. Plain cat unless a slug
+# turns it on via $EXTRACT.
+mutool_furniture() {
+  if [ "$EXTRACT" != mutool ]; then cat; return; fi
+  # $CHTITLE (set in emit) is the section being written; front matter and the
+  # preface number their pages in roman and carry camel-cased running heads that
+  # mutool's reading order drops mid-flow rather than at the page top, so those
+  # two files get an extra, file-scoped drop of a bare roman folio / a known
+  # running-head word anywhere in the file. Every file also drops the Elsevier
+  # per-chapter-opening footer (a DOI line, the copyright line, and the bare
+  # folio that trails them), which mutool linearises into the body mid-sentence.
+  awk -v ch="$CHTITLE" '
+    BEGIN { RS="\f"; ORS=""; fm = (ch=="Front Matter" || ch=="Preface") }
+    {
+      n=split($0, L, "\n"); seen=0
+      for (i=1;i<=n;i++) {
+        line=L[i]; t=line; gsub(/^[ \t]+|[ \t]+$/,"",t)
+        if (t=="") { print line "\n"; continue }
+        # Elsevier opening-page footer, anywhere it linearised to:
+        if (t ~ /^Engineering a Compiler\. https:\/\/doi\.org\//) { drop_folio=1; continue }
+        if (t ~ /^Copyright .* Elsevier Inc\. All rights reserved\.$/) { drop_folio=1; continue }
+        if (drop_folio && t ~ /^[0-9]+$/) { drop_folio=0; continue }
+        drop_folio=0
+        # page-top running head + folio (either order):
+        if (seen<2 && (t ~ /^[0-9]+$/ || t ~ /^[ivxlcdm]+$/ \
+            || t ~ /^CHAPTER [0-9]+ / || t ~ /^APPENDIX [A-Z] / \
+            || t ~ /^[0-9]+\.[0-9]+ [A-Za-z]/)) { seen++; continue }
+        # front-matter/preface: camel-cased running head or a bare roman folio
+        # that leaked into the body (never content in those two files):
+        if (fm && (t ~ /^[ivxlcdm]+$/ || t=="Preface" || t=="ChapterNotes" \
+            || t=="Contents" || t=="Acknowledgments")) { continue }
+        seen=2; print line "\n"
+      }
+      print "\f"
+    }'
+}
 book_fix() {
   # chtitle carries the current chapter/appendix running-head string (its title
   # with the "N " / "Appendix X " prefix stripped); only amd_apm_fix.awk reads it,
@@ -201,6 +244,23 @@ emit() {
   # the edge blocks of each physical page; $FURN survives for the four books
   # whose furniture is not a running head at all (a watermark, a licence notice,
   # an OCR-mangled head that no page-position rule can key).
+  # A few books (Engineering a Compiler) set their mathematical notation - angle
+  # brackets, the not-equal sign, epsilon, arrows - in subsetted math fonts that
+  # carry no ToUnicode map AND reuse the same byte code for different glyphs
+  # across fonts (byte 0x02 is angbracketleft in one font, epsilon in another),
+  # so pdftotext emits a raw control byte the pipeline can only turn into "?" and
+  # no byte->glyph map can be right. mutool resolves each glyph through its own
+  # font's /Differences, so for those books we extract with mutool instead and
+  # strip the running head/folio with mutool_furniture (folio.awk keys on the
+  # -layout column positions mutool does not emit). $EXTRACT selects it per slug.
+  if [ "$EXTRACT" = mutool ]; then
+    mutool draw -F txt -o - "$PDF" "$1-$2" 2>/dev/null \
+      | mutool_furniture \
+      | book_fix \
+      | caption_fix \
+      | cat -s > "$OUT/$n $f.txt"
+    return
+  fi
   pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
     | pre_fix \
     | sed "$CTLX$CTL" | tr '\000-\010\013\015-\037' '[?*]' | sed "$LIG" \
@@ -261,6 +321,17 @@ case "$SLUG" in
   # only ever mid-line; without this the tr turns it into a stray "?".
   a-primer-on-memory-consistency-and-cache-coherence)
     CTLX="s/$(printf '\026')/μ/g
+" ;;
+  # Hacker's Delight sets a few math signs in a font with no ToUnicode map, so
+  # pdftotext emits a raw control byte the tr below would turn into "?": 0x10 is
+  # the minus sign (14x, "base -2", "-1/0"), 0x05 the universal quantifier and
+  # 0x07 the existential (in the predicate formulas). Map them to the real glyphs
+  # while they are still distinct. (0x02 is a one-off on the Safari ad page and
+  # is left to the tr.)
+  hackers-delight)
+    CTLX="s/$(printf '\020')/−/g
+s/$(printf '\005')/∀/g
+s/$(printf '\007')/∃/g
 " ;;
 esac
 FURN=
@@ -344,6 +415,14 @@ case "$SLUG" in
   # running-head vote. amd_apm_fix drops it, keyed on the exact chapter/appendix
   # title passed in via $CHTITLE, so it can never touch a body or table line.
   amd-apm-vol1 | amd-apm-vol2) FIXAWK="${AWKF%/*}/amd_apm_fix.awk" ;;
+  hackers-delight) FIXAWK="${AWKF%/*}/hackers_delight_fix.awk" ;;
+esac
+# Per-slug text extractor. "mutool" routes emit() through mutool draw -F txt +
+# mutool_furniture instead of pdftotext -layout, for books whose math notation is
+# in ToUnicode-less, font-code-reusing math fonts (see mutool_furniture).
+EXTRACT=
+case "$SLUG" in
+  engineering-a-compiler) EXTRACT=mutool ;;
 esac
 # pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
 # control-byte tr. SSA-based Compiler Design typesets a few relations in
@@ -454,6 +533,24 @@ elif [ "$4" = book ] && { [ "$SLUG" = amd-apm-vol1 ] || [ "$SLUG" = amd-apm-vol2
         t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t)
         if ($2+0 <= 1) next
         if (lt ~ /^(contents|figures|tables|revision history)$/) next
+        print $2"\t"t
+      }' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
+    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = engineering-a-compiler ]; then
+  # Engineering a Compiler: the depth-0 outline nodes are the front matter
+  # (Front Cover .. About the Cover), the Preface, chapters 1-14, the two
+  # appendices "A ILOC" and "B Data Structures", the Bibliography and the Index.
+  # The appendices are titled with a bare letter (no "Appendix" keyword and no
+  # "A. lowercase" form), which the generic book pattern misses, so it folded
+  # them into chapter 14 and split on a stray deep "Appendix Notes" bookmark
+  # instead. Take the boundaries from the depth-0 outline: drop the
+  # cover/title/copyright/back-cover nodes so the front matter folds into the
+  # auto-emitted Front Matter (first boundary = the Preface), and prefix the two
+  # appendices with "Appendix " so they read as such.
+  awk -F'\t' '$1==0 {
+        t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t)
+        if (lt ~ /^(front cover|engineering a compiler|copyright|contents|about the authors|about the cover|back cover)$/) next
+        if (t ~ /^[AB] /) t="Appendix " t
         print $2"\t"t
       }' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"

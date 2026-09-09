@@ -1596,6 +1596,19 @@ local simple = {
 		prompt = "LibAFL> ",
 	},
 	-- DynamoRIO: open-source dynamic binary instrumentation (Intel Pin alternative)
+	-- TinyInst: Project Zero's lightweight dynamic instrumentation library. It is
+	-- unversioned (no release tags), so the docs are its scattered Markdown files:
+	-- the root README + hook.md (dynamic instrumentation hooks) + CONTRIBUTING, and
+	-- the per-platform notes under Android/ Linux/ macOS/. Browsed as docs here;
+	-- gs / :Src clone the full C++ source.
+	tinyinst = {
+		url = "https://github.com/googleprojectzero/TinyInst",
+		sparse = "/README.md /hook.md /CONTRIBUTING.md /Android/README.md /Linux/README.md /macOS/README.md /macOS/arm64e.md",
+		marker = "README.md",
+		browse = "",
+		exts = "-e md",
+		prompt = "TinyInst docs> ",
+	},
 	dynamorio = {
 		url = "https://github.com/DynamoRIO/dynamorio",
 		sparse = "/api",
@@ -1963,6 +1976,8 @@ end
 local SRC_URLS = {
 	-- Bochs docs are the frozen web manuals; "explore source" means the emulator.
 	["bochs-docs"] = "https://github.com/bochs-emu/Bochs",
+	systemd = "https://github.com/systemd/systemd",
+	lkl = "https://github.com/lkl/linux",
 	libnyx = "https://github.com/nyx-fuzz/libnyx",
 	["nyx-packer"] = "https://github.com/nyx-fuzz/packer",
 	["qemu-libafl-bridge"] = "https://github.com/AFLplusplus/qemu-libafl-bridge",
@@ -2687,6 +2702,138 @@ local pick_lazyfoo_sdl3 = frozen_web_provider("lazyfoo-sdl3", "SDL3> ")
 local pick_qemu_internals = frozen_web_provider("qemu-internals", "QEMU> ")
 local pick_jit_series = frozen_web_provider("jit-series", "JIT> ")
 local pick_bochs_docs = frozen_web_provider("bochs-docs", "Bochs docs> ")
+local pick_emudev = frozen_web_provider("emudev", "EmuDev> ")
+local pick_c10k = frozen_web_provider("c10k", "C10K> ")
+local pick_bashguide = frozen_web_provider("bashguide", "BashGuide> ")
+local pick_fuzzingbook = frozen_web_provider("fuzzingbook", "Fuzzing Book> ")
+
+-- systemd: a two-level frozen provider. systemd.io groups its docs into named
+-- categories (Booting, Concepts, Interfaces, the two blog series, ...), so the
+-- top-level entry opens the category list, a category opens its chapter list,
+-- and a chapter renders the frozen page. index.tsv is category<TAB>title<TAB>url.
+local function pick_systemd()
+	local idxfile = resolve_docs("systemd/index.tsv") or (frozen_root .. "/systemd/index.tsv")
+	if vim.fn.filereadable(idxfile) ~= 1 then
+		return vim.notify("systemd: frozen index missing", vim.log.levels.WARN)
+	end
+	local cats, order = {}, {}
+	for _, l in ipairs(vim.fn.readfile(idxfile)) do
+		local cat, title, url = l:match("^([^\t]+)\t([^\t]+)\t(.+)$")
+		if cat then
+			if not cats[cat] then cats[cat] = {}; order[#order + 1] = cat end
+			cats[cat][#cats[cat] + 1] = { title = title, url = url }
+		end
+	end
+	local ddir = resolve_docs("systemd") or (frozen_root .. "/systemd")
+	local function open_doc(title, url)
+		local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+			or (frozen_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt")
+		if vim.fn.filereadable(cf) == 1 then
+			render_lines(vim.fn.readfile(cf), "markdown", ddir, title)
+		else
+			vim.notify(title .. ": not in the frozen cache", vim.log.levels.WARN)
+		end
+	end
+	local function pick_chapter(cat)
+		local items = cats[cat]
+		last_picker = function() pick_chapter(cat) end
+		fzf().fzf_exec(vim.tbl_map(function(it) return it.title end, items), {
+			prompt = "systemd/" .. cat .. "> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				for _, it in ipairs(items) do
+					if it.title == sel[1] then return open_doc(it.title, it.url) end
+				end
+			end },
+		})
+	end
+	last_picker = pick_systemd
+	fzf().fzf_exec(order, {
+		prompt = "systemd> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = { ["default"] = function(sel) if sel and sel[1] then pick_chapter(sel[1]) end end },
+	})
+end
+
+-- LKL (Linux Kernel Library): the Linux kernel built as a userspace library
+-- (github.com/lkl/linux, arch/lkl). A curated sub-picker - each option targets a
+-- specific part of the repo (not a raw file dump): the in-tree manual, the public
+-- API headers, the runnable examples, the syscall fuzzers, the LKL source tree,
+-- and the external articles/talks. A light sparse checkout (tools/lkl, arch/lkl,
+-- Documentation/lkl) backs the code views; :Src from an article clones the full
+-- kernel source. gs / :Src resolve via SRC_URLS["lkl"].
+local LKL_URL = "https://github.com/lkl/linux"
+local LKL_SPARSE = "/tools/lkl /arch/lkl /Documentation/lkl"
+local function pick_lkl()
+	local function open_article()
+		local idxfile = resolve_docs("lkl/index.tsv") or (frozen_root .. "/lkl/index.tsv")
+		if vim.fn.filereadable(idxfile) ~= 1 then
+			return vim.notify("LKL: article index missing", vim.log.levels.WARN)
+		end
+		local ddir = resolve_docs("lkl") or (frozen_root .. "/lkl")
+		last_picker = open_article
+		fzf().fzf_exec(vim.fn.readfile(idxfile), {
+			prompt = "LKL articles> ",
+			fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				local title, url = sel[1]:match("^([^\\t]+)\\t(.+)$")
+				if not url then return end
+				local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+					or (frozen_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt")
+				if vim.fn.filereadable(cf) == 1 then
+					render_lines(vim.fn.readfile(cf), "markdown", ddir, title)
+				else
+					vim.notify(title .. ": not in the frozen cache", vim.log.levels.WARN)
+				end
+			end },
+		})
+	end
+	local function browse(kind)
+		local function go(d)
+			if kind == "docs" then
+				pick_files(d .. "/Documentation/lkl", "-e txt -e rst -e md", "LKL manual> ")
+			elseif kind == "api" then
+				pick_files(d .. "/tools/lkl/include", "-e h", "LKL API> ")
+			elseif kind == "examples" then
+				pick_files(d .. "/tools/lkl/tests", "-e c -e h -e sh -e py", "LKL examples> ")
+			elseif kind == "fuzzers" then
+				pick_files(d .. "/tools/lkl/fuzzers", "-e c -e cpp -e cc -e h -e proto -e md", "LKL fuzzers> ")
+			else
+				pick_files(d, "-e c -e h -e S -e sh -e py -e rst -e txt -e proto", "LKL source> ")
+			end
+		end
+		local found = resolve_docs("lkl/master", "tools/lkl/include/lkl.h")
+		if found then return go(found) end
+		if not have("git") then
+			return vim.notify("git is needed to fetch the LKL source", vim.log.levels.WARN)
+		end
+		ensure_repo(data_root .. "/lkl/master", LKL_URL, LKL_SPARSE, "tools/lkl/include/lkl.h", go)
+	end
+	last_picker = pick_lkl
+	fzf().fzf_exec({
+		"Manual & Docs (Documentation/lkl)",
+		"API headers (lkl.h, lkl_host.h, lkl_config.h)",
+		"Examples & tests (tools/lkl/tests)",
+		"Fuzzers (binder, hid)",
+		"Explore source (tools/lkl + arch/lkl)",
+		"Articles & talks (LWN, MobileHackingLab, LSSNA 2025)",
+	}, {
+		prompt = "LKL> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = { ["default"] = function(sel)
+			if not (sel and sel[1]) then return end
+			local c = sel[1]
+			if c:match("^Manual") then browse("docs")
+			elseif c:match("^API") then browse("api")
+			elseif c:match("^Examples") then browse("examples")
+			elseif c:match("^Fuzzers") then browse("fuzzers")
+			elseif c:match("^Explore source") then browse("source")
+			else open_article() end
+		end },
+	})
+end
 -- Bochs top-level entry: the manuals (frozen "Bochs Documentation" web book)
 -- and the emulator source live in one place, so clicking "Bochs" no longer
 -- drops straight into C++. Documentation is first (and preselected) because
@@ -3331,6 +3478,7 @@ local BOOKS = {
 		{ title = "Command-Line Rust", fmt = "epub", file = "Command-line Rust _ a project-based primer for writing Rust -- Ken Youens-Clark -- 2024 Updated Edition, 2024 -- O'Reilly Media, Incorporated; -- 9781098109400 -- 462825f45d6c0c1f3254f43a9f8062ee -- Anna’s Archive.epub" },
 		{ title = "Programming Rust (2e)", fmt = "epub", file = "Programming Rust_ Fast, Safe Systems Development, -- Jim Blandy & Jason Orendorff & Leonora F _ S_ Tindall -- 2nd Edition, 2021 -- O'Reilly Media -- 42c3a550a65cf7d0fe19185d1c57c56e -- Anna’s Archive.epub" },
 		{ title = "Rust in Action", fmt = "epub", file = "Rust_In_Action.epub" },
+		{ title = "Rust for Rustaceans (Gjengset)", fmt = "pdf", slug = "rust-for-rustaceans", file = "RustForRustaceans.pdf" },
 		{ title = "The Rust Programming Language (the book)", fmt = "mdbook", url = "https://github.com/rust-lang/book" },
 		{ title = "The Rustonomicon (unsafe Rust)", fmt = "mdbook", url = "https://github.com/rust-lang/nomicon" },
 		{ title = "Rust by Example", fmt = "mdbook", url = "https://github.com/rust-lang/rust-by-example" },
@@ -3369,6 +3517,7 @@ local BOOKS = {
 		{ title = "Modern Compiler Implementation in C", fmt = "pdf", slug = "modern-compiler-implementation-in-c", file = "Modern Compiler Implementation in C -- Andrew W. Appel.pdf" },
 		{ title = "Essentials of Compilation (Python)", fmt = "pdf", slug = "essentials-of-compilation", file = "book.pdf" },
 		{ title = "SAT/SMT by Example (Yurichev)", fmt = "pdf", slug = "sat-smt-by-example", file = "SAT_SMT_by_example.pdf" },
+		{ title = "Engineering a Compiler (Cooper & Torczon)", fmt = "pdf", slug = "engineering-a-compiler", file = "EngineeringACompiler.pdf" },
 	} },
 	{ module = "Containers", key = "books-container", items = {
 		{ title = "Build Your Own Docker (CodeCrafters)", fmt = "md", slug = "build-your-own-docker", file = "https://github.com/codecrafters-io/build-your-own-docker" },
@@ -3406,6 +3555,7 @@ local BOOKS = {
 		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
 		{ title = "Secure Coding in C and C++ (2e)", fmt = "pdf", slug = "secure-coding-in-c-and-cpp", file = "Secure Coding in C and C++ (2nd Edition) (SEI Series in -- Seacord, Robert C_ -- 601df46864954c0d50394370bb73c517 -- Anna’s Archive.pdf" },
 		{ title = "Reverse Engineering for Beginners (Yurichev)", fmt = "pdf", slug = "reverse-engineering-for-beginners", file = "reverse-engineering-for-beginners.pdf" },
+		{ title = "The Art of Software Security Assessment", fmt = "pdf", slug = "the-art-of-software-security-assessment", file = "ArtOfSoftwareSecurityAssessment.pdf" },
 		{ title = "Surreptitious Software: Obfuscation, Watermarking, and Tamperproofing", fmt = "pdf", slug = "surreptitious-software", file = "surreptitious-software.pdf" },
 	} },
 	{ module = "Architecture", key = "books-arch", items = {
@@ -3413,6 +3563,7 @@ local BOOKS = {
 		{ title = "Shared-Memory Synchronization", fmt = "pdf", slug = "shared-memory-synchronization", file = "Shared-Memory Synchronization (2nd ed).pdf" },
 		{ title = "The Art of Multiprocessor Programming", fmt = "pdf", slug = "the-art-of-multiprocessor-programming", file = "TheArtOfMultiprocessorProgramming.pdf" },
 		{ title = "What Every Programmer Should Know About Memory", fmt = "pdf", slug = "what-every-programmer-should-know-about-memory", file = "cpumemory.pdf" },
+		{ title = "Hacker's Delight (2nd Edition)", fmt = "pdf", slug = "hackers-delight", file = "HackersDelight.pdf" },
 		{ title = "Optimizing Software in C++ (Agner Fog)", fmt = "pdf", slug = "optimizing-software-in-cpp-agner-fog", file = "optimizing_cpp.pdf" },
 		{ title = "Optimizing Subroutines in Assembly (Agner Fog)", fmt = "pdf", slug = "optimizing-subroutines-in-assembly-agner-fog", file = "optimizing_assembly.pdf" },
 		{ title = "The Microarchitecture of Intel, AMD, and VIA CPUs (Agner Fog)", fmt = "pdf", slug = "microarchitecture-of-cpus-agner-fog", file = "microarchitecture.pdf" },
@@ -3597,6 +3748,10 @@ local WEB_BOOKS = {
 	{ title = "QEMU Internals (Airbus Seclab)", key = "qemu-internals", run = pick_qemu_internals },
 	{ title = "JIT (Series)", key = "jit-series", run = pick_jit_series },
 	{ title = "Bochs Documentation", key = "bochs-docs", run = pick_bochs_docs },
+	{ title = "EmuDev (Emulator Development reading list)", key = "emudev", run = pick_emudev },
+	{ title = "The C10K Problem (Kegel)", key = "c10k", run = pick_c10k },
+	{ title = "BashGuide + Bash FAQ (Greg's Wiki)", key = "bashguide", run = pick_bashguide },
+	{ title = "The Fuzzing Book (fuzzingbook.org)", key = "fuzzingbook", run = pick_fuzzingbook },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
 	{ title = "Algorithms for Modern Hardware (Algorithmica)", key = "algorithmica-hpc", run = pick_algorithmica_hpc },
@@ -3818,6 +3973,12 @@ LOCATION["lazyfoo-sdl3"] = { index = "lazyfoo-sdl3/index.tsv", unit = "chapter" 
 LOCATION["qemu-internals"] = { index = "qemu-internals/index.tsv", unit = "chapter" }
 LOCATION["jit-series"] = { index = "jit-series/index.tsv", unit = "chapter" }
 LOCATION["bochs-docs"] = { index = "bochs-docs/index.tsv", unit = "chapter" }
+LOCATION["emudev"] = { index = "emudev/index.tsv", unit = "chapter" }
+LOCATION["c10k"] = { index = "c10k/index.tsv", unit = "chapter" }
+LOCATION["bashguide"] = { index = "bashguide/index.tsv", unit = "chapter" }
+LOCATION["fuzzingbook"] = { index = "fuzzingbook/index.tsv", unit = "chapter" }
+LOCATION["systemd"] = { index = "systemd/index.tsv", unit = "chapter" }
+LOCATION["lkl"] = { index = "lkl/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
 LOCATION["writing-an-os-in-rust"] = { index = "writing-an-os-in-rust/index.tsv", unit = "chapter" }
 LOCATION["algorithmica-hpc"] = { index = "algorithmica-hpc/index.tsv", unit = "chapter" }
@@ -4023,6 +4184,8 @@ local providers = {
 	{ name = "CppReference", key = "cppman", run = pick_cppman },
 	{ name = "herd7 / litmus7 manuals", key = "herd7", run = pick_herd7 },
 	{ name = "OSDev wiki", key = "osdev", run = pick_osdev },
+	{ name = "systemd (systemd.io docs + blog series)", key = "systemd", run = pick_systemd },
+	{ name = "LKL (Linux Kernel Library: docs, API, source, fuzzers)", key = "lkl", run = pick_lkl },
 	{ name = "herdtools7 (cat models, litmus tests)", key = "herdtools7", run = make_simple("herdtools7", simple.herdtools7) },
 	{ name = "NetBSD kernel internals (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
@@ -4052,6 +4215,7 @@ local providers = {
 	{ name = "Android (bionic internals)", key = "android", run = make_simple("android", simple.android) },
 	{ name = "Android kernel (ACK, versioned)", key = "android-kernel", run = pick_android_kernel },
 	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = register_versioned("dynamorio", vspec(simple.dynamorio, "release_[0-9]+\\.[0-9]+\\.[0-9]+", { label = "DynamoRIO", diskpat = "^release_%d" })) },
+	{ name = "TinyInst (Project Zero DBI)", key = "tinyinst", run = make_simple("tinyinst", simple.tinyinst) },
 	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
 	{ name = "LibAFL", key = "libafl", run = register_versioned("libafl", vspec(simple.libafl, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LibAFL", diskpat = "^%d", submodules = true })) },
 	{ name = "CodeQL", key = "codeql", run = register_versioned("codeql", vspec(simple.codeql, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "CodeQL" })) },

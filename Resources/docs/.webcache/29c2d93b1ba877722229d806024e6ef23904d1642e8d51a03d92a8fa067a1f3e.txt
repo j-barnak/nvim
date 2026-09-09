@@ -1,0 +1,731 @@
+# [Cached Interpreters] Faster interpreters (Nostradamus)
+
+**NO EXECUTE!**
+
+**(c) 2008 by Darek Mihocka, founder, Emulators.com.**
+
+**September 3 2008  
+(source code and benchmark data updated September 8 2008)**
+
+------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------
+
+**A Year Of NO EXECUTE!**
+
+Welcome to this week's bonus posting of NO EXECUTE!, the 25th posting and one year anniversary of this particular blog which is devoted to debunking the myths about virtual machines, compilers, and overly complicated microprocessors. In this past year we've seen AMD perform its annual fall flat on its face, as if like clockwork, when its much touted Barcelona core and Phenom processor failed to beat Intel's Core 2 in performance and failed to even get multi-threaded virtualization right the first time around. The AMD Phenom is the poster child of why silicon designers have gone crazy with overly complex and impossible to verify designs that scream for a much simpler and reliable approach. And if the recent ISCA and Hot Chips conferences are any indication, the writing is now on the wall pointing the way toward simpler, scaled down CPU cores that bring back decades olds concepts such as in-order execution, and the use of binary translation to offload complex instructions from hardware into software.
+
+For this anniversary posting, I am going to tackle the one giant gaping hole of my argument that I haven't touched on so far. Over the past few months I've demonstrated how straightforward it is to implement many aspects of a virtual machine in a portable and efficient manner - how to simulate guest conditional flags without explicit use of the host processor's flags register, how to handle byte-swapping and endianness differences without an explicit byte-swapping instruction on the host, how to perform safe guest-to-host memory access translation and security checks without need for a host MMU or hardware virtualization hardware, and how to optimize away most of the branch mispredictions of a typical CPU intepreter such as to achieve purely-interpreted simulation speed levels of 100 guest MIPS or faster.
+
+But as I hinted at last week, there is still one area I haven't explored with you, and that is the crucial indirection at the heart of any interpreter loop; the indirect call or indirect jump which directs the interpreter to the next guest instruction's handler. An indirection that by design is doomed to always mispredict and thus severely limit the maximum speed of any interpreter. As the data that Stanislav and I presented at ISCA shows, the speed ratio between purely interpreted Bochs and purely jitted QEMU is almost exactly due to the extra cost of a branch misprediction on every guest x86 instruction simulated. Eliminate or reduce the rate of that branch misprediction, and you can almost close the performance gap between an interpreter and a jitter, and thus debunk one of the greatest virtual machine myths of all - the blind faith in the use of jitting as a performance accelerator.
+
+I will first show why this misprediction happens and why today's C/C++ compilers and microprocessors are missing one very obvious optimization that could make this misprediction go away. Then I will show you the evolution of what I call the **Nostradamus Distributor**, an interpreter dispatch mechanism that reduces most of the mispredictions of the inner CPU loop by helping the host CPU predict the address of the next guest instruction's handler. A form of this mechanism was already implemented in the Gemulator 9 Beta 4 release posted a few months ago, and what I will describe is the more general C/C++ based portable implementation that I plan to test out in Bochs and use in the portable C implementation of Gemulator.
+
+Oh, and since it is the one year anniversary this is where I hit you guys up for coffee. If you have been reading this blog over the past year, or have recently found out about it and enjoy reading the past year's worth of postings, **show your appreciation with coffee!** I am a card-carrying Starbucks addict and it takes a lot of caffeine to keep me going, especially after the almost 10,000-mile cross-continent drive I put myself through in August. Feed... the... Darek. Go to the [Starbucks Online Store](http://www.starbucks.com/shoponline/), purchase a prepaid gift card, and send it to me at:
+
+> Darek Mihocka c/o Emulators  
+> 14150 N.E. 20th Street, Suite 302  
+> Bellevue, WA 98007-3700  
+> U.S.A.
+
+------------------------------------------------------------------------
+
+**The Common CPU Interpreter Loop Revisited**
+
+I introduced you to a basic CPU interpreter loop last October in [Part 7](http://www.emulators.com/docs/nx07_vm101.htm), which I will now bore you with again for the last time:
+
+void **Emulate6502**()  
+{  
+    register short unsigned int PC, SP, addr;  
+    register unsigned char A, X, Y, P;  
+    unsigned char memory\[65536\];  
+  
+    memset(memory, 0, 65536);  
+    load_rom();  
+  
+    /\* set initial power-on values \*/  
+    A = X = Y = P = 0;  
+    SP = 0x1FF;  
+    PC = peekw(0xFFFC);
+
+    for(;;)  
+        {  
+        switch(peekb(PC++))  
+            {  
+        default: /\* undefined opcode! treat as nop \*/  
+        case opNop:  
+            break;  
+  
+        case opIncX:  
+            X++;  
+            break;  
+  
+        case opLdaAbs16:  
+            addr = peekw(PC);  
+            PC += 2;  
+            A = peekb(addr);  
+            break;
+
+...  
+            }  
+        }  
+}
+
+This is a hypothetical piece of sample code that could be used as a template to implement at 6502 interpreter. In fact, this is exactly what the original code for ST Xformer looked like back in 1986 when I set out to develop an Apple II emulator for my Atari ST. I wrote my first 6502 interpreter in C (Megamax C on the Atari ST to be exact) but had to discard the code and rewrite it in assembly language because it was just plain too slow. An 8 MHz 68000 processor just did not have the speed to run the above compiled C code to deliver the 0.5 to 1.0 guest MIPS throughput required for real-time Apple II emulation.
+
+The culprit is one line of code which performance the "fetch and dispatch", this one:
+
+        switch(peekb(PC++))
+
+which is actually a Pandora's box of performance problem. In any simple interpreter that uses this loop mechanism, you have some variable ("PC", for "Program Counter") that points at the next guest bytecode instruction. That could be a Java bytecode, an x86 opcode, a 6502 opcode, or a tokenized BASIC command. The fetch and dispatch operation requires the PC to be indirected (a memory load operation of the guest instruction opcode), then incremented, and then the loaded opcode itself looked up in a table of handlers, and then a jump or call made to that handler. In this case I am showing a C "switch" statement, which really compiles into a table lookup and an indirect jump.
+
+Worst case, and unfortunately some C/C++ compilers are stupid enough to generate such code, there are three branches in each iteration of this loop:
+
+1.  The table lookup and indirect jump to the specific opcode handler,
+2.  The "break" keyword at the end of each handler that results in an unconditional jump to the end of the switch statement, and,
+3.  The reverse jump to the top of the "for" loop.
+
+Most compilers are hopefully smart enough to optimize away the "jump to a jump", and simply have each "break" statement jump right back to the top of the for loop. You can hint this to the compiler by using the "continue" keyword instead of "break".
+
+------------------------------------------------------------------------
+
+**Handler Chaining**
+
+What I have never seen a C or C++ compiler do for such interpreter loop code is make one further optimization. What is if instead of generating the jump instruction to the top of the "for" loop the compiler was smart enough to simply compile in the fetch and dispatch into each handler? In other words, if there was some kind of funky "goto" keyword syntax that would allow you to write this in your source code to hint to the compiler to do that:
+
+        switch(peekb(PC++))  
+            {  
+        default: /\* undefined opcode! treat as nop \*/  
+        case opNop:  
+            goto case(peekb(PC++));  
+  
+        case opIncX:  
+            X++;  
+            goto case(peekb(PC++));  
+  
+        case opLdaAbs16:  
+            addr = peekw(PC);  
+            PC += 2;  
+            A = peekb(addr);  
+            goto case(peekb(PC++));
+
+You would now have an interpreter loop that simply jumped from instruction handler to instruction handler without even looping. Unless I missed something obvious, C and C++ lack the syntax to specify this design pattern, and the optimizing compilers don't catch it. It is for this reason that for all of my virtual machine projects over the past 20+ years I have resorted to using assembly language to implement CPU interpreters. Because in assembly language you can have a calculated jump target that you branch to from the end of each handler, as this x86 example code which represents the typical instruction dispatch code used in most past versions of Gemulator and SoftMac and Fusion PC:
+
+    movzx ebx,word ptr gs:\[esi\]  
+    add esi,2  
+    jmp fs:\[ebx\*4\]
+
+The 68040 guest program counter is in the ESI register, the 68040 opcode is loaded into EBX, the 68040 program counter is then incremented, and then the opcode is dispatched using an indirect jump. In Fusion PC the GS and FS segment registers are used to point to guest RAM and the dispatch table respectively, while in Gemulator and SoftMac there were explicit 32-bit address displacements used. But the mechanism is the same and you will see this pattern in many other interpreters.
+
+The nice thing about handler chaining is that it has a beneficial side-effect! Not only does it eliminate a jump back to the top of a loop, by spreading out the indirect jumps from one central point and into each of the handlers the host CPU how has dozens if not hundreds of places that is it dispatch from. You might say to yourself this is bad, I mean, this bloats the size of the interpreter's code and puts an extra strain on the host CPU's branch predictor, no?
+
+Yes! But, here is the catch. Machine language opcodes tend to follow patterns. Stack pushes are usually followed by a call instruction. Pops are usually followed by a return instruction. A memory load instruction is usually followed by a memory store instruction. A compare is followed by a conditional jump (usually a Jump If Zero). Especially with compiled code, you will see patterns of instructions repeating over and over again. That means that if you are executing the handler for the compare instruction, chances are very good that they next guest instruction is a conditional jump. Patterns like this will no doubt make up a huge portion of the guest code being interpreted, and so what happens is that the host CPU's branch predictor will start to correctly predict the jump targets from one handler to another.
+
+**Stop the presses!** After I posted a draft of this blog late last night, an astute reader Mark quickly emailed me to point out that **gcc does have** a syntax extension allow for a **computed goto**, as described in this Sun blog posting: <http://blogs.sun.com/nike/entry/fast_interpreter_using_gcc_s>. The contrived example in that posting doesn't show the overhead of incrementing a guest program counter, but it does show that gcc can generate code which chains from one basic block to another based on a computed jump instruction. If this was the magic solution I'd stop right now and we'd be done, but it is not. First of all, apparently nobody checked the code generated by the gcc compiler for such a code pattern. I did. The output of the Cygwin gcc compiler for me generates this code for x86 when compiled with optimizations:
+
+> L13:  
+>     movsbl (%ebx),%edx  
+>     movl -24(%ebp,%edx,4), %eax  
+>     jmp \*%eax  
+> L3:  
+>     movl \$LC1, (%esp)  
+>     incl %ebx  
+>     call \_puts  
+>     jmp L13  
+> L2:  
+>     movsbl 1(%ebx),%ecx  
+>     addl \$2, %ebx  
+>     movl \$LC0, (%esp)  
+>     movl %ecx, 4(%esp)  
+>     call \_printf  
+>     jmp L13
+
+Note that as is commonly done with common pieces of code in switch statements, all the compiler does is tail-merge the calculated jumps into one spot, which thus utterly and **completely defeats the whole point of the calculated goto functionality!** This is one example where the gcc compiler blows it and adds a language extension that has no purpose. If anything, a smart compiler would detect the interpreter dispatch code pattern and just do the right thing by *not* tail merging flow that leads to a common indirect jump.
+
+Secondly, as I will show below even handler chaining can be improved upon. This worthless hack to gcc ultimately, even if it worked as it was intended to, would not have been the most optimal way to go anyway.
+
+------------------------------------------------------------------------
+
+**Testing The Theory**
+
+Proving that handler chaining is taking place is actually quite trivial to test out, since I tend to make heavy use of macros in my assembly code. For example, this is the actual x86 MASM source code from Gemulator 8.0 which implements all the variations of the 68040 "MOVE Long", or "MOVE.L" instruction:
+
+    opcode = 03000h  
+    REPEAT 01000h  
+  
+    Decode %opcode  
+    IF FAny(opsmod,opsreg,SIZE_W) AND FAlt(opdmod,opdreg,SIZE_W)  
+        Valid 3C, 3F, 1  
+  
+        IF (fEmit NE 0)  
+            ReadEA %opsmod, %opsreg, %SIZE_W  
+  
+            IF (opdmod NE 1)  
+                ClearNZVC  
+                TestWord  
+                UpdateNZ  
+                WriteEA %opdmod, %opdreg, %SIZE_W  
+            ELSE  
+                SignExtendWord  
+                WriteEA %opdmod, %opdreg, %SIZE_L  
+            ENDIF  
+  
+            FastFetch  
+        ENDIF  
+    ENDIF  
+    ENDM
+
+There is not a line of raw x86 assembly code to be seen, which is the reason why even though I write in assembly language, it has been relatively easy over the years for me to port my interpreters from 68000 code to 16-bit x86 MS-DOS code to 32-bit Windows code to 64-bit code. The details are all wrapped up in the macros, which are modified slightly from version to version. So for example, the "FastFetch" macro in Gemulator 8 was normally defined to be this three line code sequence that you see as very similar to the one I just showed your from Fusion PC:
+
+    movzx ebx,word ptr \[esi\]  
+    sub esi,2  
+    jmp dword ptr \[opcodesRW+ebx\*4\]
+
+It is very trivial now to simply change the macro to be a single x86 RET instruction, and to just have the instruction dispatch be a common piece of code something like this:
+
+dispatch_loop:  
+    movzx ebx,word ptr \[esi\]  
+    sub esi,2  
+    call dword ptr \[opcodesRW+ebx\*4\]  
+    jmp dispatch_loop
+
+Five minutes later the code is ready to test, end sure enough, it kills most of the speed of Gemulator - the performance literally drops in half or worse!
+
+One can argue that the CALL instruction is the culprit, and this is true to some extent on the Pentium 4, so replacing the FastFetch macro to be a jump to dispatch_loop, I tried this code:
+
+dispatch_loop:  
+    movzx ebx,word ptr \[esi\]  
+    sub esi,2  
+    jmp dword ptr \[opcodesRW+ebx\*4\]
+
+**It barely makes a difference. The issue of call vs. jump is not a significant performance bottleneck. But rather, it all comes down to the issue of having a dispatch from a single location that is guaranteed to mispredict vs. distributing the dispatch out to each of the handlers and relying on common repeating patterns of guest opcodes to improve the branch prediction rate.**
+
+Branch chaining is a simple mechanism to accelerate a CPU interpreter loop. **It is far from ideal**, as many of the dispatches will still be mispredicted. For example, a PUSH instruction is commonly followed by a PUSH, but sometimes by a CALL, and sometimes by a MOV. The more repeating patterns of instructions that appear in the guest code, the better branch chaining does. It does leave room for improvement.
+
+------------------------------------------------------------------------
+
+**The Threaded Interpreter**
+
+Developers of virtual machines knew decades ago that the trick is to distribute the central interpreter dispatch to multiple locations. In addition to the branch prediction issue, there is another fundamental performance issue of the basic fetch-and-dispatch line of code:
+
+        switch(peekb(PC++))
+
+Most microprocessors take several clock cycles to calculate an effective address. For example, a double indirection such as this:
+
+    mov   eax,\[ecx+8\]  
+    mov   eax,\[eax\]
+
+takes longer to execute than an arithmetic operation:
+
+    mov   eax,\[ecx+8\]  
+    add   eax,eax
+
+The former is a bottle known as an AGI (Address Generation Interlock) while the latter is a simple data dependency. Any time you access memory, it is best to have pre-calculated the memory address ahead of time, at least 3 or 4 clock cycles prior, instead of calculating it when it is needed. So the basic fetch-and-dispatch code in Gemulator 8.0 (and similar interpreters) is not spacing out the MOVZX instruction far enough away from the JMP instruction. An out-of-order core  helps - and this is why Core 2 is able to mostly hide this latency - but a better solution is to avoid the AGI.
+
+There is form of interpreter known as a "**threaded interpreter**" which is a sort of hybrid between a pure interpreter and a jitter. What a threaded interpreter does is perform the fetch operations in advance and pre-calculates the jump addresses to the handlers of each guest instruction. The data dependency of fetching guest opcodes and mapping them to handlers is eliminated. A typical threaded interpreter literally just emits CALL instructions, a sequence of function calls to the various instruction handlers.
+
+So for a block of 6502 code you might have a sequence that looks like this:
+
+    call opLdaAbs16  
+    call opIncX  
+    call opStaIndX
+
+The simplicity of this means that although code is being generated on-the-fly at run time, it is not a full fledge dynamic recompilation engine. It is a jitter that only jits one host instruction over and over again - CALL. This makes it plausible to port a threaded interpreter from one host architecture to another in relatively short time compared to say porting an entire jit compiler.
+
+One way to avoid this jitting completely is to use a dispatch loop as in a classic interpreter but dispatch on the pre-calculated handler addresses. Some people will argue that this is not a threaded interpreter, but I argue that it is, since the commonality of both implementation is that you are walking an array of pre-decoded handler addresses. The difference is is there also an array of CALL instructions, or is it a loop.
+
+Bochs 2.3.7, as it was released this past June and presented at ISCA is such a loop based threaded interpreter. Bochs pre-decodes runs of x86 guest instructions, which are referred to as "traces", into an array of decoded instruction descriptors, known as, you guessed it, a "trace cache". The length of each trace is figured out at decode time and corresponds to a continuous run of guest x86 instructions, a basic block of x86 instructions that terminates with some kind of branch instruction.
+
+The inner loop of Bochs 2.3.7, simplified here, looks something like this:
+
+    for(;;)  
+    {  
+        entry = iCache.get_entry(RIP);  
+        length = entry-\>length;  
+        i = entry-\>i;  
+  
+        for (; length--; i++)  
+        {  
+            RIP += i-\>len;  
+            (\*i-\>execute)(i);  
+            prev_rip = RIP;  
+        }  
+    }
+
+The trace cache class has a "get_entry" method which maps a guest program counter (called "RIP" in x86 terminology) to a decoded trace, which either already exists or is then decoded on-the-fly. Then entry contains a "length" field which gives the length of the trace in guest instructions (usually 1 through 32), and contains a the pointer to the first decoded instruction descriptor of the trace, "i".
+
+The dispatch loop is now simply a matter of walking the trace, passing as a parameter to each handler the pointer to that particular decoded instruction. A global variable "prev_rip" keeps the value of the current guest RIP, while the RIP itself is incremented by the size of the guest instruction. This is because most PC-relative instruction such as conditional branches actually operate on the address of the next instruction. Details about breaking out of this loop early due to guest exceptions or interrupts are not shown here, but as with the common interpreter loop, this code is performance bound by the guaranteed misprediction of this line of code:
+
+            (\*i-\>execute)(i);
+
+All Bochs instructions handlers are called from that one central line of code which corresponds to a single compiled CALL instruction. At 2.0 GHz for example and roughly 20 clock cycles per misprediction, this bounds the best case performance of Bochs to about 100 guest MIPS on today's processors. If the prediction was perfect, the performance could in theory be double or triple, or 300 guest MIPS. As a point of comparison, Gemulator 8.0 achieves about 180 MIPS average throughput, indicating that the handler chaining is not always mispredicting, but also that it is not achieving the ideal prediction rate either.
+
+------------------------------------------------------------------------
+
+**Duff's Device Revisited**
+
+There are other bottlenecks in the above loop. If you look at the compiled code generated for the Bochs CPU loop, the copying and incrementing of RIP generates quite a few load and store operations. While this is not implemented in Bochs yet, one simple optimization would be to store the instruction's values of RIP and prev_rip in the decoded instruction descriptor itself, thus reducing the inner loop to something that looks like this:
+
+        for (; length--; i++)  
+        {  
+            (\*i-\>execute)(i);  
+        }
+
+Unfortunately, the real world performance improvement of this may be zero! An out-of-order core will use the branch misprediction window to execute those loads and stores, and this even if you can eliminate them, you still haven't solved the basic bottleneck of the branch misprediction.
+
+Any time you have a "for" or "while" loop with a variable iteration count, it is very difficult for the host CPU to predict when the loop terminates. One run might be after 5 iterations. Then the next time the loop might terminate after 7 iterations. Then 4 iterations. Most microprocessor architectures always mispredict the branch of the final loop iteration. The Core 2 has some looping branch prediction smarts, but in general, a while loop will always mispredict at least once.
+
+About 25 years, Tom Duff came up with a clever loop-unrolling trick for memory copy code, which is called "Duff's Device" (<http://www.hackszine.com/blog/archive/2008/05/duffs_device_loop_unrolling_fo.html>). The premise is very simple, if you know ahead of time how many iterations of a loop you will perform, simply jump to a piece of code that unrolls that loop exactly that many times. You may take on branch misprediction on that initial jump to the unrolled loop, but after that there is no misprediction.
+
+Duff's Device involves loops of code that involve data movement. It could be applied to loops that involve function calls, leading to dispatch code could possibly look something like this:
+
+        switch (length)  
+        {  
+        case 32:  
+            ...  
+        case 4:  
+            RIP += i-\>len;  
+            (\*i-\>execute)(i);  
+            prev_rip = RIP;  
+            i++;  
+        case 3:  
+            RIP += i-\>len;  
+            (\*i-\>execute)(i);  
+            prev_rip = RIP;  
+            i++;  
+        case 2:  
+            RIP += i-\>len;  
+            (\*i-\>execute)(i);  
+            prev_rip = RIP;  
+            i++;  
+        case 1:  
+            RIP += i-\>len;  
+            (\*i-\>execute)(i);  
+            prev_rip = RIP;  
+            i++;  
+        }
+
+This looks promising, but now shows up other bottlenecks. At each iteration the pointer "i" to the decoded instruction descriptor is incremented to point to the next instruction's entry. i is then immediately dereferenced, which of course leads to an AGI stall. Even if the updating of RIP and prev_rip was optimized away as I described above, that would still lead to code that looks like this:
+
+        switch (length)  
+        {  
+        case 32:  
+            ...  
+        case 4:  
+            (\*i-\>execute)(i);  
+            i++;  
+        case 3:  
+            (\*i-\>execute)(i);  
+            i++;  
+        case 2:  
+            (\*i-\>execute)(i);  
+            i++;  
+        case 1:  
+            (\*i-\>execute)(i);  
+            i++;  
+        }
+
+The AGI stall is still there, and there is actually a second hidden AGI. The actually indirection of the function pointer i-\>execute is itself a memory load operation that causes an AGI. So this code is still very heavily serialized and it is not clear that Duff's Device can help much further.
+
+------------------------------------------------------------------------
+
+**A Missing Instruction in x86!**
+
+One difference between a loop of data operations and a loop of function calls is that data accesses can be predicted. Since about the Intel Pentium 4 and the AMD Athlon XP processors, the hardware itself has implemented a prefetch mechanism. If you code is walking a large block of memory, the hardware will begin to pre-load the next cache line even before the code asks for it. For non-linear accesses, SSE extensions do provide a software PREFETCH instruction which allows code to explicitly tell the processor "I plan to access memory location M very soon".
+
+A prefetch is different from an explicit memory load or store because it will not fault and throw an exception. It is merely a hint to the CPU that you will want some address. If that address is bogus, no worries.
+
+**What is missing is a prefetch instruction for code.** What would be really terrific is to say to the processor "I plan to jump to function F very soon". If you could hint to the processor that you'll be jumping somewhere soon, it could pre-load the L1 code cache and perhaps even start decoding that code in advance. The pseudo-code for the Bochs inner loop would look something like this:
+
+        for (; length--; i++)  
+        {  
+            RIP += i-\>len;  
+*            prefetch_code((i+1)-\>execute);*  
+            (\*i-\>execute)(i);  
+            prev_rip = RIP;  
+        }
+
+This way, just as you are jumping to the handler of the current instruction, you are telling the CPU to go start prefetching and decoding what you are pretty sure will be the next function that you call. If you are wrong, no big deal, but if you are right, it would potentially save about 20 clock cycles. This mechanism just plain does not exist. Today, they only way for that to happen is if the CPU itself branch predicts it, and as we've seen, an interpreter loop usually always *mis*-predicts.
+
+Really what x86 needs is a **PREDECODE** instruction, a code equivalent of the PREFETCH data instruction, which takes a code pointer as an operand and hints to the CPU that it should start decoding that code. Intel? AMD? Want to tackle this? Or maybe Sun? For one company that may be ahead in implementing such functionality is in fact Sun. As I was mentioning a few days ago, at last week's Hot Chips conference in Stanford, Sun gave details of their Rock architecture which supports the concept of having basically two program counters going at the same time in the same thread. This is accomplished by having two decoded instruction queues, the queue of instructions that is actually being executed and committed, and a deferred instruction queue which holds long latency instructions and speculatively fetched instructions. This code prefetching instruction would fit very nicely with the concept of the speculative deferred instruction queue. **Instead of having hardware speculatively fetch code, why not expose that feature programatically? Duh?**
+
+ 
+
+------------------------------------------------------------------------
+
+**A Faster Solution Yet?**
+
+What we've learned so far:
+
+- An interpreter should not have one central dispatch point,
+- AGI stalls should be avoided,
+- Loops should be avoided,
+- Accessing arrays in order is good,
+- There is some "free" computation to be had in the window of a pipeline stall.
+
+These are exactly the problem areas for most interpreters since they tend to jump around unpredictably. I needed to try out a bunch of different interpreter code sequences to try to improve on where Gemulator and Bochs had gotten so far. I resorted to my trust personal CPU_TEST micro-benchmarking code which I have used for almost 10 years to evaluate the performance of various microprocessor architectures and measure clock cycle counts. Normally I measure the clock cycle counts of individual instructions, but CPU_TEST can just as easily measure the overhead of an entire block of code.
+
+I've used CPU_TEST in the past to measure the differences between different architectures - Intel vs. AMD, Pentium III vs. Pentium 4, even to measure differences between steppings of the same processor. For example, when the pipeline of the Pentium 4 was extended in the "Prescott" version, that shows up as measurable increases in the costs of mispredicted branches.
+
+What I decided to test was a small piece of sample x86 code, basically a small loop that contains a mix of common operations - a load, a store, a move, an add, and conditional flow control. This is the little test loop:
+
+    sample_loop:  
+        mov eax,\[ebp-8\]  
+        add eax,1  
+        mov edx,eax  
+        mov \[ebp-8\],eax  
+        cmp edx,CINSTR  
+        jne sample_loop
+
+CINSTR is just a numeric constant used to terminate the loop after so many tens of millions of iterations. I then implemented a very simple x86 interpreter that was hard-coded to just understand those six instructions and which used the Gemulator handler chaining mechanism. I implemented this in assembly, to serve as a reference point of the kind of performance possible using brute force x86 assembly language such as I've used over the past 20 or so years. To make things a little more difficult, the interpreter breaks down the 6 instructions into 9 micro-ops, so really it is interpreting 9 decoded micro-ops instead of 6 instructions. Just to make it that much more difficult :-)
+
+Running this sample loop code and the little fake x86 interpreter gives this kind of output on my 2.66 GHz Core 2 host:
+
+> x86 native loop :     230 ms,  2395 ps/instr, 417 MIPS,   6.3 clk  
+> x86 simulated loop : 2334 ms, 24312 ps/instr,  41 MIPS,  64.8 clk
+
+The way to interpret this data is that the Core 2 executes each iteration of the 6-instruction loop in about 6 clock cycles, about the one instruction-per-clock-cycle you would expect given the data dependencies in the test code, while the 9 fetch-and-dispatch iteration of the fake x86 interpreter takes about 65 cycles, or say, 7 cycles per micro-op dispatched. So you can see that when there is perfect branch prediction, an interpreter spends most of its time actually doing real work and dispatching at a single-digit clock cycle rate. The true rate of interpretation on the Core 2 is true 41 MIPS \* 9 = 369 MIPS in terms of micro-ops, well beyond where Bochs and Gemulator are today.
+
+Now compare that to the Pentium 4 Prescott running at 2.53 GHz:
+
+> x86 native loop :     574 ms,  5979 ps/instr, 167 MIPS,  15.1 clk  
+> x86 simulated loop : 6019 ms, 62697 ps/instr,  15 MIPS, 158.8 clk
+
+The AMD Phenom results at 2.4 GHz:
+
+> x86 native loop :     314 ms,  3270 ps/instr, 305 MIPS,   7.8 clk  
+> x86 simulated loop : 3914 ms, 40770 ps/instr,  24 MIPS,  97.8 clk
+
+The Intel Pentium III results at 1000 MHz:
+
+> x86 native loop :     640 ms,  6666 ps/instr, 150 MIPS,   6.6 clk  
+> x86 simulated loop : 8115 ms, 84531 ps/instr,  11 MIPS,  84.5 clk
+
+And the latest Intel Atom results at 1600 MHz:
+
+> x86 native loop :     302 ms,  3145 ps/instr, 317 MIPS,   5.0 clk  
+> x86 simulated loop :14722 ms,153354 ps/instr,   6 MIPS, 245.3 clk
+
+The Atom is surprisingly the most efficient processor per clock cycle on the native test loop. That result I believe is due to another micro-benchmark result I discovered a few weeks ago, in that the store-forwarding penalty on the Atom is 5 clock cycles, less than other architectures. The MOV to memory location EBP-8 and then the subsequent read of the same location in the next iteration is what's know as store-forwarding. i.e. the round-trip of a write to memory that has to propagate to the L1 cache and then be read back in. The Atom has that nice little improvement which helps to make up for its slower clock speed.
+
+Unfortunately the in-order nature of the Atom's pipeline doesn't allow it to do the kind of overlapping tricks that the other cores do. Aggregated over 9 dispatches, the 245 clock cycles for one interpretation of the loop works out to about 27 cycles per interpreted micro-op.
+
+The Pentium 4, being the piece of junk that it was, is surprisingly barely better than the Atom. It is stunning that in a period of barely 7 years, Intel was able to take roughly the performance of the Pentium 4 and redesign it into a chip that consumes about 1/50th the power!
+
+The AMD Phenom, while not bad in absolute speed thanks to its 2.4 GHz clock speed, is really no better than the design of the decade old Pentium III.
+
+In any case, these are the baseline numbers. The goal for me was to come up with C or C++ code that implemented the fake little x86 interpreter at a performance level that ideally would match (or beat!) my hand coded assembly code.
+
+**Impossible you say?**
+
+------------------------------------------------------------------------
+
+**Design Decision: Micro-ops vs. Macro-ops**
+
+A fundamental decision when designing an interpreter, even a jitter, is to decide whether to operate at the micro-op or macro-op level. A macro-op is a full guest instruction. Older CPUs such as the 486 pretty much decoded and executed full x86 instructions in one clock cycle. But this leads to complexity as you have to hard-wire each possible instruction.
+
+Newer out-of-order CPUs such as the Pentium III, AMD Athlon, and Core 2, decode macro-ops into smaller micro-ops, a sort of RISC version of the original CISC instructions. If you look at my Gemulator source code for the 68040 MOVE.L instruction, you can see that in my source I effectively do that, breaking up the MOVE instruction into its micro-ops, and then having an assembler macro which implements each micro-ops. It's code re-use, and it's the same kind of trick that any modern CPU implements in hardware.
+
+Unlike Bochs and Gemulator, which dispatch on macro-ops, I chose micro-ops both for my assembly based fake x86 interpreter and for the C/C++ versions I had yet to write. I decided to allow 16 bytes per decoded instruction descriptor, of which 4 bytes holds the function pointer to the handler, and 12 bytes is available to hold decoded information about the instruction, such as register numbers, 32-bit immediate constants, etc. The data structure I chose for each decoded micro-op, which I call a "DUOP" or "decoded micro-op", is as follows:
+
+> // A DUOP contains a pointer to the handler, and various operands  
+>   
+> typedef struct DUOP  
+> {  
+> PFNDUOP pfn;    // pointer to handler  
+> WORD uop;       // 16-bit duop opcode  
+> BYTE iduop;     // index of this duop into the block  
+> BYTE delta_PC;  // start of guest instruction duop corresponds to  
+> DWORD optional; // optional 32-bit operand  
+> DWORD ops;      // 32-bit packed operand(s) for this duop  
+> } DUOP, \*PDUOP;
+
+The guest PC can be encoded as one byte, by storing the delta of the current micro-op's PC from that of the start of the trace. The "ops" field stores a 32-bit value which is whatever the first data value is that the micro-op handler would need. For a branch it would be the branch target address, for example.
+
+Besides the out-of-order scheduling that can be done on them, there are two practical advantages to using micro-ops instead of dispatching on entire guest instructions:
+
+- The decoded instruction descriptor (the DUOP in this case) is smaller, as complex guest instructions would naturally break down into multiple simple micro-ops,
+- The overall size of the interpreter is smaller, because instead of having hundreds or even thousands of complex instruction handlers, the problem is reduced to one of perhaps a few dozen simple micro-op handlers.
+
+For two reasons therefore, an interpreter that operates on micro-ops reduces the overall complexity of the interpreter and helps keep the memory footprint down. A 16-byte micro-op descriptor compared to about the 50-byte instruction descriptor in Bochs allows for even three micro-ops per guest x86 instruction and to still use less code and data memory than Bochs uses today. In reality, many x86 and 68040 instructions can be represented by a single micro-op, while some memory operations might require two. So the memory savings can actually be significant.
+
+Another advantage is that a micro-op will operate on less data than a full x86 instruction, sometimes only even one piece of data. For this reason, I decided to use a scheme where one extra parameter was passed to the handler. A common feature of all x86 C and C++ compilers on Windows (whether 32-bit or 64-bit, Microsoft's or GCC), is the "fastcall" register calling convention which permits two integer parameters to be passed to a function via the ECX and EDX registers. This exactly now permits the ECX register to hold the pointer to the descriptor as in Bochs 2.3.7, while the EDX register holds an operand, specifically the DUOP.ops field.
+
+So, the basic design is falling into place: micro-ops, small descriptors, register calling convention. We must not forget the requirement that any good design must perform well on the whole arsenal of x86 host processors at my disposal here - the Pentium III, the Pentium 4, the Core Duo, the Pentium M, the Core 2, the AMD Phenom, and the Intel Atom. Otherwise what is the point of being portable if it is not performant?
+
+------------------------------------------------------------------------
+
+**Some Simple Micro-op Dispatchers and Unexpected Results**
+
+Based on the above design, I implemented various dispatch mechanisms in C++. You can peek at my own [raw C++ benchmark results](http://www.emulators.com/docs/nostradamus.txt) and see how they relate to the code sequences below, or simply download my actual [C++ test source code](http://www.emulators.com/docs/cpu_test_gcc.cpp) which I have verified to compile and run on Windows (using Visual Studio and Cygwin), Linux (gcc 4.2), and Mac OS X (Xcode 3.1).
+
+I wrote one version of the dispatch code that looks like this (this is version "f" in the results):
+
+> pduop = v_TS.pduopNext;  
+>   
+> do  
+> {  
+>     unsigned i;  
+>   
+>     for (i = 0; i \< count; i++)  
+>     {  
+>         (\*pduop\[i\].pfn)(&pduop\[i\], pduop\[i\].ops);  
+>     }  
+>   
+> } while (NULL != (pduop = v_TS.pduopNext));
+
+The v_TS structure contains the guest thread state, and in that, the "pduopNext" field contains the pointer to the next decoded trace to execute. Micro-op handlers that end the trace, i.e. flow control instructions, update the pduopNext field to point to the next target trace. For the purposes of this test, a NULL value means stop and exit the interpreter loop. The data type PFNDUOP is a pointer to a handler function, which is stored in the DUOP.pfn field.
+
+This code is actually extremely similar to the Bochs dispatch loop, and not surprisingly, benchmarks horribly: roughly 360 cycles per 9-micro-op iteration on Pentium 4, roughly 240 on Atom, 150 to 200 cycles on Pentium III, Pentium M, and Phenom, and a surprisingly low 65 cycles on Core 2. Core 2 as it turns out is actually able to remember patters of call targets and for a small loop of just 9 micro-ops it seems to be predicting most of the calls. Touche, Core 2, but not good enough on the other cores, which mispredict the calls and execute much worse than the handler-chaining reference. This is what the compiled code (as generated by Visual Studio 2003) looks like for that inner loop:
+
+> mov edx, DWORD PTR \[esi+12\]  
+> mov ecx, esi  
+> call DWORD PTR \[esi\]  
+> add esi, 16  
+> dec edi  
+> jne SHORT \$L61632
+
+It would seem to make sense to unroll the loop, so I tried a cheat where I simply unrolled the loop 9 times (this is version "e" in the tests):
+
+>  do  
+> {  
+>     PFNDUOP pfn = pduop\[0\].pfn;  
+>   
+>     (\*pduop\[0\].pfn)(&pduop\[0\], pduop\[0\].ops);  
+>     (\*pduop\[1\].pfn)(&pduop\[1\], pduop\[1\].ops);  
+>     (\*pduop\[2\].pfn)(&pduop\[2\], pduop\[2\].ops);  
+>     (\*pduop\[3\].pfn)(&pduop\[3\], pduop\[3\].ops);  
+>     (\*pduop\[4\].pfn)(&pduop\[4\], pduop\[4\].ops);  
+>     (\*pduop\[5\].pfn)(&pduop\[5\], pduop\[5\].ops);  
+>     (\*pduop\[6\].pfn)(&pduop\[6\], pduop\[6\].ops);  
+>     (\*pduop\[7\].pfn)(&pduop\[7\], pduop\[7\].ops);  
+>     (\*pduop\[8\].pfn)(&pduop\[8\], pduop\[8\].ops);  
+> } while (NULL != (pduop = v_TS.pduopNext));
+
+Faster, yes? BZZZT! Believe it or not, this code is SLOWER on some architectures than the the rolled up loop. Pentium III and Phenom are virtual unchanged, while Pentium 4 jumps to about 500 clock cycles, Atom jumps to about 320 cycles, but Core 2 speeds up to 54 cycles. **This is the sad truth about optimizing code - usually what works faster on one CPU ends up running slower on another!** Loop unrolling is one of those simple optimizations that can actually end up being detrimental!
+
+What happened to slow down the unrolled loop? If we look at the actual compiled code, it looks very optimal, just eight bytes per dispatch:
+
+> ; (\*pduop\[1\].pfn)(&pduop\[1\], pduop\[1\].ops);  
+>   
+> mov edx, DWORD PTR \[esi+28\]  
+> lea ecx, DWORD PTR \[esi+16\]  
+> call DWORD PTR \[ecx\]
+
+At first glance this looks terrific, but then consider that the LEA instruction very much causes a serious AGI stall. The CALL instruction can't dispatch until it has dereferenced the pointer, and it can't do that until the address in ECX is resolved. This is a very serious bottleneck!
+
+The workaround turns out to be ridiculously simple. **Why look up pfn in the dispatch code at all?** Why not use the fact that C/C++ calling convention allows functions to return a 4-byte value in EAX (and even an 8-byte value in the EDX:EAX register pair) to have the handler return the pointer to the next handler? In other words, to have dispatch code that looks like this (this is version "c"):
+
+> do  
+> {  
+>     PFNDUOP pfn = pduop\[0\].pfn;  
+>   
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[1\], pduop\[1\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[2\], pduop\[2\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[3\], pduop\[3\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[4\], pduop\[4\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[5\], pduop\[5\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[6\], pduop\[6\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[7\], pduop\[7\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[8\], pduop\[8\].ops);  
+>   
+> } while (NULL != (pduop = v_TS.pduopNext));
+
+The subtle change here is that the memory indirection to read pfn is performed in the handler, which even simplifies the main loop further:
+
+> ; pfn = (PFNDUOP)(\*pfn)(&pduop\[1\], pduop\[1\].ops);  
+>   
+> mov edx, DWORD PTR \[esi+28\]  
+> lea ecx, DWORD PTR \[esi+16\]  
+> call eax
+
+Notice now how the three instructions that make up each dispatch have **no data dependency and no AGI whatsoever!** On some CPU architectures, these three instructions can execute in parallel. Not surprisingly the clock cycle counts drop dramatically, to just 46 cycles on Core 2. Literally one micro-op is being dispatched on average every 5 clock cycles. This is an example of what is called **software pipelining**, where you explicitly prefetch data ahead of time in order to help the hardware pipeline move along faster.
+
+You can take this even further and have the handler prefetch both the pfn and ops fields, by defining an 8-byte structure that contains both fields then using an ugly C macro to return a register pair result:
+
+> typedef struct OPVEC  
+> {  
+> union  
+>     {  
+>     \_\_int64 ll;  
+>   
+>     struct {  
+>         PFNDUOP pfn;  
+>         DWORD ops;  
+>         };  
+>     };  
+> } OPVEC;  
+>   
+> \#define RETURN_OPVEC_2(x,y) { OPVEC opvec; opvec.pfn = (x); opvec.ops = (y); return (\_\_int64)opvec; }
+
+Believe it or not, this code actually works! pfn is returned in EAX, the operand is returned in EDX, and the dispatch code merely updates ECX and calls through EAX. It is a very clever hack, but ultimately not useful. First of all because the returning of 8-byte structures in a register pair is compiler specific, and because this actually did not add any extra performance.
+
+Secondly, because these software pipelining schemes still cause the execution speed on Atom and Pentium 4 to be worse than before. The reason for that is branch prediction granularity. Because indirect function calls are not as frequent as say, direct function calls or conditional branches, some CPU architectures hash their branch prediction tables on a 16-byte granularity, and that being true of the Atom and Pentium 4. Other CPUs, such as the Core 2, use a 4-byte granularity. Therefore, the problem with unrolled dispatch code that is only 8 bytes long is that it is **too optimal**, too dense. It needs to be padded out. And ironically enough, but tweaking the C source code to manually insert an 8-byte NOP in inline assembly, the performance on Atom and Pentium 4 increases.
+
+Inline assembly to inject bogus NOPs is not exactly a portable approach, so loop unrolling seems unusable. I went back to the rolled up loop that uses the software pipelining scheme:
+
+> do  
+> {  
+>     PFNDUOP pfn = pduop\[0\].pfn;  
+>   
+>     do  
+>     {  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>     pduop++;  
+>     } while (pfn != (PFNDUOP)duopFireEscape);  
+>   
+> } while (NULL != (pduop = v_TS.pduopNext));
+
+Instead of using an explicit loop counter, I use what I call a **fire escape mechanism** to exit the inner loop. Any time a handler needs to exit early out of the trace, it returns a special function pointer to the fire escape function, which signals either a flow control, or some sort of guest exception; perhaps a memory access that needs to cause a guest exception, or perhaps self-modifying code. Prior to invoking the fire escape, a handler would set some global state to indicate the guest instruction being stopped at and the new trace to go execute.
+
+By serving two purposes - as a loop terminator for the end of the trace, and as a signaling mechanism for exceptions - the fire escape eliminates having two explicit checks. Or worse, using some sort of setjmp/longjmp or catch/throw exception scheme to unwind from the CPU loop. I hate such exception mechanisms as it causes most compilers to produce less optimal code due to more frequent register spills and use of memory based variables.
+
+You may ask why am I not using NULL as the fire escape mechanism? Why check for an explicit non-null function pointer? The reason is to permit some amount of loop unrolling. Consider this variant (version "g"):
+
+> while (NULL != pduop)  
+> {  
+>     PFNDUOP pfn = pduop\[0\].pfn;  
+>   
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[1\], pduop\[1\].ops);  
+>     pduop += 2;  
+>   
+>     if (pfn == (PFNDUOP)duopFireEscape)  
+>     {  
+>         pduop = v_TS.pduopNext;  
+>     }  
+> }
+
+In this case I unrolled the dispatch loop only by factor of two. But what if the trace only consisted of one micro-op? The fire escape function simply returns itself, and so therefore no matter how much the loop is unrolled (as in version "k"):
+
+> while (NULL != pduop)  
+> {  
+>     PFNDUOP pfn = pduop\[0\].pfn;  
+>   
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[1\], pduop\[1\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[2\], pduop\[2\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[3\], pduop\[3\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[4\], pduop\[4\].ops);  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[5\], pduop\[5\].ops);  
+>     pduop += 6;  
+>   
+>     if (pfn == (PFNDUOP)duopFireEscape)  
+>     {  
+>         pduop = v_TS.pduopNext;  
+>     }  
+> }
+
+If there is invocation of the fire escape after say, 3 micro-ops, the code simply slides down through the remaining three, just as if using a fire escape, until it hits the end of the unrolled loop.
+
+------------------------------------------------------------------------
+
+**The Nostradamus Distributor**
+
+We're almost there. What has been shown so far is that software pipelining of the next handler and of its operand can be used to shave a few cycles from each handler's dispatch. Leaving the dispatch code in a loop invites misprediction. But try to get too clever by unrolling the dispatch code and you end up with a situation where you induce false misprediction because the indirect calls are too close together. The future looks bleak unless you're running on the Core 2.
+
+Ah, but I have not shown you one more variant, which is to combine the software pipelining, with loop unrolling, and with the fire escape check.
+
+What you end up with is this recursive code pattern which can nest any number of levels deep right up to the maximum trace length of your decoder (this is version "n"):
+
+> if (pfn != (PFNDUOP)duopFireEscape)  
+> {  
+>  pduop++;  
+>  pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>   
+>  if (pfn != (PFNDUOP)duopFireEscape)  
+>  {  
+>   pduop++;  
+>   pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>   
+>   if (pfn != (PFNDUOP)duopFireEscape)  
+>   {  
+>    pduop++;  
+>    pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>   
+>    if (pfn != (PFNDUOP)duopFireEscape)  
+>    {  
+>     pduop++;  
+>     pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>   
+>     if (pfn != (PFNDUOP)duopFireEscape)  
+>     {  
+>      pduop++;  
+>      pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>   
+>      if (pfn != (PFNDUOP)duopFireEscape)  
+>      {  
+>       pduop++;  
+>       pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>   
+>       if (pfn != (PFNDUOP)duopFireEscape)  
+>       {  
+>        pduop++;  
+>        pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>   
+>        if (pfn != (PFNDUOP)duopFireEscape)  
+>        {  
+>         pduop++;  
+>         pfn = (PFNDUOP)(\*pfn)(&pduop\[0\], pduop\[0\].ops);  
+>        }  
+>       }  
+>      }  
+>     }  
+>    }  
+>   }  
+>  }  
+> }
+
+The explicit check of the pfn return value pads out the code enough to ensure at least 16-byte spacing between the indirect function calls. The compiled code for each dispatch looks something like this:
+
+> mov edx, DWORD PTR \[esi+28\]  
+> add esi, 16 ; 00000010H  
+> mov ecx, esi  
+> call eax  
+> cmp eax, OFFSET FLAT duopFireEscape  
+> je \$L62740
+
+This has almost ideal characteristics. The 9 micro-op dispatch time on Atom drops to about 120 cycles, 49 on Core 2, 146 on Pentium 4, 64 on Phenom, and 79 cycles on Pentium III. **This outperforms the hand coded handler chaining on every single architecture!** Unfortunately the stupid Microsoft C/C++ compiler insists on not following its own fastcall calling convention (which specifies that ECX is not modified by fastcall functions) and thus inserts a bogus data dependency on the ESI register. One can shave a few extra clock cycles from the code, and derive at the final Nostradamus Distributor code pattern which uses explicit trace offsets (this is the final version "o"):
+
+> if (pfn != (PFNDUOP)duopFireEscape)  
+> {  
+>  pfn = (PFNDUOP)(\*pfn)(&pduop\[1\], pduop\[1\].ops);  
+>   
+>  if (pfn != (PFNDUOP)duopFireEscape)  
+>  {  
+>   pfn = (PFNDUOP)(\*pfn)(&pduop\[2\], pduop\[2\].ops);  
+>   
+>   if (pfn != (PFNDUOP)duopFireEscape)  
+>   {  
+>    pfn = (PFNDUOP)(\*pfn)(&pduop\[3\], pduop\[3\].ops);
+
+Which results in this compiled code for each dispatch spanning 19-byte per dispatch:
+
+> mov edx, DWORD PTR \[esi+28\]  
+> lea ecx, DWORD PTR \[esi+16\]  
+> call eax  
+> cmp eax, OFFSET FLAT duopFireEscape  
+> je \$L62748
+
+This further shaves cycles from the times, resulting in about 111 cycles on Atom, 46 on Core 2, 144 on Pentium 4, 56 on Phenom, and 78 on Pentium III. **Stated another way, the average number of clock cycles to dispatch a single decoded micro-op is about 19 cycles on Atom, 5 cycles on Core 2, 16 cycles on Pentium 4, 6 cycles on Phenom, and 9 cycles on Pentium III.**
+
+The Nostradamus Distributor means that Core 2 and AMD Phenom are roughly equally capable of running extremely fast purely C or C++ based interpreters at rates of about 200 MIPS at 1 GHz, and 300 to 400 MIPS at 2 GHz. Even taking into account a micro-op to macro-op ratio of say 3-to-2, it means that simulators such as Bochs can in theory easily exceed 200 guest MIPS of performance. It also shows how the good old Pentium III was a far superior architecture for simulators than the Pentium 4, something that we've all known from the benchmarks already.
+
+------------------------------------------------------------------------
+
+**The Possibilities**
+
+Portable, performant, non-jitting, non-VT virtual machines, that is clearly possible. The performance level made possible by the Nostradamus Distributor also means that Bochs could purely interpreted pretty much match the performance of QEMU, although I admit that is still left to actually implement and try out.
+
+There are some practical considerations, such as taking into account that on most architectures other than Core 2, an indirect call will predict the last address it has seen. Therefore the Nostradamus Distributor needs to have several such instances of the code pattern, perhaps several dozen handling traces up to 32 micro-ops in size, and a mechanism to map each unique decoded guest trace to a unique distributor. I have tried a very simple implementation of this which used 16 sets of distributors to speed up Bochs by about 10%, although that uses no software pipelining. It will a significant change to modify each and every Bochs instruction handler to return the prefetched handler. Stay tuned for progress on that.
+
+One thing I have tested in Gemulator is the use of a Nostradamus Distributor mechanism of 32768 dispatch points to CALL each 68040 handler and RET from each instead of handler chaining. While the performance is comparable to the old scheme, Gemulator is not yet using the micro-op scheme so similarly to Bochs currently suffers from unnecessarily large overall size of the 68040 engine with its 50,000+ unique handlers. There is untapped performance, but it is extremely encouraging since the performance is at least twice as fast as the ill-fated common dispatch modification.
+
+So finally, you may be saying to yourself this is all fine and dandy but **does it translate to non-x86 CPU architectures?** The good news is that I have verified this test code (it is written in portable C++ after all) and it works on the PowerPC G5 of my PowerMac G5 just as well as on the x86 cores. The 9 micro-op dispatch time on a 2.0 GHz PowerMac G5, running Fedora 9 Linux and using the GCC 4.3 PowerPC compiler, drops **from 352 clock cycles** (close to 40 cycles per micro-op dispatch, yikes!) to about 240 cycles for the software pipelined loop, and **down to 150 cycles** for the Nostradamus Distributor, barely 16 or 17 cycles per micro-op dispatch. In fact the characteristics of the G5 seem very similar to that of the 2.0 GHz Pentium 4, with the relative speed of the various dispatchers being similar between the P4 and G5. I have also reproduced this under Fedora 9 on my Sony Playstation 3, and you guessed it, fastest dispatcher; although the PowerPC chip in the PS/3 seems to have vastly different timings from a G5 overall.
+
+What this is telling me is that even PowerPC based interpreters are capable to well beyond 100 MIPS performance, which I know is not the performance level of most emulators on Macs and the PS/3. I read some posting a few weeks ago where somebody got Windows to boot on a PS/3 in 25 minutes. At 40 cycles minimum for a mispredicted dispatch most PowerPC based interpreters will be running slower than lousy Pentium 4 machines. It doesn't have to be that way, 25 minutes is garbage, it should be on the order of 2 to 3 minutes. Over the past year I have shown numerous optimization tricks for handling flags simulation, memory translation, and now instruction dispatch itself. **Let there never be another sloppy slow emulator released ever again!**
+
+------------------------------------------------------------------------
+
