@@ -350,7 +350,8 @@ case "$SLUG" in
   # a trailing page number. Validated per book to match only running heads.
   the-garbage-collection-handbook|bpf-performance-tools|systems-performance|\
   distributed-systems|tcp-ip-illustrated-vol-1|computer-organization-and-design|\
-  modern-processor-design|mastering-stm32|file-system-forensic-analysis)
+  modern-processor-design|mastering-stm32|file-system-forensic-analysis|\
+  computer-architecture-a-quantitative-approach)
     FURN='^[0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}[ ]*$' ;;
 esac
 # Per-slug code-listing repair (book_fix above). programming-with-posix-threads
@@ -788,6 +789,41 @@ elif [ "$4" = book ] && [ "$SLUG" = rootkits ]; then
     ty { print $2"\t"t }
   ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = computer-architecture-a-quantitative-approach ]; then
+  # H&P 6e's outline is broken: Appendix I is absent, L/M are mis-placed, and the
+  # References nodes are out of order, so the generic split truncated appendices J
+  # and M mid-section and leaked the next appendix's contents page into each one.
+  # Each chapter/appendix opens on a page whose first line is the bare number/
+  # letter then the title; those verified opener pages are the boundaries here.
+  # Front matter (pages 1-18) is auto-emitted before the first boundary.
+  # Each chapter/appendix opens with a mini-contents page (e.g. p32 lists "1.1
+  # Introduction, 1.2 ..."), THEN the numbered title page. Start each boundary at
+  # that mini-contents page (opener - 1) so the section list travels with its own
+  # chapter instead of leaking onto the end of the previous one. Front matter
+  # (cover, the whole-book Contents, and the Preface, pages 1-31) is auto-emitted
+  # as one chapter before the first boundary.
+  { printf '32\t1 Fundamentals of Quantitative Design and Analysis\n'
+    printf '108\t2 Memory Hierarchy Design\n'
+    printf '198\t3 Instruction-Level Parallelism and Its Exploitation\n'
+    printf '312\t4 Data-Level Parallelism in Vector, SIMD, and GPU Architectures\n'
+    printf '398\t5 Thread-Level Parallelism\n'
+    printf '496\t6 Warehouse-Scale Computers to Exploit Request-Level and Data-Level Parallelism\n'
+    printf '570\t7 Domain-Specific Architectures\n'
+    printf '650\tA Instruction Set Principles\n'
+    printf '706\tB Review of Memory Hierarchy\n'
+    printf '774\tC Pipelining: Basic and Intermediate Concepts\n'
+    printf '853\tD Storage Systems\n'
+    printf '921\tE Embedded Systems\n'
+    printf '948\tF Interconnection Networks\n'
+    printf '1067\tG Vector Processors in More Depth\n'
+    printf '1102\tH Hardware and Software for VLIW and EPIC\n'
+    printf '1147\tI Large-Scale Multiprocessors and Scientific Applications\n'
+    printf '1195\tJ Computer Arithmetic\n'
+    printf '1269\tK Survey of Instruction Set Architectures\n'
+    printf '1345\tL Advanced Concepts on Address Translation\n'
+    printf '1347\tM Historical Perspectives and References\n'
+    printf '1441\tReferences\n'
+    printf '1477\tIndex\n'; } > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = tcp-ip-illustrated-vol-1 ]; then
   # No outline. Each chapter opens with the bare chapter number on its own line
   # then the title, which no generic pattern matches. Boundaries below are the
