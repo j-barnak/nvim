@@ -3192,9 +3192,10 @@ local function pick_ghidra()
 						local dir = data_root .. "/ghidra/" .. tag
 						local marker = dir .. "/GhidraDocs"
 						local function browse()
-							-- GhidraDocs/languages is the SLEIGH manual (writing processor
-							-- modules); the x86 language dir gives real .slaspec/.sinc examples.
-							pick_files(dir, "-e md -e html -e txt -e slaspec -e sinc -e cspec -e ldefs -e pspec", "Ghidra " .. tag .. "> ")
+							-- Docs only (md/html/txt): the GhidraClass tutorials and the
+							-- manuals, incl. GhidraDocs/languages (the SLEIGH/p-code manual).
+							-- Processor source (.sinc/.slaspec) is not docs, so it is excluded.
+							pick_files(dir, "-e md -e html -e txt", "Ghidra " .. tag .. "> ")
 						end
 						if vim.fn.isdirectory(marker) == 1 then
 							return browse()
@@ -3208,7 +3209,7 @@ local function pick_ghidra()
 						local script = table.concat({
 							"rm -rf " .. shq(tmp) .. " " .. shq(dir),
 							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. shq(tag) .. " " .. repo .. " " .. shq(tmp),
-							"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone /GhidraDocs /Ghidra/Processors/x86/data/languages",
+							"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone /GhidraDocs",
 							"git -C " .. shq(tmp) .. " checkout",
 							"mv " .. shq(tmp) .. " " .. shq(dir),
 						}, " && ")
