@@ -2746,6 +2746,10 @@ local pick_lwn_index = frozen_web_provider("lwn-index", "LWN Kernel Index> ")
 -- Fuzzing 101 with LibAFL: epi052's 6-part series + the Atredis workshop, the
 -- MobileHackingLab Android/QEMU-mode writeup, and the FuzzCon 2021 talk slides.
 local pick_fuzzing_101_libafl = frozen_web_provider("fuzzing-101-libafl", "LibAFL (Articles)> ")
+-- Linux ptrace-based process injection: XPN's inject-into-sshd walk-through and
+-- Akamai's definitive guide (both frozen via the Wayback Machine, which is the
+-- only way past their Cloudflare/JS-render walls; cached under the live URLs).
+local pick_ptrace_injection = frozen_web_provider("ptrace-injection", "Ptrace Injection (Articles)> ")
 -- Docker docs: the official get-started/reference/best-practices pages plus
 -- softchris's five-part "Learn Docker from the beginning" tutorial.
 local pick_docker = frozen_web_provider("docker", "Docker docs> ")
@@ -3863,6 +3867,7 @@ local WEB_BOOKS = {
 	{ title = "The Modern JavaScript Tutorial (javascript.info)", key = "javascript-info", run = pick_javascript_info },
 	{ title = "Testing Handbook (Trail of Bits, appsec.guide)", key = "testing-handbook", run = pick_testing_handbook },
 	{ title = "LibAFL (Articles)", key = "fuzzing-101-libafl", run = pick_fuzzing_101_libafl },
+	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
 	{ title = "Algorithms for Modern Hardware (Algorithmica)", key = "algorithmica-hpc", run = pick_algorithmica_hpc },
@@ -4101,6 +4106,7 @@ LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "cha
 LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
 LOCATION["docker"] = { index = "docker/index.tsv", unit = "chapter" }
+LOCATION["ptrace-injection"] = { index = "ptrace-injection/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
 LOCATION["writing-an-os-in-rust"] = { index = "writing-an-os-in-rust/index.tsv", unit = "chapter" }
 LOCATION["algorithmica-hpc"] = { index = "algorithmica-hpc/index.tsv", unit = "chapter" }
