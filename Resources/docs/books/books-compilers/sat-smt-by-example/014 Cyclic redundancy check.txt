@@ -1,0 +1,710 @@
+Chapter 13
+
+Cyclic redundancy check
+
+My Untitled collection of math notes1 has a yet another explanation of CRC.
+
+13.1          Hacking CRC64 with KLEE
+All timings are when KLEE 3.0 running on AMD Ryzen 5 3600.
+
+13.1.1        Buffer alteration case #1
+Sometimes, you need to alter a piece of data which is protected by some kind
+of checksum or CRC2 , and you can’t change checksum or CRC value, but can
+alter piece of data so that checksum will remain the same.
+    Let’s pretend, we’ve got a piece of data with “Hello, world!” string at the
+beginning and “and goodbye” string at the end. We can alter 14 characters at
+the middle, but for some reason, they must be in a..z limits, but we can put any
+characters there. CRC64 of the whole block must be 0x12345678abcdef12.
+    Let’s see3 :
+# include <string .h>
+# include <stdint .h>
+
+# include "klee.h"
+
+// CRC -64 - ECMA in https :// en. wikipedia .org/wiki/ Cyclic_redundancy_check
+uint64_t crc64( uint64_t crc , unsigned char *buf , int len)
+{
+    int k;
+
+     crc = ∼crc;
+     while (len --)
+     {
+         crc ^= *buf ++;
+         for (k = 0; k < 8; k++)
+             crc = crc & 1 ? (crc >> 1) ^ 0 xC96C5795D7870F42 : crc >> 1;
+     }
+     return ∼crc;
+}
+
+int main ()
+
+    1 https://xn--mxacd.xn--qxam/math-prog.pdf
+    2 Cyclic redundancy check
+    3 There are several slightly different CRC64 implementations, the one I use here can also be
+
+different from popular ones.
+
+{
+# define HEAD_STR "Hello , world !.. "
+# define HEAD_SIZE strlen ( HEAD_STR )
+# define TAIL_STR " ... and goodbye "
+# define TAIL_SIZE strlen ( TAIL_STR )
+# define MID_SIZE 14 // stuff
+//# define MID_SIZE 13 // ( failed ) stuff
+# define BUF_SIZE HEAD_SIZE + TAIL_SIZE + MID_SIZE
+
+       char buf[ BUF_SIZE ];
+
+            klee_make_symbolic (buf , sizeof buf , "buf");
+
+            klee_assume ( memcmp (buf , HEAD_STR , HEAD_SIZE )==0);
+
+            for (int i=0; i< MID_SIZE ; i++)
+                    klee_assume (buf[ HEAD_SIZE +i]>='a' && buf[ HEAD_SIZE +i]<='z');
+
+            klee_assume ( memcmp (buf+ HEAD_SIZE +MID_SIZE , TAIL_STR , TAIL_SIZE )==0);
+
+            klee_assume (crc64 (0, buf , BUF_SIZE )==0 x12345678abcdef12 );
+}
+
+       We got 3 unit tests, the last one is correct:
+% clang -emit -llvm -c -g -O0 -Xclang -disable -O0 - optnone -I /tmp/ klee_src / include /klee/ klee_CRC64 .c
+
+% time klee --libc= uclibc --optimize klee_CRC64 .bc
+
+...
+
+KLEE: done: total instructions = 17036
+KLEE: done: completed paths = 1
+KLEE: done: partially completed paths = 32
+KLEE: done: generated tests = 3
+
+real     2m47 .538s
+user     2m46 .299s
+sys      0m0 .619s
+
+% ls klee -last /*
+klee -last/ assembly .ll    klee -last/solver - queries .smt2   klee -last/ test000002 . ktest
+klee -last/info             klee -last/ test000001 . kquery     klee -last/ test000002 .user.err
+klee -last/ messages .txt   klee -last/ test000001 . ktest      klee -last/ test000003 . ktest
+klee -last/run. istats      klee -last/ test000001 .user.err    klee -last/ warnings .txt
+klee -last/run. stats       klee -last/ test000002 . kquery
+
+% ktest -tool klee -last/ test000001 . ktest | grep data
+object 0: data: b '\ x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\⤦
+       ↪ x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 '
+
+% ktest -tool klee -last/ test000002 . ktest | grep data
+object 0: data: b'Hello , world !.. aaaaaaaaaaaaaa \x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff '
+
+% ktest -tool klee -last/ test000003 . ktest | grep data
+object 0: data: b'Hello , world !.. xnzhtcktymchxy ... and goodbye '
+
+   Since our code uses memcmp() standard C/C++ function, we need to add
+--libc=uclibc switch, so KLEE will use its own uClibc implementation.
+   Maybe it’s slow, but definitely faster than bruteforce. Indeed, log2 2614 ≈ 65.8
+which is close to 64 bits. In other words, one need ≈ 14 latin characters to encode
+64 bits. And KLEE + SMT solver needs 64 bits at some place it can alter to
+make final CRC64 value equal to what we defined.
+   I tried to reduce length of the middle block to 13 characters: no luck for
+KLEE then, it has no space enough.
+
+13.1.2           Buffer alteration case #2
+I went sadistic: what if the buffer must contain the CRC64 value which, after
+calculation of CRC64, will result in the same value? Fascinatingly, KLEE can
+solve this. The buffer will have the following format:
+Hello , world !..
+<8 bytes (64 - bit value )>
+
+<6 more bytes >
+... and goodbye
+
+Listing 13.1: Diff
+--- klee_CRC64 .c     2023 -12 -03 01:50:06.613088412 +0200
++++ klee_CRC64_v2 .c 2023 -12 -03 01:36:56.673299339 +0200
+@@ -24,8 +24 ,8 @@
+ # define HEAD_SIZE strlen ( HEAD_STR )
+ # define TAIL_STR " ... and goodbye "
+ # define TAIL_SIZE strlen ( TAIL_STR )
+-# define MID_SIZE 14 // stuff
+-//# define MID_SIZE 13 // ( failed ) stuff
++// first 8 bytes is a 64- bit value :
++# define MID_SIZE 14
+ # define BUF_SIZE HEAD_SIZE + TAIL_SIZE + MID_SIZE
+
+    char buf[ BUF_SIZE ];
+@@ -34 ,11 +34 ,10 @@
+
+              klee_assume ( memcmp (buf , HEAD_STR , HEAD_SIZE )==0);
+
+-            for (int i=0; i< MID_SIZE ; i++)
+-                    klee_assume (buf[ HEAD_SIZE +i]>='a' && buf[ HEAD_SIZE +i⤦
+         ↪ ]<='z ');
+-
+              klee_assume ( memcmp (buf+ HEAD_SIZE +MID_SIZE , TAIL_STR , ⤦
+                  ↪ TAIL_SIZE )==0);
+
+-             klee_assume ( crc64 (0, buf , BUF_SIZE )==0 x12345678abcdef12 );
++             uint64_t mid_value =*( uint64_t *)(buf+ HEAD_SIZE );
++
++             klee_assume ( crc64 (0, buf , BUF_SIZE )== mid_value );
+    }
+
+        It works:
+% time klee --libc= uclibc \
+        --optimize klee_CRC64_v2 .bc
+...
+KLEE: done: total instructions = 16901
+KLEE: done: completed paths = 1
+KLEE: done: partially completed paths = 32
+KLEE: done: generated tests = 3
+
+real           2m4 .957s
+user           2m4 .803s
+
+% ls klee -last /*
+klee -last/ assembly .ll
+klee -last/info
+klee -last/ messages .txt
+klee -last/run. istats
+klee -last/run. stats
+klee -last/solver - queries .smt2
+klee -last/ test000001 . kquery
+klee -last/ test000001 . ktest
+
+     klee -last/ test000001 .user.err
+     klee -last/ test000002 . kquery
+     klee -last/ test000002 . ktest
+     klee -last/ test000002 .user.err
+     klee -last/ test000003 . ktest
+     klee -last/ warnings .txt
+
+     % ktest -tool klee -last/ test000003 . ktest | grep data
+     object 0: data: b'Hello , world !.. \r\xc6\x98\x14\x05\⤦
+        ↪ xd2X\xef\xc2 ^\r\x01\x1b\xc9 ... and goodbye '
+
+         8 bytes between two strings is 64-bit value which equals to CRC64 of this
+     whole block itself: 0xef58d2051498c60d. Also, there are 14-8=6 bytes after that
+     64-bit value which seems random, but it’s OK. Again, it’s faster than brute-
+     force way to find it. If to decrease last spare 6-byte buffer to 4 bytes or less,
+     KLEE works so long so I’ve stopped it.
+
+     13.1.3     Recovering input data for given CRC64 value of
+                it
+     I’ve always wanted to do so, but everyone knows this is impossible for input
+     buffers larger than 8 bytes. As my experiments show, it’s still possible for tiny
+     input buffers of data, which is constrained in some way.
+         The CRC64 value of 13-byte “undisciplined” string is known: 0x811265a32d6ac13a.
+     KLEE can find this 13-byte string, if it knows that each byte of input buffer is
+     in a..z limits:
+ 1   ...
+ 2
+ 3   int main ()
+ 4   {
+ 5   # define BUF_SIZE 13
+ 6        char buf[ BUF_SIZE ];
+ 7
+ 8         klee_make_symbolic (buf , sizeof buf , "buf");
+ 9
+10         for (int i=0; i< BUF_SIZE ; i++)
+11             klee_assume (buf[i]>='a' && buf[i]<='z');
+12
+13         klee_assume ( crc64 (0, buf , BUF_SIZE )==0⤦
+              ↪ x811265a32d6ac13a );
+14   }
+
+     % clang -emit -llvm -c -g -O0 -Xclang -disable -O0 - optnone⤦
+         ↪ \
+             -I /tmp/ klee_src / include /klee/ ⤦
+                ↪ klee_CRC64_undisciplined .c
+     ...
+
+     % time klee --libc= uclibc --optimize \
+
+            klee_CRC64_undisciplined .bc
+...
+real       0m13 .948s
+user       0m13 .829s
+...
+
+% ls klee -last /*
+klee -last/ assembly .ll
+klee -last/info
+klee -last/ messages .txt
+klee -last/run. istats
+klee -last/run. stats
+klee -last/solver - queries .smt2
+klee -last/ test000001 . ktest
+klee -last/ warnings .txt
+
+% ktest -tool klee -last/ test000001 . ktest | grep data
+object 0: data: b' undisciplined '
+
+    Still, it’s no magic: if to remove condition at line 30 (i.e., if to relax con-
+straint), KLEE will produce some other string, which will be still correct for the
+CRC64 value given.
+    It works, because 13 Latin characters in a..z limits contain ≈ 61 bits: log2 2613 ≈
+61, which is even smaller value than 64. In other words, the final CRC64 value
+holds enough bits to recover ≈ 61 bits of input.
+    The input buffer can be even bigger, if each byte of it will be in even tighter
+constraints (decimal digits, binary digits, etc).
+
+13.1.4     Finding string that results in CRC64(string)==0
+I always was wondering, how to find a string so that result of CRC64 operation
+will be zero. Again, this string is constrained: each character is in a..z range.
+...
+
+int main ()
+{
+    //# define BUF_SIZE 13 // fail
+    # define BUF_SIZE 14
+
+       char buf[ BUF_SIZE ];
+
+       klee_make_symbolic (buf , sizeof buf , "buf");
+
+       for (int i=0; i< BUF_SIZE ; i++)
+           klee_assume (buf[i]>='a' && buf[i]<='z');
+
+       klee_assume ( crc64 (0, buf , BUF_SIZE )==0);
+}
+
+% ktest -tool klee -last/ test000001 . ktest | grep data
+object 0: data: b' adnwsskbroggni '
+
+   So CRC64("adnwsskbroggni")==0, cool.
+   Buf shorter string (13 character) isn’t possible, alas.
+   Every tool has its limitations, so is KLEE. I couldn’t find such string with
+characters in 0..9 range.
+
+13.2      Now CBMC
+Here I reimplement KLEE examples you already saw above. All timings are
+when KLEE 3.0 running on AMD Ryzen 5 3600.
+   I’m not using klee_assume() calls here, only standard assert()’s.
+# include <stdint .h>
+# include <stdbool .h>
+
+// CRC -64- ECMA in https :// en. wikipedia .org/wiki/⤦
+    ↪ Cyclic_redundancy_check
+uint64_t crc64 ( uint64_t crc , unsigned char *buf , int len)
+{
+    int k;
+
+     crc = ∼crc;
+     while (len --)
+     {
+         crc ^= *buf ++;
+         for (k = 0; k < 8; k++)
+             crc = crc & 1 ? (crc >> 1) ^ 0 xC96C5795D7870F42 : ⤦
+                  ↪ crc >> 1;
+     }
+     return ∼crc;
+}
+
+# define SIZE 13
+
+void main ()
+{
+    char str[SIZE ];
+
+     int i=0;
+     for (i=0; i<SIZE; i++)
+     {
+         if (str[i]<'a')
+              return ;
+         if (str[i]>'z')
+              return ;
+     };
+
+     if (crc64 (0, &str [0] , SIZE)==0 x811265a32d6ac13a )
+         assert (0);
+};
+
+Listing 13.2: Command to run
+% cbmc --trace --function main --z3 CBMC_crc64_find .c
+
+** Results :
+CBMC_crc64_find .c function main
+[main. assertion .1] line 35 assertion 0: FAILURE
+
+Trace for main. assertion .1:
+
+State 21 file CBMC_crc64_find .c function main line 23 ⤦
+   ↪ thread 0
+----------------------------------------------------
+  str ={ 'u', 'n', 'd', 'i', 's', 'c', 'i', 'p', 'l', 'i⤦
+      ↪ ', 'n', 'e', 'd' } ({ 01110101 , 01101110 , ⤦
+      ↪ 01100100 , 01101001 , 01110011 , 01100011 , ⤦
+      ↪ 01101001 , 01110000 , 01101100 , 01101001 , ⤦
+      ↪ 01101110 , 01100101 , 01100100 })
+
+...
+
+Violated property :
+  file CBMC_crc64_find .c function main line 35 thread 0
+  assertion 0
+  ( __CPROVER_bool )0
+
+** 1 of 1 failed (2 iterations )
+VERIFICATION FAILED
+
+   This result coincides with KLEE’s result.
+   Now a string for CRC64(...)==0:
+...
+
+# define SIZE 14
+
+void main ()
+{
+    char str[SIZE ];
+
+      int i=0;
+      for (i=0; i<SIZE; i++)
+      {
+          if (str[i]<'a')
+               return ;
+          if (str[i]>'z')
+               return ;
+      };
+
+      if ( crc64 (0, &str [0] , SIZE)==0)
+           assert (0);
+};
+
+** Results :
+CBMC_crc64_find_2 .c function main
+[main. assertion .1] line 36 assertion 0: FAILURE
+
+Trace for main. assertion .1:
+
+State 11 file CBMC_crc64_find_2 .c function main line 24 ⤦
+   ↪ thread 0
+----------------------------------------------------
+  str ={ 'a', 'd', 'n', 'w', 's', 's', 'k', 'b', 'r', 'o⤦
+      ↪ ', 'g', 'g', 'n', 'i' } ({ 01100001 , 01100100 , ⤦
+      ↪ 01101110 , 01110111 , 01110011 , 01110011 , ⤦
+      ↪ 01101011 , 01100010 , 01110010 , 01101111 , ⤦
+      ↪ 01100111 , 01100111 , 01101110 , 01101001 })
+
+   Now a 16-byte string where each character is a nibble? Or, in other word,
+16-nibble hexadecimal string? Or, in other words, 8-byte hexadecimal string?
+...
+
+# define SIZE 16
+
+int valid_char (char c)
+{
+    if (c >='0' && c<= '9')
+        return 1;
+    if (c >='a' && c<= 'f')
+        return 1;
+    return 0;
+};
+
+void main ()
+{
+    char str[SIZE ];
+
+      int i=0;
+      for (i=0; i<SIZE; i++)
+      {
+          if ( valid_char (str[i]) ==0)
+               return ;
+      };
+
+      if ( crc64 (0, &str [0] , SIZE)==0)
+           assert (0);
+};
+
+** Results :
+CBMC_crc64_find_3 .c function main
+[main. assertion .1] line 45 assertion 0: FAILURE
+
+Trace for main. assertion .1:
+
+State 11 file CBMC_crc64_find_3 .c function main line 35 thread 0
+----------------------------------------------------
+  str ={ '8', '4', '9', '3', 'a', '5', '6', '4', '8', '6', '0', '0', 'c', '4', ⤦
+        ↪ '9', '5' } ({ 00111000 , 00110100 , 00111001 , 00110011 , 01100001 , ⤦
+        ↪ 00110101 , 00110110 , 00110100 , 00111000 , 00110110 , 00110000 , 00110000 , ⤦
+        ↪ 01100011 , 00110100 , 00111001 , 00110101 })
+
+...
+
+Violated property :
+  file CBMC_crc64_find_3 .c function main line 45 thread 0
+  assertion 0
+  0 != 0
+
+** 1 of 1 failed (2 iterations )
+VERIFICATION FAILED
+['cbmc ', '--trace ', '--function ', 'main ', '--z3 ', 'CBMC_crc64_find_3 .c ']
+['/ home/i/ dotfiles /bin/ my_time .py ', 'cbmc ', '--trace ', '--function ', 'main ', '--⤦
+      ↪ z3 ', 'CBMC_crc64_find_3 .c ']
+seconds : 510
+or: 8m30s
+
+   Yes, CRC64("8493a5648600c495")==0, and this is very predictable: we just
+need to find a 64-bit input for CRC64 so that it’s output would be zero. No
+magic here.
+   Again, CBMC can’t find a string consisting only of 0..9 characters, like
+KLEE.
+
+      Thanks to Martin Nyx Brain4 , for help.
+
+13.3            Getting CRC polynomial and other CRC
+                generator parameters
+Sometimes CRC implementations are incompatible with each other: polynomial
+and other parameters can be different. Aside of polynomial, initial state can be
+either 0 or -1, final value can be inverted or not, bits of the final value can be
+reflected (reversed) or not. Input byte can be reflected/reversed before process-
+ing as well. Trying all these parameters by hand to match with someone’s else
+implementation can be a real pain. Also, you can bruteforce 32-bit polynomial,
+but 64-bit polynomials is too much.
+    Deducing all these parameters is surprisingly simple using Z3, just get two
+values for 01 byte and 02, or any other bytes.
+#!/ usr/bin/env python3
+
+from z3 import *
+import struct
+
+# knobs :
+
+# CRC -16 on https :// www. lammertbies .nl/comm/info/crc - calculation .html
+
+    4 https://github.com/diffblue/cbmc/issues/5099
+
+#width =16
+# samples =["\ x01", "\ x02 "]
+# must_be =[0 xC0C1 , 0xC181 ]
+# sample_len =1
+
+# CRC -16 ( Modbus ) on https :// www. lammertbies .nl/comm/info/crc - calculation .html
+#width =16
+# samples =["\ x01", "\ x02 "]
+# must_be =[0 x807E , 0x813E ]
+# sample_len =1
+
+# crc -32 , popular parameters
+width =32
+samples =["\x01", "\x02"]
+must_be =[0 xA505DF1B , 0 x3C0C8EA1 ]
+sample_len =1
+
+# crc64_jones .c (redis ):
+#width =64
+# samples =["\ x01", "\ x02 "]
+# must_be =[0 x7ad870c830358979 , 0 xf5b0e190606b12f2 ]
+# sample_len =1
+
+# crc64_xz .c:
+#width =64
+# samples =["\ x01", "\ x02 "]
+# must_be =[0 xac83edcd67c06036 , 0 xeb299724cc279f02 ]
+# sample_len =1
+
+# http :// www.unit - conversion .info/ texttools /crc/
+#width =32
+# samples =["0" ,"1"]
+# must_be =[0 xf4dbdf21 , 0 x83dcefb7 ]
+# sample_len =1
+
+# recipe -259177 -1. py , CRC -64 - ISO
+#width =64
+# samples =["\ x01", "\ x02 "]
+# must_be =[0 x01B0000000000000 , 0 x0360000000000000 ]
+# sample_len =1
+
+# recipe -259177 -1. py , CRC -64 - ISO
+# many solutions !
+#width =64
+# samples =["\ x01 "]
+# must_be =[0 x01B0000000000000 ]
+# sample_len =1
+
+# crc -32 , popular parameters
+# slower
+#width =32
+# samples =["12" ," ab "]
+# must_be =[0 x4F5344CD , 0 x9E83486D ]
+# sample_len =2
+
+# crc64 ecma 182
+#width =64
+# samples =["\ x01", "\ x02 "]
+# must_be =[0 x42f0e1eba9ea3693 , 0 x85e1c3d753d46d26 ]
+# sample_len =1
+
+# not z3 function (see underscore )
+def LShR_ (x, cnt):
+    return x>>cnt
+
+def bitrev8 (x):
+    x = LShR_(x, 4) | (x << 4)
+    x = LShR_(x & 0xCC , 2) | ((x & 0x33) << 2)
+    x = LShR_(x & 0xAA , 1) | ((x & 0x55) << 1)
+    return x
+
+# these " unoptimized " versions are constructed like a Russian doll ...
+
+def bitrev16_unoptimized (x):
+    return ( bitrev8 (x & 0xff) << 8) | ( bitrev8 (LShR_ (x, 8)))
+
+def bitrev32_unoptimized (x):
+    return ( bitrev16_unoptimized (x & 0 xffff ) << 16) | ( bitrev16_unoptimized ( LShR_ (x, 16)))
+
+def bitrev64_unoptimized (x):
+    # both versions must work:
+    return ( bitrev32_unoptimized (x & 0 xffffffff ) << 32) | bitrev32_unoptimized (LShR_ (x, 32))
+    # return ( bitrev32 (x & 0 xffffffff ) << 32) | bitrev32 (LShR(x, 32))
+
+def bitrev (width , val):
+    if width ==64:
+        return bitrev64_unoptimized (val)
+    if width ==32:
+        return bitrev32_unoptimized (val)
+    if width ==16:
+        return bitrev16_unoptimized (val)
+    raise AssertionError
+
+mask =2** width -1
+poly= BitVec ('poly ', width )
+
+# states [ sample ][0][8] is an initial state
+# ...
+# states [ sample ][i][0] is a state where it was already XORed with input bit
+
+# states [ sample ][i][1] ... where the 1th shift /XOR operation has been done
+# states [ sample ][i][8] ... where the 8th shift /XOR operation has been done
+# ...
+# states [ sample ][ sample_len ][8] - final state
+
+states =[[[ BitVec ('state_ %d_%d_%d' % (sample , i, bit), width ) for bit in range (8+1) ] for i in range ( sample_len +1)]⤦
+        ↪ for sample in range (len( samples ))]
+s= Solver ()
+
+reflect_in =Bool(" reflect_in ")
+
+def invert (val):
+    return ∼val & mask
+
+for sample in range (len( samples )):
+    # initial state can be either zero or -1:
+    s.add(Or( states [ sample ][0][8]== mask , states [ sample ][0][8]==0) )
+
+    # implement basic CRC algorithm
+    for i in range ( sample_len ):
+        x= BitVecVal (ord( samples [ sample ][i]) , width ) # ReflectIn True
+        y= BitVecVal ( bitrev8 (ord( samples [ sample ][i])), width ) # ReflectIn False
+        s.add( states [ sample ][i +1][0] == ( states [ sample ][i][8] ^ If(reflect_in , x, y)))
+
+         for bit in range (8):
+             # LShR () is logical shift , while >> is arithmetical shift , we use the first :
+             s.add( states [ sample ][i+1][ bit +1] == LShR( states [ sample ][i+1][ bit ],1) ^ If( states [ sample ][i+1][ bit⤦
+                     ↪ ]&1==1 , poly , 0))
+
+    # final state must be equal to one of these:
+    s.add(Or(
+    states [ sample ][ sample_len ][8]== must_be [ sample ],
+    states [ sample ][ sample_len ][8]== invert ( must_be [ sample ]) ,
+    states [ sample ][ sample_len ][8]== bitrev (width , must_be [ sample ]) ,
+    states [ sample ][ sample_len ][8]== invert ( bitrev (width , must_be [ sample ]))))
+
+# get all possible results :
+results =[]
+while True:
+    if s. check () == sat:
+         m = s. model ()
+         # what final state was?
+         if m[ states [0][ sample_len ][8]]. as_long () == must_be [0]:
+             outparams =" XORout =0, ReflectOut =True"
+         elif invert (m[ states [0][ sample_len ][8]]. as_long ())== must_be [0]:
+             outparams =" XORout =-1, ReflectOut =True"
+         elif m[ states [0][ sample_len ][8]]. as_long () == bitrev (width , must_be [0]):
+             outparams =" XORout ==0 , ReflectOut =False "
+         elif invert (m[ states [0][ sample_len ][8]]. as_long ())== bitrev (width , must_be [0]):
+             outparams =" XORout =-1, ReflectOut =False "
+         else:
+             raise AssertionError
+
+         print ("poly =0x%x, init =0x%x, ReflectIn =%s, %s" % (m[poly ]. as_long () , m[ states [0][0][8]]. as_long () , str(m⤦
+                ↪ [ reflect_in ]) , outparams ))
+
+        results . append (m)
+        block = []
+        for d in m:
+            c=d()
+            block . append (c != m[d])
+        s.add(Or(block ))
+    else:
+        print (" total results ", len( results ))
+        break
+
+     This is for CRC-16 (Modbus):
+poly =0 xa001 , init =0 xffff , ReflectIn =True , XORout =0, ReflectOut =True
+
+   Sometimes, we have no enough information, but still can get something.
+This is for CRC-16:
+poly =0 x96bc , init =0x0 ,                ReflectIn =True , XORout =-1, ReflectOut =True
+poly =0 x7cfc , init =0x0 ,                ReflectIn =False , XORout =-1, ReflectOut = False
+poly =0 x5814 , init =0x0 ,                ReflectIn =True , XORout =-1, ReflectOut =True
+poly =0 x6182 , init =0x0 ,                ReflectIn =True , XORout =-1, ReflectOut =True
+poly =0 xa287 , init =0x0 ,                ReflectIn =True , XORout =-1, ReflectOut =True
+poly =0 x726b , init =0x0 ,                ReflectIn =True , XORout =-1, ReflectOut =True
+poly =0 x41c1 , init =0x0 ,                ReflectIn =True , XORout =-1, ReflectOut =True
+poly =0 xe83d , init =0x0 ,                ReflectIn =True , XORout =-1, ReflectOut =True
+poly =0 xa001 , init =0x0 ,                ReflectIn =True , XORout =0, ReflectOut =True
+total results 9
+
+     One of these results is correct (last).
+     We can get something even if we have only one result for one input byte:
+
+# recipe -259177 -1. py , CRC -64 - ISO
+# many solutions !
+width =64
+samples =["\x01"]
+must_be =[0 x01B0000000000000 ]
+sample_len =1
+
+poly =0 xd800000000000000 , init =0x0 , ReflectIn =True , XORout =0, ReflectOut =True
+poly =0 xfe4fffffffffffff , init =0x0 , ReflectIn =False , XORout =-1, ReflectOut =True
+poly =0 xfffffffffffff27f , init =0x0 , ReflectIn =False , XORout =-1, ReflectOut = False
+poly =0 xd80 , init =0x0 , ReflectIn =False , XORout ==0 , ReflectOut = False
+poly =0 x1b0000000000000 , init =0x0 , ReflectIn =False , XORout =0, ReflectOut =True
+poly =0 xa7ffffffffffffbf , init =0 xffffffffffffffff , ReflectIn =False , XORout =0, ReflectOut =True
+poly =0 x6c000 , init =0x0 , ReflectIn =True , XORout ==0 , ReflectOut = False
+poly =0 xb40b40b40b4816 , init =0 xffffffffffffffff , ReflectIn =True , XORout ==0 , ReflectOut = False
+poly =0 xe73cf3cf3cf3cf3c , init =0 xffffffffffffffff , ReflectIn =False , XORout =-1, ReflectOut =True
+poly =0 x53ffffffffffffff , init =0 xffffffffffffffff , ReflectIn =True , XORout =0, ReflectOut =True
+poly =0 x7ffffffffff93fbf , init =0 xffffffffffffffff , ReflectIn =False , XORout ==0 , ReflectOut = False
+poly =0 xcc2055dc9e9bc60f , init =0 xffffffffffffffff , ReflectIn =False , XORout =-1, ReflectOut =True
+poly =0 x3ffffffffffc9fff , init =0 xffffffffffffffff , ReflectIn =True , XORout ==0 , ReflectOut = False
+poly =0 x9fd82e25acc7fcf3 , init =0 xffffffffffffffff , ReflectIn =False , XORout =-1, ReflectOut = False
+poly =0 x367a57106cf7678 , init =0 xffffffffffffffff , ReflectIn =False , XORout ==0 , ReflectOut = False
+poly =0 x92492492492e924 , init =0 xffffffffffffffff , ReflectIn =True , XORout ==0 , ReflectOut = False
+poly =0 x1d24924924924924 , init =0 xffffffffffffffff , ReflectIn =True , XORout =0, ReflectOut =True
+poly =0 x31ba , init =0x0 , ReflectIn =True , XORout ==0 , ReflectOut = False
+poly =0 x153225b1d0d61af , init =0 xffffffffffffffff , ReflectIn =False , XORout ==0 , ReflectOut = False
+poly =0 x461861861861861 , init =0 xffffffffffffffff , ReflectIn =True , XORout =0, ReflectOut =True
+poly =0 x30c30c30c30f861 , init =0 xffffffffffffffff , ReflectIn =True , XORout ==0 , ReflectOut = False
+total results 21
+
+   (The first result is correct.)
+   The files: https://smt.st/current_tree/CRC/cracker.
+   The shortcoming: longer samples slows down everything significantly. I had
+luck with samples up to 4 bytes, but not larger.
+   Further reading I’ve found interesting/helpful:
+
+     • http://www.cosc.canterbury.ac.nz/greg.ewing/essays/CRC-Reverse-Engineering.
+       html
+
+     • http://reveng.sourceforge.net/crc-catalogue/1-15.htm
+     • http://reveng.sourceforge.net/crc-catalogue/16.htm
+     • http://reveng.sourceforge.net/crc-catalogue/17plus.htm
+
+13.4            In comparison with other hashing algo-
+                rithms
+Things are that easy for some other hashing algorithms like Fletcher check-
+sum, but not for cryptographically secure ones (like MD5, SHA1, etc), they are
+protected from such simple cryptoanalysis. See also: 19.
+

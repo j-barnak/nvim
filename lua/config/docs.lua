@@ -3335,6 +3335,7 @@ local BOOKS = {
 		{ title = "Introduction to Static Analysis", fmt = "pdf", file = "Introduction to Static Analysis_ An Abstract Interpretation -- Xavier Rival & Kwangkeun Yi -- MIT Press, Cambridge, Massachusetts, 2020 -- The MIT -- 9780262043410 -- ba89612250e3eb6bad9461c789c1b5fe -- Anna’s Arch.pdf" },
 		{ title = "Modern Compiler Implementation in C", fmt = "pdf", slug = "modern-compiler-implementation-in-c", file = "Modern Compiler Implementation in C -- Andrew W. Appel.pdf" },
 		{ title = "Essentials of Compilation (Python)", fmt = "pdf", slug = "essentials-of-compilation", file = "book.pdf" },
+		{ title = "SAT/SMT by Example (Yurichev)", fmt = "pdf", slug = "sat-smt-by-example", file = "SAT_SMT_by_example.pdf" },
 	} },
 	{ module = "Containers", key = "books-container", items = {
 		{ title = "Build Your Own Docker (CodeCrafters)", fmt = "md", slug = "build-your-own-docker", file = "https://github.com/codecrafters-io/build-your-own-docker" },

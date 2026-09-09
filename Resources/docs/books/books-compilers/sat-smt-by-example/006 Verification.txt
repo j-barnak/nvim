@@ -1,0 +1,2045 @@
+Chapter 5
+
+Verification
+
+5.1 Integer overflow
+This is a classic bug:
+void allocate_data_for_some_chunks (int num)
+{
+# define MAX_CHUNKS 10
+
+      if (num > MAX_CHUNKS )
+          // throw error
+
+      void* chunks = malloc (num* sizeof (CHUNK ));
+
+      ...
+};
+
+    Seems innocent? However, if a (remote) attacker can put a negative value
+into num, no exception is to be thrown, and malloc() will crash on too big
+input value, because malloc() takes unsigned size_t on input. unsigned int
+should be used instead of int for num, but many programmers use int as a
+generic type for everything.
+
+5.1.1     Signed addition
+First, let’s start with addition. a + b also seems innocent, but it is producing
+incorrect result if a sum doesn’t fit into 32/64-bit register.
+   This is what we will do: evaluate an expression on two ALU1 s: 32-bit one
+and 64-bit one:
+  1 Arithmetic logic unit
+
+   In other words, you want your expression to be evaluated on both ALUs
+correctly, for all possible inputs, right? Like if the result of 32-bit ALU is
+always fit into 32-bit register.
+   And now we can ask Z3 SMT solver to find such an a/b inputs, for which
+the final comparison will fail.
+   Needless to say, the default operations (+, -, comparisons, etc) in Z3’s
+Python API are signed, you can see this here2 .
+   Also, we can find the lower bound, or minimal possible inputs, using minimize():
+#!/ usr/bin/env python3
+from z3 import *
+
+def func(a,b):
+    return a+b
+
+a32 , b32 , out32 = BitVecs ('a32 b32 out32 ', 32)
+out32_extended = BitVec ('out32_extended ', 64)
+a64 , b64 , out64 = BitVecs ('a64 b64 out64 ', 64)
+
+s= Optimize ()
+
+s.add(out32 == func(a32 , b32))
+s.add(out64 == func(a64 , b64))
+
+s.add(a64 == SignExt (32, a32))
+s.add(b64 == SignExt (32, b32))
+s.add( out32_extended == SignExt (32 , out32 ))
+s.add(out64 != out32_extended )
+
+s. minimize (a32)
+s. minimize (b32)
+
+if s. check ()== unsat :
+     print ("unsat: everything is OK")
+     exit (0)
+m=s. model ()
+
+# from https :// stackoverflow .com/ questions /1375897/ how -to -get -⤦
+    ↪ the -signed -integer -value -of -a-long -in - python
+def toSigned32 (n):
+    n = n & 0 xffffffff
+    return n | (-(n & 0 x80000000 ))
+
+def toSigned64 (n):
+  2 https://github.com/Z3Prover/z3/blob/master/src/api/python/z3/z3.py
+
+     n = n & 0 xffffffffffffffff
+     return n | (-(n & 0 x8000000000000000 ))
+
+_a32=m[a32 ]. as_long ()
+_b32=m[b32 ]. as_long ()
+_out32 =m[ out32 ]. as_long ()
+print ("a32 =0x%x or %d" % (_a32 , toSigned32 (_a32)))
+print ("b32 =0x%x or %d" % (_b32 , toSigned32 (_b32)))
+print ("out32 =0x%x or %d" % (_out32 , toSigned32 ( _out32 )))
+
+_out32_extended =m[out32 ]. as_long ()
+print (" out32_extended =0x%x or %d" % ( _out32_extended , ⤦
+    ↪ toSigned64 ( _out32_extended )))
+
+_a64=m[a64 ]. as_long ()
+_b64=m[b64 ]. as_long ()
+_out64 =m[ out64 ]. as_long ()
+print ("a64 =0x%x or %d" % (_a64 , toSigned64 (_a64)))
+print ("b64 =0x%x or %d" % (_b64 , toSigned64 (_b64)))
+print ("out64 =0x%x or %d" % (_out64 , toSigned64 ( _out64 )))
+
+a32 =0 x1 or 1
+b32 =0 x7fffffff or 2147483647
+out32 =0 x80000000 or -2147483648
+out32_extended =0 xffffffff80000000 or -2147483648
+a64 =0 x1 or 1
+b64 =0 x7fffffff or 2147483647
+out64 =0 x80000000 or 2147483648
+
+    Right, 1+0x7fffffff = 0x80000000. But the 0x80000000 value is negative
+already, because MSB3 is 1. However, add this on 64-bit ALU and the result
+will fit in 64-bit register.
+    How would we fix this problem? We can devise a special function with
+wrapped addition:
+/* Returns : a + b */
+
+/* Effects : aborts if a + b overflows */
+
+COMPILER_RT_ABI si_int
+__addvsi3 ( si_int a, si_int b)
+{
+    si_int s = ( su_int ) a + ( su_int ) b;
+    if (b >= 0)
+    {
+         if (s < a)
+              compilerrt_abort ();
+    }
+    else
+    {
+  3 Most Significant Bit
+
+              if (s >= a)
+                  compilerrt_abort ();
+       }
+       return s;
+}
+
+   ( https://github.com/llvm-mirror/compiler-rt/blob/master/lib/builtins/
+addvsi3.c )
+   Now I can simulate this function using Z3Py. I’m telling it: “find a solution,
+where this expression will be false”:
+s.add(Not(If(b32 >=0 , a32+b32 <a32 , a32+b32 >a32)))
+
+    And it gives unsat, meaning, there is no counterexample, so the expression
+can be evaluated safely on both ALUs.
+    But is there a bug in my statement? Let’s check. Find inputs for which this
+piece of LLVM code will call compilerrt_abort():
+s.add(If(b32 >=0 , a32+b32 <a32 , a32+b32 >a32))
+
+a32 =0 x1 or 1
+b32 =0 x7fffffff or 2147483647
+out32 =0 x80000000 or -2147483648
+out32_extended =0 xffffffff80000000 or -2147483648
+a64 =0 x1 or 1
+b64 =0 x7fffffff or 2147483647
+out64 =0 x80000000 or 2147483648
+
+   Safe implementations of other operations: https://wiki.sei.cmu.edu/
+confluence/display/java/NUM00-J.+Detect+or+prevent+integer+overflow.
+A popular library: https://github.com/dcleblanc/SafeInt.
+
+5.1.2       Arithmetic mean
+Another classic bug. This is the famous bug in binary search algorithms 4 . The
+bug itself not in binary search algorithm, but in calculating arithmetic mean:
+def func(a,b):
+    return (a+b)/2
+
+a32 =0 x1 or 1
+b32 =0 x7fffffff or 2147483647
+out32 =0 xc0000000 or -1073741824
+out32_extended =0 xffffffffc0000000 or -1073741824
+a64 =0 x1 or 1
+b64 =0 x7fffffff or 2147483647
+out64 =0 x40000000 or 1073741824
+
+   We can fix this function using a seemingly esoteric Dietz formula, used to
+do the same, but without integer overflow:
+    4 See: 1, 2, also, see the “Beautiful Code” book (2007), Chapter 7, That Pesky Binary Search.
+
+def func(a,b):
+    return ((a^b) >>1) + (a&b)
+
+   ( Its internal workings is described here: 4.3 )
+   Z3 gives unsat for this function, because it can’t find counterexample.
+
+5.1.3    Allocate memory for some chunks
+Let’s return to the allocate_data_for_some_chunks() function at the begin-
+ning of this section.
+#!/ usr/bin/env python3
+from z3 import *
+
+def func(a):
+    return a*1024
+
+a32 , out32 = BitVecs ('a32 out32 ', 32)
+out32_extended = BitVec ('out32_extended ', 64)
+a64 , out64 = BitVecs ('a64 out64 ', 64)
+
+#s= Solver ()
+s= Optimize ()
+
+s.add(out32 == func(a32))
+s.add(out64 == func(a64))
+
+s.add(a64 == SignExt (32, a32))
+s.add( out32_extended == SignExt (32 , out32 ))
+s.add(out64 != out32_extended )
+
+s. minimize (a32)
+
+if s. check ()== unsat :
+     print ("unsat: everything is OK")
+     exit (0)
+m=s. model ()
+
+# from https :// stackoverflow .com/ questions /1375897/ how -to -get -⤦
+    ↪ the -signed -integer -value -of -a-long -in - python
+def toSigned32 (n):
+    n = n & 0 xffffffff
+    return n | (-(n & 0 x80000000 ))
+
+def toSigned64 (n):
+    n = n & 0 xffffffffffffffff
+    return n | (-(n & 0 x8000000000000000 ))
+
+_a32=m[a32 ]. as_long ()
+_out32 =m[ out32 ]. as_long ()
+print ("a32 =0x%x or %d" % (_a32 , toSigned32 (_a32)))
+print ("out32 =0x%x or %d" % (_out32 , toSigned32 ( _out32 )))
+
+_out32_extended =m[out32 ]. as_long ()
+print (" out32_extended =0x%x or %d" % ( _out32_extended , ⤦
+    ↪ toSigned64 ( _out32_extended )))
+
+_a64=m[a64 ]. as_long ()
+_out64 =m[ out64 ]. as_long ()
+print ("a64 =0x%x or %d" % (_a64 , toSigned64 (_a64)))
+print ("out64 =0x%x or %d" % (_out64 , toSigned64 ( _out64 )))
+
+   For which a values will fail the a*1024 expression? This is a smallest a
+input:
+a32 =0 x200000 or 2097152
+out32 =0 x80000000 or -2147483648
+out32_extended =0 xffffffff80000000 or -2147483648
+a64 =0 x200000 or 2097152
+out64 =0 x80000000 or 2147483648
+
+   OK, let’s pretend we inserted a assert (a<100) before malloc() call:
+s.add(a32 <100)
+
+a32 =0 x80000000 or -2147483648
+out32 =0 x0 or 0
+out32_extended =0 x0 or 0
+a64 =0 xffffffff80000000 or -2147483648
+out64 =0 xfffffe0000000000 or -2199023255552
+
+     Still, an attacker can pass a negative a = −2147483648, and malloc() will
+fail.
+     Let’s pretend, we added a assert (a>0) before calling malloc():
+s.add(a32 >0)
+
+    Now Z3 can’t find any counterexample.
+    Some people say you should use functions like reallocarray() to be pro-
+tected from integer overflows:
+http://lteo.net/blog/2014/10/28/reallocarray-in-openbsd-integer-overflow-detection-for-fre
+
+5.1.4    abs()
+Also seemingly innocent function:
+def func(a):
+    return If(a<0, -a, a)
+
+a32 =0 x80000000 or -2147483648
+out32 =0 x80000000 or -2147483648
+out32_extended =0 xffffffff80000000 or -2147483648
+a64 =0 xffffffff80000000 or -2147483648
+out64 =0 x80000000 or 2147483648
+
+   This is an artifact of two’s complement system. This is INT_MIN, and
+-INT_MIN == INT_MIN. It can lead to nasty bugs, and classic one is a naive
+implementations of itoa() or printf().
+   Take a look at this implementation of itoa() function from [Brian W.
+Kernighan, Dennis M. Ritchie, The C Programming Language, 2ed, (1988)]:
+void itoa(int n, char s[])
+{
+    int i, sign;
+    if (( sign = n) < 0) /* record sign */
+        n = -n; /* make n positive */
+    i = 0;
+    do { /* generate digits in reverse order */
+        s[i++] = n % 10 + '0'; /* get next digit */
+    } while ((n /= 10) > 0); /* delete it */
+    if (sign < 0)
+        s[i++] = '-';
+    s[i] = '\0 ';
+    strrev (s);
+}
+
+   ( The full source code: https://smt.st/current_tree/verif/int_over/
+itoa_KR.c )
+   From [Brian W. Kernighan, Dennis M. Ritchie, The C Programming Lan-
+guage, 2ed, (1988)]:
+
+           Exercise 3-4. In a two’s complement number representation,
+        our version of itoa does not handle the largest negative number,
+        that is, the value of n equal to −(2wordsize−1 ). Explain why not.
+        Modify it to print that value correctly, regardless of the machine
+        on which it runs.
+
+   The correct answer is: the function cannot process largest negative number
+(INT_MIN or 0x80000000 or -2147483648) correctly.
+   So, suppose, you print a signed value. And you write something like:
+if (input <0)
+{
+    input =- input ;
+    printf ("-"); // print leading minus
+};
+
+// print digits in ( positive ) input :
+...
+
+   If a INT_MIN value (0x80000000) is passed, minus sign is printed, but the
+input variable still contain negative value. An additional check for INT_MIN is
+to be added to fix this.
+
+    This is also called undefined behaviour in C/C++. The problem is that C
+language itself is old enough to be a witness of old iron – computers which could
+represent signed numbers in other ways than two’s complement representation:
+ttps://en.wikipedia.org/wiki/Signed_number_representations.
+    For this reason, C standard doesn’t guarantee that −1 will be 0xffffffff
+(all bits set) on 32-bit registers, because the standard can’t guarantee you will
+run on a hardware with two’s complement representation of signed numbers.
+    However, almost all hardware you can currently use and buy uses two’s
+complement.
+    More about the abs() problem:
+This can become a security issue . I have seen one instance in the vasprintf
+implementation of libiberty , which is part of gcc , binutils and some other GNU
+software . vasprintf walks over the format string and tries to estimate how much
+space it will need to hold the formatted result string . In format strings ,
+there is a construct %.*s or %*s, which means that the actual value should be
+taken from the stack . The libiberty code did it like this:
+
+          if (*p == '*')
+            {
+              ++p;
+              total_width += abs ( va_arg (ap , int));
+            }
+
+This is actually two issues in one. The first issue is that total_width can
+overflow . The second issue is the one that is interesting in this context : abs
+can return a negative number , causing the code to allocate not enough space and
+thus cause a buffer overflow .
+
+( http://www.fefe.de/intof.html )
+
+5.1.5    Games
+A lot of video games are prone to integer overflow. Which are exploited ac-
+tively by gamers. As of NetHack: https://nethackwiki.com/wiki/Integer_
+overflow, https://nethackwiki.com/wiki/Negative_gold.
+
+5.1.6    Year 2038
+And of course, the number of seconds since the year 1970 wouldn’t fit in 32-bit
+variable after 2038.
+
+5.1.7    Summary
+What we did here, is we checked, if a result of an expression can fit in 32-bit
+register. Probably, you can use a narrower second ALU, than a 64-bit one.
+
+5.1.8    Further work
+If you want to catch overflows on unsigned variables, use unsigned Z3 operations
+instead of signed, and do zero extend instead of sign extend.
+
+5.1.9    Some discussion
+https://news.ycombinator.com/item?id=18521769
+
+5.1.10     Further reading
+   • Understanding Integer Overflow in C/C++.
+   • Modular Bug-finding for Integer Overflows in the Large: Sound, Efficient,
+     Bit-precise Static Analysis.
+   • blexim – Basic Integer Overflows5
+   • C32SAT.
+
+5.2 Formal verification of population count func-
+    tions using CBMC
+This time we’ll prove equivalence of several 64-bit functions, a case when brute-
+force isn’t feasible.
+    The population count function is the function that counts number of 1 bits
+in the input word, AKA Hamming weight.
+    Many of them I’ve copypasted from the Wikipedia article6 about this func-
+tion and from the chessprogramming.org website7 .
+    See also John Regehr’s blog post8 about it.
+    These hackish functions are very arcane, hard to understand and therefore
+are highly prone to (unnoticed) typos.
+    I run CBMC and SMT solvers on my ancient Intel Core 2 Duo T9600 clocked
+at 2.13GHz.
+
+5.2.1    CBMC
+So far, CBMC can prove this easily:
+// time cbmc --trace --function check 1.c
+
+int popcount64a ( uint64_t x)
+{
+    x = (x & m1 ) + ((x >> 1) & m1 );
+    x = (x & m2 ) + ((x >> 2) & m2 );
+    x = (x & m4 ) + ((x >> 4) & m4 );
+    x = (x & m8 ) + ((x >> 8) & m8 );
+    x = (x & m16) + ((x >> 16) & m16);
+    x = (x & m32) + ((x >> 32) & m32);
+    return x;
+}
+
+int popcount64b ( uint64_t x)
+{
+    x -= (x >> 1) & m1;
+    x = (x & m2) + ((x >> 2) & m2);
+  5 http://phrack.org/issues/60/10.html
+  6 https://en.wikipedia.org/wiki/Hamming_weight
+  7 https://www.chessprogramming.org/Population_Count
+  8 https://blog.regehr.org/archives/1667
+
+     x = (x + (x >> 4)) & m4;
+     x += x >> 8;
+     x += x >> 16;
+     x += x >> 32;
+     return x & 0x7f;
+}
+
+int popcount64c ( uint64_t x)
+{
+    x -= (x >> 1) & m1;
+    x = (x & m2) + ((x >> 2) & m2);
+    x = (x + (x >> 4)) & m4;
+    return (x * h01) >> 56;
+}
+
+int popcount64_naive ( uint64_t x)
+{
+    uint64_t rt=0, i;
+    for (i=0; i <64; i++)
+        rt=rt +((x>>i)&1);
+    return rt;
+}
+
+void check ( uint64_t c)
+{
+    assert ( popcount64a (c)== popcount64b (c));
+    // etc
+};
+
+   These functions maybe quite naive, but I’ve been interested how CBMC
+handles arrays:
+int popcount64_table ( uint64_t x)
+{
+    uint64_t tbl [16]={0 ,1 ,1 ,2 ,1 ,2 ,2 ,3 ,1 ,2 ,2 ,3 ,2 ,3 ,3 ,4};
+
+     uint64_t rt =0;
+
+     rt=rt+tbl [(x > >(0*4))&0 xf ];
+     rt=rt+tbl [(x > >(1*4))&0 xf ];
+     ...
+     rt=rt+tbl [(x > >(14*4))&0 xf ];
+     rt=rt+tbl [(x > >(15*4))&0 xf ];
+
+     return rt;
+}
+
+int popcount64_table2 ( uint64_t x)
+{
+    uint64_t tbl [256]={
+
+           0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2,
+           3, 3, 4, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3,
+           3, 4, 3, 4, 4, 5, 1, 2, 2, 3, 2, 3, 3,
+           4, 2, 3, 3, 4, 3, 4, 4, 5, 2, 3, 3, 4,
+           3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
+           ...
+           2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4,
+           5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5,
+           5, 6, 5, 6, 6, 7, 3, 4, 4, 5, 4, 5, 5,
+           6, 4, 5, 5, 6, 5, 6, 6, 7, 4, 5, 5, 6,
+           5, 6, 6, 7, 5, 6, 6, 7, 6, 7, 7, 8};
+
+      uint64_t rt =0;
+
+      rt=rt+tbl [(x > >(0*8))&0 xff ];
+      rt=rt+tbl [(x > >(1*8))&0 xff ];
+      ...
+      rt=rt+tbl [(x > >(6*8))&0 xff ];
+      rt=rt+tbl [(x > >(7*8))&0 xff ];
+
+      return rt;
+}
+
+    Things gets a bit harder with a function copypasted from a well-known
+HAKMEM. It takes 160 seconds to get job done, despite the somewhat hard
+(for SAT/SMT solvers) division/remainder function with the odd divisor (63):
+int hakmem169_32 ( uint32_t x)
+{
+   x = x - ((x >> 1) & 033333333333)
+          - ((x >> 2) & 011111111111) ;
+   x = (x + (x >> 3)) & 030707070707 ;
+   return x % 63; /* casting out 63 */
+}
+
+int hakmem169_64 ( uint64_t x)
+{
+        return hakmem169_32 (x > >32) + hakmem169_32 (x&0⤦
+           ↪ xffffffff );
+};
+
+    Things gets harder on another arcane function attributed to B.Kernighan:
+int popcount64d ( uint64_t x)
+{
+    int count ;
+    for ( count =0; x; count ++)
+        x &= x - 1; // x = x & (x -1)
+    return count ;
+}
+
+    CBMC stuck in seemingly infinite ”unwinding loop”:
+
+CBMC version 5.10 (cbmc -5.10) 64- bit x86_64 linux
+Parsing 1.c
+Converting
+Type - checking 1
+Generating GOTO Program
+Adding CPROVER library ( x86_64 )
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Running with 8 object bits , 56 offset bits ( default )
+Starting Bounded Model Checking
+Unwinding loop popcount64d .0 iteration 1 file 1.c line 50 function popcount64d thread 0
+Unwinding loop popcount64d .0 iteration 2 file 1.c line 50 function popcount64d thread 0
+Unwinding loop popcount64d .0 iteration 3 file 1.c line 50 function popcount64d thread 0
+Unwinding loop popcount64d .0 iteration 4 file 1.c line 50 function popcount64d thread 0
+Unwinding loop popcount64d .0 iteration 5 file 1.c line 50 function popcount64d thread 0
+Unwinding loop popcount64d .0 iteration 6 file 1.c line 50 function popcount64d thread 0
+Unwinding loop popcount64d .0 iteration 7 file 1.c line 50 function popcount64d thread 0
+Unwinding loop popcount64d .0 iteration 8 file 1.c line 50 function popcount64d thread 0
+Unwinding loop popcount64d .0 iteration 9 file 1.c line 50 function popcount64d thread 0
+Unwinding loop popcount64d .0 iteration 10 file 1.c line 50 function popcount64d thread 0
+
+...
+
+Unwinding   loop   popcount64d .0   iteration   1584   file   1.c line   50   function   popcount64d   thread   0
+Unwinding   loop   popcount64d .0   iteration   1585   file   1.c line   50   function   popcount64d   thread   0
+Unwinding   loop   popcount64d .0   iteration   1586   file   1.c line   50   function   popcount64d   thread   0
+Unwinding   loop   popcount64d .0   iteration   1587   file   1.c line   50   function   popcount64d   thread   0
+Unwinding   loop   popcount64d .0   iteration   1588   file   1.c line   50   function   popcount64d   thread   0
+
+...
+
+etc
+
+      I couldn’t wait it for finish, so I’ve interrupted.
+      So I tried to help CBMC by manually limiting the upper bound of the loop:
+int popcount64d_my ( uint64_t x)
+{
+    int count ;
+    for ( count =0; count <64 && x; count ++)
+        x &= x - 1;
+    return count ;
+}
+
+CBMC version 5.10 (cbmc -5.10) 64- bit x86_64 linux
+Parsing 1.c
+Converting
+Type - checking 1
+Generating GOTO Program
+Adding CPROVER library ( x86_64 )
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Running with 8 object bits , 56 offset bits ( default )
+Starting Bounded Model Checking
+Unwinding loop popcount64d_my .0 iteration 1 file 1.c line 58 function popcount64d_my thread 0
+Unwinding loop popcount64d_my .0 iteration 2 file 1.c line 58 function popcount64d_my thread 0
+
+...
+
+Unwinding loop popcount64d_my .0 iteration 63 file 1.c line 58 function popcount64d_my thread 0
+Unwinding loop popcount64d_my .0 iteration 64 file 1.c line 58 function popcount64d_my thread 0
+size of program expression : 517 steps
+simple slicing removed 2 assignments
+Generated 1 VCC(s), 1 remaining after simplification
+Passing problem to propositional reduction
+converting SSA
+Running propositional reduction
+Post - processing
+Solving with MiniSAT 2.2.1 with simplifier
+17496 variables , 66127 clauses
+
+      And it takes 42 minutes on my venerable notebook to verify this function.
+      I also tried to unroll the loop manually:
+int popcount64d_unrolled ( uint64_t x)
+{
+    int count =0;
+    if (x) {x &= x -1; count ++;}; if (x) {x &= x -1; count⤦
+       ↪ ++;}; if (x) {x &= x -1; count ++;}; if (x) {x &= ⤦
+       ↪ x -1; count ++;};
+
+        if (x) {x &= x -1; count ++;}; if (x) {x &= x -1; count⤦
+           ↪ ++;}; if (x) {x &= x -1; count ++;}; if (x) {x &= ⤦
+           ↪ x -1; count ++;};
+
+        ...
+
+        if (x) {x &= x -1; count ++;}; if (x) {x &= x -1; count⤦
+           ↪ ++;}; if (x) {x &= x -1; count ++;}; if (x) {x &= ⤦
+           ↪ x -1; count ++;};
+        if (x) {x &= x -1; count ++;}; if (x) {x &= x -1; count⤦
+           ↪ ++;}; if (x) {x &= x -1; count ++;}; if (x) {x &= ⤦
+           ↪ x -1; count ++;};
+
+        // be sure x==0 upon the function exit ...
+        assert (x==0);
+        return count ;
+}
+
+    Now it takes only 16 minutes. Please note the assert() upon the function
+exit. Yes, ”x” must be ”zeroed” upon the exit for obvious reasons. However,
+CBMC would prove that the assert() will never throw.
+    What if I comment one ”if (x)...” line with 4 if’s?
+SAT checker : instance is SATISFIABLE
+Runtime decision procedure : 73.0928 s
+
+** Results :
+[ popcount64d_unrolled . assertion .1] assertion x==0: FAILURE
+[check . assertion .1] assertion popcount64d_unrolled (c)== popcount64a (c): FAILURE
+
+Trace for popcount64d_unrolled . assertion .1:
+
+State 24 file 1.c line 164 thread 0
+----------------------------------------------------
+  INPUT c: 18446743244780863487 ul (11111111 11111111 11111111 00111110 11111111 11111111 11111111 11111111)
+
+State 27 file 1.c line 164 thread 0
+----------------------------------------------------
+  c =18446743244780863487 ul (11111111 11111111 11111111 00111110 11111111 11111111 11111111 11111111)
+
+State 31 file 1.c line 166 function check thread 0
+----------------------------------------------------
+  x =18446743244780863487 ul (11111111 11111111 11111111 00111110 11111111 11111111 11111111 11111111)
+
+...
+
+   You see – the ”x” variable is almost ”filled” with 1’s. Yes, our modified
+function (with 4 of if’s removed) will run incorrectly when ”x” has 0-3 zero bits.
+   Also, SAT solver gave ”SATISFIABLE”, meaning, it found a counterexample.
+Otherwise, it would say ”UNSATISFIABLE”.
+
+Exporting to SMT-LIB 2.x format
+... is possible.
+     As stated in CBMC’s manual:
+
+               CBMC for SMT-LIB Version 2
+               We also provide a version of CBMC with prototypical sup-
+            port for generating formulas in the SMT-LIB version 2 format.
+            Use the command line options
+
+               –smt2 –outfile dest
+               to write the verification conditions in SMT-LIB version 2
+            format into the file dest. The CBMC manual is here.
+
+     ( https://www.cprover.org/SMT-LIB-LSM/ )
+cbmc --smt2 --outfile dest.smt --trace --function check 1.c
+
+     You can get an idea what CBMC passes to a SMT solver in each case:
+; SMT 2
+(set -info : source " Generated by CBMC 5.10 (cbmc -5.10) ")
+(set - option :produce - models true)
+(set -logic QF_AUFBV )
+
+; set_to true ( equal )
+(define -fun | __CPROVER_dead_object #1| () (_ BitVec 64) (_ bv0 64))
+
+; set_to true ( equal )
+(define -fun | __CPROVER_deallocated #1| () (_ BitVec 64) (_ bv0 64))
+
+; set_to true ( equal )
+(define -fun | __CPROVER_malloc_is_new_array #1| () Bool false )
+
+; set_to true ( equal )
+(define -fun | __CPROVER_malloc_object #1| () (_ BitVec 64) (_ bv0 64))
+
+; set_to true ( equal )
+(define -fun | __CPROVER_malloc_size #1| () (_ BitVec 64) (_ bv0 64))
+
+; set_to true ( equal )
+(define -fun | __CPROVER_memory_leak #1| () (_ BitVec 64) (_ bv0 64))
+
+; set_to true ( equal )
+(define -fun | __CPROVER_next_thread_id #1| () (_ BitVec 64) (_ bv0 64))
+
+; set_to true ( equal )
+(define -fun | __CPROVER_pipe_count #1| () (_ BitVec 32) (_ bv0 32))
+
+; set_to true ( equal )
+(define -fun | __CPROVER_rounding_mode !0#1| () (_ BitVec 32) (_ bv0 32))
+
+; set_to true ( equal )
+(define -fun | __CPROVER_thread_id !0#1| () (_ BitVec 64) (_ bv0 64))
+
+; the following is a substitute for lambda i. x
+(declare -fun array_of .0 () ( Array (_ BitVec 64) (_ BitVec 1)))
+; set_to true ( equal )
+(define -fun | __CPROVER_threads_exited #1| () ( Array (_ BitVec 64) (_ BitVec 1)) array_of .0)
+
+; set_to true ( equal )
+(define -fun |h01 #1| () (_ BitVec 64) (_ bv72340172838076673 64))
+
+; set_to true ( equal )
+(define -fun |m1 #1| () (_ BitVec 64) (_ bv6148914691236517205 64))
+
+; set_to true ( equal )
+(define -fun |m16 #1| () (_ BitVec 64) (_ bv281470681808895 64))
+
+; set_to true ( equal )
+(define -fun |m2 #1| () (_ BitVec 64) (_ bv3689348814741910323 64))
+
+; set_to true ( equal )
+(define -fun |m32 #1| () (_ BitVec 64) (_ bv4294967295 64))
+
+; set_to true ( equal )
+(define -fun |m4 #1| () (_ BitVec 64) (_ bv1085102592571150095 64))
+
+; set_to true ( equal )
+(define -fun |m8 #1| () (_ BitVec 64) (_ bv71777214294589695 64))
+
+; find_symbols
+(declare -fun | nondet_symex :: nondet0 | () (_ BitVec 64))
+; set_to true ( equal )
+(define -fun | __CPROVER__start ::c !0#2| () (_ BitVec 64) | nondet_symex :: nondet0 |)
+
+; set_to true ( equal )
+(define -fun |check ::c!0 @1 #1| () (_ BitVec 64) | __CPROVER__start ::c !0#2|)
+
+; set_to true ( equal )
+(define -fun | popcount64a ::x!0 @1 #1| () (_ BitVec 64) | check ::c!0 @1 #1|)
+
+; set_to true ( equal )
+(define -fun | popcount64a ::x!0 @1 #2| () (_ BitVec 64) ( bvadd ( bvand (_ bv6148914691236517205 64) ( bvlshr |⤦
+       ↪ popcount64a ::x!0 @1 #1| ((_ zero_extend 32) (_ bv1 32)))) ( bvand (_ bv6148914691236517205 64) | popcount64a⤦
+       ↪ ::x!0 @1 #1|)))
+
+; set_to true ( equal )
+
+(define -fun | popcount64a ::x!0 @1 #3| () (_ BitVec 64) ( bvadd ( bvand (_ bv3689348814741910323 64) ( bvlshr |⤦
+       ↪ popcount64a ::x!0 @1 #2| ((_ zero_extend 32) (_ bv2 32)))) ( bvand (_ bv3689348814741910323 64) | popcount64a⤦
+       ↪ ::x!0 @1 #2|)))
+
+; set_to true ( equal )
+(define -fun | popcount64a ::x!0 @1 #4| () (_ BitVec 64) ( bvadd ( bvand (_ bv1085102592571150095 64) ( bvlshr |⤦
+       ↪ popcount64a ::x!0 @1 #3| ((_ zero_extend 32) (_ bv4 32)))) ( bvand (_ bv1085102592571150095 64) | popcount64a⤦
+       ↪ ::x!0 @1 #3|)))
+
+; set_to true ( equal )
+(define -fun | popcount64a ::x!0 @1 #5| () (_ BitVec 64) ( bvadd ( bvand (_ bv71777214294589695 64) ( bvlshr | popcount64a⤦
+       ↪ ::x!0 @1 #4| ((_ zero_extend 32) (_ bv8 32)))) ( bvand (_ bv71777214294589695 64) | popcount64a ::x!0 @1 #4|)))
+
+; set_to true ( equal )
+(define -fun | popcount64a ::x!0 @1 #6| () (_ BitVec 64) ( bvadd ( bvand (_ bv281470681808895 64) ( bvlshr | popcount64a ::⤦
+       ↪ x!0 @1 #5| ((_ zero_extend 32) (_ bv16 32)))) ( bvand (_ bv281470681808895 64) | popcount64a ::x!0 @1 #5|)))
+
+; set_to true ( equal )
+(define -fun | popcount64a ::x!0 @1 #7| () (_ BitVec 64) ( bvadd ( bvand (_ bv4294967295 64) ( bvlshr | popcount64a ::x!0 @1⤦
+       ↪ #6| ((_ zero_extend 32) (_ bv32 32)))) ( bvand (_ bv4294967295 64) | popcount64a ::x!0 @1 #6|)))
+
+; set_to true ( equal )
+(define -fun | popcount64a # return_value !0#1| () (_ BitVec 32) ((_ extract 31 0) | popcount64a ::x!0 @1 #7|))
+
+; set_to true ( equal )
+(define -fun |check :: $tmp :: return_value_popcount64a !0 @1 #2| () (_ BitVec 32) | popcount64a # return_value !0#1|)
+
+; set_to true ( equal )
+(define -fun | popcount64b ::x!0 @1 #1| () (_ BitVec 64) | check ::c!0 @1 #1|)
+
+; set_to true ( equal )
+(define -fun | popcount64b ::x!0 @1 #2| () (_ BitVec 64) ( bvadd | popcount64b ::x!0 @1 #1| ( bvneg (bvand (_ ⤦
+       ↪ bv6148914691236517205 64) ( bvlshr | popcount64b ::x!0 @1 #1| ((_ zero_extend 32) (_ bv1 32)))))))
+
+; set_to true ( equal )
+(define -fun | popcount64b ::x!0 @1 #3| () (_ BitVec 64) ( bvadd ( bvand (_ bv3689348814741910323 64) ( bvlshr |⤦
+       ↪ popcount64b ::x!0 @1 #2| ((_ zero_extend 32) (_ bv2 32)))) ( bvand (_ bv3689348814741910323 64) | popcount64b⤦
+       ↪ ::x!0 @1 #2|)))
+
+; set_to true ( equal )
+(define -fun | popcount64b ::x!0 @1 #4| () (_ BitVec 64) ( bvand ( bvadd ( bvlshr | popcount64b ::x!0 @1 #3| ((_ zero_extend ⤦
+       ↪ 32) (_ bv4 32))) | popcount64b ::x!0 @1 #3|) (_ bv1085102592571150095 64)))
+
+; set_to true ( equal )
+(define -fun | popcount64b ::x!0 @1 #5| () (_ BitVec 64) ( bvadd ( bvlshr | popcount64b ::x!0 @1 #4| ((_ zero_extend 32) (_ ⤦
+       ↪ bv8 32))) | popcount64b ::x!0 @1 #4|))
+
+; set_to true ( equal )
+(define -fun | popcount64b ::x!0 @1 #6| () (_ BitVec 64) ( bvadd ( bvlshr | popcount64b ::x!0 @1 #5| ((_ zero_extend 32) (_ ⤦
+       ↪ bv16 32))) | popcount64b ::x!0 @1 #5|))
+
+; set_to true ( equal )
+(define -fun | popcount64b ::x!0 @1 #7| () (_ BitVec 64) ( bvadd ( bvlshr | popcount64b ::x!0 @1 #6| ((_ zero_extend 32) (_ ⤦
+       ↪ bv32 32))) | popcount64b ::x!0 @1 #6|))
+
+; set_to true ( equal )
+(define -fun | popcount64b # return_value !0#1| () (_ BitVec 32) ( bvand (_ bv127 32) ((_ extract 31 0) | popcount64b ::x⤦
+       ↪ !0 @1 #7|)))
+
+; set_to true ( equal )
+(define -fun |check :: $tmp :: return_value_popcount64b !0 @1 #2| () (_ BitVec 32) | popcount64b # return_value !0#1|)
+
+; find_symbols
+(declare -fun | __CPROVER__start ::c!0#1| () (_ BitVec 64))
+; convert
+(define -fun |B0| () Bool (= | __CPROVER__start ::c !0#1| | __CPROVER__start ::c !0#1|) )
+
+; find_symbols
+(declare -fun | check :: $tmp :: return_value_popcount64a !0 @1 #1| () (_ BitVec 32))
+; convert
+(define -fun |B1| () Bool (= | check :: $tmp :: return_value_popcount64a !0 @1 #1| | check :: $tmp :: return_value_popcount64a⤦
+       ↪ !0 @1 #1|))
+
+; find_symbols
+(declare -fun | check :: $tmp :: return_value_popcount64b !0 @1 #1| () (_ BitVec 32))
+; convert
+(define -fun |B2| () Bool (= | check :: $tmp :: return_value_popcount64b !0 @1 #1| | check :: $tmp :: return_value_popcount64b⤦
+       ↪ !0 @1 #1|))
+
+; set_to false
+( assert (not (= | check :: $tmp :: return_value_popcount64a !0 @1 #2| | check :: $tmp :: return_value_popcount64b !0 @1 #2|)))
+
+; find_symbols
+(declare -fun | symex :: io ::0| () (_ BitVec 64))
+; set_to true
+( assert (= | __CPROVER__start ::c !0#2| | symex :: io ::0|) )
+
+(check -sat)
+
+(get -value    (| B0 |))
+(get -value    (| B1 |))
+(get -value    (| B2 |))
+(get -value    (| __CPROVER__start ::c !0#1|) )
+(get -value    (| __CPROVER__start ::c !0#2|) )
+(get -value    (| __CPROVER_dead_object #1|))
+(get -value    (| __CPROVER_deallocated #1|))
+(get -value    (| __CPROVER_malloc_is_new_array #1|))
+(get -value    (| __CPROVER_malloc_object #1|))
+(get -value    (| __CPROVER_malloc_size #1|))
+
+(get -value   (| __CPROVER_memory_leak #1|))
+(get -value   (| __CPROVER_next_thread_id #1|))
+(get -value   (| __CPROVER_pipe_count #1|))
+(get -value   (| __CPROVER_rounding_mode !0#1|) )
+(get -value   (| __CPROVER_thread_id !0#1|) )
+(get -value   (| __CPROVER_threads_exited #1|))
+(get -value   (| check :: $tmp :: return_value_popcount64a !0 @1 #1|))
+(get -value   (| check :: $tmp :: return_value_popcount64a !0 @1 #2|))
+(get -value   (| check :: $tmp :: return_value_popcount64b !0 @1 #1|))
+(get -value   (| check :: $tmp :: return_value_popcount64b !0 @1 #2|))
+(get -value   (| check ::c!0 @1 #1|))
+(get -value   (| h01 #1|))
+(get -value   (| m1 #1|))
+(get -value   (| m16 #1|))
+(get -value   (| m2 #1|))
+(get -value   (| m32 #1|))
+(get -value   (| m4 #1|))
+(get -value   (| m8 #1|))
+(get -value   (| nondet_symex :: nondet0 |))
+(get -value   (| popcount64a # return_value !0#1|) )
+(get -value   (| popcount64a ::x!0 @1 #1|))
+(get -value   (| popcount64a ::x!0 @1 #2|))
+(get -value   (| popcount64a ::x!0 @1 #3|))
+(get -value   (| popcount64a ::x!0 @1 #4|))
+(get -value   (| popcount64a ::x!0 @1 #5|))
+(get -value   (| popcount64a ::x!0 @1 #6|))
+(get -value   (| popcount64a ::x!0 @1 #7|))
+(get -value   (| popcount64b # return_value !0#1|) )
+(get -value   (| popcount64b ::x!0 @1 #1|))
+(get -value   (| popcount64b ::x!0 @1 #2|))
+(get -value   (| popcount64b ::x!0 @1 #3|))
+(get -value   (| popcount64b ::x!0 @1 #4|))
+(get -value   (| popcount64b ::x!0 @1 #5|))
+(get -value   (| popcount64b ::x!0 @1 #6|))
+(get -value   (| popcount64b ::x!0 @1 #7|))
+(get -value   (| symex :: io ::0|) )
+
+(exit)
+; end of SMT2 file
+
+5.2.2           SMT solver
+Can we do the same using SMT solver?
+    Here I am encoding popcount64a() function and also its “naive” counterpart
+in SMT-LIB language:
+(declare -fun c0 () (_ BitVec 64)) ( assert (= c0 (_ bv0 64))) ; always 0
+(declare -fun c1 () (_ BitVec 64)) ( assert (= c1 (_ bv1 64))) ; always 1
+
+(declare -fun         m1     () (_    BitVec      64)) ( assert          (=   m1 # x5555555555555555 ))
+(declare -fun         m2     () (_    BitVec      64)) ( assert          (=   m2 # x3333333333333333 ))
+(declare -fun         m4     () (_    BitVec      64)) ( assert          (=   m4 # x0f0f0f0f0f0f0f0f ))
+(declare -fun         m8     () (_    BitVec      64)) ( assert          (=   m8 # x00ff00ff00ff00ff ))
+(declare -fun         m16    () (_    BitVec      64)) ( assert          (=   m16 # x0000ffff0000ffff ))
+(declare -fun         m32    () (_    BitVec      64)) ( assert          (=   m32 # x00000000ffffffff ))
+
+...
+
+( assert (=         a_x1    (bvadd      ( bvand    a_x m1)   ( bvand            ( bvlshr   a_x (_ bv1 64)) m1))))
+( assert (=         a_x2    (bvadd      ( bvand    a_x1 m2) ( bvand             ( bvlshr   a_x1 (_ bv2 64)) m2))))
+( assert (=         a_x3    (bvadd      ( bvand    a_x2 m4) ( bvand             ( bvlshr   a_x2 (_ bv4 64)) m4))))
+( assert (=         a_x4    (bvadd      ( bvand    a_x3 m8) ( bvand             ( bvlshr   a_x3 (_ bv8 64)) m8))))
+( assert (=         a_x5    (bvadd      ( bvand    a_x4 m16) ( bvand            ( bvlshr   a_x4 (_ bv16 64)) m16)))⤦
+      ↪ )
+( assert (=         a_out (bvadd ( bvand a_x5 m32) ( bvand ( bvlshr a_x5 (_ bv32 64)) m32)))⤦
+      ↪ )
+
+; popcount64 (): the naive way:
+; (x > >0) &1 + (x > >1)&1 + (x >>2)&1 + ...
+
+( assert (= naive_out
+(bvadd
+        ( bvand ( bvlshr naive_x (_ bv0 64)) (_ bv1 64))
+        ( bvand ( bvlshr naive_x (_ bv1 64)) (_ bv1 64))
+
+              ...
+
+          ( bvand ( bvlshr naive_x (_ bv62 64)) (_ bv1 64))
+          ( bvand ( bvlshr naive_x (_ bv63 64)) (_ bv1 64))
+)))
+
+...
+
+( assert (= naive_x a_x)) ( assert (not (= naive_out a_out)))
+
+      Kernighan’s unrolled function a bit tougher:
+(declare -fun kern_x0 () (_    BitVec 64))
+(declare -fun kern_x1 () (_    BitVec 64))
+( assert (= kern_x1 (ite (=    kern_x0 c0) kern_x0 ( bvand kern_x0 (bvsub kern_x0 c1)))))
+(declare -fun kern_x2 () (_    BitVec 64))
+( assert (= kern_x2 (ite (=    kern_x1 c0) kern_x1 ( bvand kern_x1 (bvsub kern_x1 c1)))))
+
+...
+
+(declare -fun kern_x63 () (_    BitVec 64))
+( assert (= kern_x63 (ite (=    kern_x62 c0) kern_x62 (bvand kern_x62 (bvsub kern_x62 c1)))))
+(declare -fun kern_x64 () (_    BitVec 64))
+( assert (= kern_x64 (ite (=    kern_x63 c0) kern_x63 (bvand kern_x63 (bvsub kern_x63 c1)))))
+
+; be sure x==0 upon the function exit ...
+;( assert (not (= kern_x64 c0)))
+
+(declare -fun kern_out () (_ BitVec 64))
+
+; add 1 to kern_out    each time if kern_xX !=0:
+( assert (= kern_out   ( bvadd
+     (ite (= kern_x0   c0) c0 c1) (ite (= kern_x1 c0) c0 c1) (ite (= kern_x2 c0) c0 c1) (ite (= kern_x3 c0) c0 c1)
+     (ite (= kern_x4   c0) c0 c1) (ite (= kern_x5 c0) c0 c1) (ite (= kern_x6 c0) c0 c1) (ite (= kern_x7 c0) c0 c1)
+
+...
+
+      (ite (= kern_x56 c0) c0 c1) (ite (= kern_x57 c0) c0 c1) (ite (= kern_x58 c0) c0 c1) (ite (= kern_x59 c0) c0 ⤦
+             ↪ c1)
+      (ite (= kern_x60 c0) c0 c1) (ite (= kern_x61 c0) c0 c1) (ite (= kern_x62 c0) c0 c1) (ite (= kern_x63 c0) c0 ⤦
+             ↪ c1)
+)))
+
+...
+
+( assert (= naive_x kern_x0 )) ( assert (not (= naive_out kern_out )))
+
+   Again, we can prove here that the last state of ”x” would always be zero.
+   Maybe I encoded the problem in a wrong way, but this time, both CVC4 and
+Z3 stuck and couldn’t solve anything withing 15 minutes timeout. However,
+Boolector can prove it for 1 minute.
+   Of course, I could misunderstood something.
+
+SMT arrays
+Now what about array encoding?
+;int popcount64_table ( uint64_t x)
+;{
+;       uint64_t tbl [16]={0 ,1 ,1 ,2 ,1 ,2 ,2 ,3 ,1 ,2 ,2 ,3 ,2 ,3 ,3 ,4};
+;       uint64_t rt =0;
+;       rt=rt+tbl [(x > >(0*4))&0 xf];
+;       rt=rt+tbl [(x > >(1*4))&0 xf];
+;...
+
+; fill table of constants :
+(declare -const tbl (Array (_ BitVec 64) (_ BitVec 64)))
+( assert (= tbl (store tbl (_ bv0 64) (_ bv0 64))))
+( assert (= tbl (store tbl (_ bv1 64) (_ bv1 64))))
+...
+( assert (= tbl (store tbl (_ bv14 64) (_ bv3 64))))
+( assert (= tbl (store tbl (_ bv15 64) (_ bv4 64))))
+
+(declare -fun tbl_x () (_ BitVec 64))
+(declare -fun tbl_out () (_ BitVec 64))
+
+;             rt=rt+tbl [(x > >(0*4))&0 xf];
+;             rt=rt+tbl [(x > >(1*4))&0 xf];
+;             ...
+
+( assert (= tbl_out
+(bvadd
+        ( select tbl (bvand                 ( bvlshr tbl_x (_ bv0 64)) (_ bv15 64)))
+        ( select tbl (bvand                 ( bvlshr tbl_x (_ bv4 64)) (_ bv15 64)))
+        ...
+        ( select tbl (bvand                 ( bvlshr tbl_x (_ bv56 64)) (_ bv15 64)))
+        ( select tbl (bvand                 ( bvlshr tbl_x (_ bv60 64)) (_ bv15 64)))
+)))
+
+    Here we use ”store” function to populate array. At each line, tbl is reassigned.
+We then use ”select” function to address elements of the array.
+    Arrays are implemented in SMT solvers using UF9 , but logically, you can
+think about them as about chains of ITE’s (if-then-else). Or like a switch()
+construct found in many popular PLs.
+    Even more, Boolector during model generation (”get-model”), shows arrays
+as ITE chains:
+  (define -fun f (
+   (f_x0 (_ BitVec 64))) (_ BitVec 64)
+    (ite (= f_x0 # b0000000000000000000000000000000000000000000000000000000000000000 ) #⤦
+            ↪ b0000000000000000000000000000000000000000000000000000000000000000
+    (ite (= f_x0 # b0000000000000000000000000000000000000000000000000000000000000001 ) #⤦
+            ↪ b0000000000000000000000000000000000000000000000000000000000000001
+
+...
+
+      (ite (= f_x0 # b0000000000000000000000000000000000000000000000000000000000001111 ) #⤦
+              ↪ b0000000000000000000000000000000000000000000000000000000000000100
+        # b0000000000000000000000000000000000000000000000000000000000000000 )))))))))))))))))
+
+  (We see here that the default value is 0, it’s like ”default” in ”switch()” state-
+ment.)
+  As well as Z3:
+      (define -fun f ((x!0 (_ BitVec 64))) (_ BitVec 64)
+        (ite (= x!0 # x0000000000000003 ) # x0000000000000002
+        (ite (= x!0 # x0000000000000004 ) # x0000000000000001
+        ...
+        (ite (= x!0 # x0000000000000002 ) # x0000000000000001
+        (ite (= x!0 # x0000000000000009 ) # x0000000000000002
+          # x0000000000000000 ))))))))))))))))
+
+   You can think about ”select” function as if it simply evaluates internal ITE
+chain. And ”store” function simply prepends new ITE in front of an array (or
+ITE chain) returning a new array (or chain).
+   Anyway, this version Boolector can solve for 15 seconds, Z3 for 7 minutes
+and CVC4 is stuck.
+
+Uninterpreted functions
+Since my array is a constant one, I can try to implement it using UF.
+   Here f() acts like the ”select” function. And it’s populated like:
+assert f(0) is 0, f(1) is 1 ... f(15) is (4)
+(declare -fun f ((_ BitVec 64)) (_ BitVec 64))
+( assert (= (f (_ bv0 64)) (_ bv0 64)))
+( assert (= (f (_ bv1 64)) (_ bv1 64)))
+...
+      9 Uninterpreted Function
+
+( assert (= (f (_ bv14 64)) (_ bv3 64)))
+( assert (= (f (_ bv15 64)) (_ bv4 64)))
+
+(declare -fun f_x () (_ BitVec 64))
+(declare -fun f_out () (_ BitVec 64))
+
+;           rt=rt+f((x > >(0*4))&0 xf);
+;           rt=rt+f((x > >(1*4))&0 xf);
+;           ...
+( assert    (= f_out
+(bvadd
+           (f ( bvand    ( bvlshr f_x (_ bv0 64)) (_ bv15 64)))
+           (f ( bvand    ( bvlshr f_x (_ bv4 64)) (_ bv15 64)))
+           ...
+           (f ( bvand    ( bvlshr f_x (_ bv56 64)) (_ bv15 64)))
+           (f ( bvand    ( bvlshr f_x (_ bv60 64)) (_ bv15 64)))
+)))
+
+   Boolector and Z3 can solve this for 10-15 seconds, CVC4 is stuck.
+
+Moral of the story
+SAT/SMT solvers are highly capricious for various types of input. So it’s good
+idea to try several of them. And of course, I probably misunderstood something,
+don’t know yet, what exactly.
+
+5.2.3    Files used
+Here: https://smt.st/current_tree/verif/popcount/files.
+
+5.3 Knuth-Morris-Pratt string-searching algo-
+    rithm
+5.3.1    My homebrew algorithms formally verified using
+         CBMC
+Searching for the ”ok” substring
+Imagine you want to find an ”ok” substring within a string. You would do:
+unsigned search_ok_1 (char *s, unsigned len)
+{
+    if (len <2)
+        return len; // not found
+    for ( unsigned i=0; i<len -1; i++)
+    {
+        if (s[i]== 'o' && s[i +1]== 'k')
+             return i; // found
+    };
+    return len; // not found
+
+};
+
+   You see, there are two (cache-)memory accesses per one character of the in-
+put string (at average). Hence, the total number of all (cache-)memory accesses
+can be len*2 at worst.
+   Is it possible to reduce that number? Yes. In the following example, we have
+only one single memory access per character:
+unsigned search_ok_2 (char *s, unsigned len)
+{
+    if (len <2)
+        return len; // not found
+    bool seen_o = false ;
+    for ( unsigned i=0; i<len; i++)
+    {
+        char ch=s[i]; // this is single read operation
+        if (ch =='o')
+             seen_o =true;
+        else if ( seen_o && ch == 'k')
+             return i -1;     // found
+        else
+             seen_o = false ; // reset
+    };
+    return len; // not found
+};
+
+Searching for the ”eel” substring, verification using CBMC
+Can we extend that method to any 3-character strings? Let’s write a function
+that searches for the ’eel’ string 10
+    We will use the ’seen’ variable, reflecting, how many characters of the sought
+string we’ve already seen:
+unsigned search_eel (char *s, unsigned len)
+{
+    if (len <3)
+        return len; // not found
+    unsigned seen =0;
+    for ( unsigned i=0; i<len; i++)
+    {
+        char ch=s[i]; // this is single read operation
+        if (seen ==0 && ch== 'e')
+             seen =1;
+        else if (seen ==1 && ch == 'e')
+             seen =2;
+        else if (seen ==2 && ch == 'l')
+             return i -2; // found
+        else
+             seen =0;     // reset
+ 10 For non-English speakers: this is indeed a word. Some kind of fish.
+
+      }
+      return len; // not found
+};
+
+   But this implementation has a bug. To find it, I’ll use CBMC, the excellent
+tool, that can verify if a C function is equivalent to another function.
+   This is like Test-driven development (TDD).
+   I’ll add a ’reference’ (though, slow) function, but always correct:
+unsigned search_eel_brute (char *s, unsigned len)
+{
+    if (len <3)
+        return len; // not found
+    for ( unsigned i=0; i<len -2; i++)
+    {
+        if (s[i]== 'e' && s[i +1]== 'e' && s[i+2]== 'l')
+             return i;
+    };
+    return len; // not found
+};
+
+...
+
+void check ()
+{
+    unsigned len=LEN;
+    char s[len ];
+    __CPROVER_assert ( search_eel_brute (s, len)==⤦
+       ↪ search_eel (s, len), " assert ");
+};
+
+% cbmc --trace --function check -DLEN =4 kmp_eel2 .c
+...
+
+** Results :
+[check . assertion .1] assert : FAILURE
+
+Trace for check . assertion .1:
+
+...
+
+State 21 file kmp_eel2 .c line 41 function check thread 0
+----------------------------------------------------
+  s={ 'e', 'e', 'e', 'l' } ({ 01100101 , 01100101 , ⤦
+     ↪ 01100101 , 01101100 })
+...
+
+    It failed for the string ”eeel”. After some thinking, we can find a problem.
+If a third character isn’t ’l’, but ’e’, we are in the middle of a long string of ’e’
+characters. So if seen==2 and the input character isn’t ’l’, but ’e’, we shouldn’t
+advance the ’seen’ variable:
+
+...
+if (seen ==0 && ch =='e')
+         seen =1;
+else if (seen ==1 && ch== 'e')
+         seen =2;
+else if (seen ==2 && ch== 'l')
+         return i -2;                        // found
+else if (seen ==2 && ch== 'e')               // fix
+         seen =2;                            // fix
+else
+         seen =0;                            // reset
+...
+
+   Now the verification is successful up to strings of length 15:
+#!/ bin/bash
+for i in $( seq 0 15 ); do
+     #echo $i
+     cbmc --trace --function check -DLEN=$i kmp_eel2 .c
+done
+
+    Searching for the ”cocos” substring, verification using CBMC
+    The ”cocos” substring is much more problematic. But fixing it with the help
+of CBMC is a great programming exercise.
+unsigned search_cocos_brute (char *s, unsigned len)
+{
+    if (len <5)
+        return len; // not found
+    for ( unsigned i=0; i<len -4; i++)
+    {
+        if (s[i]== 'c' &&
+                 s[i +1]== 'o' &&
+                 s[i +2]== 'c' &&
+                 s[i +3]== 'o' &&
+                 s[i +4]== 's')
+             return i; // found
+    };
+    return len;        // not found
+};
+
+unsigned search_cocos_naive (char *s, unsigned len)
+{
+    if (len <5)
+        return len; // not found
+    unsigned seen =0;
+    for ( unsigned i=0; i<len; i++)
+    {
+        char ch=s[i]; // this is single read operation
+        if (seen ==0 && ch== 'c')
+
+                  seen =1;
+             else if (seen ==1       && ch == 'o')
+                  seen =2;
+             else if (seen ==2       && ch == 'c')
+                  seen =3;
+             else if (seen ==3       && ch == 'o')
+                  seen =4;
+             else if (seen ==4       && ch == 's')
+                  return i -4;       // found
+             else
+                  seen =0;           // reset
+       }
+       return len;             // not found
+};
+
+void check ()
+{
+    unsigned len=LEN;
+    char s[len ];
+    __CPROVER_assert ( search_cocos_brute (s, len)==⤦
+       ↪ search_cocos_naive (s, len), " assert ");
+};
+
+     This is the first bug:
+% cbmc --trace --function check -DLEN =6 kmp_cocos .c
+...
+** Results :
+[check . assertion .1] assert : FAILURE
+
+Trace for check . assertion .1:
+
+...
+
+State 21 file kmp_cocos .c line 47 function check thread ⤦
+   ↪ 0
+----------------------------------------------------
+  s={ 'c', 'c', 'o', 'c', 'o', 's' } ({ 01100011 , ⤦
+     ↪ 01100011 , 01101111 , 01100011 , 01101111 , 01110011⤦
+     ↪ })
+
+...
+
+   A test failed for the ”ccocos” string.
+   Here is the fix: if the first ’c’ is repeating, we shouldn’t advance the ’seen’
+variable:
+if (seen ==0 && ch =='c')
+         seen =1;
+else if (seen ==1 && ch== 'o')
+         seen =2;
+
+else if (seen ==1 && ch!= 'o')
+{
+                       // we can be here if the input is '⤦
+                          ↪ ccocos '
+        if (ch =='c')
+                 seen =1;
+        else
+                 seen =0;
+}
+else if (seen ==2 && ch== 'c')
+        seen =3;
+else if (seen ==3 && ch== 'o')
+        seen =4;
+else if (seen ==4 && ch== 's')
+        return i -4; // found
+else
+        seen =0;       // reset
+
+    CBMC can verify this function for all 6-character strings, OK. But it can
+find problematic 7-character string:
+% cbmc --trace --function check -DLEN =7 kmp_cocos .c
+...
+** Results :
+[check . assertion .1] assert : FAILURE
+
+Trace for check . assertion .1:
+
+...
+State 21 file kmp_cocos .c line 79 function check thread ⤦
+    ↪ 0
+----------------------------------------------------
+  s={ 'c', 'o', 'c', 'o', 'c', 'o', 's' } ({ 01100011 , ⤦
+     ↪ 01101111 , 01100011 , 01101111 , 01100011 , ⤦
+     ↪ 01101111 , 01110011 })
+...
+
+   That is, ”cococos”.
+   And this is my fix:
+...
+else if (seen ==4 && ch== 's')
+    return i -4; // found
+else if (seen ==4 && ch!= 's')
+{
+    // the input string is 'cocoX ' where X is not 's'
+    // ( current state of ch='X ')
+    // but 'X' could be 'c' if the input string is '⤦
+       ↪ cococos '
+    if (ch == 'c')
+    {
+
+              // if the string is 'cococos ',
+              // we can say that we have already seen the 'coc⤦
+                 ↪ ' part of it:
+              seen =3;
+       }
+       else
+       {
+              // 'X' is not 'c', so reset
+              seen =0;
+       };
+}
+else
+       seen =0;          // reset
+...
+
+   Now all 7-characters strings can be tested without a fail. But not 8-character
+ones:
+% cbmc --trace --function check -DLEN =8 kmp_cocos .c
+...
+
+** Results :
+[check . assertion .1] assert : FAILURE
+
+Trace for check . assertion .1:
+
+...
+
+State 21 file kmp_cocos .c line 96 function check thread ⤦
+   ↪ 0
+----------------------------------------------------
+  s={ 'c', 'o', 'c', 'c', 'o', 'c', 'o', 's' } ({ ⤦
+     ↪ 01100011 , 01101111 , 01100011 , 01100011 , ⤦
+     ↪ 01101111 , 01100011 , 01101111 , 01110011 })
+
+...
+
+   It fails with ”coccocos”. We have to add another check for the repeating
+second ’c’ character.
+...
+else if (seen ==3 && ch== 'o')
+        seen =4;
+else if (seen ==3 && ch!= 'o')
+{
+        // if input =' coccocos '
+        if (ch =='c')
+                 seen =1;
+        else
+                 seen =0; // reset
+}
+
+else if (seen ==4 && ch== 's')
+...
+
+   Now CBMC can check it all up to 15-character strings. The whole fixed
+function is:
+unsigned search_cocos_fixed (char *s, unsigned len)
+{
+    if (len <5)
+        return len; // not found
+    unsigned seen =0;
+    for ( unsigned i=0; i<len; i++)
+    {
+        char ch=s[i]; // this is single read operation
+        if (seen ==0 && ch== 'c')
+             seen =1;
+        else if (seen ==1 && ch =='o')
+             seen =2;
+        else if (seen ==1 && ch !='o')
+        {
+             // we can be here if the input is 'ccocos '
+             if (ch == 'c')
+                  seen =1;
+             else
+                  seen =0;
+        }
+        else if (seen ==2 && ch =='c')
+             seen =3;
+        else if (seen ==3 && ch =='o')
+             seen =4;
+        else if (seen ==3 && ch !='o')
+        {
+             // if input =' coccocos '
+             if (ch == 'c')
+                  seen =1;
+             else
+                  seen =0; // reset
+        }
+        else if (seen ==4 && ch =='s')
+             return i -4; // found
+        else if (seen ==4 && ch !='s')
+        {
+             // the input string is 'cocoX ' where X is not 's'
+             // ( current state of ch='X ')
+             // but 'X' could be 'c' if the input string is 'cococos '
+             if (ch == 'c')
+             {
+                  // if the string is 'cococos ',
+                  // we can say that we have already seen the 'coc ' part⤦
+                       ↪ of it:
+                  seen =3;
+             }
+             else
+             {
+                  // 'X' is not 'c', so reset
+                  seen =0;
+             };
+        }
+        else
+             seen =0;       // reset
+    }
+    return len; // not found
+
+};
+
+   It is capable of searching for the ’cocos’ substring reading each character of
+the input string only once, and it is formally verified by CBMC.
+   Code like that is very hard to test (can you execute these functions with all
+15-characters input strings?), but thanks to CBMC, we can be sure it’s correct,
+or at least, equivalent to the simple ’bruteforce’ version. I couldn’t devise a
+correct version without it. In fact first versions were written in Python. I
+rewritten it to pure C so that I can verify them using CBMC.
+
+All the files used
+https://smt.st/current_tree/verif/KMP/files_1
+
+But what about bruteforce?
+Naive way of testing would be feeding all possible 15-character strings, that is:
+25615 test strings. But you can probably use only characters that are present in
+a substring: ’c’, ’o’, ’s’ for ’cocos’, plus a character acting as everything else, say,
+’_’. That would result in 415 = 1, 073, 741, 824 test strings. Yes, it’s possible.
+
+5.3.2     The DFA version
+I reworked the Java code by Robert Sedgewick from his excellent book, and
+rewritten it to Python:
+#!/ usr/bin/env python3
+
+def KMP(pat):
+    R=256
+    m=len(pat)
+
+     # build DFA from pattern
+     # https :// stackoverflow .com/q /2397141
+     dfa =[[0]* m for r in range (R)]
+     dfa[ord(pat [0]) ][0]=1
+     x=0
+     for j in range (1, m):
+          for c in range (R):
+              dfa[c][j] = dfa[c][x] # Copy mismatch cases .
+          dfa[ord(pat[j])][j] = j+1 # Set match case.
+          x = dfa[ord(pat[j])][x]      # Update restart state .
+
+     return dfa
+
+# https :// stackoverflow .com/q /3525953
+def all_elements_in_list_are_zeros (l):
+    return all(v==0 for v in l)
+
+def export_dfa_to_graphviz (dfa , fname ):
+    m=len(dfa [0]) # len of pattern
+    f=open(fname ,"w")
+    f.write (" digraph finite_state_machine {\n")
+
+     f.write (" rankdir =LR ;\n")
+     f.write ("\n")
+     f.write ("size =\"8 ,5\"\n")
+     f.write (f"node [shape = doublecircle ]; S_0 S_{m};\n")
+     f.write ("node [ shape = circle ];\n")
+
+     for state in range (m):
+         exits =[]
+         for R in range (256) :
+              next=dfa[R][ state ]
+              if next !=0:
+                   exits . append ((R,next))
+         for exit in exits:
+              next_state =exit [1]
+              label="'"+chr(exit [0])+"'"
+              s=f"S_{ state} -> S_{ next_state } [ label = \"{ label⤦
+                   ↪ }\" ];\n"
+              f. write (s)
+         s=f"S_{state } -> S_0 [ label = \" other \" ];\n"
+         f.write (s)
+     f.write ("}\n")
+     f.close ()
+     print (f"{ fname } written ")
+
+def search (dfa , txt):
+    # simulate operation of DFA on text
+    m=len(dfa [0]) # len of pattern
+    n=len(txt)
+    j=0 # FA state
+    i=0
+    while i<n and j<m:
+        j = dfa[ord(txt[i])][j]
+        i=i+1
+    if j == m:
+        return i - m # found
+    return n            # not found
+
+   I added a code to produce a graph in GraphViz format.
+   Now what about the ’ok’ word?
+
+   Another word we already know, ’eel’:
+
+   The ’cocos’:
+
+   You see, I can translate these FA11 s to Python code:
+#!/ usr/bin/env python3
+
+def search_eel (txt):
+    # simulate operation of DFA on text
+    m=3 # len of pattern
+    n=len(txt)
+    j=0 # FA state
+    i=0 # iterator for txt []
+    while i<n and j<m:
+        ch=txt[i]
+        if j==0 and ch== 'e':
+             j=1
+        elif j==1 and ch == 'e':
+             j=2
+        elif j==2 and ch == 'e':
+             j=2
+        elif j==2 and ch == 'l':
+             j=3
+        else:
+             j=0 # reset
+        i=i+1
+    if j == m:
+        return i - m # found
+    return n          # not found
+
+    Do you see any similarities with the C code from the previous part 5.3.1?
+    Yes, what we actually did, was FA, and the ’seen’ variable was used as a
+marker of current state. Here we use the ’j’ variable instead, but it’s almost the
+same! We reinvented DFA.
+    The KMP algorithm creates a DFA for each substring to be searched. This
+is preprocessing.
+    The DFA is then executes on the input string, in the very same fashion like
+regular expression matcher. (For a DFA used instead of RE12 matcher, see also
+another example in this book: 6.2. And also: 15.3.2.)
+ 11 Finite Automaton
+ 12 Regular Expression
+
+All the files used
+https://smt.st/current_tree/verif/KMP/files_2
+
+5.3.3    The DFA-less version
+DFAs generated by the KMP algorithms are sparse and have regularities we can
+observe easily. One popular optimization is not using DFA, but rather a small
+”partial match” table:
+// Knuth -Morris -Pratt algorithm
+// copypasted from http :// cprogramming .com/ snippets /source -code/⤦
+    ↪ knuthmorrispratt -kmp -string -search - algorithm
+char * kmp_search (char *haystack , size_t haystack_size , char *needle , ⤦
+    ↪ size_t needle_size )
+{
+    int *T;
+    int i, j;
+    char * result = NULL;
+
+    if ( needle_size ==0)
+         return haystack ;
+
+    /* Construct the lookup table */
+    T = (int *) malloc (( needle_size +1) * sizeof (int));
+    T[0] = -1;
+    for (i=0; i< needle_size ; i++)
+    {
+        T[i+1] = T[i] + 1;
+        while (T[i+1] > 0 && needle [i] != needle [T[i+1] -1])
+             T[i+1] = T[T[i+1] -1] + 1;
+    }
+
+    printf (" restarts table :\n");
+    for (i=0; i< needle_size +1; i++)
+        printf ("T[%d]=%d\n", i, T[i]);
+
+    /* Perform the search */
+    for (i=j=0; i< haystack_size ; )
+    {
+        if (j >=0)
+             print_compare (haystack , i, needle , j);
+        if (j < 0 || haystack [i] == needle [j])
+        {
+             ++i, ++j;
+             if (j == needle_size )
+             {
+                  result = haystack +i-j;
+                  break;
+             }
+        }
+        else
+        {
+             j = T[j];
+             if (j== -1)
+                  printf (" Restarting needle at the beginning \n");
+             else
+                  print_state_needle (needle , j);
+        };
+    }
+
+     free(T);
+     return result ;
+}
+
+    Now let’s search for ’eel’ in the ’eex eel’ string:
+restarts table :
+T[0]= -1
+T[1]=0
+T[2]=1
+T[3]=0
+going to compare : eex eel
+                   eel
+                   ^
+going to compare : eex eel
+                   eel
+                     ^
+going to compare : eex eel
+                   eel
+                       ^
+Restarting needle at: eel
+                             ^
+going to compare : eex eel
+                     eel
+                       ^
+Restarting needle at: eel
+                           ^
+going to compare : eex eel
+                       eel
+                       ^
+Restarting needle at the beginning
+going to compare : eex eel
+                         eel
+                         ^
+Restarting needle at the beginning
+going to compare : eex eel
+                           eel
+                           ^
+going to compare : eex eel
+                           eel
+                             ^
+going to compare : eex eel
+                           eel
+                               ^
+
+    The T[] table is small, which is good for cache memory. But please note: a
+character is to be loaded twice in case of restart. But this is fine, it’s cached
+anyway at that moment.
+    Now the interesting thing: if the ’partial match’ table is empty (all zeroes),
+the search function can be implemented naively, like I tried in the first part
+5.3.1.
+
+    These are the cases of words like ’tesa’, ’lee’, ’banana’. But a non-empty
+table must be constructed for words like ’eel’, ’oops’, ’test’, ’elee’ – these are
+words where a prefix (1-character minimum) is repeated in the word. But this
+is not true for ’banana’ – there is no repeating prefix.
+
+All the files used
+https://smt.st/current_tree/verif/KMP/files_3
+
+5.3.4    A discussion at HN
+https://news.ycombinator.com/item?id=25856558
+
+5.4 Boyer-Moore string search algorithm ex-
+    planation and formal verification using CBMC
+Previously I did this with Knuth-Morris-Pratt algorithm: 5.3.
+   So again, let’s try to reinvent string-search algorithm.
+
+5.4.1    Version 1
+If a substring would be compared in reverse order, things may be different. For
+example, we search for a ’CAT’ substring in ’HORSE TURTLE CAT’ string.
+    With naive algorithm, we will first compare ’H’ and ’C’, we see they are
+unequal characters and we will advance substring one character ahead:
+HORSE TURTLE CAT
+CAT
+  ^
+
+    Right, but what if we will start at the end of ’CAT’ substring proceeding
+back? We first compare ’R’ with ’T’ (last character of ’CAT’) and we see that
+they are not equal. We could advance substring one character ahead, but...
+Can’t we see that ’R’ character in the middle of ’HORSE’ part is absent in the
+’CAT’ substring? Can’t this tell us something useful? Yes – since ’R’ is not in
+’CAT’, we can advance ’CAT’ substring more, because we know that this will
+fail for sure:
+HORSE TURTLE CAT
+ CAT
+   ^
+
+   This too:
+HORSE TURTLE CAT
+  CAT
+    ^
+
+   So if we see a character not in ’CAT’, we can advance 3 characters ahead:
+
+HORSE TURTLE CAT
+   CAT
+     ^
+
+  But this will fail too, also, the space (’ ’) character is absent in ’CAT’ too.
+OK, we advance 3 characters ahead:
+HORSE TURTLE CAT
+      CAT
+        ^
+
+   No, ’R’ is not in ’CAT’, advance again 3 characters ahead:
+HORSE TURTLE CAT
+         CAT
+           ^
+
+   Failing again... Adding 3 characters:
+HORSE TURTLE CAT
+            CAT
+              ^
+
+   This is important. ’A’ != ’T’, but ’A’ is in the ’CAT’ substring, so this time
+we advance only 1 character ahead, as in naive search algorithm:
+HORSE TURTLE CAT
+             CAT
+               ^
+
+   Here we will compare 3 characters and return success.
+   All this is way faster than naive string search algorithm, and is a strong
+competitor with Knuth-Morris-Pratt algorithm.
+   This is the source code of a function that is hardcoded to search for ’cat’
+substring, nothing else:
+unsigned search_cat_BM_v1 (char *s, unsigned len)
+{
+    if (len <3)
+        return len; // not found
+    unsigned read_ops =0;
+    unsigned skip; // default skip
+    for ( unsigned i=0; i<len -2; )
+    {
+        skip =1;
+        read_ops ++;
+        char char3 =s[i+2]; // read operation
+        if ( char3 == 't')
+        {
+             read_ops ++;
+             char char2=s[i+1]; // read operation
+             if (char2 == 'a')
+             {
+                 read_ops ++;
+                 char char1 =s[i]; // read operation
+                 if (char1 == 'c')
+                 {
+
+                              printf ("%s read_ops =%d\n", __FUNCTION__ , read_ops⤦
+                                  ↪ );
+                              return i; // found
+                       }
+                       else
+                       {
+                              // 1st character isn 't 'c'
+                              if (( char1 !='c') && ( char1 != 'a') && ( char1 != 't'))
+                                  skip =3;
+                       }
+                }
+                else
+                {
+                       // 2nd character isn 't 'a'
+                       if (( char2 != 'c') && ( char2 != 'a') && ( char2 !='t'))
+                           skip =3;
+                }
+         }
+         else
+         {
+                // 3rd character isn 't 't'
+                if (( char3 !='c') && ( char3 != 'a') && ( char3 != 't'))
+                    skip =3;
+         }
+         i=i+skip;
+     }
+     printf ("%s read_ops =%d\n", __FUNCTION__ , read_ops );
+     return len; // not found
+};
+
+   As compared with a naive brute-force string algorithm, it shows a significant
+advantage:
+** cacat
+search_cat_brute read_ops =7
+search_cat_BM_v1 read_ops =5
+** cac cat
+search_cat_brute read_ops =10
+search_cat_BM_v1 read_ops =5
+** cac cac cat
+search_cat_brute read_ops =17
+search_cat_BM_v1 read_ops =7
+** horse turtle cat
+search_cat_brute read_ops =16
+search_cat_BM_v1 read_ops =8
+** horse cat turtle
+search_cat_brute read_ops =9
+search_cat_BM_v1 read_ops =5
+
+5.4.2    Version 2
+Now the next observation. If we search for ’CAT’ and ’CACAT’, we see that ’C’
+!= ’T’, but ’C’ is in the ’CAT’ substring, so we would advance by one character.
+CACAT
+CAT
+
+  ^
+
+    But... we can also <i>align</i> substring so that the first ’C’ character
+in ’CAT’ would match the next ’C’ in ’CACAT’, by advancing for 2 characters
+ahead:
+CACAT
+  CAT
+    ^
+
+   We add a rule: ”if a mismatched character in string exist in substring,
+<i>align</i> substring so that they would match” or, in other words, ”if ’C’
+in string isn’t equal to the last character in ’CAT’ substring, advance by 2
+characters”:
+if (char3 =='t')
+{
+     ...
+}
+else
+{
+     // 3rd character isn 't 't'
+     if (( char3 !='c') && ( char3 != 'a') && ( char3 != 't'))
+          skip =3;
+     if ( char3 == 'c') // added
+          skip =2;      // added
+}
+i=i+skip;
+
+   It may perform even better on some strings:
+** cacat                               ** cacat
+search_cat_brute read_ops =7           search_cat_brute read_ops =7
+search_cat_BM_v1 read_ops =5           search_cat_BM_v2 read_ops =4
+
+   As of aligning ’A’ character in the middle of ’CAT’ substring – we wouldn’t
+bother, because advancing substring by one character it’s the same as is done
+by default.
+   Again, our algorithm is hardcoded only for ’CAT’.
+   And this is the universal algorithm from the R.Sedgewick’s book, the first
+function construct a table of ’skips’, the second does the actual search (Java
+code):
+      public BoyerMoore ( String pat) {
+          this.R = 256;
+          this.pat = pat;
+
+           // position of rightmost occurrence of c in the ⤦
+              ↪ pattern
+           right = new int[R];
+           for (int c = 0; c < R; c++)
+               right [c] = -1;
+           for (int j = 0; j < pat. length (); j++)
+
+                        right [pat. charAt (j)] = j;
+        }
+...
+        public int search ( String txt) {
+            int m = pat. length ();
+            int n = txt. length ();
+            int skip;
+            for (int i = 0; i <= n - m; i += skip) {
+                skip = 0;
+                for (int j = m -1; j >= 0; j--) {
+                    if (pat. charAt (j) != txt. charAt (i+j)) {
+                         skip = Math.max (1, j - right [txt.⤦
+                             ↪ charAt (i+j)]);
+                         break ;
+                    }
+                }
+                if (skip == 0) return i;       // found
+            }
+            return n;                          // not found
+
+( src )
+    And what if we search for ’COCOS’ substring? What if characters are re-
+peating within search pattern? Well, we will count only rightmost characters,
+ignoring two first ’CO’.
+
+5.4.3        Formal verification using CBMC
+I did that already with my homebrew Knuth-Morris-Pratt algorithm: 5.3.
+
+Listing 5.1: Increase object-bits and unwind options if not enough
+cbmc --object -bits 9 --trace --function check \
+        -DLEN =10 -DCBMC --unwind 9 \
+        --unwinding - assertions BM_cat_v1 .c
+cbmc --object -bits 9 --trace --function check \
+        -DLEN =10 -DCBMC --unwind 9 \
+        --unwinding - assertions BM_cat_v2 .c
+
+CBMC version 5.54.0 (cbmc -5.54.0) 64- bit x86_64 linux
+Parsing BM_cat_v1 .c
+Converting
+Type - checking BM_cat_v1
+Generating GOTO Program
+Adding CPROVER library ( x86_64 )
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Running with 9 object bits , 55 offset bits (user - specified )
+Starting Bounded Model Checking
+Unwinding loop search_cat_brute .0 iteration 1 file BM_cat_v1 .c line 12 function search_cat_brute thread 0
+Unwinding loop search_cat_brute .0 iteration 2 file BM_cat_v1 .c line 12 function search_cat_brute thread 0
+...
+Unwinding loop search_cat_BM_v1 .0 iteration 8 file BM_cat_v1 .c line 36 function search_cat_BM_v1 thread 0
+Not unwinding loop search_cat_BM_v1 .0 iteration 9 file BM_cat_v1 .c line 36 function search_cat_BM_v1 thread 0
+Runtime Symex : 0.0570656 s
+size of program expression : 1328 steps
+simple slicing removed 2 assignments
+Generated 2 VCC(s), 2 remaining after simplification
+Runtime Postprocess Equation : 0.000101775 s
+Passing problem to propositional reduction
+converting SSA
+Runtime Convert SSA: 0.0178482 s
+Running propositional reduction
+Post - processing
+
+Runtime Post - process : 3.0256e -05s
+Solving with MiniSAT 2.2.1 with simplifier
+13867 variables , 26286 clauses
+SAT checker : instance is UNSATISFIABLE
+Runtime Solver : 0.0196347 s
+Runtime decision procedure : 0.0375839 s
+
+** Results :
+BM_cat_v1 .c function check
+[check . assertion .1] line 85 assert : SUCCESS
+
+BM_cat_v1 .c function search_cat_BM_v1
+[ search_cat_BM_v1 . unwind .0] line 36 unwinding assertion loop 0: SUCCESS
+
+** 0 of 2 failed (1 iterations )
+VERIFICATION SUCCESSFUL
+CBMC version 5.54.0 (cbmc -5.54.0) 64- bit x86_64 linux
+Parsing BM_cat_v2 .c
+Converting
+Type - checking BM_cat_v2
+Generating GOTO Program
+Adding CPROVER library ( x86_64 )
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Running with 9 object bits , 55 offset bits (user - specified )
+Starting Bounded Model Checking
+Unwinding loop search_cat_brute .0 iteration 1 file BM_cat_v2 .c line 12 function search_cat_brute thread 0
+Unwinding loop search_cat_brute .0 iteration 2 file BM_cat_v2 .c line 12 function search_cat_brute thread 0
+...
+Unwinding loop search_cat_BM_v2 .0 iteration 7 file BM_cat_v2 .c line 36 function search_cat_BM_v2 thread 0
+Unwinding loop search_cat_BM_v2 .0 iteration 8 file BM_cat_v2 .c line 36 function search_cat_BM_v2 thread 0
+Not unwinding loop search_cat_BM_v2 .0 iteration 9 file BM_cat_v2 .c line 36 function search_cat_BM_v2 thread 0
+Runtime Symex : 0.0558006 s
+size of program expression : 1364 steps
+simple slicing removed 2 assignments
+Generated 2 VCC(s), 2 remaining after simplification
+Runtime Postprocess Equation : 0.000102357 s
+Passing problem to propositional reduction
+converting SSA
+Runtime Convert SSA: 0.0180041 s
+Running propositional reduction
+Post - processing
+Runtime Post - process : 2.8173e -05s
+Solving with MiniSAT 2.2.1 with simplifier
+14237 variables , 28199 clauses
+SAT checker : instance is UNSATISFIABLE
+Runtime Solver : 0.0277352 s
+Runtime decision procedure : 0.0458506 s
+
+** Results :
+BM_cat_v2 .c function check
+[check . assertion .1] line 87 assert : SUCCESS
+
+BM_cat_v2 .c function search_cat_BM_v2
+[ search_cat_BM_v2 . unwind .0] line 36 unwinding assertion loop 0: SUCCESS
+
+** 0 of 2 failed (1 iterations )
+VERIFICATION SUCCESSFUL
+
+   Now important note.
+   If you modify these lines so that this conditional expression would compare
+with other characters...
+...
+{
+        // 1st character isn 't 'c'
+        if (( char1 !='c ') && ( char1 !='a ') && ( char1 !='t '))
+            skip =3;
+}
+...
+
+    CBMC will still verify this algorithm and prove its correctness, because a
+bug here wouldn’t make the algorithm incorrect. It will degrade its performance
+to a level of naive string search algorithm, as if ’skip=3’ here would be replaced
+with ’skip=1’. It will still work correctly, but slower.
+
+5.4.4         But this algorithm is not finished.
+I reimplemented it from R.Sedgewick book.
+
+   And he states:
+   Program BoyerMoore.java implements the bad-character rule part of the
+Boyer-Moore algorithm. It does not implement the strong good suffix rule.
+   It coincides with ’delta1’ rule from the original Boyer-Moore paper. But
+there is also a ’delta2’ rule, which is just another story for another time.
+
+5.4.5    Files
+https://smt.st/current_tree/verif/boyer_moore/files
+
+5.4.6    Discussion at Hacker News
+https://news.ycombinator.com/item?id=26900640
+

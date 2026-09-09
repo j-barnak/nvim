@@ -323,6 +323,12 @@ case "$SLUG" in
   # list does not know, so ~260 survive mid-listing. fluent_python_fix drops the
   # bar-and-bare-page-number line (body-safe: prose/Python never look like that).
   fluent-python) FIXAWK="${AWKF%/*}/fluent_python_fix.awk" ;;
+  # SAT/SMT by Example: Yurichev's listings package prints a wrapped code line
+  # with a continuation hook whose font glyph ToUnicode-maps to U+00C7 (Ç), so
+  # every wrapped listing line opens with a spurious "Ç ". satsmt_fix remaps the
+  # leading "Ç " to the conventional hook "↪ " (588 lines, Ç is never a real
+  # letter in this book), pairing it with the ⤦ that ends the line above.
+  sat-smt-by-example) FIXAWK="${AWKF%/*}/satsmt_fix.awk" ;;
 esac
 # pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
 # control-byte tr. SSA-based Compiler Design typesets a few relations in
