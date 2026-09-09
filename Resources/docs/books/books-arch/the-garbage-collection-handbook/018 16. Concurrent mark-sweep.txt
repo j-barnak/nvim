@@ -1,0 +1,820 @@
+Chapter 16
+
+Concurrent mark-sweep
+
+In the previous chapter we looked at the need for incremental or concurrent garbage collec-
+tion, and identified the problems faced by all such collectors. In this chapter, we consider
+one family of these collectors: concurrent mark-sweep collectors. As we noted before, the
+most important issue facing concurrent collection is correctness. The mutator and collector
+must communicate with each other in order to ensure that they share a coherent view of
+the heap. This is necessary on the mutator’s part to prevent live objects from being hidden
+from the collector. It is necessary for collectors that move objects to ensure that the mutator
+uses the correct addresses of moved objects.
+    The mark-sweep family includes the simplest of the concurrent collectors. Because they
+do not change pointer fields, the mutator can freely read pointers from the heap without
+needing to be protected from the collector. Thus, there is no inherent need for a read barrier
+for non-moving collectors. Read barriers are otherwise generally considered too expensive
+for use in maintaining the strong invariant for a non-moving collector, since heap reads
+by the mutator are typically much more frequent than writes. For example, Zorn [1990]
+found that the static frequencies of pointer loads and stores in SPUR Lisp were 13% to 15%
+and 4%, respectively. He measured the running-time overhead of inlined write barriers as
+ranging from 2% to 6%, and up to 20% for read barriers. The exception to this general rule
+is when compiler optimisation techniques can be brought to bear on eliminating redundant
+barriers [Hosking et al., 1999; Zee and Rinard, 2002], and to folding some of the barrier
+work into existing overheads for null pointer checks [Bacon et al., 2003a]. For this reason,
+mark-sweep collectors usually adopt the Dijkstra et al. [1976, 1978] incremental update or
+Steele [1976] insertion write barriers, or their coarser Boehm et al. [1991] variant, or the
+snapshot-at-the-beginning Yuasa [1990] deletion write barrier.
+
+16.1     Initialisation
+Instead of allowing the mutator to run until memory is exhausted, concurrent collectors
+run while the mutator is still allocating. However, when to trigger the beginning of a new
+marking phase is a critical decision. If a collection is triggered too late, it can happen that
+there will be insufficient memory to satisfy some allocation request, at which point the
+mutator will stall until the collection cycle can complete. Once the collection cycle begins,
+the collector’s steady-state work-rate must be sufficient to complete the cycle before the
+mutator exhausts memory, while minimising its impact on mutator throughput. How and
+when to trigger a garbage collection cycle, ensuring that sufficient memory is available
+
+16.1. INITIALISATION                                                                            350
+
+Algorithm 16.1: Mostly-concurrent mark-sweep allocation
+
+ 1   New():
+ 2      handshake1()
+ 3      ref ← allocate()                              /* must initialise black if mutator is black */
+ 4      if ref = null
+ 5          gcStart()
+ 6          while gcRunning
+ 7             /* wait for collection to finish */
+ 8          ref ← allocate()
+ 9          if ref = null
+10             error "Out of memory"
+11      return ref
+12
+
+13   handshake1():
+14      if not gcRunning && behind()                                          /* GC checkpoint */
+15         gcStart()
+16      if markingTerminating()                                      /* only for grey mutators */
+17         ackHandshake()
+18         while markingTerminating()
+19            /* wait for marking/sweeping to finish (with lazy or eager sweep) */
+
+for allocation to keep the mutator satisfied even as concurrent collection proceeds, and
+reaching termination of the collection cycle so that garbage can be reclaimed and recycled,
+all depend on scheduling collection work alongside the mutator.
+    Algorithm 16.1 illustrates the mutator allocation sequence for a concurrent mark-sweep
+garbage collector that triggers the collector to start work based on a policy decision as to
+whether collection is ‘behind’ and needs to begin in order to avoid running out of memory
+before the collection cycle completes. Collection is synchronised with concurrent mutator
+threads executing mutator barriers or allocations, as indicated by the atomic modifier.
+There may also be multiple collector threads if the code is adjusted to use a suitable termi-
+nation algorithm to end marking and likewise sweeping may be parallelised. The decision
+as to when to start the collector is captured by the utility routine behind, which makes
+sure that the mutator does not get so far ahead of the collector that the allocate routine
+will not block waiting for the collector to finish.
+    Algorithm 16.2 shows what happens when collection work is triggered. The gcStart
+routine forces initialisation of the collector by scanning the roots to prime the work list. As-
+suming that scanning the roots also means stopping and scanning all the mutator threads,
+then at this point no mutator thread holds a white reference. Thus, this example operates
+in mostly-concurrent mode, with a stop-the-world phase to initiate collection. The now-
+grey root objects represent the initial scanning wavefront from which tracing proceeds.
+Having scanned the roots, mutator threads can now continue either as black (since they
+hold no white references) or grey, depending on the mutator barriers being used.
+    Stopping the world may result in unacceptable pauses. With grey mutator barriers in
+place, it is possible simply to enable the barriers and defer scanning all the roots until later,
+concurrently with the mutator. Section 16.6 describes techniques that relax the need to stop
+the mutator threads in order to sample their roots. Still, at least one root must be scanned
+to prime the work list and initiate tracing.
+16.2. TERMINATION                                                                             351
+
+Algorithm 16.2: Mostly-concurrent marking
+
+ 1   shared worklist ← empty
+ 2
+
+ 3   atomic gcStart():
+ 4      if not gcRunning
+ 5         scan(Roots)                         /* invariant: mutator holds no white references */
+ 6         gcRunning ← true
+ 7      return
+ 8
+
+ 9   gcThread():
+10      while true                                         /* one iteration per collection cycle */
+11         while not gcRunning
+12            /* wait for cycle start */
+13         while not isEmpty(worklist)
+14            ref ← remove(worklist)
+15            scan(ref)
+16         rescan()                                                  /* only for grey mutators */
+17         sweep()                                                       /* eager or lazy sweep */
+18         gcRunning ← false
+19
+
+20   rescan():                                               /* only needed for grey mutators */
+21      setMarkingTerminating(true)
+22      handshake2()
+23      scan(Roots)
+24      while not isEmpty(worklist)
+25         ref ← remove(worklist)
+26         scan(ref)
+27      setMarkingTerminating(false)
+28
+
+29   handshake2():                                             /* wait for all mutators to stop */
+30      waitForAllMutatorsToAckHandshake()
+
+16.2     Termination
+Termination of the collector cycle for a black mutator is a relatively straightforward proce-
+dure. When there are no grey objects in the work list remaining to be scanned, the collector
+terminates. At this point, even with the weak tricolour invariant the mutator can contain
+only black references, since there are no white objects reachable from grey objects still held
+by the mutator (since there are no grey objects). Because the mutator is black, there is no
+need to rescan its roots.
+    Termination for a grey mutator is a little more complicated, since the mutator may
+acquire white pointers after its roots were scanned to initiate the collection. Thus, the grey
+mutator roots must be rescanned before the collector cycle can terminate. Provided that
+rescanning the mutator roots does not expose any fresh grey objects, the collection cycle
+is done. Algorithm 16.2 simply follows a single marking pass by stopping all the mutator
+threads in order to rescan their stacks and mark to completion before entering the sweep
+phase. An alternative would be to repeat the process of stopping mutators, scanning their
+stacks, and marking while the mutators are restarted a number of times, before a final stop-
+16.3. ALLOCATION                                                                           352
+
+the-world rescan and mark to completion. This approach is likely to lead to a shorter pause
+to complete marking. Note that there is also a choice in handshake1 (Algorithm 16.1) of
+whether to halt mutators just until marking is complete (and then lazily sweep the heap)
+or to halt them until after the (eager) sweep is also complete.
+    Pizlo [2017] describes a technique for ensuring that rescanning eventually terminates.
+In this scheme, time is broken down into quanta of, say, two milliseconds. The collector (if
+running) always gets at least 30% of a quantum. The remaining 70% is split according to
+what fraction of the reserve space is left, the reserve being the amount of space into which
+the mutator may allocate while the collector is running. If fraction H of the reserve is left,
+the mutator gets that fraction of the 70% of the quantum. Note that in the extreme (when
+the reserve is exhausted) the collector will run to completion without interruption. This
+resource allocation approach helps prevent the collector from getting too far behind and,
+assuming that mutators continue to allocate, guarantees eventual completion.
+
+16.3     Allocation
+Notice that the allocator must initialise the mark state (colour) of the new object according
+to the colour of the mutator. If the mutator is black, then new objects must be allocated
+black (marked) under the strong invariant, unless (under the weak invariant) the new ob-
+ject is also made reachable from some grey object. This last guarantee is generally difficult
+to make, so black mutators usually allocate black even under the weak invariant [Abraham
+and Patel, 1987; Yuasa, 1990]. However, a grey mutator admits a number of alternatives
+that several implementations exploit.
+    Kung and Song [1977] simply allocate black during the marking phase and white oth-
+erwise. Their choice is guided by the observation that new objects are usually immediately
+linked to existing reachable objects, at which point their write barrier (unconditional Dijk-
+stra-style incremental update) would simply shade the object anyway. Moreover, because
+the new object contains no references, it is safe to allocate straight to black and avoid un-
+necessary work scanning it for non-existent children.
+    Steele [1976] chooses to vary the colour of allocation during marking, depending on the
+pointer values that are used to initialise the new object. Assuming that the initial values
+of a new object’s reference fields are known at the time of allocation permits a bulk test
+of the colour of the targets of those references. If none of them are white, then the new
+object can safely be allocated black. Furthermore, if none of them are white, then it is
+a possible sign that the marker is close to terminating and that the new object will not
+be discarded. Conversely, if any of the initialising pointers is white, then the new object
+is allocated white. The Steele collector marks mutator stacks last, and scans them from
+bottom (least volatile) to top (most volatile), so most cells will be allocated white to reduce
+floating garbage.
+    During sweeping, Steele allocates white or black according to where the sweeper is in
+its pass through the heap. Allocation is white if the free cell being allocated is from space
+that has already been swept, and black otherwise (to prevent the sweeper from misinter-
+preting the newly allocated object as free).
+    One problem with allocating new objects white instead of black is that the new object
+may over time accumulate a long chain of white objects which, if it remains reachable, must
+eventually be traversed before the collection cycle can terminate (consider what happens
+when a grey mutator allocates a large new data structure white). Allocating black avoids
+dragging out termination in this way, but at the cost of wasted space since it defers freeing
+any newly allocated but now unreachable data until the next cycle [Boehm et al., 1991;
+Printezis and Detlefs, 2000]. Vechev et al. [2006] propose a compromise solution in which
+16.4. CONCURRENT MARKING AND SWEEPING                                                      353
+
+they colour newly allocated objects with a fourth colour: yellow objects are treated as if
+they are white for purposes of retention (they may yet die before the cycle completes), but
+black with respect to the tricolour invariant. That is, a yellow object will be shaded straight
+to black (reachable) without being scanned. Thus, terminating tracing with a grey mutator
+that holds yellow references means not needing to trace beyond the yellow object.
+
+16.4     Concurrent marking and sweeping
+So far we have considered running marking concurrently only with the mutator, with
+marking and sweeping proceeding in series. Lazy sweeping means that allocation requests
+by the mutator may also trigger concurrent sweeping from the previous marking phase,
+even as a new collection cycle is running the next marking phase. This can potentially lead
+to a confusion about the colours of objects. The trick is to distinguish true garbage white
+objects from the previous marking phase (needing to be swept) from (as-yet unmarked)
+white objects in the next marking phase (which may yet be marked). Lamport [1976]
+pipelines the execution of marking and sweeping phases by introducing a new colour,
+purple, to distinguish the former from the latter. At the completion of the marking phase,
+all (garbage) white objects are recoloured purple. Sweeping will collect purple objects,
+adding them to the free-list (recoloured black or white, depending on allocation colour).
+Lamport envisions several concurrent marking and sweeping threads, with a collection
+cycle proceeding as follows.
+
+  1. Wait until all markers and sweepers have finished.
+
+  2. Change all white nodes to purple and all black nodes to white (preferably white to
+     avoid floating garbage) or grey (in the case the node has been shaded concurrently
+     by the mutator write barrier).
+
+  3. Shade all roots.
+
+  4. Start the markers and sweepers.
+
+Marking ignores all purple objects: the mutator can never acquire a reference to a pur-
+ple object, so grey objects never point to purple and purple objects are never shaded. Of
+course, the difficulty with this approach is that the conversion of white to purple might
+require touching colour state associated with all of the garbage objects, which must be
+completed before sweeping can begin. Similarly, when starting the marking phase, all
+black objects (from the previous cycle) must be recoloured white.
+    Lamport describes an elegant solution to this problem in which the colours are reinter-
+preted at Step 2 by rotating through a range of colour values. Each object is tagged with
+a two-bit basic hue (white, black, purple) plus a one-bit shaded flag. If the hue is white,
+then setting the shaded flag shades the object grey (that is, a shaded white hue is grey). If
+the hue is black, then setting the shaded flag has no effect (that is, black hue means black
+whether the shaded flag is set or not). If the hue is purple, then the shaded flag will never
+be set since garbage objects will not be traced. The sense of the hue bits is determined by a
+global variable base encoding the value of white (=base), black (=base+1) and purple
+(=base+2). At Step 2 there are no grey or purple nodes because marking and sweeping
+have finished, so flipping from black to white and white to purple is achieved simply by
+incrementing base modulo 3. Table 16.1 shows the three possible values of base encoded
+in binary (00, 01, 10) and the two possible values of the shaded flag (0, 1), which together
+make up the possible colours, along with examples for the three possible values of base.
+The entries in the ’value’ columns are determined using arithmetic modulo 3. Note that
+16.5. GARBAGE-FIRST: COLLECTING YOUNG AND OLD REGIONS                                   354
+
+   tag                  GC 1: base=00          GC 2: base=01          GC 3: base=10
+   hue     shaded      value     colour       value     colour       value     colour
+    00        0      base         white      base+2      purple     base+1      black
+    00        1      base          grey      base+2    impossible   base+1      black
+    01        0      base+1        black     base        white      base+2     purple
+    01        1      base+1        black     base         grey      base+2   impossible
+    10        0      base+2       purple     base+1       black     base       white
+    10        1      base+2     impossible   base+1       black     base        grey
+
+Table 16.1: Lamport [1976] mark colours: ‘hue and shaded’ encoding of
+         colours for concurrent marking and sweeping. The colour encoding is:
+         white as hue=base/shaded=0, grey as hue=base/shaded=1, black as
+         hue=base+1 and purple as hue=base+2. Note that a garbage (purple)
+         object can never be shaded. When all markers and sweepers have finished,
+         there are no grey or purple nodes, so flipping from black to white/grey and
+         white to purple is achieved simply by incrementing base modulo 3.
+
+the combination hue=base+2/shaded=1 is impossible because purple (garbage) objects
+are never shaded grey. Subsequent increments cycle the hue interpretation accordingly.
+    To make sure that Step 2 does not leave a node grey from one cycle to the next unless
+it was recently shaded by a mutator, whenever a marker thread makes a grey node black
+it must also clear the shaded flag. Otherwise, the grey node will be retained as floating
+garbage. Also, to speed up the identification of garbage, markers and sweepers can take
+the opportunity to clear the shaded flag whenever they encounter a black object.
+    Queinnec et al. [1989] propose an alternative solution to this problem, using separate
+colour information for odd and even collection cycles. Thus, marking in one cycle can
+proceed independently of sweeping from the previous cycle because they operate on in-
+dependent colour state.
+
+16.5       Garbage-First: collecting young and old regions
+Most of the concurrency issues faced in the marking phase of a mostly-concurrent collector
+are addressed by the use of write barriers, which we considered at length in the previous
+chapter. As an example, we now discuss the OpenJDK Garbage-First (G1) collector which
+employs collector threads, running concurrently with mutator threads, to mark live ob-
+jects, although it stops the world to copy survivors from condemned regions.
+    In Section 10.4 we focused on G1’s organisation of the heap and on ‘young only’ collec-
+tion of young generation regions. To recap, G1 organises the heap into equal-sized regions.
+To enable these to be collected independently, G1 requires for each collected region a re-
+membered set that records where other regions might contain a reference to this region;
+G1 implements remembered sets as sets of cards. Management of these remembered sets
+is crucial to G1’s performance and space utilisation.
+    As configured in OpenJDK, G1 is a generational collector. Most collections are ‘young
+only’, stopping the world to evacuate young generation regions and reclaim in-place any
+dead humongous objects. In this section, we consider how a ‘mixed collection’ of young
+and old regions operates, describing its phases in some detail. Here, G1 marks the whole
+heap concurrently but still evacuates any regions selected with mutators paused. Thus, it
+is a ‘mostly mark-sweep collector.’ G1 has evolved considerably from the implementation
+described by Detlefs [2004a]; here we discuss the techniques used in OpenJDK 20. One of
+the most significant changes lies in the handling of remembered sets, which can grow very
+16.5. GARBAGE-FIRST: COLLECTING YOUNG AND OLD REGIONS                                                           355
+
+large unless stale and duplicate entries are removed, which was time-consuming and did
+not eliminate all remembered set fragmentation. G1 therefore no longer builds remem-
+bered sets on the fly for all old regions but on demand only for those being evacuated;
+remembered sets for young regions are always maintained.
+    G1 starts in ‘young only’ mode, evacuating in stop-the-world pauses only live objects
+in young generation regions (see Section 10.4). Eventually, it will become necessary to re-
+claim space in old generation regions as well. This necessitates a ‘mixed collection’ that
+starts by initiating concurrent marking adaptively, based on the size of the old genera-
+tion, promotion rate, prediction of the length of time to mark and other metrics. ‘Mixed
+collections’ comprise a number of stop-the-world and concurrent phases.
+
+Start: This stop-the-world phase is piggy-backed on a ‘young only’ collection that seeds
+      the roots for concurrent marking. To avoid explicitly marking recently allocated ob-
+      jects, G1 sets a Top At Mark Start (TAMS) variable for each region; any objects allocated
+      at addresses above the TAMS for a region will be considered implicitly live/marked.
+      This simplifies allocation, as there is no need to mark the bitmap1 for new objects.
+      This phase also records those memory ranges to which the young collection copied
+      objects (in the survivor space or old generation). These ranges will be searched sub-
+      sequently for roots into the condemned set; simply recording these ranges avoids
+      expensive iteration and marking during this pause.
+
+Concurrent Clear Claimed Marks: Initialise collection of classes and class loaders.
+
+Concurrent Scan Root Regions: The ‘young only’ collection did not follow references to
+    old generation objects. In this phase, multiple threads scan the previously recorded
+    ranges of addresses occupied by survivors of the ‘young only’ collection for refer-
+    ences to the old generation, and mark the referenced objects. This phase runs concur-
+    rently with the mutators and must complete before the next stop-the-world ‘young
+    only’ collection can start.
+
+Concurrent Mark From Roots: Now that all roots have been marked, live objects below
+    each region’s TAMS are traced and marked concurrently by parallel threads, using a
+    snapshot-at-the-beginning algorithm, with mutators using a deletion barrier (as in
+    Algorithm 15.2c). G1 marking threads use the approach described by Printezis and
+    Detlefs [2000]. Each thread first claims a region to mark by atomically advancing a
+    global ‘finger’ to the right. To scan a region, the thread advances a local finger through
+    the region’s bitmap. When it encounters a mark, the thread tries to mark atomically
+    the corresponding object’s unmarked children. If an unmarked child is to the left of
+    the global finger, the thread pushes it onto its local mark stack. Otherwise, it takes
+    no further action as the object will be encountered later by some marking thread.
+      The threads use work stealing to balance loads, where necessary pushing or stealing
+      work between their local mark stacks and a global mark stack or other threads’ local
+      mark stacks. Several stop-the-world ‘young only’ collections may take place while
+      concurrent marking is in progress. Marking threads synchronise with pending GC
+      safe-points by regularly polling, based on a dynamic number of objects and words
+      scanned metric.
+
+Concurrent Pre-clean: Optionally, process weak reference objects discovered by concur-
+    rent marking. Any such object that holds null or a reference to a live object needs no
+    further processing and is dropped from the list of discovered references.
+  1 Recall that in JDK 20 G1 uses only a single bitmap for marking (it originally used two [Detlefs, 2004a]).
+16.5. GARBAGE-FIRST: COLLECTING YOUNG AND OLD REGIONS                                      356
+
+Remark: In this stop-the-world phase, G1 completes marking. Should this cause the
+    global mark stack to overflow, G1 will start another Concurrent Mark round. Other-
+    wise, it processes weak references according to the Java specification (see the discus-
+    sion of weak references in Section 12.2) and unloads unused classes. It then reclaims
+    any completely empty regions and identifies candidate regions for evacuation ac-
+    cording to the volume of live data in each region, ignoring any whose occupancy
+    exceeds a threshold (default, 85%) and therefore whose reclamation would yield lit-
+    tle free space. In the next phase, G1 will need to scan live objects for inter-region
+    references. To assist this, the Remark phase sets a Top At Rebuild Start (TARS) vari-
+    able for each old generation region. It will be sufficient to scan live objects in a region
+    only up to its TARS, since any objects above this threshold whose reference fields are
+    updated will be handled by the write barrier. The barrier will also handle all objects
+    mutated after they have been scanned.
+Concurrent Rebuild Remembered Sets: In this phase, mutators are restarted. G1 now
+    starts to gather information needed for reclaiming space in the old generation, re-
+    building the remembered sets for those old regions selected for evacuation. In ver-
+    sions prior to JDK 20, G1 obtained liveness information from its ‘current’ and ‘previ-
+    ous’ bitmaps (and ‘current’ and ‘previous’ TAMSes), which it used alternately. JDK 20
+    drops the second bitmap and TAMSes in favour of reformatting the heap in order to
+    facilitate later parsing and scanning it. Here, G1 replaces sequences of dead objects
+    and gaps with filler objects (using liveness information from the mark bitmap) in
+    order to improve heap parsability. It then scans live objects for inter-region refer-
+    ences, adding any cross-region references to the appropriate remembered set. The
+    pre-JDK 20 method had the disadvantages not only of the space needed for the sec-
+    ond bitmap but also that iterating over the live objects (below the TAMS) required
+    the use of the bitmap rather than simply walking over holes now occupied by single
+    dead objects. All these actions — reformatting the heap, scanning and rebuilding
+    remembered sets — are ‘embarrassingly’ parallel. Again, there is regular synchroni-
+    sation at safe-points where ‘young only’ collections may occur.
+Cleanup: In this stop-the-world phase, G1 calculates the efficiency of evacuating each re-
+     gion in the condemned set, based on each region’s occupancy and connectedness. It
+     drops any regions from the condemned set, along with their remembered sets, whose
+     efficiency would be too low. At this point, G1 is ready to start the Space Reclamation
+     phase but first runs a further stop-the-world Prepare Mixed ‘young only’ collection.
+     This is needed because the Cleanup pause interrupted a mutator execution that had
+     been sized to maintain minimum mutator utilisation requirements using predictions
+     for a non-mixed collection pause; changing the type of garbage collection invalidates
+     these predictions.
+Concurrent Cleanup for Next Mark: Clears the bitmap, ready for the next marking cycle.
+Space Reclamation: Over the next few stop-the-world pauses for ‘young only’ collections,
+     parallel threads also scan the card table looking for live objects in old generation
+     regions to evacuate. The only difference here between ‘young only’ and ‘mixed’
+     collections is the contents of the condemned set. In each pause, G1 continues to
+     evacuate regions in the condemned set until it estimates that it would exceed its
+     pause time goal.
+
+   In summary, G1 is intended to support applications running on multiprocessor ma-
+chines using heap sizes of tens of gigabytes or larger, with over half the heap occupied
+by live data. It is capable of defragmenting the heap while at the same time balancing
+16.6. ON-THE-FLY MARKING                                                                         357
+
+throughput and latency. Management of remembered sets has proved critical to its per-
+formance. Earlier implementations could lead to remembered sets as large as 20%2 of the
+heap in some circumstances. Building remembered sets on demand and only for those
+old regions selected for evacuation and removing the second bitmap can reduce the space
+needed to around 3% of the heap size in typical cases. Nevertheless, G1 may require care-
+ful tuning to meet throughput and latency goals for some applications.
+
+16.6      On-the-fly marking
+So far, we have assumed that the mutator threads are all stopped at once so that their roots
+can be scanned, whether to initiate or terminate marking. Thus, after the initial root scan,
+the mutator holds no white references. At this point, the mutator threads can be left to
+run as black (so long as a black mutator barrier is employed), or grey (with a grey mutator
+barrier) with the proviso that to terminate marking the collector must eventually stop and
+rescan grey mutators until no more work can be found. These stop-the-world actions re-
+duce concurrency. An alternative is to sample the roots of each mutator thread separately,
+and concurrently with other mutator threads. This approach introduces complexity be-
+cause of the need to cope with some threads operating grey and some operating black, all
+at the same time, and how it affects termination.
+    On-the-fly collection never stops the mutator threads all at once. Rather, the collector
+engages each of the mutators in a series of soft handshakes: these do not require a single
+global hard synchronisation at the command of the collector. Instead, the collector merely
+prompts each mutator thread asynchronously, one-by-one, to halt gracefully at some con-
+venient point. The collector can then sample (and perhaps modify) each thread’s state
+(stacks and registers) before releasing it on its way. While one mutator thread is stopped,
+others can continue to run. Furthermore, if stack barriers are used, as described in Sec-
+tion 11.5, the collector can restrict its examination of the stopped thread to just the top
+active stack frame (all other frames can be captured synchronously with a stack barrier) so
+the handshake can be very quick, minimising mutator interruption.
+
+Write barriers for on-the-fly collection
+Synchronisation operations for on-the-fly collectors need some care. A common approach
+for mostly-concurrent collectors, which stop all threads together to scan their stacks, is
+to use a deletion barrier with a black mutator. Furthermore, new objects are allocated
+black. This approach simplifies the termination of marking: black stacks do not need to be
+rescanned and allocation does not lead to more work for the collector. However, this ap-
+proach is not sufficient for an on-the-fly collector, as Figure 16.1 illustrates. Because stacks
+are scanned on the fly, some may be white. The heap is allowed to contain black objects
+before all threads have been scanned and before tracing has started because we allocate
+new objects black. The deletion barrier is not triggered on stack operations and there is
+no insertion barrier, so neither X nor Y is shaded grey. Typically, on-the-fly algorithms
+employ an incremental update insertion barrier to avoid propagating pointers unnoticed
+before the deletion barrier can be enabled. In summary, correct mutator-collector synchro-
+nisation for on-the-fly marking is a subtle issue that requires substantial care on the part
+of the algorithm designer.
+
+  2 Thomas Schatzl, Free and Open Source Software Developers’ European Meeting (FOSDEM), 2018, https:
+
+//archive.fosdem.org/2018/schedule/event/g1/.
+16.6. ON-THE-FLY MARKING                                                                       358
+
+     Thread 1                          Thread 2   Thread 1                          Thread 2
+       stack                             stack      stack                             stack
+                      X                                            X
+
+                      Y                                            Y
+
+     (a) The deletion barrier is ‘on’. Thread 1   (b) X is updated to point to Y; thread 2’s
+     has been scanned, but thread 2 has not. X    reference to Y is removed. Neither action
+     has been newly allocated black.              triggers a deletion barrier.
+
+Figure 16.1: On-the-fly collectors that allocate black need more than a dele-
+       tion barrier to prevent the scenario of a white object reachable only from a
+       black object.
+
+Doligez-Leroy-Gonthier
+Using soft handshakes to initiate marking was first used in a mark-sweep garbage collec-
+tor tailored for the ML programming language. Dubbed Doligez-Leroy-Gonthier, after the
+names of its authors [Doligez and Leroy, 1993; Doligez and Gonthier, 1994], this collector
+uses private thread-local heaps to allow separate garbage collection of data allocated solely
+on behalf of a single thread, and not shared with other threads. A global heap allows shar-
+ing of objects among threads, with the proviso that the global shared objects never contain
+pointers into private heaps. A dynamic escape detection mechanism copies private objects
+into the shared heap whenever a reference to them is stored outside the private heap. Only
+immutable objects (the vast majority in ML) can be allocated privately, so making a copy of
+one in the shared heap does not require updating all the sources of its pointers (though it
+does require copying its transitive closure of reachable immutable objects). But mutation is
+rare in ML, so this happens infrequently. These rules permit a private heap to be collected
+independently, stopping only the mutator that owns that heap.
+    Doligez-Leroy-Gonthier uses concurrent mark-sweep collection in the shared heap, to
+avoid having to update references from each of the threads. The steady-state concurrent
+mark-sweep collector operates in the usual black mutator snapshot mode, employing a
+Yuasa-style snapshot deletion barrier. Initiating steady-state collection proceeds using a
+series of soft handshakes to transition mutator threads from grey to black, as follows. In
+terms of Ugawa et al. [2018] (Section 15.3), this is a Type II transition.
+    The collector and mutator threads each track their own view of the state of the col-
+lection with a private status variable. To initiate the collection cycle, the collector sets its
+status to Sync1 . The mutator threads are then made to acknowledge, and update their
+own status, via soft handshakes. Once all have acknowledged the Sync1 handshake, the
+collector is said to be in Phase Sync1 . Mutator threads ignore handshakes while storing to
+a pointer field or allocating, to ensure that these operations first complete, making them
+atomic with respect to phase changes. Having acknowledged this handshake, each muta-
+tor thread now runs with the write barrier in Algorithm 16.3a, which shades both the old
+and new values of modified pointer fields, combining both the black mutator Yuasa-style
+snapshot deletion barrier and the grey mutator Dijkstra-style incremental update inser-
+tion barrier. Shading by the mutator does not place the shaded object directly into the
+collector’s work list for scanning (like Kung and Song [1977]), but simply colours a white
+object explicitly grey and resets a global dirty variable to force the collector to scan for the
+16.6. ON-THE-FLY MARKING                                                                     359
+
+Algorithm 16.3: Doligez-Leroy-Gonthier write barriers. Both ignore the handshake.
+
+              (a) The Sync barrier                            (b) The Async barrier
+
+      1   WriteSync (src, i, new):                    1   WriteAsync (src, i, new):
+      2      old ← src[i]                             2      old ← src[i]
+      3      shade(old)                               3      if not isBlack(old)
+      4      shade(new)                               4         shade(old)
+      5      src[i] ← new                             5         if old ≤ scanned
+                                                      6               dirty ← true
+                                                      7      src[i] ← new
+
+newly grey object (in the style of Dijkstra et al. [1978]). This avoids the need to synchronise
+explicitly between the mutator and the collector (other than for soft handshakes, where
+atomicity is accomplished simply by delaying acknowledging the handshake), but does
+mean that worst-case termination requires rescanning the heap for grey objects. Because
+mutation is rare in ML, this is not a significant impediment. At this point, the grey mutator
+threads are still allocating white, as they were before the collection cycle was initiated.
+    Once all of the mutators have acknowledged the Sync1 handshake the collector moves
+to Phase Sync2 with another round of handshakes. Because the write barrier is atomic only
+with respect to handshakes, it does not impose mutator-mutator synchronisation. This
+leaves the possibility that a mutator from before the Sync1 handshake, which is not run-
+ning the write barrier, could insert some other pointer X into the src[i] field right after
+the load old←src[i]. Thus, shade(old) will not shade the pointer X that actually gets
+overwritten by the store src[i]←new. The transition to Phase Sync2 avoids such problems
+by ensuring that all mutator threads have completed any unmonitored atomic allocation
+or write in Async before transitioning to Sync1 . At that point, all mutators will be run-
+ning the write barrier (with insertion protection), so even if the mutators interleave their
+write barrier operations, there will not be a problem. The collector can then safely move
+into the steady-state snapshot marking phase, Async. Each mutator thread acknowledges
+the Async handshake by scanning (shading from) its roots for the collector (making itself
+black), starting to allocate black, and reverting to the standard snapshot barrier augmented
+with resetting the global dirty flag (similarly to Dijkstra et al. [1978]) to force the collector
+to rescan if the shaded object is behind the scanning wavefront, shown in Algorithm 16.3b.
+Table 16.2 shows the phases as observed by collector and mutators.
+    Once marking finishes, sweeping commences. Like Steele [1975], the collector’s sweep
+pointer determines the mutator allocation colour to minimise floating garbage: white if
+allocating from memory already swept (so already noted free in this cycle), black if not yet
+swept (to avoid sweeping it to the free-list), and grey if at the point where the collector is
+currently sweeping (to avoid the race with the sweeper at the boundary).
+
+Doligez-Leroy-Gonthier for Java
+Domani et al. [2000] consider Doligez-Leroy-Gonthier-style collection in the context of Java,
+where they offer several improvements to cope with much higher mutation rates, and
+language features such as weak references and finalisation. Because Java lacks general
+support for immutable objects they do not consider independently collected thread-local
+heaps, but simply a global shared heap, collected on the fly. They also support correct
+execution on multiprocessors that have a more relaxed memory model than sequential
+consistency, which was assumed for the original Doligez-Leroy-Gonthier implementation.
+
+  Phase    Collector     Mutators        Meaning
+  Async    Async         Async           No mutators are executing barriers
+           Sync1         Async, Sync1    Some mutators may be running the Sync barrier
+  Sync1    Sync2         Sync1 , Sync2   Some mutators may be black and running the
+                                         Async barrier; others are running the Sync barrier
+  Sync2    Sync2         Sync2           All mutators are running the Async barrier
+           Async         Sync2 , Async   Some mutators are black; all are running the
+                                         Async barrier
+  Async    Async         Async           All mutators are black; the collector can complete
+                                         marking, scanning and sweeping
+
+Table 16.2: Phases in the Doligez and Gonthier collector
+
+To avoid rescanning for fresh mutator-shaded grey objects (which are more common in a
+mutation-oriented language like Java), Domani et al. dedicate an output-restricted double-
+ended queue to each mutator thread, to which it can enqueue grey objects at one end, while
+the collector is able to poll for work from the other end. This minimises synchronisation
+between the mutator and collector in the write barriers.
+
+Sliding views
+Azatchi et al. [2003] offer further improvements to on-the-fly marking by exploiting the
+sliding views approach to sampling mutator roots without stopping the world [Levanoni
+and Petrank, 1999]. In place of the deque used by Domani et al., the sliding views approach
+implements the snapshot deletion barrier by logging to a thread-local buffer the state of all
+the fields of an object before it is modified (dirtied) for the first time while the collector is
+marking. The buffers are drained via soft handshakes, with marking terminated once all
+the buffers are empty. Like Doligez-Leroy-Gonthier, after the initial handshake, and before
+the deletion barrier can be enabled for each mutator, the mutators also execute a Dijkstra-
+style incremental update insertion barrier to avoid propagating pointers unnoticed before
+the mutator snapshot can be gathered. These snooped stores also become mutator roots.
+The snooped stores are disabled once all threads are known to be logging the snapshot.
+We discuss further details of this approach in Section 18.7.
+
+16.7      Abstract concurrent collection
+Concurrent collectors have many common design features and mechanisms, while differ-
+ing in small but important details. To highlight these similarities and differences, we can
+adopt a common abstract framework for concurrent garbage collection [Vechev et al., 2005,
+2006; Vechev, 2007]. As discussed previously, the correctness of a concurrent collector
+depends on cooperation between the collector and the mutator in the presence of concur-
+rency. Thus, the abstract concurrent collector logs events of mutual interest to the collector
+and mutator by appending to the shared list log. These events are tagged as follows:
+
+   • T⟨src, fld, old, new⟩ records that the collector has Traced pointer field fld of
+     source object src, and that the field initially contained reference old which the col-
+     lector has replaced by reference new. That is, the collector has traced an edge in the
+     object graph src→old and replaced it with an edge src→new.
+
+   • N⟨ref⟩ records that the mutator has allocated a New object ref.
+
+   • R⟨src, fld, old⟩ records that the mutator has performed a Read from the heap
+     by loading the value old from field fld of source object src.
+   • W⟨src, fld, old, new⟩ records that the mutator has performed a Write to the
+     heap by storing the value new into field fld of source object src which previously
+     contained value old. If fld is a pointer field, then the mutator has replaced an edge
+     src→old with an edge src→new.
+Each of src, fld, old, new are the addresses of the source object and source field, and
+old and new target object addresses, respectively. Collector event T captures the fields that
+have already been scanned by the mutator. For a non-moving collector tracing does not
+modify the references in the heap, so old=new for T events. Mutator event N captures
+allocations by the mutator. Mutator events R and W capture the fields that the mutator
+has accessed or modified.
+    An abstract concurrent mark-sweep collector is illustrated by Algorithm 16.4, which
+takes the abstract tracing collector of Algorithm 6.1 and augments it to handle the fact
+that the collector executes concurrently with the mutator. The algorithm proceeds in the
+usual way, scanning reachable objects by tracing from the roots, before sweeping to reclaim
+unreachable objects. Units of scanning work performed by scanTracingInc occur atom-
+ically; except to note that sweeping must also be properly synchronised, we omit details
+of sweepTracing.
+    Initialisation of the collector atomically samples the mutator roots using the routine
+rootsTracing and clears the log. This is performed atomically (stop-the-world) to avoid
+the complication of concurrent mutation of the roots by the mutator threads. On-the-fly
+collectors can sample the roots without stopping the world.
+    The collector then proceeds concurrently with the mutator, repeatedly both scanning
+objects and adding origins to be considered by the collector due to concurrent writes per-
+formed by the mutator.
+    At some point, the loop terminates as a result of some non-deterministic choice (de-
+noted by ⃝), ?   when the collector moves to a termination phase in which the remaining
+origins and objects to be scanned are processed atomically (that is, preventing the mutator
+from writing). This is performed atomically to prevent concurrent writes during termina-
+tion, which may be needed to guarantee that the collector will complete its cycle. For some
+practical algorithms, this atomic termination phase can be eliminated.
+    The scanTracingInc procedure implements the usual collector traversal of the heap,
+but incrementally, interleaved with the mutator. It differs from the original procedure
+scanTracing of Algorithm 6.1 only in that it atomically records to the log each traced
+field and the reference it contains.
+    The addOrigins procedure reveals that the abstract concurrent collector is parametr-
+ised by an as-yet-undefined function expose which takes a log prefix and returns a set of
+objects that should be considered as additional origins for live references. Different imple-
+mentations for this function yield different abstract concurrent collector algorithms cor-
+responding to concrete algorithms in the literature, as discussed further below when we
+describe how to instantiate specific collectors. It is the log that permits dealing with con-
+current mutations that cause reachable objects to be hidden from the scan routine, which
+otherwise would remain unmarked.
+
+The collector wavefront
+Cooperation between the collector and the mutator guarantees correctness in the presence
+of concurrency. The log records the tracing progress of the collector through the heap —
+the wavefront — in the form of T events. Key to cooperation is how interleaved mutator
+
+Algorithm 16.4: Mostly-concurrent incremental tracing garbage collection
+
+ 1   shared log ← ()
+ 2
+
+ 3   collectTracingInc():
+ 4      atomic
+ 5         rootsTracing(W )
+ 6         log ← ()
+ 7      repeat
+ 8         scanTracingInc(W )
+ 9         addOrigins(W )
+10      until ⃝?
+11      atomic
+12         addOrigins(W )
+13         scanTracingInc(W )
+14      sweepTracing()
+15
+
+16   scanTracingInc(W ):
+17      while not isEmpty(W )
+18         src ← remove(W )
+19         if ρ(src) = 0                               /* reference count is zero */
+20            for each fld in Pointers(src)
+21                atomic
+22                   ref ← *fld
+23                   log ← log · T⟨src, fld, ref, ref⟩
+24                if ref ̸= null
+25                   W ← W + [ref]
+26         ρ(src) ← ρ(src)+1                      /* increment reference count */
+27
+
+28   addOrigins(W ):
+29      atomic
+30         origins ← expose(log)
+31      for each src in origins
+32         W ← W + [src]
+33
+
+34   New():
+35      ref ← allocate()
+36      atomic
+37          ρ(ref) ← 0
+38          log ← log · N⟨ref⟩
+39      return ref
+40
+
+41   atomic Write(src, i, new):
+42      if src ̸= roots
+43         old ← src[i]
+44         log ← log · W⟨src, &src[i], old, new⟩
+45         src[i] ← new
+
+events (N, R, and W) are treated, depending on whether they occur to the portion of the
+heap already scanned by the collector (behind the wavefront) or not yet scanned (ahead of
+the wavefront). The wavefront itself comprises the set of pending fields still to be scanned
+(specifically not the values of the pointers in those fields). Practical collectors may approx-
+imate the wavefront more or less precisely, from field granularity up through granularity
+at the level of objects to pages or other physical or logical units.
+
+Adding origins
+The addOrigins procedure uses the log to select a set of additional objects to be consid-
+ered live, even if the collector has not yet encountered those objects in its trace, since it is
+possible that some number of reachable pointers were hidden by the mutator behind the
+wavefront. The precise choice of the set of origins is returned by the expose function.
+
+Mutator barriers
+The procedures New and Write represent the usual barriers performed by the mutator
+(here they are suitably atomic), which in the abstract algorithm coordinate with the collec-
+tor by appending their actions to the log. Logging New objects allows subsequent mutator
+events to distinguish loading/storing fields of new objects, and loading/storing references
+to new objects. A freshly allocated object always has a unique reference until that refer-
+ence has been stored to more than one field in the heap. Moreover, it does not contain any
+outgoing references (so long as its fields have not been modified, since they are initialised
+to null). This event allows concrete collectors to vary in how they decide liveness of ob-
+jects that are allocated during the collection cycle (some collectors treat all such objects as
+live regardless of their reachability, leaving those that are unreachable to be reclaimed at
+the next collection cycle). Others will retain only those new objects whose references are
+stored to live objects.
+    As usual, the mutator Write operation assigns src[i]←new (with new̸=null) so the
+pointer to destination object new is inserted in field src[i] of source object src. Simi-
+larly, the old pointer old previously in field src[i] of source object src is deleted. When
+the source field is behind the collector wavefront, then the pointers new/old are insert-
+ed/deleted behind the wavefront. Otherwise, the pointers are inserted/deleted ahead of
+the wavefront. Logging Write events captures both the inserted and deleted pointers.
+    Recall also that the wavefront can be expressed using the tricolour abstraction, where
+those objects/fields ahead of the wavefront are white, those at the wavefront are grey, and
+those behind the wavefront are black.
+
+Precision
+The abstract concurrent collector of Algorithm 16.4 preserves a fixed level of atomicity (as
+specified by the atomic blocks) while instantiating the function expose in different ways
+to vary precision. Varying this parameter of the abstract concurrent collector is sufficient
+to capture a representative subset of concrete concurrent collectors that occur in the lit-
+erature, but there are other real collectors that cannot be instantiated directly from Algo-
+rithm 16.4 since they vary also in what they treat atomically. For example, Algorithm 16.4
+assumes that roots can be obtained atomically from the mutator threads, which implies
+that they must be sampled simultaneously perhaps by stopping them all briefly (that is,
+Algorithm 16.4 is mostly-concurrent, not fully on-the-fly).
+16.8. ISSUES TO CONSIDER                                                                  364
+
+Instantiating collectors
+Instantiating specific concurrent collectors within this framework requires defining a cor-
+responding expose function. For example, consider a Steele-style concurrent collector that
+rescans all objects modified up to and including the wavefront. The wavefront at an object
+and field granularity is captured by (last) Trace operations in the log for each object/field.
+The objects modified are captured by the src component of all the Write records in the
+log, and the modified fields by the fld component. The Steele-style expose function atom-
+ically rescans modified fields that have already been traced. The traditional implementa-
+tion tracks the wavefront at the object granularity (src component of Trace records) us-
+ing per-object mark bits, but the abstract framework highlights that the wavefront might
+also operate at the field (fld) granularity given a mechanism for marking distinct fields.
+Thus, one need only rescan modified fields that have already been traced as opposed to
+whole modified objects that have already been traced. Moreover, Steele [1976] assumes
+that mutator thread stacks are highly volatile, so expose must rescan them right to the end.
+Termination requires that every Trace record have no matching (at the field or object level)
+Write record occurring after it in the log.
+    A classical Dijkstra-style collector that unconditionally shades the target of any refer-
+ence stored to the heap will expose the new component of all the Write records up to and
+including matching Trace records at the wavefront. Note that these new references are
+extracted directly from the log without rescanning. Termination is similar to Steele.
+    Conversely, a Yuasa-style snapshot collector exposes the old component of all Write
+records that have no matching Trace record after them in log. Tracing that stays ahead
+of the mutator will successfully append Trace records to the log before the mutator can
+modify the fields they record, offering speedier termination than for incremental update.
+
+16.8     Issues to consider
+Many of the issues facing concurrent mark-sweep garbage collection are common to all
+concurrent collectors. Concurrent collectors are without doubt more complex to design,
+implement and debug than stop-the-world collectors. Do the demands made of the collec-
+tor warrant this additional complexity? Or would a simpler solution such as a generational
+collector suffice?
+    Generational collectors can offer expected pause times for most applications of a few
+milliseconds or even less. However, their worst case — a full heap collection — may pause
+an application for very much longer, depending on the size of the heap, the volume of
+live objects and so on. Such delays may not be acceptable. Concurrent collectors, on the
+other hand, offer shorter and more predictable pause times. As we shall see in Chapter 19,
+properly specified real-time collectors can guarantee submillisecond pause times, but this
+typically comes at the cost of significant overhead on both the mutator and the collector.
+To bound pause times, the collector must not only be concurrent but also on-the-fly: it
+must stop mutators only one at a time in order to process their roots (unless the mutators
+can be processed concurrently).
+    Other questions for concurrent mark-sweep collection are the same as those for its
+stop-the-world counterpart. Non-moving memory managers are vulnerable to fragmenta-
+tion. As well as defragmenting the heap, copying and compacting collectors permit bump
+pointer allocation which may be faster than free-list allocation and may also provide better
+locality for the mutator(s). On the other hand, mark-sweep collectors make better utilisa-
+tion of space than copying collectors since they do not require a copy reserve. However,
+non-moving concurrent collectors have a further advantage over other concurrent collec-
+16.8. ISSUES TO CONSIDER                                                                 365
+
+tors: a simpler heap coherency model. All concurrent collectors require mutators to inform
+the collector of changes to the topology of the heap in order to prevent a mutator from hid-
+ing objects from a collector. In addition, collectors that move objects must ensure both that
+only one collector thread moves an evacuated object and that it appears to mutators that
+all references to a moved object are updated atomically.
+     Concurrent mark-sweep collection also presents a number of tactical choices to the im-
+plementer. As with other concurrent collectors, objects may be allocated black, grey or
+white. Black mutators require that all objects be allocated black. Grey mutators allow fur-
+ther possibilities. New objects may be allocated black, grey or white, or the decision may
+be varied depending on the phase of the collector, the initial values of the new object’s
+fields or the progress of the sweeper.
+     In the remaining chapters, we examine concurrent copying and compacting collectors
+and conclude with collectors that can provide pause time guarantees sufficient for hard
+real-time systems, that is, those that must meet every deadline.
+Taylor & Francis
+Taylor & Francis Group
+http://taylorandfrancis.com

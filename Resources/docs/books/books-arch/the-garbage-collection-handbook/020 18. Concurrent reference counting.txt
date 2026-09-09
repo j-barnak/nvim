@@ -1,0 +1,885 @@
+Chapter 18
+
+Concurrent reference counting
+
+We discussed reference counting in Chapter 5. The two chief issues facing naive refer-
+ence counting were its inability to collect garbage cycles and the high cost of manipulating
+reference counts, particularly in the face of races between different mutator threads. The
+solution to cyclic garbage was trial deletion (partial tracing). We used deferred reference
+counting to avoid having mutators manipulate reference counts on local variables and co-
+alescing to avoid having to make ‘redundant’ changes to reference counts that would be
+cancelled out by later mutations; a useful side effect of coalescing is that it tolerates mu-
+tator races. All three solutions required stopping the world while the collector reconciled
+reference counts and reclaimed any garbage. In this chapter, we will relax this requirement
+and consider the changes that need to be made in order to allow a reference counting col-
+lector thread to run concurrently with mutator threads but, before we do, we look at LXR,
+a high-performance, mostly non-concurrent (mostly)-reference counting algorithm.
+
+18.1     LXR: Latency-critical ImmiX with Reference counting
+Latency-critical ImmiX with Reference counting (LXR) [Zhao et al., 2022a,b] is primarily a
+high-performance, coalescing, generational, deferred, sticky reference counter but uses
+a concurrent, snapshot-at-the-beginning tracing collector to reclaim both garbage cycles
+and objects whose reference counts are stuck. LXR applies reference count increments
+in stop-the-world pauses during which it can also defragment the heap by opportunis-
+tically evacuating either young objects or mature objects in sparsely occupied blocks; its
+decrements are applied lazily and concurrently with mutators’ execution. One of the most
+interesting aspects of LXR is that it raises the question of whether the complexity of con-
+current copying/compacting garbage collectors is worthwhile. Implemented in OpenJDK
+with the MMTk memory management toolkit,1 LXR has demonstrated performance that
+is competitive with other modern collectors such as G1 in large heaps but offers better
+throughput and especially better latency in heaps as tight as 1.3× minimum heap size. It
+also uses fewer total resources such as CPU cycles [Zhao et al., 2022b, Section 5.5].
+
+Heap structure. LXR builds on the RC Immix heap structure [Shahriyar et al., 2013] where
+heap organisation was identified as the principal cause of the performance gap between
+existing high-performance reference counters and modern tracing collectors such as immix
+[Blackburn and McKinley, 2008]. As we noted earlier, heap management based on free-lists
+  1 MMTk: a high-performance language-independent memory management framework, https://mmtk.io.
+
+18.1. LXR: LATENCY-CRITICAL IMMIX WITH REFERENCE COUNTING                                   406
+
+suffers from a number of problems including internal and external fragmentation. Free-
+list layout also leads to poor cache locality as objects allocated contemporaneously may
+be dispersed, for instance among several segregated free-lists, in contrast to bump pointer
+allocation which would allocate these objects together. RC Immix modified the authors’
+previous reference counter [Shahriyar et al., 2012] by replacing its free-list allocation with
+immix’s heap structure of 32-kilobyte blocks of 256-byte lines. Bump pointer allocation
+also allows whole blocks or contiguous free lines within a block to be zeroed more effi-
+ciently, en masse, rather than an object at a time, as a free-list allocator must do. Both immix
+and RC Immix bump allocate small and medium-sized objects into gaps of contiguous
+whole lines in partially filled blocks (see Section 10.6). The allocator places new objects
+contiguously into empty lines, skipping occupied lines; objects may span lines, but not
+blocks. Lines and blocks are not reclaimed until all the objects they contain are dead.
+
+Reference counting. Whereas RC Immix tracks the number of live objects on a line and
+in a block, LXR stores a two-bit, sticky reference count for each object in a side reference
+count table; objects whose reference count reaches three become ‘stuck’ and can only be
+reclaimed by a concurrent tracing collector thread. Importantly, objects in LXR are born
+dead, with a reference count of zero. As with other coalesced reference counters (see Sec-
+tion 5.4), reference count increments and decrements are applied in frequent epochs. In-
+crements and decrements are generated either by the LXR write barrier (Algorithm 18.1),
+or when root scanning at each reference counting epoch boundary (when LXR applies an
+increment to each object reachable from the roots — recursively for young objects — and
+buffers a corresponding decrement for the next epoch). The barrier is field rather than ob-
+ject remembering and uses one unlogged bit per field (also held in side metadata). The
+log lock (again, in side metadata) can be per-field or of coarser granularity, though for ef-
+ficiency markAsLoggedAndUnlock should be able to clear the unlogged bit and release
+the log lock in one step. As noted in Algorithm 18.1, looping is not needed if the log locks
+are per-field (not coarse).
+    As usual for a coalesced reference counter, at each epoch boundary LXR first applies
+increments to the referents of all the fields in the modifiedFieldsBuffer and then ap-
+plies decrements to objects recorded in the decrementsBuffer. Whenever an object’s
+reference count is reduced to zero, LXR enqueues the dead object for recursive decrements
+of the referents of its fields. An epoch is complete when both the decrementsBuffer
+and the recursive decrement queue are empty. To avoid long pauses, LXR restarts muta-
+tors and processes decrements lazily in a separate thread which runs immediately after
+each stop-the-world pause and completes before the next pause starts.
+    Coalesced reference counting allows LXR (and RC Immix to handle short-lived objects
+very efficiently by treating them as implicitly dead, with a reference count of zero. Young
+objects (allocated in the current epoch) cannot generate decrements since (i) their pointer
+fields are originally null, and (ii) there were no pointers to them from the stack or the heap
+at the start of the epoch. Furthermore, LXR generates increments from a young object
+only if and when the object receives its first reference count increment (from zero to one)
+at the end of the epoch in which it was created (thus transitively applying increments to
+surviving young objects). If the weak generational hypothesis holds, most objects will die
+within an epoch and therefore can be reclaimed without any reference counting increments
+or decrements. Instead, LXR sweeps all young blocks at the end of the reference counting
+pause, adding each one to its two global lists of either free or partially free blocks. After
+lazy decrement processing is complete, LXR sweeps mature blocks, but only those that
+contain an object that has received a decrement.
+18.1. LXR: LATENCY-CRITICAL IMMIX WITH REFERENCE COUNTING                                    407
+
+Algorithm 18.1: LXR field-logging write barrier
+
+ 1   Write(src, i, ref):
+ 2      field ← &src[i]
+ 3      if unLogged(field)                    /* unsynchronised test of per−field unlogged bit */
+ 4         log(field)
+ 5      src[i] ← value
+ 6
+
+ 7   log(field):
+ 8      do                                   /* looping only needed if lock is coarse */
+ 9         if tryLogLock(field)        /* returns false if another thread is logging */
+10            old ← *field                                  /* remember old referent */
+11            markAsLoggedAndUnlock(field)
+12            push(decrementsBuffer, old)                           /* log old referent*/
+13            push(modifiedFieldsBuffer, field)                   /* log field address */
+14         else:                          /* must wait for old referent to be logged */
+15            waitUntilLogUnlocked(field)
+16      while unLogged(field)
+
+Concurrent tracing. LXR (and RC Immix use a tracing collector in the background, as
+needed, to reclaim garbage cycles. In LXR, this collector also handles objects whose refer-
+ence counts are stuck. The write barrier needed by coalesced reference counting to capture
+the referents of overwritten fields is also just what is needed for LXR’s Yuasa-style concur-
+rent snapshot-at-the-beginning tracing collector. A run of the tracing collector is seeded
+from the roots set of a reference counting collection but may span several epochs. An opti-
+misation is to have the trace visit only mature objects, ignoring objects with a zero reference
+count — normally a snapshot-at-the-beginning algorithm would preserve young objects.
+In order to avoid interference with a running trace, the reference counter immediately
+marks and scans (for reference count decrementing) any mature object that it determines
+to be dead unless the trace has already marked it. Note that, since marking and reference
+count work are mutually exclusive, the former being done only outside of pauses and the
+latter only during pauses, there is no race condition. This allows the reference counter to
+reclaim objects promptly but prevents the trace from following a pointer to a deleted ob-
+ject. Unmarked objects are reclaimed in the first epoch after the trace has completed. To
+limit their cost, LXR triggers traces only if a reference counting epoch finds too few empty
+blocks or if the predicted volume of uncollected dead mature objects exceeds a threshold.
+
+Evacuation. The LXR design is based on the belief that concurrent copying is intrinsically
+expensive. It reclaims most objects without copying. However, some copying is necessary
+to defragment the heap: LXR can do this opportunistically but only during mutator pauses.
+Shahriyar et al. [2013] noted that any young object that survives its first epoch will receive
+an increment from every referent. This pause is an opportunity to move surviving young
+objects (which are identified by their reference counts incrementing from zero to one). LXR
+targets all blocks that contain only young objects, evacuating their contents into partially
+free (preferentially) or completely empty blocks, if any are available. Most notably, LXR
+respects pause time targets, stopping copying when a time threshold is reached, at which
+point further objects are left in place. Mature objects can also be compacted opportunisti-
+cally as the LXR write barrier supports the maintenance of remembered sets. This ‘double
+duty’ of the LXR write barrier is one of its key insights and innovations. Each remembered
+18.1. LXR: LATENCY-CRITICAL IMMIX WITH REFERENCE COUNTING                                 408
+
+set tracks all pointers into a condemned set of blocks within a contiguous 4-megabyte re-
+gion of the heap. Before each concurrent trace, LXR identifies blocks that are estimated
+from the reference count table to be most sparsely occupied; these form the condemned
+sets. LXR does not maintain remembered sets continuously but initialises them by pig-
+gybacking on a concurrent trace, which must traverse every pointer into the condemned
+sets, and discards the remembered sets in the pause when the condemned sets are evacu-
+ated. The write barrier remembers any new reference into the sets created subsequently.
+Remembered sets that are maintained for more than one epoch risk having entries that are
+stale because the object has been reclaimed by the reference counter. LXR avoids this by
+tagging each line and each remembered set pointer source entry with a reuse counter. Line
+reuse counts are incremented whenever the line is reused (and all reuse counts are reset
+to zero at the start of each trace). If evacuation finds that a remembered set entry’s reuse
+count is older than that of the line to which the entry refers, it discards the entry. LXR may
+evacuate one or more condemned sets at each stop-the-world pause, depending on time
+budget. It evacuates each set by tracing from roots and the remembered set, copying ob-
+jects and leaving forwarding pointers. Any reference to something outside the condemned
+set is ignored, thus bounding the number of objects traced.
+    While LXR does not represent generations explicitly, it is essentially generational in
+character, using frequent pauses to copy young survivors opportunistically (with a non-
+zero tenuring threshold). Thus it exploits the weak generational hypothesis. Both LXR and
+explicitly generational collectors use remembered sets for evacuation. The LXR increment
+buffer also resembles a remembered set but remembers unconditionally all old object fields
+that have been modified, whereas a filtering generational remembered set might remem-
+ber only where an old-young pointer has been stored. However, LXR runs collections of
+young objects (typically by stop-the-world copying) and mature objects (concurrent trac-
+ing) simultaneously and somewhat independently. Reference counting is key here to the
+prompt reclamation of dead objects.
+
+Triggers. LXR uses a number of heuristics to control collection. As well as triggering a
+pause if the heap is full, it also triggers a pause if the number of increments or the pre-
+dicted number of survivors exceed thresholds. These heuristics guard against long pauses
+due to increment processing and copying of young objects. The survivor predictor is an
+exponential decay predictor, conservatively biased to higher survival rates. To manage
+fragmentation, LXR triggers concurrent tracing based on the number of free blocks or the
+predicted heap wastage, defined as uncollected dead mature objects plus fragmentation.
+
+Scalability and performance. LXR was designed with scalability and immediacy in mind.
+It supplies fresh blocks in a lock-free manner to thread-local allocators, with minimal con-
+tention. Reference counts are inherently local so increments and decrements can be applied
+in parallel. Work stealing is used for load balancing and very large arrays are partitioned.
+Most decrements are performed concurrently. The field remembering write barrier is re-
+ported to have a geometric mean overhead of only 1.6% compared with no barrier. Only
+the tertiary mechanism, concurrent tracing, has significant potential for scalability issues.
+    Measuring the overheads of garbage collectors is difficult, as is ascribing the causes of
+these overheads; see, for example, the methodology of Cai et al. [2022] for measuring over-
+heads — they also provide a detailed analysis of a number of modern collectors, serial,
+parallel and concurrent, implemented in OpenJDK 17. Zhao et al. show that LXR offers
+excellent latency and throughput, compared with other collectors implemented in Open-
+JDK 11, when running the DaCapo benchmarks,2 which require minimum heap sizes in
+  2 DaCapo Chopin evaluation release, 2021.
+18.2. SIMPLE REFERENCE COUNTING REVISITED                                                                 409
+
+                     Thread 1 Write(o,i,x)               Thread 2 Write(o,i,y)
+                     addReference(x)                     addReference(y)
+                     old ←o[i]                           old ←o[i]
+                     deleteReference(old)                deleteReference(old)
+                     o[i]←x                              o[i]←y
+
+Figure 18.1: Reference counting must synchronise the manipulation of
+        counts with pointer updates. Here, two threads race to update an object
+        field. Note that old is a local variable of each thread’s Write method.
+
+the range of 7 to 3,689 megabytes. LXR delivered throughput competitive with G1 and
+better than the concurrent compacting collectors Shenandoah and ZGC , but with signifi-
+cantly lower 99.99% latency and overall resource consumption compared with all of those
+collectors. We can ask why LXR demonstrates better performance than some modern con-
+current copying collectors. Garbage collection is a time-space trade-off, and concurrent
+copying collectors often need large heaps, especially for applications with very high allo-
+cation rates, if they are not to revert to stop-the-world collection. In particular, concurrent
+compacting collectors cannot reclaim any space until marking is complete, and can then re-
+lease early only those regions that are completely empty. Consequently, they require more
+headroom in the heap than deferred reference counting which reclaims space occupied
+by dead objects much more promptly (in LXR’s case, for all objects that are not reachable
+only from garbage cycles). Throughput is affected by the cost of barriers, and concurrent
+copying is inherently expensive. Even with self-healing load barriers, the frequency and
+CPU cycle cost of using read barriers is higher than that of write barriers, which LXR uses.
+Furthermore, LXR avoids applying barriers to most objects since they are allocated dead
+and most die young. The opportunity cost of running multiple threads is also a consider-
+ation in many environments. Cai et al. [2022] found that the total cost (CPU cycles across
+all threads) of Shenandoah and ZGC was much higher than that of G1. However, LXR’s
+behaviour is more comparable to G1 in this respect while anecdotal results suggest it con-
+sistently uses fewer CPU cycles.
+
+18.2       Simple reference counting revisited
+We now return to think about concurrent reference counting. To be correct, reference
+counting algorithms must preserve the invariant that an object’s reference count is equal
+to the number of references to that object. Maintaining this invariant becomes more com-
+plicated with multiple mutator threads. At first sight, it may seem that it is more difficult
+to Write safely than to Read safely. Updating a pointer slot requires three actions: the
+reference count of the new target must be incremented, that of the old target be decre-
+mented and the pointer written. It is important that these three actions be coordinated,
+even though multiple mutator threads may manipulate pointers to the objects in ques-
+tion.3 Objects must not be reclaimed prematurely (for example, because their reference
+count has temporarily dropped to zero) nor is it desirable for garbage to float indefinitely
+in the heap. Figure 18.1 illustrates the problem. Here, even if all the reference count incre-
+ments and decrements are performed atomically, some thread interleavings may lead to
+an incorrect result because the reference count of old may be decremented twice and the
+reference count of one of the new targets may be too high.
+   3 Note that we are not concerned about the correctness of the user program in the face of races, but we must
+
+ensure the consistency of the heap.
+18.2. SIMPLE REFERENCE COUNTING REVISITED                                                 410
+
+Algorithm 18.2: Eager reference counting with locks
+
+ 1   Read(src, i):
+ 2      lock(src)
+ 3         tgt ← src[i]
+ 4         addReference(tgt)
+ 5      unlock(src)
+ 6      return tgt
+ 7
+
+ 8   Write(src, i, ref):
+ 9      addReference(ref)
+10      lock(src)
+11         old ← src[i]
+12         src[i] ← ref
+13         deleteReference(old)
+14      unlock(src)
+
+    The difficulty of concurrent reference counting does not lie solely with incrementing
+or decrementing reference count fields. This can be done easily enough with an atomic
+primitive operation such as AtomicIncrement, discussed in Chapter 13. The harder
+problem is to synchronise reference count modifications with pointer loads or stores; in
+Algorithm 5.1 we simply required the mutator Read and Write actions to be atomic. The
+simplest way to do this is to lock the object containing the field that is being read or writ-
+ten, src, as illustrated in Algorithm 18.2. This is safe. After Read has locked src, the
+value of field i cannot change. If it is null, Read is trivially correct. Otherwise, src holds
+a reference to some object tgt. The reference counting invariant ensures that tgt’s ref-
+erence count cannot drop to zero before src is unlocked since there is a reference to tgt
+from src. Thus, we can guarantee that tgt cannot be freed during the Read and that
+addReference will be able to update the count rather than potentially corrupting mem-
+ory. A similar argument establishes the safety of Write.
+    It is appealing to hope that we can find a lock-free solution, using commonly available
+primitive operations. Unfortunately, single memory location primitives are insufficient
+to guarantee safety. The problem does not lie in Write. Imagine that, instead of the
+coarser grain lock, we use atomic increments and decrements to update reference counts
+and compare-and-swap for the pointer write, as in Algorithm 18.3. If ref is non-null,
+then the writing thread holds a reference to it so ref cannot be reclaimed until Write
+returns (whether or not we use eager or deferred reference counting). Write spins, at-
+tempting to set the pointer field until we are successful: at that point, we know that next
+we will decrement the count of the correct old object and that only the winning thread
+will do this. Note that the reference count of this old target remains an overestimate until
+deleteReference(old) is called, and so old cannot be prematurely deleted.
+    We cannot apply the same tactic in Read, though. Even if Read uses a primitive atomic
+operation to update the reference count, unless we lock src it is possible that some other
+thread will delete the pointer src[i] and reclaim its target between the point that we load
+the reference (line 19) and the increment of the reference count. The attempt to increment
+the reference count may corrupt memory that has been freed and maybe reallocated.
+    Although single memory location primitive operations are insufficiently powerful to
+provide a solution, Detlefs et al. [2001, 2002b] show that the CompareAndSet2 primitive
+discussed in Section 13.3 is sufficient. CompareAndSet2 can atomically update two inde-
+18.3. BIASED REFERENCE COUNTING                                                              411
+
+Algorithm 18.3: Eager reference counting with compare-and-swap is broken
+
+ 1   Write(src, i, ref):
+ 2      if ref ̸= null
+ 3         AtomicIncrement(&rc(ref))           /* ref guaranteed to be non−free */
+ 4      loop
+ 5         old ← src[i]
+ 6         if CompareAndSet(&src[i], old, ref)
+ 7             deleteReference(old)
+ 8             return
+ 9
+
+10   deleteReference(ref):              /* ref guaranteed to be null or non−free */
+11      if ref ̸= null
+12         AtomicDecrement(&rc(ref))
+13         if rc(ref) = 0
+14            for each fld in Pointers(ref)
+15                deleteReference(*fld)
+16            free(ref)
+17
+
+18   Read(src, i):
+19      tgt = src[i]
+20      AtomicIncrement(&rc(tgt))                                                      /* oops! */
+21      return tgt
+
+Algorithm 18.4: Eager reference counting with CompareAndSet2
+
+ 1   Read(src, i, root):
+ 2      loop
+ 3         tgt ← src[i]
+ 4         if tgt = null
+ 5             return null
+ 6         rc ← rc(tgt)
+ 7         if CompareAndSet2(&src[i], &rc(tgt), tgt, rc, tgt, rc+1)
+ 8             return tgt
+
+pendent memory locations. Although this is not sufficient to maintain accurate reference
+counts at all times, it is sufficient to guarantee the weaker invariant that (i) while there
+remains a pointer to an object, its reference count cannot be zero, and (ii) if there are no
+pointers to an object, its reference count will eventually become zero. In Algorithm 18.4,
+CompareAndSet2 is used to increment the reference count and simultaneously to check
+that the pointer to the object still exists, thus avoiding the possibility of modifying an ob-
+ject’s header after it has been freed. An alternative if it is available is transactional memory,
+though using a transaction for each write may have high cost.
+
+18.3     Biased reference counting
+Choi et al. [2018] found that, in a selection of Swift programs, 99% of client and 93% of
+server objects were private, and that the overwhelming majority of reference counting
+18.4. BUFFERED REFERENCE COUNTING                                                         412
+
+operations were to private objects (93% for client and 87% for server programs). Their
+biased reference counting technique takes advantage of this by using two reference count
+fields. The owner thread updates the first, biased, counter using non-atomic operations,
+while non-owner threads use atomic operations to update the second, shared, counter. Both
+14-bit counters, two flag bits (Merged and queued) and a thread ID are stored in the
+64-bit word that Swift uses for a reference count. The algorithm can be understood by
+considering the five invariants that it maintains.
+
+  I1: An object can only be deallocated if the sum of the biased and shared reference counts
+      is zero.
+
+  I2: The biased reference count must be non-negative. When the biased reference count
+      reaches zero, the owner sets the Merged flag, making the biased reference count
+      inaccessible.
+
+  I3: The shared reference count may be negative. For instance, a thread may create an
+      object and point a global reference to it, only for this reference to be removed by a
+      non-owner. To prevent a leak, when a non-owner removes a reference that would
+      cause the shared count to become negative for the first time, it adds a reference to the
+      object to the owner’s QueuedObjects list and sets the Queued flag.
+
+  I4: The owner gives up ownership when it merges counters either implicitly when the
+      biased reference count becomes zero or explicitly if it finds the object in its Queued-
+      Objects list. Periodically, the owning thread examines this list.
+
+  I5: An object can only be placed in QueuedObjects list once and is removed from the
+      list when the counters are explicitly merged.
+
+Choi et al. found that biased reference counting reduced the average execution time of
+client programs by 22.5% and boosted the average throughput of server programs by 7.3%.
+
+18.4     Buffered reference counting
+Eager reference counting schemes require either locks or multi-word atomic primitives,
+which are (currently) not widely available. Deferred reference counting partially finesses
+the problem we saw in the previous section by not applying reference count operations
+to local variables and deferring reclamation of objects with zero reference counts (see Sec-
+tion 5.3). This leaves the question of how to reduce the overhead of pointer writes to object
+fields. We now turn to look at buffered reference counting techniques that only use simple
+loads and stores in the mutator write barrier, yet support multithreaded applications.
+    In order to avoid the cost of synchronising reference count manipulations by differ-
+ent mutator threads, DeTreville [1990] had mutators log the old and new referents of each
+pointer update to a buffer (in a hybrid collector for Modula-2+ that used mark-sweep as
+an occasional backup collector to handle cycles). A single, separate reference counting
+thread processed the log and adjusted objects’ reference counts, thereby ensuring that the
+modifications were trivially atomic. In order to prevent inadvertently applying a reference
+count decrement before an increment that causally preceded it (and hence prematurely re-
+claiming an object), increments were applied before decrements. Unfortunately, buffering
+updates does not resolve the problem of coordinating the reference count manipulations
+with the pointer write. DeTreville offered two solutions, neither of which is entirely satis-
+factory. His first approach was, as above, to protect the entire Write operation with a lock.
+18.5. CONCURRENT, CYCLIC REFERENCE COUNTING                                               413
+
+This ensures that records are correctly appended to the shared buffer as well as synchro-
+nising the updates. To avoid the cost of making every write atomic, his second solution
+provided each mutator thread with its own buffer, which was periodically passed to the
+reference counting thread, but this required the programmer to take care to ensure that
+pointer writes were performed atomically, if necessary performing the locking manually,
+to avoid the problems illustrated by Figure 18.1.
+    Bacon and Rajan [2001] also provided each thread with a local buffer but required the
+update of the pointer field to be atomic, as for example in Algorithm 18.5; a compare-and-
+swap with retry could be used to do this. The mutator write barrier on a processor adds
+the old and new values of slot i to its local myUpdates buffer (line 9). Once again, refer-
+ence counting of local variables is deferred, and time is divided into ragged epochs to ensure
+that objects are not prematurely deleted, by using a single shared epoch number plus per-
+thread local epoch numbers. Periodically, just as with deferred reference counting, a
+processor will interrupt a processor and scan all the stacks of each local thread that has
+been active in that epoch, logging references found to a local myStackBuffer. The pro-
+cessor then transfers its myStackBuffer and myUpdates to the collector, and updates
+its local epoch number, e. Finally, it schedules the collector thread of the next processor
+before resuming the interrupted thread.
+    The collector thread runs on the last processor. In each collection cycle k, the collec-
+tor applies the increments of epoch k and the decrements of epoch k − 1. Finally, it in-
+crements the global epoch counter (for simplicity, we assume an unbounded number of
+global updatesBuffers in Algorithm 18.5). The advantage of this technique is that it
+is never necessary to halt all mutators simultaneously: the collector is on-the-fly and the
+state transitions are simply Type I (see Section 15.3). Note how the collector uses a variant
+of deferred reference counting. At the start of the collection, the counts of objects directly
+referenced from thread stacks (in this epoch) are incremented; at the end of the cycle, those
+of objects directly reachable from the stacks in the previous epoch are decremented.
+
+18.5     Concurrent, cyclic reference counting
+This leaves the question of collecting garbage cycles by reference counting without intro-
+ducing stop-the-world pauses. The Recycler [Bacon et al., 2001; Bacon and Rajan, 2001] re-
+claims cyclic garbage by tracing candidate subgraphs, applying trial deletion to reference
+counts. Although buffering successfully devolves reference counting to a spare processor,
+the Recycler faces three problems in collecting cycles in a concurrent world.
+   • It cannot guarantee that it will retrace the same subgraph since the graph may be
+     modified by mutators while the Recycler is detecting garbage cycles.
+   • Pointer deletions may disconnect portions of the subgraph.
+   • Reference counts may be out of date.
+    To resolve these problems, the asynchronous Recycler operates in two phases. The first
+phase is much the same as the synchronous collector described in Chapter 5. However, the
+asynchronous collector defers the freeing of objects discovered by collectWhite (Algo-
+rithm 5.5) to the next phase which checks that these objects are indeed still garbage. There
+are several disadvantages to this approach. In theory, but probably not in practice, it is
+possible for some garbage cycles not to be collected — the collector is not guaranteed to
+be complete. Further, trial deletion cannot use the original reference count but must add
+a second, cyclic reference count field to object headers. Third, the algorithm must trace
+candidate cycles again, in the second phase, in order to avoid incorrectly reclaiming live
+18.6. TAKING A SNAPSHOT OF THE HEAP                                                             414
+
+Algorithm 18.5: Concurrent buffered reference counting
+
+ 1   shared epoch
+ 2   shared updatesBuffer[ ]                                              /* one buffer per epoch */
+ 3
+
+ 4   Write(src, i, ref):
+ 5      if src = Roots
+ 6         src[i] ← ref
+ 7      else
+ 8         old ← AtomicExchange(&src[i], ref)
+ 9         log(old, ref)
+10
+
+11   log(old, new):
+12      myUpdates ← myUpdates + [⟨old, new⟩]
+13
+
+14   collect():
+15      /* each processor passes its buffers on to a global updatesBuffer */
+16      myStackBuffer ← [ ]
+17      for each local ref in myStacks                            /* deferred reference counting */
+18           myStackBuffer ← myStackBuffer + [⟨ref, ref⟩]
+19      atomic
+20           updatesBuffer[e] ← updatesBuffer[e] + myStackBuffer
+21      atomic
+22           updatesBuffer[e] ← updatesBuffer[e] + myUpdates
+23      myUpdates ← [ ]
+24      e ← e + 1
+25
+
+26       me ← myProcessorId
+27       if me < MAX_PROCESSORS       /* schedule collect() on the next processor */
+28          schedule(collect, me+1)
+29       else                        /* the last processor updates the reference counts*/
+30          for each ⟨old, new⟩ in updatesBuffer[epoch]
+31             addReference(new)
+32          for each ⟨old, new⟩ in updatesBuffer[epoch−1]
+33             deleteReference(old)
+34          release(updatesBuffer[epoch−1])                       /* free the old buffer */
+35          epoch ← epoch + 1
+
+objects. It also adds overhead to the reference counting write barrier, as it must fix the
+colours of objects left white or grey by improper traversals.
+    The fundamental problem is that the Recycler is trying to apply an algorithm designed
+for synchronous collection in a world where the topology of the object graph is continually
+changing. Next, we see below how this circle can be squared by providing the Recycler
+with a fixed snapshot of the heap.
+
+18.6      Taking a snapshot of the heap
+We saw in Chapter 5 how coalesced reference counting provided the collector with a snap-
+shot of the heap. Thread-local buffers, passed synchronously to the collector, held replicas
+18.6. TAKING A SNAPSHOT OF THE HEAP                                                           415
+
+                                                  A
+         Collector’s
+             log
+                                          X           X
+
+                                                                            Some thread’s
+                               B              D           C                     log
+
+Figure 18.2: Concurrent coalesced reference counting: in the previous epoch
+       A was modified to point to C and the values of its reference fields logged.
+       However, A has been modified again in this epoch (to point to D), and so
+       marked dirty and logged again. The original referent B can be found in the
+       collector’s global log, just as in Figure 5.2. The reference to C that was added
+       in the previous epoch will be in some thread’s current log: this log can be
+       found from A’s getLogPointer field.
+
+Algorithm 18.6: Sliding views: update reference counts
+
+ 1   incrementNew(entry):                  /* use the entry in the collector’s log */
+ 2      obj ← objFromLog(entry)                              /* the current object */
+ 3      if not dirty(obj)
+ 4         replica ← copy(obj)                /* copy the object’s reference slots */
+ 5         if dirty(obj)
+ 6            replica ← getLogPointer(obj)          /* entry in some thread’s log */
+ 7      else
+ 8         replica ← getLogPointer(obj)
+ 9
+
+10      for each fld in Pointers(replica)
+11         child ← *fld
+12         if child ̸= null
+13            rc(child) ← rc(child) + 1
+14            mark(child)                                        /* if tracing young generation */
+
+of objects into which pointers had been written. Every thread was halted at the start of
+a collection cycle, its buffers were transferred to the collector, and fresh buffers allocated.
+The collector simply used the replica to find and decrement the reference counts of the old
+targets, and the current version of the object to find and increment reference counts of the
+new targets. All dirty objects were cleaned.
+    Let us see first how we can allow the reference counting thread to run concurrently with
+the mutators (after a brief pause to transfer buffers), and then consider how to make that
+concurrent algorithm on-the-fly. In the first case, all the mutator threads can be stopped
+temporarily while their buffers are transferred to the collector. However, once all the mu-
+tator threads have transferred their buffers, they can be restarted. The collector’s task is
+to modify the reference counts of the old and new children of every modified object. Ref-
+erence decrements can be handled as before, using the replicas in the logs, but handling
+increments is more involved (Algorithm 18.6). The task is to increment the reference counts
+of the children of each object in the collector’s log, using the state of the object at the time
+that the log was transferred. There are two cases to consider, since the logged object may
+have been modified since the logs were transferred to the collector.
+
+    If the object remains clean, its state has not changed, so the reference counts of its cur-
+rent children are incremented. Note that incrementNew in Algorithm 18.6 must check
+again after making a replica of a clean object in case it was dirtied while the copy was
+being taken.
+    If the object has been modified since the logs were transferred, then it will have been
+re-marked dirty and its state at the time of the transfer can be found in a fresh log buffer
+of some mutator. The object’s dirty pointer will now refer to this log, which can be read
+without synchronising with that thread. Consider the example in Figure 18.2. A has been
+modified again in this epoch, which complicates finding C, the target of the last update to
+A in the previous epoch. As A is dirty, its previous contents will be held in some thread’s
+current local log (shown on the right of the figure): the log refers to C. Thus, we can
+decrement the reference count of B and increment the reference count of C. In the next
+epoch, C’s reference count will be decremented to reflect the action Write(A, 0, D).
+
+18.7     Sliding views reference counting
+For the snapshot of the heap, we stopped the world while threads’ modification buffers
+were transferred to the collector. We relax that restriction now, instead stopping threads
+one at a time, on-the-fly. This gives a distorted view of the heap. In this sliding view, the
+values of different objects are recorded (and transferred to the collector thread) at different
+times. Sliding views require neither locks nor atomic instructions (at least, assuming se-
+quential consistency), but coordinate mutators and collector threads with four handshakes
+between each mutator thread and the collector thread. We consider what modifications
+need to be made to the algorithm to support weaker consistency models later. Sliding
+views can be used in several contexts: for plain reference counting [Levanoni and Petrank,
+1999, 2001, 2006], for managing the old generation of generational [Azatchi and Petrank,
+2003] and age-oriented [Paz et al., 2003, 2005b] collectors, and for integration with cyclic
+reference counting collectors [Paz et al., 2005a, 2007]. Here, we consider how sliding views
+can be used in an age-oriented collector and then extend it to reclaim cyclic structures.
+
+Age-oriented collection
+Age-oriented collectors partition the heap into young and old generations. Unlike tradi-
+tional generational collectors, both generations are collected at the same time: there are no
+nursery collections and inter-generational pointers do not need to be trapped. Appropriate
+policies and techniques are chosen for the management of each generation. Since the weak
+generational hypothesis expects most objects to die young, and young objects are likely
+to have high mutation rates (for example, as they are initialised), a young generation ben-
+efits from a collector tuned to low survival rates. In contrast, the old generation can be
+managed by a collector tuned to lower death and mutation rates. Paz et al. [2003] adopt
+a mark-sweep collector for the young generation (since it need not trace large volumes of
+dead objects) and a sliding views reference counting collector for the old generation (as it
+can handle huge live heaps). Their age-oriented collector does not move objects: instead,
+each object has a bit in its header denoting its generation.
+    On-the-fly collection starts by gathering a sliding view (Algorithm 18.7). Incremental
+collection of a sliding view requires careful treatment of modifications made while the
+view is being gathered. Pointer writes are protected by adding an incremental update
+write barrier called snooping (Algorithm 18.8) to the Write operation of Algorithm 5.3.
+This prevents missing a referent o whose only reference is removed from a slot s1 before
+the sliding view reads s1 , and then is written to another slot s2 after s2 is added to the view.
+
+Algorithm 18.7: Sliding views: the collector
+
+ 1   shared updates
+ 2   shared snoopFlag[MAX_PROCESSORS]                                 /* one per processor */
+ 3
+
+ 4   collect():
+ 5      collectSlidingView()
+ 6      on−the−fly handshake 4:
+ 7         for each thread t
+ 8             suspend(t)
+ 9             scanStack(t)
+10             snoopFlag[t] ← false
+11             resume(t)
+12      processReferenceCounts()
+13      markNursery()
+14      sweepNursery()
+15      sweepZCT()
+16      collectCycles()
+17
+
+18   collectSlidingView():
+19      on−the−fly handshake 1:
+20          for each thread t
+21              suspend(t)
+22              snoopFlag[t] ← true
+23              transfer t’s buffers to updates
+24              resume(t)
+25      clean modified and young objects
+26      on−the−fly handshake 2:
+27          for each thread t
+28              suspend(t)
+29              find modify-clean conflicts
+30              resume(t)
+31      reinforce dirty objects
+32      on−the−fly handshake 3:
+33          for each thread t
+34              suspend(t)
+35              resume(t)
+36
+
+37   processReferenceCounts():
+38      for each obj in updates
+39         decrementOld(obj)
+40         incrementNew(obj)
+41
+
+42   collectCycles():
+43      markCandidates()
+44      markLiveBlack()
+45      scan()
+46      collectWhite()
+47      processBuffers()
+
+Algorithm 18.8: Sliding views: Write
+
+ 1   shared logs[MAX_PROCESSORS]                                          /* one per processor */
+ 2   shared snoopFlag[MAX_PROCESSORS]                                     /* one per processor */
+ 3   me ← myProcessorId
+ 4
+
+ 5   Write(src, i, ref):
+ 6      if src = Roots
+ 7         src[i] ← ref
+ 8      else
+ 9         if not dirty(src)
+10             log(src)                                                                         $
+11         src[i] ← ref                                                                         $
+12         snoop(ref)                                                       /* for sliding view */
+13
+
+14   log(ref):
+15      for each fld in Pointers(ref)
+16         if *fld ̸= null
+17             add(logs[me], *fld)
+18      if not dirty(ref)                             /* commit the entry if ref is still clean */
+19         entry ← add(logs[me], ref)
+20         logPointer(ref) ← entry
+21
+
+22   snoop(ref):
+23      if snoopFlag[me] && ref ̸= null
+24         mySnoopedBuffer ← mySnoopedBuffer + [ref]                              /* mark grey */
+
+Algorithm 18.9: Sliding views: New
+
+ 1   New():
+ 2      ref ← allocate()
+ 3      add(myYoungSet, ref)
+ 4      setDirty(ref)                                                          /* allocate dirty */
+ 5      return ref
+
+     At the start of a cycle, each thread’s snoopFlag is raised (without synchronisation).
+While the sliding view is being collected (and the snoopFlag is up for this thread), the
+new referent of any modified object is recorded in the thread’s local mySnoopedBuffer
+(line 24 of Algorithm 18.8). In terms of the tricolour abstraction, this Dijkstra-style barrier
+marks ref grey. Objects are allocated dirty in the young generation (Algorithm 18.9) in
+order to avoid activating the write barrier when their slots are initialised.
+     In the first handshake, each thread is stopped, one at a time, its snoopFlag raised and
+its local log and young set transferred to the collector’s updates buffer.
+     Next, all modified and young objects are cleaned. This risks a race. As cleaning is per-
+formed while mutator threads are running, it may erase the dirty state of objects modified
+concurrently with cleaning. A second handshake therefore pauses each thread, again on
+the fly, and scans its local log to identify objects modified during cleaning. The dirty state
+of these objects is restored (‘reinforced’).
+
+                                            Z
+
+                 X                          Y
+                                  X
+                     Log
+
+Figure 18.3: Sliding views allow a fixed snapshot of the graph to be traced by
+      using values stored in the log. Here, the shaded objects indicate the state of
+      the graph at the time that the pointer from X to Y was overwritten to refer to
+      Z. The old version of the graph can be traced by using the value of X’s field
+      stored in the log.
+
+    A third, empty handshake ensures that no thread has fallen behind. The collector is
+now ready to begin to mark the young generation and update the reference counts of the
+old generation.
+    Concurrent marking starts with a fourth handshake, again suspending threads one at a
+time to scan their stacks in the usual way for mark-sweep and deferred reference counting
+collectors. Each thread’s snoop flag can then be dropped.
+    The items in each thread’s mySnoopedBuffer are transferred to the work list asyn-
+chronously. The collector is then ready to process reference counts in the old generation.
+Notice that the nursery cannot be marked until the old generation has been processed since
+an update may have added a pointer from an old to a young object.
+    Processing the old generation also requires the counts of old and new objects in the
+updates buffer to be processed: if the reference count of a young object is updated (it
+is reachable from the old generation and will be promoted), and that object has not been
+marked, it is added to the marker’s work list.
+    Once the old generation has been processed and all inter-generational references have
+been discovered, the young generation is traced (markNursery), marking objects with the
+incrementNew procedure, and swept (sweepNursery), freeing any unmarked object.
+    Objects in the old generation can be reclaimed in the same way as with deferred refer-
+ence counting. Any object that is unmarked, has a zero reference count and is not directly
+referenced by a root, is reclaimed (sweepZCT). If an object with a zero reference count is
+dirty, recursive freeing decrements the reference counts of its descendants, found from its
+log entry (see Figure 18.3); otherwise, its current fields are used.
+
+Sliding views cycle reclamation
+As presented so far, the age-oriented collector can reclaim cycles in the nursery but not in
+the old generation. Paz et al. [2007] combine the Recycler’s cycle collection algorithm with
+an age-oriented collector. The difficulty that faced the asynchronous Recycler was that
+the topology of the heap could vary under its feet. In contrast, sliding views presents the
+collector with a fixed view of the heap, using the original version of unmodified objects or
+18.8. ISSUES TO CONSIDER                                                                     420
+
+the logged copy of modified objects (see Figure 18.3). It is therefore possible for each pass
+of the trial deletion algorithm to retrace the steps of the first pass. Thus, by working on the
+sliding view of the heap, we can apply the simpler synchronous algorithm rather than the
+more complicated, multi-coloured asynchronous algorithm of Bacon and Rajan [2001].
+     Paz et al. introduce a number of optimisations that can further reduce the number of
+objects that trial deletion must trace. Like Bacon and Rajan [2001], they ignore scalar objects
+that cannot be members of cycles. Mature objects are considered for cycle reclamation only
+if they have survived several collections. This requires a queue of candidate buffers rather
+than a single one (they found a delay of two collection cycles to be effective). Paz et al. also
+try to avoid considering objects that might be live, including root referents, snooped objects
+and objects modified after the sliding view was collected. An additional markBlack phase
+pre-processes these objects, marking them and their sliding view descendants black. This
+raises a dilemma. The set of objects known to be live (actually, a subset of the dirty objects)
+is not fixed during the collection, so it is not possible to identify how many reference count
+modifications the collector might have made to an object before it became dirty. Hence, it
+is not possible to restore its original count. Instead, cycle detection operates on a second,
+cyclic, reference count. The alternative, to consider these objects regardless, would lead to
+more objects being processed by the reference counter.
+
+Memory consistency
+The sliding views algorithms presented above assume sequential consistency, which pro-
+cessors do not always guarantee. On the mutator side, it is important that the order of op-
+erations in Write are preserved to ensure that (i) the values seen in the log are the correct
+ones (that is, they represent a snapshot of the modified object as it was before the collec-
+tion cycle started); (ii) the collector only reads completed log entries; and (iii) object fields
+cannot be updated after a collection starts without being snooped. The handshakes used
+by the algorithm solve some dependency issues on weakly consistent platforms (ensuring
+that the collector only sees complete log entries, or that new references are snooped during
+the collection cycle). Two further modifications are necessary. First, on the mutator side,
+synchronisation must be added in the write barrier around the logging to ensure that it is
+seen before the modification of the pointer. Levanoni and Petrank [2006] do this by placing
+a memory fence before and after log(src) (line 10 in Algorithm 18.8). Second, something
+similar is needed on the collector side. However, the approach above would be inefficient
+since most objects are unlikely to be dirty since their log pointers have been reset. Instead,
+on a weakly consistent platform, the collector can reduce the cost of synchronisation by
+reading batches of values from the buffers into a local array before processing them.
+
+18.8     Issues to consider
+The immediate problem facing reference counting is how to ensure that objects’ reference
+counts are correct in the face of concurrent modifications to the object graph. The simplest
+solution is to require mutators to lock an object before it is modified. If the cost of locking
+is considered to be too high, then an alternative solution must be found. Current solutions
+rest on avoiding races between mutators that compromise the consistency of reference
+counts. Note that the memory manager is only concerned to preserve the consistency of
+the heap; whether or not mutator races violate the correctness of the user program is of no
+interest to it.
+    To preserve coherence, we must ask how we can serialise pointer writes and reference
+count operations. A partial solution is to use deferred reference counting, since this defers
+18.8. ISSUES TO CONSIDER                                                                  421
+
+reclamation of garbage objects and, in particular, devolves the task to a single collector
+thread. However, this only accounts for pointer loads and stores, and not for writes into
+object fields. Thus, the question becomes, how can we devolve reference count modifica-
+tions necessitated by writes to pointer fields from the mutator threads to a collector thread?
+One solution is for each mutator to buffer its reference counting operations and periodi-
+cally pass them to the collector. A further step, coalesced reference counting, extends this
+by taking a snapshot of objects before they are modified: this allows the collector thread
+to avoid applying any redundant reference count modifications. In both cases reference
+count manipulation and object reclamation is separated from the action of writing point-
+ers and is performed by a single collector thread (although it would be relatively straight-
+forward to use parallel collector threads). Taking a snapshot of the state of the heap also
+simplifies concurrent cyclic reference counting. Trial deletion algorithms need to traverse
+a subgraph of the heap multiple times. By traversing the snapshot, the collector can ensure
+that it traces the same subgraph each time, even in the face of concurrent mutator activity.
+
+Safe memory reclamation
+Finally we note that there is a large and growing literature on safe reclamation of mem-
+ory when using dynamic memory structures, from the ABA-prevention tags used in IBM’s
+System 370 onwards. We pick out only a selection here. Broadly, these schemes require
+a thread to reserve the set of objects that it is using in order to prevent premature recla-
+mation of an object by another thread. Proposed schemes have been manual or automatic,
+supported by atomic reference counting. Mechanisms may be epoch-based or pointer-based.
+Differences between safe memory reclamation algorithms include the costs of protecting a
+pointer and retiring an object (making it available for deallocation unless it is still in use
+by other threads), the bounds on the number of objects retired but not yet deallocated and
+restrictions on programming style.
+     Epoch-based memory management (see, for example, Fraser [2004] or Hart et al. [2007]),
+which is often the fastest approach, relies on a global epoch counter to reserve objects.
+Before a thread starts to use a data structure, it logs the current epoch in a global record.
+This implicitly reserves all objects that were not retired before the start of this epoch. To
+retire an object, depending on the algorithm, a thread might append the object to a list
+of retired objects, record the current epoch in the object’s header and update the epoch
+(either immediately or after every so many retirements). An object can only be reclaimed
+if it was retired before the earliest epoch reserved by any active thread. These techniques
+are scheduler-dependent and tend to be vulnerable to the delay or failure of a single thread.
+If some thread stalls while it is using a reserved data structure, all other threads may be
+prevented from reclaiming reserved objects.
+     In contrast, pointer-based schemes avoid the stalling problem by reserving only those
+individual objects that a thread is using, but they tend to have higher overheads. The Pass
+The Buck (PTB) scheme [Herlihy et al., 2002] provides lock-free progress to protect point-
+ers and wait-free progress to retire objects but requires a double-word compare-and-swap
+atomic instruction. Each thread creates a list of retired objects which may be proportional
+to the number of threads. Hazard pointers [Michael, 2004] require only a single-word atomic
+primitive. Before accessing an object, a thread must publish a pointer in a globally shared
+data structure. Typically, a thread must load the pointer, write it to a hazard pointer, issue
+a store-load (write-read) fence and then re-read the pointer to check that it has not changed.
+Periodically, the hazard pointers of all threads are scanned to reclaim any object on the re-
+tired list for which there is no hazard pointer. Drop The Anchor [Braginsky et al., 2013] is
+an extension of hazard pointers with improved performance to protect pointers. However,
+it may require non-trivial changes to algorithms that use it. Automatic Optimistic Access
+18.8. ISSUES TO CONSIDER                                                                   422
+
+[Cohen and Petrank, 2015] and Free Access [Cohen, 2018] are other lock-free reclamation
+schemes that require programs to be written in a particular style.
+    Ramalhete and Correia [2017] combine the lower overhead of epoch-based reclamation
+with the non-blocking properties of hazard pointer by recording hazard eras rather than
+hazard pointers. Publishing an era e guarantees that no object with a lifetime that overlaps
+e will be reclaimed. All currently live objects are protected but objects created after this era
+may be reclaimed, which is not possible in epoch-based reclamation.
+    Anderson et al. [2021] combine ideas from reference counting and hazard pointers to
+provide concurrent reference counting with wait-free, constant-time overhead, deferring
+reference count decrements until no other thread can be incrementing them, and eliding
+or deferring increments for short-lived objects.
+    In contrast with epoch-based reclamation, in which threads reserve all objects created
+after a certain time, or pointer-based reclamation schemes that reserve only individual ob-
+jects, interval-based reclamation [Wen et al., 2018] allows a thread to reserve all blocks known
+to have existed in a bounded interval of time. Like hazard pointers, interval-based recla-
+mation avoids the risk of a stalled thread retaining an unbounded number of objects but,
+unlike hazard pointers, does not need a memory fence on pointer loads.
+    The Hyaline algorithm [Nikolaev and Ravindran, 2021] in its ‘robust’ versions bounds
+memory usage by adopting the birth eras approach of hazard eras and interval-based recla-
+mation, marking each object with a global counter in order to ensure that stalled threads
+can only retain older objects. Unlike those two approaches, Hyaline relies on reference
+counting but only during reclamation and not while accessing objects.
+    OrcGC [Correia et al., 2021] is an automatic lock-free memory reclamation scheme that
+combines counts of references from other objects (but not from thread stacks) with a pointer-
+based mechanism, Pass The Pointer. It requires C++ type annotations to indicate which
+references should be tracked. Pointers are protected in the same way as with hazard point-
+ers or Pass The Buck and, similarly, to retire an object all hazardous pointers are scanned.
+However, if a pointer to an object is found, the responsibility for freeing that object is
+passed to the protecting thread. Beware And Cleanup [Gidenstam et al., 2009] is another
+manual scheme that combines hazard pointers with atomic reference counting.

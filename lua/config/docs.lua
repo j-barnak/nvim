@@ -3571,6 +3571,7 @@ local BOOKS = {
 		{ title = "Expert C Programming", fmt = "epub", file = "Expert C Programming -- Peter van der Linden -- 2002 -- 6a6a0df494fc411c9842373f70197e46 -- Anna’s Archive.epub" },
 	} },
 	{ module = "C++", key = "books-cpp", items = {
+		{ title = "Modern C++ Design (Alexandrescu)", fmt = "pdf", slug = "modern-cpp-design", file = "[Addison Wesley] Andrei Alexandrescu - Modern C++ Design Generic Programming and Design Patterns Applied.pdf" },
 		{ title = "Beautiful C++ (30 Core Guidelines)", fmt = "pdf", file = "Beautiful C++ _ 30 Core Guidelines for Writing Clean, Safe, -- J_ Guy Davidson & Kate Gregory -- 1, 2021 -- Pearson Education, Limited; Addison-Wesley -- 9780137647842 -- 3d6251a17d7996d9091349de.pdf" },
 		{ title = "C++ Concurrency in Action", fmt = "pdf", file = "Anthony Williams - C++ Concurrency in Action (2019, Manning) - libgen.li.pdf" },
 		{ title = "C++ Move Semantics (The Complete Guide)", fmt = "pdf", file = "C++ Move Semantics - The Complete Guide -- Nicolai M_ Josuttis -- 2022 -- c6f2c4fe3e0701d95a17354ad517147a -- Anna’s Archive.pdf" },
@@ -3597,6 +3598,8 @@ local BOOKS = {
 		{ title = "Blue Fox: Arm Assembly Internals and Reverse Engineering", fmt = "pdf", slug = "blue-fox-arm-assembly-internals", file = "blue-fox-arm-assembly.pdf" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
+		{ title = "Distributed Systems (Tanenbaum & van Steen, 4e)", fmt = "pdf", slug = "distributed-systems", file = "Distributed_Systems_4.pdf" },
+		{ title = "The Design and Implementation of the FreeBSD OS", fmt = "pdf", slug = "the-design-and-implementation-of-the-freebsd-operating-system", file = "The-Design-and-Implementation-of-the-FreeBSD-OS.pdf" },
 		{ title = "An Introduction to Computer Networks (Dordal)", fmt = "pdf", slug = "an-introduction-to-computer-networks", file = "an-introduction-to-computer-networks.pdf" },
 		-- https://www.cs.cmu.edu/~410-s07/p4/p4-boot.pdf (CMU 15-410, 2007)
 		{ title = "Writing a Bootloader from Scratch (CMU 15-410)", fmt = "pdf", file = "CMU 15-410 Project 4 - Writing a Bootloader from Scratch.pdf" },
@@ -3633,6 +3636,8 @@ local BOOKS = {
 		{ title = "Designing Data-Intensive Applications (2e)", fmt = "epub", file = "Designing Data-Intensive Applications (for _ _) -- Martin Kleppmann and Chris Riccomini -- 2026 -- O'Reilly Media, Inc_ -- aee9f456573bd0587f21c1b42964789f -- Anna’s Archive.epub" },
 	} },
 	{ module = "Linux / Drivers", key = "books-linux", items = {
+		{ title = "BPF Performance Tools (Gregg)", fmt = "pdf", slug = "bpf-performance-tools", file = "[Addison-Wesley Professional Computing Series] Brendan Gregg - BPF Performance Tools (2019, Addison-Wesley) - libgen.li.pdf" },
+		{ title = "Systems Performance (Gregg, 2e)", fmt = "pdf", slug = "systems-performance", file = "Systems performance _ enterprise and the cloud -- Brendan Gregg -- Addison-Wesley Professional Computing series, 2, 2020 -- Addison-Wesley -- isbn13 9780136820154 -- 2ce3f264a69f7a2e59be05e579ac0986 -- Anna’s Archi.pdf" },
 		{ title = "Learning eBPF", fmt = "pdf", file = "Learning-eBPF - Full book.pdf" },
 		{ title = "The Linux Programming Interface", fmt = "pdf", slug = "the-linux-programming-interface", file = "The-Linux-Programming-Interface.pdf" },
 		{ title = "eBPF Developer Tutorial (eunomia)", fmt = "md", slug = "ebpf-developer-tutorial", file = "https://github.com/eunomia-bpf/bpf-developer-tutorial" },
@@ -3649,6 +3654,11 @@ local BOOKS = {
 		{ title = "The Algorithm Design Manual", fmt = "pdf", file = "The-Algorithm-Design-Manual.pdf" },
 	} },
 	{ module = "Security", key = "books-security", items = {
+		{ title = "The Art of Mac Malware, Vol. 1 (Wardle)", fmt = "pdf", slug = "the-art-of-mac-malware", file = "Patrick Wardle - The Art of Mac Malware - libgen.li.pdf" },
+		{ title = "The Art of Mac Malware, Vol. 2 (Wardle)", fmt = "pdf", slug = "the-art-of-mac-malware-vol2", file = "[{Cyber-Security-COVER}] The Art of Mac Malware, Volume 2_ Detecting Malicious Software{Patrick Wardle}(2025, No Starch Press){108023820} libgen.li.pdf" },
+		{ title = "Rootkits and Bootkits (Matrosov et al.)", fmt = "pdf", slug = "rootkits", file = "Rootkits.pdf" },
+		{ title = "File System Forensic Analysis (Carrier)", fmt = "pdf", slug = "file-system-forensic-analysis", file = "File-System-Forensics-Analysis.pdf" },
+		{ title = "From Day Zero to Zero Day", fmt = "pdf", slug = "from-day-zero-to-zero-day", file = "FromDayZeroToZeroDay.pdf" },
 		{ title = "The Art of Memory Forensics", fmt = "pdf", file = "TheArtOfMemoryForensics.pdf" },
 		{ title = "Attacking Network Protocols (Forshaw)", fmt = "pdf", slug = "attacking-network-protocols", file = "attacking-network-protocols.pdf" },
 		{ title = "Practical Binary Analysis", fmt = "epub", file = "PBA.epub" },
@@ -3664,6 +3674,7 @@ local BOOKS = {
 		{ title = "Surreptitious Software: Obfuscation, Watermarking, and Tamperproofing", fmt = "pdf", slug = "surreptitious-software", file = "surreptitious-software.pdf" },
 	} },
 	{ module = "Architecture", key = "books-arch", items = {
+		{ title = "The Garbage Collection Handbook", fmt = "pdf", slug = "the-garbage-collection-handbook", file = "The Garbage Collection Handbook. The Art of Automatic Memory Managemen.pdf" },
 		{ title = "A Primer on Memory Consistency and Cache Coherence", fmt = "pdf", slug = "a-primer-on-memory-consistency-and-cache-coherence", file = "A Primer on Memory Consistency and Cache Coherence (2nd ed).pdf" },
 		{ title = "Shared-Memory Synchronization", fmt = "pdf", slug = "shared-memory-synchronization", file = "Shared-Memory Synchronization (2nd ed).pdf" },
 		{ title = "The Art of Multiprocessor Programming", fmt = "pdf", slug = "the-art-of-multiprocessor-programming", file = "TheArtOfMultiprocessorProgramming.pdf" },
@@ -3709,6 +3720,8 @@ local BOOKS = {
 		{ title = "Beyond BIOS", fmt = "epub", file = "Beyond BIOS - Vincent Zimmer,Michael Rothman,Suresh Marisetty.epub" },
 	} },
 	{ module = "Windows", key = "books-windows", items = {
+		{ title = "Windows Internals, Part 1 (7e)", fmt = "pdf", slug = "windows-internals-part-1", file = "Windows-Internals-Part-1.pdf" },
+		{ title = "Windows Internals, Part 2 (7e)", fmt = "pdf", slug = "windows-internals-part-2", file = "Windows-Internals-Part-2.pdf" },
 		{ title = "Windows Kernel Programming (2e)", fmt = "pdf", file = "WindowsKernelProgramming.pdf" },
 	} },
 	{ module = "Haskell", key = "books-haskell", items = {

@@ -1,0 +1,2551 @@
+                                                    Chapter 18
+                                    Tips, Tricks, and
+                                  Common Problems
+
+This chapter shares tips and tricks for successful BPF tracing, along with common problems that
+you might encounter and how to fix them.
+
+Tips and Tricks:
+  18.1    Typical event frequency and overhead
+  18.2    Sample at 49 or 99 Hertz
+  18.3    Yellow pigs and gray rats
+  18.4    Write target software
+  18.5    Learn syscalls
+  18.6    Keep it simple
+
+Common Problems:
+  18.7    Missing events
+  18.8    Missing stack traces
+  18.9    Missing symbols (function names) when printing
+  18.10 Missing functions when tracing
+  18.11 Feedback loops
+  18.12 Dropped events
+
+18.1        Typical Event Frequency and Overhead
+Three main factors determine the CPU overhead of a tracing program:
+
+   ■   The frequency of the event that is traced.
+   ■   The action performed while tracing.
+   ■   The number of CPUs on the system.
+
+      An application will suffer this overhead on a per-CPU basis using the relationship:
+
+      Overhead = (Frequency × Action performed) / CPUs
+
+      Tracing one million events per second on a single-CPU system may bring an application to a
+      crawl, whereas a 128-CPU system may be barely affected. The CPU count must be considered.
+
+      The number of CPUs and the overhead of the work performed can both vary by a single order
+      of magnitude. Event frequency, however, can vary by several orders of magnitude, making it the
+      biggest wildcard in trying to estimate overhead.
+
+      18.1.1         Frequency
+      It helps to have some intuitive understanding of typical event rates, so I have created Table 18-1.1
+      This includes a column where the maximum rate has been scaled to human-understandable
+      terms: once per second becomes once per year. Imagine that you are subscribed to a mailing list
+      that sends you email at this scaled rate.
+
+Table 18-1       Typical Event Frequencies
+      Event                  Typical Frequency2                  Maximum Scaled                         Max Estimated
+                                                                                                        Tracing Overhead3
+      Thread sleeps          1 per second                        Yearly                                 Negligible
+      Process                10 per second                       Monthly                                Negligible
+      execution
+      File opens             10–50 per second                    Weekly                                 Negligible
+      Profiling at           100 per second                      Twice a week                           Negligible
+      100 Hz
+      New TCP                10–500 per second                   Daily                                  Negligible
+      sessions
+      Disk I/O               10–1000 per second                  Every eight hours                      Negligible
+      VFS calls              1000–10,000 /s                      Hourly                                 Measurable
+      Syscalls               1000–50,000 /s                      Every ten minutes                      Significant
+      Network                1000–100,000 /s                     Every five minutes                     Significant
+      packets
+      Memory                 10,000–1,000,000 /s                 Every thirty seconds                   Expensive
+      allocations
+
+      1 This was inspired by the scaled latency table from Chapter 2 of Systems Performance [Gregg 13b], which became
+      popular and has been shared many times. While I created this scaled frequency table, I did not come up with the idea
+      of a scaled latency table: I first saw that when I was a university student.
+      2 It is hard to pick something “typical” as workloads vary. Databases often have higher disk I/O rates, and web and
+      proxy servers often have higher packet rates.
+      3 This is the estimated CPU overhead of tracing the event at its maximum rate (see below). CPU instructions and cycles
+      cannot be traced individually and directly, although in theory their software execution by CPU simulators could be traced.
+                                                     18.1 Typical Event Frequency and Overhead        729
+
+Event               Typical Frequency2          Maximum Scaled                  Max Estimated
+                                                                                Tracing Overhead3
+Locking             50,000–5,000,000 /s         Every five seconds              Expensive
+events
+Function            Up to 100,000,000 /s        Three times per second          Extreme
+calls
+CPU                 Up to 1,000,000,000+        Thirty times per second:        Extreme
+instructions        per second                  As a beat, C contra-octave      (CPU simulators)
+                                                on the piano scale: the limit
+                                                of human hearing
+CPU cycles          Up to 3,000,000,000+        Ninety times per second:        Extreme
+                    per second                  G on the piano scale            (CPU simulators)
+
+Throughout this book I have described the overhead for BPF tools, sometimes with measurements
+but often with the words negligible, measurable, significant, and expensive. I chose these terms to
+be both deliberately vague and sufficiently descriptive. Using hard numbers would be misleading
+as the specific metrics depend on the workload and system. With that caveat in mind, here is a
+rough guide to those terms:
+    ■   Negligible: <0.1%
+    ■   Measurable: ~1%
+    ■   Significant: >5%
+    ■   Expensive: >30%
+    ■   Extreme: >300%
+
+In Table 18-1, I extrapolated from event frequency to these overhead descriptions assuming
+the minimum tracing action: an in-kernel count and for typical system sizes of today. The next
+section shows how different actions can cost more.
+
+18.1.1.2        Action Performed
+The following measurements describe BPF overhead as the absolute per-event cost, illustrating
+how different actions can cost more. They were calculated by instrumenting reads for a dd(1)
+workload performing over one million reads per second: the previous section on frequency
+should already have suggested that BPF tracing will add expensive overhead at this high rate.
+
+The workload is:
+
+dd if=/dev/zero of=/dev/null bs=1 count=10000k
+
+This is executed with different bpftrace one-liners, such as:
+
+bpftrace -e 'kprobe:vfs_read { @ = count(); }'
+
+Based on the runtime difference and known event counts, the per-event CPU cost can be
+calculated (ignoring dd(1) process startup and termination costs). This is shown in Table 18-2.
+
+      Table 18-2      bpftrace Per-Event Costs
+      bpftrace                                           Test Purpose           dd Runtime           BPF per-event
+                                                                                (secs)               cost (nsecs)
+      <none>                                             Control                5.97243              —
+      k:vfs_read { 1 }                                   Kprobe                 6.75364              76
+      kr:vfs_read { 1 }                                  Kretprobe              8.13894              212
+      t:syscalls:sys_enter_read { 1 }                    Tracepoint             6.95894              96
+      t:syscalls:sys_exit_read { 1 }                     Tracepoint             6.9244               93
+      u:libc:__read { 1 }                                Uprobe                 19.1466              1287
+      ur:libc:__read { 1 }                               Uretprobe              25.7436              1931
+      k:vfs_read /arg2 > 0/ { 1 }                        Filter                 7.24849              124
+      k:vfs_read { @ = count() }                         Map                    7.91737              190
+      k:vfs_read { @[pid] = count() }                    Single key             8.09561              207
+      k:vfs_read { @[comm] = count() }                   String key             8.27808              225
+      k:vfs_read { @[pid, comm] = count() }              Two key                8.3167               229
+      k:vfs_read { @[kstack] = count() }                 Kernel stack           9.41422              336
+      k:vfs_read { @[ustack] = count() }                 User stack             12.648               652
+      k:vfs_read { @ = hist(arg2) }                      Histogram              8.35566              233
+      k:vfs_read { @s[tid] = nsecs }                     Timing                 12.4816              636 / 24
+      kr:vfs_read /@s[tid]/
+      { @ = hist(nsecs - @s[tid]);
+      delete(@s[tid]); }
+      k:vfs_read                                         Multiple               14.5306              836
+      { @[kstack, ustack] = hist(arg2) }
+      k:vfs_read                                         Per event              14.6719              850
+      { printf("%d bytes\n", arg2) } > out.txt
+
+      This shows that kprobes (on this system) are fast, adding only 76 nanoseconds per call, increasing
+      to around 200 nanoseconds when a map with a key is used. Kretprobes are much slower, as would
+      be expected due to instrumenting the function entry and inserting a trampoline handler for the
+      return (see Chapter 2 for details). Uprobes and uretprobes add the most overhead, over one
+      microsecond per event: this is a known problem that we would like to improve in a future version
+      of Linux.
+
+      These are all short BPF programs. It is possible to write lengthy BPF programs that cost much
+      more, measured in microseconds.
+
+      4 This added 636 nanoseconds per read, but two probes were used—a kprobe and a kretprobe—so this is really
+      636 nanoseconds for two BPF events.
+                                                                  18.2 Sample at 49 or 99 Hertz          731
+
+These were measured on Linux 4.15 with BPF JIT enabled, Intel(R) Core(TM) i7-8650U CPU
+@ 1.90GHz CPUs, using taskset(1) to bind to one CPU only for consistency, and taking the
+fastest of 10 runs (principle of least perturbations) while checking the standard deviation for
+consistency. Bear in mind that these numbers can all change based on the speed and architecture
+of the system, the running workload, and future changes to BPF.
+
+18.1.3      Test Yourself
+If you can accurately measure an application’s performance, you can do so with and without a
+BPF tracing tool running and measure the difference. If a system is running at CPU saturation
+(100%), then BPF will take CPU cycles away from the application, and the difference may be
+measurable as a drop in request rate. If the system is running with CPU idle, then the difference
+may be seen as a drop in available CPU idle.
+
+18.2        Sample at 49 or 99 Hertz
+The point of sampling at these seemingly odd rates is to avoid lockstep sampling.
+
+We take timed samples to paint a coarse picture of the target software. A rate of 100 samples per
+second (100 Hertz), or 50 per second, is usually sufficient to provide details for solving both big
+and small performance wins.
+
+Consider 100 Hertz. This takes a sample every 10 milliseconds. Now consider an application
+thread that wakes up every 10 milliseconds to do 2 milliseconds of work. It’s consuming 20% of
+one CPU. If we sample at 100 Hertz, and by coincidence run our profiling tool at just the right
+time, every sample will coincide with the two-millisecond window of work, so our profile will
+show it on-CPU 100% of the time. Or, if we hit Enter at a different time, every sample will miss
+and show that application thread 0% of the time. Both results are deeply misleading and are
+examples of aliasing errors.
+
+By using 99 Hertz instead of 100, the time offsets where we take samples will no longer always
+coincide with the application’s work. Over enough seconds, it will show that the application is
+on-CPU 20% of the time. It’s also close enough to 100 Hertz that we can reason about it as though
+it were 100. Eight-CPU system for one second? Roughly 800 samples. I frequently make such
+calculations when sanity-checking my results.
+
+If instead we picked, say, 73, that would also avoid lockstep sampling, but we wouldn’t be able to
+make such quick calculations in our heads. 73 Hertz on four CPUs for eight seconds? Give me a
+calculator!
+
+The 99 Hertz strategy only works because application programmers usually pick round numbers
+for their timed activity: every 1 second, 10 times per second, every 20 milliseconds, etc. If applica-
+tion developers began picking 99 times per second for their timed activities, we’d have the lock-
+step problem again.
+
+Let’s call 99 the “profiler number.” Don’t use it for anything other than profiling!
+
+      18.3        Yellow Pigs and Gray Rats
+      In mathematics, the number 17 is special and has been nicknamed the “yellow pig” number;
+      there is even a yellow pig day, July 17 [178]. It is also a useful number for tracing analysis, although
+      I prefer 23.
+
+      You will often be faced with an unknown system to analyze, not knowing which events to start
+      tracing. If you are able to inject a known workload, then frequency counting events may reveal
+      which are related to your workload.
+
+      To show how this works, let’s say you wanted to understand how the ext4 file system performed
+      write I/O, but you didn’t know which events to trace. We will create a known workload using
+      dd(1) to perform 23 writes, or even better, 230,000 writes so that they stand out from other
+      activity:
+
+      # dd if=/dev/zero of=test bs=1 count=230000
+      230000+0 records in
+      230000+0 records out
+      230000 bytes (230 kB, 225 KiB) copied, 0.732254 s, 314 kB/s
+
+      While this ran, all functions beginning with "ext4_" were traced for 10 seconds:
+
+      # funccount -d 10 'ext4_*'
+      Tracing 509 functions for "ext4_*"... Hit Ctrl-C to end.
+      ^C
+      FUNC                                            COUNT
+      ext4_rename2                                         1
+      ext4_get_group_number                                1
+      [...]
+      ext4_bio_write_page                                89
+      ext4_es_lookup_extent                             142
+      ext4_es_can_be_merged                             217
+      ext4_getattr                                     5125
+      ext4_file_getattr                                6143
+      ext4_write_checks                              230117
+      ext4_file_write_iter                           230117
+      ext4_da_write_end                              230185
+      ext4_nonda_switch                              230191
+      ext4_block_write_begin                         230200
+      ext4_da_write_begin                            230216
+      ext4_dirty_inode                               230299
+      ext4_mark_inode_dirty                          230329
+      ext4_get_group_desc                            230355
+      ext4_inode_csum.isra.56                        230356
+      ext4_inode_csum_set                            230356
+      ext4_reserve_inode_write                       230357
+      ext4_mark_iloc_dirty                           230357
+                                                                                 18.4 Write Target Software        733
+
+ext4_do_update_inode                                230360
+ext4_inode_table                                    230446
+ext4_journal_check_start                            460551
+Detaching...
+
+Notice that 15 of these functions were called a little over 230,000 times: these are very likely
+related to our known workload. Out of the 509 ext4 functions traced, using this trick we’ve
+narrowed them down to 15 candidates. I like using 23 (or 230, 2300, etc.) as it is unlikely to
+coincide with other unrelated event counts. What else would also happen 230,000 times during
+10 seconds of tracing?
+
+23 and 17 are prime numbers, which tend to occur less naturally in computing than other
+numbers, such as powers of 2 or 10. I prefer 23 because it has distance from other power-of-two
+and 10 numbers, unlike 17. I’d call 23 the “gray rat” number.5
+
+See Section 12.4 in Chapter 12, which also used this trick to discover functions.
+
+18.4          Write Target Software
+It can save you time and headaches to write load generation software first, then write the tracing
+tool to measure it.
+
+Let’s say you wanted to trace DNS requests and show latency and request details. Where do you
+start, and how do you know if your program is working? If you begin by writing a simple DNS
+request generator, you’ll learn which functions to trace, how the request details are stored in
+structs, and the return values of the request functions. You’ll likely learn this quickly, as there
+is usually an abundance of documentation for programmers that can be found with Internet
+searches, including code snippets.
+
+In this case, the man page for the getaddrinfo(3) resolver function contains entire programs that
+you can use:
+
+$ man getaddrinfo
+[...]
+              memset(&hints, 0, sizeof(struct addrinfo));
+              hints.ai_family = AF_UNSPEC;                /* Allow IPv4 or IPv6 */
+              hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
+              hints.ai_flags = 0;
+              hints.ai_protocol = 0;                      /* Any protocol */
+
+              s = getaddrinfo(argv[1], argv[2], &hints, &result);
+              if (s != 0) {
+                    fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+                    exit(EXIT_FAILURE);
+              }
+[...]
+
+5 It counts how many whiskers there are on a gray rat. I also own many gray rat stuffed toys from Ikea—maybe 23.
+
+      By starting here, you’ll end up with a tool to generate known requests. You can even modify it to
+      make 23 requests (or 2300) to help you find other related functions in the stack (see Section 18.3).
+
+      18.5         Learn Syscalls
+      System calls are rich targets for tracing.
+
+      They are documented in man pages, they have tracepoints, and they provide useful insight for
+      resource usage by applications. For example, you use the BCC syscount(8) tool and discover a high
+      rate of setitimer(2). What is that?
+
+      $ man setitimer
+      GETITIMER(2)                     Linux Programmer's Manual                  GETITIMER(2)
+
+      NAME
+              getitimer, setitimer - get or set value of an interval timer
+
+      SYNOPSIS
+              #include <sys/time.h>
+
+              int getitimer(int which, struct itimerval *curr_value);
+              int setitimer(int which, const struct itimerval *new_value,
+                                struct itimerval *old_value);
+
+      DESCRIPTION
+              These    system     calls provide access to interval timers, that is, timers
+              that initially expire at some point in the future, and (optionally)             at
+              regular intervals after that. When a timer expires, a signal is gener
+              ated for the calling process, and the timer is reset to the specified
+              interval (if the interval is nonzero).
+
+      [...]
+
+         setitimer()
+              The function setitimer() arms or disarms the timer specified by            which,
+              by setting the timer to the value specified by new_value.           If old_value
+              is non-NULL, the buffer it points to is used         to   return   the   previous
+              value    of   the   timer   (i.e.,   the same information that is returned by
+              getitimer()).
+
+      [...]
+
+      RETURN VALUE
+              On   success,     zero is returned.    On error, -1 is returned, and errno is
+              set appropriately.
+                                                                             18.7 Missing Events       735
+
+The man page explains what setitimer(2) does, along with its entry arguments and return
+value. These can all be inspected by the tracepoints syscalls:sys_enter_setitimer and
+syscalls:sys_exit_setitimer.
+
+18.6         Keep It Simple
+Avoid writing long and complex tracing programs.
+
+BPF tracing is a superpower that can trace everything, and it can be easy to get carried away and
+add more and more events to a tracing program and lose sight of the original problem you wanted
+to solve. This has the following drawbacks:
+
+    ■   Unnecessary overhead: The original problem might have been solved by tracing only a few
+        events, but the tool now traces many more, adding little insight to the common use case
+        but costing overhead for everyone who uses it.
+    ■   Maintenance burden: This is especially the case with kprobes and uprobes, as they are
+        an unstable interface that can change between software versions. We’ve already had a
+        number of kernel changes during the Linux 4.x series that have broken BCC tools. The fix
+        was to include code for each kernel version (often selected by checking for the existence of
+        functions, as kernel version numbers are an unreliable indicator due to backports), or to
+        simply duplicate the tools, keeping copies for older kernels in the tools/old directory.
+        Best case: tracepoints were added so that such breakage stops happening (e.g., with
+        sock:inet_sock_set_state for the tcp tools).
+
+Fixing the BCC tools has not been arduous, as each one typically traces only a few events or event
+types (as I designed them to do). Were they to trace dozens of events each, breakage would be
+more frequent, and fixing them would be more complicated. Also, the tests required would be
+magnified: testing all event types across all kernel versions that the tool has specific code for.
+
+I learned this the hard way when I developed a tool called tcpsnoop(1m) 15 years ago. My goal
+was to show which processes were causing TCP I/O, but I solved this by writing a tool to trace
+all packet types with the PID (TCP handshake, port refused packets, UDP, ICMP, etc.) so that it
+matched the output of a network sniffer. This involved tracing many unstable kernel details,
+and the tool broke several times due to kernel updates. I’d lost sight of the original problem and
+developed something that became impractical to maintain. (For more details on this lesson, see
+tcpsnoop in Chapter 10.)
+
+The bpftrace tools I developed and included in this book are the result of 15 years of experience:
+I’m deliberately restricting them to trace the fewest events required, solving the specific problem
+and no more. Where possible, I recommend that you do the same.
+
+18.7         Missing Events
+This is a common problem: an event can be instrumented successfully, but it doesn’t seem to
+fire, or a tool produces no output. (If the event can’t be instrumented at all, see Section 18.10.)
+Instrumenting the events using the Linux perf(1) utility can help determine whether the issue is
+with BPF tracing or with the event itself.
+
+      The following demonstrates using perf(1) to check if the block:block_rq_insert and
+      block:block_rq_requeue tracepoints are occurring:
+
+      # perf stat -e block:block_rq_insert,block:block_rq_requeue -a
+      ^C
+       Performance counter stats for 'system wide':
+
+                         41        block:block_rq_insert
+                          0        block:block_rq_requeue
+
+              2.545953756 seconds time elapsed
+
+      In this example, the block:block_rq_insert tracepoint fired 41 times, and the block:block_rq_requeue
+      tracepoint fired zero times. If a BPF tool was tracing block:block_rq_insert at the same time, and it did
+      not see any events, then it would suggest a problem with the BPF tool. If both a BPF tool and perf(1)
+      showed zero events, then it would suggest there is a problem with the event: it is not occurring.
+
+      Now an example of checking if the vfs_read() kernel function is called, using kprobes:
+
+      # perf probe vfs_read
+      Added new event:
+        probe:vfs_read            (on vfs_read)
+
+      You can now use it in all perf tools, such as:
+
+               perf record -e probe:vfs_read -aR sleep 1
+
+      # perf stat -e probe:vfs_read -a
+      ^C
+       Performance counter stats for 'system wide':
+
+                     3,029         probe:vfs_read
+
+              1.950980658 seconds time elapsed
+      # perf probe --del probe:vfs_read
+      Removed event: probe:vfs_read
+
+      The perf(1) interface required separate commands to create and delete the kprobe, and it is similar
+      with uprobes. This example showed that vfs_read() was called 3029 times while tracing.
+
+      Missing events sometimes happen after a software change where previously instrumented events
+      are no longer called.
+
+      One common occurrence is where a library function is traced from its shared library location,
+      but the target application is statically compiled, and that function is called from the application
+      binary instead.
+                                                                        18.8 Missing Stacks Traces      737
+
+18.8           Missing Stacks Traces
+This is where printed stack traces look incomplete or are completely missing. It may also involve
+missing symbols (covered Section 18.9) so that frames appear as "[unknown]".
+
+Here is some example output, using BCC trace(8) to print user-level stack traces for the execve()
+tracepoint (new process execution):
+
+# trace -U t:syscalls:sys_enter_execve
+PID         TID       COMM              FUNC
+26853       26853     bash              sys_enter_execve
+            [unknown]
+            [unknown]
+
+26854       26854     bash              sys_enter_execve
+            [unknown]
+            [unknown]
+[...]
+
+This is another opportunity to use perf(1) for cross-checks before digging deeper into
+BCC/BPF debugging. Reproducing this task using perf(1):
+
+# perf record -e syscalls:sys_enter_execve -a -g
+^C[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 3.246 MB perf.data (2 samples) ]
+
+# perf script
+bash 26967 [007] 2209173.697359: syscalls:sys_enter_execve: filename: 0x56172df05030,
+argv: 0x56172df3b680, envp: 0x56172df2df00
+                         e4e37 __GI___execve (/lib/x86_64-linux-gnu/libc-2.27.so)
+                  56172df05010 [unknown] ([unknown])
+
+bash 26968 [001] 2209174.059399: syscalls:sys_enter_execve: filename: 0x56172df05090,
+argv: 0x56172df04440, envp: 0x56172df2df00
+                         e4e37 __GI___execve (/lib/x86_64-linux-gnu/libc-2.27.so)
+                  56172df05070 [unknown] ([unknown])
+
+This shows similar broken stacks. There are three problems:
+
+      ■   Stacks are incomplete. They are tracing the bash(1) shell calling a new program: I know
+          from prior experience that it is several frames deep, yet only two frames (lines) are shown
+          above. If your stack traces are one or two lines long and don’t end with an initial frame
+          (e.g., "main" or "start_thread"), it’s reasonable to assume that they may be incomplete
+          as well.
+
+          ■   The last line is [unknown]. Even perf(1) could not resolve the symbol. There may be a
+              problem with symbols in bash(1), or libc’s __GI___execve() may have trampled the frame
+              pointer, breaking further walking.
+          ■   The libc __GI___exceve() call was seen by perf(1) but is not in BCC’s output. This points
+              to another problem with BCC’s trace(8) that should be fixed.6
+
+      18.8.1         How to Fix Broken Stack Traces
+      Incomplete stack traces are unfortunately common and are usually caused by a confluence of two
+      factors: (1) the observability tool using a frame pointer-based approach for reading the stack trace
+      and (2) the target binary not reserving a register (RBP on x86_64) for the frame pointer, instead
+      reusing it as a general-purpose register, as a compiler performance optimization. The observability
+      tool reads this register expecting it to be a frame pointer, but in fact it now could contain
+      anything: numbers, object address, pointers to strings. The observability tool tries to resolve this
+      number in the symbol table and, if it is lucky, it doesn’t find it and can print "[unknown]". If it is
+      unlucky, that random number resolves to an unrelated symbol, and now the printed stack trace
+      has a function name that is wrong, confusing the end user.
+
+      The easiest fix is usually to fix the frame pointer register:
+          ■   For C/C++ software and other software compiled with gcc or LLVM: Recompile the
+              software with -fno-omit-frame-pointer.
+          ■   For Java: Run java(1) with -XX:+PreserveFramePointer.
+
+      This may come with a performance cost, but it has often been measured at less than 1%; the bene-
+      fits of being able to use stack trace to find performance wins usually far outweigh this cost. These
+      are also discussed in Chapter 12.
+
+      The other approach is to switch to a stack walking technique that is not frame pointer based.
+      perf(1) supports DWARF-based stack walking, ORC, and last branch record (LBR). At the time of
+      writing, DWARF-based and LBR stack walking are not available from BPF, and ORC is not yet avail-
+      able for user-level software. For more on this topic, see Section 2.4 in Chapter 2.
+
+      18.9          Missing Symbols (Function Names) When Printing
+      This is where symbols are not printed correctly in stack traces or via symbol lookup functions:
+      instead of function names, they are shown as hexadecimal numbers or the string "[unknown]".
+      One culprit is broken stacks, explained in the previous section. Another is short-lived processes
+      that exit before the BPF tool can read its address space and look up symbol tables. A third is that
+      the symbol table information is not available. How to fix this differs between JIT runtimes and
+      ELF binaries.
+
+      6 I would guess that perf(1) may have used debuginfo to get that frame. See a similar investigation in bpftrace #646 [179].
+                                                          18.10 Missing Functions When Tracing         739
+
+18.9.1       How to Fix Missing Symbols: JIT Runtimes (Java, Node.js, ...)
+Missing symbols commonly occur for just-in-time (JIT) compiler runtimes like Java and Node.js.
+In those cases, the JIT compiler has its own symbol table that is changing at runtime and is not
+part of the pre-compiled symbol tables in the binary. The common fix is to use supplemental
+symbol tables generated by the runtime, which are placed in /tmp/perf-<PID>.map files read by
+both perf(1) and BCC. This approach, some caveats, and future work are discussed in Section 12.3
+of Chapter 12.
+
+18.9.2       How to Fix Missing Symbols: ELF binaries (C, C++, ...)
+Symbols may be missing from compiled binaries, especially those that are packaged and
+distributed, as they have been processed using strip(1) to reduce their file size. One fix is to
+adjust the build process to avoid stripping symbols; another is to use a different source of symbol
+information, such as debuginfo or BTF. BCC and bpftrace support debuginfo symbols. These
+approaches, caveats, and future work are discussed in Section 12.2 of Chapter 12.
+
+18.10           Missing Functions When Tracing
+This is where a known function cannot be traced with uprobes, uretprobes, kprobes, or
+kretprobes: it appears to be missing or doesn’t fire. The problem may be missing symbols
+(covered earlier). It may also be due to compiler optimizations, or other reasons:
+    ■   Inlining: With inlining, the function instructions have been included in the calling
+        function. This can happen for functions with few instructions, to save making call, ret, and
+        function prologue instructions. The function symbol may be gone completely, or it may be
+        present but not fire for that code path.
+    ■   Tail-call optimization: When the code flow is A()->B()->C(), and C() is called last in B(),
+        then the compiler may have C() return directly to A() as an optimization. This means the
+        uretprobe or kretprobe for the function does not fire.
+    ■   Static and dynamic linking: This is where a uprobe defines a function to be in a library,
+        but the target software has switched from dynamic to static linking, and the function
+        location has changed: it is now in the binary. The same is possible in reverse, where a
+        uprobe defines a function to be in a binary, but it has since moved to a shared library.
+
+Dealing with this may mean tracing a different event: the parent function, a child function, or
+a neighboring function. kprobes and uprobes also support instruction offset tracing (bpftrace
+should support this in the future), so the location of an inlined function can be instrumented if
+you know its offset.
+
+      18.11          Feedback Loops
+      If you trace yourself tracing, you can create a feedback loop.
+
+      Examples of things to avoid:
+
+      # bpftrace -e 't:syscalls:sys_write_enter { printf(...) }'
+      remote_host# bpftrace -e 'k:tcp_sendmsg { printf(...) }'
+      # bpftrace -e 'k:ext4_file_write_iter{ printf(...) }' > /ext4fs/out.file
+
+      The first two will accidentally trace the bpftrace printf() event by creating another printf() event,
+      which is traced and creates another. The event rate will explode, creating a performance issue
+      until you can kill bpftrace.
+
+      The third does the same as bpftrace triggers ext4 writes to save the output, which causes more
+      output to be generated and saved, and so on.
+
+      You can avoid this by using filters to exclude tracing your own BPF tool or just trace the target
+      process of interest.
+
+      18.12          Dropped Events
+      Be aware of dropped events rendering the tool output incomplete.
+
+      BPF tools can emit output so quickly that it overflows the perf output buffer, or can try to save too
+      many stack IDs and overflow the BPF stack map, etc.
+
+      For example:
+
+      # profile
+      [...]
+      WARNING: 5 stack traces could not be displayed.
+
+      The tools should tell you when events have been dropped, as the output above shows. These drops
+      can often be fixed by tuning. profile(8), for example, has the -stack-storage-size option
+      to increase the size of the stack map, which by default can store 16,384 unique stack traces. If
+      tuning becomes commonplace, the tool defaults should be updated so that users do not need to
+      change them.
+                                               Appendix A
+                            bpftrace One-Liners
+
+This is a selection of one-liners used throughout this book.
+
+Chapter 6 CPUs
+New processes with arguments:
+
+bpftrace -e 'tracepoint:syscalls:sys_enter_execve { join(args->argv); }'
+
+Syscall count by process:
+
+bpftrace -e 'tracepoint:raw_syscalls:sys_enter { @[pid, comm] = count(); }'
+
+Sample running process name at 99 Hertz:
+
+bpftrace -e 'profile:hz:99 { @[comm] = count(); }'
+
+Sample user-level stacks at 49 Hertz, for PID 189:
+
+bpftrace -e 'profile:hz:49 /pid == 189/ { @[ustack] = count(); }'
+
+Trace new threads via pthread_create():
+
+bpftrace -e 'u:/lib/x86_64-linux-gnu/libpthread-2.27.so:pthread_create {
+    printf("%s by %s (%d)\n", probe, comm, pid); }'
+
+Chapter 7 Memory
+Count process heap expansion (brk()) by code path:
+
+bpftrace -e tracepoint:syscalls:sys_enter_brk { @[ustack, comm] = count(); }
+
+Count page faults by process:
+
+bpftrace -e 'software:page-fault:1 { @[comm, pid] = count(); }'
+
+Count user page faults by user-level stack trace:
+
+bpftrace -e 'tracepoint:exceptions:page_fault_user { @[ustack, comm] =
+     count(); }'
+742   Appendix A
+
+      Count vmscan operations by tracepoint:
+
+      bpftrace -e 'tracepoint:vmscan:* { @[probe]++; }'
+
+      Chapter 8 File Systems
+      Trace files opened via open(2) with process name:
+
+      bpftrace -e 't:syscalls:sys_enter_open { printf("%s %s\n", comm,
+          str(args->filename)); }'
+
+      Show the distribution of read() syscall request sizes:
+
+      bpftrace -e 'tracepoint:syscalls:sys_enter_read { @ = hist(args->count); }'
+
+      Show the distribution of read() syscall read bytes (and errors):
+
+      bpftrace -e 'tracepoint:syscalls:sys_exit_read { @ = hist(args->ret); }'
+
+      Count VFS calls:
+
+      bpftrace -e 'kprobe:vfs_* { @[probe] = count(); }'
+
+      Count ext4 tracepoints:
+
+      bpftrace -e 'tracepoint:ext4:* { @[probe] = count(); }'
+
+      Chapter 9 Disk I/O
+      Count block I/O tracepoints:
+
+      bpftrace -e 'tracepoint:block:* { @[probe] = count(); }'
+
+      Summarize block I/O size as a histogram:
+
+      bpftrace -e 't:block:block_rq_issue { @bytes = hist(args->bytes); }'
+
+      Count block I/O request user stack traces:
+
+      bpftrace -e 't:block:block_rq_issue { @[ustack] = count(); }'
+
+      Count block I/O type flags:
+
+      bpftrace -e 't:block:block_rq_issue { @[args->rwbs] = count(); }'
+
+      Trace block I/O errors with device and I/O type:
+
+      bpftrace -e 't:block:block_rq_complete /args->error/ {
+          printf("dev %d type %s error %d\n", args->dev, args->rwbs, args->error); }'
+
+      Count SCSI opcodes:
+
+      bpftrace -e 't:scsi:scsi_dispatch_cmd_start { @opcode[args->opcode] =
+          count(); }'
+
+      Count SCSI result codes:
+
+      bpftrace -e 't:scsi:scsi_dispatch_cmd_done { @result[args->result] = count(); }'
+                                                                   bpftrace One-Liners   743
+
+Count scsi driver funcitons:
+
+bpftrace -e 'kprobe:scsi* { @[func] = count(); }'
+
+Chapter 10 Networking
+Count socket accept(2)s by PID and process name:
+
+bpftrace -e 't:syscalls:sys_enter_accept* { @[pid, comm] = count(); }'
+
+Count socket connect(2)s by PID and process name:
+
+bpftrace -e 't:syscalls:sys_enter_connect { @[pid, comm] = count(); }'
+
+Count socket send/receive bytes by on-CPU PID and process name:
+
+bpftrace -e 'kr:sock_sendmsg,kr:sock_recvmsg /retval > 0/ {
+    @[pid, comm, retval] = sum(retval); }'
+
+Count TCP send/receives:
+
+bpftrace -e 'k:tcp_sendmsg,k:tcp*recvmsg { @[func] = count(); }'
+
+TCP send bytes as a histogram:
+
+bpftrace -e 'k:tcp_sendmsg { @send_bytes = hist(arg2); }'
+
+TCP receive bytes as a histogram:
+
+bpftrace -e 'kr:tcp_recvmsg /retval >= 0/ { @recv_bytes = hist(retval); }'
+
+Count TCP retransmits by type and remote host (assumes IPv4):
+
+bpftrace -e 't:tcp:tcp_retransmit_* { @[probe, ntop(2, args->saddr)] =
+    count(); }'
+
+UDP send bytes as a histogram:
+bpftrace -e 'k:udp_sendmsg { @send_bytes = hist(arg2); }'
+
+Count transmit kernel stack traces:
+
+bpftrace -e 't:net:net_dev_xmit { @[kstack] = count(); }'
+
+Chapter 11 Security
+Count security audit events for PID 1234:
+
+bpftrace -e 'k:security_* /pid == 1234 { @[func] = count(); }'
+
+Trace pluggable authentication module (PAM) session starts:
+
+bpftrace -e 'u:/lib/x86_64-linux-gnu/libpam.so.0:pam_start {
+    printf("%s: %s\n", str(arg0), str(arg1)); }'
+
+Trace kernel module loads:
+
+bpftrace -e 't:module:module_load { printf("load: %s\n", str(args->name)); }'
+744   Appendix A
+
+      Chapter 13 Applications
+      Sum malloc() requested bytes by user stack trace (high overhead):
+
+      bpftrace -e 'u:/lib/x86_64-linux-gnu/libc-2.27.so:malloc { @[ustack(5)] =
+          sum(arg0); }'
+
+      Trace kill() signals showing sender process name, target PID, and signal number:
+
+      bpftrace -e 't:syscalls:sys_enter_kill { printf("%s -> PID %d SIG %d\n",
+          comm, args->pid, args->sig); }'
+
+      Count libpthread mutex lock functions for one second:
+
+      bpftrace -e 'u:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_*lock {
+          @[probe] = count(); } interval:s:1 { exit(); }'
+
+      Count libpthread conditional variable functions for one second:
+
+      bpftrace -e 'u:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_* {
+          @[probe] = count(); } interval:s:1 { exit(); }'
+
+      Chapter 14 Kernel
+      Count system calls by syscall function:
+
+      bpftrace -e 'tracepoint:raw_syscalls:sys_enter {
+          @[ksym(*(kaddr("sys_call_table") + args->id * 8))] = count(); }'
+
+      Count kernel function calls starting with "attach":
+
+      bpftrace -e 'kprobe:attach* { @[probe] = count(); }'
+
+      Time the kernel function vfs_read() and summarize as a histogram:
+
+      bpftrace -e 'k:vfs_read { @ts[tid] = nsecs; } kr:vfs_read /@ts[tid]/ {
+          @ = hist(nsecs - @ts[tid]); delete(@ts[tid]); }'
+
+      Frequency count the first integer argument to kernel function "func1":
+      bpftrace -e 'kprobe:func1 { @[arg0] = count(); }'
+
+      Frequency count the return value from kernel function "func1":
+
+      bpftrace -e 'kretprobe:func1 { @[retval] = count(); }'
+
+      Sample kernel-level stacks at 99 Hertz, excluding idle:
+
+      bpftrace -e 'profile:hz:99 /pid/ { @[kstack] = count(); }'
+
+      Count context switch stack traces:
+
+      bpftrace -e 't:sched:sched_switch { @[kstack, ustack, comm] = count(); }'
+
+      Count work queue requests by kernel function:
+
+      bpftrace -e 't:workqueue:workqueue_execute_start { @[ksym(args->function)] =
+          count() }'
+                                     Appendix B
+                     bpftrace Cheat Sheet
+
+Synopsis
+bpftrace -e 'probe /filter/ { action; }'
+
+Probes
+BEGIN, END                                 Program start and end
+tracepoint:syscalls:sys_enter_execve       execve(2) syscall
+tracepoint:syscalls:sys_enter_open         open(2) syscall (also trace openat(2))
+tracepoint:syscalls:sys_exit_read          trace read(2) syscall return (one variant)
+tracepoint:raw_syscalls:sys_enter          All syscalls
+block:block_rq_insert                      Queue block I/O request
+block:block_rq_issue                       Issue block I/O request to storage device
+block:block_rq_complete                    Block I/O completion
+sock:inet_sock_set_state                   Socket state change
+sched:sched_process_exec                   Process execution
+sched:sched_switch                         Context switch
+sched:sched_wakeup                         Thread wakeup event
+software:faults:1                          Page faults
+hardware:cache-misses:1000000              Once every 1,000,000 LLC cache miss
+kprobe:vfs_read                            Trace vfs_read() kernel function entry
+kretprobe:vfs_read                         Trace return of vfs_read() kernel function
+uprobe:/bin/bash:readline                  Trace readline() from /bin/bash
+uretprobe:/bin/bash:readline               Trace return of readline() from /bin/bash
+usdt:path:probe                            Trace USDT probe from path
+profile:hz:99                              Sample on all CPUs at 99 Hertz
+interval:s:1                               Run on one CPU once per second
+
+Probe Aliases
+t   tracepoint   U   usdt       k   kprobe      kr        kretprobe   p      profile
+s   software     h   hardware   u   uprobe      ur        uretprobe   i      interval
+746   Appendix B
+
+      Vars
+      comm           On-CPU process name              username          Username string
+      pid, tid       On-CPU PID, Thread ID            uid               User ID
+      cpu            CPU ID                           kstack            Kernel stack trace
+      nsecs          Time, nanoseconds                ustack            User stack trace
+      elapsed        Time since program start,        probe             Current full probe name
+                     nsecs
+      arg0..N        [uk]probe arguments              func              Current function name
+      args->         Tracepoint args                  $1..$N            CLI args, int
+      retval         [uk]retprobe return value        str($1)...        CLI args, string
+      cgroup         Current cgroup ID                curtask           Pointer to current task struct
+
+      Actions
+      @map[key1, ...] = count()                  Frequency count
+      @map[key1, ...] = sum(var)                 Sum variable
+      @map[key1, ...] = hist(var)                Power of two histogram
+      @map[key1, ...] = lhist(var,               Linear histogram
+      min, max, step)
+      @map[key1, ...] = stats(var)               Statistics: count, average, and total
+      min(var), max(var), avg(var)               Min, max, average
+      printf("format", var0..varN)               Print vars; use print() for aggregations
+      kstack(num), ustack(num)                   Print num lines of kernel, user stack
+      ksym(ip), usym(ip)                         Kernel/user symbol string from instruction pointer
+      kaddr("name"), uaddr("name")               Kernel/user address from symbol name
+      str(str[, len])                            String from address
+      ntop([af], addr)                           IP address to string
+
+      Asynchronous Actions
+      printf("format", var0..varN)                    Print vars; use print() for aggregations
+      system("format", var0..varN)                    Run at command line
+      time("format")                                  Print formatted time
+      clear(@map)                                     Clear a map: delete all keys
+      print(@map)                                     Print a map
+      exit()                                          Exit
+
+      Switches
+      -e                                              Trace this probe description
+      -l                                              List probes instead of tracing them
+      -p PID                                          Enable USDT probes on PID
+      -c 'command'                                    Invoke this command
+      -v, -d                                          Verbose and debug output
+                                              Appendix C
+                 BCC Tool Development
+
+This appendix summarizes BCC tool development using examples and is an extension of
+Chapter 4. This is optional content for those readers who are interested. Chapter 5 covers
+how to develop tools in bpftrace, a higher-level language that is expected to be sufficient and
+preferred in many cases. Also see Chapter 18 for a discussion on minimizing overhead, which
+is common to both BCC and bpftrace tool development.
+
+Resources
+I created three detailed documents for learning BCC tool development and made them
+available for free as part of the BCC repository where they are online and maintained by other
+contributors. They are:
+    ■   BCC Python Developer Tutorial: This contains more than 15 lessons for BCC tool
+        development using the Python interface, where each lesson highlights a number of
+        details to learn [180].
+    ■   BCC Reference Guide: This is a full reference for the BPF C API, and the BCC Python
+        API. It covers all the capabilities of BCC, and includes short code examples for every
+        capability. It is intended to be searched when needed [181].
+    ■   Contributing BCC/eBPF scripts: This provides a checklist for tool developers who
+        wish to contribute their tools to the BCC repository. This summarizes years of lessons
+        learned when developing and maintaining tracing tools [63].
+
+In this appendix I provide an additional resource for learning BCC tool development: a crash
+course of learning by example. This includes four Python programs: hello_world.py as a
+basic example; sleepsnoop.py for per-event output; bitehist.py to introduce histogram maps,
+function signatures, and structs; and biolatency.py as an example of a real tool.
+
+Five Tips
+Here are five tips you should know before writing BCC tools:
+
+         1. BPF C is restricted: no loops or kernel function calls. You can only use the bpf_* kernel
+            helper functions and some compiler built-ins.
+
+        2. All memory must be read through bpf_probe_read(), which does necessary checks.
+           If you want to dereference a->b->c->d, then try doing it first, as BCC has a rewriter
+           that may turn it into the necessary bpf_probe_read()s. If it doesn’t work, add explicit
+           bpf_probe_reads()s.
+              ■   Memory can only be read to the BPF stack or BPF maps. The stack is limited in size;
+                  use BPF maps for storing large objects.
+        3. There are three ways to output data from kernel to user:
+              ■   BPF_PERF_OUTPUT(): A way to send per-event details to user space, via a custom
+                  struct you define.
+              ■   BPF_HISTOGRAM() or other BPF maps: Maps are a key/value hash from which
+                  more advanced data structures can be built. They can be used for summary statistics
+                  or histograms, and read periodically from user space (efficient).
+              ■   bpf_trace_printk(): Debugging only, this writes to trace_pipe and can clash with
+                  other programs and tracers.
+
+        4. Use static instrumentation (tracepoints, USDT) instead of dynamic instrumentation
+           (kprobes, uprobes) wherever possible. Dynamic instrumentation is an unstable API, so
+           your tools will break if the code it is instrumenting changes.
+
+        5. Check for BCC developments for new features and capabilities, and bpftrace
+           developments in case it becomes sufficient for your needs.
+
+      Tool Examples
+      The following example tools have been selected to teach you the essentials of BCC
+      programming. They are hello_world.py and sleepsnoop.py as examples of per-event output,
+      and bitehist.py and biolatency.py as examples of histogram output.
+
+      Tool 1: hello_world.py
+      This is a basic example to begin with. First, consider the output:
+
+      # hello_world.py
+       ModuleProcessTh-30136 [005] .... 2257559.959119: 0x00000001: Hello, World!
+       SendControllerT-30135 [002] .... 2257559.971135: 0x00000001: Hello, World!
+       SendControllerT-30142 [007] .... 2257559.974129: 0x00000001: Hello, World!
+       ModuleProcessTh-30153 [000] .... 2257559.977401: 0x00000001: Hello, World!
+       SendControllerT-30135 [003] .... 2257559.996311: 0x00000001: Hello, World!
+      [...]
+
+      It prints a line of output for some event, ending with the text "Hello, World!"
+
+Now the source code, hello_world.py:
+
+ 1   #!/usr/bin/python
+ 2   from bcc import BPF
+ 3   b = BPF(text="""
+ 4   int kprobe__do_nanosleep()
+ 5   {
+ 6        bpf_trace_printk("Hello, World!\\n");
+ 7        return 0;
+ 8   }""");
+ 9   b.trace_print()
+
+Line 1 sets the interpreter to Python. Some environments prefer using "#!/usr/bin/env
+python" to use the first python found in the shell environment.
+
+Line 4 imports the BPF library from BCC.
+
+Lines 4 to 8, highlighted in bold, declare the kernel-level BPF program, written in C. This
+program is included in the parent Python program in quotation marks and passed as the text
+argument to a new BPF() object, b.
+
+Line 4 uses a shortcut to instrument a kprobe. This shortcut is a function declaration that
+begins with "kprobe__". The rest of the string is treated as the function name to instrument,
+in this case, do_nanosleep(). This shortcut is not used by many tools yet, since those tools
+predate his capability. The tools often use a BPF.attach_kprobe() Python call instead.
+
+Line 6 calls bpf_trace_printk() with the "Hello World!" string, followed by a newline (which
+is escaped with an extra "\" so that the "\n" is preserved for the final compilation step).
+bpf_trace_printk() prints a string to the shared trace buffer.
+
+Line 9 calls a Python trace_print() function from the BPF object. This fetches the trace buffer
+messages from the kernel and prints them out.
+
+To keep this example short, the bpf_trace_printk() interface was used. However, this is for
+debugging only as it utilizes a buffer that is shared with other tools (which can be read from
+user space via /sys/kernel/debug/tracing/trace_pipe.) Running this at the same time as other
+tracing tools may cause their outputs to clash. The recommended interface is demonstrated
+by the next tool, sleepsnoop.py.
+
+Tool 2: sleepsnoop.py
+This tool shows calls to do_nanosleep() with a timestamp and process ID. This is provided as
+an example of using the perf output buffer. Sample output:
+
+# sleepsnoop.py
+TIME(s)                PID    CALL
+489488.676744000       5008   Hello, World!
+489488.676740000       4942   Hello, World!
+
+      489488.676744000       32469   Hello, World!
+      489488.677674000       5006    Hello, World!
+      [...]
+
+      The source code is:
+
+       1   #!/usr/bin/python
+       2
+       3   from bcc import BPF
+       4
+       5   # BPF program
+       6   b = BPF(text="""
+       7   struct data_t {
+       8        u64 ts;
+       9        u32 pid;
+      10   };
+      11
+      12   BPF_PERF_OUTPUT(events);
+      13
+      14   int kprobe__do_nanosleep(void *ctx) {
+      15        struct data_t data = {};
+      16        data.pid = bpf_get_current_pid_tgid();
+      17        data.ts = bpf_ktime_get_ns() / 1000;
+      18        events.perf_submit(ctx, &data, sizeof(data));
+      19        return 0;
+      20   };
+      21   """)
+      22
+      23   # header
+      24   print("%-18s %-6s %s" % ("TIME(s)", "PID", "CALL"))
+      25
+      26   # process event
+      27   def print_event(cpu, data, size):
+      28        event = b["events"].event(data)
+      29        print("%-18.9f %-6d Hello, World!" % ((float(event.ts) / 1000000),
+      30            event.pid))
+      31
+      32   # loop with callback to print_event
+      33   b["events"].open_perf_buffer(print_event)
+      34   while 1:
+      35        try:
+      36            b.perf_buffer_poll()
+      37        except KeyboardInterrupt:
+      38            exit()
+
+Lines 7 to 10 define the output struct, data_t. It contains two members, a u64 (unsigned
+64-bit int) for a timestamp, and a u32 for a pid.
+
+Line 12 declares the perf event output buffer, named "events".
+
+Line 14 instruments do_nanosleep(), as did the earlier hello_world.py example.
+
+Line 15 declares a data_t struct named data and initializes it to zero, which is required
+(the BPF verifier will reject access to uninitialized memory).
+
+Lines 16 and 17 populate members of data using BPF helper functions.
+
+Line 18 submits the data struct via the events perf buffer.
+
+Line 27 to 30 declare a callback named print_event() that handles an event from the perf
+buffer. It reads the event data on line 28 as the object named event and accesses its members
+on lines 29 and 30. (Older versions of BCC required more manual steps to declare in Python
+the layout of the data struct; that is now automatic).
+
+Line 33 registers the perf_event() callback with the perf event buffer named events.
+
+Lines 34 to 38 poll open perf buffers. If there are events, their callbacks are executed. On a
+Ctrl-C, the program will exit.
+
+If the events are frequent, the user-space Python program may wake up often to process them.
+As an optimization, some tools introduce a small sleep in the final while loop to allow several
+events to be buffered, reducing the number of times Python runs on CPU, and lowering
+overall overhead.
+
+If events are frequent, you should consider whether summarizing them in kernel context can
+better answer your questions, as it should cost lower overhead. The next tool is an example of
+this, bitehist.py.
+
+Tool 3: bitehist.py
+This tool prints the size of disk I/O as a power-of-two histogram; a similar version is in the
+BCC examples/tracing directory. I’ll begin with the output of this tool to show what it does
+before looking at the source code:
+
+# bitehist.py
+Tracing block I/O... Hit Ctrl-C to end.
+^C
+     kbytes                  : count        distribution
+          0 -> 1             : 3           |**                                              |
+          2 -> 3             : 0           |                                                |
+          4 -> 7             : 55          |****************************************|
+          8 -> 15            : 26          |******************                              |
+         16 -> 31            : 9           |******                                          |
+         32 -> 63            : 4           |**                                              |
+
+                64 -> 127         : 0         |                                          |
+               128 -> 255         : 1         |                                          |
+               256 -> 511         : 0         |                                          |
+               512 -> 1023        : 1         |                                          |
+
+      The full BCC program, with enumerated lines:
+
+       1   #!/usr/bin/python
+       2   #[...]
+       3   from __future__ import print_function
+       4   from bcc import BPF
+       5   from time import sleep
+       6
+       7   # load BPF program
+       8   b = BPF(text="""
+       9   #include <uapi/linux/ptrace.h>
+      10
+      11   BPF_HISTOGRAM(dist);
+      12
+      13   int kprobe__blk_account_io_completion(struct pt_regs *ctx,
+      14          void *req, unsigned int bytes)
+      15   {
+      16          dist.increment(bpf_log2l(bytes / 1024));
+      17          return 0;
+      18   }
+      19   """)
+      20
+      21   # header
+      22   print("Tracing block I/O... Hit Ctrl-C to end.")
+      23
+      24   # trace until Ctrl-C
+      25   try:
+      26        sleep(99999999)
+      27   except KeyboardInterrupt:
+      28        print()
+      29
+      30   # output
+      31   b["dist"].print_log2_hist("kbytes")
+
+      Lines 1–8 include details covered in the previous hello_world.py example.
+
+      Line 9 includes header information used by the BPF program (for struct pt_regs).
+
+      Line 11 declares a BPF map histogram, named "dist", used for storage and output.
+
+Lines 13 and 14 declare the function signature for blk_account_io_completion(). The first
+argument, "struct pt_regs *ctx," refers to register state from the instrumentation, and is not
+from the target function. The remaining arguments are from the function, which is from the
+kernel in block/blk-core.c:
+
+void blk_account_io_completion(struct request *req, unsigned int bytes)
+
+I am interested in the bytes argument, but I must also declare the "struct request *req" argu-
+ment so that the positions match, even though I am not using struct request *req in the BPF
+program. However, struct request is not known by default by BPF, so including it in the func-
+tion signature would cause the BPF tool to fail to compile. There are two workarounds: (1)
+#include <linux/blkdev.h>, so that struct request is known, or (2) replace "struct request *req"
+with "void *req," since void is already known, and that I have lost the real type information is
+unimportant since the program does not dereference it. In this example I used workaround 2.
+
+Line 16 takes the bytes argument and divides it by 1024, then passes this Kbyte value to
+bpf_log2l(), a function that generates a power-of-two index from the value. This index value
+is then saved in the dist histogram via dist.increment(): which increments the value at that
+index by one. To explain with an example:
+
+  1. Imagine the for the first event the bytes variable was 4096
+
+  2. 4096 / 1024 = 4
+
+  3. bpf_log2l(4) = 3
+
+  4. dist.increment(3) adds 1 to index 3, so the dist histogram now contains:
+
+           index 1: value 0 (refers to 0 → 1 Kbytes)
+
+           index 2: value 0 (refers to 2 → 3 Kbytes)
+
+           index 3: value 1 (refers to 4 → 7 Kbytes)
+
+           index 4: value 0 (refers to 8 → 15 Kbytes)
+
+           …
+
+These indexes and values will be read by user space and printed as a histogram.
+
+Line 22 prints a header. When using this tool, it can be useful to see when the header is
+printed: it tells you that the BCC compilation stages and attaching event instrumentation has
+completed, and is about to start tracing. The contents of this introductory message follow a
+convention that explains what the tool is doing and when it will finish:
+
+    ■   Tracing: This tells the user that the tool is doing per-event tracing. If it were sampling
+        (profiling), it would say that instead.
+    ■   block I/O: This tells the user what events are instrumented.
+
+          ■   Hit Ctrl-C to end.: This tells the user when the program will end. Tools that generate
+              interval output may include this as well—for example, “Output every 1 second, Ctrl-C
+              to end.”
+
+      Lines 25 to 28 cause the program to wait until Ctrl-C is pressed. When it is, a newline is
+      printed to prepare the screen for output.
+
+      Line 31 prints the dist histogram as a power-of-2 histogram, with a label for the range column
+      of "kbytes". This involves fetching the values for the indexes from the kernel. How does this
+      Python BPF.print_log2_hist() call understand what ranges each index refers to? These ranges
+      are not passed from the kernel to user space, only the values are. The ranges are known
+      because the user-space and kernel log2 algorithms match.
+
+      There is another way to write the BPF code, which serves as an example of struct
+      dereferencing:
+
+      #include <uapi/linux/ptrace.h>
+      #include <linux/blkdev.h>
+
+      BPF_HISTOGRAM(dist);
+
+      int kprobe__blk_account_io_completion(struct pt_regs *ctx, struct request *req)
+      {
+                dist.increment(bpf_log2l(req->__data_len / 1024));
+                return 0;
+      }
+
+      Now, the bytes value is fetched from struct request and its __data_len member. Since I’m now
+      processing struct request, I have needed to include the linux/blkdev.h header that has its defi-
+      nition. Since I’m not using the second bytes argument to this function, I have not declared it
+      in the function signature: trailing unused arguments can be elided, which still preserves the
+      position of earlier arguments.
+
+      What’s really happening is that the arguments (after struct pt_regs *ctx) defined in the BPF
+      program are mapped to the function calling convention registers. On x86_64, this is %rdi,
+      %rsi, %rdx, etc. If you write the wrong function signature, the BPF tool will compile success-
+      fully and apply that signature to the registers, leading to invalid data.
+
+      Shouldn’t the kernel know what these function arguments are? Why am I redeclaring them in
+      the BPF program? The answer is that the kernel does know, if kernel debuginfo is installed on
+      your system. But that’s rarely the case in practice, since the debuginfo files can be large.
+
+      Lightweight metadata has been in development that should solve this problem: BPF Type
+      Format, which can be included in the kernel vmlinux binary, and one day may be available
+      for user-level binaries as well. This should hopefully remove the need to include header files
+      and redeclare function signatures. See Section 2.3.9 in Chapter 2.
+
+Tool 4: biolatency
+The following are all the lines from my original biolatency.py tool, enumerated and
+commented:
+
+       1 #!/usr/bin/python
+       2 # @lint-avoid-python-3-compatibility-imports
+
+Line 1: We’re Python.
+
+Line 2 suppresses a lint warning (these were added for Facebook’s build environment).
+
+       3 #
+       4 # biolatency            Summarize block device I/O latency as a histogram.
+       5 #                       For Linux, uses BCC, eBPF.
+       6 #
+       7 # USAGE: biolatency [-h] [-T] [-Q] [-m] [-D] [interval] [count]
+       8 #
+       9 # Copyright (c) 2015 Brendan Gregg.
+     10 # Licensed under the Apache License, Version 2.0 (the "License")
+     11 #
+     12 # 20-Sep-2015            Brendan Gregg          Created this.
+
+I have a certain style to my header comments. Line 4 names the tool and has a single-sentence
+description. Line 5 adds any caveats: for Linux only, uses BCC/eBPF.1 It then has a synopsis
+line, a copyright, and a history of major changes.
+
+     13
+     14 from __future__ import print_function
+     15 from bcc import BPF
+     16 from time import sleep, strftime
+     17 import argparse
+
+Note that I import BPF, which I’ll use to interact with BPF in the kernel.
+
+     18
+     19 # arguments
+     20 examples = """examples:
+     21        ./biolatency                       # summarize block I/O latency as a histogram
+     22        ./biolatency 1 10                  # print 1 second summaries, 10 times
+     23        ./biolatency -mT 1                 # 1s summaries, milliseconds, and timestamps
+     24        ./biolatency -Q                    # include OS queued time in I/O time
+     25        ./biolatency -D                    # show each disk device separately
+
+1 The “eBPF” dates back to when we were still calling it that. Today, we just call it BPF.
+
+          26 """
+          27 parser = argparse.ArgumentParser(
+          28       description="Summarize block device I/O latency as a histogram",
+          29       formatter_class=argparse.RawDescriptionHelpFormatter,
+          30       epilog=examples)
+          31 parser.add_argument("-T", "--timestamp", action="store_true",
+          32       help="include timestamp on output")
+          33 parser.add_argument("-Q", "--queued", action="store_true",
+          34       help="include OS queued time in I/O time")
+          35 parser.add_argument("-m", "--milliseconds", action="store_true",
+          36       help="millisecond histogram")
+          37 parser.add_argument("-D", "--disks", action="store_true",
+          38       help="print a histogram per disk device")
+          39 parser.add_argument("interval", nargs="?", default=99999999,
+          40       help="output interval, in seconds")
+          41 parser.add_argument("count", nargs="?", default=99999999,
+          42       help="number of outputs")
+          43 args = parser.parse_args()
+          44 countdown = int(args.count)
+          45 debug = 0
+          46
+
+      Lines 19 to 44 are argument processing. I’m using Python’s argparse here.
+
+      My intent is to make this a Unix-like tool, something similar to vmstat(8) or iostat(1), to make
+      it easy for others to recognize and learn—hence the style of options and arguments and also
+      to do one thing and do it well (in this case, showing disk I/O latency as a histogram). I could
+      have added a mode to dump per-event details but made that a separate tool, biosnoop.py.
+
+      You may be writing BCC/eBPF for other reasons, including agents to other monitoring soft-
+      ware, and don’t need to worry about the user interface.
+
+          47 # define BPF program
+          48 bpf_text = """
+          49 #include <uapi/linux/ptrace.h>>
+          50 #include <linux/blkdev.h>
+          51
+          52 typedef struct disk_key {
+          53       char disk[DISK_NAME_LEN];
+          54       u64 slot;
+          55 } disk_key_t;
+          56 BPF_HASH(start, struct request *);
+          57 STORAGE
+          58
+
+    59 // time block I/O
+    60 int trace_req_start(struct pt_regs *ctx, struct request *req)
+    61 {
+    62       u64 ts = bpf_ktime_get_ns();
+    63       start.update(&req, &ts);
+    64       return 0;
+    65 }
+    66
+    67 // output
+    68 int trace_req_completion(struct pt_regs *ctx, struct request *req)
+    69 {
+    70       u64 *tsp, delta;
+    71
+    72       // fetch timestamp and calculate delta
+    73       tsp = start.lookup(&req);
+    74       if (tsp == 0) {
+    75           return 0;     // missed issue
+    76       }
+    77       delta = bpf_ktime_get_ns() - *tsp;
+    78       FACTOR
+    79
+    80       // store as histogram
+    81       STORE
+    82
+    83       start.delete(&req);
+    84       return 0;
+    85 }
+    86 """
+
+The BPF program is declared as an inline C assigned to the variable bpf_text.
+
+Line 56 declares a hash array called "start", which uses a struct request pointer as the key.
+The trace_req_start() function fetches a timestamp using bpf_ktime_get_ns() and then
+stores it in this hash, keyed by *req. (I’m just using that pointer address as a UUID.) The
+trace_req_completion() function then does a lookup on the hash with its *req, to fetch the
+start time of the request, which is then used to calculate the delta time on line 77. Line 83
+deletes the timestamp from the hash.
+
+The prototypes to these functions begin with a struct pt_regs * for registers, and then as many
+of the probed function arguments as you want to include. I’ve included the first function
+argument in each, struct request *.
+
+This program also declares storage for the output data and stores it, but there’s a problem:
+biolatency has a -D option to emit per-disk histograms, instead of one histogram for every-
+thing, and this changes the storage code. So this BPF program contains the text STORAGE and
+
+      STORE (and FACTOR) which are merely strings that I’ll search and replace with code next,
+      depending on the options. I’d rather avoid code-that-writes-code if possible, since it makes it
+      harder to debug.
+
+          87
+          88 # code substitutions
+          89 if args.milliseconds:
+          90       bpf_text = bpf_text.replace('FACTOR', 'delta /= 1000000;')
+          91       label = "msecs"
+          92 else:
+          93       bpf_text = bpf_text.replace('FACTOR', 'delta /= 1000;')
+          94       label = "usecs"
+          95 if args.disks:
+          96       bpf_text = bpf_text.replace('STORAGE',
+          97           'BPF_HISTOGRAM(dist, disk_key_t);')
+          98       bpf_text = bpf_text.replace('STORE',
+          99           'disk_key_t key = {.slot = bpf_log2l(delta)}; ' +
+         100           'bpf_probe_read(&key.disk, sizeof(key.disk), ' +
+         101           'req->rq_disk->disk_name); dist.increment(key);')
+         102 else:
+         103       bpf_text = bpf_text.replace('STORAGE', 'BPF_HISTOGRAM(dist);')
+         104       bpf_text = bpf_text.replace('STORE',
+         105           'dist.increment(bpf_log2l(delta));')
+
+      The FACTOR code just changes the units of the time I’m recording, depending on the -m
+      option.
+
+      Line 95 checks if per-disk has been requested (-D), and if so, replaces the STORAGE and
+      STORE strings with code to do per-disk histograms. It uses the disk_key struct declared
+      on line 52, which is the disk name and the slot (bucket) in the power-of-two histogram.
+      Line 99 takes the delta time and turns it into the power-of-two slot index using the
+      bpf_log2l() helper function. Lines 100 and 101 fetch the disk name via bpf_probe_read(),
+      which is how all data is copied onto BPF’s stack for operation. Line 101 includes many
+      dereferences: req->rq_disk, rq_disk->disk_name: BCC’s rewriter has transparently turned
+      these into bpf_probe_read()s as well.
+
+      Lines 103 to 105 deal with the single histogram case (not per disk). A histogram is declared
+      named "dist" using the BPF_HISTOGRAM macro. The slot (bucket) is found using the
+      bpf_log2l() helper function and then incremented in the histogram.
+
+      This example is a little gritty, which is both good (realistic) and bad (intimidating). See the
+      tutorial I linked to earlier for more simple examples.
+
+         106 if debug:
+         107       print(bpf_text)
+
+Since I have code that writes code, I need a way to debug the final output. If debug is set, print
+it out.
+
+   108
+   109 # load BPF program
+   110 b = BPF(text=bpf_text)
+   111 if args.queued:
+   112     b.attach_kprobe(event="blk_account_io_start", fn_name="trace_req_start")
+   113 else:
+   114     b.attach_kprobe(event="blk_start_request", fn_name="trace_req_start")
+   115     b.attach_kprobe(event="blk_mq_start_request", fn_name="trace_req_start")
+   116 b.attach_kprobe(event="blk_account_io_completion",
+   117       fn_name="trace_req_completion")
+   118
+
+Line 110 loads the BPF program.
+
+Since this program was written before BPF had tracepoint support, I wrote it to use kprobes
+(kernel dynamic tracing). It should be rewritten to use tracepoints, as they are a stable API,
+although that then also requires a later kernel version (Linux 4.7+).
+
+biolatency.py has a -Q option to include time queued in the kernel. You can see how it’s
+implemented in this code. If it is set, line 112 attaches the BPF trace_req_start() function with
+a kprobe on the blk_account_io_start() kernel function, which tracks the request when it’s
+first queued in the kernel. If not set, lines 114 and 115 attach the BPF function to different
+kernel functions, which is when the disk I/O is issued (it can be either of these). This only
+works because the first argument to any of these kernels functions is the same: struct
+request *. If their arguments were different, I’d need separate BPF functions for each to
+handle that.
+
+   119 print("Tracing block device I/O... Hit Ctrl-C to end.")
+   120
+   121 # output
+   122 exiting = 0 if args.interval else 1
+   123 dist = b.get_table("dist")
+
+Line 123 fetches the "dist" histogram that was declared and populated by the
+STORAGE/STORE code.
+
+   124 while (1):
+   125       try:
+   126           sleep(int(args.interval))
+   127       except KeyboardInterrupt:
+   128           exiting = 1
+   129
+   130       print()
+
+           131       if args.timestamp:
+           132           print("%-8s\n" % strftime("%H:%M:%S"), end="")
+           133
+           134       dist.print_log2_hist(label, "disk")
+           135       dist.clear()
+           136
+           137       countdown -= 1
+           138       if exiting or countdown == 0:
+           139           exit()
+
+      This has logic for printing every interval a certain number of times (countdown). Lines 131
+      and 132 print a timestamp if the -T option was used.
+
+      Line 134 prints the histogram, or per-disk histograms. The first argument is the label variable,
+      which contains "usecs" or "msecs" and decorates the column of values in the output.
+      The second argument labels the secondary key if dist has per-disk histograms. How
+      print_log2_hist() can identify whether this is a single histogram or has a secondary key, I’ll
+      leave as an adventurous exercise in code spelunking of BCC and BPF internals.
+
+      Line 135 clears the histogram, ready for the next interval.
+
+      Here is some sample output, using -D for per-disk histograms:
+
+      # biolatency -D
+      Tracing block device I/O... Hit Ctrl-C to end.
+      ^C
+      disk = 'xvdb'
+             usecs                  : count      distribution
+                   0 -> 1           : 0         |                                               |
+                   2 -> 3           : 0         |                                               |
+                   4 -> 7           : 0         |                                               |
+                   8 -> 15          : 0         |                                               |
+                  16 -> 31          : 0         |                                               |
+                  32 -> 63          : 0         |                                               |
+                  64 -> 127         : 18        |****                                           |
+                 128 -> 255         : 167       |****************************************|
+                 256 -> 511         : 90        |*********************                          |
+
+      disk = 'xvdc'
+             usecs                  : count      distribution
+                   0 -> 1           : 0         |                                               |
+                   2 -> 3           : 0         |                                               |
+                   4 -> 7           : 0         |                                               |
+                   8 -> 15          : 0         |                                               |
+                  16 -> 31          : 0         |                                               |
+
+         32 -> 63           : 0         |                                              |
+         64 -> 127          : 22        |****                                          |
+        128 -> 255          : 179       |****************************************|
+        256 -> 511          : 88        |*******************                           |
+[...]
+
+More Info
+Refer to the section “Resources,” at the beginning of this appendix, for more about BCC tool
+development, and see Chapter 4 for BCC in general.
+This page intentionally left blank
+                                                       Appendix D
+                                                                                            C BPF
+
+This appendix shows examples of BPF tools implemented in C, either as compiled C programs
+or executed via the perf(1) utility. This appendix is optional material for those readers who
+are interested in developing a deeper understanding of how BPF works, as well as other BPF
+interfaces that are supported by the Linux kernel.
+
+Chapter 5 covers how to develop tools in bpftrace, a higher-level language that is expected
+to be sufficient and preferred in many cases, and Appendix C covers the BCC interface as
+another preferred option. This appendix is a follow-on from the BPF sections in Chapter 2.
+
+This appendix begins with a discussion on C programming and five tips before you begin.
+The first program included is hello_world.c, for demonstrating BPF instruction-level
+programming, followed by two C tools, bigreads and bitehist, to demonstrate per-event
+output and histograms, respectively. The final tool included is a perf(1) version of bigreads, as
+an example of using C programming via perf(1).
+
+Why Program in C?
+Back in 2014, C was all we had. Then came the BCC project, which provided an improved
+C language1 for the kernel BPF programs, and other languages for the front end. And now we
+have the bpftrace project, where the entire program is a high-level language.
+
+Reasons for continuing to write tracing tools entirely in C include the following, along with
+counterpoints:
+
+    ■   Lower startup overhead: On my system, bpftrace costs around 40 ms of CPU time
+        to start up, and BCC costs around 160 ms. These costs can be eliminated with a stand-
+        alone C binary. But they can also be reduced by compiling a BPF kernel object file once
+        and re-sending it to the kernel when needed: Cilium and Cloudflare have orchestration
+        systems that do this with BPF object file templating, where certain data in the program
+        (IP address, etc.) can be rewritten as needed. For your environment, consider how much
+        this matters: how frequently will you be starting BPF programs? If frequently, then
+
+1 BCC includes Clang-based memory dereference rewriters: so that a->b->c automatically expands into the
+necessary bpf_probe_read() calls. In C programs, you need to make these calls explicitly.
+
+              should they be left running (“pinned”)? I also suspect that we can tune BCC down to
+              bpftrace’s startup cost,2 plus the following point may reduce startup time further.
+          ■   No bulky compiler dependencies: BCC and bpftrace currently use LLVM and
+              Clang to compile their programs, which can add over 80 Mbytes to the file system.
+              On some environments, including embedded systems, this can be prohibitive.
+              A C binary containing pre-compiled BPF does not need these dependencies. Another
+              issue with LLVM and Clang is that there are frequent new versions with API changes
+              (during bpftrace development, we’ve worked through LLVM versions 5.0, 6.0, 7, and
+              8), creating a maintenance burden. However, there are a number of projects in various
+              stages of progress to change compilation. Some are to build a lightweight and sufficient
+              BPF compiler as a replacement for LLVM and Clang, at the cost of losing LLVM
+              optimizations. The SystemTap tracer with its BPF back end and the ply(1) tracer [5]
+              already do this. Others are for pre-compiling BPF programs from BCC/bpftrace and just
+              sending the BPF binary to the target system. These projects should also improve startup
+              overhead.
+          ■   Lower runtime overhead: At first glance, this doesn’t make sense, as any front
+              end will ultimately run the same BPF bytecode in the kernel and pay the same kprobe
+              and uprobe costs, etc. There are also many BCC and bpftrace tools that use in-kernel
+              summaries, and while running, there is no user CPU time from those front ends.
+              Rewriting them in C will accomplish nothing. A case where the front end can matter
+              is if many events are frequently printed, such that the user-space front end is needing
+              to read and process thousands of events per second (so much so that you can see the
+              front end’s CPU consumption in tools such as top(1)). In that case, a C rewrite may
+              yield more efficiency. More efficiency can also be found by tuning BCC’s ring-buffer
+              polling code,3 after which, the difference between C and Python may be negligible.
+              An optimization not yet employed by BCC or bpftrace would be to create consumer
+              threads bound to each CPU that read the per-CPU ring buffer for the CPU they are
+              bound to.
+          ■   BPF hacking: If you have a use case that’s outside the capabilities of BCC and
+              bpftrace, writing in C will allow you to code anything that the BPF verifier accepts.
+              Note that BCC already accepts arbitrary C code, so it’s hard to imagine a case where this
+              will be necessary.
+          ■   For use with perf(1): perf(1) supports BPF programs to enhance the capabilities of its
+              record and trace subcommands. perf(1) has a number of uses beyond the other BPF
+              tools: for example, if you needed a tool to record many events efficiently in a binary
+              output file, perf(1) has already optimized this use case. See the section “perf C,” later in
+              this appendix.
+
+      Note that many BPF networking projects use C, including Cilium [182]. For tracing, it is
+      expected that bpftrace and BCC will almost always be sufficient.
+
+      2 See https://github.com/iovisor/bcc/issues/2367.
+      3 See https://github.com/iovisor/bcc/issues/1033.
+                                                                                                            C BPF     765
+
+Five Tips
+Here are tips you should know before writing C tools:
+
+   1. BPF C is restricted: no unbounded loops or kernel function calls are possible. You can
+      only use the bpf_* kernel helper functions, BPF tail calls, BPF to BPF function calls, and
+      some compiler built-ins.
+
+   2. All memory must be read through bpf_probe_read(), which does necessary checks. The
+      destination is usually stack memory, but for large objects, you can use BPF map storage.
+
+   3. There are three ways to output data from kernel to user:
+
+       ■   bpf_perf_event_output() (BPF_FUNC_perf_event_output): This is the
+           preferred way to send per-event details to user space, via a custom struct you define.
+       ■   BPF_MAP_TYPE.* and map helpers (e.g., bpf_map_update_elem()): A map
+           is a key-value hash from which more advanced data structures can be built. Maps can
+           be used for summary statistics or histograms, and read periodically from user space
+           (efficient).
+       ■   bpf_trace_printk(): For debugging only, this writes to trace_pipe and can clash
+           with other programs and tracers.
+
+   4. Use static instrumentation (tracepoints, USDT) instead of dynamic instrumentation
+      (kprobes, uprobes) wherever possible, as static instrumentation provides a more stable
+      interface.
+
+   5. If you get stuck, rewriting the tool in BCC or bpftrace and then examining its
+      debug or verbose output may reveal steps that you missed. For example, BCC’s
+      DEBUG_PREPROCESSOR mode shows the C code after the preprocessor.
+
+Some tools use the following macro wrapper to bpf_probe_read():
+
+#define _(P) ({typeof(P) val; bpf_probe_read(&val, sizeof(val), &P); val;})
+
+So "_(skb->dev)" will expand to the appropriate bpf_probe_read() for that member.
+
+C Programs
+When a new BPF feature is developed, a sample C program and/or a kernel self-test suite test
+case is often provided in the same patch set to demonstrate its use. The C programs are stored
+in the Linux source under samples/bpf, and the self-tests are under tools/testing/selftests/bpf.4
+These Linux samples and self-tests demonstrate two ways to specify BPF programs in
+C [Zannoni 16]:
+
+4 These were written by many from the BPF kernel community. Developers with more than twenty commits to these
+locations include: Alexei Starovoitov, Daniel Borkmann, Yonghong Song, Stanislav Fomichev, Martin KaFai Lau, John
+Fastabend, Jesper Dangaard Brouer, Jakub Kicinski, and Andrey Ignatov. There is more development work happen-
+ing on self-tests, and to keep everything in BPF working as it grows, new developers are encouraged to add to self-
+tests instead of samples.
+
+          ■   BPF instructions: As an array of BPF instructions embedded in a C program, passed
+              to the bpf(2) syscall.
+          ■   C program: As a C program that can be compiled to BPF, which is later passed to the
+              bpf(2) syscall. This method is preferred.
+
+      Compilers typically support cross-compiling, where different architectural targets can be
+      specified. The LLVM compiler has a BPF target5 so that C programs can be compiled to BPF in
+      ELF files, just like they can to x86/ELF. The BPF instructions can be stored in an ELF section
+      named after the BPF program type ("socket", "kprobe/...", etc.). Some object loaders will
+      parse this type for use with the bpf(2) syscall;6 for other loaders (including the ones in this
+      appendix) the type is used as a label.
+
+      Note that other techniques to build BPF programs are also possible: for example, specifying
+      the BPF program in LLVM intermediate representation format, which LLVM can compile to
+      BPF bytecode.
+
+      The following sections cover API changes, compilation, and example tools for each type
+      described earlier: an instruction-level example, hello_world.c; and C programming examples,
+      bigread_kern.c and bitehist_kern.c.
+
+      WARNING: API Changes
+      Between December 2018 and August 2019, this appendix has been rewritten twice to
+      match changes in the BPF C library APIs. In case of further changes, it is recommended to
+      follow updates to the libraries as they occur. The libraries are libbpf in the Linux source
+      (tools/lib/bpf) and libbcc from iovisor BCC [183].
+
+      The older API from the Linux 4.x series was a simple library of common functions defined
+      in bpf_load.c and bpf_load.h in samples/bpf. It has been deprecated in favor of libbpf in the
+      kernel, and at some point this older bpf_load API may be removed. Most of the networking
+      samples have already been converted to use libbpf instead, which is developed in sync with
+      the kernel features and is used by external projects (BCC, bpftrace). We recommend that
+      you use libbpf and libbcc instead of either the bpf_load library or creating your own
+      custom library, as they will lag features and fixes that are in libbpf and libbcc and hinder
+      BPF adoption.
+
+      The tracing tools in this appendix use libbpf and libbcc. Thanks to Andrii Nakryiko for
+      rewriting these to use the latest API, which should be present in Linux 5.4, and for his work
+      on libbpf. Earlier versions of these tools were written for Linux 4.15 and can be found in the
+      tool repository for this book (the URL can be found on http://www.brendangregg.com/
+      bpf-performance-tools-book.html).
+
+      Compilation
+      Starting with an Ubuntu 18.04 (Bionic) server, here are example steps for fetching, compiling,
+      and installing a newer kernel, and compiling the bpf samples. (WARNING: Try this on a test
+
+      5 A BPF target has been developed for gcc as well, although it has not yet been merged.
+      6 Including samples/bpf/bpf_load.*, although that library is deprecated.
+                                                                                          C BPF   767
+
+system first, as mistakes such as missing necessary CONFIG options for virtualized environ-
+ments may cause the system to fail to boot):
+
+# apt-get update
+# apt-get install bc libssl-dev llvm-9 clang libelf-dev
+# ln -s llc-9 /usr/bin/llc
+# cd /usr/src
+# wget https://git.kernel.org/torvalds/t/linux-5.4.tar.gz
+# cd linux-5.4
+# make olddefconfig
+# make $(getconf _NPROCESSORS_ONLN)
+# make modules_install && make install && make headers_install
+# reboot
+[...]
+# make samples/bpf/
+
+llvm-9 or a newer LLVM version is required for BTF support. These steps are provided as
+an example: as your OS distribution, the kernel, LLVM, Clang, and the BPF samples are
+updated, these steps will need to be adjusted to match.
+
+At times there have been problems with the packaged LLVM, and it has been necessary to
+build the latest LLVM and Clang from source. Some example steps:
+
+# apt-get install -y cmake gcc g++
+# git clone --depth 1 http://llvm.org/git/llvm.git
+# cd llvm/tools
+# git clone --depth 1 http://llvm.org/git/clang.git
+# cd ..; mkdir build; cd build
+# cmake -DLLVM_TARGETS_TO_BUILD="X86;BPF" -DLLVM_BUILD_LLVM_DYLIB=ON \
+     -DLLVM_ENABLE_RTTI=ON -DCMAKE_BUILD_TYPE=Release ..
+# make -j $(getconf _NPROCESSORS_ONLN)
+# make install
+
+Note how the build targets were restricted to X86 and BPF only in these steps.
+
+Tool 1: Hello, World!
+As an example of instruction programming, I have rewritten the hello_world.py program
+from Appendix C as a C program, hello_world.c. It can be compiled from samples/bpf/ as
+described earlier, after adding it to thesamples/bpf/Makefile. Some sample output:
+
+# ./hello_world
+           svscan-1991    [007] .... 2582253.708941: 0: Hello, World!
+             cron-983     [008] .... 2582254.363956: 0: Hello, World!
+           svscan-1991    [007] .... 2582258.709153: 0: Hello, World!
+[...]
+
+      This shows the "Hello, World!" text, along with other default fields from the trace buffer
+      (process name and ID, CPU ID, flags, and timestamp).
+
+      The hello_world.c file is:
+
+       1   #include <stdio.h>
+       2   #include <stdlib.h>
+       3   #include <string.h>
+       4   #include <errno.h>
+       5   #include <unistd.h>
+       6   #include <linux/version.h>
+       7   #include <bpf/bpf.h>
+       8   #include <bcc/libbpf.h>
+       9
+      10   #define DEBUGFS "/sys/kernel/debug/tracing/"
+      11
+      12   char bpf_log_buf[BPF_LOG_BUF_SIZE];
+      13
+      14   int main(int argc, char *argv[])
+      15   {
+      16       int prog_fd, probe_fd;
+      17
+      18       struct bpf_insn prog[] = {
+      19                 BPF_MOV64_IMM(BPF_REG_1, 0xa21), /* '!\n' */
+      20                 BPF_STX_MEM(BPF_H, BPF_REG_10, BPF_REG_1, -4),
+      21                 BPF_MOV64_IMM(BPF_REG_1, 0x646c726f), /* 'orld' */
+      22                 BPF_STX_MEM(BPF_W, BPF_REG_10, BPF_REG_1, -8),
+      23                 BPF_MOV64_IMM(BPF_REG_1, 0x57202c6f), /* 'o, W' */
+      24                 BPF_STX_MEM(BPF_W, BPF_REG_10, BPF_REG_1, -12),
+      25                 BPF_MOV64_IMM(BPF_REG_1, 0x6c6c6548), /* 'Hell' */
+      26                 BPF_STX_MEM(BPF_W, BPF_REG_10, BPF_REG_1, -16),
+      27                 BPF_MOV64_IMM(BPF_REG_1, 0),
+      28                 BPF_STX_MEM(BPF_B, BPF_REG_10, BPF_REG_1, -2),
+      29                 BPF_MOV64_REG(BPF_REG_1, BPF_REG_10),
+      30                 BPF_ALU64_IMM(BPF_ADD, BPF_REG_1, -16),
+      31                 BPF_MOV64_IMM(BPF_REG_2, 15),
+      32                 BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0,
+      33                               BPF_FUNC_trace_printk),
+      34                 BPF_MOV64_IMM(BPF_REG_0, 0),
+      35                 BPF_EXIT_INSN(),
+      36       };
+      37       size_t insns_cnt = sizeof(prog) / sizeof(struct bpf_insn);
+      38
+                                                                                           C BPF     769
+
+39       prog_fd = bpf_load_program(BPF_PROG_TYPE_KPROBE, prog, insns_cnt,
+40                                       "GPL", LINUX_VERSION_CODE,
+41                                       bpf_log_buf, BPF_LOG_BUF_SIZE);
+42       if (prog_fd < 0) {
+43                printf("ERROR: failed to load prog '%s'\n", strerror(errno));
+44                return 1;
+45       }
+46
+47       probe_fd = bpf_attach_kprobe(prog_fd, BPF_PROBE_ENTRY, "hello_world",
+48                                         "do_nanosleep", 0, 0);
+49       if (probe_fd < 0)
+50                return 2;
+51
+52       system("cat " DEBUGFS "/trace_pipe");
+53
+54       close(probe_fd);
+55       bpf_detach_kprobe("hello_world");
+56       close(prog_fd);
+57       return 0;
+58   }
+
+This example is about the "Hello, World!" BPF instruction program on lines 19 to 35. The
+remainder of this program uses the older file-descriptor based API and trace pipe output as
+shortcuts to keep this example small. The newer API and output methods are shown in the
+later bigreads and bitehist examples in this appendix, and as you will see, they make the
+program much longer.
+
+The BPF program is declared as the prog array using BPF instruction helper macros. See
+Appendix E for a summary of these BPF macros and BPF instructions. This program also uses
+functions from libbpf and libbcc to load the program and attach it to a kprobe.
+
+Lines 19 to 26 store "Hello, World!\n" on the BPF stack. For efficiency, instead of storing this
+character string one character at a time, groups of four characters are declared and stored
+as a 32-bit integer (type BPF_W for word). The final two bytes are stored as a 16-bit integer
+(type BPF_H for half-word).
+
+Lines 27 to 33 prepare and call BPF_FUNC_trace_printk, which writes the string to the shared
+trace buffer.
+
+Lines 39 to 41 call the bpf_load_program() function from libbpf (the library in the Linux
+source under tools/lib/bpf). It loads the BPF program and sets the type to kprobe, and returns
+a file descriptor for the program.
+
+Lines 47 to 48 call the bpf_attach_kprobe() function from libbcc (the library from the iovisor
+BCC repository; it is defined in BCC’s src/cc/libbpf.h), which attaches the program to a kprobe
+for the entry of the do_nanosleep() kernel function. The event name "hello_world" is used,
+which can be helpful for debugging (it appears in /sys/kernel/debug/tracing/kprobe_events).
+bpf_attach_kprobe() returns a file descriptor for the probe. This library function will also print
+
+      an error message on failure, so I do not print an additional error message for the test
+      on line 49.
+
+      Line 52 uses system() to call cat(1) on the shared trace pipe, printing out messages.7
+
+      Lines 54 to 56 close the probe file descriptor, detach the kprobe, and close the program file
+      descriptor. If you miss these calls, earlier Linux kernels can be left with probes configured and
+      enabled, costing overhead but with no user-level consumer. This can be checked using
+      cat /sys/kernel/debug/tracing/kprobe_events or bpftool(8) prog show, and can be
+      cleaned up using BCC’s reset-trace(8) (which cancels all tracers). By Linux 5.2, the kernel has
+      switched to file descriptor–based probes, which are automatically closed on process exit.
+
+      BPF_FUNC_trace_printk and system() were used to make this example as short as possible.
+      They operate using the shared trace buffer (/sys/kernel/debug/tracing/trace_pipe), which can
+      clash with other tracing or debugging programs, for which the kernel offers no protection.
+      The recommended interface is via BPF_FUNC_perf_event_output: this is explained in the
+      section “Tool 2: bigreads,” later in this appendix.
+
+      To compile this program, hello_world was added to the Makefile. The following diff shows the
+      extra three lines for Linux 5.3, highlighted in bold:
+
+      # diff -u Makefile.orig Makefile
+      --- ../orig/Makefile 2019-08-03 19:50:23.671498701 +0000
+      +++ Makefile 2019-08-03 21:23:04.440589362 +0000
+      @@ -10,6 +10,7 @@
+       hostprogs-y += sockex1
+       hostprogs-y += sockex2
+       hostprogs-y += sockex3
+      +hostprogs-y += hello_world
+       hostprogs-y += tracex1
+       hostprogs-y += tracex2
+       hostprogs-y += tracex3
+      @@ -64,6 +65,7 @@
+       sockex1-objs := sockex1_user.o
+       sockex2-objs := sockex2_user.o
+       sockex3-objs := bpf_load.o sockex3_user.o
+      +hello_world-objs := hello_world.o
+       tracex1-objs := bpf_load.o tracex1_user.o
+       tracex2-objs := bpf_load.o tracex2_user.o
+       tracex3-objs := bpf_load.o tracex3_user.o
+      @@ -180,6 +182,7 @@
+       HOSTCFLAGS_bpf_load.o += -I$(objtree)/usr/include -Wno-unused-variable
+
+       KBUILD_HOSTLDLIBS                      += $(LIBBPF) -lelf
+
+      7 This trace pipe can also be read by bpftool prog tracelog.
+                                                                                                            C BPF      771
+
++HOSTLDLIBS_hello_world                 += -lbcc
+ HOSTLDLIBS_tracex4                     += -lrt
+ HOSTLDLIBS_trace_output                += -lrt
+ HOSTLDLIBS_map_perf_test               += -lrt
+
+It can then be compiled and executed as described in the “Compilation” section, later in this
+appendix.
+
+While instruction-level programming is possible, as shown by this tool, it is not recom-
+mended for tracing tools. The following two tools switch to developing the BPF code via C
+programming.
+
+Tool 2: bigreads
+bigreads traces the return of vfs_read() and prints a message for reads larger than one Mbyte.
+This time the BPF program is declared using C.8 bigreads is equivalent to the following
+bpftrace one-liner:
+
+# bpftrace -e 'kr:vfs_read /retval > 1024 * 1024/ {
+      printf("READ: %d bytes\n", retval); }'
+
+Some sample output from running the bigreads C program:
+
+# ./bigreads
+                   dd-5145      [003] d... 2588681.534759: 0: READ: 2097152 bytes
+                   dd-5145      [003] d... 2588681.534942: 0: READ: 2097152 bytes
+                   dd-5145      [003] d... 2588681.535085: 0: READ: 2097152 bytes
+[...]
+
+This output shows that a dd(1) command was used to issue three reads, each with a size of
+two Mbytes. As with hello_world.c, extra fields are added to the output from the shared trace
+buffer.
+
+bigreads is split into separate kernel and user-level C files. This allows the kernel component
+to be compiled separately to a file using BPF as the target architecture, and then the user
+component reads that file and sends the BPF instructions to the kernel.
+
+The kernel component, bigreads_kern.c, is:
+
+ 1   #include <uapi/linux/bpf.h>
+ 2   #include <uapi/linux/ptrace.h>
+ 3   #include <linux/version.h>
+ 4   #include "bpf_helpers.h"
+ 5
+
+8 I first wrote this on 6-Jun-2014, when C was the highest-level language available. Andrii Nakryiko rewrote these C
+BPF tools to use the latest BPF interfaces on 1-Aug-2019.
+
+       6   #define MIN_BYTES (1024 * 1024)
+       7
+       8   SEC("kretprobe/vfs_read")
+       9   int bpf_myprog(struct pt_regs *ctx)
+      10   {
+      11       char fmt[] = "READ: %d bytes\n";
+      12       int bytes = PT_REGS_RC(ctx);
+      13       if (bytes >= MIN_BYTES) {
+      14                 bpf_trace_printk(fmt, sizeof(fmt), bytes, 0, 0);
+      15       }
+      16
+      17       return 0;
+      18   }
+      19
+      20   char _license[] SEC("license") = "GPL";
+      21   u32 _version SEC("version") = LINUX_VERSION_CODE;
+
+      Line 6 defines the bytes threshold.
+
+      Line 8 declares an ELF section named "kretprobe/vfs_read", followed by a BPF program. This
+      will be seen in the final ELF binary. Some user-level loaders will use these section headers to
+      determine where to attach programs. The bitehist_user.c loader (covered in a moment) does
+      not, although this section header may still be useful for debugging purposes.
+
+      Line 9 begins a function called for the kretprobe event. The struct pt_regs argument contains
+      register state and BPF context. From the registers, function arguments and return values can
+      be read. This struct pointer is also a required argument to a number of BPF helper functions
+      (see include/uapi/linux/bpf.h).
+
+      Line 11 declares a format string for use with printf().
+
+      Line 12 fetches the return value from the pt_regs struct register using a macro (it will map
+      long bytes = PT_REGS_RC(ctx) to ctx->rax on x86).
+
+      Line 13 performs the test.
+
+      Line 14 prints the output string using a debugging function: bpf_trace_printk(). This writes to
+      the output to a shared trace buffer and is only used here to keep this example short. It has the
+      same caveats as explained in Appendix C: it can clash with other concurrent users.
+
+      Lines 20 and 21 declare other necessary sections and values.
+
+      The user-level component, bigreads_user.c, is:
+
+       1   // SPDX-License-Identifier: GPL-2.0
+       2   #include <stdio.h>
+       3   #include <stdlib.h>
+       4   #include <unistd.h>
+                                                                                C BPF   773
+
+ 5   #include <string.h>
+ 6   #include <errno.h>
+ 7   #include <sys/resource.h>
+ 8   #include "bpf/libbpf.h"
+ 9
+10   #define DEBUGFS "/sys/kernel/debug/tracing/"
+11
+12   int main(int ac, char *argv[])
+13   {
+14       struct bpf_object *obj;
+15       struct bpf_program *prog;
+16       struct bpf_link *link;
+17       struct rlimit lim = {
+18               .rlim_cur = RLIM_INFINITY,
+19               .rlim_max = RLIM_INFINITY,
+20       };
+21       char filename[256];
+22
+23       snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
+24
+25       setrlimit(RLIMIT_MEMLOCK, &lim);
+26
+27       obj = bpf_object__open(filename);
+28       if (libbpf_get_error(obj)) {
+29               printf("ERROR: failed to open prog: '%s'\n", strerror(errno));
+30               return 1;
+31       }
+32
+33       prog = bpf_object__find_program_by_title(obj, "kretprobe/vfs_read");
+34       bpf_program__set_type(prog, BPF_PROG_TYPE_KPROBE);
+35
+36       if (bpf_object__load(obj)) {
+37               printf("ERROR: failed to load prog: '%s'\n", strerror(errno));
+38               return 1;
+39       }
+40
+41       link = bpf_program__attach_kprobe(prog, true /*retprobe*/, "vfs_read");
+42       if (libbpf_get_error(link))
+43               return 2;
+44
+45       system("cat " DEBUGFS "/trace_pipe");
+46
+47       bpf_link__destroy(link);
+
+      48       bpf_object__close(obj);
+      49
+      50       return 0;
+      51   }
+
+      Lines 17 to 19 and 25 set RLIMIT_MEMLOCK to infinity, to avoid any BPF memory allocation
+      issues.
+
+      Line 27 creates a struct bpf_object to refer to the BPF components in the _kern.o file. This
+      bpf_object may contain multiple BPF programs and maps.
+
+      Line 28 checks that the bpf_object was initialized successfully.
+
+      Line 33 creates a struct bpf_program based on the BPF program that matches the section title
+      "kretprobe/vfs_read", as set by SEC() in the kernel source.
+
+      Line 36 initializes and loads the BPF objects from the kernel file into the kernel, including all
+      maps and programs.
+
+      Line 41 attaches the earlier selected program to a kprobe for vfs_read(), and returns a bpf_link
+      object. This is later used on line 47 to detach the program.
+
+      Line 45 prints the shared trace buffer using system() to keep this tool short.
+
+      Line 48 unloads the BPF programs from the bpf_object from the kernel and frees all associated
+      resources.
+
+      These files can be added to samples/bpf and compiled by adding a bigreads target to the
+      samples/bpf/Makefile. The lines you need to add are (place each among similar lines in the
+      Makefile):
+
+      # grep bigreads Makefile
+      hostprogs-y += bigreads
+      bigreads-objs := bigreads_user.o
+      always += bigreads_kern.o
+
+      Compiling and execution is the same as for the previous hello_world example. This time,
+      there is a separate bigreads_kern.o file created containing the BPF program in a section that
+      bigreads_user.o reads. You can inspect it using readelf(1) or objdump(1):
+
+      # objdump -h bigreads_kern.o
+
+      bigreads_kern.o:        file format elf64-little
+
+      Sections:
+      Idx Name             Size        VMA                  LMA                   File off    Algn
+        0 .text            00000000    0000000000000000     0000000000000000      00000040    2**2
+                           CONTENTS, ALLOC, LOAD, READONLY, CODE
+                                                                                                          C BPF      775
+
+  1 kretprobe/vfs_read 000000a0               0000000000000000        0000000000000000        00000040       2**3
+                        CONTENTS, ALLOC, LOAD, READONLY, CODE
+  2 .rodata.str1.1 0000000f             0000000000000000        0000000000000000         000000e0      2**0
+                        CONTENTS, ALLOC, LOAD, READONLY, DATA
+  3 license             00000004      0000000000000000         0000000000000000         000000ef      2**0
+                        CONTENTS, ALLOC, LOAD, DATA
+  4 version             00000004      0000000000000000         0000000000000000         000000f4      2**2
+                        CONTENTS, ALLOC, LOAD, DATA
+  5 .llvm_addrsig 00000003            0000000000000000         0000000000000000         00000170      2**0
+                        CONTENTS, READONLY, EXCLUDE
+
+The "kretprobe/vfs_read" section is highlighted.
+
+To turn this into a reliable tool, the bpf_trace_printk() must be replaced with print_bpf_output(),
+which emits records to user space via a BPF map that accesses perf per-CPU ring buffers. The
+kernel program will then include code such as the following (this uses the newer BTF-based
+deceleration)9:
+
+struct {
+           __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY)
+           __uint(key_size, sizeof(int));
+           __uint(value_size, sizeof(u32));
+} my_map SEC(".maps");
+[...]
+bpf_perf_event_output(ctx, &my_map, 0, &bytes, sizeof(bytes));
+
+Changes to the user-level program are more extensive: the system() call will be removed, and
+a function added to process the map output events. This function will then be registered
+using perf_event_poller(). An example of this is in the Linux source samples/bpf directory:
+trace_output_user.c.
+
+Tool 3: bitehist
+This tool is based on BCC bitehist.py from the Appendix C. It demonstrates output via BPF
+maps, which it uses for storing a histogram of block device I/O sizes. Example output:
+
+# ./bitehist
+Tracing block I/O... Hit Ctrl-C to end.
+^C
+
+9 This was declared differently on earlier kernels, which also included setting max_entries to __NR_CPUS__ so that
+there was a buffer per CPU. This max_entries setting has become the default for BPF_MAP_TYPE_PERF_EVENT_
+ARRAY.
+
+            kbytes             : count        distribution
+               4 -> 7          : 11         |****************                               |
+               8 -> 15         : 24         |************************************* |
+              16 -> 31         : 12         |******************                             |
+              32 -> 63         : 10         |**************                                 |
+              64 -> 127        : 5          |******                                         |
+            128 -> 255         : 4          |*****                                          |
+      Exiting and clearing kprobes...
+
+      As with bigreads, bitehist is composed of two C files: bitehist_kern.c and bitehist_user.c. The full
+      source can be found at this book’s website: http://www.brendangregg.com/bpf-performance-
+      tools-book.html. The following are excerpts.
+
+      From bitehist_kern.c:
+
+      [...]
+      struct hist_key {
+                u32 index;
+      };
+
+      struct {
+                __uint(type, BPF_MAP_TYPE_HASH);
+                __uint(max_entries, 1024);
+                __type(key, struct hist_key);
+                __type(value, long);
+      } hist_map SEC(".maps");
+      [...]
+      SEC("kprobe/blk_account_io_completion")
+      int bpf_prog1(struct pt_regs *ctx)
+      {
+                long init_val = 1;
+                long *value;
+                struct hist_key key = {};
+
+                key.index = log2l(PT_REGS_PARM2(ctx) / 1024);
+                value = bpf_map_lookup_elem(&hist_map, &key);
+                if (value)
+                          __sync_fetch_and_add(value, 1);
+                else
+                          bpf_map_update_elem(&hist_map, &key, &init_val, BPF_ANY);
+                return 0;
+      }
+      [...]
+                                                                                            C BPF    777
+
+This declares a map of type BPF_MAP_TYPE_HASH called hist_map: this style of declaration
+will be propagated using BTF. The key is a struct hist_key that only contains a bucket index,
+and the value is a long: the count for the bucket.
+
+The BPF program reads the size from the second argument of blk_account_io_completion
+using the PT_REGS_PARM2(ctx) macro. This is turned into a histogram bucket index using
+log2() C function (not included here).
+
+A pointer to the value for that index is fetched using bpf_map_lookup_elem(). If a value is
+found, it is incremented using __sync_fetch_and_add(). If it is not found, it is initialized using
+bpf_map_update_elem().
+
+From bitehist_user.c:
+
+struct bpf_object *obj;
+struct bpf_link *kprobe_link;
+struct bpf_map *map;
+
+static void print_log2_hist(int fd, const char *type)
+{
+[...]
+         while (bpf_map_get_next_key(fd, &key, &next_key) == 0) {
+                   bpf_map_lookup_elem(fd, &next_key, &value);
+                   ind = next_key.index;
+// logic to print the histogram
+[...]
+}
+
+static void int_exit(int sig)
+{
+         printf("\n");
+         print_log2_hist(bpf_map__fd(map), "kbytes");
+         bpf_link__destroy(kprobe_link);
+         bpf_object__close(obj);
+         exit(0);
+}
+
+int main(int argc, char *argv[])
+{
+         struct rlimit lim = {
+                   .rlim_cur = RLIM_INFINITY,
+                   .rlim_max = RLIM_INFINITY,
+         };
+         struct bpf_program *prog;
+         char filename[256];
+
+               snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
+
+               setrlimit(RLIMIT_MEMLOCK, &lim);
+
+               obj = bpf_object__open(filename);
+               if (libbpf_get_error(obj))
+                        return 1;
+
+               prog = bpf_object__find_program_by_title(obj,
+                   "kprobe/blk_account_io_completion");
+               if (prog == NULL)
+                        return 2;
+               bpf_program__set_type(prog, BPF_PROG_TYPE_KPROBE);
+
+               if (bpf_object__load(obj)) {
+                        printf("ERROR: failed to load prog: '%s'\n", strerror(errno));
+                        return 3;
+               }
+
+               kprobe_link = bpf_program__attach_kprobe(prog, false /*retprobe*/,
+                   "blk_account_io_completion");
+               if (libbpf_get_error(kprobe_link))
+                        return 4;
+
+               if ((map = bpf_object__find_map_by_name(obj, "hist_map")) == NULL)
+                        return 5;
+
+               signal(SIGINT, int_exit);
+
+               printf("Tracing block I/O... Hit Ctrl-C to end.\n");
+               sleep(-1);
+
+               return 0;
+      }
+
+      The main() program loads the BPF program using similar steps to bigreads.
+
+      A BPF map object is fetched using bpf_object__find_map_by_name(), and saved as the global
+      map variable that is later printed during int_exit().
+
+      int_exit() is a signal handler attached to SIGINT (Ctrl-C). After initializing the signal
+      handler, the main() program sleeps. When Ctrl-C is pressed, int_exit() is run, which calls the
+      print_log2_hist() function.
+                                                                                              C BPF     779
+
+print_log2_hist() iterates over the map using a bpf_get_next_key() loop calling
+bpf_lookup_elem() to read each value. The rest of the function, elided here, turns the
+keys and values into the printed histogram.
+
+This tool can be compiled and run from the samples/bpf directory, using similar Makefile
+additions as bigreads.
+
+perf C
+The Linux perf(1) utility has the ability to run BPF programs on events10 from one of two
+interfaces:
+    ■    perf record: For running programs on events that can apply custom filters and emit
+         additional records to the perf.data file.
+    ■    perf trace: For "beautifying" trace output: using BPF programs to filter and enhance
+         the output of perf trace events (e.g., showing a filename string on syscalls instead of just
+         a filename pointer [84]).
+
+perf(1)’s BPF capabilities are rapidly growing, and there is currently a lack of documentation
+on how to use them. The best source of documentation at the moment is a search of the
+Linux kernel mailing list archives for the keywords "perf" and "BPF."
+
+The following section demonstrates perf and BPF.
+
+Tool 1: bigreads
+bigreads is based on the same tool shown earlier, in the section “C Programs,” which traces
+the return of vfs_read() and shows reads larger than one Mbyte. Here is some sample output to
+show how it works:
+
+# perf record -e bpf-output/no-inherit,name=evt/ \
+        -e ./bigreads.c/map:channel.event=evt/ -a
+^C[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 0.255 MB perf.data (3 samples) ]
+# perf script
+              dd 31049 [009] 2652091.826549:                       0                           evt:
+ffffffffb5945e20 kretprobe_trampoline+0x0
+(/lib/modules/5.0.0-rc1-virtual/build/vmlinux)
+         BPF output: 0000: 00 00 20 00 00 00 00 00          .. .....
+                        0008: 00 00 00 00                   ....
+
+              dd 31049 [009] 2652091.826718:                       0                           evt:
+ffffffffb5945e20 kretprobe_trampoline+0x0
+(/lib/modules/5.0.0-rc1-virtual/build/vmlinux)
+
+10 perf(1) BPF support was first added by Wang Nan.
+
+             BPF output: 0000: 00 00 20 00 00 00 00 00       .. .....
+                           0008: 00 00 00 00                 ....
+
+                    dd 31049 [009] 2652091.826838:                  0                         evt:
+      ffffffffb5945e20 kretprobe_trampoline+0x0
+      (/lib/modules/5.0.0-rc1-virtual/build/vmlinux)
+             BPF output: 0000: 00 00 20 00 00 00 00 00       .. .....
+                           0008: 00 00 00 00                 ....
+
+      The perf.data record file only contains entries for reads larger than one Mbyte, followed by
+      BPF output events that contain the size of the read. While tracing, I issued three two Mbyte
+      reads using dd(1), which can be seen in the BPF output: "00 00 20" is two Mbytes, 0x200000,
+      in little-endian format (x86).
+
+      The bigreads.c source is:
+
+      #include <uapi/linux/bpf.h>
+      #include <uapi/linux/ptrace.h>
+      #include <linux/types.h>
+
+      #define SEC(NAME) __attribute__((section(NAME), used))
+
+      struct bpf_map_def {
+               unsigned int type;
+               unsigned int key_size;
+               unsigned int value_size;
+               unsigned int max_entries;
+      };
+
+      static int (*perf_event_output)(void *, struct bpf_map_def *, int, void *,
+           unsigned long) = (void *)BPF_FUNC_perf_event_output;
+
+      struct bpf_map_def SEC("maps") channel = {
+               .type = BPF_MAP_TYPE_PERF_EVENT_ARRAY,
+               .key_size = sizeof(int),
+               .value_size = sizeof(__u32),
+               .max_entries = __NR_CPUS__,
+      };
+
+      #define MIN_BYTES (1024 * 1024)
+
+      SEC("func=vfs_read")
+      int bpf_myprog(struct pt_regs *ctx)
+                                                                                       C BPF   781
+
+{
+          long bytes = ctx->rdx;
+          if (bytes >= MIN_BYTES) {
+                   perf_event_output(ctx, &channel, BPF_F_CURRENT_CPU,
+                        &bytes, sizeof(bytes));
+          }
+
+          return 0;
+}
+
+char _license[] SEC("license") = "GPL";
+int _version SEC("version") = LINUX_VERSION_CODE;
+
+This issues perf_event_output() via a "channel" map for reads larger than MIN_BYTES: these
+become the BPF output events in the perf.data file.
+
+The perf(1) interface is gaining more capabilities, and it is becoming possible to run BPF
+programs with just "perf record -e program.c." Check for new developments and examples.
+
+More Info
+For more on BPF C programming, see:
+
+    ■   Documentation/networking/filter.txt in the Linux source [17].
+    ■   Cilium’s “BPF and XDP Reference Guide” [19].
+This page intentionally left blank
+                                              Appendix E
+                                      BPF Instructions
+
+This appendix is a summary of selected BPF instructions, and is provided to aid in reading
+instruction listings from tracing tools and the source to the hello_world.c program in
+Appendix D. Developing BPF tracing programs from scratch directly using instructions is not
+recommended and not covered here.
+
+The BPF instructions included in this appendix are only a selection. For a complete reference,
+see the following header files in the Linux source and the references at the end of this
+appendix:
+   ■    Classic BPF: include/uapi/linux/filter.h and include/uapi/linux/bpf_common.h
+   ■    Extended BPF: include/uapi/linux/bpf.h and include/uapi/linux/bpf_common.h
+
+The bpf_common.h is shared between them as the encodings are mostly the same.
+
+Helper Macros
+The BPF instructions from the Appendix D hello_world.c example include:
+
+          BPF_MOV64_IMM(BPF_REG_1, 0xa21), /* '!\n' */
+          BPF_STX_MEM(BPF_H, BPF_REG_10, BPF_REG_1, -4),
+          BPF_MOV64_IMM(BPF_REG_1, 0x646c726f), /* 'orld' */
+          BPF_STX_MEM(BPF_W, BPF_REG_10, BPF_REG_1, -8),
+[...]
+          BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0,
+                        BPF_FUNC_trace_printk),
+          BPF_MOV64_IMM(BPF_REG_0, 0),
+          BPF_EXIT_INSN(),
+
+These are actually higher-level helper macros. They are summarized in Table E-1.
+784   Appendix E
+
+      Table E-1     Selected BPF Instruction Helper Macros1
+      BPF Instruction Macro                                      Description
+      BPF_ALU64_REG(OP, DST, SRC)                                ALU 64-bit register operation
+      BPF_ALU32_REG(OP, DST, SRC)                                ALU 32-bit register operation
+      BPF_ALU64_IMM(OP, DST, IMM)                                ALU 64-bit immediate value operation
+      BPF_ALU32_IMM(OP, DST, IMM)                                ALU 32-bit immediate value operation
+      BPF_MOV64_REG(DST, SRC)                                    Move 64-bit source register to destination
+      BPF_MOV32_REG(DST, SRC)                                    Move 32-bit source register to destination
+      BPF_MOV64_IMM(DST, IMM)                                    Move 64-bit immediate value to destination
+      BPF_MOV32_IMM(DST, IMM)                                    Move 32-bit immediate value to destination
+      BPF_LD_IMM64(DST, IMM)                                     Load 64-bit immediate value
+      BPF_LD_MAP_FD(DST, MAP_FD)                                 Load map FD into register
+      BPF_LDX_MEM(SIZE, DST, SRC, OFF)                           Memory load from register
+      BPF_STX_MEM(SIZE, DST, SRC, OFF)                           Memory store from register
+      BPF_STX_XADD(SIZE, DST, SRC, OFF)                          Atomic memory add by register
+      BPF_ST_MEM(SIZE, DST, OFF, IMM)                            Memory store from immediate value
+      BPF_JMP_REG(OP, DST, SRC, OFF)                             Conditional jump against register
+      BPF_JMP_IMM(OP, DST, IMM, OFF)                             Conditional jump against immediate value
+      BPF_JMP32_REG(OP, DST, SRC, OFF)                           Compare registers as 32-bit
+      BPF_JMP32_IMM(OP, DST, IMM, OFF)                           Compare register-to-immediate as 32-bit
+      BPF_JMP_A(OFF)                                             Unconditional jump
+      BPF_LD_MAP_VALUE(DST, MAP_FD, OFF)                         Load map value pointer to register
+      BPF_CALL_REL(IMM)                                          Relative call (BPF-to-BPF)
+      BPF_EMIT_CALL(FUNC)                                        Helper function call
+      BPF_RAW_INSN(CODE, DST, SRC, OFF, IMM)                     Raw BPF code
+      BPF_EXIT_INSN()                                            Exit
+
+      These macros and arguments use abbreviations that may or may not be obvious. In
+      alphabetical order:
+          ■   32: 32-bit
+          ■   64: 64-bit
+          ■   ALU: Arithmetic Logic Unit
+
+      1 BPF_LD_ABS() and BPF_LD_IND() have been left out as they are deprecated and included for mostly historical
+      reasons.
+                                                                                     BPF Instructions     785
+
+    ■   DST: destination
+    ■   FUNC: function
+    ■   IMM: immediate value: a provided constant
+    ■   INSN: instruction
+    ■   JMP: jump
+    ■   LD: load
+    ■   LDX: load from register
+    ■   MAP_FD: map file descriptor
+    ■   MEM: memory
+    ■   MOV: move
+    ■   OFF: offset
+    ■   OP: operation
+    ■   REG: register
+    ■   REL: relative
+    ■   ST: store
+    ■   SRC: source
+    ■   STX: store from register
+
+These BPF macros expand to BPF instructions, in some cases based on the operation specified.
+
+Instructions
+BPF instructions include those listed in Table E-2. (See the earlier header files for a complete list.)
+
+Table E-2     Selected BPF Instructions, Fields, and Registers
+Name                Type                    Origin        Numeric       Description
+BPF_LD              Instruction class       Classic       0x00          Load
+BPF_LDX             Instruction class       Classic       0x01          Load into X
+BPF_ST              Instruction class       Classic       0x02          Store
+BPF_STX             Instruction class       Classic       0x03          Store from X
+BPF_ALU             Instruction class       Classic       0x04          Arithmetic Logic Unit
+BPF_JMP             Instruction class       Classic       0x05          Jump
+BPF_RET             Instruction class       Classic       0x06          Return
+BPF_ALU64           Instruction class       Extended      0x07          ALU 64-bit
+786   Appendix E
+
+      Name                Type                      Origin     Numeric    Description
+      BPF_W               Size                      Classic    0x00       32-bit word
+      BPF_H               Size                      Classic    0x08       16-bit half word
+      BPF_B               Size                      Classic    0x10       8-bit byte
+      BPF_DW              Size                      Extended   0x18       64-bit double word
+      BPF_XADD            Store modifier            Extended   0xc0       Exclusive add
+      BPF_ADD             ALU/Jump operation        Classic    0x00       Addition
+      BPF_SUB             ALU/Jump operation        Classic    0x10       Subtraction
+      BPF_K               ALU/Jump operand          Classic    0x00       Immediate value operand
+      BPF_X               ALU/Jump operand          Classic    0x08       Register operand
+      BPF_MOV             ALU/Jump operation        Extended   0xb0       Move register to register
+      BPF_JLT             Jump operation            Extended   0xa0       Unsigned jump less than
+      BPF_REG_0           Register number           Extended   0x00       Register 0
+      BPF_REG_1           Register number           Extended   0x01       Register 1
+      BPF_REG_10          Register number           Extended   0x0a       Register 10
+
+      Instructions are often composed of combinations of instruction classes and fields that are
+      bitwise OR’d together.
+
+      Encoding
+      The extended BPF instruction format is (struct bpf_insn):
+
+      Table E-3     Extended BPF Instruction Format
+      Opcode      Dest     Source Signed Offset                Signed Immediate Constant
+                  Register Register
+      8-bit       8-bit          8-bit     16-bit              32-bit
+
+      So, for the first instruction in the hello_world.c program:
+
+      BPF_MOV64_IMM(BPF_REG_1, 0xa21)
+
+      the opcode expands to:
+
+      BPF_ALU64 | BPF_MOV | BPF_K
+                                                                              BPF Instructions   787
+
+Referring to Tables E-3 and E-2, this opcode becomes 0xb7. The arguments to the instruction
+set the destination register BPF_REG_1 (0x01) and the constant (operand) 0xa21. The result-
+ing instruction bytes can be verified using bpftool(8):
+
+# bpftool prog
+[...]
+907: kprobe     tag 9abf0e9561523153       gpl
+          loaded_at 2019-01-08T23:22:00+0000        uid 0
+          xlated 128B    jited 117B      memlock 4096B
+# bpftool prog dump xlated id 907 opcodes
+   0: (b7) r1 = 2593
+         b7 01 00 00 21 0a 00 00
+   1: (6b) *(u16 *)(r10 -4) = r1
+         6b 1a fc ff 00 00 00 00
+   2: (b7) r1 = 1684828783
+         b7 01 00 00 6f 72 6c 64
+   3: (63) *(u32 *)(r10 -8) = r1
+         63 1a f8 ff 00 00 00 00
+[...]
+
+For tracing tools, much of the BPF instructions will be for loading data from structures and
+then calling BPF helper functions to store values in maps or emit perf records. See the “BPF
+Helper Functions” subsection under Section 2.3.6 in Chapter 2.
+
+References
+For more about BPF instruction-level programming, see the Linux source headers listed at the
+start of this appendix and:
+    ■   Documentation/networking/filter.txt [17]
+    ■   include/uapi/linux/bpf.h [184]
+    ■   Cilium’s “BPF and XDP Reference Guide” [19]
+This page intentionally left blank

@@ -1,0 +1,715 @@
+                                                  Chapter 15
+                                                               Containers
+
+Containers have become a commonly used method for deploying services on Linux, providing
+security isolation, application startup times, resource controls, and ease of deployment. This
+chapter covers how to use BPF tools in container environments and covers some differences in
+tools and methods for analysis that are specific to containers.
+
+Learning Objectives:
+    ■   Understand the makeup of containers and their targets for tracing
+
+    ■   Understand challenges with privileges, container IDs, and FaaS
+
+    ■   Quantify CPU sharing between containers
+
+    ■   Measure blk cgroup I/O throttling
+
+    ■   Measure the performance of overlay FS
+
+This chapter begins with the necessary background for container analysis, then describes BPF
+capabilities. Various BPF tools and one-liners are then introduced.
+
+The knowledge and tools you need to analyze the performance of applications in containers is
+mostly covered in prior chapters: with containers, CPUs are still CPUs, file systems are still file
+systems, and disks are still disks. This chapter focuses on the container-specific differences, such
+as namespaces and cgroups.
+
+15.1         Background
+Containers allow multiple instances of an operating system to execute on a single host. There are
+two main ways containers can be implemented:
+    ■   OS virtualization: This involves partitioning the system using namespaces on Linux
+        and is usually combined with cgroups for resource controls. A single kernel is running,
+        shared between all containers. This is the approach used by Docker, Kubernetes, and other
+
+               container environments.
+          ■    Hardware (HW) virtualization: This involves running lightweight virtual machines, each
+               with its own kernel. This approach is used by Intel Clear Containers (now Kata Containers
+               [165]) and Firecracker from AWS [166].
+
+      Chapter 16 provides some insights for the analysis of HW-virtualized containers. This chapter
+      covers OS-virtualized containers.
+
+      A typical Linux container implementation is pictured in Figure 15-1.
+
+Figure 15-1 Linux OS-virtualized containers
+
+      A namespace restricts the view of the system. Namespaces include cgroup, ipc, mnt, net, pid,
+      user, and uts. A pid namespace restricts the container’s processes view of /proc to see only the
+      container’s own processes; an mnt namespace restricts the file system mounts that can be seen;
+      the uts1 namespace isolates details returned from the uname(2) syscall, and so on.
+
+      The control group (cgroup) restricts usage of resources. There are two versions of cgroups in
+      the Linux kernel, v1 and v2; many projects such as Kubernetes are still using v1. cgroups for v1
+      include blkio, cpu, cpuacct, cpuset, devices, hugetlb, memory, net_cls, net_prio, pids, and rmda.
+      These can be configured to limit resource contention between containers, for example by putting
+      a hard limit on CPU and memory usage, or softer limits (share-based) for CPU and disk usage.
+      There can also be a hierarchy of cgroups, including system cgroups that are shared between the
+      containers, as pictured in Figure 15-1.2
+
+      1 Named after the utsname structure from the uname(2) syscall, which itself is named after UNIX Time-sharing System
+      [167].
+      2 I also used parallelograms for cgroups, to imply a range of usage between soft and hard limits, rather than the ridged
+                                                                                             15.1 Background        673
+
+cgroups v2 solves various shortcomings of v1, and it is expected that container technologies will
+migrate to v2 in the coming years, with v1 eventually being deprecated.
+
+A common concern for container performance analysis is the possible presence of “noisy
+neighbors”: container tenants that are aggressively consuming resources and causing access
+contention for others. Since these container processes are all under one kernel and can be
+analyzed simultaneously from the host, this is not dissimilar to traditional performance analysis
+of multiple applications running on one time-sharing system. The main difference is that cgroups
+may impose additional software limits for resources that are encountered before the hardware
+limits. Monitoring tools that have not been updated to support containers may be blind to these
+soft limits and the performance issues they cause.
+
+15.1.1        BPF Capabilities
+Container analysis tools are typically metrics based, showing which containers, cgroups, and
+namespaces exist, their settings, and their sizes. BPF tracing tools can provide many more details,
+answering:
+    ■   What is the run-queue latency per container?
+    ■   Is the scheduler switching between containers on the same CPU?
+    ■   Are CPU or disk soft limits encountered?
+
+These questions can be answered with BPF by instrumenting tracepoints for scheduler events
+and kprobes for kernel functions. As has been discussed in prior chapters, some of these events
+(such as scheduling) can be very frequent and are more suited to ad hoc analysis than continuous
+monitoring.
+
+There are tracepoints for cgroup events, including cgroup:cgroup_setup_root,
+cgroup:cgroup_attach_task, and others. These are high-level events that can help debug
+container startup.
+
+Network packet programs can also be attached to cgroup ingress and egress using the
+BPF_PROG_TYPE_CGROUP_SKB program type (not shown in this chapter).
+
+15.1.2        Challenges
+Some challenges when using BPF tracing with containers are covered in the following topics.
+
+BPF Privileges
+BPF tracing currently requires root privileges, which for most container environments means that
+BPF tracing tools can only be executed from the host, not from within containers. This should
+change; non-privileged BPF access is currently being discussed specifically to solve the container
+problem.3 This was also summarized in Section 11.1.2 in Chapter 11.
+
+rectangles of namespaces.
+3 I’m writing this from the BPF track at the LSFMM summit 2019, where the discussions are happening in real-time.
+
+      Container IDs
+      Container IDs used by technologies such as Kubernetes and Docker are managed by user-space
+      software. For example (highlighted in bold):
+
+      # kubectl get pod
+      NAME                              READY    STATUS                 RESTARTS     AGE
+      kubernetes-b94cb9bff-kqvml         0/1       ContainerCreating    0            3m
+      [...]
+      # docker ps
+      CONTAINER ID    IMAGE    COMMAND     CREATED        STATUS        PORTS   NAMES
+      6280172ea7b9    ubuntu   "bash"      4 weeks ago    Up 4 weeks            eager_bhaskara
+      [...]
+
+      In the kernel, a container is a set of cgroups and namespaces, but there is no kernel-space
+      identifier tying these together. Adding a container ID to the kernel has been suggested [168],
+      but so far it has not happened.
+
+      This can be a problem for when you run BPF tracing tools from the host (as they are normally
+      executed: see the subsection “BPF Privileges” under Section 15.1.2). From the host, BPF tracing
+      tools capture events from all containers, and you may want to be able to filter for just one
+      container or break down events per container. But there is no container ID available in the kernel
+      to use for filters or breakdowns.
+
+      Fortunately, there are a number of workarounds, although each depends on the specific
+      configuration of the containers under investigation. Containers use some combination
+      of namespaces; their details can be read from the nsproxy struct in the kernel. From
+      linux/nsproxy.h:
+
+      struct nsproxy {
+               atomic_t count;
+               struct uts_namespace *uts_ns;
+               struct ipc_namespace *ipc_ns;
+               struct mnt_namespace *mnt_ns;
+               struct pid_namespace *pid_ns_for_children;
+               struct net               *net_ns;
+               struct cgroup_namespace *cgroup_ns;
+      };
+
+      A container almost certainly uses a PID namespace, so you can at least use that to differentiate
+      them. As an example of accessing this for the current task using bpftrace:
+
+      #include <linux/sched.h>
+      [...]
+               $task = (struct task_struct *)curtask;
+               $pidns = $task->nsproxy->pid_ns_for_children->ns.inum;
+                                                                                   15.1 Background        675
+
+This sets $pidns to be the PID namespace ID (integer), which can be printed or filtered. It will
+match the PID namespace seen in the /proc/PID/ns/pid_for_children symlink.
+
+If the container runtime uses a UTS namespace and sets the nodename to be the container name
+(as is often the case with Kubernetes and Docker), then the nodename can also be fetched from a
+BPF program to identify containers on output. For example, using bpftrace syntax:
+
+#include <linux/sched.h>
+         [...]
+         $task = (struct task_struct *)curtask;
+         $nodename = $task->nsproxy->uts_ns->name.nodename;
+
+The pidnss(8) tool (covered in Section 15.3.2) does this.
+
+The network namespace can be a useful identifier for the analysis of Kubernetes pods since
+containers in the pod will likely share the same network namespace.
+
+You can add these namespace identifiers to the tools covered in prior chapters to make them
+container-aware, including the PID namespace ID or UTS nodename string, along with the PID.
+Note that this only works if the instrumentation is in process context, so that curtask is valid.
+
+Orchestration
+Running BPF tools across multiple container hosts presents a similar problem to a cloud deploy-
+ment across many VMs. Your company may already have orchestration software to manage
+this that can run a given command across multiple hosts and collect the output. There are also
+tailored solutions, including kubectl-trace.
+
+kubectl-trace is a Kubernetes scheduler for running bpftrace programs across a Kubernetes cluster.
+It also provides a $container_pid variable for use in bpftrace programs that refers to the pid of the
+root process. For example, this command:
+kubectl trace run -e 'k:vfs* /pid == $container_pid/ { @[probe] = count() }' mypod -a
+
+counts kernel vfs*() calls for the mypod container application until you press Ctrl-C. Programs
+can be specified as one-liners, as in this example, or read from files using -f [169]. kubectl-trace is
+covered further in Chapter 17.
+
+Function as a Service (FaaS)
+A new model for computing involves defining application functions that a service provider
+runs, likely in containers. The end user defines only functions and may not have SSH access to
+the system that runs the functions. Such an environment is not expected to support end users
+running BPF tracing tools. (It cannot run other tools, either.) When non-privileged BPF tracing
+is supported by the kernel, it might be possible for an application function to make BPF kernel
+calls directly, but this presents many challenges. FaaS analysis with BPF will likely only be possible
+from the host, performed by users or interfaces that have access to the host.
+
+      15.1.3        Strategy
+      If you are new to container analysis, it can be difficult to know where to start—which target to
+      begin analyzing and with which tool. Here is an overall suggested strategy that you can follow.
+      The next sections explain the tools involved in more detail.
+
+         1. Examine the system for hardware resource bottlenecks and other issues covered in previous
+            chapters (Chapter 6, Chapter 7, etc.). In particular, create CPU flame graphs for the running
+            applications.
+
+         2. Check whether cgroup software limits have been encountered.
+
+         3. Browse and execute the BPF tools listed in Chapters 6 to 14.
+
+      Most container issues that I’ve encountered were caused by application or hardware problems,
+      not the container configuration. CPU flame graphs would often show an application-level issue
+      that had nothing to do with running within containers. Do check for such issues, as well as
+      investigating the container limits.
+
+      15.2          Traditional Tools
+      Containers can be analyzed using the numerous performance tools covered by earlier chapters.
+      Analysis of container specifics from the host and within containers using traditional tools is
+      summarized here.4
+
+      15.2.1        From the Host
+      For the analysis of container-specific behavior, especially the usage of cgroups, there are some
+      tools and metrics that can be used from the host, shown in Table 15-1.
+
+Table 15-1      Traditional Host Tools for Container Analysis
+      Tool                       Type                            Description
+      systemd-cgtop              Kernel statistics               Top for cgroups
+      kubectl top                Kernel statistics               Top for Kubernetes resources
+      docker stats               Kernel statistics               Resource usage by Docker container
+      /sys/fs/cgroups            Kernel statistics               Raw cgroup statistics
+      perf                       Statistics and tracing          Multitool tracer that supports cgroup filters
+
+      These tools are summarized in the sections that follow.
+
+      4 For more details on this topic, see my “Linux Container Performance Analysis” talk video and slides from USENIX LISA
+      2017 [Gregg 17].
+                                                                               15.2 Traditional Tools     677
+
+15.2.2       From the Container
+Traditional tools can also be used within the containers themselves, bearing in mind that some
+metrics exposed will refer to the entire host and not just the container. Table 15-2 lists the state of
+commonly-used tools, as they are for a Linux 4.8 kernel.
+
+Table 15-2    Traditional Tools When Run from The Container
+Tool              Description
+top(1)            Process table shows container processes; summary heading shows the host
+ps(1)             Shows container processes
+uptime(1)         Shows host statistics, including host load averages
+mpstat(1)         Shows host CPUs, and host CPU usage
+vmstat(8)         Shows host CPUs, memory, and other statistics
+iostat(1)         Shows host disks
+free(1)           Shows host memory
+
+The term container-aware is used to described tools that, when run from the container, will show
+only the container processes and resources. None of the tools in this table are fully container-
+aware. This may change over time as the kernel and these tools are updated. For now, this is a
+known gotcha for performance analysis within containers.
+
+15.2.3       systemd-cgtop
+The systemd-cgtop(1) command shows the top resource-consuming cgroups. For example, from a
+production container host:
+
+# systemd-cgtop
+Control Group                                      Tasks     %CPU    Memory     Input/s Output/s
+/                                                       -   798.2      45.9G          -          -
+/docker                                              1082   790.1      42.1G          -          -
+/docker/dcf3a...9d28fc4a1c72bbaff4a24834              200   610.5      24.0G          -          -
+/docker/370a3...e64ca01198f1e843ade7ce21              170   174.0       3.0G          -          -
+/system.slice                                         748     5.3       4.1G          -          -
+/system.slice/daemontools.service                     422     4.0       2.8G          -          -
+/docker/dc277...42ab0603bbda2ac8af67996b              160     2.5       2.3G          -          -
+/user.slice                                             5     2.0      34.5M          -          -
+/user.slice/user-0.slice                                5     2.0      15.7M          -          -
+/user.slice/u....slice/session-c26.scope                3     2.0      13.3M          -          -
+/docker/ab452...c946f8447f2a4184f3ccff2a              174     1.0       6.3G          -          -
+/docker/e18bd...26ffdd7368b870aa3d1deb7a              156     0.8       2.9G          -          -
+[...]
+
+      This output shows that a cgroup named "/docker/dcf3a..." is consuming 610.5% total CPU for this
+      update interval (across many CPUs) and 24 Gbytes of main memory, with 200 running tasks. The
+      output also shows a number of cgroups created by systemd for system services (/system.slice) and
+      user sessions (/user.slice).
+
+      15.2.4      kubectl top
+      The Kubernetes container orchestration system provides a way to check basic resource usage using
+      kubectl top. Checking hosts (“nodes”):
+
+      # kubectl top nodes
+      NAME                            CPU(cores)     CPU%     MEMORY(bytes)     MEMORY%
+      bgregg-i-03cb3a7e46298b38e      1781m          10%      2880Mi            9%
+
+      The "CPU(cores)" time shows cumulative milliseconds of CPU time, and "CPU%" shows the
+      current usage of the node. Checking containers (“pods”):
+
+      # kubectl top pods
+      NAME                            CPU(cores)     MEMORY(bytes)
+      kubernetes-b94cb9bff-p7jsp      73m            9Mi
+
+      This shows the cumulative CPU time and current memory size.
+
+      These commands require a metrics server to be running, which may be added by default
+      depending on how you initialized Kubernetes [170]. Other monitoring tools can also display these
+      metrics in a GUI, including cAdvisor, Sysdig, and Google Cloud Monitoring [171].
+
+      15.2.5      docker stats
+      The Docker container technology provides some docker(1) analysis subcommands, including
+      stats. For example, from a production host:
+
+      # docker stats
+      CONTAINER        CPU %     MEM USAGE / LIMIT         MEM %    NET I/O     BLOCK I/O         PIDS
+      353426a09db1     526.81%   4.061 GiB / 8.5 GiB       47.78%   0 B / 0 B   2.818 MB / 0 B    247
+      6bf166a66e08     303.82%   3.448 GiB / 8.5 GiB       40.57%   0 B / 0 B   2.032 MB / 0 B    267
+      58dcf8aed0a7     41.01%    1.322 GiB / 2.5 GiB       52.89%   0 B / 0 B   0 B / 0 B         229
+      61061566ffe5     85.92%    220.9 MiB / 3.023 GiB 7.14%        0 B / 0 B   43.4 MB / 0 B     61
+      bdc721460293     2.69%     1.204 GiB / 3.906 GiB 30.82%       0 B / 0 B   4.35 MB / 0 B     66
+      [...]
+
+      This shows that a container with UUID "353426a09db1" was consuming a total of 527% CPU for
+      this update interval and was using four Gbytes of main memory versus an 8.5 Gbyte limit. For this
+      interval there was no network I/O, and only a small volume (Mbytes) of disk I/O.
+                                                                            15.2 Traditional Tools    679
+
+15.2.6      /sys/fs/cgroups
+This directory contains virtual files of cgroup statistics. These are read and graphed by various
+container monitoring products. For example:
+
+# cd /sys/fs/cgroup/cpu,cpuacct/docker/02a7cf65f82e3f3e75283944caa4462e82f...
+# cat cpuacct.usage
+1615816262506
+# cat cpu.stat
+nr_periods 507
+nr_throttled 74
+throttled_time 3816445175
+
+The cpuacct.usage file shows the CPU usage of this cgroup in total nanoseconds. The cpu.stat
+file shows the number of times this cgroup was CPU throttled (nr_throttled), as well as the total
+throttled time in nanoseconds. This example shows that this cgroup was CPU throttled 74 times
+out of 507 time periods, for a total of 3.8 throttled seconds.
+
+There is also a cpuacct.usage_percpu, this time showing a Kubernetes cgroup:
+
+# cd /sys/fs/cgroup/cpu,cpuacct/kubepods/burstable/pod82e745...
+# cat cpuacct.usage_percpu
+37944772821 35729154566 35996200949 36443793055 36517861942 36156377488 36176348313
+35874604278 37378190414 35464528409 35291309575 35829280628 36105557113 36538524246
+36077297144 35976388595
+
+The output includes 16 fields for this 16-CPU system, with total CPU time in nanoseconds.
+
+These cgroupv1 metrics are documented in the kernel source under Documentation/cgroup-v1/
+cpuacct.txt [172].
+
+15.2.7      perf
+The perf(1) tool, introduced in Chapter 6, can be run from the host and can filter on cgroups
+using --cgroup (-G). This can be used for CPU profiling, for example, with the perf record
+subcommand:
+perf record -F 99 -e cpu-clock --cgroup=docker/1d567... -a -- sleep 30
+
+The event can be anything that occurs in process context, including syscalls.
+
+This switch is also available with the perf stat subcommand, so that counts of events can be
+collected instead of writing events to the perf.data file. For example, counting the read family of
+syscalls and showing a different format of cgroup specification (with identifiers elided):
+
+perf stat -e syscalls:sys_enter_read* --cgroup /containers.slice/5aad.../...
+
+Multiple cgroups can be specified.
+
+perf(1) can trace the same events that BPF can, although without the programmatic capabilities that
+BCC and bpftrace provide. perf(1) does have its own BPF interface: an example is in Appendix D. For
+other uses of perf that can be adapted to container inspection, see my perf examples page [73].
+
+      15.3           BPF Tools
+      This section covers the BPF tools you can use for container performance analysis and
+      troubleshooting. These are either from BCC or were created for this book. Table 15-3 lists the
+      tool origins.
+
+Table 15-3      Container-Specific Tools
+      Tool            Source    Target           Description
+      runqlat         BCC       Sched            Summarize CPU run queue latency by PID namespace
+      pidnss          Book      Sched            Count PID namespace switches: containers sharing a CPU
+      blkthrot        Book      Block I/O        Count block I/O throttles by blk cgroup
+      overlayfs       Book      Overlay FS       Show overlay FS read and write latency
+
+      For container analysis, these should be used in conjunction with the many tools from the prior
+      chapters.
+
+      15.3.1         runqlat
+      runqlat(8) was introduced in Chapter 6: it shows run queue latency as a histogram, helping to
+      identify CPU saturation issues. It supports a --pidnss option to show the PID namespace. For
+      example, on a production container system:
+
+      host# runqlat --pidnss -m
+      Tracing run queue latency... Hit Ctrl-C to end.
+      ^C
+      pidns = 4026532382
+             msecs                  : count         distribution
+                 0 -> 1             : 646           |****************************************|
+                 2 -> 3             : 18            |*                                          |
+                 4 -> 7             : 48            |**                                         |
+                 8 -> 15            : 17            |*                                          |
+                16 -> 31            : 150           |*********                                  |
+                32 -> 63            : 134           |********                                   |
+
+      […]
+      pidns = 4026532870
+             msecs                  : count         distribution
+                 0 -> 1             : 264          |****************************************|
+                 2 -> 3             : 0            |                                           |
+      [...]
+                                                                                                 15.3 BPF Tools   681
+
+This shows that one PID namespace (4026532382) is suffering much higher run queue latency
+than the other.
+
+This tool does not print the container name, since the mapping of a namespace to a container is
+specific to the container technology used. At the very least, the ls(1) command can be used as the
+root user to determine the namespace for a given PID. For example:
+
+# ls -lh /proc/181/ns/pid
+lrwxrwxrwx 1 root root 0 May             6 13:50 /proc/181/ns/pid -> 'pid:[4026531836]'
+
+This shows that PID 181 is running in PID namespace 4026531836.
+
+15.3.2         pidnss
+           5
+pidnss(8) counts when a CPU switches between running one container and another, by
+detecting a PID namespace switch during a scheduler context switch. This tool can be used to
+confirm or exonerate issues of multiple containers contending for a single CPU. For example:
+
+# pidnss.bt
+Attaching 3 probes...
+Tracing PID namespace switches. Ctrl-C to end
+^C
+Victim PID namespace switch counts [PIDNS, nodename]:
+
+@[0, ]: 2
+@[4026532981, 6280172ea7b9]: 27
+@[4026531836, bgregg-i-03cb3a7e46298b38e]: 28
+
+The output shows two fields and then a switch count. The fields are the PID namespace ID
+and the nodename (if present). This output shows a PID namespace with the nodename
+"bgregg-i-03cb3a7e46298b38e" (the host) switched to another namespace 28 times while
+tracing, and another with nodename "6280172ea7b9" (a Docker container) switched 27 times.
+These details can be confirmed from the host:
+
+# uname -n
+bgregg-i-03cb3a7e46298b38e
+# docker ps
+CONTAINER ID       IMAGE      COMMAND       CREATED           STATUS          PORTS     NAMES
+6280172ea7b9       ubuntu     "bash"        4 weeks ago       Up 4 weeks                eager_bhaskara
+[...]
+
+5 Origin: I created this for this book on 6-May-2019, based on a suggestion from my colleague Sargun Dhillon.
+
+      This works by tracing the kernel context switch path using kprobes. The overhead is expected to
+      become significant for busy I/O workloads.
+
+      Here is another example, this time during the setup of a Kubernetes cluster:
+
+      # pidnss.bt
+      Attaching 3 probes...
+      Tracing PID namespace switches. Ctrl-C to end
+      ^C
+      Victim PID namespace switch counts [PIDNS, nodename]:
+
+      @[-268434577, cilium-operator-95ddbb5fc-gkspv]: 33
+      @[-268434291, cilium-etcd-g9wgxqsnjv]: 35
+      @[-268434650, coredns-fb8b8dccf-w7khw]: 35
+      @[-268434505, default-mem-demo]: 36
+      @[-268434723, coredns-fb8b8dccf-crrn9]: 36
+      @[-268434509, etcd-operator-797978964-7c2mc]: 38
+      @[-268434513, kubernetes-b94cb9bff-p7jsp]: 39
+      @[-268434810, bgregg-i-03cb3a7e46298b38e]: 203
+      [...]
+      @[-268434222, cilium-etcd-g9wgxqsnjv]: 597
+      @[-268434295, etcd-operator-797978964-7c2mc]: 1301
+      @[-268434808, bgregg-i-03cb3a7e46298b38e]: 1582
+      @[-268434297, cilium-operator-95ddbb5fc-gkspv]: 3961
+      @[0, ]: 8130
+      @[-268434836, bgregg-i-03cb3a7e46298b38e]: 8897
+      @[-268434846, bgregg-i-03cb3a7e46298b38e]: 15813
+      @[-268434581, coredns-fb8b8dccf-w7khw]: 39656
+      @[-268434654, coredns-fb8b8dccf-crrn9]: 40312
+      [...]
+
+      The source to pidnss(8) is:
+
+      #!/usr/local/bin/bpftrace
+
+      #include <linux/sched.h>
+      #include <linux/nsproxy.h>
+      #include <linux/utsname.h>
+      #include <linux/pid_namespace.h>
+
+      BEGIN
+      {
+               printf("Tracing PID namespace switches. Ctrl-C to end\n");
+      }
+                                                                                 15.3 BPF Tools   683
+
+kprobe:finish_task_switch
+{
+           $prev = (struct task_struct *)arg0;
+           $curr = (struct task_struct *)curtask;
+           $prev_pidns = $prev->nsproxy->pid_ns_for_children->ns.inum;
+           $curr_pidns = $curr->nsproxy->pid_ns_for_children->ns.inum;
+           if ($prev_pidns != $curr_pidns) {
+                       @[$prev_pidns, $prev->nsproxy->uts_ns->name.nodename] = count();
+           }
+}
+
+END
+{
+           printf("\nVictim PID namespace switch counts [PIDNS, nodename]:\n");
+}
+
+This is also an example of pulling out namespace identifiers. The identifiers from other
+namespaces can be fetched similarly.
+
+Should more container-specific details be needed beyond the kernel namespace and cgroup info,
+this tool could be ported to BCC so that it can include code that fetches details directly from
+Kubernetes, Docker, etc.
+
+15.3.3             blkthrot
+               6
+blkthrot(8) counts when the cgroup blk controller throttles I/O based on a hard limit. For
+example:
+
+# blkthrot.bt
+Attaching 3 probes...
+Tracing block I/O throttles by cgroup. Ctrl-C to end
+^C
+
+@notthrottled[1]: 506
+
+@throttled[1]: 31
+
+While tracing this, I saw that blk cgroup with ID 1 was throttled 31 times and not throttled
+506 times.
+
+This works by tracing the kernel blk_throtl_bio() function. The overhead should be minimal as
+block I/O is typically a relatively low-frequency event.
+
+6 Origin: I created this for this book on 6-May-2019.
+
+      The source to blkthrot(8) is:
+
+      #!/usr/local/bin/bpftrace
+
+      #include <linux/cgroup-defs.h>
+      #include <linux/blk-cgroup.h>
+
+      BEGIN
+      {
+                printf("Tracing block I/O throttles by cgroup. Ctrl-C to end\n");
+      }
+
+      kprobe:blk_throtl_bio
+      {
+                @blkg[tid] = arg1;
+      }
+
+      kretprobe:blk_throtl_bio
+      /@blkg[tid]/
+      {
+                $blkg = (struct blkcg_gq *)@blkg[tid];
+                if (retval) {
+                           @throttled[$blkg->blkcg->css.id] = count();
+                } else {
+                           @notthrottled[$blkg->blkcg->css.id] = count();
+                }
+                delete(@blkg[tid]);
+      }
+
+      This is also an example of pulling out a cgroup ID, which is in the cgroup_subsys_state struct, in
+      this case as css in the blkcg.
+
+      If desired, a different approach could be used: checking for the presence of the BIO_THROTTLED
+      flag on the struct bio, upon block completions.
+
+      15.3.4        overlayfs
+                    7
+      overlayfs(8) traces the latency of overlay file system reads and writes. The overlay FS is commonly
+      used for containers, so this tool provides a view of container file system performance. For
+      example:
+
+      7 Origin: My colleague Jason Koch created this on 18-Mar-2019 while working on container performance.
+                                                                                  15.3 BPF Tools       685
+
+# overlayfs.bt 4026532311
+Attaching 7 probes...
+
+21:21:06 --------------------
+@write_latency_us:
+[128, 256)                 1 |                                                            |
+[256, 512)               238 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+@read_latency_us:
+[1]                        3 |@                                                           |
+[2, 4)                     1 |                                                            |
+[4, 8)                     3 |@                                                           |
+[8, 16)                    0 |                                                            |
+[16, 32)                 115 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@            |
+[32, 64)                 123 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[64, 128)                  0 |                                                            |
+[128, 256)                 1 |                                                            |
+
+21:21:07 --------------------
+[...]
+
+This shows the latency distribution of reads and writes, with the reads usually taking between
+16 and 64 microseconds during the 21:21:06 interval.
+
+This works by tracing the overlayfs file_operations_t kernel functions for read and write. The over-
+head is relative to the rate of these functions, and should be negligible for many workloads.
+
+The source to overlayfs(8) is:
+
+#!/usr/local/bin/bpftrace
+
+#include <linux/nsproxy.h>
+#include <linux/pid_namespace.h>
+
+kprobe:ovl_read_iter
+/((struct task_struct *)curtask)->nsproxy->pid_ns_for_children->ns.inum == $1/
+{
+          @read_start[tid] = nsecs;
+}
+
+kretprobe:ovl_read_iter
+/((struct task_struct *)curtask)->nsproxy->pid_ns_for_children->ns.inum == $1/
+{
+          $duration_us = (nsecs - @read_start[tid]) / 1000;
+          @read_latency_us = hist($duration_us);
+          delete(@read_start[tid]);
+}
+
+      kprobe:ovl_write_iter
+      /((struct task_struct *)curtask)->nsproxy->pid_ns_for_children->ns.inum == $1/
+      {
+              @write_start[tid] = nsecs;
+      }
+
+      kretprobe:ovl_write_iter
+      /((struct task_struct *)curtask)->nsproxy->pid_ns_for_children->ns.inum == $1/
+      {
+              $duration_us = (nsecs - @write_start[tid]) / 1000;
+              @write_latency_us = hist($duration_us);
+              delete(@write_start[tid]);
+      }
+
+      interval:ms:1000
+      {
+              time("\n%H:%M:%S --------------------\n");
+              print(@write_latency_us);
+              print(@read_latency_us);
+              clear(@write_latency_us);
+              clear(@read_latency_us);
+      }
+
+      END
+      {
+              clear(@write_start);
+              clear(@read_start);
+      }
+
+      The ovl_read_iter() and ovl_write_iter() functions were added in Linux 4.19. This tool accepts
+      the PID namespace ID as an argument: it was developed for Docker, to be run with the following
+      wrapper (overlayfs.sh) that accepted the Docker container ID as the argument.
+
+      #!/bin/bash
+
+      PID=$(docker inspect -f='{{.State.Pid}}' $1)
+      NSID=$(stat /proc/$PID/ns/pid -c "%N" | cut -d[ -f2 | cut -d] -f1)
+
+      bpftrace ./overlayfs.bt $NSID
+                                                                                     15.6 Summary        687
+
+You can adjust this to match the container technology you use. That this step is necessary is
+discussed in Section 15.1.2: there is no in-kernel container ID; it is a construct of user space. This
+is a user space wrapper to convert the container ID into a PID namespace that the kernel can
+match on.
+
+15.4        BPF One-Liners
+This section shows bpftrace one-liners.
+
+Count cgroup ID at 99 Hertz:
+
+bpftrace -e 'profile:hz:99 { @[cgroup] = count(); }'
+
+Trace open filenames for cgroup v2 named "container1":
+
+bpftrace -e 't:syscalls:sys_enter_openat
+    /cgroup == cgroupid("/sys/fs/cgroup/unified/container1")/ {
+    printf("%s\n", str(args->filename)); }'
+
+15.5        Optional Exercises
+If not specified, these can be completed using either bpftrace or BCC:
+
+   1. Modify runqlat(8) from Chapter 6 to include the UTS namespace nodename
+      (see pidnss(8)).
+
+   2. Modify opensnoop(8) from Chapter 8 to include the UTS namespace nodename.
+
+   3. Develop a tool to show which containers are swapping out due to the mem cgroup
+      (see the mem_cgroup_swapout() kernel function).
+
+15.6        Summary
+This chapter summarized Linux containers and showed how BPF tracing can expose container
+CPU contention and cgroup throttling durations, as well as overlay FS latency.
+This page intentionally left blank

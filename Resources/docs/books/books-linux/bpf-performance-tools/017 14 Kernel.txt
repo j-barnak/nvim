@@ -1,0 +1,1452 @@
+                                                  Chapter 14
+                                                                               Kernel
+
+The kernel is the heart of the system; it is also a complex body of software. The Linux kernel
+employs many different strategies for improving CPU scheduling, memory placement, disk
+I/O performance, and TCP performance. As with any software, sometimes things go wrong.
+Previous chapters instrumented the kernel to help understand application behavior. This
+chapter uses kernel instrumentation to understand kernel software, and will be of use for kernel
+troubleshooting and to aid in kernel development.
+
+Learning Objectives:
+    ■   Continue off-CPU analysis by tracing wakeups
+    ■   Identify kernel memory consumers
+    ■   Analyze kernel mutex lock contention
+    ■   Show activity of work queue events
+
+If you are working on a particular subsystem, you should first browse the tools in the relevant
+previous chapters. By Linux subsystem name, these are:
+
+    ■   sched: Chapter 6
+    ■   mm: Chapter 7
+    ■   fs: Chapter 8
+    ■   block: Chapter 9
+    ■   net: Chapter 10
+
+Chapter 2 also covers tracing technologies, including BPF, tracepoints, and kprobes. This chapter
+focuses on studying the kernel rather than the resources, and includes additional kernel topics
+beyond the previous chapters. I begin with background discussion, then BPF capabilities, kernel
+analysis strategy, traditional tools including Ftrace, and BPF tools for additional analysis: wakeups,
+kernel memory allocation, kernel locks, tasklets, and work queues.
+
+      14.1         Background
+      The kernel manages access to resources and schedules processes on the CPUs. Previous chapters
+      have already introduced many kernel topics. In particular, see:
+          ■   Section 6.1.1 for the CPU Modes and the CPU Scheduler sections
+          ■   Section 7.1.1 for the Memory Allocators, Memory Pages and Swapping, Page-Out Daemon,
+              and File System Caching and Buffering sections
+          ■   Section 8.1.1 for the I/O Stack and File System Caches sections
+          ■   Section 9.1.1 for the Block I/O Stack and I/O Schedulers sections
+          ■   Section 10.1.1 for the Network Stack, Scaling, and TCP sections
+
+      Additional topics for kernel analysis are explored in this chapter.
+
+      14.1.1       Kernel Fundamentals
+
+      Wakeups
+      When threads block and go off CPU to wait for an event, they usually return to the CPU when
+      triggered by a wakeup event. An example is disk I/O: a thread may block on a file system read that
+      issues a disk I/O and is later woken up by a worker thread that processes the completion interrupt.
+
+      In some cases, there is a dependency chain of wakeups: one thread wakes up another, and that
+      thread wakes up another, until it wakes up the blocked application.
+
+      Figure 14-1 shows how an application thread can block and go off CPU for a syscall, to be later
+      woken up by a resource thread with possible dependency threads.
+
+Figure 14-1 Off-CPU and wakeups
+
+      Tracing the wakeups can reveal more information about the duration of the off-CPU event.
+                                                                                14.1 Background       637
+
+Kernel Memory Allocation
+Two main allocators in the kernel are the:
+
+    ■   slab allocator: A general-purpose memory allocator for objects of fixed sizes, which
+        supports caching allocations and recycling them for efficiency. In Linux this is now the
+        slub allocator: it is based on the slab allocator paper [Bonwick 94], but with reduced
+        complexity.
+    ■   page allocator: For allocating memory pages. It uses a buddy algorithm, which refers to
+        finding neighboring pages of free memory so that they can be allocated together. This is
+        also NUMA aware.
+
+These allocators were mentioned in Chapter 7 as background for application memory usage
+analysis. This chapter focuses on kernel memory usage analysis.
+
+The API calls for kernel memory allocation include kmalloc(), kzalloc(), and kmem_cache_alloc()
+(slab allocation) for small chunks, vmalloc() and vzalloc() for large areas, and alloc_pages() for
+pages [156].
+
+Kernel Locks
+User-level locks were covered in Chapter 13. The kernel supports locks of different types: spin
+locks, mutex locks, and reader-writer locks. Since locks block threads, they are a source of
+performance issues.
+
+Linux kernel mutex locks are a hybrid with three acquisition paths, tried in the following
+order [157]:
+
+  1. fastpath: Using a compare-and-swap instruction (cmpxchg)
+
+  2. midpath: Optimistically spinning first if the lock holder is running in case it is about to be
+     released
+
+  3. slowpath: Blocking until the lock is available
+
+There is also the read-copy-update (RCU) synchronization mechanism that allows multiple
+reads to occur concurrently with updates, improving performance and scalability for data that is
+mostly read.
+
+Tasklets and Work Queues
+For Linux, device drivers are modeled as two halves, with the top half handling the interrupt
+quickly and scheduling work to a bottom half to be processed later [Corbet 05]. Handling the
+interrupt quickly is important because the top half runs in interrupt-disabled mode to postpone
+the delivery of new interrupts, which can cause latency problems if it runs for too long. The
+bottom half can be either tasklets or work queues; the latter are threads that can be scheduled by
+the kernel and can sleep when necessary. This is pictured in Figure 14-2.
+
+Figure 14-2 Tasklets and work queues
+
+      14.1.2       BPF Capabilities
+      BPF tracing tools can provide additional insight beyond kernel metrics, including answering such
+      questions as:
+          ■   Why are threads leaving the CPU, and how long are they off CPU?
+          ■   What events did off-CPU threads wait for?
+          ■   Who is currently using the kernel slab allocator?
+          ■   Is the kernel moving pages to balance NUMA?
+          ■   What work queue events are occurring? With what latencies?
+          ■   For kernel developers: which of my functions are called? With what arguments and return
+              value? With what latency?
+
+      These can be answered by instrumenting tracepoints and kernel functions to measure their
+      latency, arguments, and stack traces. Timed sampling of stack traces can also be used to provide
+      a view of on-CPU code paths, which usually works because the kernel is typically compiled with
+      stack support (either frame pointers or ORC).
+
+      Event Sources
+      Kernel event types are listed in Table 14-1, along with instrumentation sources.
+
+Table 14-1     Kernel Event Types and Instrumentation Sources
+      Event Type                                          Event Source
+      Kernel function execution                           kprobes
+      Scheduler events                                    sched tracepoints
+      System calls                                        syscalls and raw_syscalls tracepoints
+                                                                                     14.2 Strategy     639
+
+Event Type                                        Event Source
+Kernel memory allocation                          kmem tracepoints
+Page out daemon scanning                          vmscan tracepoints
+Interrupts                                        irq and irq_vectors tracepoints
+Workqueue execution                               workqueue tracepoints
+Timers                                            timer tracepoints
+IRQ and preemption disabled                       preemptirq traceponts1
+
+Check your kernel version to see what other tracepoints exist, such as by using bpftrace:
+
+bpftrace -l 'tracepoint:*'
+
+Or using perf(1):
+
+perf list tracepoint
+
+Prior chapters covered resource events, including block and network I/O.
+
+14.2         Strategy
+If you are new to kernel performance analysis, here is a suggested overall strategy that you can
+follow. The next sections explain the tools involved in more detail.
+
+   1. If possible, create a workload that triggers the events of interest, ideally a known number of
+      times. This might involve writing a short C program.
+
+  2. Check for the existence of tracepoints that instrument the event or existing tools
+     (including those in this chapter).
+
+  3. If the event can be called frequently so that it consumes significant CPU resources (>5%),
+     CPU profiling can be a quick way to show the kernel functions involved. If not, a longer
+     profile may be used to capture enough samples for study (e.g., using perf(1) or BCC
+     profile(8), with CPU flame graphs). CPU profiling will also reveal the use of spin locks, and
+     mutex locks during optimistic spin.
+
+  4. As another way to find related kernel functions, count function calls that likely match the
+     event. For example, if analyzing ext4 file system events, you could try counting all calls that
+     matched "ext4_*" (using BCC funccount(8)).
+
+  5. Count stack traces from kernel functions to understand the code path (using BCC
+     stackcount(8)). These code paths should already be known if profiling was used.
+
+  6. Trace function call flow through its child events (using perf-tools Ftrace-based funcgraph(8)).
+
+   7. Inspect function arguments (using BCC trace(8) and argdist(8), or bpftrace).
+
+  8. Measure function latency (using BCC funclatency(8) or bpftrace).
+
+  9. Write a custom tool to instrument the events and print or summarize them.
+
+1 Requires CONFIG_PREEMPTIRQ_EVENTS.
+
+      The following section shows some of these steps using traditional tools, which you can try before
+      turning to BPF tools.
+
+      14.3           Traditional Tools
+      Many traditional tools were covered in prior chapters. Some additional tools that can be used for
+      kernel analysis are included here and listed in Table 14-2.
+
+Table 14-2       Traditional Tools
+      Tool                     Type                          Description
+      Ftrace                   Tracing                       Linux built-in tracer
+      perf sched               Tracing                       Linux official profiler: scheduler analysis subcommand
+      slabtop                  Kernel statistics             Kernel slab cache usage
+
+      14.3.1         Ftrace
+              2
+      Ftrace was created by Steven Rostedt and added to Linux 2.6.27 in 2008. Like perf(1), Ftrace is a
+      multi-tool with many capabilities. There are at least four ways to use Ftrace:
+
+           A. Via the /sys/kernel/debug/tracing files, controlled using cat(1) and echo(1) or a higher-level
+              language. This usage is documented in the kernel source under Documentation/trace/
+              ftrace.rst [158].
+
+           B. Via the trace-cmd front-end by Steven Rostedt [159][160].
+
+           C. Via the KernelShark GUI by Steven Rostedt and others [161].
+
+           D. Via the tools in the perf-tools collection by myself [78]. These are shell wrappers to the /sys
+              /kernel/debug/tracing files.
+
+      I will demonstrate Ftrace capabilities using perf-tools, but any of these methods can be used.
+
+      Function Counting
+      Let’s say I wanted to analyze file system read-ahead in the kernel. I can begin by counting all func-
+      tions containing "readahead" using funccount(8) (from perf-tools) while generating a workload
+      that is expected to trigger it:
+
+      # funccount '*readahead*'
+      Tracing "*readahead*"... Ctrl-C to end.
+      ^C
+      FUNC                                             COUNT
+      page_cache_async_readahead                           12
+
+      2 It is often written as "ftrace"; however, Steven would like to standardize on "Ftrace." (I asked for this book.)
+                                                                           14.3 Traditional Tools   641
+
+__breadahead                              33
+page_cache_sync_readahead                 69
+ondemand_readahead                        81
+__do_page_cache_readahead                 83
+
+Ending tracing...
+
+This shows five functions that were called, with their frequency.
+
+Stack Traces
+The next step is to learn more about these functions. Ftrace can collect stack traces on events,
+which show why the function was called—their parent functions. Analyzing the first one from
+the previous output using kprobe(8):
+
+# kprobe -Hs 'p:page_cache_async_readahead'
+Tracing kprobe page_cache_async_readahead. Ctrl-C to end.
+# tracer: nop
+#
+#                                  _-----=> irqs-off
+#                                 / _----=> need-resched
+#                                | / _---=> hardirq/softirq
+#                                || / _--=> preempt-depth
+#                                ||| /       delay
+#            TASK-PID     CPU#   ||||     TIMESTAMP    FUNCTION
+#                | |        |    ||||          |         |
+           cksum-32372 [006] .... 1952191.125801: page_cache_async_readahead:
+(page_cache_async_readahead+0x0/0x80)
+            cksum-32372 [006] .... 1952191.125822: <stack trace>
+ => page_cache_async_readahead
+ => ext4_file_read_iter
+ => new_sync_read
+ => __vfs_read
+ => vfs_read
+ => SyS_read
+ => do_syscall_64
+ => entry_SYSCALL_64_after_hwframe
+           cksum-32372 [006] .... 1952191.126704: page_cache_async_readahead:
+(page_cache_async_readahead+0x0/0x80)
+            cksum-32372 [006] .... 1952191.126722: <stack trace>
+ => page_cache_async_readahead
+ => ext4_file_read_iter
+[...]
+
+      This prints a stack trace per event, showing that it was triggered during a read() syscall. kprobe(8)
+      also allows function arguments and the return value to be inspected.
+
+      For efficiency, these stack traces can be frequency counted in kernel context rather than printed
+      one by one. This requires a newer Ftrace feature, hist triggers, short for histogram triggers.
+      Example:
+
+      # cd /sys/kernel/debug/tracing/
+      # echo 'p:kprobes/myprobe page_cache_async_readahead' > kprobe_events
+      # echo 'hist:key=stacktrace' > events/kprobes/myprobe/trigger
+      # cat events/kprobes/myprobe/hist
+      # event histogram
+      #
+      # trigger info: hist:keys=stacktrace:vals=hitcount:sort=hitcount:size=2048 [active]
+      #
+
+      { stacktrace:
+                ftrace_ops_assist_func+0x61/0xf0
+                0xffffffffc0e1b0d5
+                page_cache_async_readahead+0x5/0x80
+                generic_file_read_iter+0x784/0xbf0
+                ext4_file_read_iter+0x56/0x100
+                new_sync_read+0xe4/0x130
+                __vfs_read+0x29/0x40
+                vfs_read+0x8e/0x130
+                SyS_read+0x55/0xc0
+                do_syscall_64+0x73/0x130
+                entry_SYSCALL_64_after_hwframe+0x3d/0xa2
+      } hitcount:           235
+
+      Totals:
+          Hits: 235
+          Entries: 1
+          Dropped: 0
+      [...steps to undo the tracing state...]
+
+      This output shows that this stack trace path was taken 235 times during tracing.
+
+      Function Graphing
+      Finally, funcgraph(8) can show the child functions called:
+                                                                                  14.3 Traditional Tools   643
+
+# funcgraph page_cache_async_readahead
+Tracing "page_cache_async_readahead"... Ctrl-C to end.
+ 3)                  |   page_cache_async_readahead() {
+ 3)                  |      inode_congested() {
+ 3)                  |          dm_any_congested() {
+ 3)     0.582 us     |              dm_request_based();
+ 3)                  |              dm_table_any_congested() {
+ 3)                  |                  dm_any_congested() {
+ 3)     0.267 us     |                      dm_request_based();
+ 3)     1.824 us     |                      dm_table_any_congested();
+ 3)     4.604 us     |                  }
+ 3)     7.589 us     |              }
+ 3) + 11.634 us      |          }
+ 3) + 13.127 us      |      }
+ 3)                  |      ondemand_readahead() {
+ 3)                  |          __do_page_cache_readahead() {
+ 3)                  |              __page_cache_alloc() {
+ 3)                  |                  alloc_pages_current() {
+ 3)     0.234 us     |                      get_task_policy.part.30();
+ 3)     0.124 us     |                      policy_nodemask();
+[...]
+
+This reveals not just the code path taken but, as with stack traces, these functions can also be
+traced for more information arguments and return values.
+
+14.3.2      perf sched
+The perf(1) command is another multi-tool, and Chapter 6 summarized its use with PMCs, profil-
+ing, and tracing. It also has a sched subcommand for scheduler analysis. For example:
+
+# perf sched record
+# perf sched timehist
+
+Samples do not have callchains.
+             time     cpu    task name                   wait time   sch delay      run time
+                             [tid/pid]                      (msec)       (msec)       (msec)
+--------------- ------       ------------------          ---------   ---------     ---------
+  991962.879971 [0005]       perf[16984]                     0.000        0.000        0.000
+  991962.880070 [0007]       :17008[17008]                   0.000        0.000        0.000
+  991962.880070 [0002]       cc1[16880]                      0.000        0.000        0.000
+  991962.880078 [0000]       cc1[16881]                      0.000        0.000        0.000
+  991962.880081 [0003]       cc1[16945]                      0.000        0.000        0.000
+  991962.880093 [0003]       ksoftirqd/3[28]                 0.000        0.007        0.012
+  991962.880108 [0000]       ksoftirqd/0[6]                  0.000        0.007        0.030
+[...]
+
+      This output shows per-scheduling event metrics of the time spent blocked and waiting for a
+      wakeup ("wait time"), the scheduler delay (aka run queue latency, "sch delay"), and the on-CPU
+      run time ("run time").
+
+      14.3.3      slabtop
+      The slabtop(1) tool shows the current sizes of the kernel slab allocation caches. For example, from
+      a large production system, sorting by cache size (-s c):
+
+      # slabtop -s c
+       Active / Total Objects (% used)           : 1232426 / 1290213 (95.5%)
+       Active / Total Slabs (% used)             : 29225 / 29225 (100.0%)
+       Active / Total Caches (% used)            : 85 / 135 (63.0%)
+       Active / Total Size (% used)              : 288336.64K / 306847.48K (94.0%)
+       Minimum / Average / Maximum Object : 0.01K / 0.24K / 16.00K
+
+        OBJS ACTIVE    USE OBJ SIZE     SLABS OBJ/SLAB CACHE SIZE NAME
+       76412   69196     0%     0.57K    2729          28      43664K radix_tree_node
+      313599 313599 100%        0.10K    8041          39      32164K buffer_head
+        3732    3717     0%     7.44K      933          4      29856K task_struct
+       11776    8795     0%     2.00K      736         16      23552K TCP
+       33168   32277     0%     0.66K      691         48      22112K proc_inode_cache
+       86100   79990     0%     0.19K    2050          42      16400K dentry
+       25864   24679     0%     0.59K      488         53      15616K inode_cache
+      [...]
+
+      This output shows around 43 Mbytes in the radix_tree_node cache and around 23 Mbytes in the
+      TCP cache. For a system with a total of 180 Gbytes of main memory, these kernel caches are rela-
+      tively tiny.
+
+      This is a useful tool for troubleshooting memory pressure problems, to check whether some
+      kernel component is unexpectedly consuming significant memory.
+
+      14.3.4      Other Tools
+      /proc/lock_stat shows various statistics on kernel locks but is only available if
+      CONFIG_LOCK_STAT is set.
+
+      /proc/sched_debug provides many metrics to aid scheduler development.
+
+      14.4        BPF Tools
+      This section covers additional BPF tools you can use for kernel analysis and troubleshooting.
+      They are shown in Figure 14-3.
+
+Figure 14-3 Additional BPF tools for kernel analysis
+
+These tools are either from the BCC and bpftrace repositories covered in Chapters 4 and 5 or were
+created for this book. Some tools appear in both BCC and bpftrace. Table 14-3 lists the tool origins
+(BT is short for bpftrace).
+
+Table 14-3    Kernel-Related Tools
+Tool              Source        Target            Description
+loads             BT            CPUs              Show load averages
+offcputime        BCC/book      Sched             Summarize off-CPU stack traces and times
+wakeuptime        BCC           Sched             Summarize waker stack traces and blocked times
+offwaketime       BCC           Sched             Summarize waker with off-CPU stack traces
+mlock             Book          Mutexes           Show mutex lock times and kernel stacks
+mheld             Book          Mutexes           Show mutex held times and kernel stacks
+kmem              Book          Memory            Summarize kernel memory allocations
+kpages            Book          Pages             Summarize kernel page allocations
+memleak           BCC           Memory            Show possible memory leak code paths
+slabratetop       BCC/book      Slab              Show kernel slab allocation rates by cache
+numamove          Book          NUMA              Show NUMA page migration statistics
+workq             Book          Work queues       Show work queue function execution times
+
+For the tools from BCC and bpftrace, see their repositories for full and updated lists of tool
+options and capabilities.
+
+See the previous chapters for more tools for kernel analysis, including for system calls, network-
+ing, and block I/O.
+
+The following tool summaries include a discussion on instrumenting spin locks and tasklets.
+
+      14.4.1            loads
+               3
+      loads(8) is a bpftrace tool to print the system load averages every second:
+
+      # loads.bt
+      Attaching 2 probes...
+      Reading load averages... Hit Ctrl-C to end.
+      18:49:16 load averages: 1.983 1.151 0.931
+      18:49:17 load averages: 1.824 1.132 0.926
+      18:49:18 load averages: 1.824 1.132 0.926
+      [...]
+
+      As discussed in Chapter 6, these load averages are not very useful, and you should quickly move
+      on to deeper metrics. The loads(8) tool may be more useful as an example of fetching and printing
+      a kernel variable, in this case avenrun:
+
+      #!/usr/local/bin/bpftrace
+
+      BEGIN
+      {
+                   printf("Reading load averages... Hit Ctrl-C to end.\n");
+      }
+
+      interval:s:1
+      {
+                   /*
+                    * See fs/proc/loadavg.c and include/linux/sched/loadavg.h for the
+                    * following calculations.
+                    */
+                   $avenrun = kaddr("avenrun");
+                   $load1 = *$avenrun;
+                   $load5 = *($avenrun + 8);
+                   $load15 = *($avenrun + 16);
+                   time("%H:%M:%S ");
+                   printf("load averages: %d.%03d %d.%03d %d.%03d\n",
+                         ($load1 >> 11), (($load1 & ((1 << 11) - 1)) * 1000) >> 11,
+                         ($load5 >> 11), (($load5 & ((1 << 11) - 1)) * 1000) >> 11,
+                         ($load15 >> 11), (($load15 & ((1 << 11) - 1)) * 1000) >> 11
+                   );
+      }
+
+      3 Origin: I created this as loads.d for DTrace on 10-Jun-2005 and the bpftrace version on 10-Sep-2018.
+
+The kaddr() built-in is used to fetch the address of the avenrun kernel symbol, which is then
+dereferenced. Other kernel variables can be fetched in the same way.
+
+14.4.2        offcputime
+offcputime(8) was introduced in Chapter 6. In this section, I will look at its ability to examine a
+task state, and also problems that led to the creation of additional tools included in this chapter.
+
+Non-interruptible I/O
+Matching on the TASK_UNINTERRUPTIBLE thread state can shed light on time that applications
+were blocked waiting for a resource. This helps exclude time that applications spend sleeping in
+between work, which can otherwise drown out the real performance issues in an offcputime(8)
+profile. This TASK_UNINTERRUPTIBLE time is also included in the system load averages on Linux,
+leading to much confusion when people expect them to reflect only CPU time.
+
+Measuring this thread state (2) for user-level process and kernel stacks only:
+
+# offcputime -uK --state 2
+Tracing off-CPU time (us) of user threads by kernel stack... Hit Ctrl-C to end.
+[...]
+
+    finish_task_switch
+    __schedule
+    schedule
+    io_schedule
+    generic_file_read_iter
+    xfs_file_buffered_aio_read
+    xfs_file_read_iter
+    __vfs_read
+    vfs_read
+    ksys_read
+    do_syscall_64
+    entry_SYSCALL_64_after_hwframe
+    -                     tar (7034)
+          1088682
+
+Only the last stack has been included, which shows a tar(1) process waiting on storage I/O via the
+XFS file system. This command has filtered out other thread states, including:
+    ■   TASK_RUNNING (0): Threads can block in this state due to involuntary context switches,
+        as the CPUs are running at saturation. In such a case, the stack trace that was interrupted is
+        not very interesting, as it does not show why the thread moved off-CPU.
+    ■   TASK_INTERRUPTIBLE (1): This normally pollutes the output with many off-CPU stacks
+        in sleeping and waiting for work code paths.
+
+      Filtering these out helps focus the output to show the stacks that are blocking during application
+      requests, which have more impact on performance.
+
+      Inconclusive Stacks
+      Many stack traces printed by offcputime(8) are inconclusive, showing a blocking path but not its
+      cause. Here is an example that traces off-CPU kernel stacks for five seconds for a gzip(1) process:
+
+      # offcputime -Kp $(pgrep -n gzip) 5
+      Tracing off-CPU time (us) of PID 5028 by kernel stack for 5 secs.
+
+          finish_task_switch
+          __schedule
+          schedule
+          exit_to_usermode_loop
+          prepare_exit_to_usermode
+          swapgs_restore_regs_and_return_to_usermode
+          -                   gzip (5028)
+               21
+
+          finish_task_switch
+          __schedule
+          schedule
+          pipe_wait
+          pipe_read
+          __vfs_read
+          vfs_read
+          ksys_read
+          do_syscall_64
+          entry_SYSCALL_64_after_hwframe
+          -                   gzip (5028)
+               4404219
+
+      The output shows that 4.4 seconds out of five were in pipe_read(), but you can’t tell from the
+      output what was on the other end of the pipe that gzip was waiting for or why it took so long.
+      The stack just tells us that it is waiting on someone else.
+
+      Such inconclusive off-CPU stack traces are common—not just with pipes but also with I/O and
+      lock contention. You may see threads blocked waiting for a lock, but you can’t see why the lock
+      was unavailable (e.g., who was the holder and what they were doing).
+
+      Examining wakeup stacks using wakeuptime(8) can often reveal what is on the other side of the wait.
+
+      See Chapter 6 for more about offcputime(8).
+
+14.4.3        wakeuptime
+wakeuptime(8)4 is a BCC tool that shows the stack traces from threads performing scheduler
+wakeups and the time that the target was blocked. This can be used to further explore off-CPU
+time. Continuing the previous example:
+
+# wakeuptime -p $(pgrep -n gzip) 5
+Tracing blocked time (us) by kernel stack for 5 secs.
+
+     target:                 gzip
+     ffffffff94000088 entry_SYSCALL_64_after_hwframe
+     ffffffff93604175 do_syscall_64
+     ffffffff93874d72 ksys_write
+     ffffffff93874af3 vfs_write
+     ffffffff938748c2 __vfs_write
+     ffffffff9387d50e pipe_write
+     ffffffff936cb11c __wake_up_common_lock
+     ffffffff936caffc __wake_up_common
+     ffffffff936cb65e autoremove_wake_function
+     waker:                  tar
+           4551336
+
+Detaching...
+
+This output shows that the gzip(1) process was blocked on the tar(1) process doing a vfs_write().
+Now I’ll reveal the command that caused this workload:
+tar cf - /mnt/data | gzip - > /mnt/backup.tar.gz
+
+From this one-liner, it may be obvious that gzip(1) spends much of its time waiting for data from
+tar(1). tar(1) in turn spends much of its time waiting for data from disk, which can be shown by
+offcputime(8):
+
+# offcputime -Kp $(pgrep -n tar) 5
+Tracing off-CPU time (us) of PID 5570 by kernel stack for 5 secs.
+[...]
+
+     finish_task_switch
+     __schedule
+     schedule
+
+4 Origin: I developed wakeuptime tracing using DTrace and visualized it with flame graphs on 7-Nov-2013. This started
+out as part of a 45-minute talk on flame graphs that I had to develop at the last minute for the USENIX LISA conference
+[Gregg 13a] when the talk I had originally planned suddenly became impossible to do. Then I was asked to also fill in
+for another speaker who had become ill, so I ended up giving this as part two of a 90-minute plenary on flame graphs.
+I created the BCC tool on 14-Jan-2016.
+
+           io_schedule
+           generic_file_read_iter
+           xfs_file_buffered_aio_read
+           xfs_file_read_iter
+           __vfs_read
+           vfs_read
+           ksys_read
+           do_syscall_64
+           entry_SYSCALL_64_after_hwframe
+           -                       tar (5570)
+                 4204994
+
+      This stack shows tar(1) blocked on io_schedule(): block device I/O. Given the output of both
+      offcputime(8) and wakeuptime(8), you can see why an application was blocked (offcputime(8)
+      output) and then the reason the application was woken up (wakeuptime(8) output). Sometimes
+      the wakeup reason better identifies the source of issues than the blocked reason.
+
+      To keep these examples short, I’m using -p to match on a PID. You can trace system-wide instead
+      by not specifying -p.
+
+      This tool works by tracing scheduler functions schedule() and try_to_wake_up(). These can be
+      very frequent on busy systems, so the overhead may be significant.
+
+      Command line usage:
+
+      wakeuptime [options] [duration]
+
+      Options include:
+
+          ■    -f: Output in folded format, for generating a wakeup time flame graph
+          ■    -p PID: This process only
+
+      As with offcputime(8), if it is run without -p, it will trace system-wide—and likely produce
+      hundreds of pages of output. A flame graph will help you navigate this output quickly.
+
+      14.4.4         offwaketime
+      offwaketime(8)5 is a BCC tool that combines offcputime(8) and wakeuptime(8). Continuing the
+      previous example:
+
+      # offwaketime -Kp $(pgrep -n gzip) 5
+      Tracing blocked time (us) by kernel off-CPU and waker stack for 5 secs.
+
+      5 Origin: I developed this initially as chain graphs for the USENIX LISA 2013 conference on 7-Nov-2013 [Gregg 13a],
+      where I walked multiple wakeups and showed the output as a flame graph. That version used DTrace, and since DTrace
+      can’t save and retrieve stacks I needed to dump all events and post-process, which was too expensive for real produc-
+      tion use. BPF allows saving and retrieving stack traces (which I used when creating this BCC tool on 13-Jan-2016),
+      as well as limiting it to one wakeup level. Alexei Starovoitov added a version to the kernel source, under
+      samples/bpf/offwaketime_*.c.
+
+[...]
+
+    waker:                tar 5852
+    entry_SYSCALL_64_after_hwframe
+    do_syscall_64
+    ksys_write
+    vfs_write
+    __vfs_write
+    pipe_write
+    __wake_up_common_lock
+    __wake_up_common
+    autoremove_wake_function
+    --                    --
+    finish_task_switch
+    __schedule
+    schedule
+    pipe_wait
+    pipe_read
+    __vfs_read
+    vfs_read
+    ksys_read
+    do_syscall_64
+    entry_SYSCALL_64_after_hwframe
+    target:               gzip 5851
+          4490207
+
+This output shows tar(1) waking up gzip(1), which was blocked in this path for 4.49 seconds. Both
+stack traces are shown, delimited by "--", and the top waker stack has been inverted. This way,
+the stack traces meet in the middle at the point where the waker stack (top) is waking the blocked
+stack (bottom).
+
+This tool works by tracing scheduler functions schedule() and try_to_wake_up(), and saves the
+waker stack trace in a BPF stack map for later lookup by the blocked thread so that they can be
+summarized together in kernel context. These can be very frequent on busy systems, so the over-
+head may be significant.
+
+Command line usage:
+
+offwaketime [options] [duration]
+
+Options include:
+
+   ■    -f: Output in folded format, for generating an off-wake time flame graph
+   ■    -p PID: This process only
+   ■    -K: Only kernel stack traces
+   ■    -U: Only user-level stack traces
+
+      Without -p, it will trace system-wide, likely producing hundreds of pages of output. The use of
+      options such as -p, -K, and -U will help reduce overhead.
+
+      Off-Wake Time Flame Graphs
+      The folded output (using -f) can be visualized as a flame graph using the same orientation: waker
+      stack on the top, inverted, and blocked stack on the bottom. An example is shown in Figure 14-4.
+
+Figure 14-4 Off-wake time flame graph
+
+      14.4.5         mlock and mheld
+      The mlock(8)6 and mheld(8) tools trace the kernel mutex lock latency and held times as
+      histograms, with kernel-level stacks. mlock(8) can be used to identify issues of lock contention,
+      and then mheld(8) can show the cause: which code path is responsible for hogging the lock.
+      Starting with mlock(8):
+
+      # mlock.bt
+      Attaching 6 probes...
+      Tracing mutex_lock() latency, Ctrl-C to end.
+
+      6 Origin: I created these tools for this book on 14-Mar-2019. This approach is inspired by the Solaris lockstat(1M) tool
+      by Jeff Bonwick, which also showed partial stacks with latency histograms for lock and held times.
+
+^C
+[...]
+
+@lock_latency_ns[0xffff9d015738c6e0,
+     kretprobe_trampoline+0
+     unix_stream_recvmsg+81
+     sock_recvmsg+67
+     ___sys_recvmsg+245
+     __sys_recvmsg+81
+, chrome]:
+[512, 1K)              5859 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                        |
+[1K, 2K)               8303 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[2K, 4K)               1689 |@@@@@@@@@@                                                  |
+[4K, 8K)                476 |@@                                                          |
+[8K, 16K)               101 |                                                            |
+
+The output included many stack traces and locks, only one of which has been included here. It
+shows the address of the lock (0xffff9d015738c6e0), the stack trace to mutex_lock(), the process
+name ("chrome"), and the latency of mutex_lock(). This lock was acquired thousands of times
+while tracing, although it was usually fast: for example, the histogram shows that 8303 times it
+took between 1024 and 2048 nanoseconds (roughly one to two microseconds).
+
+Now running mheld(8):
+
+# mheld.bt
+Attaching 9 probes...
+Tracing mutex_lock() held times, Ctrl-C to end.
+^C
+[...]
+
+@held_time_ns[0xffff9d015738c6e0,
+     mutex_unlock+1
+     unix_stream_recvmsg+81
+     sock_recvmsg+67
+     ___sys_recvmsg+245
+     __sys_recvmsg+81
+, chrome]:
+[512, 1K)             16459 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[1K, 2K)               7427 |@@@@@@@@@@@@@@@@@@@@@@@                                     |
+
+This shows that the same process and stack trace was the holder for this lock.
+
+These tools work by tracing the mutex_lock(), mutex_lock_interruptible(), and mutex_trylock()
+kernel functions because mutex tracepoints do not yet exist. Since these can be frequent, the over-
+head while tracing may become significant for busy workloads.
+
+      mlock
+      The source to mlock(8) is:
+
+      #!/usr/local/bin/bpftrace
+
+      BEGIN
+      {
+               printf("Tracing mutex_lock() latency, Ctrl-C to end.\n");
+      }
+
+      kprobe:mutex_lock,
+      kprobe:mutex_lock_interruptible
+      /$1 == 0 || pid == $1/
+      {
+               @lock_start[tid] = nsecs;
+               @lock_addr[tid] = arg0;
+      }
+
+      kretprobe:mutex_lock
+      /($1 == 0 || pid == $1) && @lock_start[tid]/
+      {
+               @lock_latency_ns[ksym(@lock_addr[tid]), kstack(5), comm] =
+                   hist(nsecs - @lock_start[tid]);
+               delete(@lock_start[tid]);
+               delete(@lock_addr[tid]);
+      }
+
+      kretprobe:mutex_lock_interruptible
+      /retval == 0 && ($1 == 0 || pid == $1) && @lock_start[tid]/
+      {
+               @lock_latency_ns[ksym(@lock_addr[tid]), kstack(5), comm] =
+                   hist(nsecs - @lock_start[tid]);
+               delete(@lock_start[tid]);
+               delete(@lock_addr[tid]);
+      }
+
+      END
+      {
+               clear(@lock_start);
+               clear(@lock_addr);
+      }
+
+This times the duration of mutex_lock(), and also mutex_lock_interruptible() only if it returned
+successfully. mutex_trylock() is not traced, as it is assumed to have no latency. An optional argument
+to mlock(8) can be provided to specify the process ID to trace; without it, the entire system is traced.
+
+mheld
+The source to mheld(8) is:
+
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+         printf("Tracing mutex_lock() held times, Ctrl-C to end.\n");
+}
+
+kprobe:mutex_lock,
+kprobe:mutex_trylock,
+kprobe:mutex_lock_interruptible
+/$1 == 0 || pid == $1/
+{
+         @lock_addr[tid] = arg0;
+}
+
+kretprobe:mutex_lock
+/($1 == 0 || pid == $1) && @lock_addr[tid]/
+{
+         @held_start[@lock_addr[tid]] = nsecs;
+         delete(@lock_addr[tid]);
+}
+
+kretprobe:mutex_trylock,
+kretprobe:mutex_lock_interruptible
+/retval == 0 && ($1 == 0 || pid == $1) && @lock_addr[tid]/
+{
+         @held_start[@lock_addr[tid]] = nsecs;
+         delete(@lock_addr[tid]);
+}
+
+kprobe:mutex_unlock
+/($1 == 0 || pid == $1) && @held_start[arg0]/
+{
+         @held_time_ns[ksym(arg0), kstack(5), comm] =
+              hist(nsecs - @held_start[arg0]);
+         delete(@held_start[arg0]);
+}
+
+      END
+      {
+               clear(@lock_addr);
+               clear(@held_start);
+      }
+
+      This traces the held duration from the different mutex functions. As with mlock(8), an optional
+      process ID argument can be provided.
+
+      14.4.6      Spin Locks
+      As with mutex locks traced previously, there are not yet tracepoints for tracing spin locks.
+      Note that there are several types of spin locks, including spin_lock_bh(), spin_lock(),
+      spin_lock_irq(), and spin_lock_irqsave() [162]. They are defined as follows in
+      include/linux/spinlock.h:
+
+      #define spin_lock_irqsave(lock, flags)                                  \
+      do {                                                                    \
+               raw_spin_lock_irqsave(spinlock_check(lock), flags);            \
+      } while (0)
+      [...]
+      #define raw_spin_lock_irqsave(lock, flags)                              \
+               do {                                                  \
+                        typecheck(unsigned long, flags);             \
+                        flags = _raw_spin_lock_irqsave(lock);        \
+               } while (0)
+
+      You can see them using funccount(8):
+
+      # funccount '*spin_lock*'
+      Tracing 16 functions for "*spin_lock*"... Hit Ctrl-C to end.
+      ^C
+      FUNC                                         COUNT
+      _raw_spin_lock_bh                             7092
+      native_queued_spin_lock_slowpath              7227
+      _raw_spin_lock_irq                          261538
+      _raw_spin_lock                            1215218
+      _raw_spin_lock_irqsave                    1582755
+      Detaching...
+
+funccount(8) is instrumenting the entry of these functions using kprobes. The return of these
+functions cannot be traced using kretprobes,7 so it’s not possible to time their duration directly
+from these functions. Look higher in the stack for functions that can be traced, e.g., by using
+stackcount(8) on the kprobe to see the call stack.
+
+I usually debug spin lock performance issues using CPU profiling and flame graphs, since they
+appear as CPU-consuming functions.
+
+14.4.7         kmem
+           8
+kmem(8) is a bpftrace tool to trace kernel memory allocations by stack trace and prints statis-
+tics on the number of allocations, the average allocation size, and the total bytes allocated. For
+example:
+
+# kmem.bt
+Attaching 3 probes...
+Tracing kmem allocation stacks (kmalloc, kmem_cache_alloc). Hit Ctrl-C to end.
+^C
+[...]
+@bytes[
+     kmem_cache_alloc+288
+     getname_flags+79
+     getname+18
+     do_sys_open+285
+     SyS_openat+20
+, Xorg]: count 44, average 4096, total 180224
+@bytes[
+     __kmalloc_track_caller+368
+     kmemdup+27
+     intel_crtc_duplicate_state+37
+     drm_atomic_get_crtc_state+119
+     page_flip_common+51
+, Xorg]: count 120, average 2048, total 245760
+
+This output has been truncated to show only the last two stacks. The first one shows an
+open(2) syscall that led to a slab allocation (kmem_cache_alloc()) during getname_flags() by the
+Xorg process. That allocation occurred 44 times while tracing, allocating an average of 4096 bytes,
+for a total of 180,224 bytes.
+
+7 It was found that instrumenting these using kretprobes could deadlock the system [163], so BCC has added a
+section for banned kretprobes. There are other functions that are banned in the kernel using NOKPROBE_SYMBOL;
+I hope these are not included, as it may break kprobes for these functions as well, and kprobes have many uses even
+without the kretprobes.
+8 Origin: I created it for this book on 15-Mar-2019.
+
+      This works by tracing kmem tracepoints. Since allocations can be frequent, the overhead may
+      become measurable on busy systems.
+
+      The source to kmem(8) is:
+
+      #!/usr/local/bin/bpftrace
+
+      BEGIN
+      {
+                 printf("Tracing kmem allocation stacks (kmalloc, kmem_cache_alloc). ");
+                 printf("Hit Ctrl-C to end.\n");
+      }
+
+      tracepoint:kmem:kmalloc,
+      tracepoint:kmem:kmem_cache_alloc
+      {
+                 @bytes[kstack(5), comm] = stats(args->bytes_alloc);
+      }
+
+      This uses the stats() built-in to print the triplet: count of allocations, average bytes, and total
+      bytes. This can be switched to hist() for printing histograms if desired.
+
+      14.4.8         kpages
+                 9
+      kpages(8) is a bpftrace tool that traces the other type of kernel memory allocation, alloc_pages(),
+      via the kmem:mm_page_alloc tracepoint. Example output:
+
+      # kpages.bt
+      Attaching 2 probes...
+      Tracing page allocation stacks. Hit Ctrl-C to end.
+      ^C
+      [...]
+      @pages[
+           __alloc_pages_nodemask+521
+           alloc_pages_vma+136
+           handle_pte_fault+959
+           __handle_mm_fault+1144
+           handle_mm_fault+177
+      , chrome]: 11733
+
+      The output has been truncated to show only one stack; this one shows Chrome processes allocating
+      11,733 pages while tracing during page faults. This tool works by tracing kmem tracepoints. Since
+      allocations can be frequent, the overhead may become measurable on busy systems.
+
+      9 Origin: I created it on 15-Mar-2019 for this book.
+
+The source to kpages(8) is:
+
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+         printf("Tracing page allocation stacks. Hit Ctrl-C to end.\n");
+}
+
+tracepoint:kmem:mm_page_alloc
+{
+         @pages[kstack(5), comm] = count();
+}
+
+This can be implemented as a one-liner, but, to ensure that it isn’t overlooked, I’ve created it as the
+kpages(8) tool.
+
+14.4.9      memleak
+memleak(8) was introduced in Chapter 7: it is a BCC tool that shows allocations that were not
+freed while tracing, which can identify memory growth or leaks. By default it traces kernel
+allocations, for example:
+
+# memleak
+Attaching to kernel allocators, Ctrl+C to quit.
+
+[13:46:02] Top 10 stacks with outstanding allocations:
+[...]
+         6922240 bytes in 1690 allocations from stack
+                   __alloc_pages_nodemask+0x209 [kernel]
+                   alloc_pages_current+0x6a [kernel]
+                   __page_cache_alloc+0x81 [kernel]
+                   pagecache_get_page+0x9b [kernel]
+                   grab_cache_page_write_begin+0x26 [kernel]
+                   ext4_da_write_begin+0xcb [kernel]
+                   generic_perform_write+0xb3 [kernel]
+                   __generic_file_write_iter+0x1aa [kernel]
+                   ext4_file_write_iter+0x203 [kernel]
+                   new_sync_write+0xe7 [kernel]
+                   __vfs_write+0x29 [kernel]
+                   vfs_write+0xb1 [kernel]
+                   sys_pwrite64+0x95 [kernel]
+                   do_syscall_64+0x73 [kernel]
+                   entry_SYSCALL_64_after_hwframe+0x3d [kernel]
+
+      Just one stack has been included here, showing allocations via ext4 writes. See Chapter 7 for more
+      about memleak(8).
+
+      14.4.10          slabratetop
+                       10
+      slabratetop(8) is a BCC and bpftrace tool that shows the rate of kernel slab allocations by slab
+      cache name, by tracing kmem_cache_alloc() directly. This is a companion to slabtop(1), which
+      shows the volume of the slab caches (via /proc/slabinfo). For example, from a 48-CPU production
+      instance:
+
+      # slabratetop
+
+      09:48:29 loadavg: 6.30 5.45 5.46 4/3377 29884
+
+      CACHE                                         ALLOCS           BYTES
+      kmalloc-4096                                      654       2678784
+      kmalloc-256                                      2637        674816
+      filp                                              392        100352
+      sock_inode_cache                                   94          66176
+      TCP                                                31          63488
+      kmalloc-1024                                       58          59392
+      proc_inode_cache                                   69          46920
+      eventpoll_epi                                     354          45312
+      sigqueue                                          227          36320
+      dentry                                            165          31680
+      [...]
+
+      This output shows that the kmalloc-4096 cache had the most bytes allocated in that output
+      interval. As with slabtop(1), this tool can be used when troubleshooting unexpected memory
+      pressure.
+
+      This works by using kprobes to trace the kmem_cache_alloc() kernel function. Since this function
+      can be called somewhat frequently, the overhead of this tool might become noticeable on very
+      busy systems.
+
+      BCC
+      Command line usage:
+
+      slabratetop [options] [interval [count]]
+
+      Options:
+
+            ■   -C: Don’t clear the screen
+
+      10 Origin: I created it on 15-Oct-2016 for BCC, and I wrote the bpftrace version for this book on 26-Jan-2019.
+
+bpftrace
+This version only counts allocations by cache name, printing output each second with a
+timestamp:
+
+#!/usr/local/bin/bpftrace
+
+#include <linux/mm.h>
+#include <linux/slab.h>
+#ifdef CONFIG_SLUB
+#include <linux/slub_def.h>
+#else
+#include <linux/slab_def.h>
+#endif
+
+kprobe:kmem_cache_alloc
+{
+           $cachep = (struct kmem_cache *)arg0;
+           @[str($cachep->name)] = count();
+}
+
+interval:s:1
+{
+           time();
+           print(@);
+           clear(@);
+}
+
+A check for the kernel compile option CONFIG_SLUB is needed so that the correct version of the
+slab allocator header files are included.
+
+14.4.11          numamove
+numamove(8)11 traces page migrations of type “NUMA misplaced.” These pages are moved to
+different NUMA nodes to improve memory locality and overall system performance. I’ve encoun-
+tered production issues where up to 40% of CPU time was spent doing such NUMA page migra-
+tions; this performance loss outweighed the benefits of NUMA page balancing. This tool helps me
+keep an eye on NUMA page migrations in case the problem returns. Example output:
+
+# numamove.bt
+Attaching 4 probes...
+TIME               NUMA_migrations NUMA_migrations_ms
+22:48:45                               0                          0
+
+11 Origin: I created it for this book on 26-Jan-2019 and to use to check for recurrence of an issue.
+
+      22:48:46                        0                     0
+      22:48:47                     308                     29
+      22:48:48                        2                     0
+      22:48:49                        0                     0
+      22:48:50                        1                     0
+      22:48:51                        1                     0
+      [...]
+
+      This output caught a burst of NUMA page migrations at 22:48:47: 208 migrations, taking
+      29 milliseconds in total. The columns show the per-second rate of migrations and the time spent
+      doing migrations in milliseconds. Note that NUMA balancing must be enabled (sysctl kernel.
+      numa_balancing=1) for this activity to occur.
+
+      The source to numamove(8) is:
+
+      #!/usr/local/bin/bpftrace
+
+      kprobe:migrate_misplaced_page { @start[tid] = nsecs; }
+
+      kretprobe:migrate_misplaced_page /@start[tid]/
+      {
+               $dur = nsecs - @start[tid];
+               @ns += $dur;
+               @num++;
+               delete(@start[tid]);
+      }
+
+      BEGIN
+      {
+               printf("%-10s %18s %18s\n", "TIME",
+                   "NUMA_migrations", "NUMA_migrations_ms");
+      }
+
+      interval:s:1
+      {
+               time("%H:%M:%S");
+               printf("    %18d %18d\n", @num, @ns / 1000000);
+               delete(@num);
+               delete(@ns);
+      }
+
+      This uses a kprobe and kretprobe to trace the start and end of the kernel function
+      migrate_misplaced_page(), and an interval probe to print out the statistics.
+
+14.4.12           workq
+           12
+workq(8)        traces workqueue requests and times their latency. For example:
+
+# workq.bt
+Attaching 4 probes...
+Tracing workqueue request latencies. Ctrl-C to end.
+^C
+[...]
+
+@us[intel_atomic_commit_work]:
+[1K, 2K)                        7 |                                                     |
+[2K, 4K)                        9 |                                                     |
+[4K, 8K)                     132 |@@@@                                                  |
+[8K, 16K)                   1524 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16K, 32K)                  1019 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                    |
+[32K, 64K)                      2 |                                                     |
+
+@us[kcryptd_crypt]:
+[2, 4)                          2 |                                                     |
+[4, 8)                      4864 |@@@@@@@@@@@@@@@@@@@@@@@                               |
+[8, 16)                   10746 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)                    2887 |@@@@@@@@@@@@@                                         |
+[32, 64)                     456 |@@                                                    |
+[64, 128)                    250 |@                                                     |
+[128, 256)                   190 |                                                      |
+[256, 512)                     29 |                                                     |
+[512, 1K)                      14 |                                                     |
+[1K, 2K)                        2 |                                                     |
+
+This output shows that the kcryptd_crypt() workqueue function was called frequently,
+usually taking between four and 32 microseconds.
+
+This works by tracing the workqueue:workqueue_execute_start and
+workqueue:workqueue_execute_end tracepoints.
+
+The source to workq(8) is:
+
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+           printf("Tracing workqueue request latencies. Ctrl-C to end.\n");
+}
+
+12 Origin: I created it for this book on 14-Mar-2019.
+
+      tracepoint:workqueue:workqueue_execute_start
+      {
+               @start[tid] = nsecs;
+               @wqfunc[tid] = args->function;
+      }
+
+      tracepoint:workqueue:workqueue_execute_end
+      /@start[tid]/
+      {
+               $dur = (nsecs - @start[tid]) / 1000;
+               @us[ksym(@wqfunc[tid])] = hist($dur);
+               delete(@start[tid]);
+               delete(@wqfunc[tid]);
+      }
+
+      END
+      {
+               clear(@start);
+               clear(@wqfunc);
+      }
+
+      This measures the time from execute start to end and saves it as a histogram keyed on the
+      function name.
+
+      14.4.13       Tasklets
+      In 2009, a patch to add tasklet tracepoints was proposed by Anton Blanchard, but these are not in
+      the kernel as of today [164]. The tasklet functions, initialized in tasklet_init(), can be traced using
+      kprobes. For example, in net/ipv4/tcp_output.c:
+
+      [...]
+                         tasklet_init(&tsq->tasklet,
+                                        tcp_tasklet_func,
+                                        (unsigned long)tsq);
+      [...]
+
+      This creates a tasklet to call the tcp_tasklet_func() function. Tracing its latency using BCC
+      funclatency(8):
+
+# funclatency -u tcp_tasklet_func
+Tracing 1 functions for "tcp_tasklet_func"... Hit Ctrl-C to end.
+^C
+         usecs                   : count          distribution
+             0 -> 1              : 0            |                                           |
+             2 -> 3              : 0            |                                           |
+             4 -> 7              : 3            |*                                          |
+             8 -> 15             : 10           |****                                       |
+            16 -> 31             : 22           |********                                   |
+            32 -> 63             : 100          |****************************************|
+            64 -> 127            : 61           |************************                   |
+Detaching...
+
+Custom tools can be created using bpftrace and kprobes for tasklet functions as desired.
+
+14.4.14          Other Tools
+Other tools worth mentioning for kernel analysis:
+
+     ■   runqlat(8): Summarizes CPU run queue latency (Chapter 6).
+     ■   syscount(8): Summarizes system calls by type and process (Chapter 6).
+     ■   hardirq(8): Summarizes hard interrupt time (Chapter 6).
+     ■   softirq(8): Summarizes soft interrupt time (Chapter 6).
+     ■   xcalls(8): Times CPU cross calls (Chapter 6).
+     ■   vmscan(8): Measures VM scanner shrink and reclaim times (Chapter 7).
+     ■   vfsstat(8): Counts common VFS operation statistics (Chapter 8).
+     ■   cachestat(8): Shows page cache statistics (Chapter 8).
+     ■   biostacks(8): Shows block I/O initialization stacks with latency (Chapter 9).
+     ■   skblife(8): Measures sk_buff lifespans (Chapter 10).
+     ■   inject(8): Uses bpf_override_return() to modify kernel functions to return errors, for testing
+         error paths. A BCC tool.
+     ■   criticalstat(8)13: Measures atomic critical sections in the kernel, showing durations
+         and stack traces. By default, it shows IRQ-disabled paths that lasted longer than 100
+         microseconds. This is a BCC tool that can help you locate a source of latency in the kernel.
+         It requires CONFIG_DEBUG_PREEMPT and CONFIG_PREEMPTIRQ_EVENTS.
+
+Kernel analysis often involves custom instrumentation beyond the tools, and one-liners are a way
+to begin developing custom programs.
+
+13 Origin: It was developed by Joel Fernandes on 18-Jun-2018.
+
+      14.5        BPF One-Liners
+      These sections show BCC and bpftrace one-liners. Where possible, the same one-liner is
+      implemented using both BCC and bpftrace.
+
+      14.5.1      BCC
+      Count system calls by process:
+
+      syscount -P
+
+      Count system calls by syscall name:
+
+      syscount
+
+      Count kernel function calls starting with "attach":
+
+      funccount 'attach*'
+
+      Time the kernel function vfs_read() and summarize as a histogram:
+
+      funclatency vfs_read
+
+      Frequency count the first integer argument to kernel function "func1":
+
+      argdist -C 'p::func1(int a):int:a'
+
+      Frequency count the return value from kernel function "func1":
+
+      argdist -C 'r::func1():int:$retval'
+
+      Cast the first argument as a sk_buff and frequency count the len member:
+
+      argdist -C 'p::func1(struct sk_buff *skb):unsigned int:skb->len'
+
+      Sample kernel-level stacks at 99 Hertz:
+
+      profile -K -F99
+
+      Count context switch stack traces:
+
+      stackcount -p 123 t:sched:sched_switch
+
+      14.5.2      bpftrace
+      Count system calls by process:
+
+      bpftrace -e 'tracepoint:raw_syscalls:sys_enter { @[pid, comm] = count(); }'
+
+      Count system calls by syscall probe name:
+
+      bpftrace -e 'tracepoint:syscalls:sys_enter_* { @[probe] = count(); }'
+
+      Count system calls by syscall function:
+
+      bpftrace -e 'tracepoint:raw_syscalls:sys_enter {
+          @[ksym(*(kaddr("sys_call_table") + args->id * 8))] = count(); }'
+                                                                  14.6 BPF One-Liners Examples         667
+
+Count kernel function calls starting with "attach":
+bpftrace -e 'kprobe:attach* { @[probe] = count(); }'
+
+Time the kernel function vfs_read() and summarize as a histogram:
+
+bpftrace -e 'k:vfs_read { @ts[tid] = nsecs; } kr:vfs_read /@ts[tid]/ {
+    @ = hist(nsecs - @ts[tid]); delete(@ts[tid]); }'
+
+Frequency count the first integer argument to kernel function "func1":
+
+bpftrace -e 'kprobe:func1 { @[arg0] = count(); }'
+
+Frequency count the return value from kernel function "func1":
+
+bpftrace -e 'kretprobe:func1 { @[retval] = count(); }'
+
+Sample kernel-level stacks at 99 Hertz, excluding idle:
+
+bpftrace -e 'profile:hz:99 /pid/ { @[kstack] = count(); }'
+
+Sample on-CPU kernel function at 99 Hertz:
+
+bpftrace -e 'profile:hz:99 { @[kstack(1)] = count(); }'
+
+Count context switch stack traces:
+
+bpftrace -e 't:sched:sched_switch { @[kstack, ustack, comm] = count(); }'
+
+Count workqueue requests by kernel function:
+
+bpftrace -e 't:workqueue:workqueue_execute_start { @[ksym(args->function)] =
+    count() }'
+
+Count hrtimer starts by kernel function:
+
+bpftrace -e 't:timer:hrtimer_start { @[ksym(args->function)] = count(); }'
+
+14.6        BPF One-Liners Examples
+Including some sample output, as was done for each tool, is also useful for illustrating one-liners.
+
+14.6.1    Counting System Calls by Syscall Function
+# bpftrace -e 'tracepoint:raw_syscalls:sys_enter {
+     @[ksym(*(kaddr("sys_call_table") + args->id * 8))] = count(); }'
+Attaching 1 probe...
+^C
+[...]
+@[sys_writev]: 5214
+@[sys_sendto]: 5515
+@[SyS_read]: 6047
+@[sys_epoll_wait]: 13232
+@[sys_poll]: 15275
+
+      @[SyS_ioctl]: 19010
+      @[sys_futex]: 20383
+      @[SyS_write]: 26907
+      @[sys_gettid]: 27254
+      @[sys_recvmsg]: 51683
+
+      This output shows that the sys_recvmsg() function, likely for the recvmsg(2) syscall, was called
+      the most while tracing: 51,683 times.
+
+      This one-liner uses the single raw_syscalls:sys_enter tracepoint, rather than matching all the
+      syscalls:sys_enter_* tracepoints, making it much faster to initialize and terminate. However, the
+      raw_syscall tracepoint only provides an ID number for the syscall; this one-liner translates it into
+      the syscall function by looking up its entry in the kernel sys_call_table.
+
+      14.6.2      Counting hrtimer Starts by Kernel Function
+      # bpftrace -e 't:timer:hrtimer_start { @[ksym(args->function)] = count(); }'
+      Attaching 1 probe...
+      ^C
+
+      @[timerfd_tmrproc]: 2
+      @[sched_rt_period_timer]: 2
+      @[watchdog_timer_fn]: 8
+      @[intel_uncore_fw_release_timer]: 63
+      @[it_real_fn]: 78
+      @[perf_swevent_hrtimer]: 3521
+      @[hrtimer_wakeup]: 6156
+      @[tick_sched_timer]: 13514
+
+      This shows the timer functions in use; the output caught perf_swevent_hrtimer() as perf(1) was
+      doing a software-based CPU profile. I wrote this one-liner to check which CPU profile mode was
+      in use (cpu-clock versus cycles events), since the software version uses timers.
+
+      14.7          Challenges
+      Some challenges when tracing kernel functions:
+
+           ■   Some kernel functions are inlined by the compiler. This can make them invisible to
+               BPF tracing. One workaround is to trace a parent or child function that isn’t inlined to
+               accomplish the same task (perhaps requiring a filter). Another is to use kprobe instruction
+               offset tracing.
+                                                                                    14.8 Summary       669
+
+   ■   Some kernel functions are unsafe to trace as they run in special modes, such as interrupts
+       disabled, or are part of the tracing framework itself. These are blacklisted by the kernel to
+       make them unavailable to trace.
+   ■   Any kprobe-based tool will need maintenance to match changes to the kernel. Several BCC
+       tools have already broken and required fixes to span newer kernels. The long-term solution
+       is to use tracepoints instead where possible.
+
+14.8        Summary
+This chapter focused on kernel analysis, as supplemental material beyond the prior resource-
+oriented chapters. Traditional tools including Ftrace were summarized, then off-CPU analysis was
+explored in more detail with BPF, as well as kernel memory allocation, wakeups, and work queue
+requests.
+This page intentionally left blank

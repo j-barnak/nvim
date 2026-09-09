@@ -1,0 +1,823 @@
+Chapter 4. Small-Object Allocation
+This chapter discusses the design and that of implementation of a fast allocator for small objects. If you use
+this allocator, the extra cost of dynamically allocated objects compared with stack-allocated objects often
+becomes negligible.
+
+In various places, Loki uses very small objects—as small as a few bytes. Chapter 5 (Generalized Functors)
+and Chapter 7 (Smart Pointers) use small objects heavily. For various reasons, polymorphic behavior being
+the most important, these small objects cannot be stored on the stack and must live on the free store.
+
+C++ provides the operators new and delete as the primary means of using the free store. The problem is,
+these operators are general purpose and perform badly for allocating small objects. To give an idea of just
+how bad "badly" is when it comes to small objects, some standard free store allocators may perform up to
+an order of magnitude slower, and also eat up twice as much memory, as the allocator that is the subject of
+this chapter.
+
+"Early optimization is the root of all evils," Knuth said, but on the other hand, "belated pessimization is the
+leaf of no good," according to Len Lattanzi. A pessimization of one order of magnitude in the runtime of a
+core object like a functor, a smart pointer, or a string can easily make the difference between success and
+failure for a whole project. The benefit of cheap, fast, dynamic allocation for small objects can be
+enormous because it allows you to apply advanced techniques without worrying about significant loss in
+performance. This provides a lot of incentive for looking into optimizing free store allocation for small
+objects.
+
+Many books on C++, such as Sutter (2000) and Meyers (1998a), mention the usefulness of writing your
+own specialized memory allocator. Meyers, after describing an implementation, leaves some details "in the
+form of the dreaded exercise for the reader," and Sutter sends you to "your favorite advanced C++ or
+general-purpose programming textbook." The book you're now reading doesn't pretend to become your
+favorite; however, this chapter does go down to the metal and implement a standard C++ custom allocator
+in every detail.
+
+After reading this chapter, you will understand the subtle, interesting issues associated with tuning memory
+allocators. You will also know how to use Loki's heavy-duty small-object allocator, the workhorse of smart
+pointers and generalized functors.
+
+4.1 The Default Free Store Allocator
+For occult reasons, the default allocator is notoriously slow. A possible reason is that it is usually
+implemented as a thin wrapper around the C heap allocator (malloc/realloc/ free). The C heap
+allocator is not focused on optimizing small chunk allocations. C programs usually make ordered,
+conservative use of dynamic memory. They don't naturally foster idioms and techniques that lead to
+numerous allocations and deallocations of small chunks of memory. Instead, C programs usually allocate
+medium-to large-sized objects (hundreds to thousands of bytes). Consequently, this is the behavior for
+which malloc/free is optimized.
+
+In addition to being slow, the genericity of the default C++ allocator makes it very space inefficient for
+small objects. The default allocator manages a pool of memory, and such management often requires some
+extra memory. Usually, the bookkeeping memory amounts to a few extra bytes (4 to 32) for each block
+allocated with new. If you allocate 1024-byte blocks, the per-block space overhead is insignificant (0.4%
+to 3%). If you allocate 8-byte objects, the per-object overhead becomes 50% to 400%, a figure big enough
+to make you worry if you allocate many such small objects.
+
+In C++, dynamic allocation is very important. Runtime polymorphism is most often associated with
+dynamic allocation. Strategies such as "the pimpl idiom" (Sutter 2000) prescribe replacing stack allocation
+with free store allocation.
+
+Therefore, the poor performance of the default allocator makes it a bump on the road toward efficient C++
+programs. Seasoned C++ programmers instinctively avoid constructs that foster using free store allocation
+because they know its costs from experience. Not only is the default allocator a concrete problem, but it
+also might become a psychological barrier.
+
+4.2 The Workings of a Memory Allocator
+Studying memory usage trends of programs is a very interesting activity, as proven by Knuth's seminal
+work (Knuth 1998). Knuth established many fundamental memory allocation strategies, and even more
+were invented later.
+
+How does a memory allocator work? A memory allocator manages a pool of raw bytes and is able to
+allocate chunks of arbitrary size from that pool. The bookkeeping structure can be a simple control block
+having a structure like the following:
+
+struct MemControlBlock
+{
+   std::size_t size_;
+   bool available_;
+};
+
+The memory managed by a MemControlBlock object lies right after it and has size_ bytes. After the
+chunk of memory, there is another MemControlBlock, and so on.
+
+When the program starts, there is only one MemControlBlock at the beginning of the pool, managing
+the entire memory as a big chunk. This is the root control block, which will never move from its original
+location. Figure 4.1 shows the memory layout for a 1MB memory pool at startup.
+
+Figure 4.1. The memory map at program startup
+
+For each allocation request, a linear search of memory blocks finds a suitable block for the requested size.
+Its size must be equal to or larger than the size requested. It is amazing just how many strategies for fitting
+requests with available blocks exist, and how oddly they perform. You can go for first fit, best fit, worst fit,
+or even a random fit. Interestingly, worst fit is better than best fit—how's that for an oxymoron?
+
+Each deallocation incurs, again, a linear search for figuring out the memory block that precedes the block
+being deallocated, and an adjustment of its size.
+
+As you can see, this strategy is not terribly time efficient. However, the overhead in size is quite small—
+only one size_t plus a bool per memory block. In most concrete cases, you can even give up a bit in
+size_ and store available_ there, thus squeezing MemControl Block to the ultimate:
+
+// Platform- and compiler-dependent code
+struct MemControlBlock
+{
+   std::size_t size_ : 31;
+   bool available_ : 1;
+};
+
+If you store pointers to the previous and next MemControlBlock in each MemControlBlock, you can
+achieve constant-time deallocation. This is because a block that's freed can access the adjacent blocks
+directly and adjust them accordingly. The necessary memory control block structure is
+
+struct MemControlBlock
+{
+   bool available_ ;
+   MemControlBlock* prev_;
+   MemControlBlock* next_;
+};
+
+Figure 4.2 shows the layout of a memory pool fostering such a doubly linked list of blocks. As you can see,
+the size_ member variable is not needed anymore because you can compute the size as this->next_
+- this. Still, you have the overhead of two pointers and a bool for each allocated memory block.
+(Again, you can do some system-dependent tricks to pack that bool together with one of the pointers.)
+
+Figure 4.2. An allocator with constant-time deallocations
+
+Still, allocations take linear time. There are many neat techniques for mitigating that, each fostering a
+different set of trade-offs. Interestingly, there's no perfect memory allocation strategy; each of them has a
+memory use trend that makes it perform worse than others.
+
+We don't need to optimize general allocators. Let's focus on specialized allocators—allocators that deal
+best with small objects.
+
+4.3 A Small-Object Allocator
+The small-object allocator described in this chapter sports a four-layered structure, shown in Figure 4.3.
+The upper layers use functionality provided by the lower layers. At the bottom is a Chunk type. Each
+object of type Chunk contains and manages a chunk of memory consisting of an integral number of fixed-
+size blocks. Chunk contains logic that allows you to allocate and deallocate memory blocks. When there
+are no more blocks available in the chunk, the allocation function fails by returning zero.
+
+Figure 4.3. The layered structure of the small-object allocator
+
+The next layer features the FixedAllocator class. A FixedAllocator object uses Chunk as a
+building block. FixedAllocator's primary purpose is to satisfy memory requests that go beyond a
+Chunk's capacity. FixedAllocator does this by aggregating an array of Chunks. Whenever a request
+for memory comes and all existing Chunks are occupied, FixedAllocator creates a new Chunk and
+appends it to the array. Then it satisfies the request by forwarding the request to that new Chunk.
+
+SmallObjAllocator provides general allocation and deallocation functions. A SmallObjAllocator
+holds several FixedAllocator objects, each specialized for allocating objects of one size. Depending
+on the number of bytes requested, SmallObjAllocator dispatches memory allocation requests to one
+of its FixedAllocators or to the default ::operator new if the size requested is too large.
+
+Finally, SmallObject wraps FixedAllocator to offer encapsulated allocation services for C++
+classes. SmallObject overloads operator new and operator delete and passes them to a
+SmallObjAllocator object. This way, you make your objects benefit from specialized allocation by
+simply deriving them from SmallObject.
+
+You can also use SmallObjAllocator and FixedAllocator directly. (Chunk is too primitive and
+unsafe, so it is defined in the private section of FixedAllocator.) Most of the time, however, client
+code will simply derive from the SmallObject base class to take advantage of efficient allocation. That's
+quite an easy-to-use interface.
+
+4.4 Chunks
+Each object of type Chunk contains and manages a chunk of memory containing a fixed amount of blocks.
+At construction time, you configure the block size and the number of blocks.
+
+A Chunk contains logic that allows you to allocate and deallocate memory blocks from that chunk of
+memory. When there are no more blocks available in the chunk, the allocation function returns zero.
+
+The definition of Chunk is as follows:
+
+// Nothing is private — Chunk is a Plain Old Data (POD) structure
+
+// structure defined inside FixedAllocator
+// and manipulated only by it
+struct Chunk
+{
+   void Init(std::size_t blockSize, unsigned char blocks);
+   void* Allocate(std::size_t blockSize);
+   void Deallocate(void* p, std::size_t blockSize);
+   unsigned char* pData_;
+   unsigned char
+      firstAvailableBlock_,
+      blocksAvailable_;
+};
+
+In addition to a pointer to the managed memory itself, a chunk stores the following integral values:
+
+    •   firstAvailableBlock_, which holds the index of the first block available in this chunk
+    •   blocksAvailable_, the number of blocks available in this chunk
+
+The interface of Chunk is very simple. Init initializes a Chunk object, and Release releases the
+allocated memory. The Allocate function allocates a block, and Deallocate deallocates a block. You
+have to pass a size to Allocate and Deallocate because Chunk does not hold it. This is because the
+block size is known at a superior level. Chunk would waste space and time if it redundantly kept a
+blockSize_ member. Don't forget we are at the very bottom here—everything matters. Again for
+efficiency reasons, Chunk does not define constructors, destructors, or assignment operator. Defining
+proper copy semantics at this level hurts efficiency at upper levels, where we store Chunk objects in a
+vector.
+
+The Chunk structure reveals important trade-offs. Because blocksAvailable_ and
+firstAvailableBlock_ are of type unsigned char, it follows that you cannot have a chunk that
+contains more than 255 blocks (on a machine with 8-bit characters). As you will soon see, this decision is
+not bad at all and saves us a lot of headaches.
+
+Now for the interesting part. A block can be either used or unused. We can store whatever we want in an
+unused block, so we take advantage of this. The first byte of an unused block holds the index of the next
+unused block. Because we hold the first available index in firstAvailableBlock_, we have a full-
+fledged singly linked list of unused blocks without using any extra memory.
+
+At initialization, a chunk looks like Figure 4.4. The code that initializes a Chunk object looks like this:
+
+void Chunk::Init(std::size_t blockSize, unsigned char blocks)
+{
+   pData_ = new unsigned char[blockSize * blocks];
+   firstAvailableBlock_ = 0;
+   blocksAvailable_ = blocks;
+   unsigned char i = 0;
+   unsigned char* p = pData_;
+   for (; i != blocks; p += blockSize)
+   {
+      *p = ++i;
+   }
+}
+
+Figure 4.4. A chunk of 255 blocks of 4 bytes each
+
+This singly linked list melted inside the data structure is an essential goodie. It offers a fast, efficient way
+of finding available blocks inside a chunk—without any extra cost in size. Allocating and deallocating a
+block inside a Chunk takes constant time, which is exclusively thanks to the embedded singly linked list.
+
+Now you see why the number of blocks is limited to a value that fits in an unsigned char. Suppose we
+used a larger type instead, such as unsigned short (which is 2 bytes on many machines). We would
+now have two problems—a little one and a big one.
+
+    •    We cannot allocate blocks smaller than sizeof(unsigned short), which is awkward
+         because we're building a small-object allocator. This is the little problem.
+    •    We run into alignment issues. Imagine you build an allocator for 5-byte blocks. In this case,
+         casting a pointer that points to such a 5-byte block to unsigned int engenders undefined
+         behavior. This is the big problem.
+
+The solution is simple: We use unsigned char as the type of the "stealth index." A character type has
+size 1 by definition and does not have any alignment problem because even the pointer to the raw memory
+points to unsigned char.
+
+This setting imposes a limitation on the maximum number of blocks in a chunk. We cannot have more than
+UCHAR_MAX blocks in a chunk (255 on most systems). This is acceptable even if the size of the block is
+really small, such as 1 to 4 bytes. For larger blocks, the limitation doesn't make a difference because we
+don't want to allocate chunks that are too big anyway.
+
+The allocation function fetches the block indexed by firstAvailableBlock_ and adjusts
+firstAvailableBlock_ to refer to the next available block—typical list stuff.
+
+void* Chunk::Allocate(std::size_t blockSize)
+{
+   if (!blocksAvailable_) return 0;
+   unsigned char* pResult =
+      pData_ + (firstAvailableBlock_ * blockSize);
+   // Update firstAvailableBlock_ to point to the next block
+   firstAvailableBlock_ = *pResult;
+   ——blocksAvailable_;
+   return pResult;
+}
+
+The cost of Chunk::Allocate is one comparison, one indexed access, two dereference operations, an
+assignment, and a decrement—quite a small cost. Most important, there are no searches. We're in pretty
+good shape so far. Figure 4.5 shows the layout of a Chunk object after the first allocation.
+
+Figure 4.5. A Chunk object after the one allocation. The allocated memory is shown in
+                                           gray
+
+The deallocation function does exactly the opposite: It passes the block back to the free blocks list and
+increments blocksAvailable_. Don't forget that because Chunk is agnostic regarding the block size,
+you must pass the size as a parameter to Deallocate.
+
+void Chunk::Deallocate(void* p, std::size_t blockSize)
+{
+   assert(p >= pData_);
+   unsigned char* toRelease = static_cast<unsigned char*>(p);
+   // Alignment check
+   assert((toRelease - pData_) % blockSize == 0);
+   *toRelease = firstAvailableBlock_;
+   firstAvailableBlock_ = static_cast<unsigned char>(
+       (toRelease - pData_) / blockSize);
+   // Truncation check
+   assert(firstAvailableBlock_ ==
+      (toRelease - pData_) / blockSize);
+   ++blocksAvailable_;
+}
+
+The deallocation function is lean, but it does a lot of assertions (which still don't catch all error conditions).
+Chunk respects the grand C and C++ tradition in memory allocation: Prepare for the worst if you pass the
+wrong pointer to Chunk::Deallocate.
+
+4.5 The Fixed-Size Allocator
+The next layer of our small-object allocator consists of FixedAllocator. FixedAllocator knows
+how to allocate and deallocate blocks of a fixed size but is not limited to a chunk's size. Its capacity is
+limited only by available memory.
+
+To achieve this, FixedAllocator aggregates a vector of Chunk objects. Whenever an allocation
+request occurs, FixedAllocator looks for a Chunk that can accommodate the request. If all Chunks
+are filled up, FixedAllocator appends a new Chunk. Here is the relevant part of the definition of
+FixedAllocator:
+
+class FixedAllocator
+
+{
+   ...
+private:
+   std::size_t blockSize_;
+   unsigned char numBlocks_;
+   typedef std::vector<Chunk> Chunks;
+   Chunks chunks_;
+   Chunk* allocChunk_;
+   Chunk* deallocChunk_;
+};
+
+To achieve a speedy lookup, FixedAllocator does not iterate through chunks_ looking for a space for
+each allocation. Instead, it holds a pointer to the last chunk that was used for an allocation
+(allocChunk_). Whenever an allocation request comes, FixedAllocator::Allocate first checks
+allocChunk_ for available space. If allocChunk_ has a slot available, the allocation request is
+satisfied—presto—using allocChunk_. If not, a linear search occurs (and, possibly, a new Chunk is
+appended to the chunks_ vector). In any case, allocChunk_ is updated to point to that found or added
+chunk. This way we increase the likelihood of a fast allocation next time. Here's the code that implements
+this algorithm:
+
+void* FixedAllocator::Allocate()
+{
+   if (allocChunk_ == 0 ||
+      allocChunk_->blocksAvailable_ == 0)
+   {
+      // No available memory in this chunk
+      // Try to find one
+      Chunks::iterator i = chunks_.begin();
+      for (;; ++i)
+      {
+         if (i == chunks_.end())
+         {
+            // All filled up-add a new chunk
+            chunks_.reserve(chunks _.size()+1);
+            Chunk newChunk;
+            newChunk.Init(blockSize_, numBlocks_);
+            chunks_.push_back(newChunk);
+            allocChunk_ = &chunks_.back();
+            deallocChunk_ = &chunks_.back();
+            break;
+         }
+         if (i->blocksAvailable_ > 0)
+         {
+            // Found a chunk
+            allocChunk_ = &*i;
+            break;
+         }
+      }
+   }
+   assert(allocChunk_ != 0);
+   assert(allocChunk_->blocksAvailable_ > 0);
+   return allocChunk_->Allocate(blockSize_);
+}
+
+Using this strategy, FixedAllocator satisfies most of the allocations in constant time, with occasional
+slowdowns caused by finding and adding a new block. Some memory allocation trends make this scheme
+work inefficiently; however, they tend not to appear often in practice. Don't forget that every allocator has
+an Achilles' heel.
+
+Memory deallocation is more problematic, because at deallocation time there's a piece of information
+missing—all we have is a pointer to deallocate, and we don't know to what Chunk that pointer belongs.
+We can walk through chunks_ and check whether the given pointer falls in between pData_ and
+pData_ + blockSize_ * numBlocks_. If that's the case, then we pass the pointer to that Chunk's
+Deallocate member function. The problem is, this takes time. Although allocations are fast,
+deallocations take linear time. We need an additional device that speeds up deallocations.
+
+We could use a supplemental cache memory for freed blocks. When user code frees a block using
+FixedAllocator::Deallocate(p), the FixedAllocator does not pass p back to the
+corresponding Chunk; instead, it adds p to an internal memory—a cache that holds available blocks.
+When a new allocation request comes, FixedAllocator first looks up the cache. If the cache is not
+empty, FixedAllocator fetches the last available pointer from cache and returns it right away. This is a
+very fast operation. Only when the cache is depleted does FixedAllocator need to go the standard
+route by forwarding the allocation request to a Chunk. This is a promising strategy, but it works badly
+with certain allocation and deallocation trends that are common to small-object use.
+
+There are four main trends in allocating small objects:
+
+    •     Bulk allocation. Many small objects are allocated at the same time. For example, this is the case
+          when you initialize a collection of pointers to small objects.
+    •     Deallocation in same order. Many small objects are deallocated in the same order as they were
+          allocated. This happens when most STL containers are destroyed.[1]
+
+              [1]
+                 Standard C++ does not define the order of destruction of objects within a standard container.
+              Therefore, each implementer has to make a choice. Usually, containers are destroyed through a
+              simple forward iteration. However, some implementers go for the more "natural" order by destroying
+              objects in reverse order. The rationale is that in C++ objects are destroyed in reverse order of their
+              creation.
+
+    •     Deallocation in reverse order. Many small objects are deallocated in the reverse order of their
+          allocation. This trend occurs naturally in C++ programs as you call functions that manipulate
+          small objects. Function arguments and temporary stack variables follow this trend.
+    •     Butterfly allocation and deallocation. Objects are created and destroyed without following a
+          certain order. This happens as your program is running and has occasional need for small objects.
+
+A caching strategy serves the butterfly trend very well because it can sustain quick allocations and
+deallocations if they arrive randomly. However, for bulk allocation and deallocation, caching is not of help.
+Worse, caching slows down deallocations because clearing the cache memory takes its own time.[2]
+
+    [2]
+       I could not come up with a reasonable caching scheme that works equally well for same-order
+    deallocation and reverse-order deallocation. Caching hurts either one or the other. Because both trends are
+    likely to occur in real programs, caching is not a good choice.
+
+A better strategy is to rely on the same concept as with allocation. The member variable
+FixedAllocator::deallocChunk_ points to the last Chunk object that was used for a deallocation.
+Whenever a deallocation occurs, deallocChunk_ is checked first. Then, if it's the wrong chunk,
+Deallocate performs a linear search, satisfies the request, and updates deallocChunk_.
+
+Two important tweaks increase the speed of Deallocate for the allocation trends enumerated earlier.
+First, the Deallocate function searches the appropriate Chunk starting from deallocChunk_'s
+vicinity. That is, chunks_ is searched starting from deallocChunk_ and going up and down with two
+iterators. This greatly improves the speed of bulk deallocations in any order (normal or reversed). During a
+bulk allocation, Allocate adds chunks in order. During deallocation, either deallocChunk_ hits right
+away or the correct chunk is fetched in the next step.
+
+The second tweak is the avoidance of borderline conditions. Say both allocChunk_ and
+deallocChunk_ point to the last Chunk in the vector, and there is no space left in the current set of
+chunks. Now imagine the following code is run:
+
+for (...)
+{
+   // Some smart pointers use the small-object
+   // allocator internally (see Chapter 7)
+   SmartPtr p;
+   ... use p ....
+}
+
+Each pass through the loop creates and destroys a SmartPtr object. At creation time, because there's no
+more memory, FixedAllocator::Allocate creates a new Chunk and appends it to the chunks_
+vector. At destruction time, FixedAllocator::Deallocate detects an empty block and frees it. This
+costly cycle gets repeated for each iteration of the for loop.
+
+This inefficiency is unacceptable. Therefore, during deallocation, a chunk is freed only when there are two
+empty chunks. If there's only one empty chunk, it is efficiently swapped to the end of the chunks_ vector.
+Thus, we avoid costly vector<Chunk>::erase operations by always deleting the last element.
+
+Of course, some situations defeat this simple heuristic. If you allocate a vector of SmartPtrs of
+appropriate size in a loop, you are back to the same problem. However, such situations tend to appear more
+rarely. Besides, as mentioned in the introduction of this chapter, any allocator may perform worse than
+others under specific circumstances.
+                                             Y
+                                           FL
+The deallocation strategy chosen also fits the butterfly allocation trend acceptably. Even if not allocating
+data in an ordered manner, programs tend to foster a certain locality; that is, they access a small amount of
+                                         AM
+
+data at a time. The allocChunk_ and deallocChunk_ pointers deal nicely with such memory use
+because they act as a cache for the latest allocations and deallocations.
+
+In conclusion, we now have a FixedAllocator class that can satisfy fixed-memory allocation requests
+                                TE
+
+in an acceptably fast and memory-efficient manner. FixedAllocator is optimized for typical trends in
+small-object allocation.
+
+4.6 The SmallObjAllocator Class
+The third layer in our allocator architecture consists of SmallObjAllocator, a class capable of
+allocating objects of any size. SmallObjAllocator does so by aggregating several FixedAllocator
+objects. When SmallObjAllocator receives an allocation request, it either forwards it to the best
+matching FixedAllocator object or passes it to the default ::operator new.
+
+The following is a synopsis of SmallObjAllocator. Explanations follow the code.
+
+class SmallObjAllocator
+{
+public:
+   SmallObjAllocator(
+       std::size_t chunkSize,
+       std::size_t maxObjectSize);
+   void* Allocate(std::size_t numBytes);
+   void Deallocate(void* p, std::size_t size);
+   ...
+
+                                                   77 ®
+                                                Team-Fly
+private:
+   std::vector<FixedAllocator> pool_;
+   ...
+};
+
+The constructor takes two parameters that configure SmallObjAllocator. The chunkSize parameter
+is the default chunk size (the length in bytes of each Chunk object), and maxObjectSize is the
+maximum size of objects that must be considered to be "small." SmallObjAllocator forwards requests
+for blocks larger than maxObjectSize directly to ::operator new.
+
+Oddly enough, Deallocate takes the size to deallocate as an argument. Deallocations are much faster
+this way. Otherwise, SmallObjAllocator::Deallocate would have to search through all
+FixedAllocators in pool_ to find the one to which the pointer belongs. This is too expensive, so
+SmallObjAllocator requires you to pass the size of the block to deallocate. As you'll see in the next
+section, this task is graciously handled by the compiler itself.
+
+What's the mapping between the block size of FixedAllocator and pool_? In other words, given a
+size, what's the FixedAllocator that handles allocations and deallocations for blocks of that size?
+
+A simple and efficient idea is to have pool_[i] handle objects of size i. You initialize pool_ to have a
+size of maxObjectSize, and then initialize each FixedAllocator accordingly. When an allocation
+request of size numBytes comes, SmallObjAllocator forwards it either to pool_[numBytes]—a
+constant-time operation—or to ::operator new.
+
+However, this solution is not as clever as it seems. "Efficient" is not always "effective." The problem is,
+you might need allocators only for certain sizes, depending on your application. For instance, maybe you
+create only objects of size 4 and 64—nothing else. In this case, you allocate 64 or more entries for pool_
+although you use only 2.
+
+Alignment and padding issues further contribute to wasting space in pool_. For instance, many compilers
+pad all user-defined types up to a multiple of a number (2, 4, or more). If the compiler pads all structures to
+a multiple of 4, for instance, you can count on using only 25% of pool_—the rest is wasted.
+
+A better approach is to sacrifice a bit of lookup speed for the sake of memory conservation.[3] We store
+FixedAllocators only for sizes that are requested at least once. This way pool_ can accommodate
+various object sizes without growing too much. To improve lookup speed, pool_ is kept sorted by block
+size.
+
+    [3]
+      Actually, on modern systems, you can count on an increase in speed when you use less memory. This is
+    due to the big difference in speed between the main memory (large and slow) and the cache memory (small
+    and fast).
+
+To improve lookup speed, we can rely on the same strategy as in FixedAllocator.
+SmallObjAllocator keeps a pointer to the last FixedAllocator used for allocation and a pointer to
+the last FixedDeallocator used for deallocation. The following is the complete set of member
+variables in SmallObjAllocator.
+
+class SmallObjAllocator
+{
+   ...
+private:
+   std::vector<FixedAllocator> pool_;
+   FixedAllocator* pLastAlloc_;
+   FixedAllocator* pLastDealloc_;
+};
+
+When an allocation request arrives, pLastAlloc_ is checked first. If it is not of the correct size,
+SmallObjAllocator::Allocate performs a binary search in pool_. Deal location requests are
+handled in a similar way. The only difference is that SmallObjAllocator::Allocate can end up
+inserting a new FixedAllocator object in pool_.
+
+As discussed with FixedAllocator, this simple caching scheme favors bulk allocations and
+deallocations, which take place in constant time.
+
+4.7 A Hat Trick
+The last layer of our architecture consists of SmallObject, the base class that conveniently wraps the
+functionality provided by SmallObjAllocator.
+
+SmallObject overloads operator new and operator delete. This way, whenever you create an
+object derived from SmallObject, the overloads enter into action and route the request to the fixed
+allocator object.
+
+The definition of SmallObject is quite simple, if a bit intriguing.
+
+class SmallObject
+{
+public:
+   static void* operator new(std::size_t size);
+   static void operator delete(void* p, std::size_t size);
+   virtual ~SmallObject() {}
+};
+
+SmallObject looks perfectly kosher, except for a little detail. Many C++ books, such as Sutter (2000),
+explain that if you want to overload the default operator delete in a class, operator delete must
+take a pointer to void as its only argument.
+
+C++ offers a kind of a loophole that is of great interest to us. (Recall that we designed
+SmallObjAllocator to take the size of the block to be freed as an argument.) In standard C++ you can
+overload the default operator delete in two ways—either as
+
+void operator delete(void* p);
+
+or as
+
+void operator delete(void* p, std::size_t size);
+
+This issue is thoroughly explained in Sutter (2000), page 144.
+
+If you use the first form, you choose to ignore the size of the memory block to deallocate. But we badly
+need that block size so that we can pass it to SmallObjAlloc. Therefore, SmallObject uses the
+second form of overloading operator delete.
+
+How does the compiler provide the object size automagically? It seems as if the compiler is adding all by
+itself a per-object memory overhead that we have tried to avoid all through this chapter.
+
+No, there is no overhead at all. Consider the following code:
+
+class Base
+{
+    int a_[100];
+public:
+    virtual ~Base() {}
+};
+class Derived : public Base
+{
+    int b_[200];
+public:
+    virtual ~Derived() {}
+};
+...
+Base* p = new Derived;
+delete p;
+
+Base and Derived have different sizes. To avoid the overhead of storing the size of the actual object to
+which p points, the compiler does a hat trick: It generates code that figures out the size on the fly. Four
+possible techniques of achieving that are listed here. (Wearing a compiler writer hat from time to time is
+fun—you suddenly can do little miracles inaccessible to programmers.)
+
+    1. Pass a Boolean flag to the destructor meaning "Call/don't call operator delete after
+       destroying the object." Base's destructor is virtual, so, in our example, delete p will reach the
+       right object, Derived. At that time, the size of the object is known statically—it's
+       sizeof(Derived)—and the compiler simply passes this constant to operator delete.
+    2. Have the destructor return the size of the object. You can arrange (you're the compiler writer,
+       remember?) that each destructor, after destroying the object, returns sizeof(Class). Again,
+       this scheme works because the destructor of the base class is virtual. After invoking the destructor,
+       the runtime calls operator delete, passing it the "result" of the destructor.
+    3. Implement a hidden virtual member function that gets the size of an object, say _Size(). In this
+       case, the runtime calls that function, stores the result, destroys the object, and invokes operator
+       delete. This implementation might look inefficient, but its advantage is that the compiler can
+       use _Size() for other purposes as well.
+    4. Store the size directly somewhere in the virtual function table (vtable) of each class. This solution
+       is both flexible and efficient, but less easy to implement.
+
+(Compiler writer hat off.) As you see, the compiler makes quite an effort in passing the appropriate size to
+your operator delete. Why, then, ignore it and perform a costly search each time you deallocate an
+object?
+
+It all dovetails so nicely. SmallObjAllocator needs the size of the block to de allocate. The compiler
+provides it, and SmallObject forwards it to FixedAllocator.
+
+Most of the solutions listed assume you defined a virtual destructor for Base, which explains again why it
+is so important to make all of your polymorphic classes' destructors virtual. If you fail to do this,
+deleteing a pointer to a base class that actually points to an object of a derived class engenders undefined
+behavior. The allocator discussed herein will assert in debug mode and crash your program in NDEBUG
+mode. Anybody would agree that this behavior fits comfortably into the realm of "undefined."
+
+To protect you from having to remember all this (and from wasting nights debugging if you don't),
+SmallObject defines a virtual destructor. Any class that you derive from SmallObject will inherit its
+virtual destructor. This brings us to the implementation of SmallObject.
+
+We need a unique SmallObjAllocator object for the whole application. That SmallObjAllocator
+must be properly constructed and properly destroyed, which is a thorny issue on its own. Fortunately, Loki
+solves this problem thoroughly with its SingletonHolder template, described in Chapter 6. (Referring
+
+you to subsequent chapters is a pity, but it would be even more pitiful to waste this reuse opportunity.) For
+now, just think of SingletonHolder as a device that offers you advanced management of a unique
+instance of a class. If that class is X, you instantiate Singleton<X>. Then, to access the unique instance
+of that class, you call Singleton<X>::Instance(). The Singleton design pattern is described in
+Gamma et al. (1995).
+
+Using SingletonHolder renders SmallObject's implementation extremely simple:
+
+typedef Singleton<SmallObjAllocator> MyAlloc;
+void* SmallObject::operator new(std::size_t size)
+{
+   return MyAlloc::Instance().Allocate(size);
+}
+void SmallObject::operator delete(void* p, std::size_t size)
+{
+   MyAlloc::Instance().Deallocate(p, size);
+}
+
+4.8 Simple, Complicated, Yet Simple in the End
+The implementation of SmallObject turned out to be quite simple. However, it cannot remain that
+simple because of multithreading issues. The unique SmallObjAllocator is shared by all instances of
+SmallObject. If these instances belong to different threads, we end up sharing the
+SmallObjAllocator between multiple threads. As discussed in the appendix, in this case we must take
+special measures. It seems as if we must go back to all layers' implementations, figure out the critical
+operations, and add locking appropriately.
+
+However, although it's true that multithreading complicates things a bit, it's not that complicated because
+Loki already defines high-level object synchronization mechanisms. Following the principle that the best
+step toward reuse is to use, let's include Loki's Threads.h and make the following changes to
+SmallObject (changes are shown in bold):
+
+template <template <class T> class ThreadingModel>
+class SmallObject : public ThreadingModel<SmallObject>
+{
+  ... as before ...
+};
+
+The definitions of operator new and operator delete also undergo a bit of surgery:
+
+template <template <class T> class ThreadingModel>
+void* SmallObject<ThreadingModel>::operator new(std::size_t size)
+{
+   Lock lock;
+   return MyAlloc::Instance().Allocate(size);
+}
+template <template <class T> class ThreadingModel>
+void SmallObject<ThreadingModel>::operator delete(void* p, std::size_t size)
+{
+   Lock lock;
+   MyAlloc::Instance().Deallocate(p, size);
+}
+
+That's it! We don't have to modify any of the previous layers—their functionality will be properly guarded
+by locking at the highest level.
+
+Using the Singleton management and the multithreading features of Loki right inside Loki is witness to the
+power of reuse. Each of these two domains—global variables' lifetimes and multithreading—has its own
+complications. Trying to handle them all in SmallObject starting from first principles would have been
+overwhelmingly difficult—just try to get peace of mind for implementing FixedAllocator's intricate
+caching while facing the spectrum of multiple threads spuriously initializing the same object. . .
+
+4.9 Administrivia
+This section discusses how to use the SmallObj.h file in your applications.
+
+To use SmallObject, you must provide appropriate parameters to SmallObjAllocator's constructor:
+the chunk size and the maximum size of a small object. How is a small object defined? What is the size
+under which an object can be considered small?
+
+To find an answer to this question, let's go back to the purpose of building a small-object allocator. We
+wanted to mitigate the inefficiencies in size and time introduced by the default allocator.
+
+The size overhead imposed by the default allocator varies largely. After all, the default allocator can use
+similar strategies to the ones discussed in this chapter. For most generic allocators, however, you can
+expect a per-object overhead that varies between 4 and 32 bytes per object in typical desktop machines.
+For an allocator with 16 bytes of overhead per object, an object of 64 bytes wastes 25% of memory; thus, a
+64-byte object should be considered small.
+
+On the other hand, if SmallObjAllocator handles objects that are too large, you end up allocating
+much more memory than needed (don't forget that FixedAllocator tends to keep one chunk allocated
+even after you have freed all small objects).
+
+Loki gives you a choice and tries to provide appropriate defaults. The SmallObj.h file uses three
+preprocessor symbols, described in Table 4.1. You should compile all the source files in a given project
+with the same preprocessor symbols defined (or don't define them at all and rely on the defaults). If you
+don't do this, nothing lethal happens; you just end up creating more FixedAllocators tuned to different
+sizes.
+
+The defaults are targeted toward a desktop machine with a reasonable amount of physical memory. If you
+#define either MAX_SMALL_OBJECT_SIZE or DEFAULT_CHUNK_SIZE to be zero, then SmallObj.h
+uses conditional compilation to generate code that simply uses the default ::operator new
+and ::operator delete, without incurring any overhead at all. The interface of the objects defined
+remains the same, but their functions are inline stubs that forward to the default free store allocator.
+
+The class template SmallObject used to have one parameter. To support different chunk sizes and
+object sizes, SmallObject gets two more template parameters. They default to DEFAULT_CHUNK_SIZE
+and MAX_SMALL_OBJECT_SIZE, respectively.
+
+template
+<
+   template <class T>
+      class ThreadingModel = DEFAULT_THREADING,
+   std::size_t chunkSize = DEFAULT_CHUNK_SIZE,
+   std::size_t maxSmallObjectSize = MAX_SMALL_OBJECT_SIZE
+
+>
+class SmallObject;
+
+If you just say SmallObject<>, you get a class that can work with your default threading model,
+garnished with the default choices concerning memory management.
+
+Table 4.1. Preprocessor Symbols Used by SmallObj.h
+Symbol                 Meaning                                                               Default Value
+DEFAULT_CHUNK_SIZE     The default size (in bytes) of a memory chunk.                        4096
+MAX_SMALL_OBJECT_SIZE The maximum value that is handled by                                   64
+                               SmallObjAllocator.
+DEFAULT_THREADING              The default threading model used by the application. Inherited from
+                               A multithreaded application should define this       Threads.h
+                               symbol to ClassLevelLockable.
+
+4.10 Summary
+Some C++ idioms make heavy use of small objects allocated on the free store. This is because in C++,
+runtime polymorphism goes hand in hand with dynamic allocation and pointer/reference semantics.
+However, the default free store allocator (accessible through the global ::operator new
+and ::operator delete) is often optimized for allocating large objects, not small ones. This renders
+the default free store allocator unsuitable for allocating small objects because it is often slow and brings
+nonnegligible per-object memory overhead.
+
+The solution is to rely on small-object allocators—specialized allocators that are tuned for dealing with
+small memory blocks (tens to hundreds of bytes). Small-object allocators use larger chunks of memory and
+organize them in ingenious ways to reduce space and time penalties. The C++ runtime support helps by
+providing the size of the block to be released. This information can be grabbed by simply using a less-
+known overloaded form of operator delete.
+
+Is Loki's small-object allocator the fastest possible? Definitely not. Loki's allocator operates only within
+the confines of standard C++. As you saw throughout this chapter, issues such as alignment must be treated
+very conservatively, and being conservative spells being less than optimal. However, Loki is a reasonably
+fast, simple, and robust allocator that has the advantage of portability.
+
+4.11 Small-Object Allocator Quick Facts
+    •   The allocator implemented by Loki has a four-layered architecture. The first layer consists of a
+        private type Chunk, which deals with organizing memory chunks in equally sized blocks. The
+        second layer is FixedAllocator, which uses a variable-length vector of chunks to satisfy
+        memory allocation to the extent of the available memory in the system. In the third layer,
+        SmallObjAllocator uses multiple FixedAllocator objects to provide allocations of any
+        object size. Small objects are allocated using a FixedAllocator, and requests for large objects
+        are forwarded to ::operator new. Finally, the fourth layer consists of SmallObject, a class
+        template that wraps a SmallObjAllocator object.
+    •   SmallObject class template synopsis:
+
+        template
+        <
+
+        template <class T>
+           class ThreadingModel = DEFAULT_THREADING,
+        std::size_t chunkSize = DEFAULT_CHUNK_SIZE,
+        std::size_t maxSmallObjectSize = MAX_SMALL_OBJECT_SIZE
+    >
+    class SmallObject
+    {
+    public:
+       static void* operator new(std::size_t size);
+       static void operator delete(void* p, std::size_t size);
+       virtual ~SmallObject() {}
+    };
+
+•   You can benefit from a small-object allocator by deriving from an instantiation of SmallObject.
+    You can instantiate the SmallObject class template with the default parameters
+    (SmallObject<>) or tweak its threading model or its memory allocation parameters.
+•   If you create objects with new in multiple threads, you must use a multithreaded model as the
+    ThreadingModel parameter. Refer to the appendix for information concerning
+    ThreadingModel.
+•   The default value of DEFAULT_CHUNK_SIZE is 4096.
+•   The default value of MAX_SMALL_OBJECT_SIZE is 64.
+•   You can #define DEFAULT_CHUNK_SIZE or MAX_SMALL_OBJECT_SIZE, or both, to
+    override the default values. After expansion, the macros must expand to constants of type
+    (convertible to) std::size_t.
+•   If you #define either DEFAULT_CHUNK_SIZE or MAX_SMALL_OBJECT_SIZE to zero, then
+    the SmallAlloc.h file uses conditional compilation to generate code that forwards directly to
+    the free store allocator. The interface remains the same. This is useful if you need to compare how
+    your program behaves with and without specialized memory allocation.
+

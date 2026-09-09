@@ -1,0 +1,976 @@
+Chapter 12
+
+Language-specific concerns
+
+Many programming languages assume the availability of garbage collection. This has led
+to the development of various means for interacting with the collector in ways that ex-
+tend the basic semantics of programming language memory management. For example,
+a program might want to be informed and take some action when a given object is about
+to be, or has been, reclaimed. We describe such finalisation mechanisms in Section 12.1.
+Conversely, it is sometimes helpful to support references that do not of themselves force an
+object to be retained. We consider such weak pointer mechanisms in Section 12.2. Lastly,
+so far we have considered only the case of objects that do not change their size or type
+(for garbage collection purposes) after allocation. Languages like JavaScript allow objects’
+layout to evolve more dynamically; we describe techniques to support changing layouts
+in Section 12.3.
+
+12.1     Finalisation
+Automatic storage reclamation with a garbage collector provides the appropriate seman-
+tics for most objects. However, if a managed object refers to some other resource that lies
+outside the scope or knowledge of the collector, automatic garbage collection does not
+help, and in fact can lead to resource leaks that are hard to fix. A typical case is open files.
+The interface to the operating system usually represents each open file with a small inte-
+ger called a file descriptor, and the interface limits the number of files that a given process
+may have open at one time. A language implementation will generally have, for each open
+file, an object that the programmer uses to manage that file stream. Most of the time it is
+clear when a program has finished with a given file stream, and the program can ask the
+run-time system to close the stream, which can close the corresponding file descriptor at
+the operating system interface, allowing the descriptor number to be reused.
+    But if the file stream is shared across a number of components in a program, it can be
+difficult to know when they have all finished with the stream. If each component that uses
+a given stream sets its reference to the stream to null when the component is finished with
+the stream, then when there are no more references the collector can (eventually) detect
+that fact. We show such a situation in Figure 12.1. Perhaps we can arrange for the collector
+somehow to cause the file descriptor to be closed.
+    To do so, we need the ability to cause some programmer-specified action to happen
+when a given object becomes no longer reachable — more specifically, when it is no longer
+reachable by any mutator. This is called finalisation. A typical finalisation scheme allows
+the programmer to indicate a piece of code, called a finaliser, that is to be run when the
+
+                       Garbage collected
+                       applicaon
+
+                                                 FileStream
+                                                 int desc 3
+                                                 ...
+
+                    Operang System
+                               Open File
+                                  Table 0
+                                         1
+                                         2
+                                                               open file’s
+                                         3                    informaon
+                                           ...
+
+                                           63
+
+Figure 12.1: Failure to release a resource: a FileStream object has become
+       unreachable, but its file descriptor has not been closed.
+
+collector determines that a particular object is no longer mutator reachable. Commonly,
+the implementation of this has the run-time system maintain a special table of objects for
+which the programmer has indicated a finaliser. The mutators cannot access this table, but
+the collector can. We call an object finaliser-reachable if it is reachable from this table but
+not from mutator roots. In Figure 12.2 we show the previous situation but with a finaliser
+added. The finaliser’s call to close the descriptor is conditional, since the application may
+have already closed the file.
+    In a reference counting system, before freeing an object the collector checks the finali-
+sation table to see if the object requires finalisation. If it does, then the collector causes the
+finaliser to run, and removes the object’s entry from the table. Similarly, in a tracing sys-
+tem, after the tracing phase the collector checks the finalisation table to see if any untraced
+object has a finaliser, and if so, the collector causes the finaliser to run, and so on.
+    There is a range of subtly different ways in which finalisation can work. We now con-
+sider some of the possibilities and issues.
+
+When do finalisers run?
+At what time do finalisers run? In particular, finalisation might occur during collection, as
+soon as the collector determines the need for it. However, the situation during collection
+might not support execution of general user code. For example, it may not be possible
+for user code to allocate new objects at this time. Therefore most finalisation approaches
+run finalisers after collection. The collector simply enqueues the finalisers. To avoid the
+need to allocate space for the queue during collection, the collector can use a linked-list
+representation for both the table of objects that have a finaliser but have not been enqueued
+and for the queue of objects to be finalised. When the collector determines an object should
+be enqueued for finalisation, it simply moves a linked-list node from one list to the other.
+    In general, finalisers affect shared state; there is little reason to operate only on finalis-
+able objects since they are about to disappear. For example, finalisers may need to access
+
+                      Garbage collected
+                      applicaon
+
+             Table of objects
+          that have finalisers
+
+                                                FileStream                    Method table
+                                                int desc 3
+                                                ...                           finalize(){
+                                                                                if isOpen
+                                                                                  close(desc);
+                  Operang System                                             }
+                                Open File
+                                   Table 0
+                                          1
+                                          2
+                                                                 open file’s
+                                          3                     informaon
+                                          ...
+
+                                          63
+
+Figure 12.2: Using a finaliser to release a resource: here, an unreachable
+        FileStream object has a finaliser to close the descriptor.
+
+some global data to release a shared resource, and so often need to acquire locks. This is
+another reason not to run finalisers during collection: it could result in a deadlock. Worse,
+if the run-time system provides re-entrant locks — locks where the same thread can ac-
+quire a lock that it already holds — we can have a finaliser run at a time when a critical
+data structure is in the middle of being changed and its invariants do not hold. Thus we
+can have absence of deadlock and silent corruption of the state of the application.1
+    Even assuming that finalisers run after collection, there remain several options as to
+exactly when they run. One possibility is immediately after collection, before mutator
+thread(s) resume. This improves promptness of finalisation but perhaps to the detriment
+of mutator pause time. Also, if finalisers communicate with other threads, which remain
+blocked at this time, or if finalisers compete for locks on global data structures, this policy
+could lead to communication problems or deadlock.
+    A last consideration is that it is not desirable for a language’s specification of finali-
+sation to constrain the possible collection techniques. In particular, collection on the fly,
+concurrent with mutation, most naturally leads to running finalisers at arbitrary times,
+concurrently with mutator execution.
+
+Which thread runs a finaliser?
+In a language that permits multiple threads, the most natural approach is to have a back-
+ground finalisation thread run the enqueued finalisers asynchronously with the mutator
+threads. In this case, the finalisers may run concurrently with mutators and must therefore
+be safe for concurrent execution. Of particular concern is the possibility that a finaliser for
+   1 Java has avoided this by indicating that a finalisation thread will invoke a finaliser with no locks held. Thus
+
+the finalisation thread must be one that does not hold a lock on the object being finalised. In practice this pretty
+much requires finalisation threads to be distinct threads, used only for that purpose. However, finalisation has
+long been deprecated (since Java 9) and is now scheduled for removal.
+
+an object of type T might run at the same time as the allocation and initialisation code for a
+new instance of T. Any shared data structures must be synchronised to handle that case.2
+    In a single-threaded language, which thread runs a finaliser is not a question — though
+it does re-raise the question of when finalisers run. Given the difficulties previously men-
+tioned, it appears that the only feasible and safe way, in general, to run finalisers in a
+single-threaded system is to queue them and have the program run them under explicit
+control. In a multithreaded system, as previously noted it is best that distinct finalisation
+threads invoke finalisers, to avoid issues around locks.
+
+Can finalisers run concurrently with each other?
+If a large concurrent application uses finalisers, it may need more than one finalisation
+thread in order to be scalable. Thus, from the standpoint of language design it appears
+better to allow finalisers to run concurrently with each other, as well as concurrently with
+mutators. Since, in general, programmers must code finalisers carefully so that they oper-
+ate correctly in the face of concurrency — because finalisers are essentially asynchronous
+with respect to mutator operations — there should be no additional problem with running
+finalisers concurrently with each other.
+
+Can finalisers access the object that became unreachable?
+In many cases it is convenient for a finaliser to access the state of the object being reclaimed.
+In the file stream example, the operating system file descriptor number, a small integer,
+might most conveniently be stored as a field in the file stream object, as we showed in
+Figure 12.2. The simplest finaliser can read that field and call on the operating system to
+close the file (possibly after flushing a buffer of any pending output data). Notice that if the
+finaliser does not have access to the object, and is provided no additional data but is just
+a piece of code to run, then finalisation will not be very useful — the finaliser needs some
+context for its work. In a functional language, this context may be a closure; in an object-
+oriented language it may be an object. Thus the queuing mechanism needs to provide for
+the passing of arguments to the finaliser.
+    On balance it seems more convenient if finalisers can access the object being finalised.3
+Assuming finalisers run after collection, this implies that objects enqueued for finalisation
+survive the collection cycle in which they are enqueued. So that finalisers have access
+to everything they might need, the collector must also retain all objects reachable from
+objects enqueued for finalisation. This implies that tracing collectors need to operate in
+two passes. The first pass discovers the objects to be finalised, and the second pass traces
+and preserves objects reachable from the finaliser queue. In a reference counting collector
+the system can increment the object’s reference count as it enqueues it for finalisation, that
+is, the finalisation queue’s reference to the object ‘counts’. Once the object is dequeued
+and its finaliser runs, the reference count will become zero and the object can be reclaimed.
+Until then, objects reachable from it will not even be considered for reclamation.
+
+    2 Java has a special rule to help prevent this: if an object’s finaliser can cause synchronisation on the object, then
+
+the object is considered mutator reachable whenever its lock is held. This can inhibit removal of synchronisation
+(because an object otherwise reachable only from the thread that allocated it will now be reachable also from the
+finalisation thread, though not at the same time).
+    3 However, using something like Java’s cleaners, which are built using phantom references, avoids the pitfalls
+
+of finalisers while not restricting what the programmer can accomplish. See Section 12.2.
+
+When are finalised objects reclaimed?
+The fact that finalisers usually hold a reference to the object being finalised means that
+they might store that reference in a global data structure. This has been called resurrection.
+In a mechanical sense resurrection is not a problem, though it may be surprising to the
+programmer. Since it is probably difficult to detect stores that resurrect objects, and since
+setting up an object for future finalisation tends to happen as part of allocation and initial-
+isation, resurrected objects will generally not be re-finalised. Java, for example, guarantees
+that an object will not be finalised more than once. A language design in which setting up
+finalisation works more dynamically might allow the programmer to request finalisation
+for a resurrected object — because it allows such requests for any object.
+    If a finalised object is not resurrected, then the next collection cycle can reclaim it. In a
+system with partitioned spaces, such as a generational collector, the finalised object might
+reside in a space that will not be collected again for a long time, so making it available to
+the finaliser can substantially extend the object’s physical lifetime.
+
+What happens if there is an error in a finaliser?
+If finalisation is run synchronously at times known to the application, then programmers
+can easily wrap finalisation actions with recovery handlers for when a finaliser returns an
+error or throws an exception. If finalisers run asynchronously, it may be best to catch and
+log exceptions for later handling by the application at an appropriate time. This is more a
+concern of software engineering than of the garbage collection algorithm or mechanism.
+
+Is there any guaranteed order to finalisation?
+Finalisation order can matter to an application. For example, consider a BufferedStream
+object connected to a FileStream that holds an open operating system file descriptor, as
+shown in Figure 12.3. Both objects may need finalisers, but it is important to flush (write)
+the buffer of the BufferedStream before closing the file descriptor.4
+     Clearly, in a layered design like this, the sensible semantics will finalise from higher
+layers to lower ones. In this case, because the lower level object is reachable from the
+higher level one, it is possible for finalisation to occur in the sensible order automatically.
+Notice that if we impose order on finalisations, ultimate finalisation may be slow, since we
+only finalise one ‘level’ in the order at each collection. That is, in a given collection we only
+finalise those unreached objects that are not themselves reachable from other unreached
+objects.
+     This proposal has a significant flaw: it does not handle cycles of unreachable objects
+where more than one needs finalisation. Given that such cases appear to be rare, it seems
+simpler and more helpful to guarantee finalisation in order of reachability; that is, if B is
+reachable from A, the system should invoke the finaliser for A first.
+     In the rare case of cycles, the programmer will need to get more involved. Mechanisms
+such as weak references (see Section 12.2) may help, though using them correctly may be
+tricky. A general technique is to separate out fields needed for finalisation in such a way
+as to break the cycle of objects needing finalisation, as suggested by Boehm [2003]. That
+is, if A and B have finalisers and cross-reference each other as shown in Figure 12.4a, we
+can split B into B and B′ , where B does not have a finaliser but B′ does (see Figure 12.4b).
+A and B still cross-reference each other, but (importantly) B′ does not refer to A. In this
+scenario, finalisation in reachability order will finalise A first and then B′ .
+   4 As a more subtle point, note that unless we can guarantee that the FileStream is used only by the
+
+BufferedStream, then the BufferedStream should not close the FileStream. Unfortunately, this implies
+that it may require two collection cycles before the file descriptor is closed.
+
+                                              Garbage collected
+                                              applicaon
+
+         Method table
+                                       BufferedStream
+         finalize(){                   file                         FileStream
+           if isOpen                   buffer                       int desc 3
+             flush();                  ...                          ...
+         }
+
+                                                                  StringBuffer
+
+Figure 12.3: Object finalisation order. Unreachable BufferedStream and
+       FileStream objects, which must be finalised in that order.
+
+         A                  B                                A                   B
+
+         finaliser               finaliser                    finaliser              B'
+
+                                                                                      finaliser
+
+                (a) Original order                         (b) Refactored to handle cycles
+
+Figure 12.4: Restructuring to force finalisation order in cyclic object graphs
+
+The finalisation race problem
+Lest we think that finalisation can be used straightforwardly without risk of subtle bugs,
+even in the case of objects not requiring special finalisation order, there is a subtle kind of
+race condition that can arise [Boehm, 2003]. Consider the FileStream example shown in
+Figure 12.2. Suppose that the mutator is making its last call to write data to the file. The
+writeData method of FileStream may fetch the descriptor, and then as its last action
+call write on the descriptor, passing the data. Significantly, at this point the method’s
+reference to the FileStream object is dead, and the compiler may optimise it away. If
+collection happens during the call to write, the finaliser on FileStream may run and
+close the file, before write actually invokes the operating system to write the data. This is a
+difficult problem and Boehm’s experience is that the bug is pervasive, but rarely triggered
+because the window of vulnerability is short.
+    One fix for this is the Java rule mentioned previously that an object must be considered
+live whenever its lock is held and a finaliser could run that requires synchronisation on the
+object. A more general way to avoid the race is to force the compiler to retain the reference
+to the FileStream longer. The trick to doing this is to pass the FileStream reference
+in a later call (to a routine that does nothing) that the compiler cannot optimise away. The
+.NET framework and C# (for example) provide a function for this called GC.KeepAlive.
+Java similarly provides the Reference.reachabilityFence method.
+
+Algorithm 12.1: Process finalisation queue
+
+ 1   process_finalisation_queue():
+ 2      while not isEmpty(Queue)
+ 3         do
+ 4            obj ← remove(Queue)
+ 5            obj.finalize()
+ 6         until isEmpty(Queue)
+ 7         if desired                                   /* whatever condition is appropriate */
+ 8            collect()
+
+Finalisers and locks
+As noted, for example by Boehm [2003], the purpose of a finaliser is usually to update some
+global data structure in order to release a resource connected with the object that becomes
+unreachable. Since such data structures are global, they generally require synchronised
+access. In cases such as closing open file handles, some other software component (in this
+case, the operating system) handles the synchronisation implicitly, but for data structures
+within the program, it must be explicit. The concern is that, from the standpoint of most
+code in the program, finalisers are asynchronous.
+    There are two general approaches a programmer can take to the situation. One is to
+apply synchronisation to all operations on the global data structure — even in the single-
+threaded case (because a finaliser could run in the middle of a data structure operation
+otherwise). This counts on the underlying implementation not to elide synchronisation on
+an apparently private object if that object has a finalisation method. The other approach
+is to arrange for the collector only to enqueue the object for finalisation, but not to begin
+the actual finalisation work. Some language implementations offer such queueing mech-
+anisms as built-in features; if a particular implementation does not, then the programmer
+can code the finalisation method so that all it does is place the object in a programmer-
+defined queue. In the queueing approach, the programmer will add code to the program,
+at desirable (that is, safe) points. The code will process any enqueued objects needing
+finalisation. Since running finalisers can cause other objects to be enqueued for finalisa-
+tion, such queue-processing code should generally continue processing until the queue is
+empty, and may want to force collections if it is important to reclaim resources promptly.
+Suitable pseudocode appears in Algorithm 12.1. As previously noted, the thread that runs
+this algorithm should not be holding a lock on any object to be finalised, which constrains
+the places where this processing can proceed safely.
+    The pain involved in this approach is the need to identify appropriate places in the code
+at which to empty the finalisation queue. In addition to sprinkling enough invocations
+throughout the code, the programmer must also take care that invocations do not happen
+in the middle of other operations on the shared data structures. Locks alone cannot prevent
+this, since the invoking thread may already hold the lock, and thus can be allowed to
+proceed. This is the source of the statement in the Java Language Specification that the
+system will only invoke finalize methods while holding no user-visible locks.
+
+Finalisation and weak references
+Finalisation and weak references can have complex interactions and require subtle imple-
+mentation in a collector. This topic is discussed further in Section 12.2.
+
+Finalisation in particular languages
+Java. The Object class at the top of the Java class hierarchy provides a method named
+finalize, which does nothing. Any subclass can override the method to request final-
+isation. Java does not guarantee finalisation order, and with respect to concurrency only
+says that finalisation runs in a context starting with no (user-visible) synchronisation locks
+held. This pretty much means that finalisation runs in one or more separate threads, even
+though the specification is not quite worded that way. If finalize throws an exception,
+the Java system ignores it and moves on. If the finalised object is not resurrected, a future
+collection will reclaim it. Java also provides support for programmer-controlled finalisa-
+tion through appropriate use of the java.lang.ref API, as we describe in Section 12.2.
+Note that finalisation has been officially deprecated since Java 9 and is now scheduled for
+removal in a future release.
+
+Lisp. Liquid Common Lisp offers a kind of object called a finalisation queue. The program-
+mer can register an ordinary object with one or more finalisation queues. When the reg-
+istered object becomes otherwise unreachable, the collector enters it into the finalisation
+queues with which it was registered. The programmer can extract objects from any finali-
+sation queue and do with them what she will. The system guarantees that if objects A and
+B are both registered and become unreachable in the same collection, and B is reachable
+from A but not vice versa, then the collector will enter A in the finalisation queue before
+it enters B. That is, it guarantees order of finalisation for acyclic object graphs. These
+finalisation queues are similar to the guardians described by Dybvig et al. [1993].
+    CLisp offers a simpler mechanism: the programmer can request that the collector call
+a given function f when it detects that a given object O is no longer reachable. In this
+case f must not refer to O or else O will remain reachable and the system will never call
+the finaliser. Since f receives O as an argument, this system permits resurrection. Also,
+f could register O again, so O can be finalised more than once. A variant of the basic
+mechanism allows the programmer to specify a guardian G in addition to the object O and
+function f . In this case, when O becomes unreachable the system calls f only if G is still
+reachable. If at this time G is unreachable, then the system reclaims O but does not call f .
+This can be used to implement guardians of the kind described by Dybvig et al. [1993] —
+f can add O to the internal queue of G.
+
+C++. The C++ language offers destructors to handle disposal of objects, as a converse to
+constructors which initialise new objects. The primary role of most destructors is to cause
+explicit freeing of memory and its return to the allocator for reuse. However, since pro-
+grammers can offer any code they want, C++ destructors can handle the case of closing a
+file, and so forth. Destructors also provide a hook through which a programmer can sup-
+port reference counting to reclaim (acyclic) shared data structures. In fact, C++ templates
+allow a general smart pointer mechanism to drive the reference counting. But this shows
+again that destructors are mostly about reclaiming memory — a job that a garbage col-
+lector already handles. Thus, true finalisation remains relatively rare, even for C++. The
+memory reclamation aspect of destructors is relatively safe and straightforward, not least
+because it does not involve user-visible locks. However, as soon as the programmer veers
+into the realm of ‘true’ finalisation, all the issues we mention here arise and are dropped
+into the programmer’s lap. This includes dealing with locking, order of invocation of fi-
+nalisers, and so on. Placing the responsibility for all this on the programmer’s shoulders
+makes it difficult to ensure that it is done correctly.
+
+.NET. The .NET framework adds finalisers to the existing notion of destructors in C, C++,
+and the other languages supported by the framework. Destructors are called determin-
+istically, starting with compiler-generated code for cleaning up objects as they go out of
+scope. A destructor may call other objects’ destructors, but all destructors are concerned
+with reclaiming managed resources, that is, resources known to the language and .NET run-
+time system, primarily memory. Finalisers, on the other hand, are for explicitly reclaiming
+unmanaged resources, such as open file handles and the like. If a kind of object needs fi-
+nalisation, then the destructor should call the finaliser, to cover the case when the object
+is reclaimed explicitly by compiler-generated code. However, the collector will call the
+finaliser if the object is being reclaimed implicitly, that is, by the collector. In that case the
+destructor will not be called. In any case, the finalisation mechanism itself is very similar
+to that of Java. The end result is a mixture of C++ destructors and something close to Java
+finalisation, with both synchronous and asynchronous invocation of finalisers possible.
+
+JavaScript Core. JavaScript Core (JSC) is a JavaScript implementation in the WebKit brow-
+ser. Its heap objects may have destructors that must be called before the storage is reused.
+These destructors are typically concerned with things like references to items in the brow-
+ser’s DOM (Document Object Model, representation of HTML objects), which may need
+explicit reclamation when JSC objects are reclaimed. Kim et al. [2014] describe a technique
+to speed up the processing of these destructors. They sweep a block at a time in JSC’s
+lazy sweeping scheme, doing so concurrently with the mutators, invoking the destructors
+of the dead objects of the block. Note that this finalisation is run entirely by the collector
+and cannot refer to any other objects in the JSC heap — only the contents of the dead ob-
+ject, which may hold non-JSC references into other spaces such as the DOM. More recently
+JavaScript added a more typical finalisation scheme similar to Java’s phantom references.
+
+For further study
+Various languages have supported finalisation for decades and have evolved mechanisms
+suitable to their contexts. Systematic consideration of the issues and various design ap-
+proaches across several languages appears more recently in the literature in works such as
+Hudson [1991] and Hayes [1992]. More careful inspection of the semantics of finalisation
+and some of the thorny problems at its heart was performed by Boehm [2003], to whom
+we are indebted as a primary source.
+
+12.2     Weak references
+Garbage collection determines which memory to retain and which to reclaim using reach-
+ability through chains of pointers. For automatic reclamation this is a sound approach.
+Still, there are a number of situations in which it is problematic.
+    For example, in a compiler it can be useful to ensure that every reference to a given
+variable name, say xyz, uses exactly the same string instance. Then, to compare two vari-
+able names for equality, it suffices to compare their pointers. To set this up, the compiler
+builds a table of all the variable names it has seen so far. The strings in the table are the
+canonical instances of the variable names, and such tables are therefore sometimes called
+canonicalisation tables. But consider what happens if some names fall into disuse as the
+compiler runs. There are no references to the names from other data structures, but the
+canonical copy remains. It would be possible to reclaim a string whose only reference is
+from the table, but the situation is difficult for the program to detect reliably.
+
+     Weak references (also called weak pointers) address this difficulty. If an object is reach-
+able from a root via a chain consisting only of ordinary strong references, we call the object
+strongly-reachable. A weak reference continues to refer to its target, also called its referent,
+as long as the target is strongly-reachable. Conversely, if there is no path from the roots to
+an object consisting only of strong references, yet the object is reachable from one or more
+weak references, we call the object weakly-reachable. (This implies that every path from
+the roots to the object includes at least one weak reference.) The collector may reclaim any
+weakly-reachable object, and in that case must set any weak references from which the
+object is strongly-reachable to null. (This is also called clearing the weak reference.) As we
+will see, the collector may also take additional action, such as notifying the mutator that a
+given weak reference has been cleared.
+     In the case of the canonicalisation table for variable names, if the reference from the
+table to the name is a weak reference, then once there are no ordinary references to the
+string, the collector can reclaim the string and set the table’s weak reference to null. Notice
+that the table design must take this possibility into account, and it may be necessary or
+helpful for the program to clean up the table from time to time. For example, if the table
+is organised by hashing with each hash bucket being a linked list, defunct weak references
+result in linked list entries whose referent is null. We should clean those out of the table
+from time to time. This also shows why a notification facility might be helpful: we can use
+it to trigger the cleaning up.
+     Here is how we can we support weak references in a collector. We consider first the case
+of tracing collectors. In this case, the collector performs tracing in two passes. In the first
+pass, the collector does not trace the target of a weak reference. Rather, it records where
+the weak reference is, for processing in a second pass. Thus, the first tracing pass finds all
+strongly-reachable objects. In the second pass the collector examines the weak references
+that it found and noted in the first pass. If a weak reference’s target was reached in the first
+pass, then the collector retains the weak reference, and in copying collectors it updates the
+weak reference to refer to the new copy. If a weak reference’s target is found to be not
+strongly-reachable, then the collector clears the weak reference, thus making the referent
+no longer reachable (strongly or weakly). At the end of the second pass, the collector can
+reclaim all unreached objects.
+     The technique just described requires that the collector be able to identify any weak
+reference. It may be possible to use a bit in the reference to indicate that it is weak. For
+example, if objects are aligned on word boundaries in a byte-addressed machine, then
+pointers normally have some low bits that are zero. One of those bits could indicate a
+weak reference if the bit is set to 1. This approach has the disadvantage that it requires
+the low bits to be cleared before trying to use a reference that may be weak. That may
+be acceptable if weak references only arise in certain restricted places in a given language
+design. Some languages and their implementations may use tagged values anyway, and
+this simply requires one more possible tag value.
+     An alternative to using a low bit is to use a high-order bit and double-map the heap.
+In this case every heap page appears twice in the virtual address space, once in its natural
+place, lower in the address space, and again at a high memory address. The addresses
+only differ in the value of a chosen bit near the high-order end of the address. Thus the
+heap address space is duplicated at a fixed offset from its natural position. This technique
+avoids the need to mask pointers before using them, and its test for weakness is simple
+and efficient (test the chosen high-order bit). However, it doubles the use of address space,
+which may make it undesirable except in large address spaces.
+     Perhaps the most common implementation approach is to use indirection, so that spe-
+cially marked weak objects hold weak references. The disadvantage of the weak object
+approach is that it is less transparent to use — it requires an explicit dereferencing opera-
+
+tion on the weak object — and it imposes a level of indirection. It also requires allocating a
+weak object in addition to the object whose reclamation we are trying to control. However,
+an advantage is that weak objects are only special to the allocator and collector — to all
+other code they are like ordinary objects. A system can distinguish a weak object from an
+ordinary one by examining its type, which may have a field reserved for this purpose. An
+alternative design is to reserve a bit in the object header. A third possibility, if objects have
+custom-generated tracing methods, is to give weak objects a special one.
+    An implementation must also provide means for a programmer to obtain a weak refer-
+ence (weak object) in the first place. In the case of true weak references, the system supplies
+a primitive that, when given a strong reference to object O, returns a weak reference to O.
+In the case of weak objects, the weak object types similarly supply a constructor that, given
+a strong reference to O, returns a new weak object whose target is O. It is also possible for
+a system to allow programs to change the referent field in a weak object.
+
+Additional motivations
+Canonicalisation tables are but one example of situations where weak references of some
+kind help solve a programming problem, or solve it more easily or efficiently. Another
+example is managing a cache whose contents can be retrieved or rebuilt as necessary. Java
+SoftReference objects are intended for this purpose; see below.
+    Sometimes it is useful to let a program know when an object is weakly-reachable but
+not strongly-reachable, and to allow it to take some action before the collector reclaims the
+object. This is a generalisation of finalisation, a topic we took up in Section 12.1. Among
+other things, suitable arrangements of these sorts of weak references can allow better con-
+trol of the order in which the program finalises objects.
+
+Weak references in Java: the short story
+Java has what is probably the most complex weak reference design to date. To describe it,
+we start with a simple subset — one arguably sufficient for all the purposes of the full de-
+sign — and then cover the full design. Our starting point is Java with phantom references,
+with no other non-strong references and without finalisation. Java uses weak objects, as
+opposed to weak references. These objects are instances of subclasses of the abstract class
+Reference, a special class known to the allocator and collector. PhantomReference is
+one of those subclasses. Its particular behavior is that you cannot fetch its contained refer-
+ence. It is possible, however, to test whether it has been cleared or still refers to some object.
+The collector will clear the contained reference when the referent is no longer strongly-
+reachable.5
+    Another feature of Java weak references is that when a Reference object’s referent is
+no longer strongly-reachable, the Reference object can be placed on a queue for special
+processing. These queues are ordinary Java objects, and ordinary Java threads can process
+Reference objects placed in a queue. This makes phantom references more useful — they
+can accomplish finalisation in a more user-controlled fashion than the built-in finalisation
+mechanism can. To facilitate this usage pattern, Java now has a Cleaner class. A Cleaner
+maintains a collection of registered objects, each with an associated cleaning action. When the
+program registers an object O with the cleaner, it provides the cleaning action at the same
+time. The cleaner then creates a PhantomReference to O, and associates that phantom
+reference with the provided cleaning action. Cleaning actions have a run() method and
+can include any other state needed by the action — but should definitely not include O it-
+self. The cleaner has a ReferenceQueue into which its phantom references will be placed
+  5 In the full model, Phantomly-reachable.
+
+by the collector when the original referents (such as O) are no longer strongly-reachable.6
+The cleaner will then find and run the associated cleaning action, exactly once.
+     In contrast to Java finalisation, cleaners support application controlled resurrection and
+re-finalisation, as follows. For a managed object O, the application (i) creates a wrapper
+object W, which has a reference to O; (ii) registers W with a cleaner, along with an action
+that has a reference to O; and (iii) only hands out references to W, not to O. When W is no
+longer reachable, the collector eventually detects that and the cleaner’s phantom reference
+to W is cleared and enqueued. The cleaner will then run the action, which can do whatever
+it likes with O, including creating and registering another wrapper for O, and so on. The
+wrapper W will be reclaimed.
+     This cleaner pattern can support the use cases previously mentioned: canonicalisation
+tables, caches and finalisation. Cleaners naturally support finalisation in topological order
+in the object graph, and give the user control over the degree of concurrency of finalisation.
+Cleaners also avoid direct resurrection, while allowing the application-defined state to be
+set up for finalisation-like handling again, if that is desirable. Using cleaners for canoni-
+calisation tables and caches may require an additional level of wrapping or indirection in
+the user objects, but again is a general solution that puts control in the hands of the user
+rather than the collector.
+     The Java weak reference model has evolved over time, and may well continue to do so.
+Finalisation is now deprecated, and cleaners have been added. For simplicity and to guard
+against future change, future Java code might well restrict itself to cleaners and Phantom
+references. However, current collector implementers still need to deal with the full model,
+to which we now turn.
+
+Weak references in Java: the full story
+We have endeavoured to explain the Java weak reference and finalisation model correctly
+as of the time of writing, but note that it may well continue to change. The full model
+includes three Reference classes: WeakReference, SoftReference and Phantom-
+Reference. It also interacts with Java finalisation — objects with a non-empty finalize
+method can be viewed as referenced by a finaliser reference known only to the collector.
+We describe the semantics and implementation strategy as if finaliser references exist as
+another kind of Reference object, but they are more likely implemented as just a list or
+table of all the objects that have non-empty finalize methods.
+    These four kinds of weak references we will henceforth write as Soft reference, Weak
+reference, Finaliser reference and Phantom reference, to distinguish the general notion of
+weak reference from the particlar kinds of references of Java. Each kind of Java weak
+reference has a different (reachability) strength. To define this concept precisely, consider
+n strengths, s1 , ..., sn , where s1 is the strongest. Every reference (pointer) has a designated
+strength. Ordinary pointers are strong references and thus have strength s1 . An object
+O is at least si -reachable if there is a sequence of pointers from a root to O each of which
+has strength si or stronger. O is si -reachable if it is at least si -reachable and it is not at least
+si−1 -reachable.7
+    The Java strengths, in order from strongest to weakest, are: Strong, Soft, Weak, Fi-
+naliser and Phantom. In principle, it would seem that up to four passes over the object
+graph might be needed to determine the level of reachability of each object, but the seman-
+tics of the different kinds of weak references simplify this to two: Strongly-reachable and
+Finaliser-reachable, as we describe below.
+  6 See footnote 5.
+  7 Being ‘at least s -reachable’ is the same as being ‘s -reachable.’
+                     1                                   1
+
+   Any Java weak object may have a ReferenceQueue associated with it. After it clears
+the weak object, the collector will add the weak object to the queue. Finaliser references
+have as their queue the internal finalisation queue of the system.
+   The differences in semantics between these kinds of weak references are as follows.
+Soft: The collector can clear a Soft reference at its discretion, based on current space usage,
+      if the referent is not Strongly-reachable. If a Java collector clears a Soft reference to
+      object O (that is, sets the reference to null), it must at the same time atomically8 clear
+      all other Soft references from which O is Strongly-reachable. This rule ensures that
+      after the collector clears the references, O will no longer be Softly-reachable.
+       The recommendation is that collectors clear Soft references based on time, either how
+       recently the reference was created or when it was last accessed.9 We call this the Soft
+       reference’s timestamp. To support the recommendation, a collector can trace through
+       a Soft reference if its timestamp is sufficiently recent, treating the Soft reference as if
+       it is Strong. After tracing, the collector will then clear Soft references whose referent
+       is found to be not Strongly-reachable.
+Weak: The collector must clear a Softly-reachable Weak reference if it determines that its
+    referent is Weakly-reachable (and thus not at least Softly-reachable). As with Soft
+    references, if the collector clears a Weak reference to object O, it must simultane-
+    ously clear all other at least Softly-reachable Weak references from which O is at least
+    Softly-reachable.
+Finaliser: Finaliser references are special in that their implementation is entirely internal
+      to the system, and they enqueue the referent, not the reference.
+Phantom: Phantom references differ in that they do not allow the program to obtain a
+     reference to their referent. Hence, as previously discussed, they avoid the issues of
+     resurrection of the referent. However, like other Java weak references, they can be
+     enqueued, which is basis for Java cleaners, previously discussed.
+   We now describe an implementation strategy,10 followed by an explanation of why it
+works. This strategy involves using two mark bits. One of these records Strong reachability
+and the other records Finaliser reachability. The procedure is as follows. Threads that mark
+from roots trace through all Strong references, plus those Soft references that the collector
+determines it definitely will not clear. These threads set the Strong mark bit for each object
+they reach. They also remember all reference objects they encounter. Threads that mark
+from the internal Finaliser references set the Finaliser mark bit of unmarked objects they
+encounter. They do not trace through any object with either mark bit set, but should trace
+through Soft references in the same way the other threads do, and they should also remem-
+ber reference objects they encounter. When using a single thread, it can do the marking
+    8 By atomically the Java specification seems to mean that no thread can see just some of the references from
+
+which a given object is reachable cleared and not others: either all of them are cleared or none are. This can
+be accomplished by having the reference objects consult a shared flag that indicates whether the referent field
+should be treated as possibly cleared, even if it is not yet set to null. The reference object can itself contain a
+flag that indicates whether the single global flag should be consulted, that is, whether the reference is being
+considered for clearing. Doing this safely requires synchronisation in concurrent collectors. On-the-fly collection
+is particularly complex [Ugawa et al., 2014].
+    9 The documentation for the SoftReference class in Java SE 18 and JDK 18, 2022, (https://docs.
+
+oracle.com/en/java/javase/18/docs/api/java.base/java/lang/ref/SoftReference.html),
+after noting both the required atomicity of clearing Soft references, and that implementations cannot throw
+OutOfMemoryError unless they first try clearing all Soft references, reads, “Virtual machine implementations
+are, however, encouraged to bias against clearing recently-created or recently-used soft references.”
+   10 The ZGC concurrent collector, discussed in Section 17.5, takes this approach, which allows concurrent mark-
+
+ing from both roots and Finaliser references.
+
+from roots and then the marking from Finaliser references as two separate passes. In that
+case it is possible to use a single mark bit, clearing and enqueueing Phantom references
+after the second pass, but handling the other kinds before the second pass.
+    After marking, the collector examines the referent of each reference object it encoun-
+tered. If the referent’s Strong mark bit is set, then do not clear the reference.
+    If neither mark bit is set, this object must be the target of a Soft reference that is not
+being retained, or it must be the target of a Weak or Phantom reference. Clear the reference
+and enqueue it as necessary.
+    If only the Finaliser mark bit is set, then for the target of a Soft or Weak reference, clear
+the reference and enqueue as necessary. For the target of a Finaliser reference, enqueue the
+referent for finalisation. For the target of a Phantom reference, leave the reference alone.
+    Recall that clearing references must be done atomically, as previously discussed, so
+where we say ‘clear the reference’ above, we mean that it should be included in the set of
+references to be cleared atomically.
+    We now argue that these two marking passes (whether concurrent or sequential) are
+sufficient, as opposed to the four one might imagine to be necessary. We consider each kind
+of reference in turn. A Soft reference is only cleared / enqueued if (i) the collector did not
+choose it as one to keep alive (in that case the referent has its Strong mark bit set because
+the collector traced through the reference) and (ii) it was not otherwise Strongly-reachable.
+That behaviour matches the specification. A Weak reference is cleared / enqueued if it is
+not Strongly-reachable. This might seem too eager — what if it were Softly-reachable? We
+can see that the behaviour is in fact correct if we imagine that the Soft references that will be
+cleared were already clear when the collector started. In that imagined view, a Soft reference
+that was not cleared causes objects reachable from it to have their Strong mark bit set. Thus
+the Softly-reachable objects have their Strong mark bit set, as do the Strongly-reachable
+ones. Concerning Finaliser references, we can make a similar argument, imagining that
+the appropriate Weak references have already been cleared. Lastly, Phantom references
+are appropriately sensitive to whether they are Finaliser-reachable because they check the
+Finaliser mark bit. In fact, it is Phantom references that require the second marking pass.
+    While we worded the description above in terms of a mark-sweep collector, it works
+just as well for copying collection, and also generalises to generational collection if one
+considers older generation objects as Strongly-reachable.
+    Here is how one might construct a reference counting version of the Java semantics.
+An object’s reference count will record just the number of strong references to the object.
+However, it will have an additional bit to indicate that it is a referent of a weak reference
+(of any kind). It is also convenient if an object has a separate bit indicating that it has a
+non-trivial finaliser. We assume that there is a global table that, for each object O that is the
+referent of at least one Reference object, indicates those Reference objects that refer to
+O. We call this the Reverse Reference Table.
+    Before proceeding, we observe that a weakly-reachable cycle of objects connected via
+strong references will not be reclaimed without special cycle collection techniques, so we
+ignore that case for the moment. Regardless, if an object’s reference count decreases to
+zero, it is not Strongly-reachable.
+    Consider what should happen when a reference count goes to zero and the object is
+a referent of a weak reference or has a finaliser. The collector can handle the situation
+in order of strength. If the object is the target of any Soft references, then if any of those
+Soft references should be retained, the object will be retained for now, and handling will
+be revisited when a weak reference object is reclaimed. If all of the Soft references can
+be cleared, do so atomically, enqueue the Soft references as necessary, and proceed to the
+next strength. If there are any Weak references, clear them atomically, enqueue them as
+necessary, and proceed to the next strength. If there is a finaliser, enqueue the object for
+
+finalisation, clear the object’s ‘I have a finaliser’ bit and stop. (Note: the reference from
+the finalisation queue will count as a strong reference.) If the object’s ‘I have a finaliser’
+bit is not set, but there are any Phantom references, clear the Phantom references and
+enqueue them as necessary. If there was no finaliser and all the weak references were
+cleared, then the object can be reclaimed. Achieving atomicity of these special reference
+count adjustments can be tricky, and requires either locking or a technique similar to that
+described by Ugawa et al. [2014].
+    There are some more cases to note. When we reclaim a Reference object, we need to
+remove it from the Reverse Reference Table. We also need to do that when a Reference
+object is cleared. We further need to check the referent. If its reference count is zero, we
+need to redo the processing described above since the situation has changed.
+    A tricky case is when a detector of garbage cycles finds such a cycle. It appears that, be-
+fore doing anything else, we need to see if any of the objects is the referent of a Soft object,
+and in that case retain them all, but keep checking periodically somehow. If none are Soft
+referents but some are Weak referents, then we need to clear all those Weak objects atomi-
+cally, and enqueue any objects requiring finalisation. Finally, if none of the previous cases
+apply but there are some Phantom referents to the cycle, we need to clear and enqueue all
+the Phantoms. If no object in the cycle is a Soft or Weak referent, or requires finalisation,
+we can reclaim the whole cycle.
+    As perhaps an historical note, we observe that Java11 defines an object as “phantomly-
+reachable if it is neither strongly-, softly-, nor weakly-reachable, it has been finalized, and
+some phantom reference refers to it.” This definition is inadequate: consider the following
+example12 where F1 and F2 are objects with non-trivial finalisers, and P is the referent of a
+PhantomReference. Initially, F1 holds a reference to P and some root points to F2 which
+holds a null reference. Then,
+
+   1. F1 ’s finaliser runs and notionally P’s (empty) finaliser runs. F1 updates F2 with a
+      strong reference to P. At this point, P has now been finalised and the root points to
+      F2 which points to P.
+
+   2. The root is cleared, making F2 unreachable. P is now neither strongly, softly or
+      weakly referenced, and it has been finalised. Therefore P is phantom-reachable.
+
+   3. The PhantomReference to P is enqueued, resulting in running a Cleaner which
+      maybe deallocates native memory required by P.
+
+   4. F2 ’s finaliser runs and accesses P, which can no longer access the native memory it
+      needs. . .
+
+The ‘has been finalized’ check required by java.lang.ref is the wrong check; what
+matters is whether it is reachable from a not yet finalised object with a non-trivial finaliser.
+This requires a reachability analysis such as the one we described above.
+
+Race in weak pointer clearing
+We note that, just as certain compiler optimisations can lead to a race that can cause pre-
+mature finalisation, the same situations can lead to premature clearing of weak pointers.
+We described the finalisation case in Section 12.1.
+  11 Java SE 18 and JDK 18, 2022, https://docs.oracle.com/en/java/javase/18/docs/api/java.
+
+base/java/lang/ref/package-summary.html
+  12 Example due to Hans Boehm.
+
+Weak pointers in other languages
+We discussed Java separately because of its multiple strengths of weak references. Other
+languages offer alternative or additional weak reference features.
+
+Lisp. A number of Lisp implementations support weak arrays and vectors.13 These are
+simply multi-entry weak objects: when a referent O is no longer strongly-reachable, the
+collector sets to nil any weak array or vector slots that refer to O.
+    Some Lisp implementations also support weak hash tables. These often come in three
+varieties. One offers weak keys, in which the keys, but not the values, are weak. In this
+case, once the key of a given key-value pair is no longer strongly-reachable, the collector
+removes the entire pair from the hash table. This is useful for things like canonicalisation
+tables and certain kinds of caches. A second variety offers weak values, where the collector
+removes the key-value pair once the value is no longer strongly-reachable. The third va-
+riety supports weak keys and values, removing the pair once either the key or the value is
+no longer strongly-reachable.
+    Some Lisp implementations support weak-AND and weak-OR objects. The elements of
+these objects are potentially weak, but in the following way. A weak-AND will set all
+its elements to nil if one or more of them becomes not strongly-reachable. Thus, it is
+analogous to a Lisp AND, which returns nil if any argument to AND is nil. A weak-OR
+is the converse: it retains all its arguments until none of them are strongly-reachable, and
+then sets all of its fields to nil. We refer readers to the documentation on the Platform
+Independent Extensions to Common Lisp14 for more details and further generalisations,
+including weak associations, weak AND- and OR-mappings, weak association lists and a
+version of weak hash tables similar to what we discussed above.
+
+Ephemerons. Ephemerons15 [Hayes, 1997] are a particular form of weak key-value pairs
+useful for maintaining information attached to other objects. Several languages and di-
+alects provide ephemerons, for example GNU Smalltalk and Squeak, .NET languages such
+as C#, F# and VB.NET, OCaml and the Racket dialect of Lisp. Suppose we wish to asso-
+ciate information I with object O through a side table. We can use an ephemeron with key
+O and value I. The semantics of an ephemeron are as follows. Its reference to the key is
+weak. Its reference to the value is strong while the key is non-null, but is weak after the
+key is set to null. In the example, the reference to the base object O is weak, and initially
+the reference to the associated information I is strong. Once O is reclaimed and the weak
+reference to it is set to null, the reference to I is treated as weak. Thus, I is not reclaimable
+while O is alive, but may become reclaimable once O has gone. A weak-key/strong-value
+pair with notification (to allow the value reference to be set to null, or to be replaced with
+a weak reference to the value) more or less simulates an ephemeron. A subtle difference,
+though, is that it does not ‘count’ toward reachability of the ephemeron’s key if it is reach-
+able from the ephemeron’s value. Thus, if I refers to O, as it well might, an ephemeron
+can still collect O, but the weak-pair approach would prevent O from being reclaimed. The
+only way around this without ephemerons would seem to be to ensure that any path from
+I to O includes a weak reference.
+    Here is a sketch of how to implement ephemerons (ignoring any other forms of weak
+pointers or other finalisation mechanisms). First, trace through strong pointers from the
+roots, recording ephemerons but not tracing through them. Iterate over the recorded
+ 13 Arrays may be multi-dimensional while vectors have only one dimension, but the distinction does not affect
+
+weak reference semantics.
+ 14 https://clisp.cons.org.
+ 15 Hayes credits George Bosworth with the invention of ephemerons.
+12.3. CHANGING OBJECT LAYOUT                                                                                241
+
+ephemerons repeatedly. If an ephemeron’s key has been traced, then trace through the
+ephemeron’s value field and remove the ephemeron from the set of recorded ephemerons.
+Such tracing may reach other ephemerons’ keys and may also find new ephemerons to con-
+sider. Eventually we obtain a set, possibly empty, of ephemerons that we have recorded
+whose keys are not reachable.16 We clear the key fields of these ephemerons, and the value
+fields if the value object is not yet traced. Alternatively, we can use a notification mech-
+anism and enqueue the ephemerons, at the risk of possible object resurrection. It may be
+better to clear the ephemeron’s fields and enqueue a new pair that presents the key and
+the value to a finalisation function.
+
+Swift. The Swift language provides three reference flavours: strong, weak and unowned.
+Its Automatic Reference Counting (ARC) manages strong references in the usual way, re-
+taining an object until its (strong) reference count is zero. The Swift Programming Guide
+[Apple, 2021] advocates resolving cycles of strong references by including a weak or an
+unowned reference in the cycle. Weak references are intended for scenarios in which the
+referent has a shorter lifetime than the referrer. A weak reference does not prevent its
+target from being reclaimed but instead, when the target is deallocated, Swift’s ARC auto-
+matically sets the weak reference to nil. For example, a Tenant type may hold a (strong)
+reference to the apartment they rent, but the Apartment instance should be defined with
+a weak reference to the tenant. In contrast, an unowned reference is intended to be used
+when the referent has the same or a longer lifetime than the referrer. An unowned refer-
+ence is always expected to have a value and is never set to nil by ARC. For instance, a
+Customer may have an optional credit card property, but a CreditCard would have a
+(non-optional) unowned customer property, initialised when the CreditCard instance is
+created. If an unowned reference is marked as optional, it is the programmers’s responsi-
+bility to ensure that it always refers to a valid object or is set to nil.
+    It is possible to create strong reference cycles inadvertently. For example, a property
+of a class may be a closure whose body refers to the instance of the class, self. Swift
+has two mechanisms to address this. First, the language requires the programmer to
+write self.someProperty or self.someMethod rather than just someProperty or
+someMethod as a reminder that it is possible to capture self. Second, Swift allows a
+closure to provide a ‘capture list’ defining whether each captured reference is weak or
+unowned. Captured references should be unowned if both the closure and the instance it
+captures will be deallocated at the same time, and weak if the reference may become nil.
+
+Other languages. Other languages with weak pointer support, at least in some implemen-
+tations, include ActionScript, C++ (earlier in the Boost library and now in the standard
+library), Haskell, JavaScript, OCAML, Python, Rust and Smalltalk. There has also been at
+least one attempt to give a formal semantics for the feature [Donnelly et al., 2006].
+
+12.3       Changing object layout
+In many languages the layout of an object — its number of fields and also usually which
+of those fields contain pointers — is fixed when the object is allocated and cannot change
+thereafter. In languages that are more dynamically typed, however, the layout of an object
+may change over time. If only the type of fields may change, a language may tag values
+  16 This process is a bit tricky, epecially in a concurrent collection context, and a subtle error in processing
+
+ephemerons resulted in a critical defect in the V8 JavaScript engine [Mo, 2021]. The specific setting was the
+WeakMap built-in object class of JavaScript, which has semantics equivalent to ephemerons.
+12.3. CHANGING OBJECT LAYOUT                                                                 242
+
+(see Section 11.2) to allow discrimination of pointers from non-pointers at run time. How-
+ever, some languages, for example Python and JavaScript, allow objects to change their
+entire layout and size dynamically.
+     Clifford et al. [2015] describe a design for objects in the V8 implementation of JavaScript.
+Each object has a map (or ‘hidden class’) that describes its layout. The map can change as
+fields are added to and deleted from the object, leading to a transition tree of maps for
+a particular allocation site. The design separates an object’s integer-indexed properties
+from those indexed by name, with the integer-indexed properties acting like a dynamically
+adjustable array. For efficiency, arrays that contain only small integers and arrays that
+contain only numbers (represented as double length floating point numbers) are special
+cases. A small integer array will transition to a double array if a double is stored into
+it, and either form of numeric array will transition to a general array, where individual
+elements are tagged, if a non-numeric value is stored into it. These transitions will never
+be undone. Further, the design distinguishes between arrays where all elements in a given
+range are present from ones where elements may have been deleted. The latter are called
+holey, and in them deleted elements are indicated using a distinguished value.
+     An interesting feature of their system is that it uses instrumentation called mementos to
+collect information on a per allocation site basis to determine the common eventual map
+for arrays allocated at that site, so as to avoid expensive transitions of array layouts. A
+memento is a small object that is allocated immediately after an object that the run-time
+systems wishes to track. The memento refers back to the object, describes the allocation
+site, and includes whatever other information the run-time system will find useful. The
+Clifford et al. system allocates mementos only for objects allocated in the nursery, and
+only for allocation sites in unoptimised code. Allocating mementos only for nursery ob-
+jects keeps the space overhead lower, and allocating them only in unoptimised code keeps
+the time overhead lower. A nursery collection will detect mementos associated with sur-
+vivors by checking the object immediately following the survivor in memory (mementos
+are distinguishable from regular objects), and trigger collection of statistics.
+     Concerning layout, a memento will trigger recording of the object’s layout as of the
+time of the collection. This is generally long enough after allocation to give good guidance
+if an allocation site’s code is later optimised. Mementos can also be used for optimizations
+such as pretenuring.
+     Ugawa et al. [2022] similarly aim to identify the maps eventually used by objects allo-
+cated at each site, but in the context of the closed world of a JavaScript virtual machine for
+embedded systems. They use the garbage collector to gather the transitions of each site’s
+map off-line. Using this profile, they are able to eliminate some intermediate maps, biasing
+chains of transitions to favour the most frequently used cases.
+     Accomplishing layout changes concurrently with reading and writing fields, without
+sacrificing too much performance, can be a challenge. Pizlo [2017] describes an obstruction-
+free scheme for updating object layout metadata that is used in Riptide’s JavaScript imple-
+mentation. Objects in Riptide consist of a structure id that identifies the object’s layout, a
+fixed-size area for fields and a pointer to an object extension (initially null). The structure
+id includes what is effectively a lock bit. A reader of an object, using strongly ordered
+load instructions, reads the structure id, then data or metadata, and then rereads the struc-
+ture id. If the two versions of the structure id match and show it to be unlocked, then
+the reader can trust the data or metadata it read. In the case of an object with immutable
+structure, the rereading of the structure id is not necessary. A writer of an object first ac-
+quires the structure id lock using a compare-and-swap, then updates the information (data
+or metadata) and releases the lock. Each update of structure information leads to a new
+structure id value, even if the structure is equivalent to a previous one, which avoids any
+ABA problem.
+12.4. ISSUES TO CONSIDER                                                                   243
+
+    Degenbaev et al. [2019] describe a different approach to managing layout changes in
+a concurrent collector. Their objects can be thought of as having a starting address s, an
+address u of the beginning of a slack (currently unused) area and an address e, of the word
+beyond the end of the object. Additionally, an object has a map that indicates for addresses
+a such that s ≤ a < u whether the value at that address is tagged or raw. A tagged value
+is a reference if the low bit is 1 and a small integer otherwise. The layout of an object
+consists of the values of s, u and e along with its map, which can be determined from one
+of the initial fields of the object. A key idea that Degenbaev et al. introduce is that some
+layout changing operations are safe with respect to concurrent collection and some are not.
+The safe operations are ones that cannot lead to confusion as to whether a word read by
+the collector is tagged or raw. These can proceed with minimal synchronisation, generally
+needing only acquiring loads and releasing stores. It should be noted that the write barrier
+is a Dijkstra-style insertion one (we discuss the barriers needed for concurrent collection
+in Section 15.2) that always ensures that the referent of a stored reference will be marked.
+Thus races with respect to whether the collector has visited a given field are not an issue.
+Unsafe layout changes while the collector is running require the mutator to ensure that the
+object is visited, trying to do so itself if the object is not yet black.
+    Degenbaev et al. consider two ways to process unsafe layout changes. One is for the
+collector to snapshot the object. It does this by using an acquiring load on the object’s class
+word (which implies the object’s layout), copying the tagged fields to a private buffer, and
+doing a releasing compare-and-swap on the mark bits of the object. If the compare-and-
+swap fails, it knows the mutator is dealing with the object and ignores it. Otherwise, it can
+correctly use the snapshot. The second way they consider to handle unsafe layout changes
+is to lock the object (which requires the collector to lock each object as it visits it). They
+found the snapshot algorithm to be superior to locking, and while concurrent collection
+unsurprisingly costs a bit more compared with incremental collection, it clearly improved
+minimum mutator utilisation.
+
+12.4     Issues to consider
+While we have termed finalisation and weak pointers ‘language-specific’ concerns, they
+are now largely part of the accepted landscape of automatic memory management. Auto-
+matic management is a software engineering boon, enabling easier construction of more
+complex systems that work correctly, but various specific problems motivate finalisation
+and weak pointers as extensions to language semantics — extensions that have been intro-
+duced precisely because of the assumption that memory will be managed automatically.
+    If the collector and run-time system implementer receive the language being imple-
+mented as a given, then many of the design considerations mentioned here have already
+been decided: the language is what it is. The design questions mentioned earlier, partic-
+ularly with respect to choices in the design of support for finalisation, are more relevant
+in the context of designing a new programming language. Likewise, the varieties of weak
+pointer mechanisms, such as which ‘weak’ data structures to offer, how many strengths of
+references to support, and so on, are also more the province of language design.
+    Where a collector and run-time system implementer has more scope is in the choice
+and design of allocation and collection techniques. Here are some of the considerations of
+how those choices relate to the mechanisms discussed in this chapter.
+    Weak pointers and finalisation tend to require additional tracing ‘passes’. These typi-
+cally complete quickly — their performance is typically not of unusual concern. However,
+they complicate otherwise basic algorithms and require considerable care in their design.
+It is best to design in the necessary support from the beginning rather than to attempt
+12.4. ISSUES TO CONSIDER                                                               244
+
+to add it on later. Needless to say, it is very important to gain a solid understanding of
+the semantics of the features and of how proposed implementation strategies enact those
+semantics.
+    Some mechanisms, notably some of the ‘strengths’ of Java’s weak references, require
+that a whole group of related weak references be cleared at the same time. This is rela-
+tively easy to accomplish in a stop-the-world collector, but in a more concurrent setting
+it requires additional mechanism and care. As mentioned earlier, traversing the weak
+references needs to include a check of a shared flag and possibly some additional synchro-
+nisation, to ensure that collector and mutator threads make the same determination as to
+which weakly referenced objects are live — they need to resolve the race between any mu-
+tator thread trying to obtain a strong reference and the collector trying to clear a group
+of weak references atomically. This race is by no means peculiar to Java’s weak reference
+mechanisms, and is a potentiality in supporting weak pointers in any concurrent setting.
+    Given the concerns about atomic clearing of sets of weak references and the general
+complexity of weak pointer and finalisation support, it may be reasonable to handle those
+features in a stop-the-world phase of an otherwise concurrent collector, or at least to use
+locks rather than lock-free or wait-free techniques. Chapter 13 discusses these different
+approaches to controlling concurrent access to data structures.
+    Java soft references require a collector mechanism to decide whether it is appropriate
+to clear them during a given collection cycle.
+    Dynamic languages such as JavaScript may change the layout of objects on the fly. For
+such languages it can be important to consider common cases, detecting them statically,
+dynamically or both, to reduce impacts on both the mutator and the collector. Special care
+must be taken in the presence of concurrency so that layout changes do not confuse the
+collector into treating a pointer as a non-pointer, vice versa or missing fields entirely.

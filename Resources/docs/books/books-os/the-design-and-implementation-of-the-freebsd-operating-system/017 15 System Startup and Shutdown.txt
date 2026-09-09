@@ -1,0 +1,1272 @@
+                     Part V: System Operation
+
+             Chapter 15. System Startup and Shutdown
+
+Most of this book focuses on the FreeBSD kernel’s steady state: the invariants maintained
+during operation and the kernel services provided to local processes or, for network services, to
+remote systems. In this chapter, we describe how the kernel is bootstrapped and shut down. The
+details of the boot process vary significantly by hardware type and anticipated deployment but
+share a common structure involving the system firmware, its basic input-output system (BIOS),
+a variable number of stages of FreeBSD-provided boot loaders, the kernel boot, and finally
+userspace.
+
+System operation begins, and often ends, with vendor-provided firmware that abstracts away
+low-level variations in the hardware environment. The firmware also provides information on
+processor, memory, bus, and peripheral device configuration to the kernel, and may provide
+power-management services. The interfaces to system firmware differ substantially across
+platforms, vendors, and deployment environments: workstations and servers have different
+operational models than embedded devices, all of which must be taken into account by the
+FreeBSD kernel. Higher-end systems often have firmware support for remote management
+features and network booting, over which FreeBSD layers multiple stages of scripted boot
+loaders, the kernel, and optionally loaded kernel modules. By contrast, embedded and small
+personal devices tend to have more constrained boot processes in which a simple firmware
+copies a statically linked kernel out of flash to main memory and then jumps to its starting
+address to begin execution. In lower-end environments, FreeBSD may boot from a read-only
+filesystem image in flash and run a single specialized application.
+
+Kernel boot and shutdown are complex processes that depart from normal execution paths and
+hence require careful attention to detail. A key concern during boot is the set of dependencies
+between components: filesystems cannot be mounted until storage devices have been
+enumerated. In turn, storage device drivers depend on initialization of lower-level features such
+as scheduling and virtual memory. Historically, system shutdown has required somewhat less
+finesse: freeing each allocated piece of memory is unnecessary as the contents of memory will be
+lost on powerdown or reinitialized on reboot. The introduction of virtual network stacks has,
+however, forced increasing numbers of subsystems to provide explicit and carefully designed
+destructors. Dependencies remain important: user processes must be safely shut down before
+filesystems can be unmounted, which in turn depends on draining I/O queues to storage devices
+
+before power is turned off. The kernel defines linker-based frameworks to manage these
+complex dependencies: the frameworks allow components to register functions for ordered
+execution during the boot and shutdown processes. The frameworks also allow code to have a
+common structure independent of whether the code is linked into the kernel itself or loaded via
+a module at boot or run time.
+
+This chapter traces the boot process starting with the firmware and boot loaders, then the kernel
+startup, and finally the startup and shutdown of userspace. The final section examines topics
+that are related to the startup procedure. These topics include configuring the kernel load image,
+shutting down a running system, and debugging system failures.
+
+15.1 Firmware and BIOSes
+
+The boot process begins with the initial hardware reset as power is turned on, but can also be
+triggered following a system-administrator-requested reboot, or a system crash and reset.
+Processors begin execution in vendor-provided firmware stored in ROM or memory-mapped
+flash referred to as the BIOS. The firmware performs several functions, depending on the device
+and vendor, including:
+
+• Initializing low-level hardware features such as CPU caches, programmable interrupt
+controllers, bridges, and memory controllers.
+
+• Running a set of boot-time diagnostics, checking CPU and memory functionality, and issuing
+warnings if the system may not be able to operate in production. The firmware may maintain a
+log of past failures—for example, a list of ECC-memory error recoveries.
+
+• Providing pre-boot administrative services to configure RAID, remote management, and
+boot-device choice.
+
+• Coordinating multiprocessor startup; a boot processor will be nominated, and other processors
+put in a suspended state awaiting operating-system initialization.
+
+• Performing boot-time hardware discovery to identify and initialize devices from which an
+operating system may be loaded; for example, the firmware will enumerate locally attached
+media such as USB devices, CD-ROMs, and hard disks suitable for local booting, and it will
+identify Ethernet devices suitable for network booting.
+
+• Loading and updating manufacture-time hardware descriptions based on the firmware’s
+knowledge of the processor, chipset, and peripherals on the integrated device. This information
+will be exported to the boot loader and operating system via a scheme such as the advanced
+
+configuration and power interface (ACPI) on X86 systems or Flattened Device Trees (FDT) on
+many embedded systems.
+
+• Continuing, optionally, to provide run-time services via a system management mode on the
+main processor or an embedded management processor, even as the operating system runs.
+These run-time services may include features such as power management and remote-console
+access (e.g., serial-over-LAN).
+
+• Providing both I/O services and device-enumeration services to support the bootstrap of
+standalone programs.
+
+• Loading and executing code from the selected boot device.
+
+After a variety of boot-time diagnostics, handling any administrative requests, and selecting a
+target boot device, the BIOS’s next responsibility is to start bootstrapping the operating system
+by loading and executing the initial code. It also provides continuing early I/O and
+system-configuration services for the nascent operating-system loader and kernel. Firmware
+such as the PC BIOS, U-Boot, and Open Firmware will provide operating-system-like disk and
+network I/O routines until the kernel’s device drivers are in operation, as well as descriptions of
+hardware devices that cannot be automatically enumerated, such as PCI root bridges.
+
+In the past, PC firmware has rarely understood the filesystems of the operating systems that
+they must load; instead, the startup procedure read a program from a reserved area of the boot
+disk. The recent Unified Extensible Firmware Interface (UEFI) standard requires that new
+BIOSes support the FAT filesystem as an origin for later boot stages, a feature long supported in
+embedded and server firmware such as U-Boot and Open Firmware [Forum, 2013]. UEFI also
+brings security features such as cryptographically verified boot loading to X86, which will see
+increasing support in forthcoming FreeBSD versions.
+
+15.2 Boot Loaders
+
+The role of the operating-system boot-loader sequence is similar to that of the firmware:
+bootstrap the higher-level operating system using a restricted set of lower-level facilities. It also
+facilitates security, management functions, and failure recovery. Multiple stages are often used
+as each successive stage is able to have a larger code footprint and can rely on services and
+accumulated configuration state provided by the previous stage.
+
+The first-stage boot loader on a conventional X86 system is limited to a single 512-byte sector,
+which is insufficient space for code that can interpret filesystems. Hence, the first-stage boot
+loader’s only job is to determine a boot-partition and load a larger and more comprehensive
+
+boot phase from a specified sector. Later boot phases are more complete execution
+environments that include filesystem and networking support, allow preloading of
+cryptographic keys, can be scripted in a high-level language, and support an interactive menu to
+allow recovery from a failed upgrade.
+
+Embedded systems trade off boot-loader size and complexity, depending on the capabilities of
+the physical platform and maturity of the integrated firmware. At one extreme, boot loaders
+from operating-system vendors are entirely avoided for reasons of space; at the other, the
+complete X86-like boot sequence, including scriptable loader, will be present and will offer
+greater flexibility.
+
+Master Boot Record and Globally Unique Identifier Partition Table
+
+When the X86 BIOS has selected a disk device for booting, the BIOS loads the first sector into
+memory at a fixed location and executes it. On most disk devices, this first sector will contain a
+master boot record (MBR). The 512-byte sector, illustrated in Figure 15.1, contains a fragment of
+boot code, disk layout information, a four-entry partition table, and a magic number (signature)
+that will be checked to confirm a valid boot sector is present. To continue the boot, the BIOS
+jumps into the operating system’s boot code once it has been loaded into RAM. FreeBSD
+supports two different partitioning schemes on X86: mbr, the default prior to FreeBSD 9.0,
+implements the fdisk partitioning scheme from MS-DOS; and pmbr, the default in FreeBSD 9.0
+and later, implements the more recent globally unique identifier partition table (GPT) scheme,
+which supports greater numbers of partitions and larger disk sizes.
+
+Figure 15.1 X86 boot-time-partition data structures: master boot record (MBR) and globally
+unique identifier partition table (GPT).
+
+GPT is a multisector successor to MBR that provides an additional header in sector 1, described
+by the gpt_hdr structure, and further sectors containing a variable-length table of partition
+entries, described by gpt_ent structures. FreeBSD 9.0 and later use GPT via the pmbr boot
+loader written to the first sector by the installer, although these versions continue to support
+optional use of fdisk partitions if required for compatibility. When GPT is used, the boot sector
+contains a special variant of the MBR called a protective MBR (PMBR). The PMBR describes a
+single partition of the GPT type, causing pmbr to load the GPT and scan it for a freebsd-boot
+partition (typically sized at 64 Kbyte). If found, pmbr will load the first 545 Kbyte of that
+partition into memory, which will contain gptboot, the next-stage boot loader. The final action
+for pmbr is to jump into the loaded code.
+
+The Second-Stage Boot Loader: gptboot
+
+The second-stage boot loader, gptboot, can be a substantially larger multisector program as it
+is loaded from a partition and is not limited by the space constraints of the PMBR. This
+additional space allows for significantly more functionality, including support for loading
+configuration data and later boot code from filesystems rather than simply disk sectors. The
+gptboot boot loader has several tasks:
+
+1. Transition to protected mode so that the boot loader can access more than the 1 Mbyte
+available to the 16-bit X86 MBR execution environment. This transition is done by the i386 boot
+extender (BTX) library against which gptboot is linked. BTX is a protected-mode monitor that
+executes the majority of the boot loader with access to a larger virtual address space, but is still
+able to forward requests to the BIOS by temporarily switching back to 16-bit real mode.
+
+2. Accept a set of boot flags, which may be entered interactively on a video or serial console, or
+loaded from the configuration file /boot.config. The flags will be passed to the next boot stage
+via an instance of the bootinfo structure. Boot flags select features such as single-user mode,
+verbose logging, or immediate entry to the kernel debugger on start.
+
+3. Load and start the ELF-formatted next-stage boot loader /boot/loader or a kernel from a
+filesystem in a GPT partition type of freebsd-ufs using read-only UFS support. A variation of
+gptboot named gptzfsboot will likewise search for a ZFS filesystem stored in a GPT partition
+of type freebsd-zfs; for RAIDZ, multiple partitions may be used.
+
+The Final-Stage Boot Loader: /boot/loader
+
+The final-stage loader, /boot/loader, is a scriptable, interactive boot environment that can:
+
+• Prompt the user for input via a boot menu or command line;
+
+• Offer a choice of kernels to load;
+
+• Inspect and modify kernel environment variables that will be passed to the next phase of the
+boot;
+
+• Preload kernel modules; and
+
+• Preload filesystem data such as GELI keys or memory-disk images.
+
+The /boot/loader’s menu-driven user interface is implemented via scripts executed by a
+built-in   Forth   interpreter,   libficl,   making    more   complex   boot-time   customization
+straightforward. The interpreter has access to a broad set of system APIs provided by libstand,
+a bare-metal system library. The libstand library implements POSIX-like APIs used by libficl,
+as well as filesystem access to UFS, ZFS, CD9660, and NFS. As with gptboot, /boot/loader is
+linked against BTX, and so has access to BIOS services while running in protected mode.
+
+When the loader starts, it will execute the script /boot/loader.4th, which will then load
+/boot/kernel/kernel and any modules enabled in /boot/loader.conf. The loader then
+presents a boot menu and begins a countdown that can be interrupted by the user. If requested
+by the user, the loader will drop to a command-line interpreter on the console and await input; a
+list of commands is shown in Table 15.1. The most commonly used commands are the “unload”
+command, to remove the default kernel, followed by the “load” command, to load an alternative
+kernel. Typically, the alternative kernel being loaded is /boot/kernel.old/kernel, saved by
+the kernel build system when installing a new kernel, in case the new kernel proves to be faulty.
+
+Table 15.1 /boot/loader user commands on X86.
+
+The kernel is started by issuing the “boot” command, either by the user or because the
+countdown has reached 0. The details of the boot command are machine dependent, but for
+systems without a hardware-provided mapping of physical addresses into the virtual-address
+space, may include setting up initial memory mappings for physical memory.
+
+As with gptboot, /boot/loader expects the next-stage binary to be an ELF file, and will pass a
+bootinfo structure pointer as an argument to the kernel, illustrated in Figure 15.2. As with
+/boot/loader before it, gptboot will pass on boot flags such as that for single-user mode.
+Unlike gptboot, it will also pass kernel-environment variables set during the boot, preloaded
+module data, memory-size information, memory-filesystem images, and ACPI table references,
+which will be used early in kernel boot by the virtual memory system and kernel linker.
+
+Figure 15.2 The bootinfo structure passed by the boot-loader to the kernel.
+
+Boot Loading on Embedded Platforms
+
+Whereas X86 workstations and servers are resource-rich platforms intended to be maximally
+flexible in terms of deployment environments and workloads, embedded systems are often
+resource-poor environments tuned to reduce cost, size, and energy use to the minimum required
+for their specific function. The firmware, boot loader, and operating system may all be tuned for
+small size or reduced functionality, and hence vary significantly in terms of the software features
+present.
+
+Very low-end devices such as network switches may have a small firmware that directly loads
+and begins execution of the FreeBSD kernel without any further boot-loader stages. Where the
+operating-system boot loaders are present, they may be stripped of features to reduce their size,
+compared to similar code on server-class platforms. This is the case for the ARM version of
+FreeBSD’s boot2, a predecessor to gptboot; in contrast, the MIPS port of boot2 is a full
+adaptation of the feature-rich X86 code.
+
+Higher-end embedded devices may provide sufficiently mature and scriptable loader
+environments, such as U-Boot, with the result that the flexibility gained from /boot/loader
+
+offers little additional benefit. Other devices use both U-Boot and ubldr, a version of
+/boot/loader customized to run over U-Boot’s firmware services. Some MIPS targets also use
+the /boot/loader. On systems where FreeBSD provides a boot loader but firmware is unable to
+provide I/O abstractions, the boot loader may need to incorporate device drivers [Davis et al.,
+2014]. Embedded environments also benefit from industry-wide reduction in size and energy
+use in integrated circuits, and so are becoming more capable over time. Multistage, feature-rich
+boot loaders will likely see increasing deployment to facilitate security, customizability, field
+upgrade, and recovery.
+
+15.3 Kernel Boot
+
+After the firmware or boot loader has started the FreeBSD kernel, the kernel must initialize both
+the hardware and its own data structures in preparation for the execution of application
+programs. The initialization process is divided into four stages. In the first stage, handcrafted
+assembly-language code will set up the hardware to allow more generic C-language code to
+operate. The second stage continues machine-dependent initialization of hardware and core
+data structures, but in the C language. After this stage’s completion, memory size will be known,
+virtual addressing will be enabled, and features such as printf() and the kernel debugger will be
+available. The third stage initializes a broader set of basic kernel services such as virtual memory,
+scheduling, and synchronization. The fourth stage initializes higher-level services such as
+filesystems and the network stack, starts kernel processes, and creates the first user-level
+process to execute the init binary and user-level startup scripts.
+
+The FreeBSD kernel attempts to rely on only limited aspects of machine state. At the point of
+handoff from the boot loader, the following three conditions will be in effect:
+
+1. All interrupts are blocked.
+
+2. The memory management unit is configured so that a range of virtual addresses corresponds
+directly to physical memory locations; for some architectures, this mapping requires specific
+configuration actions such as the boot loader setting up suitable page tables and flushing the
+TLB; for others, a hardware-supported, physically mapped region provides this mapping
+automatically in kernel mode (e.g., MIPS).
+
+3. The in-memory location of any firmware-provided configuration state, such as memory
+configuration via the X86 ACPI or FDT tables, has been identified and passed to the kernel via
+bootinfo.
+
+The boot loader passes to the kernel the identity of the boot device, boot flags, and an initialized
+kernel environment consisting of name and value pairs. In addition, it will pass on information
+
+about preloaded modules including loadable kernel modules, memory images, and keying
+material for cryptographically protected storage.
+
+The kernel is loaded into physical memory at a known location—for many architectures this
+location will be at a low physical address just above the location of interrupt-vector tables or
+handlers. In normal operation, the kernel image is mapped into virtual memory at an address
+near the top of the address space. For platforms without directly mapped regions, the kernel
+image may initially appear at the bottom of the virtual address space. Until the kernel is mapped
+to its permanent location, it requires assembly-language startup code to manually convert
+between its initial temporary mapping and its eventual permanent mapping. The kernel is
+usually loaded into contiguous physical memory, so the translation is simply a constant offset
+that can be saved in an index register.
+
+An early task of the startup code is to identify the type of CPU on which the system is executing.
+Often, older versions of the CPU support only a subset of the complete instruction set. For these
+machines, the kernel must emulate the missing hardware instructions in software. For
+workstation and server architectures, FreeBSD can be configured such that a single kernel load
+image can support all the models in an architecture family. For embedded systems, it is common
+to have a kernel configuration tuned for each board or device, either because of space and
+performance limitations, or because of a lack of common conventions for an instruction set,
+hardware configuration, and boot-loader behavior. The early startup code may also call
+machine-dependent code to initialize the CPU or virtual-memory subsystem.
+
+Assembly-Language Startup
+
+The first steps taken during initialization are carried out by assembly-language code in locore.S.
+The goal of this code is to create a run-time environment that meets the expectations of the C
+code that is to follow, primarily by providing a conformant stack frame (sometimes on a fresh
+stack), and by initializing the register file to the C ABI that will be used by the kernel. It may also
+initialize low-level processor features that affect memory management and addressing, so that C
+code executes in a uniform and easily understood environment. Assembly code is minimized in
+favor of C to the greatest extent possible. The work of locore.S is highly machine dependent
+and includes the following:
+
+• Identifying the CPU and its features
+
+• Placing the processor into a known state; for example, by clearing the error flags on X86 and
+clearing or setting coprocessor-enable bits on MIPS
+
+• Creating an initial stack or stack frame for the early boot
+
+• Clearing the bss area (pre-zeroed C-language global variables)
+
+• Probing the physical-memory size
+
+• Enabling virtual addressing
+
+• Invoking platform-specific C-language startup code
+
+• Handing over control to machine-independent C-language startup code
+
+In ports to more recent architectures, locore.S has become increasingly minimal: whereas the
+32-bit X86 code is several hundred lines of assembly, the 64-bit version is less than 20. The size
+reduction reflects not only simplifications made by AMD in the 64-bit ISA design, but also
+initialization functions shifting to the boot loader or platform-specific C-language startup code.
+
+Platform-Specific C-Language Startup
+
+Two C-language functions are called by locore.S: one for platform-specific initialization and a
+second to proceed with the machine-independent boot (which will not return). The split allows
+the machine-independent boot sequence to be done in a well-defined environment. The name of
+the platform-specific initialization function varies by architecture; for 64-bit X86, it is
+hammer_time; for embedded architectures such as ARM and MIPS, it is typically
+platform_start. Platform-specific initialization will include most of the following steps:
+
+• Further characterization of the CPU and configuration of its features, including caches,
+memory-management unit, and floating-point unit
+
+• Initialize and enable memory-management hardware, such as virtual-address translation or
+caching for a hardware-supported directly mapped regions
+
+• Set up interrupt, trap, exception vectors or handlers, and on architectures that require it,
+segment registers and system calls
+
+• Process data passed from the boot loader such as the kernel environment and preloaded
+modules
+
+• Tune kernel parameters—especially resource limits such as address-space and process
+limits—based on environment variables and compile-time defaults
+
+• Interpret firmware-provided data such as FDT hardware descriptions
+
+• Calculate the amount of physical memory on the machine if the architecture does not provide
+this information reliably via the firmware
+
+• Set up the first kernel process and thread
+
+• Initialize static and dynamic per-CPU storage for the boot processor
+
+• Set up tables for multiprocessor or multithreaded operation, if necessary
+
+• Initialize the kernel message buffer and console (enabling kernel printf())
+
+• Initialize global locks such as Giant and the machine-dependent IPI lock
+
+• Initialize the kernel debugger
+
+• Invoke pmap_bootstrap to do early virtual-memory system initialization
+
+Although the details of these steps vary from architecture to architecture, the broad outline
+described here is applicable to any machine on which FreeBSD runs.
+
+Modular Kernel Design
+
+The kernel is a multimillion-line C program that runs on ‘bare metal,’ and hence must provide
+its own run-time linker, memory allocator, threading model, synchronization primitives, work
+models, and debugging tools. Higher-level kernel services such as device drivers, filesystems,
+and network protocols depend on these lower-level primitives, providing facilities to one
+another and to user processes via the system-call interface. To manage this complexity, most
+kernel components are encapsulated in kernel modules that consume core-kernel primitives,
+register services they offer via common frameworks (such as the device-driver framework), and
+specify boot-order dependencies so that the kernel can ensure that any requirements are met
+before any code is executed.
+
+Modules can be compiled into the kernel binary itself, or as loadable kernel modules
+compiled into separate ELF binaries that can be preloaded by the boot loader or loaded
+dynamically. Loadable modules make it possible to extend the kernel at run time as new
+requirements become apparent, adding significant flexibility. For example, device drivers can be
+loaded when a new peripheral is plugged into a USB hub, and firewall command-line tools can
+automatically load their corresponding kernel modules. In practice, many parts of the FreeBSD
+kernel source can be compiled either into the kernel or into loadable modules without
+source-code modification, depending on the kernel configuration used.
+
+A key design goal in the kernel is to avoid differentiating between modules that are linked into
+the kernel and modules that are loaded dynamically. The same kernel programming interfaces
+(KPIs) declare startup and stop functions, register with kernel frameworks, and so on. This
+approach provides modularity without inhibiting practical deployment.
+
+Module Initialization
+
+In earlier versions of BSD, the kernel was brought up using handcrafted C code that implicitly
+(and often correctly) encoded the dependencies of each subsystem by virtue of the order in
+which subsystem initialization routines were invoked. An intimate understanding of the entire
+operating system was needed for someone to add a new service or subsystem, which slowed the
+evolution of the kernel and made it more difficult to customize the kernel for incorporation into
+larger integrated products. A significant part of the extensibility benefit of kernel modules rests
+on the core kernel being unaware of the specifics of modules until they are loaded. The SYSINIT
+framework allows modules, whether compiled into the kernel, preloaded by the boot loader, or
+loaded at run time, to declare a common set of ordered startup and shutdown functions.
+Modules register startup functions via the static SYSINIT macro, and stop functions via
+SYSUNINIT:
+
+SYSINIT(name, subsystem, order, function, identifier)
+
+SYSUNINIT(name, subsystem, order, function, identifier)
+
+Module startup and stop functions are organized into a two-level hierarchy that determines the
+order in which the function should be called during boot, module load, module unload, and
+system shutdown. The subsystem argument is the first level of the hierarchy. Each subsystem is
+assigned a particular numeric constant that creates the first-level ordering of the modules to be
+loaded; an ordered list of subsystem identifiers is in the /sys/sys/kernel.h include file. The
+second level of the hierarchy is handled by the order argument. If two modules are in the same
+subsystem, the order determines which comes first.
+
+The function argument is a pointer to the function that the kernel will invoke, and the identifier
+argument is passed to the invoked function as its sole parameter. The identifier is often a
+pointer to a data structure; this parameter allows a single function to be reused in multiple
+contexts. For example, the function kproc_start() is used with several SYSINITs to start kernel
+processes with varying names and is used for multiple subsystems.
+
+The SYSINIT framework is implemented using linker sets: each use of one of its macros creates
+a static data structure describing the specific startup or stop function and its properties. The
+structure is tagged with a request that the compiler place its symbol in a special named section
+in the ELF binary indicating whether it is to be run at startup or stop. After the
+assembly-language startup code has completed its work, it calls the machine-independent
+kernel start, mi_startup(). The kernel binary is scanned for symbols in the startup section,
+whose target data structures are sorted and their function pointers called. This process will be
+repeated later in the boot when preloaded kernel modules are runtime linked, as modules are
+dynamically loaded and unloaded, and on system shutdown, using the corresponding named
+section.
+
+A similar technique allows modules to declare startup and stop functions to be run each time a
+virtual    network   stack   is   instantiated   or     destroyed.   Macros   VNET_SYSINIT   and
+VNET_SYSUNINIT take identical arguments, but use different ELF sections, allowing modules
+to easily perform per-network-stack setup and teardown.
+
+Basic Kernel Services
+
+Before higher-level services such as device drivers and filesystems can do any useful work,
+FreeBSD must set up its basic kernel services, including virtual memory, the general-purpose
+memory allocator, and the kernel linker. These services are shown in Table 15.2 in the order in
+which they are done. All these services are initialized early in the machine-independent startup
+sequence so that they can be used by the remainder of the kernel.
+
+Table 15.2 Basic kernel services.
+
+SI_SUB_TUNABLES retrieves configuration values from the boot-time kernel environment and
+installs them in global variables. Tunables are processed early in the boot as they override
+compile-time defaults. Some may be adjusted at run time via sysctl, such as resource limits on
+the number of TCP connections. Others commit the kernel to difficult-to-change resource
+allocation choices, such as the size of the kernel address space, and so can be set only at boot
+time.
+
+SI_SUB_VM and SI_SUB_KMEM initialize the virtual-memory system and general-purpose
+kernel memory allocator. The virtual-memory system is initialized by a call to vm_mem_init().
+Once the vm_mem_init() routine has completed its work, all memory allocations by the kernel
+or processes are for virtual addresses that are translated by the memory-management hardware
+into physical addresses. The kernel’s malloc(), wrapped around the slab allocator for small
+
+allocations, and the virtual-memory system directly for larger allocations, is initialized by a call
+to mallocinit(). These subsystems are described in greater detail in Section 6.3.
+
+SI_SUB_HYPERVISOR detects whether FreeBSD is running under Xen HVM, and if so, sets up
+paravirtualized features such as Xen hypercall stubs and Xen-aware virtual-memory operations,
+and disables emulated devices in favor of paravirtualized ones. Xen support is discussed in
+greater detail in Section 8.10.
+
+SI_SUB_WITNESS initializes the optionally compiled witness deadlock-prevention facility
+described in Section 4.3. Witness tracks nested lock acquisitions, building a lock-order graph
+that will provide debugging information to the developer if the possibility of deadlock arises.
+The witness_initialize() routine allocates memory to hold lock-acquisition data used for
+deadlock detection, and also installs any statically declared graph edges.
+
+SI_SUB_MTX_POOL_DYNAMIC initializes the system’s pool of mutexes described in Section
+4.3. Mutexes are generally allocated as global variables or embedded within data structures
+allocated from the heap, keeping locks close to the data they protect. The pool of mutexes is an
+array of mutexes looked up by hashing the pointer of an object that will return a
+deterministically selected leaf lock for the object. The pool of mutexes is allocated early in the
+boot so that it can be used by higher-level kernel subsystems.
+
+SI_SUB_LOCK indicates the point in the boot at which it is safe for kernel modules to allocate
+and initialize locks; it is used both directly by module functions registered with SYSINIT, and
+indirectly through static-wrapper macros such as MTX_SYSINIT, RM_SYSINIT, RW_SYSINIT,
+and SX_SYSINIT, which as arguments will take a pointer to a global lock, its flags, and its
+description. Lock initialization occurs after SI_SUB_WITNESS in the boot so that storage is
+available to track new lock classes from inception. Initialization must also occur before any
+potential use of the locks in other subsystem code paths.
+
+SI_SUB_EVENTHANDLER initializes the event-handler system, which allows the kernel and
+its modules to register functions to be called when events of interest occur elsewhere in the
+kernel. Event handlers are used to expose events such as network-interface arrival, departure,
+and address changes, routing changes, the creation and destruction of processes, execution of
+binaries, the creation and destruction of threads, system-shutdown stages, the filesystem mount
+and unmount events, power events, kernel-module load and unload, watchdog timeouts, and
+low-memory      conditions.       Event   handlers     may   be   declared   statically   using   the
+EVENTHANDLER_REGISTER macro, which uses SYSINIT to initialize the event handler early
+in boot before any of the events it describes can occur.
+
+SI_SUB_VNET_PRELINK, used only for vnet_init_prelink(), performs early initialization of
+virtual network-stack support and runs before most kernel modules have executed any code.
+
+SI_SUB_KLD is complex as it calls many kernel functions associated with modules, linkage, and
+memory allocation:
+
+1. In the first phase, the kernel prepares for the linking and initialization of kernel modules. The
+module registry is initialized by module_init() and will maintain administrative information on
+modules such as their reference counts and descriptions suitable for export to userspace. The
+kernel-linker framework is initialized, preparing lists and other data structures that will track
+preloaded and dynamically loaded modules. Two special memory allocators are also initialized
+before module events that will allocate memory: the dynamic per-CPU allocator by
+dpcpu_startup(), and the virtual-network stack allocator by vnet_data_startup(). The
+allocators have similar structures, providing frameworks for scoped global-memory allocation.
+
+2. Next, individual linker classes will be initialized—in practice, they will consist of the
+ELF-specific linker code, found in link_elf_init(), on all systems.
+
+3. In the next phase, the ELF linker code will search the list of modules preloaded by the boot
+loader for ELF kernel modules, process the symbols for each, and register them with the kernel
+linker for later processing and initialization.
+
+4. In the final stage, the registration of new linker classes is halted by linker_stop_class_add(),
+and then modules linked into the kernel and those preloaded by the boot loader will be
+registered and initialized by linker_init_kernel_modules() and linker_preload(). This
+registration and initialization must sort the modules so that dependencies are taken into
+account when invoking the module constructors. Loadable kernel module SYSINITs with
+subsystems prior to SI_SUB_KLD will have those startup functions invoked only after module
+linking and registration have taken place. Modules are able to register optional command-line
+extensions to the kernel debugger, such as data-structure pretty printers. These extensions are
+also processed in this phase.
+
+SI_SUB_CPU is responsible for initializing several CPU-related services, including time-counter
+synchronization that is required to implement kernel callouts. It is also responsible for starting
+execution of additional processors in multiprocessor configurations. Starting additional
+processors requires a blend of machine-dependent and machine-independent code performed
+as a series of phases:
+
+1. The first phase is done by a set of machine-dependent cpu_startup() functions. Kernel
+virtual-memory configuration is completed by calling vm_ksubmit_init(), which allocates
+
+virtual address space for paging and I/O, swap, and transition bio storage. In general, kernel
+memory is not pageable, but two pageable submaps are initialized to hold arguments to execve
+and for pipe storage. The buffer cache will be initialized by bufinit(), including data structures,
+current and running resource limits, and reserved memory to use in low-memory situations.
+Swap buffers are set up by vm_pager_bufferinit(). Certain machine-dependent initialization
+will also be done. On 64-bit X86, for example, the timestamp counter (TSC) is calibrated with
+wall-clock time and registered as a source of timer ticks, CPU and hyperthread information is
+printed, and additional CPU registers associated with floating point will also be configured. The
+X86 local APIC will be initialized, which allows interrupts to be configured and routed to—and
+between—multiple CPUs in a multiprocessor system.
+
+2. In the second phase, the machine-independent mp_start() function will start additional
+processors using machine-dependent start functions. On many architectures, starting additional
+processors requires some additional interrupt configuration (e.g., setting up interrupt vectors to
+receive interprocessor interrupts (IPIs) and then sending an IPI to each additional CPU to
+begin execution). On other architectures, such as SPARC64, the firmware may instead provide
+interfaces to start the additional CPUs. After the additional CPUs are started, information about
+them will be printed on the console by cpu_mp_announce().
+
+3. In the final phase, callout_callwheel_init() will configure the callout wheel for the boot CPU,
+making it possible to register callouts without specific CPU affinity (timers are described in
+Section 3.4). Additional per-CPU callout wheels will be initialized later in the boot.
+
+Several other machine-dependent CPU-related initialization functions will also run in this phase
+of the boot, setting up access to the PC BIOS, allocating space for coprocessor-2 contexts for
+certain MIPS processors, and setting up virtual-CPU state for Xen.
+
+SI_SUB_RACCT is responsible for initializing the kernel’s resource-accounting system, used to
+limit and balance CPU, memory, IPC, and other resource utilization by competing processes,
+users, login classes, and jails. Two routines are run in this subsystem: racct_init(), which creates
+a new kernel-memory zone for accounting state, and configures prison0’s accounting state; and
+rctl_init(), which sets up kernel-memory zones for resource-accounting policy.
+
+SI_SUB_RANDOM          is   responsible    for   initializing   the   kernel’s   noncrypto-graphic
+pseudo-random number generator from the timestamp counter via the routine random_init().
+It also initializes random-number generation for kernel stack protection via __stack_chk_init().
+
+SI_SUB_KDTRACE initializes software-trace functions relating to two frameworks: DTrace,
+described in Section 3.8, and processor hardware performance monitoring counters (HWPMC),
+which provide access to CPU performance-sampling functions. DTrace first registers with
+
+thread- and process-creation event handlers in init_dtrace(), which manage storage for each
+thread or process that might be used with DTrace. DTrace then initializes its per-CPU debugging
+output buffers in dtrace_debug_init(). HWPMC initializes storage for “soft” events in
+init_hwpmc (), to be triggered by software sources such as locking events, page faults, and clock
+ticks. It accepts registrations using the macro PMC_SOFT_DEFINE via pmc_soft_ev_register(),
+which likewise uses SYSINIT. Many later-configured modules implement DTrace events, or
+“probes,” relying on the results of this phase.
+
+SI_SUB_MAC, SI_SUB_MAC_POLICY, and SI_SUB_MAC_LATE initialize mandatory access
+control (MAC), described in Section 5.10. In the first phase, implemented in mac_init(), data
+structures, locks, and kernel-memory zones are initialized. In the second phase, policy modules
+that   have   declared    themselves    using     the    MAC_POLICY_SET       macro   will   invoke
+mac_policy_register() to attach to entry points and optionally allocate label storage. In the final
+phase, mac_init_late() sets the mac_late flag, which indicates to the framework that policy
+modules loaded after this point must be registered as “dynamic” policies requiring full
+synchronization when entry points are invoked. Until this point, policies that register with flags
+that prevent unload can be added to a linked list that does not require locks to iterate over,
+avoiding overhead if all policies are “static.” This initialization must be completed before any
+operations requiring MAC authorization, such as operations involved in mounting the root
+filesystem as well as creation of the first process, can proceed.
+
+SI_SUB_VNET is implemented by vnet0_init(), which allocates the first virtual network stack
+and associates it with prison0. This network-stack instance will be used for all processes unless
+further stacks are explicitly configured by the system administrator.
+
+SI_SUB_VM_CONF           completes     initialization    of   kernel-memory   zones    by    calling
+uma_startup3(), which starts up a callout, uma_timeout(), to run every 20 seconds. The
+timeout walks the list of kernel-memory zones performing routine activities such as updating
+statistics and, as required, resizing hash tables. The timeout also performs machine-dependent
+functions such as tuning limits on X86 local descriptor table segments.
+
+SI_SUB_DDB_SERVICES completes initialization of the DDB in-kernel debugger by setting up
+its capture buffer in db_capture_sysinit(). The capture facility logs text output from debugger
+scripts to a crash partition to create textdumps, a more compact alternative to a full
+kernel-memory crash dump.
+
+SI_SUB_RUN_QUEUE initializes the scheduler’s run queues, CPU groups, and initial load
+calculations, at boot. Both the ULE and 4BSD schedulers are initialized by routines named
+sched_setup(). The system scheduler is described in greater detail in Section 4.4.
+
+Finally, SI_SUB_KTRACE initializes the userspace kernel-trace facility, ktrace, by calling
+ktrace_init(), which must initialize locks and data structures, but also pre-allocate a set of
+trace-entry structures. These trace-entry structures will log kernel events such as system calls,
+data copied in and out of the user address space, signal delivery, and context switches as
+requested by user processes. This initialization must occur before any user process requests
+enabling of tracing. Section 3.8 describes ktrace in greater detail.
+
+From this point onward, the bulk of basic kernel services required to support the launching of
+kernel threads, device-driver discovery, and the remainder of the high-level boot are now
+present.
+
+Kernel-Thread Initialization
+
+Kernel-module code enters execution in several ways—most frequently by direct function
+invocation from another subsystem. For example, code might be invoked as a system-call
+implementation by the system-call trap-handling code in user threads, as an interrupt handler
+in an interrupt thread, as a task function in a task thread, or as a timeout function from a
+per-CPU callout thread. In other cases, subsystems will start kernel threads to embody portions
+of their activities.
+
+Sometimes, subsystems will create threads to provide asynchronous execution opportunities for
+other modules. For example, the interrupt-thread framework calls device-driver interrupt
+handlers in interrupt threads when it receives hardware interrupts for the corresponding device.
+In other cases, kernel modules create threads to allow the modules to defer blocking filesystem
+I/O to an asynchronous context. For example, the virtual-memory and security-audit
+subsystems create threads to perform disk I/O asynchronously from the process that triggered
+the I/O. A few threads are intrinsic to system functionality, such as idle threads required by the
+scheduler, as well as the first user process from which all later user processes will descend.
+Threads may be created on demand, as happens for iSCSI worker threads, which are
+instantiated when new sessions are configured; others are created unconditionally in boot, such
+as the GEOM worker threads that process upward and downward I/O requests. The modules
+that start kernel threads or processes during the boot are shown in Table 15.3.
+
+Table 15.3 Kernel threads and processes started by default on X86.
+
+SI_SUB_INTRINSIC begins the creation of the process hierarchy by executing p0init(). The
+function creates process0, the first process, pgrp0, its process group, and thread0, the first
+thread within that process. The first process is named kernel and its first thread is named
+swapper. Then, p0init() calls pmap_pinit0() to initialize the process’s virtual-memory space
+and memory map. For all later processes, the kernel-memory zone allocator will automatically
+invoke thread- and process-creation event handlers; however, since process0 and thread0 are
+statically allocated, p0init() must invoke them manually. The function also charges the root user
+for the resources associated with this first process.
+
+SI_SUB_AUDIT creates a kernel process and thread to support the kernel’s audit subsystem,
+described in Section 5.11. The separate thread allows the audit process to write records to the
+filesystem asynchronously from the process that performed the event. The audit_init() function
+initializes the audit subsystem and then creates audit_worker by calling audit_worker_init().
+The thread executes a loop that alternately awaits further events to write to the audit trail or
+blocks on filesystem I/O while writing records to the disk. The thread will also detect low-space
+conditions, which will be signalled to userspace by means of a special-device node.
+
+SI_SUB_CREATE_INIT is responsible for forking the first userspace process, init. This process
+will execute /sbin/init and implement the userspace boot. The create_init() function uses the
+kernel-internal fork1() function to create the new process; subsystems such as MAC and audit
+then customize init’s process credential with properties that will be inherited by all other user
+processes. The final action of create_init() is to call cpu_set_fork_handler() to set the function
+that the newly created kernel thread will call to start_init(). The init process will not
+immediately run, as it has not yet been placed in a runnable state.
+
+SI_SUB_SCHED_IDLE creates an idle process containing a set of per-CPU idle threads. Idle
+threads provide a default thread context that can always run, at the idle priority, on each CPU.
+This context ensures that interrupts delivered to an idle CPU always have a thread suitable to
+preempt and, therefore, a stack to borrow.
+
+SI_SUB_INTR, SI_SUB_SOFTINTR, and SI_SUB_DRIVERS create a variety of kernel
+processes and threads in service of device drivers, including interrupt threads and GEOM’s up,
+down, and event threads created by g_init(). Device drivers may create further threads; for
+example, the random device described in Section 5.12 creates a thread that intermittently
+extracts entropy harvested around the system from queues and feeds it into Yarrow. Interrupt
+threads serve not only devices fielding hardware interrupts, but also soft-interrupt handlers
+such as the callout thread and network-stack netisr threads.
+
+Four subsystems initialize threads supporting virtual memory, the buffer cache, and filesystems:
+SI_SUB_KTHREAD_PAGE,            SI_SUB_KTHREAD_VM,             SI_SUB_KTHREAD_BUF,            and
+SI_SUB_KTHREAD_UPDATE.             These     subsystems    incorporate    functions    that   run
+asynchronously from user threads, such as write-behind flushes of the buffer cache to disk,
+managing the vnode LRU cache, and paging activity. They also perform tasks that must occur at
+differing priorities. The virtual-memory subsystem and its threads are discussed in detail in
+Chapter 6.
+
+SI_SUB_KTHREAD_INIT completes creation of the init process by calling kick_init(), which
+schedules init’s kernel thread. When the thread starts, it will execute start_init(), which
+performs a series of activities to bring up the filesystem and userspace environment. First, init
+calls vfs_mountroot() to await completion of any device initialization that may be required to
+mount the root filesystem. Kernel modules such as the device-driver framework, GEOM RAID
+storage classes, and ZFS can request that the boot process be suspended to allow device probes
+to continue, and higher-level storage constructs to be discovered, before the root filesystem is
+mounted. Each component will invoke root_hold_token(), which returns a reference that must
+later be released using root_mount_rel(). Once devices have settled, the kernel must now
+identify and mount a suitable root filesystem by means of the following four steps:
+
+1.   First,    kernel    environmental      variables     such     as    vfs.root.mountfrom       and
+vfs_root.mountfrom.options are inspected to determine how root filesystem mounting should
+proceed. This inspection may update the rootdevnames array whose entries will be tried in the
+search for a viable mount.
+
+2. Next, vfs_mountroot_devfs() mounts a devfs instance as the initial root filesystem. Because
+it requires no source device, devfs can be mounted before /dev is available. Once devfs is
+mounted, then disk-based filesystems can use the same model for root filesystems as they do for
+later filesystems, reducing special casing in the root mount path.
+
+3. In the next phase, vfs_mountroot_devfs() will parse each device name, look up a suitable
+filesystem in the kernel’s filesystem-module list, and attempt to mount it by calling
+kernel_mount().
+
+4. In the final phase, vfs_mountroot_shuffle() will rearrange the two mounted filesystems so
+that the newly mounted root is available as /, and the earlier devfs mount can be found under its
+/dev.
+
+If a failure occurs, then the next possible filesystem root will be tried. Once the root filesystem is
+mounted, prison0 is updated, and the mountroot event handler is called to notify other kernel
+modules that the filesystem is now available. Creation of the userspace process is completed by
+start_init() searching for a suitable init binary, copying out boot-flag arguments, and issuing
+execve to load the binary. Execution will begin when the thread returns to userspace returning
+from execve.
+
+Device-Module Initialization
+
+With all the kernel’s basic services in place, and the basic processes created, it is now possible to
+initialize the rest of the devices in the system including the disks, network interfaces, and clocks.
+Table 15.4 shows the main components used to initialize the device modules.
+
+Table 15.4 Device modules.
+
+Before any devices can be initialized—in particular, network interfaces—the mbuf subsystem
+must be set up so that the network interfaces have a set of buffers they can use for their own
+initialization. The mbuf subsystem initialization is handled by the SI_SUB_MBUF module and
+its mbuf_init() routine (mbufs are described in Section 12.3).
+
+At this point in the startup sequence, hardware interrupts are not enabled on the system. The
+kernel now sets up all the interrupt threads that will handle interrupts when the system begins
+to run. The interrupts are setup by two modules: SI_SUB_INTR, which sets up the interrupt
+threads that handle device interrupts, and SI_SUB_SOFTINTR, which creates soft-interrupt
+threads. Soft-interrupt threads are used by services that handle asynchronous events that are
+not generated by hardware. Soft-interrupt threads provide the soft clock, which supports the
+callout subsystem. They also provide the network thread that dequeues inbound packets from
+the network-interface queues and moves them through the network stack.
+
+As part of bringing up real hardware devices, the kernel first initializes the device filesystem and
+then readies the network stack to handle devices with a call to the if_init() routine. The if_init()
+routine does not initialize any network interfaces; it only sets up the data structures that will
+support them. Finally, the devices themselves are initialized by the SI_SUB_DRIVERS and
+SI_SUB_CONFIGURE modules. All devices in the system are initialized by autoconfiguration as
+described in Section 8.9.
+
+Once the devices are configured, the virtual filesystem (VFS) is initialized. Bringing up the VFS
+is a multistage process that entails initializing the VFS itself, the vnode subsystem, and the name
+cache and pathname-translation subsystem that maps pathnames to vnodes.
+
+The next systems to be set up are those relating to the real-time clock provided by the hardware.
+The initclocks() routine, which is a part of the SI_SUB_CLOCKS module, calls the architecture’s
+specific cpu_initclocks() routine to initialize the hardware clock on the system and start it
+running. Once the hardware clock is running, other services such as support for the Network
+Time Protocol (NTP), device polling, and the time counter are started.
+
+Loadable Kernel Modules
+
+Some kernel modules can be loaded and started or shut down and unloaded while the system is
+running. Providing a system where kernel services can be loaded and unloaded at run time has
+several advantages over a system where all kernel services must be linked in at build time. For
+systems programmers, being able to load and unload modules at run time means that they are
+able to develop their code more quickly. Only those modules absolutely necessary to the system,
+such as the memory manager and scheduler, need to be directly linked into the kernel. A kernel
+module can be compiled, loaded, debugged, unloaded, modified, compiled, and loaded again
+without having to link it directly into the kernel or having to reboot the system. When a system
+is placed in the field, the use of kernel modules makes it possible to upgrade only selected parts
+of the system, as necessary. Upgrading in the field is absolutely necessary in embedded
+applications where the system may be physically unreachable, but it is also convenient in more
+traditional environments where many systems might have to change at the same time—for
+instance, in a large server farm.
+
+Loadable kernel modules are declared in the following way:
+
+DECLARE_MODULE(name, moduledata, subsystem, order)
+
+Each module has a name, subsystem, and order that serve the same purposes here as they do in
+the SYSINIT macro. The key difference is the use of the moduledata argument, which is a data
+structure that is defined in the following way:
+
+int (*modeventhand_t)(
+    struct module *module,
+    int command,
+    void *argument);
+
+typedef moduledata = {
+    const char *name;
+    modeventhand_t event_handler;
+    void *data;
+} moduledata_t;
+
+All modules have an associated version that is declared with the MODULE_VERSION macro.
+Without a version, it would be impossible to differentiate between different revisions of the
+same module, making field upgrades difficult. One last macro used by kernel modules is the
+SYSCALL_MODULE_HELPER that developers use to add new system calls to the kernel.
+
+To have kernel modules that can be loaded both at boot time and at run time, two different cases
+must be handled. When a module is loaded at boot time, it has already been processed by the
+kernel’s build process, which means that its system-call entry points and other data are already
+known to the kernel. This knowledge simplifies the loading process. All that needs to be done is
+to call the module’s event handler with the MOD_LOAD command. At run time, the module
+needs to be loaded into memory, registered with the kernel, and its system calls dynamically
+added to the system-call table. Once all that work is done, it can be initialized by calling its event
+handler. All the run-time loading is handled by the kldload system call and the
+module_register() routine. To keep the interface that programmers use simple, all this
+functionality is hidden by the DECLARE_MODULE macro and the use of the single
+event-handler routine. When creating a kernel module, a programmer needs to be concerned
+only with writing the module event handler and exporting the module-handler’s system calls via
+the macros.
+
+A key consideration in the use of loadable kernel modules is that they are a double-edged sword
+with respect to security and reliability. On the one hand, loadable modules allow field upgrade of
+kernel components without binary patching, which can be used to correct stability defects
+discovered after a product is shipped. Loadable modules can likewise adapt the kernel’s security
+model to protect against discovered vulnerabilities. On the other hand, the kernel is a critical
+part of the system’s trusted computing base (TCB). Attackers that can load kernel modules
+can bypass the system’s security policies, install subtle back doors, and mask their presence in
+the system by modifying the behavior of monitoring interfaces.
+
+In practice, loadable modules have little concrete effect on the integrity of the TCB for several
+reasons. Integrity of the kernel depends on a secure boot process, which currently depends on
+correct configuration of userspace-managed protections in the filesystem. Further, userspace
+interfaces to system memory and I/O devices allow privileged users the ability to modify kernel
+memory even without an explicit loading interface. Jail and MAC policies such as Biba can be
+
+used to provide stronger integrity protection for the TCB, which includes controls on
+low-integrity manipulation of the kernel either by module loading or access to virtual and
+physical memory via /dev nodes.
+
+As secure boot features such as UEFI’s boot-chain signature-verification support become more
+widely deployed, the initial boot chain will become increasingly secure against attacks that
+might damage TCB integrity. A sensible future direction would be to extend these facilities into
+cryptographic protection of loadable kernel modules using digital signatures and other
+security-critical portions of the filesystem and userspace. These extensions will need to address
+not just kernel modules, but also configuration files and system maintenance tools. One key
+concern in the adoption of such techniques will be increased complexity and fragility:
+maintenance operations that previously required root access may now require management of
+cryptographic keys; similarly, administrators might be forced to choose between the
+performance or functionality benefits derived from kernel customization and boot-time integrity
+protection.
+
+15.4 User-Level Initialization
+
+With the start of the init process, the kernel is operating and functional, and userspace is in
+execution. There are several additional steps that must be taken before users can log in and
+network services are available. All these actions are driven by user-level programs that use the
+standard FreeBSD system-call interface that has been described in previous chapters. We shall
+briefly examine the steps that take place in a typical system.
+
+/sbin/init
+
+The /sbin/init program is invoked as process 1 in the final step of the kernel bootstrapping
+procedure. The parameters specified at the time FreeBSD was bootstrapped are passed to init in
+a machine-dependent fashion. The init program uses the values of these flags to determine
+whether it should bring up the system to single-user or to multiuser operation and whether it
+should check the consistency of its disks with the fsck program. In single-user operation, init
+forks a process that invokes the standard shell, /bin/sh. The standard input, output, and error
+descriptors of the process are directed to the system’s console terminal, /dev/console. This
+shell then operates normally but with superuser privileges until it terminates.
+
+In multiuser operation, init first spawns a shell to interpret the commands in the file /etc/rc,
+which is the root of a set of system startup scripts that do all the user-level initialization of the
+system. If the /etc/rc script completes successfully, init then forks a copy of itself for each
+terminal device that is marked for use in the file /etc/ttys. These copies of init invoke other
+
+system programs, such as /usr/libexec/getty, to manage the standard sign-on procedure.
+Process 1 always acts as the master coordinating process for system operation. It is responsible
+for spawning new processes as terminal sessions are terminated and for managing the shutdown
+of a running system.
+
+System Startup Scripts
+
+The /etc/rc file is mostly empty and simply serves to order and execute the various system
+startup scripts contained in the /etc/rc.d directory. It will also search for third-party startup
+scripts in /usr/local/etc/rc.d, where they may be installed by the FreeBSD ports system or
+package system. The /etc/rc.conf, /etc/rc.conf.d, and /etc/defaults/rc.conf files control
+which user-level services are started at boot time and some aspects of their configuration. Each
+of these files is loaded by the system startup scripts when they execute. The
+/etc/defaults/rc.conf file contains the default values for various shell variables that control
+whether a service is to be started. Administrators override the defaults by placing different
+values for the same shell variables into /etc/rc.conf. For example, to enable the use of the
+secure shell (ssh) at boot time, the following line would be placed into /etc/rc.conf:
+
+sshd_enable="yes"
+
+The heart of the rc script system is a program called rcorder that takes a set of shell scripts as
+input, works out their interdependencies, and then outputs an ordered list of names. Each
+startup script declares the modules that it requires as well as those it provides. The rcorder
+programs uses these REQUIRE and PROVIDE statements to determine the proper order in
+which to run the startup scripts.
+
+One housekeeping task is to check the local filesystems after a system crash. If the system is not
+booted with the fastboot option, then the /etc/rc.d/fsck script carries out filesystem checks. In
+versions of BSD before FreeBSD, the filesystem checks were absolutely necessary and had to be
+carried out before any other work, but with the advent of soft updates and journaling in UFS
+(Sections 9.6 and 9.8) and ZFS (Chapter 10), that is required only if the system has shut down
+uncleanly (e.g., because of unexpected power loss). The program /sbin/fsck checks filesystem
+consistency and repairs damaged filesystems. Normally, fsck is invoked from the
+/etc/rc.d/fsck script to examine and repair each filesystem before it is mounted. When the
+system is initially booted, the root filesystem is mounted read-only. If the root filesystem
+requires repairs, FreeBSD does a variant of the mount system call that requests the kernel to
+reload all its root-filesystem data structures. Reloading ensures consistency between the data in
+the kernel memory and any data in the filesystem that were modified by fsck. Having the root
+
+filesystem mounted read-only ensures that the kernel will not have any modified data in
+memory that cannot be reloaded.
+
+Following the filesystem checks, the filesystems are mounted, the root filesystem is updated to
+be writable, and any devices that are to be used for swapping and paging are enabled. Disk
+quotas are then checked and enabled, and the system starts the background processes that
+implement various system services. These processes include /usr/sbin/cron, the program that
+executes commands at periodic intervals; /usr/sbin/accton, the program that enables system
+accounting; /usr/sbin/syslogd, the system error-logging process; and /usr/sbin/sshd,
+which implements encrypted remote access to the shell. Each of these processes is started from
+its own startup script in /etc/rc.d.
+
+/usr/libexec/getty
+
+Historically, the /usr/libexec/getty program was spawned by init to open and initialize
+terminal lines—most frequently, serial terminals or modems. Today, the primary obligation of
+getty is to launch the /usr/bin/login sessions on the video or serial console (if any). It is
+sometimes used to launch X Display Manager (xdm) sessions to enable login via graphical user
+interfaces, although many systems will instead be configured to start the window system via
+rc.d. The getty program reads a login name and invokes the /usr/bin/login program to
+complete a login sequence.
+
+/usr/bin/login
+
+The login program is responsible for signing a user in to the system; it is usually invoked by
+/usr/libexec/getty with the name of the user who wishes to log in to the system. Login will
+then authenticate the user using the pluggable authentication modules (PAM) mechanism. PAM
+supports diverse authentication mechanisms including local passwords (stored in the
+/etc/master.passwd file), Kerberos distributed authentication, one-time password in
+everything (OPIE) onetime passwords, and a range of third-party modules supporting other
+distributed or hardware-token-based authentication schemes. If a secret is requested from the
+user—for example, a password—then login will disable terminal echoing. After successful
+authentication, login is responsible for performing a variety of accounting functions including
+adding entries to the system lastlog and utmpx files, as well as auditing the login via the audit
+facility described in Section 5.11.
+
+The process credential, described in Section 5.3, must be configured to represent the user and
+group identifiers of the authenticated user, as well as audit properties, MAC labels, and resource
+limits. The login program must also change the current working directory to the user’s home
+
+directory. The user’s login name is stored in the session structure using the setlogin system call
+so that it can be obtained reliably via the getlogin system call by programs that want to know the
+login name associated with a given process. Finally, login uses execve to overlay itself with the
+user’s shell.
+
+The login program may also be invoked when a user enters the system through a network
+connection. For such connections, getty and init are bypassed; their functionality is subsumed
+by the daemon spawned when the network connection is established.
+
+15.5 System Operation
+
+In this section, we consider topics that are related to the system-startup procedure.
+
+Kernel Configuration
+
+The software that makes up a FreeBSD kernel is defined by a configuration file that is
+interpreted by the /usr/sbin/config program invoked as part of the kernel build process. The
+kernel build process has become considerably more complex in FreeBSD and is now controlled
+by a set of Makefile targets. To build a kernel, the administrator invokes make in the following
+way:
+
+make buildkernel KERNCONF=<kernel_config_file>
+
+The buildkernel argument is a Makefile target that tells make to build a kernel but not to install
+it. KERNCONF is a Makefile variable that is set to the name of the kernel configuration. Once a
+kernel has been properly built, it is installed by running make in the following way:
+
+make installkernel KERNCONF=<kernel_config_file>
+
+One reason for this new build process is the need to build and install the necessary kernel
+modules that were discussed in Section 15.3. The configuration file specifies the hardware and
+software components that should be supported by a kernel. The build process generates several
+output files, some of which are compiled and linked into the kernel’s load image. It also creates a
+directory into which all the loadable kernel modules will be built. When the kernel is installed,
+its modules are installed as well. A complete description of the kernel build process is given in
+Hamby & Mock [2014].
+
+System Shutdown and Autoreboot
+
+FreeBSD provides several utility programs to halt, reboot, or power off a system, or to bring a
+system from multiuser to single-user operation. Safe halting, rebooting, and powering down of a
+system require support from the kernel. This support is provided by the reboot system call.
+
+The reboot system call is a privileged call. A parameter specifies how the system should be shut
+down and rebooted. This parameter is a superset of the flags passed by the boot program to the
+system when the latter is initially bootstrapped. A system can be brought to a halt (typically by
+forcing it to execute an infinite loop), it can be rebooted to single-user or multiuser operation, or
+powered off, which causes the kernel to first halt the system and then (if supported by the
+architecture) request a poweroff. There are additional controls that can be used to force a crash
+dump before rebooting (see the next subsection for information about crash dumps) and to
+disable the writing to disk of data that are in the buffer cache if the information in the buffer
+cache is wrong.
+
+Automatic rebooting is usually done when a catastrophic failure is recognized. The system will
+reboot itself automatically if it recognizes an unrecoverable failure during normal operation.
+Failures of this type, termed panics, are all handled by the panic() subroutine.
+
+When the system is shutting down, it goes through three separate phases:
+
+• Shutdown of all services that depend on the filesystem to store data
+
+• Shutdown of the filesystem itself
+
+• Shutdown of services that do not depend on the filesystem
+
+These three phases are necessary because some services will want to write some final data to the
+filesystem before it is turned off and may not be able to restart cleanly if they cannot do so.
+
+Services register event handlers with the kernel to provide an orderly shutdown of the system.
+Each event handler is declared with the following macro:
+
+EVENTHANDLER_REGISTER(name, function, argument, priority)
+
+Table 15.5 lists the names of the shutdown phases. In the EVEN-THANDLER_REGISTER
+macro, the name parameter identifies in which phase of the shutdown sequence the event
+handler’s function will be called. The argument allows the module to pass itself any private data
+
+necessary for it to turn off. The priority orders the shutdown routines within a phase. The
+priority serves the same purpose here as the order argument does in the SYSINIT macro in
+creating an orderly startup sequence. The priority is necessary to make sure that services do not
+go away while other services depend on them.
+
+Table 15.5 Shutdown phases.
+
+The kernel shutdown routine first walks the list of shutdown_pre_sync functions and calls each
+in turn, and then it shuts down the filesystems on the local disks. With the filesystems in a
+quiescent state, it invokes all the shutdown_post_sync functions. A kernel core dump is made if
+requested—for example, if it was called because of a kernel panic. Kernel core dumps are written
+directly to the swap partition and not to a normal filesystem, which is why this step can come
+after the filesystems have been shut down. Finally, the kernel shutdown routine invokes all the
+functions registered in the shutdown_final group. The machine then powers down if it has been
+directed to do so and the hardware supports software-based power-off. Otherwise, it goes into
+an infinite loop awaiting a reset by the user.
+
+System Debugging
+
+FreeBSD provides several facilities for debugging system failures. The most commonly used
+facility is the crash dump: a copy of memory that is saved on secondary storage by the kernel
+when a catastrophic failure occurs. Crash dumps are created by the doadump() routine. They
+occur if a reboot system call is made in which the RB_DUMP flag is specified or if the system
+encounters an unrecoverable—and unexpected—error.
+
+The doadump() saves the current context with a call to the savectx() routine and then invokes
+the dumpsys() routine to write the contents of physical memory to secondary storage. The
+precise location of a crash dump is configurable; most systems place the information in a
+primary swap partition. This operation is done by the dump entry point of the configured disk
+driver.
+
+A crash dump is retrieved from its location on disk by the /sbin/savecore program after the
+system is rebooted and the filesystems have been checked. It creates a file into which the
+
+crash-dump image is copied. The system administrator can examine crash dumps with the
+standard FreeBSD debugging program, kgdb. The kernel is also set up so that a kgdb debugger
+running on one machine can attach itself across a serial line to a kernel running on another
+machine. Once attached, it can set breakpoints, examine and modify kernel data structures, and
+invoke kernel routines on the machine being debugged. This form of source-level debugging is
+particularly useful in developing kernel device drivers, as long as the driver being developed is
+not the serial-line driver itself.
+
+Passage of Information To and From the Kernel
+
+In 4.3BSD and earlier systems, utilities that needed to get information from the kernel would
+open the special device /dev/kmem, which gave access to the kernel’s memory. Using the
+name list from the kernel binary, the utility would seek to the address of the desired symbol and
+read the value at that location. Utilities with superuser privilege could also use this technique to
+modify kernel variables. Although this approach worked, it had six problems:
+
+1. Applications did not have a way to find the binary for the currently running kernel reliably.
+Using an incorrect binary would result in looking at the wrong location in /dev/kmem,
+resulting in wildly incorrect output. For programs that modified the kernel, using the wrong
+binary would usually result in crashing the system by trashing some unrelated data structure.
+
+2. Reading and interpreting the kernel name list is time consuming. Thus, applications that had
+to read kernel data structures ran slowly.
+
+3. Applications given access to the kernel memory could read the entire kernel memory.
+Malicious (or vulnerable) programs could snoop the terminal or network input queues looking
+for users who were typing sensitive information such as passwords.
+
+4. It is desirable to provide unprivileged access to a subset of monitoring information: for
+example, to a user’s own processes or sockets. This policy is not only difficult to enforce
+correctly in userspace, which does not have race-free access to kernel data structures such as the
+user credential, but it also violates the design goals laid out in Section 5.5 to centralize policy
+implementation as an aid to security extensibility. Controlling access to kernel-originated data is
+substantially easier within the kernel than it is when a userspace program is given access to all
+of kernel memory.
+
+5. As more of the kernel data structures became dynamically allocated, it became difficult to
+extract the desired information reliably. For example, in 4.3BSD, the process structures were all
+contained in a single, statically allocated table that could be read in a single operation. In
+FreeBSD, process structures are allocated dynamically and are referenced through a linked list.
+
+Thus, they can be read out only one process entry at a time. Because a process entry is
+subdivided into many separate pieces, each of which resides in a different part of the kernel
+memory, every process entry takes several seeks and reads to extract through /dev/kmem.
+
+6. With an increased focus on long-term binary compatibility, especially with not just individual
+userspace binaries but whole userspace installations running in a jail, userspace interpretation
+of internal kernel data structures proves extremely fragile. A more explicit monitoring interface
+allows userspace monitoring tools to be more robust to internal kernel changes.
+
+To resolve these problems, 4.4BSD introduced the sysctl system call. This extensible kernel
+interface allows controlled access to kernel data structures. The problems enumerated
+previously are resolved as follows:
+
+1. Applications do not need to know which kernel binary they are running. The running kernel
+responds to their requests and knows where their data structures are stored. Thus, the correct
+data structure is always returned or modified.
+
+2. No time is spent reading or interpreting name lists. Accessing kernel data structures takes
+only a few system calls.
+
+3. Sensitive data structures cannot be accessed. The kernel controls the set of data structures
+that it will return. Nothing else in the kernel is accessible. The kernel can impose its own set of
+access restrictions on each set of data structures that it returns.
+
+4. Kernel sysctl handlers are able to invoke security policies such as MAC and jails, allowing
+limits to be placed on monitoring processes, network connections, and so on. Each user process
+is limited to an appropriate view of the system.
+
+5. The kernel can use its standard mechanisms for ensuring consistent access to distributed data
+structures. When requesting process entries, the kernel can acquire the appropriate locks to
+ensure that a coherent set of data can be returned.
+
+6. The kernel is able to export well-defined and carefully managed versions of data structures to
+userspace; for example, rather than exporting the proc structure, which changes frequently as
+new kernel features are added, a separate kinfo_proc structure is exported from the kernel,
+which includes version information and padding to allow userspace to detect and adjust to
+changes. Userspace libraries such as libprocstat and libmemstat provide higher-level APIs
+used by monitoring applications such as procstat and memstat.
+
+Additional benefits of the interface include the following:
+
+• Values to be changed can be validated before the data structure is updated. If modification of
+the data structure requires exclusive access, an appropriate lock can be obtained before the
+update is done. Thus, an element can be added to a linked list without danger of another process
+traversing the list while the update is in progress.
+
+• Information can be computed only on demand. Infrequently requested information can be
+computed only when it is requested, rather than being computed continually. For example,
+many of the virtual-memory statistics are computed only when a system-monitoring program
+requests them.
+
+• The interface allows monitoring tools to run without the privilege to access kernel memory,
+removing them from the TCB; likewise, user processes can manipulate system settings subject to
+kernel policy without general write access to the kernel address space. This isolation from access
+to kernel memory is important for jails and virtual network stacks, in which guest superusers
+must be able to modify settings for their local environments, but not those of other jails or
+virtual stacks.
+
+The sysctl system call describes the kernel namespace using a management information base
+(MIB). A MIB is a hierarchical namespace much like the filesystem namespace, except that each
+component is described with an integer value rather than with a string name. A hierarchical
+namespace has several benefits:
+
+• New subtrees can be added without existing applications being affected.
+
+• If the kernel omits support for a subsystem, the sysctl information for that part of the system
+can be omitted.
+
+• Each kernel subsystem can define its own naming conventions. Thus, the network can be
+divided into protocol families. Each protocol family can be divided into protocol-specific
+information, and each protocol can describe its own state.
+
+• The namespace can be divided into those parts that are machine independent and are available
+on every architecture, and those parts that are machine dependent and are defined on an
+architecture-by-architecture basis.
+
+Since the addition of the sysctl system call in 4.4BSD, the number of variables it controls has
+been expanded to include about 3000 values that control the virtual memory system,
+filesystems, networking stacks, and the underlying hardware, as well as the kernel itself.
+
+Exercises
+
+15.1 What is the purpose of each stage in the boot-loader sequence?
+
+15.2 What is the job of the assembly-language startup? Why is this program written in assembly
+language?
+
+15.3 What processes are started when the system is booted?
+
+15.4 How are kernel modules loaded into the system at boot time? Give an example of a kernel
+module.
+
+15.5 The reboot system call causes the system to halt or reboot. Give two reasons why this
+system call is useful.
+
+15.6 Give two reasons why loadable kernel modules are useful in developing kernel services.
+Give one reason not to use them.
+
+15.7 Why is it necessary to have a particular order in which kernel services are loaded and
+initialized? Why is it also necessary to have a particular order in which kernel services are shut
+down?
+
+*15.8 Suppose that a machine does not have a battery-backup time-of-day clock. Propose a
+method for determining that the time-of-day clock is incorrect. Describe a way to initialize the
+clock’s time of day. What are the limitations of your method?
+
+**15.9 What are the necessary macros to create a loadable kernel module? How would you test
+your module without linking it directly into the kernel?
+
+References
+
+Davis et al., 2014.
+
+B. Davis, R. Norton, J. Woodruff, & R. Watson, “How FreeBSD Boots: a Soft-Core MIPS
+Perspective,” Proceedings of AsiaBSDCon 2014, March 2014.
+
+Forum, 2013.
+
+Unified     EFI       Forum,   Inc.,   UEFI   Specification     Version   2.4,   available   from
+http://www.uefi.org/specifications, July 2013.
+
+Hamby & Mock, 2014.
+
+J. Hamby & J. Mock, FreeBSD Handbook, Chapter 9, Configuring the FreeBSD Kernel,
+available                                                                       from
+http://www.freebsd.org/doc/en_US.ISO8859-1/books/handbook/kernelconfig.html,   March
+2014.
+

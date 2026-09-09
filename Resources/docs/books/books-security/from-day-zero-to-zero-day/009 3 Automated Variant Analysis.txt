@@ -1,0 +1,1479 @@
+
+   AUTOMATED VARIANT ANALYSIS
+                                   3
+                                   Only connect!
+                            —E.M. Forster, Howards End
+
+             Now that you’ve approached code analy-
+            sis from both the inside out and the out-
+           side in, it’s time to connect the two. As you
+        labored over the minutiae of source and sink
+analysis, you might’ve wondered whether it was possi-
+ble to automate the process. The answer to that ques-
+tion is one that you’ll often encounter in vulnerability
+research: it depends.
+    In this chapter, you’ll learn the theory behind automated code analysis
+before practicing with two popular open source static code analysis tools,
+CodeQL and Semgrep. Next, you’ll apply these tools to variant analysis by
+identifying a vulnerable code pattern from a single vulnerability to discover
+repeated variants elsewhere in the code. You’ll use the CodeQL extension
+for Visual Studio Code (VS Code) to enhance your workflow. Finally, you’ll
+attempt multi-repository variant analysis across multiple projects.
+
+     Abstract Syntax Trees
+                 To perform better than a simple regex match-and-replace operation, mod-
+                 ern static code analysis tools need to understand certain aspects of the code,
+                 such as the difference between a function and a variable, class inheritance
+                 for object-oriented languages, and so on. This understanding is usually ex-
+                 pressed in the form of an abstract syntax tree (AST), a representation of the
+                 syntactic structure of a program. ASTs serve a far more fundamental pur-
+                 pose than code analysis: compilers use ASTs as an intermediate represen-
+                 tation of source code to quickly perform optimizations and syntax checks
+                 before compiling it down to machine code.
+                      You can visualize an AST with Python’s built-in ast module. To try it out
+                 for yourself, save the following in a script called ast_example_1.py:
+
+                 import ast
+
+                 # Python source code to convert to AST
+                 code = """
+                 name = 'World'
+                 print('Hello,' + name)
+                 """
+
+                 tree = ast.parse(code)
+                 print(ast.dump(tree, indent=4))
+
+                     Run the script to convert the source code into an AST. You should get
+                 the following output:
+
+                 $ python ast_example_1.py
+                 Module(
+                     body=[
+                         Assign(
+                             targets=[
+                                 Name(id='name', ctx=Store())],
+                             value=Constant(value='World')),
+                         Expr(
+                             value=Call(
+                                 func=Name(id='print', ctx=Load()),
+                                 args=[
+                                      BinOp(
+                                          left=Constant(value='Hello,'),
+                                          op=Add(),
+                                          right=Name(id='name', ctx=Load()))],
+                                 keywords=[]))],
+                     type_ignores=[])
+
+                     The output is organized in a tree structure, with Module as the root node
+                 branching off into child nodes like Assign, Expr, and Call.
+
+       Now suppose that print is a dangerous sink function. You want to know
+  if executing the following Python code will call print:
+
+  def old_greet(name):
+   ¶ print('Hello, ' + name)
+
+  yell = print
+
+· yell('HELLO, WORLD')
+
+      The source code defines a simple function that prints out the string
+  'Hello, ' followed by its argument. The code then assigns the built-in print
+  function to the yell variable before calling it with the 'HELLO, WORLD' argument.
+      The naive approach would be to use a regex like /print\([^)]*\)/g; how-
+  ever, you’d end up with a false positive ¶ and a false negative ·. Although
+  the old_greet function calls print, it never uses it in the script. In contrast,
+  yell does, but due to a little reassignment, the regex misses it. A regex that
+  could deal with all possible edge cases, even for simple code like this, would
+  be incredibly complex and difficult to debug.
+      Instead, you can traverse the AST to identify all the Call nodes that will
+  actually occur based on the meaning of their parent nodes. Use the ast mod-
+  ule again to convert the code into an AST. Store the sample code in sample
+  _code.py, then create a script called ast_example_2.py with the following con-
+  tents in the same directory:
+
+  import ast
+  import os
+
+  cur_dir = os.path.dirname(os.path.abspath(__file__))
+
+  with open(os.path.join(cur_dir, 'sample_code.py')) as f:
+      tree = ast.parse(f.read())
+      print(ast.dump(tree, indent=4))
+
+      The output of the script should look something like this:
+
+  $ python ast_example_2.py
+  Module(
+      body=[
+          FunctionDef(
+              name='old_greet',
+              args=arguments(
+                  posonlyargs=[],
+                  args=[
+                       arg(arg='name')],
+                  kwonlyargs=[],
+                  kw_defaults=[],
+                  defaults=[]),
+              body=[
+
+                                 Expr(
+                                      value=Call(
+                                          func=Name(id='print', ctx=Load()),
+                                          args=[
+                                              BinOp(
+                                                  left=Constant(value='Hello, '),
+                                                  op=Add(),
+                                                  right=Name(id='name', ctx=Load()))],
+                                          keywords=[]))],
+                             decorator_list=[]),
+                         Assign(
+                             targets=[
+                                 Name(id='yell', ctx=Store())],
+                             value=Name(id='print', ctx=Load())),
+                         Expr(
+                             value=Call(
+                                 func=Name(id='yell', ctx=Load()),
+                                 args=[
+                                      Constant(value='HELLO, WORLD')],
+                                 keywords=[]))],
+                     type_ignores=[])
+
+                      Equipped with knowledge of what each node does, you can efficiently
+                 traverse the AST by going down only nodes like Assign and Expr, ignoring
+                 FunctionDef and similar nodes unless the defined function is called at some
+                 point. By tracking variables affected by Assign, you’ll eventually correctly
+                 identify that the path in the tree reaches a Call node whose func attribute
+                 value is actually print.
+                      The tree structure allows various optimized algorithms to query the AST
+                 for the information you need and avoid wasting compute cycles on pruned
+                 branches. Another way of representing the code is a control flow graph (CFG)
+                 that models the potential paths through a program during execution. This
+                 allows even more advanced and targeted queries on the code, such as reach-
+                 ability analysis, which determines which parts of the code can actually be
+                 reached during execution.
+                      Another type of representation is a data flow graph (DFG). While CFGs
+                 are concerned with the order of execution in a program (such as if-else
+                 statements and loops), DFGs focus on the propagation and transformation
+                 of data (including variables and expressions). Both CFGs and DFGs are use-
+                 ful representations of code for automated analysis.
+                      All this theory is important to understand how static code analysis tools
+                 work. Any abstraction necessarily loses some level of detail. While manual
+                 code analysis may be more comprehensive in this regard, it is often not pos-
+                 sible to manually review the code for complex software that may consist of
+                 millions of lines of code. Static code analysis tools are extremely useful in
+                 such cases, and understanding their strengths and weaknesses will enable
+                 you to use them more effectively to support your code analysis strategy.
+
+Static Code Analysis Tools
+        Not all source code analysis tools are created equal. Differences in abstrac-
+        tions and querying methods affect how effectively a tool can search for cer-
+        tain patterns in code. In this section, you’ll observe these differences in
+        action with CodeQL and Semgrep.
+
+        CodeQL
+        CodeQL is a code analysis engine with deep roots in academia. It was cre-
+        ated by a research team at Oxford that developed an object-oriented query
+        language (originally named .QL) that could query a relational database con-
+        taining a model of the code. This database focus is one of the key differ-
+        ences between CodeQL and Semgrep; CodeQL needs to build a database
+        of the code before performing any queries. For compiled languages, this is
+        integrated with the programming language’s build system, such as make for C
+        and C++. For non-compiled languages like Python, CodeQL uses extractors
+        to parse the code before storing it in the database.
+             Not surprisingly, CodeQL’s query language bears many similarities to
+        database query languages like SQL. For example, take this CodeQL query to
+        find calls to print:
+
+        import python
+
+        from Call call, Name name
+        where call.getFunc() = name and name.getId() = "print"
+        select call, "call to 'print'."
+
+             The CodeQL classes (Call, Name) share the same names as the types in
+        the Python ast module because CodeQL’s Python extractor uses ast as well
+        as its own extended semmle.python.ast class to parse Python codebases. Simi-
+        larly, many of its other extractors integrate deeply into their target program-
+        ming language’s contexts. For example, CodeQL’s Go extractor also uses
+        the Go standard library’s go/ast package (https://github.com/github/codeql/
+        blob/820de5d/go/extractor/extractor.go). CodeQL’s highly customized extrac-
+        tion approach for each language allows it to build comprehensive databases
+        of data and control flow relationships.
+             With CodeQL’s in-depth approach, you can create powerful global taint
+        tracking queries to find source-to-sink vulnerabilities. Additionally, Code-
+        QL’s object-oriented query language allows you to reuse components easily.
+        The following example illustrates CodeQL’s strengths.
+
+        Multifile Taint Tracking Example
+        Consider a Node.js web API server built on the Express framework that con-
+        sists of two files, index.js and utils.js. This web API has a single /ping endpoint
+        that causes the server to ping any IP address in the ip query parameter. Un-
+        fortunately, the developer has inadvertently introduced a remote code exe-
+        cution as a service feature via a command injection vulnerability:
+
+                   index.js const express = require("express");
+                         ¶ const { ping } = require("./utils.js");
+
+                            const app = express();
+
+                            app.get("/ping", (req, res) => {
+                             · const ip = req.query.ip;
+                                res.send(`Result: \n${ping(ip)}`);
+                            })
+
+                            app.listen(3000);
+
+                                 You can’t determine whether the vulnerability exists just by analyzing
+                            the code of index.js. While this file does add a source of user-controlled data
+                            in req.query.ip ·, you need to check whether the ping function imported
+                            from utils.js ¶ passes the ip argument to a dangerous sink:
+
+                     utils.js const { execSync } = require("child_process");
+
+                                  exports.ping = (ip) => {
+                                      try {
+                                       ¶ return execSync(`ping -c 5 ${ip}`);
+                                      } catch (error) {
+                                          return error.message;
+                                  }
+                            };
+
+                                 Unfortunately, ping passes ip to the execSync function ¶, which executes
+                            a shell command using its first argument. An attacker can execute any com-
+                            mand by sending an ip query parameter, like ;whoami. Although this is a
+                            simple code review task, the source-to-sink tracing process stumps most
+                            regex-based searches, as they can’t easily correlate imported functions and
+                            data flow across files. Fortunately, CodeQL can do so because it models the
+                            code as a DFG and extends it with taint tracking. While data flow analysis
+                            follows the propagation of data (such as a variable), it doesn’t keep track of
+                            other tainted variables. The separate DataFlow and TaintTracking libraries pro-
+                            vided by CodeQL reflect this.
+                                 Additionally, CodeQL provides convenient classes for common sources
+                            and sinks, including remote user input and command execution functions.
+                            As such, a simple global taint tracking rule for the previous vulnerable server
+                            can be written like this:
+
+RemoteCommandInjection.ql /**
+                           * @id remote-command-injection
+                           * @name Remote Command Injection
+                           * @description Passing user-controlled remote data to a command injection.
+                           * @kind path-problem
+
+ * @severity error
+ */
+
+import javascript
+
+module RemoteCommandInjectionConfig implements DataFlow::ConfigSig {
+    predicate isSource(DataFlow::Node source) {
+      ¶ source instanceof RemoteFlowSource
+    }
+
+     predicate isSink(DataFlow::Node sink) {
+       · sink = any(SystemCommandExecution sys).getACommandArgument()
+     }
+}
+
+module RemoteCommandInjectionFlow =
+    TaintTracking::Global<RemoteCommandInjectionConfig>;
+
+import RemoteCommandInjectionFlow::PathGraph
+
+from RemoteCommandInjectionFlow::PathNode source,
+    RemoteCommandInjectionFlow::PathNode sink
+where RemoteCommandInjectionFlow::flowPath(source, sink)
+select sink.getNode(), source, sink,
+    "taint from $@ to $@.", source.getNode(), "source", sink, "sink"
+
+     For now, don’t worry about the exact details of CodeQL syntax. Instead,
+focus on the general structure of the query, such as the taint tracking con-
+figuration that defines sources as RemoteFlowSource instances ¶ and sinks
+as a command argument in any SystemCommandExecution instance ·. This is
+all you need to track the flow of attacker-controllable data to a vulnerable
+function call (see Chapter 1). The actual query checks whether there’s a flow
+path from sources to sinks, and if so it outputs the results in a structure that
+CodeQL can parse into comprehensive step-by-step paths (I’ve omitted some
+intermediate steps for brevity):
+
+"results" : [ {
+--snip--
+    "codeFlows" : [ {
+         "threadFlows" : [ {
+             "locations" : [ {
+                 "location" : {
+                     "physicalLocation" : {
+                         "artifactLocation" : {
+                             "uri" : "index.js",
+                             "uriBaseId" : "%SRCROOT%",
+                             "index" : 1
+                         },
+
+                                        "region" : {
+                                            "startLine" : 7,
+                                            "startColumn" : 16,
+                                            "endColumn" : 28
+                                        }
+                                   },
+                                   "message" : {
+                                     ¶ "text" : "req.query.ip"
+                                   }
+                              }
+                          },
+                          --snip--
+                          {
+                              "location" : {
+                                   "physicalLocation" : {
+                                       "artifactLocation" : {
+                                           "uri" : "index.js",
+                                           "uriBaseId" : "%SRCROOT%",
+                                           "index" : 1
+                                       },
+                                       "region" : {
+                                           "startLine" : 8,
+                                           "startColumn" : 32,
+                                           "endColumn" : 34
+                                       }
+                                   },
+                                   "message" : {
+                                     · "text" : "ip"
+                                   }
+                              }
+                          },
+                          --snip--
+                          {
+                              "location" : {
+                                   "physicalLocation" : {
+                                       "artifactLocation" : {
+                                           "uri" : "utils.js",
+                                           "uriBaseId" : "%SRCROOT%",
+                                           "index" : 0
+                                       },
+                                       "region" : {
+                                           "startLine" : 5,
+                                           "startColumn" : 21,
+                                           "endColumn" : 38
+                                       }
+                                   },
+                                   "message" : {
+
+                              ¸ "text" : "`ping -c 5 ${ip}`"
+                          }
+                      }
+                } ]
+          } ]
+    } ]
+
+     CodeQL accurately tracks the tainted data from the req.query.ip request
+query parameter value ¶ to the ip variable · and finally to the template
+string passed to execSync in utils.js ¸. If you ran a global data flow analysis by
+replacing TaintTracking::Configuration with DataFlow::Configuration, you’d get
+no results because data flow analysis follows only the preserved data value
+of req.query.ip. The use of the template string in the argument passed to
+execSync means that the value of req.query.ip is no longer preserved and ter-
+minates the data flow path. If utils.js used execSync(ip) instead, the data flow
+analysis would have worked as well.
+     The power of global taint tracking comes with significant trade-offs:
+moving from local to global analysis, as well as from data flow to taint track-
+ing, is more computationally expensive and less accurate. Additionally, the
+CodeQL rule syntax is fairly complex. CodeQL rules are written in QL, an
+object-oriented programming language for making queries. This is why the
+first part of RemoteCommandInjection.ql looks like typical object-oriented
+code with classes and overrides, while the final query at the end resembles
+a database query language with from, where, and select clauses.
+     To use CodeQL effectively, you need to essentially learn a new program-
+ming language and familiarize yourself with the CodeQL standard libraries.
+You may find this a worthwhile pursuit because the query-oriented nature of
+QL allows you to express complex relationships and predicates for powerful
+global taint tracking queries.
+     The CodeQL developers have added many helpful classes for common
+frameworks such as Express, Spring, and Ruby on Rails. For example, in-
+stead of RemoteFlowSource in the example query, you can use Express::Request
+Source to specifically track inputs from an Express framework web request.
+On the other hand, there’s a lot of context switching as you toggle between
+analyzing the target code and writing the desired query.
+
+VS Code Extension
+To minimize the friction of developing CodeQL queries, you can use the
+CodeQL extension for Visual Studio Code, which adds a number of UI ele-
+ments and features in the VS Code editor that work with the CodeQL CLI
+to create an integrated development environment (IDE) for writing queries
+in QL.
+     Although the extension comes bundled with its own CodeQL CLI, its
+documentation states:
+          The extension-managed CodeQL CLI is not accessible from the
+          terminal. If you intend to use the CLI outside of the extension (for
+
+                         example to create databases), we recommend that you install your
+                         own copy of the CodeQL CLI.
+
+                      Since you’ll be creating your own CodeQL databases locally, you’ll need
+                 to install the CodeQL CLI first. Download the latest release from https://
+                 github.com/github/codeql-action/releases, extract the archive, and add it to your
+                 PATH. For example, in Kali Linux, run the following commands:
+
+                 $ wget https://github.com/github/codeql-action/releases/download/codeql-bundle
+                 -v2.20.2/codeql-bundle-linux64.tar.gz
+                 $ tar -xzvf codeql-bundle-linux64.tar.gz
+                 $ echo "export PATH=\$PATH:$(pwd)/codeql" >> ~/.zshrc
+                 $ source ~/.zshrc
+                 $ codeql version
+                 --snip--
+                 Unpacked in: /home/kali/Desktop/codeql
+                   Analysis results depend critically on separately distributed query and
+                   extractor modules. To list modules that are visible to the toolchain,
+                   use 'codeql resolve packs' and 'codeql resolve languages'.
+
+                      After installing the CodeQL CLI, download VS Code from https://code
+                 .visualstudio.com/download (for Kali Linux, download the .deb package) and
+                 install it with the command sudo apt install <DOWNLOAD PATH>.
+                      Next, open VS Code and install the CodeQL extension by using the key-
+                 board shortcut CTRL + P and entering ext install GitHub.vscode-codeql. Al-
+                 ternatively, you can simply click the Extensions button in the Activity Bar
+                 on the left, then search for the CodeQL extension in the marketplace and
+                 install it.
+                      After installing the extension, Git clone the CodeQL starter VS Code
+                 workspace from https://github.com/github/vscode-codeql-starter to a working di-
+                 rectory of your choice. Make sure to recursively clone Git submodules with
+                 git clone --recursive https://github.com/github/vscode-codeql-starter, or you
+                 may find that you’re missing important CodeQL libraries later on.
+                      Finally, open the CodeQL starter workspace file vscode-codeql-starter.code-
+                 workspace in VS Code via File ▶ Open Workspace.
+                      This will set up your CodeQL development environment, where you will
+                 draft and test CodeQL queries. However, before you can run your queries,
+                 you need to specify a CodeQL database generated from a target’s source
+                 code to run the CodeQL queries against. While the extension allows you to
+                 download CodeQL databases created by others from remote sources like
+                 GitHub, you’ll be creating a database yourself using the multifile taint track-
+                 ing example from the previous section.
+                      Create a project directory outside of your CodeQL starter VS Code
+                 workspace. Move the example code files index.js and utils.js into the project
+                 directory. If you’re referring to the book’s example code repository (https://
+                 github.com/spaceraccoon/from-day-zero-to-zero-day), this project directory is lo-
+                 cated at chapter-03/command-injection-example/app.
+                      Navigate to the parent directory of the project directory and create the
+                 CodeQL database using the following commands:
+
+$ cd chapter-03/command-injection-example
+$ codeql database create --language javascript --source-root app example-database
+--snip--
+Finished writing database (relations: 13.30 MiB; string pool: 4.78 MiB).
+TRAP import complete (2.1s).
+Finished zipping source archive (243.70 KiB).
+Successfully created database at /home/kali/Desktop/from-day-zero-to-zero-day/chapter-03/
+command-injection-example/example-database.
+
+                   Now that you’ve successfully generated a CodeQL database from the ex-
+                ample code, you can test the example remote command injection CodeQL
+                query on it:
+                    1.   Back in the VS Code workspace, click the CodeQL button in the
+                         Activity Bar on the left to open a CodeQL sidebar with a few views,
+                         including Databases, Variant Analysis Repositories, Query History,
+                         and AST Viewer.
+                    2.   In the Databases view, click the button to add a CodeQL database
+                         From a folder and open the example-database directory you created
+                         earlier.
+                    3.   After loading the database, right-click example-database in the
+                         Databases view in the CodeQL sidebar, then select Add Database
+                         Source to Workspace.
+                    4.   Switch to the Explorer view by clicking the files icon in the Activ-
+                         ity Bar. You should see a new folder in the file explorer sidebar,
+                         example-database source archive, which contains the original source
+                         code files.
+                    5.   Right-click index.js, located in the new folder, and select CodeQL:
+                         View AST to open the AST Viewer view in the CodeQL extension
+                         sidebar, showing how the CodeQL database represents the code.
+                    6.   Click any item in the AST Viewer view to open the matching source
+                         code file index.js and highlight the relevant code. You can also se-
+                         lect code in the file to automatically open the matching node in the
+                         database. For example, if you select res.send(`Result: \n${ping(ip)}`);,
+                         the AST Viewer tells you that this is an ExprStmt node with a child
+                         MethodCallExpr node. This helps you select the correct classes when
+                         writing a query.
+                    7.   Switch back to the Explorer view and create (or copy from the book’s
+                         code repository) the RemoteCommandInjection.ql query file in the
+                         codeql-custom-queries-javascript directory. You can’t create a query file
+                         on its own because QL queries refer to a qlpack.yml file in the same
+                         directory to determine which CodeQL library dependencies to in-
+                         clude. In this case, it needs the codeql/javascript-all library.
+                    8.   Right-click the query file and select CodeQL: Run Queries in
+                         Selected Files.
+
+                     The extension triggers the CodeQL CLI to run your query on the database
+                 and parses the results. If all is working as intended, you should get a nicely
+                 formatted results view in the editor region on the right.
+                     If you expand a row in the results, you’ll get a list of each taint step from
+                 the source to sink. Clicking a step directly links you to the exact location of
+                 the source code corresponding to the taint step, which is helpful for analyz-
+                 ing query results and debugging draft queries.
+                     As you’ll use CodeQL later, when we discuss multi-repository variant
+                 analysis, keep the CodeQL setup ready. Before this, however, you’ll use Sem-
+                 grep for single-repository variant analysis.
+
+                 Semgrep
+                 Semgrep is another popular code analysis tool that uses a pattern-oriented
+                 rule syntax, in contrast to CodeQL’s query-oriented syntax. This affects the
+                 usability and capabilities of Semgrep, which in turn affects the vulnerability
+                 research use cases that Semgrep works better for than CodeQL.
+
+     NOTE        To learn more about the fascinating origins of Semgrep, read the blog post “Sem-
+                 grep: A Static Analysis Journey” by Yoann Padioleau (author of Semgrep’s prede-
+                 cessor, sgrep) at https://semgrep.dev/blog/2021/semgrep-a-static-analysis
+                 -journey/.
+                    Consider the following rule (express-injection.yml) that identifies the same
+                 command injection vulnerability as the RemoteCommandInjection.ql CodeQL
+                 query:
+
+rules:
+  - id: express-injection
+    mode: taint ¶
+    pattern-sources:
+       - pattern: req.query.$PARAMETER ·
+    pattern-sinks:
+       - pattern: execSync(...) ¸
+    message: Passing user-controlled Express query parameter to a command injection.
+    languages:
+       - javascript
+    severity: ERROR
+    metadata:
+         interfile: true
+
+                      Though you don’t need to dive too deeply into the Semgrep rule syntax
+                 for the purposes of this chapter, there are a few key components you should
+                 take note of. First, the rule is formatted in YAML, a data serialization lan-
+                 guage common in configuration files. As such, be careful of YAML-specific
+                 quirks, such as multiline strings (prefixed with the | character), Booleans,
+                 and escaped characters.
+                      Next, other than the standard pattern matching mode, Semgrep sup-
+                 ports a few advanced and experimental modes via the mode field ¶, including
+
+          taint, join, and extract. These are helpful for creating the more powerful
+          rules that you’ll need as you tackle more complex patterns in code. For the
+          rest of this book, you’ll use only the regular and taint modes.
+               The most used pattern feature is metavariables, whose names are always
+          prefixed with a dollar sign ($) character and can contain only uppercase let-
+          ters, underscores (_), or digits ·. You use metavariables to match an item,
+          like a variable or function name, that can be any value instead of a fixed
+          value. The contents of the match are stored in the metavariable, allowing
+          you to run further checks on them, such as ensuring that the metavariable
+          matches a specific pattern.
+               Coming a close second is the ellipsis operator ¸, which matches a se-
+          quence of zero or more items, such as statements, characters in a string, or
+          function arguments. This allows you to quickly abstract away parts of the
+          code that you aren’t concerned with but still want to include in the match.
+
+WARNING   Once, while trying to write a Semgrep rule to match an insecure configuration in
+          an XML file that looked like <setting name="sanitizeInputs">off</setting>, a fel-
+          low Semgrep user kept getting the error message False is not of type 'string' in
+          pattern ['rules'][0]['pattern'](). After cracking our heads for far too long, we
+          found out that YAML version 1.1 interprets on and off as Boolean values instead of
+          as strings!
+              You’ll often use metavariables and ellipsis operators in conjunction. For
+          example, suppose you want to match hardcoded secrets in code that are as-
+          signed to variables prefixed with SECRET_, like the following:
+
+          var SECRET_KEY = "D3ADB33F"
+          var SECRET_TOKEN = "1337"
+
+              You aren’t concerned with matching the exact values of the strings,
+          since they can be any value. This pattern does the trick:
+
+          patterns:
+            - pattern: var $VARIABLE_NAME = "..."
+            - metavariable-regex:
+                  metavariable: $VARIABLE_NAME
+                  regex: SECRET_.*
+
+              One final point to note before moving on is how to compose Semgrep
+          patterns. The patterns operator performs a logical AND operation on its
+          child patterns; here, only code that matches a string variable assignment
+          where the variable name starts with SECRET_.* is considered a result. To per-
+          form a logical OR, use pattern-either. You can nest these operators multiple
+          times, but that quickly becomes unwieldy.
+              As mentioned earlier, one of the most critical syntax distinctions be-
+          tween a Semgrep rule and a CodeQL query is that Semgrep syntax is pattern-
+          oriented, while QL syntax is query-oriented. Semgrep focuses on matching
+          specific patterns in the code, and CodeQL is concerned with programming
+          a query that fetches variables that meet the correct conditions from the
+
+                 database. Given the additional layer of abstraction and the context switch-
+                 ing required to perform the latter, one could argue that Semgrep rule syntax
+                 is easier to learn.
+                       Other than pattern syntax, Semgrep and CodeQL also differ in how
+                 they represent the source code for data flow analysis. Instead of extracting
+                 language-specific relationship data and classes and storing it in a database,
+                 Semgrep parses code from different languages into a generic AST before
+                 converting it into an intermediate language (IL) on which it runs pattern
+                 matching.
+                       This approach means that Semgrep’s data flow analysis is largely lan-
+                 guage agnostic, in contrast to CodeQL’s language-specific queries. For ex-
+                 ample, CodeQL cannot query for a JavaScript CallExpr class instance in a
+                 Python database, since the CodeQL Python library supports only the equiva-
+                 lent Call class. Semgrep, on the other hand, is able to pattern-match function
+                 _name(...) in both JavaScript and Python codebases, skipping the database
+                 creation step as well.
+                       However, Semgrep’s approach also entails the loss of important pro-
+                 gram analysis data. ASTs, unlike CFGs or DFGs, can’t directly represent ex-
+                 ecution or data flow, which is critical to proper taint tracking. Additionally,
+                 language-specific features (like class inheritance and overrides that affect
+                 taint tracking) are lost in a generic AST, and because one AST is created per
+                 file, inter-file taint analysis is not possible.
+                       To make up for the gaps in the base Semgrep OSS engine, Semgrep’s
+                 developers built a paid Semgrep Pro engine that adds support for inter-file
+                 and inter-function analysis as well as greater language support. You can access
+                 these features via the Semgrep Playground (https://semgrep.dev/playground),
+                 which allows you to test Semgrep rules against code.
+                       In the Semgrep Playground, switch to the “advanced” tab and paste in
+                 the express-injection.yml rule from the beginning of this section. The test code
+                 editor on the right accepts only one text input, but you can paste the con-
+                 tents of utils.js and index.js one after another. Ensure that the Pro toggle at
+                 the top right is switched on. Now click Run. You should see the highlighted
+                 pattern match at execSync(`ping -c 5 ${ip}`), as expected.
+                       While you can try out Semgrep Pro in the Playground, you need a sub-
+                 scription to use it on more than a few snippets of code. As such, you’ll in-
+                 stead use Semgrep OSS, the base engine, to analyze code in the following
+                 section as you’ll be working with multiple files in a large codebase. You can
+                 install it using the pip Python package manager by running pip install semgrep.
+                       As noted in the documentation, Semgrep OSS provides a few analyses,
+                 such as constant propagation and taint tracking (see https://semgrep.dev/
+                 docs/writing-rules/data-flow/data-flow-overview). It also performs only intra-
+                 procedural analysis, meaning it analyzes data flow within a single function
+                 or method, and it comes with some design trade-offs that improve speed at
+                 the cost of comprehensiveness, such as limited taint analysis of data passed
+                 through pointers.
+                       Due to the fundamental design choices made at the program analysis
+                 level (which ultimately affect the practical rule-writing experience), Semgrep
+
+        OSS runs much faster than CodeQL and with less overhead. You don’t need
+        to worry about getting the correct class or type while writing a rule. You also
+        don’t need to build a database or compile a query, allowing you to iterate
+        much faster. One particular use case is when you’re searching for a fairly
+        simple but rare pattern across hundreds or even thousands of codebases,
+        such as when I was narrowing down potential browser extension vulnerabil-
+        ities across a large database of extensions (https://spaceraccoon.dev/universal
+        -code-execution-browser-extensions/). Vulnerability research often involves care-
+        ful allocation of time and labor to achieve results with a reasonable invest-
+        ment. Knowing which tool is best suited to which target is key.
+
+Variant Analysis
+        Vulnerability research has increased in difficulty over time, as developers
+        implement system-level mitigations and write more secure code. New vul-
+        nerabilities are regularly discovered, but it’s a far cry from the Wild West of
+        the past. Accordingly, you’ll now have to invest significantly more time and
+        expertise to discover impactful vulnerabilities in the most popular software.
+        For example, large open source applications like LibreOffice can easily con-
+        tain millions of lines of code. Automated source code analysis tools can cut
+        down the time needed to analyze that code, but you still have to triage all the
+        results and understand the context of each finding. For example, an unsafe
+        memcpy in one file may have been mitigated earlier on by a size check else-
+        where. You can tweak the rules to reduce false positives by narrowing down
+        the search criteria, but that risks increasing the number of false negatives as
+        well, causing you to miss actual vulnerabilities.
+            Fortunately, many other researchers have walked the same path as you.
+        While they may not publish their research, breaking down every single detail
+        about the vulnerabilities they’ve discovered, open source software has two
+        key pieces of evidence you can access: the patched code diff and the public
+        vulnerability advisory, typically published as a Common Vulnerabilities and
+        Exposures (CVE) record (see Chapter 0). By analyzing these sources of in-
+        formation, you may be able to parlay a previous vulnerability into multiple
+        new ones. In this section we’ll cover how to perform variant analysis within a
+        single codebase, or repository, as well as across multiple repositories.
+
+        Single-Repository Variant Analysis
+        Vulnerabilities don’t often exist in isolation. If a developer made a mistake
+        in their code that caused a vulnerability, they likely made that mistake else-
+        where in the codebase, too. Additionally, vulnerability researchers may not
+        be interested in enumerating all possible variants of a vulnerability, but
+        rather exploring a particular exploit path and content with finding some-
+        thing. Finally, in their rush to patch one bug, developers may fail to perform
+        deeper root cause analysis of why that vulnerability occurred, and then fail
+        to build secure guardrails to prevent future occurrences. These factors can
+        give rise to a surprisingly rich source of vulnerabilities and facilitate a less
+
+                 resource-intensive approach to vulnerability research. Avenues to pursue
+                 include:
+                     Variants A particular code pattern that caused a vulnerability exists
+                     elsewhere in the code, creating more vulnerabilities.
+                     Insufficient patches A patch for a vulnerability does not adequately
+                     resolve the root cause, leaving various bypasses available for the vulnera-
+                     bility to still be exploited.
+                     Regression A vulnerability is patched in the code but, due to lack of
+                     regression testing or secure guardrails, is revived when future changes in
+                     the code weaken or remove the patch.
+                      Thanks to the previously mentioned vulnerability advisory and patch
+                 code diff, you know exactly how and why the original vulnerability occurs.
+                 With some root cause analysis, you can quickly pivot to scanning the code
+                 for similar vulnerable patterns. After that, you can triage the results based
+                 on whether they repeat the original vulnerability, rather than starting afresh
+                 in your analysis each time. The rules you write can be a lot more specific to
+                 patterns that would not make sense in a general ruleset.
+                      You can try out this method with a collection of integer overflow vul-
+                 nerability variants in Expat, a C library for parsing XML files. Given the
+                 ubiquity of XML files, Expat has applications in countless other software,
+                 including Firefox and Python (https://libexpat.github.io/doc/users/). As such, a
+                 vulnerability in Expat has significant downstream impact, especially since
+                 you can use the library in ways the original developers may not have ex-
+                 pected. If you look at the CVEs for Expat, you’ll notice that it has suffered
+                 from multiple integer overflows, including CVE-2022-22822 through CVE-
+                 2022-22827 (https://cve.mitre.org/cgi-bin/cvekey.cgi?keyword=expat). If you browse
+                 to the individual pages for any of those vulnerabilities, you’ll see a link under
+                 the “References” section to the merged commit on GitHub that patched the
+                 vulnerability. For the shared patch for CVE-2022-22822 through CVE-2022-
+                 22827 titled “[CVE-2022-22822 to CVE-2022-22827] lib: Prevent more inte-
+                 ger overflows,” the pull request comment notes that the patch is related to
+                 pull requests 534 and 538. In turn, those pull requests patch earlier integer
+                 overflows in CVE-2021-46143 and CVE-2021-45960.
+
+                 Root Cause Analysis
+                 To practice single-repository variant analysis, try to rediscover the variants
+                 CVE-2022-22822 through CVE-2022-22827 by writing a code analysis rule
+                 based on CVE-2021-46143. The first step in writing a rule is performing root
+                 cause analysis to understand how the vulnerability occurred and determine
+                 which patterns to target.
+                      Take a look at the patch for CVE-2021-46143 at https://github.com/libexpat/
+                 libexpat/pull/538. The pull request is titled “[CVE-2021-46143] lib: Prevent
+                 integer overflow on m_groupSize in function doProlog.” The “Files changed”
+                 section lists only two updated files. The changelog adds the following lines:
+
++        #532 #538 CVE-2021-46143 (ZDI-CAN-16157) -- Fix integer overflow
++                    on variable m_groupSize in function doProlog leading
++                    to realloc acting as free.
++                    Impact is denial of service or more.
+
+     This helpfully informs you that the integer overflow in CVE-2021-46143
+leads to “realloc acting as free.” The realloc standard library function takes
+two arguments, void *ptr and size_t size. As noted on its manual page, the
+function tries to change the size of the allocated memory that ptr points at
+to size, but if size is zero, it frees the memory instead. You can glean further
+information in the diff for the other updated file, expat/lib/xmlparse.c:
+
+@@ -5019,6 +5046,11 @@ doProlog
+       if (parser->m_prologState.level >= parser->m_groupSize) {
+           if (parser->m_groupSize) {
+               {
++                /* Detect and prevent integer overflow */
++             ¶ if (parser->m_groupSize > (unsigned int)(-1) / 2u) {
++                    return XML_ERROR_NO_MEMORY;
++                }
++
+               char *const new_connector = (char *)REALLOC(
+                   parser, parser->m_groupConnector, parser->m_groupSize *= 2);
+               if (new_connector == NULL) {
+@@ -5029,6 +5061,16 @@ doProlog
+           }
+
+           if (dtd->scaffIndex) {
++              /* Detect and prevent integer overflow.
++               * The preprocessor guard addresses the "always false" warning
++               * from -Wtype-limits on platforms where
++               * sizeof(unsigned int) < sizeof(size_t), e.g. on x86_64. */
++#if UINT_MAX >= SIZE_MAX
++       · if (parser->m_groupSize > (size_t)(-1) / sizeof(int)) {
++              return XML_ERROR_NO_MEMORY;
++          }
++#endif
++
+           int *const new_scaff_index = (int *)REALLOC(
+               parser, dtd->scaffIndex, parser->m_groupSize * sizeof(int));
+           if (new_scaff_index == NULL)
+
+    This tells you exactly where the patch occurs and, more importantly,
+what it patches. In this case, it adds two comparison checks on parser->
+m_groupSize to ensure that it’s no larger than (unsigned int)(-1) / 2u ¶ or
+(size_t)(-1) / sizeof(int) ·, the values that you multiply parser->m_groupSize
+by before passing it as the size argument to the REALLOC macro.
+
+                     Take a moment to analyze the REALLOC macro. In the C programming
+                 language, macros are named fragments of code. To find the definition of the
+                 REALLOC macro, search for #define REALLOC in the code:
+
+                 #define REALLOC(parser, p, s) (parser->m_mem.realloc_fcn((p), (s)))
+
+                      When compiling the code, the C preprocessor expands all occurrences
+                 of REALLOC and their arguments to (parser->m_mem.realloc_fcn((p), (s))). How-
+                 ever, this doesn’t confirm whether m_mem.realloc_fcn is equivalent to the
+                 realloc standard library function. If you search for realloc_fcn in the code,
+                 you’ll find the following:
+
+parserCreate(const XML_Char *encodingName,
+             const XML_Memory_Handling_Suite *memsuite, const XML_Char *nameSep,
+             DTD *dtd) {
+    XML_Parser parser;
+
+     if (memsuite) { ¶
+         XML_Memory_Handling_Suite *mtemp;
+         parser = (XML_Parser)memsuite->malloc_fcn(sizeof(struct XML_ParserStruct));
+         if (parser != NULL) {
+              mtemp = (XML_Memory_Handling_Suite *)&(parser->m_mem);
+              mtemp->malloc_fcn = memsuite->malloc_fcn;
+              mtemp->realloc_fcn = memsuite->realloc_fcn;
+              mtemp->free_fcn = memsuite->free_fcn;
+         }
+     } else {
+         XML_Memory_Handling_Suite *mtemp;
+         parser = (XML_Parser)malloc(sizeof(struct XML_ParserStruct));
+         if (parser != NULL) {
+              mtemp = (XML_Memory_Handling_Suite *)&(parser->m_mem);
+              mtemp->malloc_fcn = malloc;
+              mtemp->realloc_fcn = realloc; ·
+              mtemp->free_fcn = free;
+         }
+     }
+
+                     Unless you pass an alternative memory handling suite to parserCreate ¶,
+                 realloc_fcn is assigned as realloc ·. This may seem like a long detour to con-
+                 firm your suspicions, but it’s important to be thorough. After all, the REALLOC
+                 macro could be a safe wrapper around the realloc function, a common prac-
+                 tice by many developers.
+                      Returning to the patch for CVE-2021-46143, you may wonder how the
+                 comparison checks prevent an integer overflow, or what an integer overflow
+                 means in this context. As a quick experiment, compile and run the following
+                 C code:
+
+        #include <stdio.h>
+
+        int main() {
+            printf("SIZE_MAX: %zu\n", ((size_t)(-1)));
+            printf("no overflow: %zu\n", ((size_t)(-1) / sizeof(int)) * sizeof(int));
+            printf("overflow: %zu\n", ((size_t)(-1) / sizeof(int) + 1) * sizeof(int));
+            return 0;
+        }
+
+             You should get the following output:
+
+        SIZE_MAX: 18446744073709551615
+        no overflow: 18446744073709551612
+        overflow: 0
+
+             There’s a maximum number that unsigned integer types can represent,
+        which in binary is 11111..., up to the number of bits for that type. Since
+        unsigned integers can’t be negative, casting -1 to an unsigned integer type
+        performs a two’s complement operation that ends up with the same binary
+        representation as the maximum for that type.
+             In binary arithmetic, multiplying by two is represented by “shifting left”
+        by 1 bit, and dividing by two (rounding down) is the converse. For example,
+        multiplying 7 (111 in binary) by two results in 1110, which corresponds to 14.
+        If the operation exceeds the number of bits for the type in question, it trun-
+        cates the most significant bits. As such, the unsigned integer overflow here
+        occurs when the multiplication ends up with 1000000..., which it truncates
+        to 000000..., representing 0. Integer overflows are a common vulnerability
+        class that can lead to all sorts of undefined behavior if the value is used for
+        other functions; in the case of Expat, it can lead to freeing memory instead
+        of reallocating it.
+             To complete the root cause analysis, you must understand how to reach
+        this vulnerable code path, or sink. Fortunately, the pull request comment
+        also links to the corresponding issue, titled “[CVE-2021-46143] Crafted XML
+        file can cause integer overflow on m_groupSize in function doProlog” (https://
+        github.com/libexpat/libexpat/issues/532). The issue notes that an anonymous
+        white hat researcher reported the vulnerability via the Zero Day Initiative
+        (ZDI), which facilitates zero-day vulnerability disclosures and provides finan-
+        cial rewards. Additionally, it states that “the issue is an integer overflow (in
+        multiplication) near a call to realloc that takes a 2 GiB size craft XML file,
+        and then will cause denial of service or more.” Finally, the issue comment
+        includes a snippet of the vulnerability disclosure’s analysis section:
+                  This is an integer overflow vulnerability that exists in expat library.
+                  The vulnerable function is doProlog
+
+doProlog(XML_Parser parser, const ENCODING *enc, const char *s, const char *end,
+         int tok, const char *next, const char **nextPtr, XML_Bool haveMore,
+         XML_Bool allowClosingDoctype, enum XML_Account account) {
+#ifdef XML_DTD
+
+               static const XML_Char externalSubsetName[] = {ASCII_HASH, '\0'};
+           #endif /* XML_DTD */
+               static const XML_Char atypeCDATA[]
+               --snip--
+                   case XML_ROLE_GROUP_OPEN:
+                       if (parser->m_prologState.level >= parser->m_groupSize) {
+                           if (parser->m_groupSize) {
+                               {
+                                   char *const new_connector = (char *)REALLOC(
+                                       parser, parser->m_groupConnector, parser->m_groupSize *= 2);// (1)
+                                   if (new_connector == NULL) {
+                                       parser->m_groupSize /= 2;
+                                       return XML_ERROR_NO_MEMORY;
+                                   }
+                                   parser->m_groupConnector = new_connector;
+                               }
+
+                             At (1), integer overflow occurs if the value of m_groupSize is greater
+                             than 0x7FFFFFFF.
+
+                        This provides you with the final piece of the puzzle: the attack vector,
+                   a large crafted XML file. In order for m_groupSize to reach such a large num-
+                   ber, it must include enough tokens that match the XML_ROLE_GROUP_OPEN case in
+                   the XML file.
+
+     NOTE          Although it isn’t necessary to re-create the proof of concept during root cause analy-
+                   sis, doing so can be helpful in improving your understanding of the vulnerability.
+                   Try reproducing CVE-2021-46143 by creating an XML file that would trigger it.
+                   Hint: Look at the pull request and related issue for CVE-2021-45960, which in-
+                   cludes more detail about the proof of concept and includes a link to a script to create
+                   it. You can adapt this for CVE-2021-46143.
+                        Although Expat extensively documents its vulnerability remediation
+                   process, more often than not you’ll have only scraps of information from
+                   published vulnerability advisories. Depending on the criticality of a bug, de-
+                   velopers may choose to obfuscate a vulnerability patch by burying it inside a
+                   much larger update or fix it at a higher level in the code. Additionally, vul-
+                   nerability advisory descriptions may be deliberately unclear to prevent mali-
+                   cious actors from deducing the real vulnerability and exploiting it via n-day
+                   attacks on unpatched users. Nevertheless, it’s usually easier to patch diff a
+                   known vulnerability and analyze it than to discover a brand-new vulnerabil-
+                   ity. Root cause analysis of disclosed vulnerabilities is a skill that yields rich
+                   rewards for the careful researcher.
+
+                   Variant Pattern Matching
+                   Now that you understand the root cause of the vulnerability, you can write a
+                   pattern to find other variants of it in the code. To recap the key features of
+                   CVE-2021-46143:
+
+                    1.   An integer overflow occurs when multiplying some variable of an
+                         unsigned integer type beyond its maximum.
+                    2.   The overflowed integer is passed as the third argument to the
+                         REALLOC macro, which leads to an unintended free if the variable
+                         overflows to 0.
+                    3.   The variable is attacker-controlled via the XML file, which can take
+                         the form parser->m_groupSize.
+                    Typically, for single-repository variant analysis, you can afford to be
+                more specific with your patterns because the developer’s style often repeats
+                throughout the code. Start with an almost-exact match of the original vul-
+                nerable code, then slowly generalize the rule until you begin finding variants.
+                This iterative approach allows you to make sure you aren’t overgeneralizing
+                from the start and keeps your scope small. As such, it’s better to begin with
+                pattern matching rather than a full data flow analysis rule. In this case, focus
+                on the sink of the vulnerability rather than the source-to-sink flow.
+                    For CVE-2021-46143, the sink is the REALLOC macro’s third argument,
+                which the developers patched by adding a comparison check right before
+                the two REALLOC invocations:
+
+                 char *const new_connector = (char *)REALLOC(
+                     parser, parser->m_groupConnector, parser->m_groupSize *= 2);
+                 int *const new_scaff_index = (int *)REALLOC(
+                     parser, dtd->scaffIndex, parser->m_groupSize * sizeof(int));
+
+                     When drafting Semgrep rules, it’s helpful to use Semgrep Playground
+                due to its support for Semgrep Pro features and convenient user interface
+                for debugging rules. Begin drafting your rule by placing these two REALLOC
+                invocations in the test code section of the Playground. In the rule section,
+                switch to the ”advanced” tab and start with a skeleton rule that matches the
+                first invocation exactly:
+
+rules:
+  - id: CVE-2021-46143
+    pattern: REALLOC(parser, parser->m_groupConnector, parser->m_groupSize *= 2);
+    message: Detected variant of CVE-2021-46143.
+    languages: [c]
+    severity: ERROR
+
+                    Click Run and confirm that the rule matches the line where the first
+                REALLOC invocation appears. Next, generalize the rule to match both invoca-
+                tions. You might do this by abstracting away the last two arguments with the
+                ellipsis operator, since those are the only differences between the first and
+                second invocations:
+
+                    pattern: REALLOC(parser, ...);
+
+                    While this works, it greatly increases the number of false positives be-
+                cause it also fails to differentiate safe and vulnerable REALLOC invocations.
+
+                   Recall that the root cause of this vulnerability is an integer overflow in the
+                   third argument passed to REALLOC (and consequently realloc) caused by mul-
+                   tiplying it (parser->m_groupSize *= 2 and parser->m_groupSize * sizeof(int)). As
+                   such, you should match this pattern by using metavariables:
+
+                       patterns:
+                           - pattern-either:
+                               - pattern: REALLOC(parser, $POINTER, $SIZE * $CONSTANT);
+                               - pattern: REALLOC(parser, $POINTER, $SIZE *= $CONSTANT);
+
+                        Notice the proper usage of the patterns, pattern-either, and pattern op-
+                   erators. You cannot nest the two pattern operators under patterns because
+                   patterns performs a logical AND operation, meaning that the code must
+                   match both patterns rather than either of them. To perform a logical OR
+                   operation instead, use pattern-either.
+                        After completing this basic rule, you can now test it on the vulnerable
+                   commit of Expat. Save the rule to a file called cve-2021-46143-variant-1.yml
+                   (or copy it from the book’s code repository), then check out the commit and
+                   run the Semgrep rule on it with the following commands:
+
+                   $ git clone https://github.com/libexpat/libexpat
+                   $ cd libexpat
+                   $ git checkout 0adcb34c
+                   $ semgrep -f ../cve-2021-46143-variant-1.yml .
+
+                       If all goes well, you should get the following results:
+
+Scanning 18 files.
+18/18 tasks 0:00:00
+
+Results
+Findings:
+
+     expat/lib/xmlparse.c
+        CVE-2021-46143
+           Detected variant of CVE-2021-46143.
+
+          �3271 temp = (ATTRIBUTE *)REALLOC(parser, (void *)parser->m_atts,
+          �3272                             parser->m_attsSize * sizeof(ATTRIBUTE));
+             ��----------------------------------------
+          �3279 temp2 = (XML_AttrInfo *)REALLOC(parser, (void *)parser->m_attInfo,
+          �3280                                 parser->m_attsSize * sizeof(XML_AttrInfo));
+             ��----------------------------------------
+          �5049 char *const new_connector = (char *)REALLOC(
+          �5050     parser, parser->m_groupConnector, parser->m_groupSize *= 2);
+             ��----------------------------------------
+          �5059 int *const new_scaff_index = (int *)REALLOC(
+          �5060     parser, dtd->scaffIndex, parser->m_groupSize * sizeof(int));
+             ��----------------------------------------
+
+       �6130 temp = (DEFAULT_ATTRIBUTE *)REALLOC(parser, type->defaultAtts,
+       �6131                                     (count * sizeof(DEFAULT_ATTRIBUTE)));
+          ��----------------------------------------
+       �7131 temp = (CONTENT_SCAFFOLD *)REALLOC(
+       �7132     parser, dtd->scaffold, dtd->scaffSize * 2 * sizeof(CONTENT_SCAFFOLD));
+
+Scan Summary
+
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
+  Partially scanned: 1 files only partially analyzed due to a parsing or internal Semgrep error
+  Scan skipped: 6 files matching .semgrepignore patterns
+  For a full list of skipped files, run semgrep with the --verbose flag.
+
+Ran 1 rule on 18 files: 6 findings.
+
+                    The rule correctly identifies the original two vulnerabilities as well as
+                four additional potential variants. The variants all use some potentially
+                attacker-controlled value multiplied by the size of a data structure.
+                    Take a closer look at the first variant, which occurs at line 3271 of
+                xmlparse.c:
+
+                /* Precondition: all arguments must be non-NULL;
+                   Purpose:
+                   - normalize attributes
+                   - check attributes for well-formedness
+                   - generate namespace aware attribute names (URI, prefix)
+                   - build list of attributes for startElementHandler
+                   - default attributes
+                   - process namespace declarations (check and report them)
+                   - generate namespace aware element name (URI, prefix)
+                */
+                static enum XML_Error
+                storeAtts(XML_Parser parser, const ENCODING *enc, const char *attStr,
+                           TAG_NAME *tagNamePtr, BINDING **bindingsPtr,
+                           enum XML_Account account) {
+                    DTD *const dtd = parser->m_dtd; /* save one level of indirection */
+                    ELEMENT_TYPE *elementType;
+                    int nDefaultAtts;
+                    const XML_Char **appAtts; /* the attribute list for the application */
+                    int attIndex = 0;
+                    int prefixLen;
+                    int i;
+                    int n;
+                    XML_Char *uri;
+                    int nPrefixes = 0;
+                    BINDING *binding;
+                    const XML_Char *localPart;
+
+                    /* lookup the element type name */
+                    elementType = (ELEMENT_TYPE *)lookup(parser, &dtd->elementTypes,
+                                    tagNamePtr->str, 0);
+                    if (! elementType) {
+                        const XML_Char *name = poolCopyString(&dtd->pool, tagNamePtr->str);
+                        if (! name)
+                            return XML_ERROR_NO_MEMORY;
+                        elementType = (ELEMENT_TYPE *)lookup(parser, &dtd->elementTypes,
+                                        name, sizeof(ELEMENT_TYPE));
+                        if (! elementType)
+                            return XML_ERROR_NO_MEMORY;
+                        if (parser->m_ns && ! setElementTypePrefix(parser, elementType))
+                            return XML_ERROR_NO_MEMORY;
+                      }
+                    ¶ nDefaultAtts = elementType->nDefaultAtts;
+
+                       /* get the attributes from the tokenizer */
+                    · n = XmlGetAttributes(enc, attStr, parser->m_attsSize, parser->m_atts);
+                        if (n + nDefaultAtts > parser->m_attsSize) {
+                            int oldAttsSize = parser->m_attsSize;
+                            ATTRIBUTE *temp;
+                 #ifdef XML_ATTR_INFO
+                     XML_AttrInfo *temp2;
+                 #endif
+                  ¸ parser->m_attsSize = n + nDefaultAtts + INIT_ATTS_SIZE;
+                     temp = (ATTRIBUTE *)REALLOC(parser, (void *)parser->m_atts,
+                                               ¹ parser->m_attsSize * sizeof(ATTRIBUTE));
+
+                      With experience, you’ll build intuition about what a particular snippet
+                 does without having to enumerate everything, which will come in handy
+                 as you encounter more complex source code. Expat is considered a fairly
+                 straightforward codebase, with most of the logic contained in a single file.
+                 Even with imperfect information, you can pick up a few clues regarding
+                 whether the code is vulnerable. First, the storeAtts function, in which the
+                 potential variant occurs, is commented with details about what it does. In
+                 short, it appears to handle parsing XML attributes, which would indeed be
+                 attacker-controlled if the library was handling untrusted XML documents.
+                 More specifically, you’ll be interested in parser->m_attsSize rather than
+                 sizeof(ATTRIBUTE), because while both are used in the the third argument to
+                 REALLOC (the sink) ¹, the former is potentially attacker-controlled while the
+                 latter is a fixed value.
+                      Going back a few lines, note that parser->m_attsSize is set to the sum
+                 of several variables ¸. You can ignore INIT_ATTS_SIZE, which is a constant.
+                 Meanwhile, nDefaultAtts is set to another value ¶, and you can make the
+                 reasonable guess based on the variable names that this value is equal to the
+                 number of default attributes for the type of element being parsed. This ap-
+                 pears to be less likely to be attacker-controllable, as it relies on fixed defaults,
+
+but you can file it away for further investigation. Finally, n is set to the return
+value of a function · that, according to the comment, gets the attributes
+from the tokenizer. If you look up XmlGetAttributes, you’ll find that it’s actu-
+ally a macro defined in expat/lib/xmltok.h:
+
+#define XmlGetAttributes(enc, ptr, attsMax, atts)
+    (((enc)->getAtts)(enc, ptr, attsMax, atts))
+
+     The macro essentially calls the getAtts member function of the enc struct
+instance on the same arguments. Searching for getAtts provides the actual
+implementation of the function in expat/lib/xmltok_impl.c. While you can
+fully analyze the code yourself, the comment above the function definition is
+sufficient to tell you what it does:
+
+/* This must only be called for a well-formed start-tag or empty
+   element tag. Returns the number of attributes. Pointers to the
+   first attsMax attributes are stored in atts.
+*/
+
+     Fortunately, this suggests that n is indeed an attacker-controllable value,
+since it is the number of attributes in the XML element that’s being parsed.
+Although attsMax initially caused some concern because it could potentially
+limit the number of attributes returned, the comment tells you that it lim-
+its only the number of attributes stored in atts. You can confirm this by
+observing that the function increments the return value nAtts regardless of
+whether it has exceeded attsMax:
+
+case BT_QUOT:
+    if (state != inValue) {
+        if (nAtts < attsMax)
+            atts[nAtts].valuePtr = ptr + MINBPC(enc);
+        state = inValue;
+        open = BT_QUOT;
+    } else if (open == BT_QUOT) {
+        state = other;
+        if (nAtts < attsMax)
+            atts[nAtts].valueEnd = ptr;
+        nAtts++;
+    }
+    break;
+
+     For example, although it checks whether nAtts < attsMax, nAtts++; falls
+outside the if statement’s body and executes regardless of the result of the
+if statement. In C, only the statement right after an if statement is executed
+unless it is contained inside braces.
+     This confirms that the eventual value passed as the third argument to
+REALLOC is partially attacker-controllable and is a valid vulnerability. We took
+the long road here, but as highlighted earlier, you could skip various steps in
+the sink-to-source analysis by making reasonable guesses based on variable
+
+                 names and developer comments. That’s a judgment call you’ll have to make
+                 based on the size of the codebase and the amount of time you can spend on it.
+                     Looking at the pull request that fixed CVE-2022-22822 through CVE-
+                 2022-22827, you’ll see that it added a validation check prior to the REALLOC
+                 invocation in storeAtts (https://github.com/libexpat/libexpat/pull/539/files#diff
+                 -d1bcab18f24ba66b34aeb2e156f7fde58ef3de1a165514b0fccf0d04c26838f8R3289
+                 -R3294):
+
+                 +     /* Detect and prevent integer overflow */
+                 +     if ((nDefaultAtts > INT_MAX - INIT_ATTS_SIZE)
+                 +         || (n > INT_MAX - (nDefaultAtts + INIT_ATTS_SIZE))) {
+                 +         return XML_ERROR_NO_MEMORY;
+                 +     }
+                 +
+                      parser->m_attsSize = n + nDefaultAtts + INIT_ATTS_SIZE;
+                 +
+                 +    /* Detect and prevent integer overflow.
+                 +     * The preprocessor guard addresses the "always false" warning
+                 +     * from -Wtype-limits on platforms where
+                 +     * sizeof(unsigned int) < sizeof(size_t), e.g. on x86_64. */
+                 +#if UINT_MAX >= SIZE_MAX
+                 +    if ((unsigned)parser->m_attsSize > (size_t)(-1) / sizeof(ATTRIBUTE)) {
+                 +        parser->m_attsSize = oldAttsSize;
+                 +        return XML_ERROR_NO_MEMORY;
+                 +    }
+                 +#endif
+
+                      The description for CVE-2022-22827 states that “storeAtts in xmlparse.c
+                 in Expat (aka libexpat) before 2.4.3 has an integer overflow.” This confirms
+                 that your rule was able to detect a real variant of CVE-2021-46143. Based
+                 on the other results, the rule also correctly identifies integer overflows in
+                 defineAttribute (CVE-2022-22824) and nextScaffoldPart (CVE-2022-22826),
+                 but it fails to identify the ones in addBinding (CVE-2022-22822), build_model
+                 (CVE-2022-22823), and lookup (CVE-2022-22825). The latter two are due
+                 to the fact that the overflowed integer is passed to a malloc call instead of
+                 realloc. For addBinding, the offending code is:
+
+                 XML_Char *temp = (XML_Char *)REALLOC(
+                     parser, b->uri, sizeof(XML_Char) * (len + EXPAND_SPARE));
+
+                       Note that if you copy this code into a separate file, false_negative.c, and
+                 scan it with your Semgrep rule, it’ll detect the vulnerability. If you recall
+                 the Partially scanned: 1 files only partially analyzed due to a parsing or
+                 internal Semgrep error message from the Semgrep output earlier, this is be-
+                 cause the Semgrep engine does not yet fully support the C language and can
+                 fail to properly parse parts of the code. Additionally, Semgrep’s generic rep-
+                 resentation of code may not capture all the nuances of the C programming
+                 language due to the trade-offs in its design. Use Semgrep’s dump-ast feature
+                 to understand how Semgrep represents the code internally:
+
+$ semgrep --lang c --dump-ast false_negative.c
+ ¶ Call(
+        N(
+            Id(("REALLOC", ()),
+                 {id_info_id=3; id_hidden=false; id_resolved=Ref(
+                  None); id_type=Ref(None); id_svalue=Ref(
+                  None); })),
+        [Arg(
+              N(
+                  Id(("parser", ()),
+                      {id_info_id=4; id_hidden=false; id_resolved=Ref(
+                       None); id_type=Ref(None); id_svalue=Ref(
+                       None); })));
+
+    In the abbreviated output, the AST for the REALLOC invocation starts with
+that node ¶. Semgrep does not differentiate between macro invocations and
+function calls, which is why the root of this tree is the Call element.
+    Despite its limitations, using a code scanning engine like Semgrep al-
+lows you to scan for patterns that go beyond what a simple regex can do. For
+example, consider another scenario in which a variable is first assigned the
+result of a multiplication or addition operation and then passed to REALLOC as
+the third argument, rather than the third argument passed to REALLOC being
+the multiplication or addition operation. This creates the same integer over-
+flow vulnerability but allows for a more generic pattern. To check for this,
+use the pattern-inside operator as well as metavariables:
+
+rules:
+  - id: CVE-2021-46143
+    patterns:
+   ¶ - pattern-either:
+          - pattern-inside: |
+              · (int $SIZE) = $VARIABLE * $CONSTANT;
+                ...
+          - pattern-inside: |
+                (int $SIZE) *= $CONSTANT;
+                ...
+          - pattern-inside: |
+                (int $SIZE) = $VARIABLE + $CONSTANT;
+                ...
+          - pattern-inside: |
+                (int $SIZE) += $CONSTANT;
+                ...
+   ¸ - pattern: REALLOC(parser, $POINTER, $SIZE);
+    message: Detected variant of CVE-2021-46143.
+    languages: [c]
+    severity: ERROR
+
+                        In the new rule, observe how the various permutations of pattern-inside
+                    are nested under pattern-either ¶, paying attention to the Boolean opera-
+                    tions. The rule uses typed metavariables · to increase its accuracy, since the
+                    integer overflow should technically apply only to integer variables. It also
+                    uses the same $SIZE metavariable in both the pattern-inside and pattern ¸
+                    operators to match them up.
+                        If you run this rule on the repository, you should get two new results:
+
+Scanning 19 files.
+19/19 tasks 0:00:00
+
+Results
+Findings:
+
+     expat/lib/xmlparse.c
+        CVE-2021-46143
+           Detected variant of CVE-2021-46143.
+
+            �1938 temp = (char *)REALLOC(parser, parser->m_buffer, bytesToAllocate);
+              ��----------------------------------------
+            �2573 char *temp = (char *)REALLOC(parser, tag->buf, bufSize);
+
+Scan Summary
+
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
+  Partially scanned: 1 files only partially analyzed due to a parsing or internal Semgrep error
+  Scan skipped: 6 files matching .semgrepignore patterns
+  For a full list of skipped files, run semgrep with the --verbose flag.
+
+Ran 1 rule on 18 files: 2 findings.
+
+                         By analyzing these results, you’ll discover that one of them is in fact yet
+                    another integer overflow that was discovered later (CVE-2022-25315). Take
+                    some time to understand why one finding is a true positive while the other
+                    is a false positive. Hint: Are there any validation checks before the REALLOC
+                    invocation?
+                         Before proceeding to discuss multi-repository variant analysis, let’s quickly
+                    recap the path you took to discover variants of CVE-2021-46143. First, you
+                    performed a root cause analysis of the original vulnerability by checking the
+                    diffs of the patch as well as metadata like patch notes. You then wrote an ex-
+                    act match pattern of the vulnerability sink, before iteratively generalizing the
+                    rule to catch more variants. You can tweak your rules to be as strict or loose
+                    as you want. For example, you can exclude all matches that include a valida-
+                    tion check by using the pattern-not-inside operator. However, each design
+                    choice creates a trade-off between higher rates of false positives and false
+                    negatives.
+
+                Multi-Repository Variant Analysis
+                When hunting vulnerability variants in a single repository, you can afford
+                to write more general code-scanning rules because most repositories tend
+                to follow a set of coding conventions enforced by the maintainers of the
+                project. Unfortunately, once you try to write a rule to identify vulnerabili-
+                ties across multiple repositories, you’ll quickly encounter all kinds of chal-
+                lenges. There are infinite ways in which a developer could call a function like
+                realloc, from macros to function pointers. Simply looking for REALLOC would
+                not work outside of the Expat codebase.
+                     While “one pattern to match them all” does not exist, researchers can
+                tweak their rules toward the low–false positive, high-confidence end of the
+                spectrum. By scanning thousands of repositories in one go, you can make
+                up for a higher rate of false negatives (missing out on potential vulnerabili-
+                ties) with sheer scale; even a 1 percent hit rate means at least 10 new vulner-
+                abilities. However, the logic is not perfectly transferable, given the quirks of
+                each vulnerability; a rule targeting a misconfiguration in a specific frame-
+                work will have a much smaller pool of potential targets.
+                     One way to decrease the false positive rate is to use data flow analysis
+                and taint tracking rather than pure pattern matching. For this, you can turn
+                to CodeQL’s powerful data flow capabilities. Fortunately, instead of tackling
+                CodeQL’s complex syntax head-on, you can adapt existing standard library
+                queries that deal with integer overflows used as memory allocation sizes,
+                such as cpp/integer-overflow-tainted and cpp/uncontrolled-allocation-size. You
+                can simplify and combine the two queries into this:
+
+/**
+ * @id integer-overflow-allocation-size
+ * @name Integer Overflow in Allocation Size
+ * @description Potential integer overflow passed to allocation size.
+ * @kind path-problem
+ * @severity error
+ */
+
+import cpp
+import semmle.code.cpp.rangeanalysis.SimpleRangeAnalysis
+import semmle.code.cpp.dataflow.new.TaintTracking
+
+module IntegerOverflowConfig implements DataFlow::ConfigSig {
+    predicate isSource(DataFlow::Node source) {
+        exists(Expr e | e = source.asExpr() |
+            (
+                e instanceof UnaryArithmeticOperation or
+                e instanceof BinaryArithmeticOperation or
+                e instanceof AssignArithmeticOperation
+            ) and
+            convertedExprMightOverflow(e)
+        )
+
+     }
+
+     predicate isSink(DataFlow::Node sink) {
+         exists(Expr e, HeuristicAllocationExpr alloc | e = sink.asConvertedExpr() |
+             e = alloc.getAChild() and
+             e.getUnspecifiedType() instanceof IntegralType and
+             not e instanceof Conversion
+         )
+     }
+}
+
+module IntegerOverflowFlow =
+    TaintTracking::Global<IntegerOverflowConfig>;
+
+import IntegerOverflowFlow::PathGraph
+
+from IntegerOverflowFlow::PathNode source,
+    IntegerOverflowFlow::PathNode sink
+where IntegerOverflowFlow::flowPath(source, sink)
+select sink.getNode(), source, sink,
+    "Potential integer overflow $@ passed to allocation size $@.",
+    source.getNode(), "source",
+    sink, "sink"
+
+                     Test this rule on Expat by compiling the database with codeql database
+                 create --language cpp --source-root expat expat-codeql-database in the Expat
+                 root directory, then adding it to your CodeQL starter VS Code workspace
+                 and running the query like you did in “CodeQL” on page 67. It won’t return
+                 the results you expect, however, since the query looks only for standard li-
+                 brary memory allocation functions and does not follow macro invocations.
+                 To enable that, you’ll need to modify isSink to:
+
+     predicate isSink(DataFlow::Node sink) {
+         exists(Expr e, ExprCall ec, MacroInvocation mi | e = sink.asExpr() |
+             ec = mi.getExpr() and
+             mi.getMacroName() = "REALLOC" and
+             e = ec.getAnArgument() and
+             e.getUnspecifiedType() instanceof IntegralType
+         )
+     }
+
+                     This returns some vulnerability variants, like Semgrep did. Since you’ll
+                 be using CodeQL to perform multi-repository instead of single-repository
+                 variant analysis, before moving on make sure you revert the rule to the more
+                 generic standard library memory allocation function sinks instead of the
+                 Expat-specific REALLOC macro.
+                     With Semgrep, scanning thousands of repositories is relatively straight-
+                 forward because it doesn’t require a database creation step. You could sim-
+
+        ply clone all the repositories and run Semgrep directly on them. In contrast,
+        to work with CodeQL, you need to build a database individually for each
+        repository, which could fail if a repository has a nonstandard build process
+        or third-party dependencies. Fortunately, the CodeQL team at GitHub has
+        provided prebuilt databases of top repositories, allowing you to scan up to
+        1,000 repositories through distributed continuous integration and continu-
+        ous delivery (CI/CD) workflows, known as GitHub Actions, that run in the
+        cloud.
+              To set up multi-repository variant analysis with CodeQL and GitHub
+        on VS Code, follow the instructions in the CodeQL documentation (https://
+        codeql.github.com/docs/codeql-for-visual-studio-code/running-codeql-queries-at-scale
+        -with-mrva). When setting up your controller repository, make sure to set
+        the workflow permissions to “Read and write permissions.” After the ini-
+        tial setup, return to VS Code and click CodeQL in the Activity Bar on the
+        left. Under “Variant Analysis Repositories,” select Top 100 repositories.
+        Finally, right-click anywhere in your custom integer overflow query and se-
+        lect CodeQL: Run Variant Analysis. Hopefully, your multi-repository vari-
+        ant analysis will start without a hitch.
+              After several minutes, you should begin receiving results. The number
+        of results will appear beside each repository name. You can expand the find-
+        ings to view the data flow paths in the source code.
+              As you can see, even with just 100 repositories, you receive tens of thou-
+        sands of results! It isn’t feasible to triage all of these findings in a limited
+        time span, but if you take a closer look at the results, you’ll notice that the
+        numbers vary greatly; some repositories have thousands of results, while oth-
+        ers have less than 10. Given that the repositories with thousands of results
+        have a higher likelihood of being false positives, start with the repositories
+        that have fewer findings to refine your rule. Filter out common validation
+        patterns and false positives based on the initial set of results, then work up
+        to the larger repositories as your rule becomes more accurate. With suffi-
+        cient scale, you’ll be able to identify real variants of vulnerable code.
+              You can also use GitHub’s custom code search to refine the list of repos-
+        itories you want to analyze instead of using the top repositories. For example,
+        you may wish to focus on XML repositories for XML-specific vulnerabilities.
+
+Conclusion
+        Automated code analysis tools offer powerful ways to analyze source code at
+        scale. The trade-offs you make and the types of rules you write will vary de-
+        pending on your strategy (single-repository variant analysis calls for very dif-
+        ferent tactics than multi-repository variant analysis), but used appropriately,
+        these tools will enable you to discover vulnerabilities far more efficiently
+        with limited resources.
+             In this chapter, you used the static code analysis tools CodeQL and Sem-
+        grep to automate variant analysis. You analyzed the patch notes and code
+        diff of known vulnerability CVE-2021-46143 to identify the root cause be-
+        fore writing a Semgrep rule that matched the vulnerable pattern. In addi-
+
+                 tion, you wrote taint tracking and data flow queries with CodeQL that could
+                 perform deeper source-to-sink matching across multiple files. Finally, you
+                 experimented with multi-repository variant analysis to find vulnerabilities at
+                 scale.
+                      Translating your understanding of typical vulnerable patterns in code
+                 to automated tools will help you identify what to look for when reverse en-
+                 gineering binaries in the next part of the book. Code review is like reading
+                 the schematics and diagrams of a complex machine to understand it; reverse
+                 engineering is like getting the fully built machine without schematics and
+                 diagrams and figuring out how it works based on observation and analysis.
+                 Without some knowledge about how such machines are typically designed,
+                 you’d be completely lost. Similarly, what you learned from code review will
+                 lay a strong foundation for the next few chapters.
+

@@ -740,6 +740,125 @@ elif [ "$4" = book ] && [ "$SLUG" = disarming-code ]; then
 521	A. disarm(j) - The Missing Manual Page
 535	B. jtrace(j) - The Missing Manual Page
 EOF3
+elif [ "$4" = book ] && { [ "$SLUG" = bpf-performance-tools ] || [ "$SLUG" = systems-performance ]; }; then
+  # Gregg's two books: each Part-divider bookmark shares a page with that part's
+  # first chapter, so the generic dedup drops the chapter; and two chapter titles
+  # are lower-case ("5 bpftrace", "13 perf") which the generic `^N [A-Z]` rule
+  # misses. Take the numbered chapters at depth <= 1 case-insensitively, plus the
+  # front/back matter, and drop the colliding Part dividers entirely.
+  awk -F'\t' '
+    { t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); keep=0 }
+    $1<=1 && t ~ /^[0-9]+ [A-Za-z]/ { keep=1 }
+    $1<=1 && lt ~ /^(foreword|preface|appendix|glossary|bibliography|index)([ .:]|$)/ { keep=1 }
+    keep { print $2"\t"t }
+  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
+    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = distributed-systems ]; then
+  # Tanenbaum/van Steen: chapters are unnumbered depth-0 names (Introduction,
+  # Architectures, ...), so only the depth-0 nodes matter. The Glossary's
+  # alphabetical sub-sections are ALSO depth-0 single-letter bookmarks (B, C, D
+  # ...) that must not become chapters. Keep depth-0 titles longer than one
+  # character; the letters fold into the Glossary chapter.
+  awk -F'\t' '$1==0 { t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); if (length(t) > 1) print $2"\t"t }' "$OUT/.all.tsv" \
+    | sort -t"$(printf '\t')" -k1,1n -s \
+    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = rootkits ]; then
+  # Rootkits and Bootkits: the Brief Contents bookmarks add arabic-numbered
+  # "Part 1 / Part 3" nodes alongside the real roman "Part I / II / III", so the
+  # generic `^part [ivxlc0-9]` matches both and yields duplicate part chapters.
+  # Same logic as the generic book branch, but roman-only parts.
+  awk -F'\t' '
+    { t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); ty=0 }
+    lt ~ /^part [ivxlc]+([ :.]|$)/ || lt ~ /^chapter [0-9]+.*[a-z]/ || lt ~ /^appendix[: ]/ { ty=1; seen=1 }
+    lt ~ /^(preface|foreword|epilogue|afterword)([ .:]|$)/ { ty=1 }
+    lt ~ /^introduction[ ]*$/ && $1 <= 1 { ty=1 }
+    seen && lt ~ /^(bibliography|index|references|glossary)[ ]*$/ { ty=1 }
+    ty { print $2"\t"t }
+  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
+    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = the-design-and-implementation-of-the-freebsd-operating-system ]; then
+  # A 1152-page scan with no outline. Boundaries are the printed chapter openings
+  # (printed page == PDF page here), taken from the book's own Contents and each
+  # checked against the page whose text carries that heading. The five Parts share
+  # a page with their first chapter (no separate divider page), so Parts are not
+  # their own boundaries - the "Part N:" line just sits atop that chapter. Front
+  # matter (pages 1-11) is auto-emitted before the first boundary.
+  { printf '12\tPreface\n'
+    printf '23\t1 History and Goals\n'
+    printf '44\t2 Design Overview of FreeBSD\n'
+    printf '84\t3 Kernel Services\n'
+    printf '117\t4 Process Management\n'
+    printf '183\t5 Security\n'
+    printf '266\t6 Memory Management\n'
+    printf '372\t7 I-O System Overview\n'
+    printf '425\t8 Devices\n'
+    printf '506\t9 The Fast Filesystem\n'
+    printf '615\t10 The Zettabyte Filesystem\n'
+    printf '646\t11 The Network Filesystem\n'
+    printf '690\t12 Interprocess Communication\n'
+    printf '753\t13 Network-Layer Protocols\n'
+    printf '834\t14 Transport-Layer Protocols\n'
+    printf '891\t15 System Startup and Shutdown\n'
+    printf '928\tGlossary\n'
+    printf '976\tIndex\n'; } > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = modern-cpp-design ]; then
+  # This scan has only a single junk bookmark ("Modern C++ Design.pdf"), so the
+  # outline is useless. The boundaries below are the printed chapter openings,
+  # each verified against the PDF page whose first line is that heading. Front
+  # matter (pages 1-9) is auto-emitted before the first boundary.
+  { printf '10\tPreface\n'
+    printf '15\tPart I: Techniques\n'
+    printf '16\t1 Policy-Based Class Design\n'
+    printf '33\t2 Techniques\n'
+    printf '56\t3 Typelists\n'
+    printf '82\t4 Small-Object Allocation\n'
+    printf '99\tPart II: Components\n'
+    printf '100\t5 Generalized Functors\n'
+    printf '127\t6 Implementing Singletons\n'
+    printf '152\t7 Smart Pointers\n'
+    printf '187\t8 Object Factories\n'
+    printf '205\t9 Abstract Factory\n'
+    printf '219\t10 Visitor\n'
+    printf '242\t11 Multimethods\n'
+    printf '276\tAppendix A: A Minimalist Multithreading Library\n'
+    printf '284\tBibliography\n'; } > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = from-day-zero-to-zero-day ]; then
+  # No Starch outline: the chapters sit at depth 1 with the number fused to the
+  # title ("1Taint Analysis"), which no generic pattern matches, so the plain
+  # book branch splits only on the three Parts. Take the depth-0 nodes (the two
+  # forewords, Introduction, the "0Day Zero" chapter, the three Parts, Index) plus
+  # the depth-1 fused-number chapters, and normalise the titles ("1Taint Analysis"
+  # -> "1 Taint Analysis", "Part ICode Review" -> "Part I: Code Review").
+  awk -F'\t' '
+    function norm(t,   pre) {
+      if (match(t, /^Part [IVX]+/)) { return substr(t,1,RLENGTH) ": " substr(t,RLENGTH+1) }
+      if (match(t, /^[0-9]+/) && substr(t,RLENGTH+1,1) ~ /[A-Za-z]/) { return substr(t,1,RLENGTH) " " substr(t,RLENGTH+1) }
+      return t
+    }
+    { t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); keep=0 }
+    $1==0 && (lt ~ /^foreword/ || lt=="introduction" || lt=="0day zero" || lt ~ /^part [ivxlc]/ || lt=="index") { keep=1 }
+    $1==1 && t ~ /^[0-9]+[A-Za-z]/ { keep=1 }
+    keep { print $2"\t" norm(t) }
+  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
+    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = file-system-forensic-analysis ]; then
+  # Every chapter ends with its own "Bibliography" bookmark; the generic
+  # trailing-matter rule would promote each to a separate chapter (doubling the
+  # count). Same logic as the generic book branch below, but WITHOUT bibliography
+  # as a boundary, so each end-of-chapter bibliography folds into its chapter -
+  # only the final Index still splits.
+  awk -F'\t' '
+    { t=$3; sub(/^[ \t]+/,"",t); sub(/^\[[A-Za-z0-9 ._-]*\][ \t]*/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); ty=0 }
+    $1 == 0 { partop = (lt ~ /^part [ivxlc0-9]/ || lt ~ /^section [0-9]+[ :.]/) }
+    lt ~ /^part [ivxlc0-9]/ || lt ~ /^section [0-9]+[ :.]/ || lt ~ /^chapter [0-9]+.*[a-z]/ \
+      || t ~ /^[0-9]+\. [^(]/ || t ~ /^[0-9]+ [A-Z]/ || lt ~ /^appendix[: ]/ { ty=1; seen=1 }
+    seen && $1 <= 1 && lt ~ /^[a-h]\. [a-z]/ { ty=1 }
+    lt ~ /^(preface|foreword|epilogue|afterword)([ .:]|$)/ { ty=1 }
+    lt ~ /^introduction[ ]*$/ && ($1 == 0 || ($1 == 1 && partop)) { ty=1 }
+    seen && lt ~ /^(index|references|glossary)[ ]*$/ { ty=1 }
+    ty { print $2"\t"t }
+  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
+    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
 elif [ "$4" = book ]; then
   # Match on a lowercased copy so No Starch's "APPENDIX: ..." / "GLOSSARY" count;
   # accept letter-numbered appendices ("A. The One-Definition Rule") once a

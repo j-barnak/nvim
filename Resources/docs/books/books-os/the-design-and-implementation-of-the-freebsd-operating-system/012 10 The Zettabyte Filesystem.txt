@@ -1,0 +1,1078 @@
+                 Chapter 10. The Zettabyte Filesystem
+
+10.1 Introduction
+
+The Zettabyte filesystem is generally referred to as simply ZFS [Bonwick et al., 2003]. It is in a
+class of filesystems that never overwrite existing data. A benefit of never overwriting is that
+snapshots (read-only) and clones (writable) are easy and cheap. Many of them can be created
+with no performance hit.
+
+ZFS has the property that the on-disk filesystem state is never inconsistent. Filesystem changes
+are accumulated in memory. Periodically, all the changes are gathered up and written to disk.
+When all the changes are on stable storage, ZFS makes a checkpoint of the new filesystem state.
+The checkpoint is made by doing a single write to update the uberblock to reference the new
+filesystem state (the uberblock is analogous to the superblock of a UFS filesystem). Thus, a ZFS
+filesystem moves from one consistent state to the next without ever passing through an
+inconsistent state.
+
+ZFS takes advantage of the abundant processor power available with current multi-core CPUs.
+Because they are much faster than storage, ZFS can afford to checksum everything. The
+checksums are used to detect:
+
+• Bit rot on disks
+
+• Phantom writes
+
+• Misdirected reads and writes
+
+• DMA parity errors
+
+• Bugs in disk drivers and disk firmware
+
+• Accidental overwrite of disk data
+
+• Verification of reconstructed data (e.g., if you have a 3-way mirror, and one disk dies,
+nonchecksumming systems would just choose a “good” disk at random from which to read the
+data). ZFS reads the data and then verifies the checksum, so if a “good” disk has a few bad
+blocks, it can read from the other good disk instead. Data verification can also be used with
+RAIDZ when it has multiple levels of redundancy.
+
+ZFS allows the use of inexpensive mechanical disks. Because of the redundancy available with
+RAIDZ and the error detection provided by checksums, ZFS can quickly and easily recover from
+disk failure.
+
+Unlike the rest of FreeBSD, which is broken into many layers, ZFS is written as one big
+monolithic piece. The modules that make up ZFS along with the piece of FreeBSD that they
+most closely resemble is shown in Table 10.1. Figure 10.1 compares the layers of UFS and ZFS.
+The traditional FreeBSD layering is:
+
+• Filesystem namespace management: UFS layer
+
+• Cache management: virtual memory page-cache layer
+
+• Filesystem storage organization: FFS layer
+
+• Volume management: GEOM layer
+
+Figure 10.1 Comparison of UFS and ZFS layering.
+
+Table 10.1 ZFS modules.
+
+ZFS subsumes all these layers:
+
+• Filesystem namespace management: the ZFS POSIX Layer (ZPL) and ZFS Attribute Processor
+(ZAP) have a role similar to the UFS layer.
+
+• Filesystem storage management: the Data Management Unit (DMU) and ZFS Intent Log (ZIL)
+have a role like the FFS layer. The Dataset and Snapshot Layer (DSL) manages snapshots as
+does the FFS layer. However, these two modules of ZFS provide much additional functionality
+that has no analog in the other FreeBSD filesystems. As described in the next section, these
+modules operate in the Meta-Object Set (MOS) layer that is separate from the filesystem layers
+rather than being a part of the filesystem.
+
+• Volume management: The Storage Pool Allocator (SPA) module manages block placement.
+The ZFS I/O (ZIO) module orchestrates I/O. The Virtual Device (VDEV) module aggregates
+disks into RAIDZ groups. ZFS also provides ZFS volumes (ZVOLs) that appear as traditional
+fixed-size disk partitions, much like the role of the GEOM layer.
+
+• Cache management: The Adaptive Replacement Cache (ARC) has a role similar to that of the
+virtual memory page cache. The Level 2 Adaptive Replacement Cache (L2ARC) has a role
+similar to that of the virtual memory swap area and acts as a slower-access backing store for the
+memory-based ARC cache.
+
+The result of this monolithic design is that ZFS has many features that include:
+
+• Massive scale supporting petabyte-size storage pools with data structures that allow scalability
+to zettabytes.
+
+• POSIX filesystems with features similar to UFS that include support for NFSv4 and Server
+Message Block (SMB) remote filesystem functionality such as selectable case insensitivity,
+unicode normalization, ACLs, and special flags needed for anti-virus support.
+
+• ZVOLs that can be shared over iSCSI.
+
+• Support for millions of snapshots and clones.
+
+• Selective data compression and deduplication.
+
+• Data integrity from checksums and data redundancy.
+
+• A variable block size.
+
+• Architecture-independent on-disk format.
+
+• Pooled storage shared among filesystems.
+
+• Disk-level redundancy through mirroring and single, double, and triple parity RAID.
+
+• Support for a hybrid storage pool by using fast devices such as solid-state disks (SSDs) to cache
+reads and nonvolatile memory (NVRAM) to accelerate synchronous writes.
+
+• Intelligent prefetch with multiple streams per file and autodetected stride patterns.
+
+• Space management that includes several types of quotas and reservations.
+
+• A simple administrative model that has the filesystem as the administrative control point with
+delegated administration and integration between mountpoints and NFS shares.
+
+• Fast remote replication and backups.
+
+• Availability on many platforms including FreeBSD, Linux, Mac OS/X, and Illumos.
+
+• Stability derived from its use in production by the world’s biggest companies since 2006.
+
+10.2 ZFS Organization
+
+Figure 10.2 shows the relationship of the ZFS modules. The remainder of this chapter explains
+the interactions of these modules.
+
+Figure 10.2 ZFS module layering. See Table 10.1 for acronyms.
+
+Traditional filesystems like UFS each manage their own set of disk blocks that are stored at a
+range of offsets on a single device. Each filesystem is given a fixed-size set of blocks when it is
+first created and the size of that set does not change. When a filesystem runs out of blocks, it
+cannot borrow blocks from another filesystem. If a filesystem has an excess of blocks, it cannot
+make them available to another filesystem.
+
+ZFS removes the space-management role from the traditional filesystem model. It creates a pool
+of space that is then handed out as needed to the set of filesystems using the pool. The DSL and
+SPA modules implementing the Meta-Object Set (MOS) layer shown in Table 10.1 and Figure
+10.3 manage the pool of space and make it available to the filesystem modules of the object-set
+layer. Thus, space in the pool can move between filesystems as needed. The arrows in Figure
+10.3 represent a single block pointer, while the triangles represent indirect blocks mapping a
+potentially large set of blocks.
+
+Figure 10.3 ZFS organization.
+
+At the top is the uberblock that points to a data structure that describes an array of meta-objects.
+These meta-objects include filesystems, snapshots, clones, ZVOLs, and the space map describing
+the allocated and free blocks in the pool. Creating a new snapshot or filesystem requires
+allocating a new metadata object, a task that is about as difficult as creating a new file in a
+filesystem. When a filesystem needs to allocate space, its request is handled by the SPA module
+that finds an available block of the requested size in the space map. When the filesystem (and all
+its clones and snapshots) no longer need the block, it is returned to the pool. In general, the
+blocks of the pool are shared among all the filesystems that the pool contains. For
+administrative reasons, it is possible both to limit the maximum amount of space that a
+filesystem can use and to ensure that some minimum amount of space is reserved for a
+filesystem to use.
+
+Each object set in the MOS, such as a filesystem, references a data structure that describes its
+array of objects. These objects include the usual things found in a filesystem such as directories,
+files, symbolic links, etc. Each of these filesystem objects then references an array of blocks that
+contain the object’s data.
+
+The allocation, expansion, and eventual freeing of the contents of all these objects is managed by
+the DMU module. The tree-structured POSIX-semantic directory structure is managed by the
+ZPL module. The ZAP module stores a keyto-value hashtable in an on-disk object. Its original
+use was for directory entries (each directory is implemented as a ZAP object). Its use later was
+expanded to store object attributes and many other types of metadata in other parts of ZFS.
+Finally, the ZIL module ensures that changes are not lost between filesystem checkpoints.
+
+ZFS Dnode
+
+ZFS stores the metadata for a file in a dnode that is analogous to the inode of UFS. Like that
+inode used in UFS, a dnode describes an object that may change in size from tiny to huge. The
+dnode is managed by the DMU. One use for dnodes is to describe filesystem objects such as files,
+directories, etc. When used for this purpose, the dnode is embedded with a znode that is
+managed by the ZPL and contains the metadata required to support POSIX semantics. Unlike
+the inode, dnodes also describe objects in the MOS layer such as the objects that represent
+filesystems, snapshots, clones, ZVOLs, space maps, property lists, and dead-block lists (referred
+to as deadlists).
+
+Just as with inodes, the ability to describe objects of greatly different sizes is done by using
+indirect blocks. Unlike inodes, each dnode uses a fixed number of levels of indirect blocks. For
+objects smaller than 128 Kbyte, the dnode uses a single, direct-block pointer that references a
+block of the appropriate size. Thus, a 12-Kbyte object would be referenced by a single pointer to
+a 12-Kbyte block. When the object grows to a size bigger than 128 Kbyte, the direct-block pointer
+is replaced by a pointer to a 16-Kbyte single indirect block. The indirect block then has pointers
+to the data blocks that hold the object.
+
+As described later in this subsection, the size of ZFS block pointers are 128 bytes. Thus, each
+16-Kbyte indirect block can hold 128 pointers. By default, each indirect-block pointer references
+a 128-Kbyte block, though a filesystem may be configured to reference smaller blocks if that is
+sensible for the application running on that filesystem. For example, if the primary application
+running on the filesystem is a database that reads and writes widely separated 4-Kbyte records,
+the filesystem can be configured to allocate 4-Kbyte blocks to reduce the need to copy an entire
+128-Kbyte block when only 4 Kbyte of it has been modified.
+
+When the object grows beyond the size that can be described by a single-level indirect block, its
+dnode is promoted to use two levels of indirect blocks. The dnode’s block pointer references a
+16-Kbyte second-level block. The single-level block that it previously referenced is moved to be
+referenced from the first pointer in the new second-level indirect block. As the object continues
+to grow, additional first-level indirect blocks are allocated and referenced from the second-level
+indirect block.
+
+If the object outgrows the size that can be described by a two-level set of indirect blocks, the
+dnode grows to support a three-level hierarchy, similarly to the way it was expanded to support
+a two-level hierarchy.
+
+One important use of dnodes is to reference ZAP objects. A ZAP object stores a key-to-value
+hashtable. They were first used for directories that map from names to object numbers. An
+object number is an index into an objset dnode array that maps the object number to the
+location of the object on the disk. Directories require fast entry lookup, new entry insertion, old
+entry deletion, and full-directory scanning. All these properties are provided by ZAP objects.
+Because the ZAP module is flexibly written and these directory-like properties are needed in
+many other contexts, ZAP objects are used to store attribute and property lists along with many
+other types of metadata in the DSL and the SPA.
+
+ZFS Block Pointers
+
+Figure 10.4 shows a ZFS block-pointer structure. Unlike the traditional UFS 8-byte block
+pointer that references a block number within a disk partition, the ZFS block pointer is a
+128-byte structure that can contain pointers to as many as three copies of a block, each on a
+different disk along with the block’s size and its checksum. By keeping the checksum separate
+from the data, errors such as misdirected reads and writes can be detected. If the checksum
+were stored in the data block itself, a misdirected read or write would appear to be correct since
+both the data and the checksum would have been misdirected.
+
+Figure 10.4 Description of a block pointer. Key: vdev—virtual device identifier; grid—RAIDZ
+layout information (reserved for future use); asize—allocated size (including RAIDZ parity and
+gang-block headers); G—gang-block flag; offset—offset into virtual device; B—byteorder
+(endianness) flag; D—deduplication flag; X—unused flag; lvl—number of levels of indirection for
+data described by this block pointer; type—DMU object type; cksum—checksum function
+identifier; comp—compression function identifier; psize—physical size (after compression);
+lsize—logical size; physical birth time—transaction group in which the block was physically
+allocated, zero if same as logical birth time; logical birth time—transaction group in which the
+block was logically allocated; fill count—number of nonzero blocks under this block pointer;
+checksum[ ]—256-bit checksum of the data described by this block pointer.
+
+By default, ZFS checksums every block that it is managing. With multiple-core processors being
+common, the CPU cost of performing the checksum is insignificant in comparison to the cost of
+performing an I/O operation.
+
+For systems with multiple disks, the first line of defense against data corruption or loss is RAID.
+If a disk block or even an entire disk is lost, the RAID disk structure can recover the data. For
+systems with only a single disk such as a laptop, and as a secondary backup for systems with
+multiple disks running with RAID, ZFS by default provides double redundancy for all metadata.
+Thus, all ZFS block pointers that reference metadata will have two of the three block-pointer
+fields in use. Filesystems can be configured to have all data replicated. Here, all block-pointers
+that reference user data will have two of the three block-pointer fields in use. When running in
+this mode, ZFS uses triple redundancy for all metadata. Thus, metadata block pointers will have
+all three block-pointer fields in use.
+
+Each block has an associated birth time. Birth time is measured as the number of checkpoints
+that have been taken since the ZFS pool was created. When the pool is first created, the
+transaction group (TXG) is set to zero. Each time that a checkpoint is done, the transaction
+group is incremented. The problem with using seconds since the epoch for the birth time is that
+seconds since the epoch can fail to be monotonically increasing if the battery maintaining the
+hardware clock fails or if a time daemon sets incorrect time information. Self-consistency is
+ensured by using transaction groups rather than seconds since the epoch. It also ensures that if
+two checkpoints are taken less than 1 second apart, the birth times of blocks from the two
+checkpoints can be distinguished. As described in the next section, the birth time is needed to
+determine when a block has no references so that it can be freed.
+
+The dedup flag identifies a block that is in the deduplication table. The flag is used when trying
+to free a block. If the deduplication flag is set, ZFS must find the corresponding entry in the
+deduplication table and decrement its reference count as the block can only be freed when the
+
+reference count reaches zero. The deduplication table is huge so it typically does not fit in
+memory. Pieces of it are brought in when needed. Thus, checking for a block in the
+deduplication table is expensive, especially if the required block of the deduplication table is not
+in memory. If the deduplication flag is not set, ZFS can avoid the cost of looking it up in the
+deduplication table.
+
+Most blocks have only a logical birth time that is equal to the TXG in which they were created.
+Only deduplication blocks need a physical birth time. The first time a block is written, it gets just
+a logical birth time. When the same contents are written again, the deduplication module
+creates a new block pointer to the original copy. The new block pointer has a logical birth time of
+the current TXG but a physical birth time of the TXG of the original block’s logical birth time.
+The reason that the physical birth time is needed is so that when the filesystem is traversed after
+a disk failure to reconstruct the RAIDZ, the kernel knows the actual times that blocks were
+created and hence knows which ones need to be reconstructed.
+
+Normally, when the SPA needs to allocate a block of a given size, it is able to do so. However,
+when the pool of unused blocks becomes small, there may not be a single block of space large
+enough to fulfill the request. Here, the SPA must allocate two or more smaller pieces to make up
+the bigger block. These smaller pieces are described by an array of pointers in a structure called
+a gang-block header. The gang-block flag is set when the reference in the block pointer is to one
+of these gang-block headers so that header can be interpreted by the I/O system to gather
+together the pieces that make up the block.
+
+Each block pointer has three sizes associated with it:
+
+1. lsize – the logical size of the block
+
+2. psize – the physical size of the block, which may be smaller than the logical size if it has been
+compressed.
+
+3. asize – the allocated size on the disk including RAIDZ parity and gang-block headers.
+
+For blocks that reference indirect blocks, the level of the referenced block is also maintained.
+Since any given dnode uses a fixed number of indirection levels as described earlier in this
+subsection, maintaining the level count in the block pointer is used purely as a consistency check
+and is not needed for normal operation. Similarly, the type field is known, so it is used only as a
+consistency check.
+
+ZFS objset Structure
+
+The objset structure describes a set of objects. An objset structure is used to describe the set of
+objects in a filesystem, a snapshot, a clone, or a ZVOL. When used in this role, their closest
+analogy to UFS is that of the superblock, which is the data structure that describes all the objects
+in a filesystem. Another important use of the objset structure is to describe the collection of
+objects that make up the MOS. The objects in the MOS include the descriptors for all the
+filesystems, clones, snapshots, and ZVOLs in the pool along with their relationships to each
+other. The MOS also includes a master node that includes properties that apply to the pool and
+space-map objects that identify the used and available blocks in the pool.
+
+10.3 ZFS Structure
+
+Having described the most important ZFS data structures, it is now possible to describe the
+layout of a ZFS pool in more detail. Figure 10.5 shows a typical ZFS pool that is anchored at its
+top by an uberblock.
+
+Figure 10.5 ZFS Structure.
+
+Two 256-Kbyte blocks of space are reserved for volume labels at the beginning and end of every
+device in the ZFS pool. Half of each of these four volume labels are used to store redundant
+copies of information specific to the device. The other half of each of these four labels holds an
+array of 128 uberblocks. The final step to complete a checkpoint is to write out the uberblock.
+When the pool is created, the initial uberblock is written to the zeroth entry in each of the
+uberblock arrays on all the devices. The uberblock for the first checkpoint (TXG number one) is
+written to the first entry in all the uberblock arrays of up to three of the devices that are selected
+at random. After all 128 entries in an uberblock array have been used, the checkpoint location of
+the uberblock update reverts to the zeroth entry in that uberblock array.
+
+The MOS Layer
+
+A single block pointer contained in the uberblock references an objset structure that describes
+the set of objects making up the MOS layer. The MOS contains the data structures managed by
+the DSL that tracks datasets, which include chains of snapshots, trees of clones, the active
+filesystems, and ZFS volumes (ZVOLs) that appear like traditional fixed-size disk partitions. The
+DSL is also responsible for tracking filesystem properties and the deadlists. The MOS also
+contains data structures managed by the Storage Pool Allocator (SPA) that tracks allocated
+versus freed blocks. The SPA module is also responsible for handling compression and
+deduplication as well as I/O queueing and scheduling. Thus, the MOS manages filesystems
+while the volume manager found in traditional filesystem layering manages blocks.
+
+Each of the objects in the MOS is described by a dnode. One important object in the MOS is the
+first dnode, often referred to as the master node. The master node contains pool-wide
+information including pool-wide property lists and configurations, recent error logs, and
+operational statistics. Another important object in the MOS layer is the dnode that contains the
+space map. The space map identifies the allocation of blocks within the pool.
+
+Most of the dnodes in the MOS are used to describe a filesystem, clone, snapshot, or ZVOL.
+Each of these dnodes has a dsl_dataset structure embedded within it. This structure serves two
+main purposes:
+
+1. It keeps a set of pointers to track the relationship of snapshots and clones to their associated
+filesystem.
+
+2. It contains the object number of the deadlist that tracks when blocks are no longer referenced
+and can be freed.
+
+The management of relationships and the operation of deadlists is described in the next section.
+
+The dsl_dataset structure within all these dnodes, except those for snapshots, points to a second
+dnode object in the MOS that contains an embedded dsl_dir structure. The dsl_dir structure
+contains:
+
+• The object number of the MOS object for its parent’s dsl_dir.
+
+• The object number of the ZAP object listing its children’s dsl_dirs.
+
+• The object number of the ZAP object listing its properties. Its properties include typical
+filesystem properties such as whether to honor the set-user-identifier flag on executables,
+whether to maintain access time on files and directories, etc. The ZAP object also records the use
+of compression and, if enabled, the compression algorithm being used.
+
+• The object number of the ZAP object that lists all its clones.
+
+• Block accounting for all filesystems and clones mounted below it.
+
+• Its quota and reservation byte counts.
+
+• For clones, the object number of the MOS object for the snapshot from which they were
+created.
+
+The relationships between a filesystem and its clones and snapshots is shown in Figure 10.6.
+ZFS can take snapshots and make clones of both filesystems and ZVOLs, so everything
+described below in the context of filesystems applies equally to ZVOLs. Clones cannot be taken
+of a filesystem or another clone; they can only be taken from a snapshot. It is possible to create
+multiple clones from the same snapshot. When a clone is promoted to being a filesystem, the
+previous filesystem is demoted to being a clone. Clone promotion does not change the datasets’
+names, mountpoints, or contents. Renaming operations must be done separately.
+
+Figure 10.6 Filesystem, clone, and snapshot relationships.
+
+The Object-Set Layer
+
+Each of the dsl_dataset structures in the MOS layer has a block pointer that points to an objset
+structure in the object-set layer. The bottom half of Figure 10.5 shows three distinct
+organizations of the objset. From left to right in the object-set layer, they are:
+
+1. A snapshot of a filesystem or a clone (see number 3). The organization of the snapshot is the
+same as that of a filesystem or clone except that since it cannot be changed, it does not need to
+track user or group quotas. A snapshot does keep a copy of the user and group quotas as they
+existed at the time that the snapshot was made so that they are available for use after a rollback
+is done or a clone is made. They are stored in the objset as is done for a filesystem, but are not
+shown in Figure 10.5.
+
+2. ZVOLs have a single dnode in their objset that references an array of two dnodes. The first
+dnode references an array of block pointers that is the size of the device partition with one
+pointer per 4-Kbyte block. The other dnode describes the master node. It is a ZAP object that
+records ZVOL-specific information.
+
+3. Filesystems have three dnodes in their objset. Two are ZAP objects that record the user and
+group space usage for a filesystem. The third references the filesystem’s array of the files and
+directories. The first dnode of the array is its master node, described later in this section. Clones
+of filesystems have the same objset organization as a filesystem, while clones of ZVOLs have the
+same objset organization as a ZVOL.
+
+The filesystem master node is a ZAP object that contains the following information:
+
+• It records the object number of the root inode.
+
+• It records the objects numbers for the user and group quota files.
+
+• It records the ZAP object number that tracks the set of files that have been unlinked but cannot
+be reclaimed because they are still referenced by an open file descriptor. The ZAP object simply
+records a list of the unlinked object numbers. Objects are added when they become unlinked
+and removed when their final reference is closed. Use of the ZAP object ensures that these
+operations can be done in constant time. After a reboot, the list is traversed to remove the
+unlinked and now unreferenced files.
+
+The layout of a snapshot mirrors that of the object set that it snapshots. The snapshot of a
+filesystem in Figure 10.6 shows how its structure mirrors that of a filesystem. A snapshot of a
+
+ZVOL has a structure that mirrors that of a ZVOL. Similarly, the layout of a clone of a filesystem
+or ZVOL snapshot is the same as that of the object that it is cloning.
+
+Each of the objsets that describe a filesystem, clone, or ZVOL has a zil_header structure
+embedded within it that points to a linked list of blocks containing the ZIL intent log. The ZIL
+records all the changes since the last checkpoint for recovery after a crash.
+
+10.4 ZFS Operation
+
+Unlike overwriting filesystems like UFS that continuously update their on-disk state, ZFS
+collects all filesystem updates in memory. Periodically, it writes all the changes to an unused
+disk area to create a checkpoint. None of the changes to the on-disk state are visible until the
+final write of the checkpoint is made, which is to update the root of the ZFS pool, the uberblock.
+Thus, a ZFS filesystem is always consistent; that is, it transitions from one consistent state to a
+new consistent state.
+
+Each checkpoint is taken across the entire pool and affects every filesystem, snapshot, clone, and
+ZVOL in the pool at the same time. ZFS calls these checkpoints transaction groups, abbreviated
+to TXGs. Snapshots taken across several filesystems that all fall within the same checkpoint will
+all be consistent at the same instant in time. Thus, two different snapshots within the same pool
+with the same TXG will be precisely synchronized with each other in time. Conversely, it is
+difficult to get consistent snapshots across two different pools because it would require the
+precise coordination when they take a checkpoint.
+
+Many operations in ZFS, such as the way that writes to files appear atomic to different processes
+doing write system calls to the same file, are handled similarly to those of traditional
+overwriting filesystems like UFS. This section will not describe functionality that is similar to the
+UFS functionality described in Chapter 9. This section details the operations performed by the
+ZFS filesystem that differ significantly from the way they are performed in UFS.
+
+Writing New Data to Disk
+
+All updates to the filesystems, clones, and ZVOLs within a pool are accumulated in memory
+until a specified time has passed (default is 5 seconds), 64 Mbyte of dirty data have been
+accumulated, or an administrative action is taken that requires a checkpoint such as a snapshot
+request. To flush the new data to disk, ZFS must take a checkpoint of the pool.
+
+Taking a checkpoint requires that all modifications to the filesystem, made since the previous
+checkpoint, be saved to disk. The first step is to get a consistent state for the filesystem, which
+
+requires that all system calls modifying filesystem data must be complete. ZFS uses a technique
+similar to the one described in Section 9.7 as step 3 of taking a snapshot in UFS. Specifically,
+processes that are already in progress on such system calls are permitted to finish those system
+calls. The checkpoint proceeds once all the in-progress system calls have finished.
+
+It may take several seconds to write out all the disk blocks making up the checkpoint. Allowing
+no modifications during that entire period would cause an unacceptable delay to applications
+running on the system. To avoid this delay, all the dirty blocks that will be written to make the
+checkpoint are tagged with their transaction group (TXG). New modifications to the filesystems,
+clones, and ZVOLs are tagged with a new transaction group. If a modification finds that the
+block it needs to modify is marked as being part of a checkpoint in progress, ZFS makes a copy
+of that block in memory and the modification is made to the copy. The copied blocks become
+part of the next checkpoint. As I/O completes on the blocks that are part of the current
+checkpoint, ZFS must decide how to handle the in-memory buffers. If they were not copied, they
+can be marked as available for current use. If they were copied, then their contents are now out
+of date so the memory holding the out-of-date copy is freed.
+
+Figure 10.7 shows the nine steps that must be taken to flush the changes for a file to which data
+has been added since the last checkpoint:
+
+1. All the blocks of new data must be written. If the write has been done over existing data, the
+modified data block must be written to a new location as ZFS never overwrites any existing data.
+
+2. Typically, the update requires an update of a block pointer in one of the file’s indirect blocks.
+Since the indirect block has been modified, it will need to be written to a new location, which
+means the indirect block that references it will need to be modified. These modifications
+continue up the indirect tree until they reach the dnode for the file.
+
+3. Update the dnode for the file to reference the new block location for the top of its indirect
+pointers. Since ZFS cannot overwrite the existing dnode when it has changed, it must write a
+copy of the block containing the dnode with the updated size and new block pointer.
+
+In UFS, reading in an inode requires allocating a piece of memory that is the size of an inode
+including the space needed to store the on-disk dinode, reading in the disk block that contains
+the inode, copying the dinode from the disk block to the newly allocated memory, and then
+releasing the disk buffer. Writing an inode back to disk requires reading in the disk block that
+contains the inode, copying the modified inode into the appropriate part of the buffer, and then
+writing the updated buffer back to the disk.
+
+In ZFS, reading in a dnode begins by allocating a piece of memory that is the size of the
+in-memory dnode. The in-memory dnode does not contain the on-disk dnode; it includes only a
+pointer to the on-disk part. ZFS reads in and locks in memory the disk block that contains the
+on-disk dnode. It then sets the pointer in the dnode to point to its on-disk part in the disk buffer.
+Writing the dnode back to the disk requires only that the disk buffer containing the modified
+dnode be written to its new location.
+
+The benefit of the ZFS approach is less memory-to-memory copies and fewer I/O operations at
+the expense of using more memory. For a system with 100,000 cached nodes, UFS will use 50
+Mbyte of memory while ZFS typically uses 200 Mbyte and can use up to 1.6 Gbyte of memory.
+
+The original log-structured filesystem (LFS) collected all the modified inodes together in sets of
+64 that could then be packed into a 16-Kbyte block. The drawback to this approach is that it
+required another metadata file that mapped from inode number to disk location. ZFS simply
+writes all the in-memory disk blocks that contain modified dnodes. By updating the block
+pointers in its objset dnode that have changed, there is no requirement for a separate metadata
+file to track their location as they can be found using a simple look up at their known offset in
+the objset dnode. Though this approach requires more I/O than the LFS approach, it simplifies
+and speeds later lookup of the dnodes.
+
+4. Once all the filesystem dnodes have been updated, the changed block pointers referencing
+them are propagated up through the indirect blocks of the filesystem objset in the same way that
+they were in step 2 for the file.
+
+5. Update the filesystem objset dnode object to reference the new block location for the top of
+the objset dnode’s indirect pointers.
+
+6. Update the block pointer in the MOS dsl_dataset to reference the new copy of the filesystem
+objset to which it points.
+
+7. Once all the dsl_dataset pointers have been updated to point to their new objset objects, the
+changed block pointers referencing them are propagated up through the indirect blocks of the
+MOS objset in the same way that they were in steps 2 and 4 for the file and filesystem objsets.
+
+8. Update the MOS objset dnode object to reference the new block location for the top of its
+indirect pointers.
+
+9. Once all these updates have been written to their disk locations, the last step in checkpoint
+creation is to update the block pointer in the uberblock to point at the new MOS objset and
+update its TXG transaction group to reflect the new checkpoint. The updated uberblock is then
+written to its new locations as is described in Section 10.3.
+
+Figure 10.7 Nine steps to create a checkpoint.
+
+Logging
+
+ZFS keeps all ZPL-level changes logged in memory. The log is handled by the ZFS Intent Log
+(ZIL). Examples of log entries are:
+
+• Write these 700 bytes of data to this offset of this file,
+
+• Change the permissions of this file to this mode, or
+
+• Create a new symbolic link in this directory with this name that points to this path.
+
+Unlike logs associated with traditional overwriting filesystems that are needed to bring the
+filesystem back into a consistent state, ZFS is always consistent so its only requirement for its
+log is to retain any changes between checkpoints that need to be persistent. An example of the
+need for persistence is the fsync system call that needs to ensure the associated file is stable
+before returning. Because of the time and I/O operations required to do a ZFS checkpoint, fsync
+is implemented by forcing a log write, not by doing a checkpoint.
+
+Traditional filesystems often log only filesystem metadata changes as meta-data tends to be
+much smaller than the data updates and returning to a consistent state requires only that the
+metadata be recovered. When performing an fsync on a file, a traditional filesystem can commit
+modified data by overwriting the same disk blocks that held the previous value of the data. The
+traditional filesystem can also overwrite a file’s inode to reflect any newly allocated blocks. ZFS
+has to log both data and metadata because it does not have the option of just flushing the data
+and inode to disk to synchronize them. ZFS reduces the overhead of writing file data to both the
+
+log and the disk by allocating a disk block, writing the data to it, and then placing a pointer to
+that data in the log. When the next checkpoint is made, ZFS can reference the already-written
+block. By default, ZFS only allocates and writes blocks of size 32 Kbyte and larger, but the
+logbias property allows the setting of a lower threshold.
+
+The high volume of data being written to the ZFS log can often be a throughput-performance
+bottleneck. The logging bottleneck can be alleviated by using a solid-state disk (SSD) to store the
+log. The log often does not need all the space available on the SSD. ZFS can use the remaining
+space on the SSD to extend its in-memory ARC cache by pushing less actively read items to the
+SSD. ZFS refers to this SSD cache as its L2ARC.
+
+Recovery of a ZFS pool starts from the last checkpoint. When the pool is first opened, the kernel
+must read in an uberblock array from every device and scan through them to find the uberblock
+with the highest TXG value as that will represent the most current checkpointed state of the ZFS
+pool. If an uberblock array on a device is unreadable or corrupted, the kernel reads an
+alternative copy of the uberblock array from that device.
+
+Once the uberblock has been found, ZFS has to find and claim all the log blocks. The blocks are
+claimed by updating the MOS space map to show that all the log blocks are allocated. This
+reclaim must happen when the pool is first opened and before any other modifications are made
+to it to ensure that the log blocks are not overwritten by later writes. The log blocks are
+identified by looking up the objset for all the filesystems, ZVOLs, and clones listed in the MOS.
+Each of these objsets contains an intent-log header that points to its linked list of log blocks. The
+pool then starts processing a new transaction group (TXG).
+
+The processing of filesystems, ZVOLs, and clones is completely analogous. In the rest of this
+section filesystems are described, but the description applies equally to ZVOLs and clones.
+Recovery for each filesystem then proceeds as follows:
+
+1. The filesystem is mounted.
+
+2. ZFS plays forward through its intent log whose list head is contained in its objset structure.
+Each of the operations contained in the log is made to the filesystem.
+
+3. The blocks from the fully replayed log are freed.
+
+4. The filesystem begins accepting new requests.
+
+In the normal course of events, the transaction completes with a new uberblock being written. If
+the system crashes before the new uberblock has been written, then all the recovery work is lost
+and must be done again when the system is restarted. No data will be lost as any writes that
+
+were done before the crash will be to parts of the disk that were previously unallocated, so none
+of the existing filesystem data will have been corrupted. Any modifications accepted for the
+filesystems that had completed step 4 above will have been added to their intent log. Thus, these
+changes will be included in the filesystem when the system successfully completes its recovery
+process.
+
+RAIDZ
+
+Traditional layered design separates the filesystem implementation from the disk-storage
+implementation. Thus, the storage layer has no knowledge of the data being stored on it. RAID
+is typically used in modern storage systems. Since the size and organization of the data is
+unknown to the storage layer, each stripe in the RAID array is a fixed-size. For example,
+consider a traditional RAID running with four data disks plus a single parity disk. If the disks
+have a 4-Kbyte sector size, the stripe size is 16 Kbyte using one sector on each of the four data
+drives plus a 4-Kbyte sector on the parity drive. If an application writes a 24-Kbyte block, this
+RAID will write one full-size stripe and then have to read in a 16-Kbyte stripe, replace the first 8
+Kbyte of the 16-Kbyte stripe, recalculate the parity, and write out the new 8 Kbyte of data and
+the updated 4-Kbyte parity sector. If a disk fails, the RAID reconstructs by reading every stripe,
+rebuilds the bad 4-Kbyte block, and writes the rebuilt block back to the replacement disk. The
+rebuild time can be reduced by using dirty-region logging to keep track of the stripes that are in
+use, but it comes at a cost of increased complexity and reduced performance.
+
+Because ZFS integrates its RAIDZ disk-storage implementation with its filesystem
+implementation, it can support a variable-size stripe. Instead of writing fixed-size stripes, each
+block that it writes fills in the amount of space that it requires. Each block that is written is
+referenced by a block pointer that contains the size of the block so the disk-storage
+implementation can determine the size of the stripe to use. Figure 10.8 shows the layout of
+blocks on a RAIDZ-1 pool constructed from five disks with a single parity per stripe. Each block
+requires a parity sector for each four blocks of data sectors. A block that is not a multiple of four
+sectors requires a parity block for its residual set of sectors. To get double redundancy
+(RAIDZ-2), each block would require two parity sectors for each three blocks of data sectors.
+The smallest possible allocation on RAIDZ-N is N + 1 sectors constructed from N parity sectors
+plus one data sector.
+
+Figure 10.8 Layout of blocks in a RAIDZ disk pool. The blocks have been written sequentially
+and are shown alternating between light and dark backgrounds.
+
+In Figure 10.8, the first block has two parity and eight data sectors. The second and third blocks
+have one parity sector and three data sectors. The fourth block exhibits the worst overhead with
+one parity and one data sector. The fifth block has fourteen data and four parity sectors. The
+sixth block contains one parity sector, four data sectors, and an unused sector. To avoid the
+creation of unallocatable segments, ZFS requires all allocations be a multiple of N + 1 sectors. In
+Figure 10.8, N is equal to one, so allocations must be a multiple of two. Since the sixth block
+uses five sectors, its allocation must be rounded up to six sectors thus charging the odd-size
+block for the wasted space. If the sixth block is freed and the space is later reallocated to a block
+with one parity and three data sectors, the two-sector residual space will still be usable for a
+block containing one parity and one data sector. Had the allocation for the sixth block not been
+rounded up, the residual space would have been a single sector that could not be used. The
+seventh data block containing a single parity and two data sectors also needs to allocate an
+unused sector. The eighth and final block contains three parity and nine data sectors. The parity
+sectors for a given block are all on the same disk. The disk holding the parity for a block is the
+one on which the block begins. Thus, parity blocks are distributed among the disks.
+
+If a disk fails, the RAIDZ reconstructs it by traversing the pool’s filesystems and rebuilding each
+block that it encounters using the block’s size to determine its stripe size. An added benefit of
+this approach is that reconstruction time is often lowered since ZFS need only rebuild the part of
+the disk holding allocated data. Despite the slowdown from random reads to the data to be
+
+rebuilt, the need to rebuild just the allocated data is faster than rebuilding the whole disk when
+the allocated data use less than about half of the disk. However, in worst-case scenarios of pools
+configured to use 4-Kbyte blocks, such as those supporting databases or virtual-disk images
+with totally random block placement and most of the disk space allocated, ZFS reconstruction
+may take 10 times longer to complete.
+
+Snapshots
+
+Taking a snapshot in ZFS is quick and easy, and for reasons explained later in this section, there
+are no limits on the number of snapshots that can be taken. The steps involved in taking a
+snapshot are:
+
+• Take a checkpoint.
+
+• Allocate a new dnode in the MOS to contain the new dsl_dataset that will represent the
+snapshot.
+
+• Copy the block pointer from the dsl_dataset of the filesystem being snapshotted to the
+dsl_dataset in the newly allocated snapshot dnode. Until at least the next checkpoint is taken,
+the block pointers of both the snapshot and the filesystem will reference the same objset block.
+The next checkpoint made after any change in the filesystem will create a new copy of the
+filesystem objset. The block pointer in the snapshot will continue to reference the old objset,
+while the block pointer in the filesystem will reference the new objset.
+
+• Link the new dnode into the head of the filesystem’s snapshot list (as it is the youngest
+snapshot).
+
+• Add the new snapshot’s name and object number into the snapshot name list for the
+filesystem.
+
+• Move the filesystem’s deadlist to the snapshot. Since the filesystem’s deadlist contains blocks
+that it no longer references, they will not be referenced by the snapshot. The freeing of deadlists
+is described in a later subsection.
+
+At this point, the new snapshot is complete and is ready to be accessed.
+
+ZFS Block Allocation
+
+Space allocation is handled by the SPA module. It manages all the space in the pool and makes it
+available to filesystems, clones, and ZVOLs as it is needed. The SPA uses the space map in the
+
+MOS to identify the allocation of blocks within the pool. Rather than having a single map to
+describe the entire pool, the blocks are broken up into fixed-size groups analogous to the way
+that UFS breaks a filesystem up into cylinder groups, each with a fixed-size block map. Unlike
+cylinder-group maps, ZFS maps are described using base-length pairs similar to those used to
+describe space in an extent-based filesystem. A disk will typically be described by about 200 of
+these fixed-size maps. The next subsection describes how blocks are freed back to the pool.
+
+A ZFS allocation proceeds as follows:
+
+1. Select a disk from which to do the allocation. The preference is to choose the disk with the
+most free space.
+
+2. From among the fixed-size space maps describing the space on the disk, select the one that is
+least fragmented.
+
+3. Allocate a chunk of space with the needed size that is closest to the previous allocation.
+
+In addition to managing the space map, the SPA also handles related operations such as
+compression and deduplication, and it determines block layout into a RAIDZ stripe as well as
+the stripe’s parity calculation. Finally, the SPA manages the scheduling, queueing, and
+completion handling of the block I/O operations.
+
+Freeing Blocks
+
+The first implementations of nonoverwriting filesystems were described as log-structured
+filesystems [Rosenblum & Ousterhout, 1992]. A production version of a log-structured
+filesystem, LFS, was released as part of 4.4BSD [McKusick et al., 1996; Seltzer et al., 1993]. New
+data were appended to the filesystem partition until they reached the end of the partition. A
+garbage collection process was run over the filesystem partition to find the blocks that were no
+longer being referenced. The filesystem operations then resumed until these blocks had been
+used at which point another garbage collection pass was done. While this technique for
+managing free space worked, and much research was done on ways to minimize its effect, it still
+produced awkward pauses that made production use difficult [Blackwell et al., 1995].
+
+In the 1990’s, two commercial implementations of nonoverwriting filesystems were started, ZFS
+by Sun Microsystems and the Write Anywhere File Layout (WAFL) filesystem by Network
+Appliance (NetApp) [Hutchinson et al., 1999]. Both of these implementations chose to track the
+used and available blocks continuously as is done in traditional filesystems but used different
+techniques.
+
+WAFL keeps and updates a complete block list. In WAFL, each block has a 256-bit word
+associated with it. Bit 0 in the word is set to show that the block is in use in the active filesystem.
+Bit 1 is set to show that the block is in use in snapshot 1, bit 2 is set to show that the block is in
+use in snapshot 2, etc. When all bits in the word are 0, the block is free and available for use.
+When a new snapshot is made, WAFL allocates an available bit number for it and then makes a
+pass over the entire bitmap, copying all the set bits in bit 0 to the new snapshot’s bit column.
+Freeing a snapshot makes a pass over the entire bitmap, clearing the bit in the snapshot’s bit
+location. Thus, the cost to create or delete a WAFL snapshot is proportional to the size of the
+filesystem and the number of snapshots is limited to the width of the block-map word. ZFS does
+not have these limitations.
+
+ZFS tracks its used and available blocks using space maps, birth time, and deadlists. The benefit
+of the ZFS approach is that it never has to traverse its space map when creating or freeing a
+snapshot, clone, or ZVOL. When a filesystem needs a new block, it requests one from the SPA
+that allocates it from the pool’s space map. The current transaction group (TXG) is recorded in
+the block’s pointer. The block then becomes part of an object in the filesystem. Over time, the
+filesystem or clone may be snapshotted, which will also reference the block.
+
+When an object in a filesystem is overwritten, truncated, or deleted, its blocks will be released.
+For each block freed from an object, the kernel must determine whether to free it. The kernel
+checks the block pointer’s birth time and, if it was born after the most recent (youngest)
+snapshot, it is not referenced by any snapshots so the block can be freed (i.e., the SPA can return
+the block to the pool’s space map). Otherwise, the block must be remembered for later freeing
+by adding it to the filesystem’s deadlist. Each dsl_dataset contains the object number of its
+deadlist. The deadlist of a given dataset (filesystem, ZVOL, clone, or snapshot) is the list of
+blocks referenced by the previous snapshot and possibly some older snapshots, but not
+referenced by the dataset.
+
+When a snapshot is freed, the kernel needs to free any blocks referenced only by that snapshot
+[Ahrens, 2005]. Figure 10.9 shows the four lifetimes of blocks that need to be considered when
+freeing “this snap.” The kernel must determine the blocks to be freed and those that need to
+remain on a deadlist. It iterates over the blocks in the “next snap” deadlist (blocks A and B in
+Figure 10.9). Each block is removed from the list and the block’s birth time is compared to the
+birth time of “prev snap.” If the block was born before “prev snap” (block A), then the kernel
+cannot free it, so it adds the block to the deadlist of “this snap.” Otherwise, the block was born
+after “prev snap” (block B), so the kernel must free it. Having emptied the deadlist of “next
+snap,” the kernel sets the deadlist of “next snap” to the deadlist of “this snap.” Finally, the kernel
+removes “this snap” from the linked list of snapshots and from the directory of snapshot names.
+
+Figure 10.9 Four lifetimes of blocks considered by the kernel when a snapshot is deleted.
+
+While the implementation is simple, the algorithm is subtle. The blocks that the kernel must free
+are those that are referenced by only the snapshot the kernel is deleting (block B). The blocks to
+be deleted must meet four constraints:
+
+1. They were born after “prev snap,”
+
+2. They were born before “this snap,”
+
+3. They died after “this snap,” and
+
+4. They died before the “next snap.”
+
+The blocks on the “next snap” deadlist are those that meet constraints 2, 3, and 4. They are live
+in “this snap,” but dead in the “next snap.” Thus, to find the blocks that meet all constraints, the
+kernel examines all the blocks on the deadlist of “next snap” and finds those that meet
+constraint 1 (i.e., if the block’s birth time is after the “prev snap”). Note that the argument
+applies if “next snap” is the live filesystem.
+
+To confirm that the kernel left the correct blocks on the deadlist of “next snap,” observe that the
+deadlist of “this snap” contains the blocks that were live in “prev snap” and dead in “this snap”
+(block D). If “this snap” did not exist, then the blocks would be live in “prev snap” and dead in
+“next snap,” and therefore should be on the deadlist of “next snap.” Additionally, the blocks that
+were live for both “prev snap” and “this snap” but dead in “next snap” (block A) should be on the
+deadlist of “next snap.”
+
+Originally, the deadlist contained the object number of an object that contained an array of all
+the dead-block pointers associated with the filesystem, ZVOL, snapshot, or clone. Since every
+block on the list has to be considered for deletion, snapshot deletion time is proportional to the
+size of its deadlist. As the number of deleted or changed blocks grows, the size of the deadlists
+also grows. Because the only blocks that could be deleted are those in the transaction group that
+covers the snapshot or clone being deleted, the deadlist was reorganized.
+
+To decouple the removal time of a snapshot from the size of the deadlist, the deadlist has now
+been split into separate lists organized by the ranges of transaction groups between each of the
+snapshots that existed at the time the snapshot was created. The new deadlist contains the
+object number of a ZAP object that maps the first transaction group of a specific range of birth
+times to an object that contains an array of all the dead block pointers for just that range of birth
+times. Typically, only one of these lists needs to be scanned when the snapshot is deleted, which
+improves snapshot deletion time as it only needs to consider the subset of blocks that it will
+need to free. If several snapshots have been deleted between the snapshot being deleted and the
+one that currently precedes it, then several lists will need to be traversed, but all the blocks on
+the traversed lists will need to be freed. Thus, with this new organization, the time required at
+snapshot removal time is a function of the number of blocks that the snapshot will free
+independent of the number of other blocks that remain.
+
+The elegance of this design is that it places no limit on the number of snapshots that can be
+created and it never needs to traverse the entire block-allocation map, so snapshot creation and
+removal times are not affected by the size of the disk space being managed.
+
+Deduplication
+
+ZFS provides deduplication on a pool-wide basis [Bonwick, 2009]. Deduplication is
+implemented in the SPA module. Logically, when a new block is created, the pool is checked to
+see if a block with identical contents already exists. If an identical block does exist, the existing
+block is referenced rather than creating a duplicate copy of it. Deduplication is most useful when
+there are many duplicate blocks, such as when many instances of the same virtual-machine
+image are being stored among the filesystems in the pool.
+
+To speed the check for an existing block with a given value, ZFS computes a hash of each unique
+block and stores it in the MOS in a ZAP table that maps from hash to block location. Rather than
+computing both a hash and a checksum for each block, the checksum is used as the hash. The
+hash must use a function such as SHA-256 that uniquely identifies data with very high
+probability. Thus, when using deduplication, the fletcher4 checksumming function, which is
+faster to compute but more likely to have collisions, is replaced with SHA-256.
+
+When a block is to be written, ZFS computes its hash and then checks the table to see if a block
+with that hash already exists. If it does, a pointer to the existing block is created and the
+reference count associated with the block is incremented. Otherwise, the hash, the new block’s
+location, and a reference count of 1 are inserted into the table and the block is written to disk.
+
+Not all users of the pool need to participate in deduplication. Only filesystems and ZVOLs that
+administratively elect to participate have their blocks deduplicated. The size of the
+hash-to-block mapping table is proportional to the number of blocks allocated to the
+participating filesystems and ZVOLs. When the table grows too large to be kept entirely in
+memory, write throughput to the participating filesystems and ZVOLs slows dramatically as new
+allocations have to wait for the needed part of the table to be read into memory to check whether
+they are a duplicate. Because of the cost of deduplication, most administrators only enable
+deduplication on filesystems and ZVOLs on which there are likely to be many duplicate blocks.
+The administrators further limit the number of filesystems participating in deduplication to a
+level that provides enough memory to keep the entire table resident.
+
+Note that redundant copies of blocks that have been made for reliability are not deduplicated. As
+described in Section 10.2, ZFS supports up to three copies of a block referenced from its block
+pointer. When the first instance of the block is created, all the requested copies will be made.
+Later instances of the block will have block pointers that also reference all the copies of the data.
+
+Remote Replication
+
+As with all filesystems, ZFS must be able to provide a mechanism for performing backup both
+locally and remotely. Backup is handled by the DMU layer that understands how to traverse the
+data structures of any type of objset to create a data stream much like the UFS dump creates a
+data stream from a filesystem image using its knowledge of the filesystem’s on-disk data
+structures. ZFS refers to creating this data stream as a send operation.
+
+The stream of data can be directed locally or over a network to a remote backup site where it can
+be stored as a blob of data on a tape or disk, or it can be interpreted by the DMU layer to create
+another copy of the contents. ZFS refers to accepting a data stream as a receive operation. This
+functionality is similar to a UFS dump stream that can be stored as a blob of data on a tape or
+disk or immediately reconstructed into a filesystem using the restore program.
+
+Much like the UFS dump program, ZFS is able to send either the complete contents of a
+snapshot (equivalent to a full dump) or just the differences between two snapshots (equivalent
+to an incremental dump).
+
+10.5 ZFS Design Tradeoffs
+
+This section compares the design tradeoffs between a traditional overwriting filesystem versus
+ZFS’s nonoverwriting architecture. The biggest difference between the two architectures is the
+tradeoff between reading and writing. Writes in a traditional filesystem architecture are
+
+scattered across the disk as data for different files being written at the same time may be
+scattered far apart on the disk. Additionally, the metadata for those files will typically be stored
+separately from the file data. The payoff for the scattered writes is that when the file is later read,
+its data will all be clustered together even if they were written over a long period of time (as
+would be the case for a log file). The nonoverwriting filesystem does all its writes sequentially.
+All the modified file data along with any metadata changes are collected and written together.
+The result of the sequential writing is that a file can end up requiring many random accesses
+when it is later read. ZFS mitigates the reading cost by dedicating enough memory to the ARC to
+be able to keep all actively accessed files resident. ZFS also attempts to prefetch data when files
+are being read.
+
+The areas in which ZFS’s architecture works well are as follows:
+
+• When disk pools are less than half full, RAIDZ can reconstruct a failed disk faster than
+fixed-size RAID since it only needs to copy the blocks that are in use.
+
+• Traditional filesystems using RAID have to handle a condition known as the RAID write hole.
+Each update to a RAID stripe requires writing to several disks which cannot be done atomically.
+Thus, unprotected RAID stripes can become damaged during a crash or power outage. For
+example, if two of five disks are written and the power fails, the data and parity for that stripe
+are inconsistent. Therefore, if a disk fails, the RAID reconstruction process generates garbage
+the next time any data is read from that stripe. The write-hole problem can be avoided by using
+nonvolatile memory to hold data until all the disks in a stripe have been written. However,
+nonvolatile memory is expensive and when full, the system must pause and wait for enough I/O
+to complete to release some of it. Because ZFS never overwrites existing data, it can avoid the
+write-hole problem by waiting for all disk I/O to complete before creating a new checkpoint.
+
+• Moving allocation and freeing of storage out of the filesystems, and managing it as part of the
+pool optimizes the utilization of the space since individual filesystems do not need to be
+over-provisioned for their highest expected usage scenarios.
+
+• The tight integration of ZFS’s architecture means that all the features work well together. For
+example, snapshots work the same when taken on filesystems, clones, and ZVOLs.
+
+• Administration is easier because the pool is aware of the relationships between all the
+filesystems, clones, and snapshots. Thus, it keeps track of how everything should be mounted
+(subsuming the need to maintain /etc/fstab), allows properties to be inherited down the tree
+rather than needing to be set individually, and organizes NFS exports (subsuming the need to
+maintain /etc/exports).
+
+The areas in which ZFS’s architecture works less well than UFS are as follows:
+
+• As implemented, ZFS’s block cache must fit in the kernel’s address space. Thus, it works well
+only on 64-bit systems.
+
+• Like all nonoverwriting filesystems, ZFS operates best when at least a quarter of its disk pool is
+free. Write throughput becomes poor when the pool gets too full. By contrast, UFS can run well
+to 95 percent full and acceptably to 99 percent full.
+
+• Traditional RAID implementations have a fixed overhead for the parity. For example, with five
+drives, one-fifth of the space will be dedicated to parity. With a RAIDZ pool filled with
+sector-size blocks, half of the space will be dedicated to parity, effectively reducing it to the
+density of a mirror. This scenario arises when using disks with 4-Kbyte sectors to build pools
+configured to use 4-Kbyte blocks such as those supporting databases or ZVOLs.
+
+• ZFS caches its data in its ARC that is not part of the unified-memory cache managed by the
+virtual memory. The result is that when mmap is used on a ZFS file, read faults are first read
+into the ARC and then copied to a page in the unified-memory cache. When dirty
+unified-memory pages are flushed, they must be copied to an ARC buffer and then written by
+ZFS. To ensure coherency whenever mmap has been used on a ZFS file, reads and writes to that
+file need to check whether, for each page in the transfer, the requested page is present in the
+unified-memory cache and, if present, use that page to do the I/O. If the page is not present in
+the unified-memory cache, then the I/O can proceed normally from the ARC. This approach
+provides coherency between memory-mapped and I/O access at the expense of wasted memory
+due to having two copies of the file in memory and extra overhead caused by the need to copy
+the contents between the two copies.
+
+Similarly, when using sendfile on a file in ZFS, it must be copied from the ARC to the
+unified-memory cache thereby losing the benefits of the no-copy semantics of sendfile. The
+primary use of sendfile is by Web-server applications like Apache.
+
+Integrating ZFS’s ARC into the unified-memory cache would require massive changes. The
+problem is easily seen in Figure 10.1. The unified-memory cache operates at the vnode interface
+level and the ARC operates at the physical block level. The pages in the ARC are identified by
+their block number on a device. The ARC representation is efficient because access to an
+unmodified file in a filesystem and access to the same file in a snapshot will reference the same
+entry in the ARC. By contrast, the unified-memory cache identifies pages by their vnode and
+logical block number. In the unified-memory cache, access to an unmodified file in a filesystem
+and access to the same file in a snapshot will reference different pages even though their
+
+contents are identical. The benefit of this approach is that modification of the file’s copy of a
+block will not affect the snapshot’s copy of that block.
+
+ZFS was designed to manage and operate enormous filesystems easily, which it does well. Its
+design assumed that it would have many fast 64-bit CPUs with large amounts of memory to
+support these enormous filesystems. When these resources are available, it works extremely well.
+However, it is not designed for or well suited to run on resource-constrained systems using
+32-bit CPUs with less than 8 Gbyte of memory and one small, nearly-full disk, which is typical of
+many embedded systems.
+
+Exercises
+
+10.1 What is the purpose of the dnode data structure?
+
+10.2 List five problems that ZFS’s checksums can detect.
+
+10.3 What is the role of ZFS’s Meta-Object Set?
+
+10.4 What is the role of ZFS’s Object Set?
+
+10.5 Why does the ZFS block pointer contain three disk addresses?
+
+10.6 Why is the ZFS checksum stored in its block pointer?
+
+10.7 Given that ZFS’s on-disk state is always consistent, why does it need a log?
+
+10.8 Why does ZFS checksum using SHA-256 instead of fletcher4 when doing deduplication?
+
+*10.9 Much of the time required to rebuild a RAIDZ disk pool after replacing a disk arises from
+all the random reads it requires. Describe an algorithm that would reduce the time to perform
+these random reads.
+
+**10.10 Describe a design for integrating the unified-memory cache into ZFS.
+
+References
+
+Ahrens, 2005.
+
+M.     Ahrens,     “It    Is    Magic,”      Unpublished     Blog    entry,    available    from
+http://www.mckusick.com/bookrefs/is_it_magic.html, November 2005.
+
+Blackwell et al., 1995.
+
+T. Blackwell, J. Harris, & M. Seltzer, “Heuristic Cleaning Algorithms in Log-Structured File
+Systems,” USENIX Association Conference Proceedings, pp. 277–288, January 1995.
+
+Bonwick, 2009.
+
+J.   Bonwick,       “ZFS    Deduplication,”   Unpublished     Blog     entry,      available   from
+http://www.mckusick.com/bookrefs/zfs_dedup.html, November 2009.
+
+Bonwick et al., 2003.
+
+J. Bonwick, M. Ahrens, V. Henson, M. Maybee, & M. Shellenbaum, “The Zettabyte File System,”
+Unpublished Paper, available from http://www.mckusick.com/bookrefs/zfs_overview.pdf,
+November 2003.
+
+Hutchinson et al., 1999.
+
+N. Hutchinson, S. Manley, M. Federwisch, G. Harris, D. Hitz, S. Kleiman, & S. O’Malley,
+“Logical vs. Physical File System Backup,” USENIX 3rd Symposium on Operating Systems
+Design         and         Implementation,      pp.         239–250,            available      from
+https://www.usenix.org/legacy/publications/library/proceedings/osdi99/full_papers/hutchins
+on/hutchinson_html/hutchinson.html, February 1999.
+
+McKusick et al., 1996.
+
+M. McKusick, K. Bostic, M. Karels, & J. Quarterman, The Design and Implementation of the
+4.4BSD Operating System, Addison-Wesley, Reading, MA, 1996.
+
+Rosenblum & Ousterhout, 1992.
+
+M. Rosenblum & J. Ousterhout, “The Design and Implementation of a Log-Structured File
+System,” ACM Transactions on Computer Systems, vol. 10, no. 1, pp. 26–52, Association for
+Computing Machinery, February 1992.
+
+Seltzer et al., 1993.
+
+M. Seltzer, K. Bostic, M. K. McKusick, & C. Staelin, “An Implementation of a Log-Structured File
+System for UNIX,” USENIX Association Conference Proceedings, pp. 307–326, January 1993.
+

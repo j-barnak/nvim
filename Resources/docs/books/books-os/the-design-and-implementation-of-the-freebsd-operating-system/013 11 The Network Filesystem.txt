@@ -1,0 +1,1422 @@
+                 Chapter 11. The Network Filesystem
+
+A commonly provided user-level service in any collection of UNIX systems is the network
+filesystem (NFS) that allows a set of computers connected to a network to share files. NFS
+provides client computers with a namespace and a set of file access semantics similar to the
+capabilities of a local filesystem. Providing local-filesystem semantics in a distributed system is a
+challenging problem. Sections 11.1 and 11.2 cover the development of NFSv2 and NFSv3. Section
+11.3 describes NFSv4 which attempts to address the problems discovered in the first 25 years of
+deploying NFS. NFSv3 is the most widely used version in 2014, but NFSv4 is rapidly overtaking
+it in popularity. FreeBSD supports all three versions of NFS.
+
+11.1 Overview
+
+The most commercially successful and widely available remote-filesystem protocol on UNIX
+systems is NFS, originally designed and implemented by Sun Microsystems [Sandberg et al.,
+1985; Walsh et al., 1985]. There are two important components to the success of NFS. First, Sun
+placed the protocol specification for NFS in the public domain. Second, Sun sold that
+implementation to anyone who wanted it, for less than the cost the company would have
+incurred to implement it. Thus, most vendors chose to buy the Sun implementation. They were
+willing to buy from Sun because they knew that they could always legally write their own
+implementation. The 4.4BSD implementation was written from the protocol specification rather
+than being incorporated from Sun because of the developers’ desire to be able to redistribute it
+freely in source form.
+
+The first widely released implementation of NFS was version 2 by Sun in 1984. Although version
+3 was expected to be released within a year or two of version 2, it suffered several iterations of
+hugely complicated proposals before an incremental improvement on version 2 was finally
+released in 1992. The final release of 4.4BSD included an implementation of NFS that supported
+both versions 2 and 3. FreeBSD’s NFS implementation is a direct descendant of the code
+released in 4.4BSD.
+
+Although versions 2 and 3 of NFS were designed entirely within Sun, the growing set of
+companies providing NFS-based products put increasing pressure on Sun to bring others into
+the design of NFS version 4. After much political maneuvering, Sun agreed to pass the
+responsibility for defining the specification of NFS version 4 to the Internet Engineering Task
+Force (IETF). Version 4 greatly expands the functionality of the earlier versions of NFS.
+
+Sun’s NFS is not the only remote filesystem protocol currently in use. Research at
+Carnegie-Mellon lead to the Andrew filesystem (AFS) [Howard, 1988]. AFS was commercialized
+by Transarc and eventually became part of the Distributed Computing Environment
+promulgated by the Open Software Foundation and was supported by many vendors. It was
+designed to handle widely distributed servers and clients, and also to work well with mobile
+computers that operate while detached from the network for long periods. AFS did not see wide
+commercial use.
+
+In the Microsoft family of operating systems, remote filesystem access is provided by the
+Common Internet File System (CIFS), which runs on top of the Server Message Block (SMB)
+protocol [SNIA, 2002]. In FreeBSD, support for SMB and CIFS client and server is provided by
+Samba, which resides in /usr/ports/net/samba. Since this book deals with the kernel, and
+Samba runs mostly external to the kernel, we will not discuss it further.
+
+NFS was designed as a client-server application. Its implementation is divided into a client part
+that imports filesystems from other machines and a server part that exports local filesystems to
+other machines. The general model is shown in Figure 11.1. In FreeBSD, the kernel can be
+configured to support just the client, just the server, or both client and server. Many goals went
+into the NFS design:
+
+• The protocol is designed to be stateless. Because there is no state to maintain or recover, NFS
+can continue to operate even during periods of client or server failures. Thus, it was thought to
+be much more robust than a system that operates with state.
+
+• NFS is designed to support UNIX filesystem semantics. However, its design also allows it to
+support the possibly less-rich semantics of other filesystem types, such as the MS-DOS
+filesystem.
+
+• The protection and access controls follow the UNIX semantics of having the process present a
+UID and set of groups that are checked against the file’s owner, group, and other access modes.
+The security check is done by filesystem-dependent code that can do more or fewer checks based
+on the capabilities of the filesystem that it is supporting. For example, the MS-DOS filesystem
+cannot implement the full UNIX security validation, and it makes access decisions solely based
+on the UID.
+
+• The protocol design is transport independent. Although it was originally built using the UDP
+datagram protocol in version 2, it was easily moved to the TCP stream protocol in version 3. It
+has also been ported to run over numerous other non-IP-based protocols.
+
+Figure 11.1 The division of NFS between client and server.
+
+Some of the design decisions limit the set of applications for which NFS is appropriate:
+
+• The design envisions clients and servers being connected on a local, fast network. The NFS
+protocol does not work well over slow links. When using an unreliable protocol, such as UDP as
+the transport, it does not work well between clients and servers with intervening gateways. It
+also works poorly in mobile computing environments that have extended periods of
+disconnected operation.
+
+• The caching model assumes that most files will not be shared. Performance suffers when files
+are heavily shared.
+
+• The stateless protocol requires some loss of traditional UNIX semantics. Filesystem locking
+(flock) has to be implemented by a separate stateful daemon. Deferral of the release of space in
+an unlinked file until the final process has closed the file is approximated with a heuristic that
+sometimes fails.
+
+Despite these limitations, NFS proliferated because it makes a reasonable tradeoff between
+semantics and performance; its low cost of adoption has now made it ubiquitous.
+
+11.2 Structure and Operation
+
+NFS operates as a typical client–server application. The server receives remote procedure
+call (RPC) requests from its various clients. An RPC operates much like a local procedure call:
+the client makes a procedure call and then waits for the result while the procedure executes. For
+a remote procedure call, the parameters must be marshalled together into a message.
+Marshalling includes replacing pointers by the data to which they point and converting data
+into network byte order. The message is then sent to the server, where it is unmarshalled
+(separated out into its original pieces) and processed as a local filesystem operation. The result
+
+must be similarly marshalled and sent back to the client. The client unmarshalls the result and
+returns that value to the calling process as though the result were being returned from a local
+procedure call [Birrell & Nelson, 1984]. NFS uses Sun’s RPC and external data-representation
+(XDR) protocols [Reid, 1987]. Although the kernel implementation is done by hand to get
+maximum performance, the user-level daemons described later in this section use the RPC and
+XDR libraries.
+
+The NFS protocol can run over any available stream- or datagram-oriented protocol but the
+most common choice is TCP because it provides better service over a wide range of network
+types from local to wide area. Each NFS RPC message may need to be broken into multiple
+packets to be sent across the network. A motivating factor to move away from running NFS over
+a datagram protocol, such as UDP, is that any single RPC may be broken into up to six packets;
+if any of these packets are lost, the entire RPC is lost and needs to be resent. When running over
+a stream protocol, such as TCP, the RPC will still be broken into several packets; however,
+individual lost packets, rather than the entire message, will be retransmitted by TCP. The
+problems with running NFS over an unreliable datagram protocol are exacerbated on
+high-bandwidth local-area networks. NFS messages will always fit into a single UDP datagram
+but the underlying network usually requires the messages to be split, a process called IP
+fragmentation. Each IP packet contains an identifier that allows large packets, that were broken
+up, to be reassembled when they are received by the server. The IP identifier field is only 16 bits,
+which means that once a concurrent and highly fragmented workload is present, the birthday
+paradox kicks in where different streams have a high probability of selecting overlapping
+IP-identifier sequences. The server’s network stack will now reassemble the UDP datagrams
+incorrectly, leading to datagrams with failed checksums that require retransmission. The
+ensuing poor performance is the main reason use of NFS over UDP is heavily discouraged even
+for local-area networks. In FreeBSD, NFS over UDP is retained primarily for use in network
+booting. For a more complete discussion of IP fragmentation see Section 13.1.
+
+The set of RPC requests that a client can send to a server, under version 3 of the protocol, is
+shown in Table 11.1. After the server handles each request, it responds with the appropriate data
+or with an error code explaining why the request could not be completed. As noted in the table,
+many operations are idempotent. An idempotent operation is one that can be repeated several
+times without the final result being changed or an error being caused. For example, writing the
+same data to the same offset in a file is idempotent because it will yield the same result whether
+it is done once or many times. However, trying to remove the same file more than once is
+nonidempotent because the file will no longer exist after the first try. Idempotency is an issue
+when the server is slow or when an RPC acknowledgment is lost and the client retransmits the
+RPC request. The retransmitted RPC will cause the server to attempt the same operation again.
+For a nonidempotent request, such as a request to remove a file, the retransmitted RPC, if
+
+undetected by the server recent-request cache [Juszczak, 1989], will cause a “no such file” error
+to be returned, because the file will have been removed already by the first RPC. Users may be
+confused by the error because they believe that they are attempting to remove an existing file.
+
+Table 11.1 NFS, Version 3, RPC requests.
+
+Each file on the server is identified by a unique file handle. A file handle is the token by which
+clients refer to files on a server. The handles are passed in operations, such as read and write,
+that reference a file. A file handle is created by the server when a pathname-translation request
+(lookup) is sent from a client to the server. The server must find the requested file or directory
+and ensure that the requesting user has access permission. If permission is granted, the server
+returns a file handle for the requested file to the client. The file handle identifies the file in
+future access requests by the client. A file handle is meant to be opaque to the client. The client
+
+is not allowed to peek into or infer any information from the file handle but only to present it to
+the server as part of routine file operations. Servers are free to build file handles from whatever
+information they find convenient.
+
+In the FreeBSD NFS implementation, each filesystem can decide what data goes into a file
+handle. In ZFS, the file handle is created from the underlying file ID. ZFS is covered in Chapter
+10.
+
+In UFS, covered in Chapter 9, the file handle is built from a filesystem identifier, an inode
+number, and a generation number. The server creates a unique filesystem identifier for each
+of its locally mounted filesystems. A generation number is assigned to an inode each time that
+the latter is allocated to represent a new file. The generation number is selected by using the
+kernel’s random-number generator. The kernel ensures that the same generation value is never
+used for two consecutive allocations of the same underlying inode or file ID.
+
+The purpose of the file handle is to provide the server with enough information to find the file in
+future requests. The generation number verifies that the file handle still references the same file
+that it referenced when the file was first accessed. Using a generation number allows the server
+to detect when a file has been deleted, and a new file is later created using the same inode or file
+ID. Although the new file has the same filesystem identifier and inode number, it is a completely
+different file from the one that the previous file handle referenced. Since the generation number
+is included in the file handle, a previously used generation number for an inode will not match
+the new generation number in the same inode. When a file handle representing a previous
+version of the file is presented to the server by a client, the server refuses to accept it and instead
+returns the “stale file handle” error message.
+
+The use of the generation number ensures that the file handle is time stable. Distributed systems
+define a time-stable identifier as one that refers uniquely to some entity both while that
+entity exists and for a long time after it is deleted. A time-stable identifier allows a system to
+remember an identity across transient failures and allows the system to detect and report errors
+for attempts to access deleted entities.
+
+Versions 2 and 3 of the NFS protocol are stateless. Being stateless means that the server does
+not need to maintain any information about which clients it is serving or about the files that they
+currently have open. Every RPC request that is received by the server is completely
+self-contained. The server does not need any additional information beyond that contained in
+the RPC to fulfill the request. For example, a read request will include the credential of the user
+doing the request, the file handle on which the read is to be done, the offset in the file to begin
+the read, and the number of bytes to be read. This information allows the server to open the file,
+verify that the user has permission to read it, seek to the appropriate point, read the desired
+
+contents, and close the file. In practice, the server caches recently accessed file data. However, if
+there is enough activity to push the file out of the cache, the file handle provides the server with
+enough information to reopen the file.
+
+The benefit of a stateless protocol is that there is no need to do state recovery after a client or
+server has crashed and rebooted or after the network has been partitioned and reconnected.
+Because each RPC is self-contained, the server can simply begin servicing requests as soon as it
+begins running; it does not need to know which files its clients have open. Indeed, it does not
+even need to know which clients are currently using it as a server.
+
+There are drawbacks to a stateless protocol. First, the semantics of the local filesystem imply
+state. When files are unlinked, they continue to be accessible until the last reference to them is
+closed. Because NFS knows neither which files are open on clients nor when those files are
+closed, it cannot properly know when to free file space. As a result, it always frees the space at
+the time of the unlink of the last link to the file. Clients that want to preserve the
+freeing-on-last-close semantics convert unlinks of open files to renames to obscure names on
+the server. The names are in the form .nfs.tttttttt.xxxx4.4, where the tttttttt is the number of
+CPU ticks since the system booted and xxxx is replaced with the hexadecimal value of the
+process identifier. The ticks are successively incremented until an unused name is found. When
+the last close is done on the client, the client sends an unlink of the obscure filename to the
+server. This heuristic works for file access on only a single client; if one client has the file open
+and another client removes the file, the file will still disappear from the first client at the time of
+the remove. Other stateful semantics include the advisory locking described in Section 9.5. The
+locking semantics cannot be handled by the NFS protocol. Under versions 2 and 3 of the NFS
+protocol, they are handled by a separate lock manager; the FreeBSD version of NFS implements
+them using the user-level rpc.lockd daemon. Locking is handled differently under version 4 of
+the protocol (see Section 11.3).
+
+The second drawback of a stateless protocol is related to performance. Under version 2 of the
+NFS protocol, all operations that modify the filesystem must be committed to stable storage
+before the RPC can be acknowledged. Most servers do not have battery-backed memory; the
+stable-store requirement means that all written data must be on the disk before they can reply to
+the RPC. For a growing file, an update may require up to three synchronous disk writes: one for
+the inode to update its size, one for the indirect block to add a new data pointer, and one for the
+new data. At a minimum, a single write to a filesystem log is required. Each synchronous write
+takes several milliseconds; this delay severely restricts the write throughput for any given client
+file.
+
+Version 3 of the NFS protocol eliminated some of the synchronous writes by adding a new
+asynchronous write RPC request. When such a request is received by the server, it is permitted
+to acknowledge the RPC without writing the new data to stable storage. Typically, a client will do
+a series of asynchronous write requests followed by a commit RPC request when it reaches the
+end of the file or it runs out of buffer space to store the file. The commit RPC request causes the
+server to write any unwritten parts of the file to stable store before acknowledging the commit
+RPC. The server benefits by having to write the inode and indirect blocks for the file only once
+per batch of asynchronous writes, instead of on every write RPC request. The client benefits
+from having higher throughput for file writes. The client does have the added overhead of
+having to save copies of all asynchronously written buffers until a commit RPC is done because
+the server may crash before having written one or more of the asynchronous buffers to stable
+store. Each time the client does an asynchronous write RPC, the server returns a cookie, which
+acts as a verification token. When the client sends the commit RPC, the acknowledgment to that
+RPC also includes a cookie. The client uses the cookie to determine whether the server has
+rebooted between a call to write data and a later call to commit it. The cookie is guaranteed to be
+the same throughout a single boot session of the server and to be different each time the server
+reboots where uncommitted data may be lost. If the cookie changes, the client knows that it
+must retransmit all asynchronous write RPCs done since the last commit RPC that were verified
+with the old cookie value.
+
+The NFS protocol does not specify the granularity of the buffering that should be used when files
+are written. Most implementations of NFS utilize 8-Kbyte buffers when working on file blocks in
+system memory. If an application writes 10 bytes in the middle of a block, the client reads the
+entire block from the server, modifies the requested 10 bytes, and then writes the entire block
+back to the server. The FreeBSD implementation also uses 8-Kbyte buffers, but it keeps
+additional information that describes which bytes in the buffer are modified. If an application
+writes 10 bytes in the middle of a block, the client reads the entire block from the server,
+modifies the requested 10 bytes, but then writes back only the 10 modified bytes to the server.
+The block read is necessary to ensure that, if the application later reads back other unmodified
+parts of the block, it will get valid data. Writing back only the modified data has two benefits:
+
+1. Fewer bytes are sent over the network, reducing contention for a scarce resource.
+
+2. Nonoverlapping modifications to a file are not lost. If two different clients simultaneously
+modify different parts of the same file block, both modifications will show up in the file since
+only the modified parts are sent to the server. When clients send back entire blocks to the server,
+changes made by the first client will be overwritten by data read before the first modification
+was made and then will be written back by the second client.
+
+Another performance problem that comes from the stateless nature of the NFS protocol is that
+the server must check permissions for each I/O operation that a client requests. The server does
+not support, nor understand, the concept of an open file; it only handles I/O operations based
+on the paths that are sent by the clients. Checking the permissions on each request requires
+extra filesystem accesses on the server, resulting in higher overhead per operation.
+
+The FreeBSD NFS Implementation
+
+The NFS implementation that appears in FreeBSD was written by Rick Macklem at the
+University of Guelph, using the specifications of the Version 2 protocol published by Sun
+Microsystems [Macklem, 1994a; Sun Microsystems, 1989]. He later extended it to support the
+protocol extensions found in version 3 [Callaghan et al., 1995; Pawlowski et al., 1994], and has
+most recently added support for version 4 of the protocol [Haynes & Noveck, 2014]. Table 11.1
+lists the functionality in the version 3 protocol. Version 3 of the protocol provides the following:
+
+• Sixty-four-bit file offsets and sizes
+
+• An access RPC that provides server permission checking on file open, rather than having the
+client guess whether the server will allow access
+
+• An append option on the write RPC
+
+• A defined way to make special device nodes and fifos
+
+• Optimization of bulk directory access
+
+• The ability to batch writes into several asynchronous RPCs followed by a commit RPC to
+ensure that the data are on stable storage
+
+• Additional information about the capabilities of the underlying filesystem
+
+In addition to the version 2 and version 3 support, Rick Macklem made several other extensions
+to the BSD NFS implementation; the extended version became known as the Not Quite NFS
+(NQNFS) protocol [Macklem, 1994b]. The NQNFS extensions added support for extended file
+attributes to support FreeBSD filesystem functionality more fully and a variant of short-term
+leases with delayed-write client caching that provided distributed cache consistency and
+improved performance [Gray & Cheriton, 1989]. Although the NQNFS extensions were never
+widely adopted in version 3 implementations, they were instrumental in proving the value of
+using leases in NFS. The leasing technology was adopted for use in the NFS version 4 protocol,
+
+not only for cache consistency and improved performance, but also as a mechanism to bound
+the recovery time for locks.
+
+The NFS implementation distributed in FreeBSD supports clients and servers running any of
+versions 2, 3, or 4 of the NFS protocol. The code that implemented the experimental NQNFS
+protocol was removed during the development of FreeBSD 5.
+
+The FreeBSD client and server implementations of NFS are kernel resident. NFS interfaces to
+the network with sockets via the kernel RPC layer. The kernel RPC layer contains calls to the
+in-kernel versions of the socket routines sosend() and soreceive() (see Chapter 12 for a
+discussion of the socket interface) and frees the NFS daemons from having to handle socket
+communication on their own.
+
+The less time-critical operations, such as the mounting and unmounting of remote filesystems,
+as well as determination of which filesystems may be exported and to what set of clients they
+may be exported are managed by user-level system daemons. For the server side to function, the
+portmap, mountd, and nfsd daemons must be running. For full NFS functionality, the
+rpc.lockd and rpc.statd daemons must also be running.
+
+The portmap acts as a clearing house for the services provided by the machine on which it is
+running. Whenever any RPC daemon is started, it tells the portmap daemon to what port
+number it is listening and what RPC services it is prepared to serve. When a client wishes to
+make an RPC call to a given service, it will first contact the portmap daemon on the server
+machine to determine whether a service is available and, if it is available, the port number to
+which RPC messages should be sent.
+
+The interactions between the client and server daemons when a remote filesystem is mounted
+are shown in Figure 11.2. The mountd daemon handles two important functions:
+
+1. On startup and after a hangup signal, mountd reads the /etc/exports file and creates a list
+of hosts and networks to which each local filesystem may be exported. It passes this list into the
+kernel using the mount system call; the kernel links the list to the associated local filesystem
+mount structure so that the list is readily available for consultation when an NFS request is
+received.
+
+2. Client mount requests are directed to the mountd daemon. After verifying that the client has
+permission to mount the requested filesystem, mountd returns a file handle for the requested
+mount point. This file handle is used by the client for later traversal into the filesystem.
+
+Figure 11.2 Daemon interaction when a remote filesystem is mounted. Step 1: The client’s
+mount process sends a message to the well-known port of the server’s portmap daemon,
+requesting the port address of the server’s mountd daemon. Step 2: The server’s portmap
+daemon returns the port address of its server’s mountd daemon. Step 3: The client’s mount
+process sends a request to the server’s mountd daemon with the pathname of the filesystem
+that it wants to mount. Step 4: The server’s mountd daemon requests a file handle for the
+desired mount point from its kernel. If the request is successful, the file handle is returned to the
+client’s mount process. Otherwise, the error from the file-handle request is returned. If the
+request is successful, the client’s mount process does a mount system call, passing in the file
+handle that it received from the server’s mountd daemon.
+
+The NFS server is implemented as a set of kernel libraries that are invoked by a pool of service
+threads that remain perpetually resident in the kernel. The user level nfsd daemon creates, and
+fills in, a structure that it passes to the nfssvc system call that tells the kernel how many NFS
+daemon threads to run. Typical servers run four to six nfsd kernel threads but more may be
+used to increase throughput if the underlying hardware has sufficient resources. Other than
+starting the kernel nfsd master thread, the user level NFS daemon does very little work. The
+nfsd kernel threads rely on the kernel RPC and service libraries.
+
+Any kernel thread that wishes to provide an RPC creates a transport object and then registers it
+with the service layer. To create a datagram-based transport service the thread uses the
+svc_dg_create() routine while creating a connection-oriented service is accomplished with the
+svc_vc_create() routine. After the transport is created, it must be registered with the service, in
+order to start receiving RPCs, via the svc_reg() routine. All versions of NFS for both datagram
+and connection oriented protocols register the nfssvc_program() entry point, which
+demultiplexes incoming requests into the correct parts of the protocol libraries. Once the
+demultiplexing is complete, the nfsd kernel thread verifies the sender and then passes the
+request to the appropriate local filesystem for processing. When the result comes back from the
+filesystem, it is returned to the requesting client. Each individual request results in a kernel
+thread invoking nfssvc_program(), which returns once its work is complete. The maximum
+
+degree of concurrency on the server is determined by the number of nfsd kernel threads that
+are running.
+
+For connection-oriented transport protocols, such as TCP, there is one connection for each
+client-to-server mount point. For datagram-oriented protocols, such as UDP, the server creates
+a fixed number of incoming RPC sockets when it starts its nfsd daemons; clients create one
+socket for each imported mount point. The socket for a mount point is created in the kernel in
+response to the mount command on the client calling the nmount() system call. The client side
+uses it to communicate with the mountd daemon on the server. Once the client-to-server
+connection is established, the daemon processes on a connection-oriented protocol may perform
+additional verification, such as authentication. If the connection breaks while the mount point is
+still active, the client will attempt a reconnect with a new socket.
+
+For version 2 and version 3 of the NFS protocol, the rpc.lockd daemon manages locking
+requests for remote files. Client locking requests are exported from the kernel through a fifo,
+/var/run/lock. The rpc.lockd daemon reads the locking request from the fifo and sends the
+lock request across the network to the rpc.lockd daemon on the server that holds the file. The
+daemon running on the server opens the file to be locked and uses the flock system call to
+acquire the requested lock. Once the lock has been acquired, the server daemon sends a message
+back to the client daemon. The client daemon writes the lock status into the fifo, which is then
+read by the kernel and passed up to the user application. The release of the lock is handled
+similarly. If the rpc.lockd daemon is not run, then lock requests on NFS files will fail with an
+“operation not supported” error.
+
+The rpc.statd daemon cooperates with rpc.statd daemons on other hosts to provide a
+status-monitoring service. The daemon accepts requests from programs running on the local
+host (typically rpc.lockd) to monitor the status of specified hosts. If a monitored host crashes
+and restarts, the daemon on the crashed host will notify the other daemons that it crashed when
+it is restarted. When notified of a crash, or when a daemon determines that a remote host has
+crashed because of its lack of response, it will notify the local program(s) that requested the
+monitoring service. If the rpc.statd daemon is not run, then locks held by clients on a host that
+crashed may be held indefinitely. By using the rpc.statd service, crashes will be discovered and
+the locks held by a crashed host will be released.
+
+The client side can operate without any daemons running, but the system administrator can
+improve performance by running several nfsiod daemons. As with the server, for full
+functionality the client must run the rpc.lockd and rpc.statd daemons.
+
+The purpose of the nfsiod daemons is to perform asynchronous read-ahead and write-behind.
+The daemons are typically started when the kernel begins running multiuser, and are started via
+
+the nfsiod_setup() routine. They are completely kernel resident, providing a process context for
+the NFS RPC client side. In their absence, each read or write of an NFS file that cannot be
+serviced from the local client cache must be done in the context of the requesting process. The
+process sleeps while the RPC is sent to the server, the RPC is handled by the server, and a reply
+is sent back. No read-ahead is done and write operations proceed at the disk-write speed of the
+server. When present, the nfsiod daemons provide a separate context in which to issue RPC
+requests to a server. When a file is written, the data are copied into the buffer cache on the client.
+The buffer is then passed to a waiting nfsiod that does the RPC to the server and awaits the
+reply. When the reply arrives, nfsiod updates the local buffer to mark that buffer as written.
+Meanwhile, the process that did the write can continue running. The NFS protocol flushes all
+the blocks of a file to the server when that file is closed. If all the dirty blocks have been written
+to the server when a process closes a file that it has been writing, it will not have to wait for them
+to be flushed.
+
+When reading a file, the client first hands a read-ahead request to the nfsiod that does the RPC
+to the server. It then looks up the buffer that it has been requested to read. If the sought-after
+buffer is already in the cache because of a previous read-ahead request, then it can proceed
+without waiting. Otherwise, it must do an RPC to the server and wait for the reply. The
+interactions between the client and server daemons when I/O is done are shown in Figure 11.3.
+
+Figure 11.3 Daemon interaction when I/O is done. Step 1: The client’s process does a write
+system call. Step 2: The data to be written are copied into a kernel buffer on the client, and the
+write system call returns. Step 3: An nfsiod daemon awakens inside the client’s kernel, picks up
+the dirty buffer, and sends the buffer to the server. Step 4: The incoming write request is
+delivered to the next available nfsd daemon running inside the kernel on the server. The
+server’s nfsd daemon writes the data to the appropriate local disk and waits for the disk I/O to
+complete. Step 5: After the I/O has completed, the server’s nfsd daemon sends back an
+
+acknowledgment of the I/O to the waiting nfsiod daemon on the client. On receipt of the
+acknowledgment, the client’s nfsiod daemon marks its local buffer as clean.
+
+Client–Server Interactions
+
+A local filesystem is unaffected by network service disruptions. It is always available to the users
+on the machine unless there is a catastrophic event, such as a disk or power failure. Since the
+entire machine hangs or crashes, the kernel does not need to concern itself with how to handle
+the processes that were accessing the filesystem. By contrast, the client end of a network
+filesystem must have ways to handle processes that are accessing remote files when the client is
+still running but the server becomes unreachable or crashes. Each NFS mount point is provided
+with three alternatives for dealing with server unavailability:
+
+1. The default is a hard mount that will continue to try to contact the server indefinitely to
+complete the filesystem access. This type of mount is appropriate when processes on the client
+that access files in the filesystem do not tolerate I/O system calls that return transient errors. A
+hard mount is used for processes for which access to the filesystem is critical for normal system
+operation. It is also useful if the client has a long-running program that simply wants to wait for
+the server to resume operation (e.g., after the server is taken down for maintenance).
+
+2. The other extreme is a soft mount that retries an RPC a specified number of times, and then
+the corresponding system call returns with a transient error. For a connection-oriented protocol,
+the actual RPC request is not retransmitted; instead, NFS depends on the protocol
+retransmission to do the retries. If a response is not returned within the specified time, the
+corresponding system call returns with a transient error. The problem with this type of mount is
+that most applications do not expect a transient error return from I/O system calls (since they
+never occur on a local filesystem). Often, they will mistakenly interpret the transient error as a
+permanent error and will exit prematurely. An additional problem is deciding how long to set
+the timeout period. If it is set too low, error returns will start occurring whenever the NFS server
+is slow because of heavy load or when the network is heavily loaded. Alternately, a large retry
+limit can result in a process being hung for a long time because of a crashed server or network
+partitioning.
+
+3. Most system administrators take a middle ground by using an interruptible mount that will
+wait forever like a hard mount but checks to see whether a termination signal is pending for any
+process that is waiting for a server response. If a signal (such as an interrupt) is sent to a process
+waiting for an NFS server, the corresponding I/O system call returns with a transient error.
+Normally, the process is terminated by the signal. If the process chooses to catch the signal, then
+it can decide how to handle the transient failure. This mount option allows interactive programs
+
+to be aborted when a server fails, while allowing long-running processes to await the server’s
+return.
+
+Security Issues
+
+NFS versions 2 and 3 are not secure because the protocol was not designed with security in
+mind. Despite several attempts to fix security problems in these versions, NFS security is still
+limited. In particular, the security work only addresses authentication; file data are sent over the
+network in clear text. Even if someone is unable to get your server to send him or her a sensitive
+file, he or she can just wait until a legitimate user accesses it, and then can pick it up as it goes by
+on the net. Much of the work that went into version 4 addressed both authentication and data
+security. As version 4 moves into general use, NFS filesystems will be able to be run more
+securely than previously.
+
+NFS export control is at the granularity of local filesystems. Associated with each local
+filesystem mount point is a list of the hosts to which that filesystem may be exported. A local
+filesystem may be exported to a specific host, to all hosts that match a subnet mask, or to all
+other hosts (the world). For each host or group of hosts, the filesystem can be exported
+read-only or read–write. In addition, a server may specify a set of subdirectories within the
+filesystem that may be mounted. However, this list of mount points is enforced by only the
+mountd daemon. If a malicious client wishes to do so, it can access any part of a filesystem that
+is exported to it.
+
+The final determination of exportability is made by the list maintained in the kernel. As a result,
+even if a rogue client manages to snoop the net and to steal a file handle for the mount point of a
+valid client, the kernel will refuse to accept the file handle unless the client presenting that
+handle is on the kernel’s export list. When NFS is running with TCP, the check is done once
+when the connection is established. When NFS is running with UDP, the check must be done for
+every RPC request.
+
+The NFS server also permits limited remapping of user credentials. Typically, the credential for
+the superuser is not trusted and is remapped to the low-privilege user “nobody.” The credentials
+of all other users can be accepted as given or also mapped to a default user (typically “nobody”).
+Use of the client UID and GID list unchanged on the server implies that the UID and GID space
+are common between the client and server (i.e., UID N on the client must refer to the same user
+on the server). One of the main problems in the deployment of NFS in large, heterogeneous
+environments is the need for a unified UID and GID space. The system administrator can
+support more complex UID and GID mappings by using the umapfs filesystem described in
+Section 7.5.
+
+NFSv3 can use Kerberos to authenticate users of the system. A fuller discussion of the use of
+Kerberos within NFS is presented in Section 11.3.
+
+Techniques for Improving Performance
+
+Remote filesystems face a challenging performance problem: providing both a coherent
+network-wide view of the data and delivering that data quickly are often conflicting goals. The
+server can maintain coherency easily by keeping a single repository for the data and sending
+them out to each client when the clients need them; this approach tends to be slow because
+every data access requires the client to wait for an RPC round-trip time. The delay is further
+aggravated by the huge load that it puts on a server that must service every I/O request from its
+clients. To increase performance and to reduce server load, remote filesystem protocols attempt
+to cache frequently used data on the clients themselves. If the cache is designed properly, the
+client will be able to satisfy many of its own I/O requests directly from the cache. Performing
+these accesses is faster than communicating with the server, reducing latency on the client and
+load on the server and network. The hard part of client caching is keeping the caches
+coherent—that is, ensuring that each client quickly replaces any cached data that are modified
+by writes done on other clients. If one client writes a file that is later read by a second client, the
+second client wants to see the data written by the first client, rather than the stale data that were
+in the file previously. There are two main ways that the stale data may be read accidentally:
+
+1. If the second client has stale data sitting in its cache, the client may use those data because it
+does not know that newer data are available.
+
+2. The first client may have new data sitting in its cache but may not yet have written those data
+back to the server. Here, even if the second client asks the server for up-to-date data, the server
+may return the stale data because it does not know that one of its clients has a newer version of
+the file in that client’s cache.
+
+The second of these problems is related to the way that client writing is done. Synchronous
+writing requires that all writes be pushed through to the server during the write system call.
+This approach is the most consistent because the server always has the most recently written
+data. It also permits any write errors, such as “filesystem out of space,” to be propagated back to
+the client process via the write system-call return. With an NFS filesystem using synchronous
+writing, error returns most closely parallel those from a local filesystem. Unfortunately, this
+approach restricts the client to only one write per RPC round-trip time.
+
+An alternative to synchronous writing is delayed writing, where the write system call returns as
+soon as the data are cached on the client; the data are written to the server sometime later. This
+
+approach permits client writing to occur at the rate of local storage access up to the size of the
+local cache. Also, for cases where file truncation or deletion occurs shortly after writing, the
+write to the server may be avoided entirely because the data have already been deleted. Avoiding
+the data push saves the client time and reduces load on the server.
+
+There are some drawbacks to delayed writing. To provide full consistency, the server must notify
+the client when another client wants to read or write the file so that the delayed writes can be
+written back to the server. There are also problems with the propagation of errors back to the
+client process that issued the write system call. For example, a semantic change is introduced by
+delayed-write caching when the file server is full. Here, delayed-write RPC requests can fail with
+an “out of space” error. If the data are sent back to the server when the file is closed, the error
+can be detected only if the application checks the return value from the close system call. For
+delayed writes, written data may not be sent back to the server until after the process that did
+the write has exited—long after it can be notified of any errors. The only solution is to modify
+programs writing an important file to do an fsync system call and to check for an error return
+from that call instead of depending on getting errors from write or close. Finally, there is a risk
+of the loss of recently written data if the client crashes before the data are written back to the
+server.
+
+A compromise between synchronous writing and delayed writing is asynchronous writing. The
+write to the server is started during the write system call, but the write system call returns
+before the write completes. This approach reduces the risk of data loss because of a client crash
+but negates the possibility of reducing server write load by discarding writes when a file is
+truncated or deleted.
+
+Since NFS has no way of knowing when write sharing might occur, it tries to bound the period of
+inconsistency by writing the data back when a file is closed. Files that are open for long periods
+are written back when their oldest dirty data becomes 30 seconds old. Thus, the NFS
+implementation does a mix of asynchronous and delayed writing, but it always pushes all writes
+to the server on close. Pushing the delayed writes on close negates much of the performance
+advantage of delayed writing because the delays that were avoided in the write system calls are
+observed in the close system call. With this approach, the server is always aware of all changes
+made by its clients with a maximum delay of 30 seconds and usually sooner, because most files
+are open only briefly for writing.
+
+The server maintains read consistency by always having a client verify the contents of its cache
+before using that cache. When a client reads data, it first checks for the data in its cache. Each
+cache entry is stamped with an attribute that shows the most recent time that the server says
+that the data were modified. If the data are found in the cache, the client sends a timestamp RPC
+
+request to its server to find out when the data were last modified. If the modification time
+returned by the server matches that associated with the cache, the client uses the data in its
+cache; otherwise, it arranges to replace the data in its cache with the new data.
+
+The problem with checking with the server on every cache access is that the client still
+experiences an RPC round-trip delay for each file access, and the server is still inundated with
+RPC requests, although they are considerably quicker to handle than are full I/O operations. To
+reduce this client latency and server load, most NFS implementations track how recently the
+server has been asked about each cache block. The client then uses a tunable parameter that is
+typically set at a few seconds to delay asking the server about a cache block. If an I/O request
+finds a cache block and the server has been asked about the validity of that block within the
+delay period, the client does not ask the server again, but just uses the block. Because certain
+blocks are used many times in succession, the server will be asked about them only once, rather
+than on every access. For example, the directory block for the /usr/include directory will be
+accessed once for each #include in a source file that is being compiled. The drawback to this
+approach is that changes made by other clients may not be noticed for up to the delay number of
+seconds.
+
+A more consistent approach used by some network filesystems is to use a callback mechanism
+where the server keeps track of all the files that each of its clients has cached. When a cached file
+is modified, the server notifies the clients holding that file so that they can purge it from their
+cache. This algorithm dramatically reduces the number of queries from the client to the server,
+with the effect of decreasing client I/O latency and server load [Howard et al., 1988]. The
+drawback is that this approach introduces state into the server because the server must
+remember the clients that it is serving and the set of files that they have cached. If the server
+crashes, it must rebuild this state before it can begin running again. Rebuilding the server state
+is a significant problem when everything is running properly; it gets even more complicated and
+time-consuming when it is aggravated by network partitions that prevent the server from
+communicating with some of its clients [Mogul, 1993].
+
+The FreeBSD NFS implementation uses asynchronous writes while a file is open but
+synchronously waits for all data to be written when the file is closed. This approach gains the
+speed benefit of writing asynchronously, yet ensures that any delayed errors will be reported no
+later than the point at which the file is closed. The implementation will query the server about
+the attributes of a file at most once every 3 seconds. This 3-second period reduces network
+traffic for files accessed frequently, yet ensures that any changes to a file are detected with no
+more than a 3-second delay. Although these heuristics provide tolerable semantics, they are
+noticeably imperfect.
+
+11.3 NFS Evolution
+
+Over its 25-year history, the NFS protocol has had to evolve to meet changing technology and
+user requirements. Many of the features that were considered experimental extensions to
+version 3 of NFS, as well as the work done in NQNFS, have been codified and included as fully
+fledged features in the latest versions of the protocol, NFS version 4.0 and 4.1. NFS version 3, in
+particular, depended on external daemons for certain operations, such as locking, that have now
+been subsumed into the base protocol in version 4, obviating the need for supplementary
+daemons. The scale of the work undertaken to update NFS for version 4 was monumental, with
+the initial update to version 4.0 spanning over 250 pages of description [Shepler et al., 2003].
+Version 4.1, an update to version 4.0, is described in an even larger, 600-page-plus document,
+although much of the length of the update can be attributed to the more extensive description of
+each of the possible NFS operations [Shepler et al., 2010]. FreeBSD contains an implementation
+of both a client and server that supports the NFS protocol up through version 4.1. This section
+describes the design and implementation of both of the protocols as if they were one. The
+differences between the major version and the revision will be noted only when absolutely
+necessary. The NFSv4.0 RFC lists four goals for the latest version of the protocol:
+
+• Improved access and good performance on the Internet. The protocol should not only do well
+in   a   high-bandwidth/low-latency      network      such   as   a   LAN,   but      also   over   a
+low-bandwidth/high-latency network such as a WAN. The earlier versions of the protocol
+operate poorly over WANs.
+
+• Strong security with negotiation built into the protocol. When NFS was first designed,
+computers that were powerful enough to run a UNIX-like operating system were generally used
+in medium to large installations and were not carried around by individuals who might connect
+them to an insecure network and then expect to get full access to their files on a server. The
+advent of mobile computing and pervasive, high-speed, wireless networking has made it so that
+all network protocols must address security concerns, and NFS is no different. Version 4 of the
+protocol had security mechanisms designed into it from the beginning.
+
+• Good cross-platform interoperability. NFS was designed so that computers running UNIX-like
+operating systems, with similar directory structures and file operations, could share a
+centralized store of files. The adaptation of NFS to non-UNIX environments required rethinking
+the protocol so that more types of clients could interoperate with NFS servers.
+
+• Designed for protocol extensions. A shortcoming of both version 2 and version 3 of the NFS
+protocol was that it was virtually impossible to extend once it had been deployed. An inability to
+evolve the protocol has meant that necessary changes took a long time to get into the field.
+
+Revision 4.1 of the NFS protocol adds a few new goals:
+
+• Correct significant structural weaknesses and oversights discovered in version 4.0 of the
+protocol
+
+• Add clarity and specificity to areas left unaddressed or not addressed in enough detail in
+version 4.0 of the protocol
+
+• Add specific features based on experience with the existing protocol and recent industry
+developments
+
+• Provide protocol support for clustered-server deployments including providing scalable
+parallel access to files distributed across multiple servers
+
+NFSv4 is a significantly different protocol from its predecessors. A fundamental change in
+NFSv4 is the move to a stateful protocol. Many of the new features in version 4, such as caching,
+delegation, and locking, require that the server maintain state. Another significant change
+comes at the lowest level of the protocol where the 20 standard RPCs present in version 3 of the
+protocol have been replaced with two regular procedures, NULL and COMPOUND, and two
+callback procedures, CB_NULL and CB_COMPOUND. The operations that were previously
+encoded as their own RPCs in NFS versions 2 and 3 (see Section 11.2) are now encoded as
+operations within the COMPOUND or CB_COMPOUND RPCs. The COMPOUND procedure
+encapsulates, in a single RPC call, several NFS operations that are to be carried out by the server.
+When a server receives a COMPOUND RPC, it attempts to perform the operations encapsulated
+therein, in the order in which they are encoded into the message. If an error occurs in processing
+any of the operations received in the COMPOUND RPC, processing immediately stops and an
+error is returned. Encapsulating multiple operations into a single message can help to improve
+the performance of NFS by reducing the number of round trips that each operation requires. In
+practice, it has not been possible to group operations within the COMPOUND RPCs because too
+often one operation is dependent on the successful completion of a previous operation. Although
+the current implementation of NFSv4 in FreeBSD groups between 3 and 5 operations, the
+number of messages needed to do an operation in NFSv4 is the same as NFSv3.
+
+Comparing the set of operations available in NFSv4, shown in Table 11.2 with the RPCs that
+were given in Table 11.1 shows that there are more than twice as many available in NFSv4. The
+new operations exist to support new features available in NFSv4 including locking, which was
+handled by a separate protocol under previous versions of NFS, delegations, which allow for
+local open and lock operations to be carried out on the client; and more aggressive caching of
+file data and attributes.
+
+Table 11.2 NFS Version 4 operations.
+
+A significant change between previous versions of NFS, and NFSv4 is the addition of explicit
+OPEN and CLOSE operations. Integrating support for features that require state, such as
+locking and caching, lead to the addition of OPEN and CLOSE, which bring the filesystem
+semantics present in NFSv4 closer to those of a stateful local filesystem such as UFS. In previous
+versions of NFS, all the client needed to manipulate a file on the server was the file’s handle.
+NFSv4 requires clients to open a file and obtain a file handle specific to that file before it can
+perform operations such as reading and writing data.
+
+The original version of NFS targeted UNIX and UNIX-like operating systems in which there was
+always a single unique filesystem root. Systems such as Windows have a root for each filesystem
+that appears as the drive letter, C:, D: etc. Version 4 of the protocol tries to address the
+multiple-root problem by having the server maintain a pseudo-filesystem hierarchy that
+brings back the concept of a single root to the filesystem tree. The motivation for providing a
+single namespace comes from the way that many users access their files. They progressively
+browse the directory and file hierarchy through a graphical chooser or via tab completion on the
+command line.
+
+A way to reduce the load on the server and to improve the user’s experience on the client is to
+allow the client to cache as much file and metadata as possible. Removing round trips between
+the client and server by keeping copies of data at the client is a well-known technique for
+improving performance in a distributed system. Caching data at the client introduces the
+problem discussed in Section 11.2, maintaining the coherence of data over many systems which
+must be handled carefully to avoid cases where data are mangled or lost by conflicting changes
+submitted by different clients. If two clients have opened and modified the same file, and those
+modifications occur on copies of the data that are locally cached at the client, then the server has
+no way of knowing which modification is correct and which should be thrown away. To avoid
+cache-coherency problems, NFSv4 only allows a client to cache information if either it is the
+only one writing data to the file or if all clients are only reading from the file. When a server
+allows a client to cache data, it is said to be delegating responsibility for that data to the client.
+To properly support delegation, the protocol must also have a way to regain control over the
+data it delegated, for example, if a second client requests to open a file for writing. To regain
+control over a delegated piece of data, the server uses a callback mechanism to contact the client
+to which it has delegated the data and tell the client that the data can no longer be cached. In the
+absence of delegations, NFSv4 reverts to caching data, similarly to the way it was cached in
+NFSv3, by having the client periodically check for file change with the server.
+
+Namespace
+
+A problem users encounter when browsing a server’s filesystem under version 2 or 3 of NFS is
+reaching a dead end in the directory hierarchy caused by having to cross a mount point. On a
+simple server, all the underlying filesystems might be exported to all clients, but exporting to all
+clients would be an unusual case. More commonly, a subset of the filesystems are exported, such
+as those in Table 11.3, where there are two exported filesystems, / and /usr/ports bracketing
+one that is not exported. In previous versions of NFS, users that had changed their directory to
+the root would not be able to see /usr/ports from the root directory because the /usr volume
+was not exported, leaving a hole in the directory hierarchy. NFSv4 servers maintain a complete
+
+hierarchy of their exported filesystems filling in any holes with pseudo-filesystems that appear
+to the client as read-only exports.
+
+Table 11.3 Unified namespace.
+
+Representing a unified namespace to the client requires the server to handle four operations
+differently from all others. The LOOKUP, GETATTR, GETFH, and SECINFO operations are the
+only client requests that are allowed to cross mount-points on the server. The function
+nfsrvd_compound(), which handles all COMPOUND RPCs for the server, checks to see if the
+operation is one of the four listed above and returns an error to the client if any other operation
+attempts to cross a mount point. It is by allowing these four operations to cross mount points
+that the client and server can present a unified filesystem hierarchy to the user.
+
+Attributes
+
+Version 3 of the NFS protocol contained limited support for file attributes. Attributes are
+metadata that are associated with a file, such as its size, and the times at which it was created,
+modified, and accessed. The original 13 file attributes that were available in NFSv3 proved to be
+insufficient for more modern filesystems that store more metadata. Information such as
+whether the file has been recently archived or the maximum supported file size, only some of
+which may be supported by a filesystem, are handled as attributes within NFSv4.
+
+Clients have the ability to request attributes on an operation-by-operation basis, which means
+that the client can be highly specific about what it wants to know about the server or any object
+stored on it. The attributes that the server supports are themselves communicated as an
+attribute between the server and the client. The OPEN operation only asks for 2 attributes, the
+most recent modification time of the file and a server-generated change value that is used by the
+client to determine if the file or any of its associated metadata have been changed. The attribute
+is generated by the server, stored by the client, and used periodically after a successful OPEN
+call to make sure that the file has not changed on the server. A file can change when it is opened
+by multiple writers or when a user local to the server modifies the file directly. The ACCESS
+operation, which determines if the user can access an object, asks for 16 different attributes,
+
+including the file’s owner and group, the file’s mode, and the largest read request that the server
+will support. Unlike previous versions of NFS, the owner and group for a filesystem object are
+not a numeric user id and group id. Rather, they are strings that encode the user and domain
+name of the system, for example, gnn@FreeBSD.org.
+
+The RFC defines three groups of attributes for version 4 of NFS. Required attributes are those
+pieces of metadata that every server must provide and every client must be able to handle.
+Examples of required attributes are file size, file type, and whether the server supports links.
+Recommended attributes are those that the authors of the RFC felt would be best for servers to
+support but are not strictly necessary. An example of a recommended attribute is an
+access-control list. The next subsection discusses recommended attributes such as whether a file
+should be considered as hidden by the Windows operating system, the maximum size of files,
+links and names supported by the server, and many others. The NFSv4 RFC includes 43
+recommended attributes.
+
+A goal for the NFSv4 protocol is extensibility, which includes being able to extend the set of
+attributes that can be associated with a filesystem object. Named attributes make extensibility of
+the attribute system in the field possible. A named attribute can be thought of as a key/value
+pair, where both the key and value are uninterpreted strings that can be associated with any
+filesystem object. The implementation of named attributes is dependent on the server, but the
+most common implementation creates a directory of named attributes. This attribute directory
+is sometimes referred to as a fork file. Each attribute appears as a file in this attribute directory.
+Each attribute file can be opened, read, and written to modify the named attribute. Named
+attributes are not supported by the FreeBSD 10 NFSv4 server.
+
+Clients request attributes by using the GETATTR operation that is encoded into a COMPOUND
+RPC, with other operations such as ACCESS and OPEN. Unlike previous versions of NFS,
+attributes are not sent in a fixed-size structure. They are requested when the client sets specific
+bits in a bit array. The implementation of NFSv4 in FreeBSD uses a set of macros to simplify
+handling the bits in the attribute array. The server replies to each GETATTR query from the
+client using the same 64-bit-wide array to indicate to the client which of the requested attributes
+are present. A single routine, nfsv4_fillattr(), does all the work of encoding attributes on the
+server. Centralizing the handling of attributes makes the code easier to manage and update.
+Clients can also set attributes on filesystem objects on the server by using the SETATTR
+operation. An example of setting an attribute is changing the access control list on an object, as
+discussed in the next subsection.
+
+Access Control Lists
+
+Although it is possible to use UNIX-style users, groups, and mode bits to control access to a set
+of files, such a system is limited in several ways. The first limitation is that there are clients such
+as Windows that do not understand UNIX user and group IDs, or UNIX mode bits. The second,
+and more important, limitation is that users and groups do not scale well in a heterogeneous
+environment. If two different departments both allocate user and group numbers independently,
+there is a high likelihood of a collision should these users and groups ever attempt to share a
+single filesystem. Forcing one set of users to change their user and group IDs can be a daunting
+task if there are many files that need to have their user and group IDs changed. Finally, the
+traditional UNIX model is often too coarse grained for large organizations that have multiple
+layers of security. For these reasons NFSv4 has added support for Access Control Lists
+(ACLs) to the protocol.
+
+An ACL can express a specific set of permissions on any object in the filesystem, including files,
+directories, and links. Several filesystems present in FreeBSD including UFS and ZFS have
+built-in support for ACLs. For information on how ACLs are represented in a filesystem, see
+Section 5.7. ACLs in NFSv4 are a way of communicating the ACLs present in the filesystem over
+the network. The structures for ACLs are shared between NFSv4 and the on-disk filesystems
+ZFS and UFS. ACLs are contained in attributes, which is why setting or retrieving an ACL is
+done with the SETATTR and GETATTR operations rather than with a dedicated set of
+operations just for ACLs. Several operations can handle ACLs including: OPEN, CREATE,
+SETATTR, and GETATTR.
+
+Caching, Delegation, and Callbacks
+
+One way to improve the performance of a distributed system is to cache as much data and do as
+many operations at the client as possible. There are three caching scenarios in a distributed
+filesystem:
+
+1. A file is being read by one or more clients. The file can be cached at all the clients at the same
+time as long as there are no updates to the file’s data, and only minor changes to its metadata,
+such as changes to its time of last access.
+
+2. A file is being written by a single client. The client that is writing the file may cache writes
+locally so that updates to the file are batched before being sent to the server, thereby improving
+write performance.
+
+3. A file is being both read and written simultaneously on several clients and, therefore, cannot
+be cached at any of the clients but must be updated and accessed only on the server.
+
+To properly handle all three of these scenarios and the inevitable transitions between them,
+NFSv4 provides clients with the ability to work with files locally through a mechanism called
+delegation. NFSv4 maintains control over delegated files via a series of callbacks from the
+server to the client. Caching and delegation are intimately related with normal file operations.
+This section illustrates these mechanisms by describing how the client and server establish
+communication and how they work together during the typical operation where clients are
+opening, closing, reading, and writing files.
+
+Before a client can open a file, it must first mount the filesystem exported by the server, at which
+time several key structures are created. An NFSv4 client begins the mounting process by testing
+to see if the server exists using a CB_NULL message. If the client receives a correct reply, it then
+establishes a session with the server. Mounting an NFSv4 filesystem requires the creation of two
+persistent pieces of information shared by the client and the server. A client ID is created to
+identify the client and a session ID identifies all operations between the client and the server.
+The client ID is a unique 64-bit value that identifies each client from the server’s perspective.
+The client establishes its identity with the server by using an EXCHANGE_ID operation. The
+EXCHANGE_ID operation is the first of a twopart operation that establishes the identity of the
+client on the server. The exchange_id() service executing in the server’s kernel allocates an
+nfsclient structure that tracks all the client’s interactions with the server. The nfsclient structure
+is retained until either the client unmounts all the filesystems that it has mounted from the
+server or the server or client crash. The process of mounting a filesystem is shown in Figure 11.4.
+
+Figure 11.4 Mounting an NFSv4 Filesystem. Step 1: Client looks for the server with a
+CB_NULL RPC. Step 2: The Server replies to the CB_NULL. Step 3: Client requests a client ID
+from the server with an EXCHANGE_ID call. Step 4: The Server replies with a valid client ID
+constructed from their server’s boot time and an incrementing boot count. Step 5: Client
+establishes a session with a CREATE_SESSION RPC. Step 6: The Server returns a set of
+communication parameters to the client establishing the session. Step 7: The Server checks to
+see whether the client is running the nfscbd daemon with its own CB_NULL call. Step 8: The
+client’s nfscbd daemon replies to the CB_NULL RPC.
+
+Structures in the FreeBSD NFS implementation are named such that they can be easily
+identified as belonging either to the client or the server code. All structures that are part of the
+client software have the letters “cl” embedded between “nfs” and the structure’s descriptive
+name. Thus, the structure that encapsulates the client’s state in the client code is named
+nfsclclient, while the server structure that encapsulates the client’s state is named nfsclient.
+Table 11.4 lists several of the client and server structures.
+
+Table 11.4 Client and server data structures.
+
+When the server is contacted by a client with an EXCHANGE_ID call, it searches its client hash
+list for a pre-existing instance of the client and if no preexisting client is found, initializes a new
+nfsclient structure. Each client is assigned a unique client ID based on the boot time of the
+server and an incrementing counter. The combination of the boot time and the counter make
+client IDs unique across server reboots. This information is used by the client to detect when it
+must recover state from a crashed server. The boot time increases whenever the server is
+rebooted; a client that sends a request with an out-of-date client ID will receive an error from
+the server.
+
+The second part of establishing initial communication between a client and server is the creation
+of a session. The next operation after the EXCHANGE_ID must be a CREATE_SESSION as no
+other operations can take place until a session has been created. All operations in NFSv4, other
+than the establishment of the client ID, occur as part of a session.
+
+The session concept was added during the update to NFSv4.1 and does not exist in version 4.0.
+One reason sessions were added was to provide exactly once semantics. On the server side,
+each session has associated with it a set of available slots. Operations posted to a slot will always
+be serialized; they will never be run in parallel. If a client wants to serialize a set of calls, for
+example, a series of locking operations, it will use the same slot on the server for all the locking
+calls so that the RPC calls are serialized on that single slot. Operations that do not require
+
+serialization, such as reads, can be spread across the slots to increase parallelism and receive the
+fastest level of service from the server.
+
+A session describes all the state necessary for the client and server to communicate, including
+several parameters that influence resource allocation and performance. The parameters
+negotiated as part of setting up a session include the maximum number of concurrent requests
+the session can carry at any one time, the maximum number of operations per request, and the
+maximum number of replies that the server can cache. Fine-grained performance tuning can be
+implemented using the session parameters, as they allow the server to express what it can
+handle in terms of parallelism and the amount of state it is willing to maintain on behalf of each
+client. To create a session, the client sends its client ID to the server along with its set of
+requested communications parameters. The server responds with a session ID and a possibly
+modified set of communications parameters. If the parameters are unacceptable to either the
+client or the server, then an error is returned and the session is not created. Once the client and
+server have created a session, the structures shown in Figure 11.5 are in place. The session
+structure on both the client and the server contain the negotiated communication parameters
+for use by the kernel when filesystem operations are executed. To complete the mounting
+process the server sends a CB_NULL RPC to the client and waits for a reply. If the server
+receives a reply to its CB_NULL call, it can then allow the client to cache data through the
+delegation process. If there is no reply to the CB_NULL RPC then the server will never grant a
+delegation to the client but will allow the client to receive file services. The callback mechanism
+is not used to test the network path between the client and server, as the client and server have
+already demonstrated their ability to properly communicate over the network. The server sends
+the call back to the client to ensure that the client is running the call back service, which is what
+allows the server to recall a delegation.
+
+Figure 11.5 Session and client structure (server side).
+
+The need to handle callbacks in the NFSv4 protocol has led to the creation of a new daemon that
+must run on the client and whose job it is to receive and respond to the callbacks. The nfscbd
+program is an optional daemon that must be run if the client is to receive delegations. It is
+nfscbd that responds to the CB_NULL RPCs sent by the server, and to which all
+CB_COMPOUND RPCs will be sent. The full complement of callback operations is given in
+Table 11.5. The daemon itself is simple; like the NFS daemons described in Section 11.2, it is
+implemented by a set of kernel libraries that register a callback, nfscb_program(), with the
+kernel RPC service. The nfscb_program() interprets the CB_COMPOUND or CB_NULL RPC
+that it receives and takes the appropriate action. While it would be possible to add the callback
+
+functionality directly into the nfsd program, it is cleaner and simpler to place it in its own
+daemon.
+
+Table 11.5 NFS Version 4.1 callback operations from server to client.
+
+Once the client and state IDs and client and session structures are set up, the client can ask for
+services from the server.
+
+NFSv4 uses delegations combined with a system of callbacks to provide clients the ability to
+cache both data and metadata. Figure 11.6 shows a typical delegation and recall scenario. A
+delegation is a recallable right granted by the server to the client that allows the client to
+perform operations locally for a fixed but extendable period of time without consulting the
+server. Delegations are always under the control of the server and may be revoked at any time.
+There are two important problems that NFSv4 has to handle with respect to delegations. The
+first is that the server must be able to revoke a delegation. Revoking a delegation requires the
+server to contact the client, which reverses the normal client-server relationship seen in
+previous versions of NFS. The second problem is that the client or server may crash or they may
+be unable to communicate for some period of time because of a network partition. If the server
+is unable to retrieve a delegation from a client, then it cannot allow other clients to proceed with
+operations on the same file. To prevent files from being caught in this deadlock situation, the
+server only allows the client to use a delegation for a fixed period of time, which is called a lease.
+
+Figure 11.6 Delegating and recalling delegations. Step 1: Client A opens file foo.txt and wishes
+to cache it locally. Step 2: The server replies to the OPEN and includes an
+OPEN_DELEGATE_WRITE delegation type. Step 3: Client B asks the server for foo.txt, the
+same file that client A asked for in Step 1. Step 4: The server informs client A, via a
+CB_COMPOUND callback, that it must return the delegation for foo.txt. Step 5: Client A
+flushes any of its pending changes to foo.txt and returns the delegation by sending a
+DELEG_RETURN message to the server. Step 6: The server finishes the open and grants a file
+handle for foo.txt to client B with a delegation type of DELEGATE_NONE.
+
+A lease is a piece of data that acts as a contract between the client and server, permitting an
+activity that is valid until some expiration time. As long as a client holds a valid lease, it knows
+that the server will not violate the terms of the contract, for example, by handing out a
+conflicting lock to another client. The server maintains a single lease for each client and the
+lease covers all the state including delegations and locks that are granted to the client. When the
+client first contacts the server and establishes a session, it will ask for the lease time via a
+GETATTR request and the server will return the lease time, which by default is 120 seconds. The
+client must renew the lease before the lease period ends. A lease is only considered stale by the
+server if it is older than five times the lease duration. If the client fails to renew the lease, it must
+return all the delegations and locks that were previously granted by the server. Several common
+operations, including opening or locking files, will cause the lease time to be extended. The
+
+server will respond with an error of NFS4ERR_EXPIRED to any operation from a client whose
+client ID has expired. The client must contact the server before the lease has expired if it wants
+to continue to hold the lock.
+
+Leases are issued using time intervals rather than absolute times to avoid the requirement of
+time-of-day clock synchronization. If NFSv4 used absolute times for its leases, then the server
+and all its clients would need to have their clocks synchronized, via an external time protocol
+such as NTP or PTP, so that they would all share the same concept of the current time [Mills,
+1992; IEEE, 2008]. By using an interval time, the server and clients can all have completely
+unsynchronized clocks and still execute the lease protocol correctly because each system has the
+ability to know when a certain amount of time has passed. A small amount of slop is allowed
+into the lease calculation to account for differing clock speeds between the clients and the
+server.
+
+The server attempts to maintain client state as long as possible and will not forcibly remove a
+client that has delegations or active opens so long as it has enough resources to maintain the
+state. Each server has a maximum number of active clients that it is willing to service, 1000 by
+default, and so long as this number is not exceeded, a client’s state ID, and therefore its implied
+lease, can remain active on the server for up to a week.
+
+Each session has only one lease expiration time associated with it and all operations that must
+operate under a lease, including locking and delegations, are constrained by the same timeout.
+Although there is a specific operation to renew a lease it is rarely used because any operation
+initiated by the client that contains a valid client ID extends the lease time. Operations that
+extend the lease include OPEN, CLOSE, READ, WRITE, LOCK, and several others. When a lease
+has almost expired, and no other operation has taken place that might extend it, the client will
+attempt to extend the lease using the RENEW operation. If the request to renew the lease is
+granted, then operations can continue as before, with the new lease expiration being another
+120 seconds into the future. When the server denies the request, the client loses all its locks and
+share reservations that it had in place up to the point when it received the denial from the
+server.
+
+Clients that open a file exclusively for reading where no client is attempting to write, may cache
+data from the opened file and may also repeatedly open the same file without contacting the
+server. If a server has delegated control of a file to a client and then another client attempts to
+open the file for writing, the server must invalidate the original delegation and the first client
+must return the delegation to the server before the second client can be given access to the file.
+
+Locking
+
+Previous versions of NFS did not include support for file or record locking as part of the protocol.
+Limited support for locking was provided in NFSv3 by an out-of-band protocol and an external
+daemon, the Network Lock Manager. NFSv4 distinguishes between two cases when dealing with
+locks: a byte-range lock and a lock on an entire file, which is referred to in the protocol as a
+share reservation. Whole-file locking is handled through the OPEN RPC. When a client opens a
+file it specifies the type of access that it wishes to have: read, write, or both. It also specifies the
+level of control it wishes to maintain over the entire file in the form of a set of share deny bits, as
+shown in Table 11.6. During on open file operation, the client can indicate that it needs exclusive
+control over read, write, or both operations. A client that does not need to lock a file in any way
+specifies a share deny of none.
+
+Table 11.6 Open share types.
+
+The server maintains a global structure that is a hashed list of all locks relating to files.
+Whenever a file is opened, a new nfslockfile structure is allocated and added to the nfslockhash
+table whether the client is asking the server to lock the file or a byte range within it. An
+nfslockfile structure exists for all open files so that there is one common place to which the
+server can refer to check on or allocate locking state in the future.
+
+Byte-range locks are acquired and released via a separate set of RPC calls: LOCK, LOCKU, and
+LOCKT, which respectively lock, unlock, and test for byte-range locks. A single, large, routine,
+nfsrv_lockctrl() is at the center of all byte-range-locking operations and is called by the server’s
+nfsrvd_lock(), nfsrvd_locku(), and nfsrvd_lockt() routines, which map to the RPC operations
+listed above. File locking is handled via the nfsrv_open() routine as described earlier in this
+section. Prior to locking a byte range, the nfsrv_lockctrl() routine must first check to make sure
+that there are no conflicting delegations or conflicting locks. A conflicting delegation would exist
+
+only if another client had been granted a write delegation in the past. The write delegation must
+be recalled by the callback mechanism before the lock can be granted. Read delegations do not
+conflict with locks because the lock does not deny a client the ability to read data. The server
+locks a range of bytes within a file by adding an nfslock structure to the nfslockfile structure
+associated with the underlying file. When the client requests a byte-range lock, the server looks
+up the nfslockfile structure for the underlying file and searches the lf_lock list for any conflicting
+locks. If no conflicting lock is found, then a new nfslock structure is allocated and added to the
+list of locks for the file. The list of locks is kept in increasing order of byte range so that only a
+single pass over the list is necessary to find potential conflicts as well as the proper location to
+add or coalesce entries. All the actual changes to the file’s locking state are handled by the
+nfsrv_updatelock() routine, which is responsible for adding and removing lock structures from
+the file’s lf_lock list. Figure 11.7 shows an example containing two files, one of which has two
+byte-range locks. Acquiring a lock is considered a heavyweight operation in which much state
+may be passed between the client and the server. Reading and writing data, which should be the
+majority of the work of the protocol, should not be burdened with the state needed to maintain
+control of a lock.
+
+Figure 11.7 NFSv4 locking data structures.
+
+Both share reservations and byte-range locks are acquired under the same lease that is used for
+delegations. The lease limits the time that the client can maintain a lock on a file or piece of a file
+without a renewal.
+
+Security
+
+Versions 2 and 3 of NFS had little support for security features. Since the original goal of the
+NFS protocol was to enable the sharing of files within a single work-group, and certainly within
+a single organizational domain, it did not seem necessary to have heavyweight mechanisms for
+authenticating, encrypting, or validating data. Network filesystems are now deployed widely
+within companies and across more hostile environments, such as the Internet, so NFSv4 has
+integrated support for various levels of security directly into the protocol. There are three
+components that interact to provide security within NFSv4: an authentication system, a library
+that secures data within the RPC layer, and NFSv4 itself.
+
+A system that wishes to provide a secure communication environment must have a way to
+authenticate participants such as users and hosts. Authentication is the process by which a
+participant, such as a user, proves to some other participant, such as a remote file server, that
+the participant is who it claims to be. NFSv4 relies on version 5 of the Kerberos Network
+Authentication Service to provide authentication between participants of the system [Neuman et
+al., 2005]. The Kerberos systems acts as a trusted third party that is used by both clients and
+servers to verify the truthfulness of various assertions that are made by participants in the
+system. A client wishing to communicate with a server using Kerberos must first contact a
+Kerberos authentication server to acquire the proper credentials, referred to in Kerberos as a
+ticket. A ticket has a limited lifetime to protect against a malicious entity gaining permanent
+access to the system. Using the ticket, the client can authenticate itself to the server and perform
+various cryptographic operations that allow the client and server to encrypt their data and
+communicate privately. Kerberos is a relatively complex network security protocol and will not
+be covered in further detail here. Interested readers are recommended to the RFC cited above
+for further information on the Kerberos protocol. For the purposes of our discussion within
+NFSv4 Kerberos should be thought of as the system that hands out, to both clients and servers,
+the keys to lock and unlock data transported over the network.
+
+An authentication system is a necessary requirement to implement a secure network-based
+filesystem, but it does not really have any ability to secure or verify the data that is exchanged in
+the system. Securing data in NFSv4 is done using the RPCSEC_GSS protocol that depends on
+the Generic Security Service Application Program Interface (GSSAPI) [Eisler et al., 1997; Linn,
+2000]. Three parameters describe the mechanism, service, and quality of protection that
+secures data between the client and the server. When taken together, these three parameters are
+
+referred to as the security-triple and each unique security triple is referred to as a flavor. There
+are three possible services that can be provided by the GSSAPI. The authentication service
+guarantees that a user or other entity wishing to gain access to a piece of data is the user or
+entity that they claim to be. NFSv4 uses Kerberos to authenticate users and systems, and so does
+not use the authentication service in GSS. The integrity service guarantees that the data has not
+been tampered with in transit but does not prevent an attacker from reading the data from the
+network while they are in transit between the client and server. The privacy service encrypts the
+data between the client and server so that an attacker cannot read the data while they are in
+transit. The actual encryption and decryption of data is done by the RPC libraries in the kernel
+and not by NFS directly, which has little or no direct knowledge of how data is secured.
+
+The only situation in which NFSv4 deals directly with security, rather than relying on other
+protocols or libraries, is when a client needs to know the choice of security protocols that it can
+use with a server. An NFS client starts by assuming that there is only minimal security
+implemented on the server. At some point, perhaps as early as when a filesystem is mounted by
+the client, the server can respond with an NFS4ERR_WRONGSEC error, forcing the client to
+negotiate security parameters with the server. The client sends a SECINFO operation in
+response to the NFS4ERR_WRONGSEC message and receives back from the server a security
+flavor. If the security flavor is RPCSEC_GSS, then the reply to the SECINFO operation also
+contains a security triple, indicating the type of security and quality of security service that the
+server supports. Servers may return a list of security triples and the client picks the first one that
+it can support.
+
+Data security in NFSv4 is available on a filesystem by filesystem basis, meaning that many
+different operations may fail with an NFS4ERR_WRONGSEC reply and necessitate the
+negotiation of security parameters.
+
+Crash Recovery
+
+A distributed system such as NFS must gracefully handle several common error conditions such
+that applications using the service can treat it as they would a local filesystem. Maintaining this
+illusion of consistency requires the protocol to have mechanisms that prevent recoverable or
+transient errors from permanently interrupting the service. While it should not be a common
+occurrence, the client or the server may crash, leading to an inconsistent state among the
+communicating systems. A more common problem is a network partition, where a client and
+server that were once able to communicate can no longer reach each other for some period of
+time. Network partitions may be brief, but if the state on the client and server get out of sync
+during the period when the client and server cannot communicate, then they must have a way to
+agree on a consistent state once the partition is repaired. From the point of view of both the
+
+client and server, it is impossible, without some help from the protocol, to determine whether a
+system has crashed or whether a temporary network partition has occurred. The NFSv4 protocol
+has mechanisms that handle regaining consistent state after a network partition or the failure of
+either the client or server system.
+
+A client that has crashed and restarted would like to return to a correct running state as quickly
+as possible. Even though a client has crashed and restarted, the server continues to hold state
+for the client. Each client has an associated client ID. All state for the client is maintained at the
+server until the server restarts or the client dismounts all its mounted filesystems and destroys
+its session and client ID with explicit DESTROY_SESSION and DESTROY_CLIENTID RPC
+calls. Even if the client restarts within the lease period, it will still have to create a new client ID
+with the server via the EXCHANGE_ID mechanism described earlier in this section.
+Establishing a new client ID lets the server know that the client has restarted, at which point the
+server can invalidate and free all state associated with the previous incarnation of the client.
+After establishing a new client ID, the client can again use the NFS service.
+
+Recovering from a server crash is a more complicated process than that required when a client
+restarts. When a server experiences a restart, it must take care to restore any locking state that
+existed prior to the system restarting. A client that attempts an operation with a server that has
+restarted will find that both its session and client IDs are invalid, and will have to establish new
+values for both before it can again use the service. A client that had locking state stored on the
+server must then go through a reclamation process to reacquire the locks that it previously held.
+
+When a server restarts, it takes several steps to make sure that it is in a consistent state before it
+continues serving files to its clients. All NFSv4 servers record the time at which they were
+booted, in seconds since the epoch, and place that time into all client and state IDs. When a
+server is restarted, its boot time will have changed and any requests that contain a client or state
+ID from a previous incarnation of the server will receive an NFS4ERR_BAD_SESSION error,
+informing the client that it must reestablish itself with the server. During normal operation, the
+NFSv4 server makes a record of certain operations in a local file that recovers state after a server
+crash. The local state file includes a list of all the previous boot times of the server to guard
+against a collision in boot times. The server’s boot time is used to construct client and state IDs
+and a collision could allow stale client or state IDs to go unnoticed, resulting in file corruption.
+Following the list of previous boot times is a set of variable-size entries containing client IDs and
+flags. The flags indicate whether the client has active state associated with it or whether the state
+has been revoked.
+
+When the server starts up, it sets a grace period of 15 seconds before it will grant new locks.
+During the grace period, clients are expected to reestablish any claims to state on the server,
+
+such as locks, via a reclamation process. The OPEN RPC contains a claim argument that shows
+whether the client is trying to reclaim state on the server. In normal operation, the claim
+argument is set to NULL, but when a client is forced to reestablish state with the server, its
+OPEN RPCs will contain a claim outlined in Table 11.7.
+
+Table 11.7 Open claims.
+
+The client must also reclaim any locks that it had when the server restarted. A lock can be
+reclaimed by sending a LOCK RPC with the reclaim bit set. Once the client has completed the
+process of reclaiming all its state, it sends a RECLAIM_COMPLETE message to the server, at
+which point the server can discard the client’s previous state records from its state file.
+
+The local state file is created when the server is started via a call to the nfsrv_setupstable()
+routine. Any time the state file is written to by the server, it is also backed up via a call to
+nfsrv_backupstable() as an extra, paranoid measure to protect against the corruption of the
+state file during a system crash.
+
+Exercises
+
+11.1 Describe the functions done by an NFS client.
+
+11.2 Describe the functions done by an NFS server.
+
+11.3 Describe three benefits that NFSv3 derives from being stateless.
+
+11.4 Name two new features added to version 4 of the NFS protocol.
+
+11.5 Give two reasons why TCP is a better protocol to use than UDP for handling the NFS RPC
+protocol.
+
+11.6 Describe the contents of a file handle in FreeBSD. How is a file handle used?
+
+11.7 When is a new generation number assigned to a file? What purpose does the generation
+number serve?
+
+11.8 Describe the three ways that an NFS client can handle filesystem-access attempts when its
+server crashes or otherwise becomes unreachable.
+
+11.9 Give two reasons why leases are given a limited lifetime.
+
+11.10 What is a callback? When is it used? Which daemon sends callbacks? Which daemon
+receives them?
+
+11.11 What are the two types of locking that are supported in NFSv4?
+
+11.12 Describe how an NFSv4 server recovers after a crash.
+
+*11.13 Give a network time diagram that shows the process of a client acquiring a record lock
+within a file, writing data to the record, and releasing the lock.
+
+**11.14 Assume that leases have an unlimited lifetime. Design a system for recovering the lease
+state after a client or server crash.
+
+References
+
+SNIA, 2002.
+
+Storage Networking Industry Association SNIA, Common Internet File System (CIFS) Technical
+Reference,    available    from    www.snia.org/tech_activities/CIFS/CIFS-TR-1p00_FINAL.pdf,
+March 2002.
+
+Birrell & Nelson, 1984.
+
+A. D. Birrell & B. J. Nelson, “Implementing Remote Procedure Calls,” ACM Transactions on
+Computer Systems, vol. 2, no. 1, pp. 39–59, Association for Computing Machinery, February
+1984.
+
+Callaghan et al., 1995.
+
+B. Callaghan, B. Pawlowski, & P. Staubach, “NFS: Network File System Version 3 Protocol
+Specification,” RFC 1813, available from http://www.faqs.org/rfcs/rfc1813.html, June 1995.
+
+Eisler et al., 1997.
+
+M. Eisler, A. Chiu, & L. Ling, “RPCSEC_GSS Protocol Specification,” RFC 2203, available from
+http://www.faqs.org/rfcs/rfc2203.html, September 1997.
+
+Gray & Cheriton, 1989.
+
+C. Gray & D. Cheriton, “Leases: An Efficient Fault-Tolerant Mechanism for Distributed File
+Cache Consistency,” Proceedings of the Twelfth Symposium on Operating Systems Principles,
+pp. 202–210, December 1989.
+
+Haynes & Noveck, 2014.
+
+T. Haynes & D. Noveck, NFS Version 4 Protocol (rfc3530bis Draft 33), available from
+https://datatracker.ietf.org/doc/draft-ietf-nfsv4-rfc3530bis/, April 2014.
+
+Howard, 1988.
+
+J. Howard, “An Overview of the Andrew File System,” USENIX Association Conference
+Proceedings, pp. 23–26, January 1988.
+
+Howard et al., 1988.
+
+J. Howard, M. Kazar, S. Menees, D. Nichols, M. Satyanarayanan, R. Sidebotham, & M. West,
+“Scale and Performance in a Distributed File System,” ACM Transactions on Computer Systems,
+vol. 6, no. 1, pp. 51–81, Association for Computing Machinery, February 1988.
+
+IEEE, 2008.
+
+IEEE, 1588-2008 - IEEE Standard for a Precision Clock Synchronization Protocol for
+Networked Measurement and Control Systems, July 2008.
+
+Juszczak, 1989.
+
+C. Juszczak, “Improving the Performance and Correctness of an NFS Server,” USENIX
+Association Conference Proceedings, pp. 53–63, January 1989.
+
+Linn, 2000.
+
+J. Linn, “Generic Security Service Application Program Interface Version 2, Update 1,” RFC
+2743, available from http://www.faqs.org/rfcs/rfc2743.html, January 2000.
+
+Macklem, 1994a.
+
+R. Macklem, “The 4.4BSD NFS Implementation,” in 4.4BSD System Manager’s Manual, pp.
+6:1–14, O’Reilly & Associates, Inc., Sebastopol, CA, 1994.
+
+Macklem, 1994b.
+
+R. Macklem, “Not Quite NFS, Soft Cache Consistency for NFS,” USENIX Association
+Conference Proceedings, pp. 261–278, January 1994.
+
+Mills, 1992.
+
+D. L. Mills, “The NTP Time Synchronization Protocol,” RFC 1305, available from
+http://www.faqs.org/rfcs/rfc1305.html, March 1992.
+
+Mogul, 1993.
+
+J. Mogul, “Recovery in Spritely NFS,” Research Report 93/2, Digital Equipment Corporation
+Western Research Laboratory, Palo Alto, CA, June 1993.
+
+Neuman et al., 2005.
+
+C. Neuman, T. Yu, S. Hartman, & K. Raeburn, “The Kerberos Network Authentication Service
+(V5),” RFC 4120, available from http://www.faqs.org/rfcs/rfc4120.html, July 2005.
+
+Pawlowski et al., 1994.
+
+B. Pawlowski, C. Juszczak, P. Staubach, C. Smith, D. Lebel, & D. Hitz, “NFS Version 3: Design
+and Implementation,” USENIX Association Conference Proceedings, pp. 137–151, June 1994.
+
+Reid, 1987.
+
+Irving Reid, “RPCC: A Stub Compiler for Sun RPC,” USENIX Association Conference
+Proceedings, pp. 357–366, June 1987.
+
+Sandberg et al., 1985.
+
+R. Sandberg, D. Goldberg, S. Kleiman, D. Walsh, & B. Lyon, “Design and Implementation of the
+Sun Network Filesystem,” USENIX Association Conference Proceedings, pp. 119–130, June
+1985.
+
+Shepler et al., 2003.
+
+S. Shepler, B. Callaghan, D. Robinson, R. Thurlow, C. Beame, M. Eisler, & D. Noveck, “Network
+File    System        (NFS)   version     4   Protocol,”   RFC      3530,     available   from
+http://www.faqs.org/rfcs/rfc3530.html, April 2003.
+
+Shepler et al., 2010.
+
+S. Shepler, M. Eisler, & D. Noveck, Network File System (NFS) Version 4 Minor Version 1
+Protocol, available from http://www.ietf.org/rfc/rfc5661.txt, January 2010.
+
+Sun Microsystems, 1989.
+
+Sun Microsystems, “NFS: Network File System Protocol Specification,” RFC 1094, available
+from http://www.faqs.org/rfcs/rfc1094.html, March 1989.
+
+Walsh et al., 1985.
+
+D. Walsh, B. Lyon, G. Sager, J. Chang, D. Goldberg, S. Kleiman, T. Lyon, R. Sandberg, & P.
+Weiss, “Overview of the Sun Network File System,” USENIX Association Conference
+Proceedings, pp. 117–124, January 1985.
+

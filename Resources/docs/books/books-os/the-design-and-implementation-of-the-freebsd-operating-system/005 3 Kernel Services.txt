@@ -1,0 +1,1140 @@
+                          Chapter 3. Kernel Services
+
+3.1 Kernel Organization
+
+The FreeBSD kernel can be viewed as a service provider to user processes. Processes usually
+access these services through system calls. Some services, such as process scheduling and
+memory management, are implemented as processes that execute in kernel mode or as routines
+that execute periodically within the kernel. In this chapter, we describe how kernel services are
+provided to user processes, and we explain some of the ancillary processing done by the kernel.
+Then we describe the basic kernel services provided by FreeBSD and provide details of their
+implementation.
+
+System Processes
+
+All FreeBSD user-level processes originate from a single process that is crafted by the kernel at
+startup. Table 3.1 lists the most important of the processes that are created immediately and
+exist always. They are kernel processes, and they function wholly within the kernel. Kernel
+processes execute code that is compiled into the kernel’s load image and operate with the
+kernel’s privileged execution mode. Often these processes have many threads. For example, the
+intr process starts a kernel thread for each device to handle interrupts for that device.
+
+Table 3.1 Permanent kernel processes.
+
+After creating the kernel processes, the kernel creates the first process to execute a program in
+user mode; it serves as the parent process for all subsequent processes. The first user-mode
+process is the init process—historically, process 1. This process does administrative tasks, such
+as spawning getty processes for each terminal on a machine, collecting exit status from
+orphaned processes, and handling the orderly shutdown of a system from multiuser to
+single-user operation. The init process is a user-mode process, running outside the kernel (see
+Section 15.4).
+
+System Entry
+
+Entrances into the kernel can be categorized according to the event or action that initiates them:
+
+• Hardware interrupt
+
+• Hardware trap
+
+• Software-initiated trap
+
+Hardware interrupts arise from external events, such as an I/O device needing attention or a
+clock reporting the passage of time. (For example, the kernel depends on the presence of a
+real-time clock or interval timer to maintain the current time of day, to drive process scheduling,
+and to initiate the execution of system timeout functions.) Hardware interrupts occur
+asynchronously and may not relate to the context of the currently executing process.
+
+Hardware traps may be either synchronous or asynchronous but are related to the current
+executing process. Examples of hardware traps are those generated as a result of an illegal
+arithmetic operation, such as dividing by zero.
+
+Software-initiated traps are used by the system to force the scheduling of an event, such as
+process rescheduling or network processing, as soon as possible. Software-initiated traps are
+implemented by setting a flag that is checked whenever a process is preparing to exit from the
+kernel. If the flag is set, the software-interrupt code runs instead of exiting from the kernel.
+
+System calls are a special case of a software-initiated trap—the machine instruction used to
+initiate a system call typically causes a hardware trap that is handled specially by the kernel.
+
+Run-Time Organization
+
+The kernel can be logically divided into a top half and a bottom half, as shown in Figure 3.1.
+The top half of the kernel provides services to processes in response to system calls or traps.
+This software can be thought of as a library of routines shared by all processes. The top half of
+the kernel executes in a privileged execution mode, in which it has access both to kernel data
+structures and to the context of user-level processes. The context of each process is contained in
+two areas of memory reserved for process-specific information. The first of these areas is the
+process structure, which has historically contained the information that is necessary even if
+the process has been swapped out. In FreeBSD, this information includes the identifiers
+associated with the process, the process’s rights and privileges, its descriptors, its memory map,
+pending external events and associated actions, maximum and current resource utilization, and
+many other things. The second is the thread structure, which has historically contained the
+information that is not necessary when the process is swapped out. In FreeBSD, the
+thread-structure information of each process includes the hardware thread state block (TSB), its
+kernel stack, and minor additional information for debugging and creating a core dump.
+Deciding what was to be stored in the process structure and the thread structure was far more
+important in previous systems than it was in FreeBSD. As memory became a less limited
+
+resource, most of the thread structure was merged into the process structure for convenience
+(see Section 4.2).
+
+Figure 3.1 Run-time structure of the kernel.
+
+The bottom half of the kernel comprises routines that are invoked to handle hardware interrupts.
+Activities in the bottom half of the kernel are synchronous with respect to the interrupt
+source but are asynchronous, with respect to the top half, and the software cannot depend on
+having a specific (or any) process running when an interrupt occurs. Thus, the state information
+for the process that initiated the activity is not available. The top and bottom halves of the kernel
+communicate through data structures, generally organized around work queues.
+
+The FreeBSD kernel is rarely preempted to run another user process while executing in the top
+half of the kernel—for example, while executing a system call—although it will explicitly give up
+the processor if it must wait for an event or for a shared resource. Its execution may be
+interrupted, however, by the need to run a real-time process or by interrupts for the bottom half
+of the kernel. When an interrupt is received, the kernel process that handles that device is
+scheduled to run. Normally these device-interrupt processes have a higher priority than user
+processes or processes running in the top half of the kernel. Thus, when an interrupt causes a
+device-interrupt process to be made runnable, it will usually preempt the currently running
+process. When a process running in the top half of the kernel wants to add an entry to the work
+list for a device, it needs to ensure that it will not be preempted by that device part way through
+linking the new element onto the work list. In FreeBSD, the work list is protected by a mutex.
+Any process (top or bottom half) seeking to modify the work list must first obtain the mutex.
+
+Once held, any other process seeking to obtain the mutex will wait until the process holding it
+has finished modifying the list and released the mutex.
+
+Processes cooperate in the sharing of system resources, such as the disks and memory. The top
+and bottom halves of the kernel also work together in implementing certain system operations,
+such as I/O. Typically, the top half will start an I/O operation, and then relinquish the processor;
+then the requesting process will sleep, awaiting notification from the bottom half that the I/O
+request has completed.
+
+Entry to the Kernel
+
+When a process enters the kernel through a trap or an interrupt, the kernel must save the
+current machine state before it begins to service the event. For the PC, the machine state that
+must be saved includes the program counter, the user stack pointer, the general-purpose
+registers, and the processor status longword. The PC trap instruction saves the program counter
+and the processor status longword as part of the exception stack frame; the user stack pointer
+and registers must be saved by the software trap handler. If the machine state were not fully
+saved, the kernel could change values in the currently executing program in improper ways.
+Since interrupts may occur between any two user-level instructions (and on some architectures
+between parts of a single instruction), and because they may be completely unrelated to the
+currently executing process, an incompletely saved state could cause correct programs to fail in
+mysterious and not easily reproducible ways.
+
+The exact sequence of events required to save the process state is completely machine
+dependent, although the PC provides a good example of the general procedure. A trap or system
+call will trigger the following events:
+
+• The hardware switches into kernel (supervisor) mode, so that memory-access checks are made
+with kernel privileges, references to the stack use the per-process kernel stack, and privileged
+instructions can be executed.
+
+• The hardware pushes onto the per-process kernel stack the program counter, processor status
+longword, and information describing the type of trap. (On architectures other than the PC, this
+information can include the system-call number and general-purpose registers as well.)
+
+• An assembly-language routine saves all state information not saved by the hardware. On the
+PC, this information includes the general-purpose registers and the user stack pointer, also
+saved onto the per-process kernel stack.
+
+After this preliminary state saving, the kernel calls a C routine that can freely use the
+general-purpose registers as any other C routine would, without concern about changing the
+unsuspecting process’s state.
+
+There are three major kinds of handlers, corresponding to particular kernel entries:
+
+1. Syscall() for a system call
+
+2. Trap() for hardware traps and for software-initiated traps other than system calls
+
+3. The appropriate device-driver interrupt handler for a hardware interrupt
+
+Each type of handler takes its own specific set of parameters. For a system call, they are the
+system-call number and an exception frame. For a trap, they are the type of trap, the relevant
+floating-point and virtual-address information related to the trap, and an exception frame. (The
+exception-frame arguments for the trap and system call are not the same. The PC hardware
+saves different information based on different types of traps.) For a hardware interrupt, the only
+parameter is a unit (or board) number.
+
+Return from the Kernel
+
+When the handling of the system entry is completed, the user-process state is restored, and
+control returns to the user process. Returning to the user process reverses the process of
+entering the kernel:
+
+• An assembly-language routine restores the general-purpose registers and user-stack pointer
+previously pushed onto the stack.
+
+• The hardware restores the program counter and program status longword, and switches to
+user mode, so that future references to the stack pointer use the user’s stack pointer, privileged
+instructions cannot be executed, and memory-access checks are done with user-level privileges.
+
+Execution then resumes at the next instruction in the user’s process.
+
+3.2 System Calls
+
+The most frequent trap into the kernel (after clock processing) is a request to do a system call.
+System performance requires that the kernel minimize the overhead in fielding and dispatching
+a system call. The system-call handler must do the following work:
+
+• Verify that the parameters to the system call are located at a valid user address, and copy them
+from the user’s address space into the kernel
+
+• Call a kernel routine that implements the system call
+
+Result Handling
+
+Eventually, the system call returns to the calling process, either successfully or unsuccessfully.
+On the PC architecture, success or failure is returned as the carry bit in the user process’s
+program status longword: If it is zero, the return was successful; otherwise, it was unsuccessful.
+On many machines, return values of C functions are passed back through a general-purpose
+register (for the PC, data register EAX). The routines in the kernel that implement system calls
+return the values that are normally associated with the global variable errno. After a system call,
+the kernel system-call handler leaves this value in the register. If the system call failed, a C
+library routine moves that value into errno, and sets the return register to -1. The calling process
+is expected to notice the value of the return register, and then to examine errno. The mechanism
+involving the carry bit and the global variable errno exists for historical reasons derived from
+the PDP-11.
+
+There are two kinds of unsuccessful returns from a system call: those where kernel routines
+discover an error and those where a system call is interrupted. The most common case is a
+system call that is interrupted when it has relinquished the processor to wait for an event that
+may not occur for a long time (such as terminal input), and a signal arrives in the interim. When
+signal handlers are initialized by a process, they specify whether system calls that they interrupt
+should be restarted or whether the system call should return with an interrupted system call
+(EINTR) error.
+
+When a system call is interrupted, the signal is delivered to the process. If the process has
+requested that the signal abort the system call, the handler then returns an error, as described
+previously. If the system call is to be restarted, however, the handler resets the process’s
+program counter to the machine instruction that caused the system-call trap into the kernel.
+(This calculation is necessary because the program-counter value that was saved when the
+system-call trap was done is for the instruction after the trap-causing instruction.) The handler
+replaces the saved program-counter value with this address. When the process returns from the
+signal handler, it resumes at the program-counter value that the handler provided and
+reexecutes the same system call.
+
+Restarting a system call by resetting the program counter has certain implications. First, the
+kernel must not modify any of the input parameters in the process address space (it can modify
+
+the kernel copy of the parameters that it makes). Second, it must ensure that the system call has
+not performed any actions that cannot be repeated. For example, in the current system, if any
+characters have been read from the terminal, the read must return with a short count. Otherwise,
+if the call were to be restarted, the already-read bytes would be lost.
+
+Returning from a System Call
+
+While the system call is running or sleeping with signals blocked, a signal may be posted to the
+process, or another process may attain a higher scheduling priority. After the system call
+completes, the system-call exit code checks to see whether either event has occurred.
+
+The system-call exit code first checks for a posted signal. Such signals include signals that
+interrupted the system call, as well as signals that arrived while a system call was in progress but
+were held pending until the system call completed. Signals that are ignored, by default or by
+explicit programmatic request, are never posted to the process. Signals with a default action
+have that action taken before the process runs again (i.e., the process may be stopped or
+terminated as appropriate). If a signal is to be caught (and is not currently blocked), the
+system-call exit code arranges to have the appropriate signal handler called rather than have the
+process return directly from the system call. After the signal handler returns, the process will
+resume execution at system-call return (or system-call execution, if the system call is being
+restarted).
+
+After checking for posted signals, the system-call exit code checks to see whether any process
+has a priority higher than that of the currently running one. If such a process exists, the
+system-call exit code calls the context-switch routine to cause the higher-priority process to run.
+At a later time, the current process will again have the highest priority and will resume
+execution by returning from the system call to the user process.
+
+If a process has requested that the system do profiling, the system-call exit code also calculates
+the amount of time that has been spent in the system call—that is, the system time accounted to
+the process between the latter’s entry into and exit from the kernel. This time is charged to the
+routine in the user’s process that made the system call.
+
+3.3 Traps and Interrupts
+
+Traps, like system calls, occur synchronously for a process. Traps normally occur because of
+unintentional errors, such as division by zero or indirection through an invalid pointer. The
+process becomes aware of the problem either by catching a signal or by being terminated. Traps
+
+can also occur because of a page fault, in which case the system makes the page available and
+restarts the process without the process being aware that the fault occurred.
+
+The trap handler is invoked like the system-call handler. First, the process state is saved. Next,
+the trap handler determines the trap type and then arranges to post a signal or to cause a pagein
+as appropriate. Finally, it checks for pending signals and higher-priority processes, and exits like
+the system-call handler except that it has no return value.
+
+I/O Device Interrupts
+
+Interrupts from I/O and other devices are handled by interrupt routines that are loaded as part
+of the kernel’s address space. These routines handle the console terminal interface, one or more
+clocks, and several software-initiated interrupts used by the system for low-priority clock
+processing and for networking facilities.
+
+Unlike traps and system calls, device interrupts occur asynchronously. The process that
+requested the service is unlikely to be the currently running process and may no longer exist!
+The process that started the operation will be notified that the operation has finished when that
+process runs again. As occurs with traps and system calls, the entire machine state must be
+saved, since any changes could cause errors in the currently running process.
+
+Device-interrupt handlers run only on demand. Unlike the pre-multiprocessing versions of
+FreeBSD, modern FreeBSD kernels create a thread context for each device driver. Thus, just as
+one process cannot access the context of the previously running process, interrupt handlers
+cannot access any of the context of the previously running interrupt handler. The stack normally
+used by the kernel is part of a process context. Since each device has its own context, it also has
+its own stack on which to run.
+
+Interrupts in pre-multiprocessing FreeBSD systems had no context, so they had to run to
+completion without sleeping. In modern FreeBSD kernels, interrupts can block to wait for
+resources. However, while blocked they cannot be invoked with another event, so to reduce the
+chance for lost interrupts, most handlers still run to completion without sleeping.
+
+An interrupt handler is never invoked from the top half of the kernel. Thus, it must get all the
+information it needs from the data structures that it shares with the top half of the
+kernel—generally, its global work queue. Similarly, all information provided to the top half of
+the kernel by the interrupt handler must be communicated the same way.
+
+Software Interrupts
+
+Many events in the kernel are driven by hardware interrupts. For high-speed devices such as
+network controllers, these interrupts are scheduled at a high priority. A network controller must
+quickly acknowledge receipt of a packet and reenable the controller to accept more packets to
+avoid losing closely spaced packets. However, the further processing of passing the packet to the
+receiving process, although time-consuming, does not need to be done quickly. Thus, the further
+processing can be scheduled at a lower priority, so critical operations will not be blocked from
+executing longer than necessary.
+
+The mechanism for performing lower-priority processing is called a software interrupt.
+Typically, a high-priority interrupt creates a queue of work to be done at a lower-priority level.
+As with hardware devices in FreeBSD, each software interrupt has a process context associated
+with it. The software-interrupt processes are generally given a lower scheduling priority than the
+device-driver processes but a higher priority than those given to user processes. Whenever a
+hardware interrupt arrives, the process associated with the device driver will attain the highest
+priority and be scheduled to run. When there are no device-driver processes that are runnable,
+the highest priority software-interrupt process will be scheduled to run. If there are no
+software-interrupt processes that are runnable, then the highest priority user process will run. If
+either a software-interrupt process or a user process is running when an interrupt arrives and
+makes its device-driver process runnable, the scheduler will preempt the software-interrupt or
+user process to run the device-driver process.
+
+The delivery of network packets to destination processes is handled by a packet-processing
+function that runs at a lower priority than the network-controller device driver. As packets come
+in, they are put onto a work queue and the controller is immediately reenabled. Between packet
+arrivals, the packet-processing process works to deliver the packets. Thus, the controller can
+accept new packets without having to wait for the previous packet to be delivered. In addition to
+network processing, software interrupts are used to handle time-related events and process
+rescheduling.
+
+3.4 Clock Interrupts
+
+The system is driven by a clock that interrupts at regular intervals. Each interrupt is referred to
+as a tick. On the PC, the clock ticks 1000 times per second. At each tick, the system updates the
+current time of day as well as user-process and system timers.
+
+Handling 1000 interrupts per second can be time consuming. To reduce the interrupt load, the
+kernel computes the number of ticks in the future at which an action may need to be taken. It
+
+then schedules the next clock interrupt to occur at that time. Thus, clock interrupts typically
+occur much less frequently than the 1000 ticks-per-second rate implies. This reduced interrupt
+rate is particularly helpful for systems with limited power budgets such as laptop computers and
+embedded systems as it allows them to spend much more time in low-power-consumption sleep
+mode.
+
+Interrupts for clock ticks are posted at a high hardware-interrupt priority. After switching to the
+clock-device process, the hardclock() routine is called. It is important that the hardclock()
+routine finish its job quickly:
+
+• If hardclock() runs for more than one tick, it will miss the next clock interrupt. Since
+hardclock() maintains the time of day for the system, a missed interrupt will cause the system to
+lose time.
+
+• Because of hardclock()’s high interrupt priority, nearly all other activity in the system is
+blocked while hardclock() is running. This blocking can cause network controllers to miss
+packets.
+
+So the time spent in hardclock() is minimized, less critical time-related processing is handled by
+a lower-priority software-interrupt handler called softclock(). In addition, if multiple clocks are
+available, some time-related processing can be handled by other routines supported by alternate
+clocks. On the PC there are two additional clocks that run at a different frequency than the
+system clock: the statclock(), which runs at 127 ticks per second to collect system statistics, and
+the profclock(), which runs at 8128 ticks per second to collect profiling information.
+
+The work done by hardclock() is as follows:
+
+• If the currently running process has a virtual or profiling interval timer (see Section 3.6), it
+decrements the timer and delivers a signal if the timer has expired.
+
+• It increments the current time of day by the number of ticks since the previous call to
+hardclock().
+
+• If the system does not have a separate clock for process profiling, the hardclock() routine does
+the operations normally done by profclock(), as described in the next section.
+
+• If the system does not have a separate clock for statistics gathering, the hardclock() routine
+does the operations normally done by statclock(), as described in the next section.
+
+• If softclock() needs to be run, it makes the softclock process runnable.
+
+Statistics and Process Scheduling
+
+On historic FreeBSD systems, the hardclock() routine collected resource-utilization statistics
+about what was happening when the clock interrupted. These statistics were used to do
+accounting, to monitor what the system was doing, and to determine future scheduling priorities.
+In addition, hardclock() forced context switches so that all processes would get a share of the
+CPU.
+
+This approach has weaknesses because the clock supporting hardclock() interrupts on a regular
+basis. Processes can become synchronized with the system clock, resulting in inaccurate
+measurements of resource utilization (especially CPU) and inaccurate profiling [McCanne &
+Torek, 1993]. It is also possible to write programs that deliberately synchronize with the system
+clock to outwit the scheduler.
+
+On architectures with multiple high-precision, programmable clocks—such as the PC—a
+statistics clock is run at a different frequency than the time-of-day clock. The FreeBSD statclock()
+runs at 127 ticks per second and is responsible for accumulating resource usage to processes. At
+each tick, it charges the currently running process with a tick; if the process has accumulated
+four ticks, it recalculates its priority. If the new priority is less than the current priority, it
+arranges for the process to be rescheduled. Thus, processes that become synchronized with the
+system clock still have CPU time accounted to them.
+
+The statclock() also collects statistics on what the system was doing at the time of the tick
+(sitting idle, executing in user mode, or executing in system mode). Finally, it collects basic
+information on system I/O, such as which disk drives are currently active.
+
+To allow the collection of more accurate profiling information, FreeBSD supports a profiling
+clock. When one or more processes are requesting profiling information, the profiling clock is
+set to run at a tick rate that is relatively prime to the main system clock (8128 ticks per second
+on the PC). At each tick, it checks to see if one of the processes that it has been asked to profile is
+running. If so, it obtains the current location of the program counter and increments a counter
+associated with that location in the profiling buffer associated with the process.
+
+Timeouts
+
+The remaining time-related processing involves processing timeout requests and periodically
+reprioritizing processes that are ready to run. These functions are handled by the softclock()
+routine.
+
+When hardclock() completes, if there were any softclock() functions to be done, hardclock()
+schedules the softclock process to run.
+
+The primary task of the softclock() routine is to arrange for the execution of periodic events,
+such as the following:
+
+• Process real-time timer (see Section 3.6)
+
+• Retransmission of dropped network packets
+
+• Watchdog timers on peripherals that require monitoring
+
+• System process-rescheduling events
+
+An important event is the scheduling that periodically raises or lowers the CPU priority for each
+process in the system based on that process’s recent CPU usage (see Section 4.4). The
+rescheduling calculation is done once per second. The scheduler is started at boot time, and each
+time that it runs, it requests that it be invoked again 1 second in the future.
+
+On a heavily loaded system with many processes, the scheduler may take a long time to
+complete its job. Posting its next invocation 1 second after each completion may cause
+scheduling to occur less frequently than once per second. However, as the scheduler is not
+responsible for any time-critical functions, such as maintaining the time of day, scheduling less
+frequently than once a second is normally not a problem.
+
+The data structure that describes waiting events is called the callout queue. Figure 3.2 shows
+an example of the callout queue. When a process schedules an event, it specifies a function to be
+called, a pointer to be passed as an argument to the function, and the number of clock ticks until
+the event should occur.
+
+Figure 3.2 Timer events in the callout queue.
+
+The kernel maintains an array of queue headers, each representing a particular time. There is a
+pointer that references the queue header for the current time, marked “now” in Figure 3.2. The
+queue header that follows the currently referenced one represents events that are one tick in the
+future. The queue header after that is two ticks in the future. The list wraps around, so if the last
+queue header in the list represents time t, then the first queue header in the list represents time
+t + 1. The queue header immediately preceding the currently referenced one represents the time
+furthest in the future. In Figure 3.2 there are 200 queue headers, so the queue header
+immediately preceding the one marked “now” represents events that are 199 ticks in the future.
+
+Each time the hardclock() routine runs, it increments the callout queue-head pointer. If the
+queue is not empty, it schedules the softclock() process to run. The softclock() process scans the
+events in the current queue. It compares the current time to the time stored in the event
+structure. If the times match, the event is removed from the list and its requested function is
+called, being passed the argument specified when it was registered.
+
+When an event n ticks in the future is to be posted, its queue header is calculated by taking the
+index of the queue labelled “now” in Figure 3.2, adding n to it, and then taking the resulting
+value modulo the number of queue headers. If an event is to occur further in the future than the
+number of queue headers, then it will end up on a list with other events that are to happen
+sooner. Thus, the actual time of the event is stored in its entry so that when the queue is scanned
+by softclock(), it can determine which events are current and which are to occur in the future. In
+Figure 3.2, the second entry in the “now” queue will be skipped on the current scan of the queue,
+but it will be handled 200 ticks in the future when softclock() next processes this queue.
+
+An argument is provided to the callout-queue function when it is called so that one function can
+be used by multiple processes. For example, there is a single real-time timer function that sends
+a signal to a process when a timer expires. Every process that has a real-time timer running
+posts a timeout request for this function; the argument that is passed to the function is a pointer
+to the process structure for the process. This argument enables the timeout function to deliver
+the signal to the correct process.
+
+Timeout processing is more efficient when the timeouts are specified in ticks. Time updates
+require only an integer decrement, and checks for timer expiration require only an integer
+comparison. If the timers contained time values, decrementing and comparisons would be more
+complex. The approach used in FreeBSD is based on the work of Varghese & Lauck [1987].
+Another possible approach is to maintain a heap with the next-occurring event at the top
+[Barkley & Lee, 1988].
+
+3.5 Memory-Management Services
+
+The memory organization and layout associated with a FreeBSD process is shown in Figure 3.3.
+Each process begins execution with three memory segments: text, data, and stack. The data
+segment is divided into initialized data and uninitialized data (also known as bss). The text is
+read-only and is normally shared by all processes executing the file, whereas the data and stack
+areas can be written by, and are private to, each process. The text and initialized data for the
+process are read from the executable file.
+
+Figure 3.3 Layout of a FreeBSD process in memory and on disk.
+
+An executable file is distinguished by being a plain file (rather than a directory, special file, or
+symbolic link) and by having one or more of its execute bits set. Each executable file has an exec
+header containing a magic number that specifies the type of the executable file. FreeBSD
+supports multiple executable formats including the following:
+
+1. Files that must be read by an interpreter
+
+2. Files that are directly executable including AOUT, ELF, and gzipped ELF
+
+An executable file is initially parsed by the image activation (imgact) framework. The header of
+a file to be executed is passed through a list of registered image activators to find a matching
+format. When a matching format is found, the corresponding image activator prepares the file
+for execution.
+
+Files falling into the first classification have as their magic number (located in the first 2 bytes of
+the file) the two-character sequence #! followed by the pathname of the interpreter to be used.
+
+This pathname is currently limited by a compile-time constant to 128 characters. For example,
+#!/bin/sh refers to the Bourne shell. The image activator that will be selected is the one that
+handles the invocation of interpreters. It will load and run the named interpreter, passing the
+name of the file that is to be interpreted as an argument. To prevent loops, FreeBSD allows only
+one level of interpretation, and a file’s interpreter may not itself be interpreted.
+
+For performance reasons, most files fall into the second classification and are directly executable.
+Information in the header of a directly executable file includes the architecture and operating
+system for which an executable was built and whether it is statically linked or uses shared
+libraries. The selected image activator can use information such as knowledge of the operating
+system for which an executable was compiled to configure the kernel to use the proper system
+call interpretation when running the program. For example, an executable built to run on Linux
+can be seamlessly run on FreeBSD by using the system-call dispatch vector that provides
+emulation of the Linux system calls.
+
+The header also specifies the sizes of text, initialized data, uninitialized data, and additional
+information for debugging. The debugging information is not used by the kernel or by the
+executing program. Following the header is an image of the text, followed by an image of the
+initialized data. Uninitialized data are not contained in the executable file because they can be
+created on demand using zero-filled memory.
+
+To begin execution, the kernel arranges to have the text portion of the file mapped into the low
+part of the process address space starting at the beginning of the second page of the virtual
+address space. The first page of the virtual address space is marked as invalid so that attempts to
+read or write through a null pointer will fault. The initialized data portion of the file is mapped
+into the address space following the text. An area equal to the uninitialized data region is
+created with zero-filled memory after the initialized data region. The stack is also created from
+zero-filled memory. Although the stack should not need to be zero filled, early UNIX systems
+made it so. In an attempt to save some startup time in 4.2BSD, the developers modified the
+kernel to not zero-fill the stack, leaving the random previous contents of the page instead. But
+concerns about surreptitious misuse of data from previously running programs and
+unrepeatable errors in previously working programs lead to restoration of the zero filling of the
+stack by the time that 4.3BSD was released.
+
+Copying into memory the entire text and initialized data portion of a large program causes a
+long startup latency. FreeBSD avoids this startup time by demand paging the program into
+memory rather than preloading the program. In demand paging, the program is loaded in small
+pieces (pages) as it is needed rather than all at once before it begins execution. The system does
+demand paging by dividing up the address space into equal-size areas called pages. For each
+
+page, the kernel records the offset into the executable file of the corresponding data. The first
+access to an address on each page causes a page-fault trap in the kernel. The page-fault handler
+reads the correct page of the executable file into the process memory. Thus, the kernel loads
+only those parts of the executable file that are needed. Chapter 6 explains paging details.
+
+It might seem more efficient to load the whole process at once rather than in many little pieces.
+However, most processes use less than half of their address space during their entire execution
+lifetime. The reason for the low utilization is that typical user commands have many options,
+only a few of which are used on any invocation. The code and data structures that support the
+unused options are not needed. Thus, the cost of loading the subset of pages that are used is
+lower than the cost of initially loading the whole process. In addition to the time saved by
+avoiding the loading of the entire process, demand paging also reduces the amount of physical
+memory that is needed to run the process.
+
+The uninitialized data area can be extended with zero-filled pages using the system call sbrk,
+although most user processes use the library routine malloc(), a more programmer-friendly
+interface to sbrk. This allocated memory, which grows from the top of the original data segment,
+is called the heap. On the PC, the stack grows down from the top of memory, whereas the heap
+grows up from the bottom of memory.
+
+Above the user stack are areas of memory that are created by the system when the process is
+started. Directly above the user stack is the number of arguments (argc), the argument vector
+(argv), and the process environment vector (envp) set up when the program was executed.
+Following them are the argument and environment strings themselves. Next is the signal code,
+used when the system delivers signals to the process. At the top is the ps_strings structure, used
+by ps to locate the argv of the process.
+
+Historically, most executables were statically linked. In a statically linked binary, all the library
+routines and system-call entry stubs are loaded into the binary image at the time that it is
+compiled. Today, most binaries are dynamically linked. A dynamically linked binary contains
+only the compiled application code and a list of the routines (library and system-call entry stubs)
+that it needs. When the executable is run, a set of shared libraries containing the routines that it
+needs to use are mapped into its address space as part of its startup. The first time that it calls a
+routine, that routine is located in the shared library and a dynamic linkage is created to it.
+
+When the dynamic loader does the mmap system call to allocate space for the shared libraries,
+the kernel must find a place within the process address space to place them. The convention in
+FreeBSD is to place them just below the administrative lower limit for the stack. Since the stack
+will not be permitted to grow below the administrative stack size limit, there is no danger of the
+shared libraries being overwritten. A side effect of this implementation is that the stack limit
+
+cannot be safely changed after a binary begins running. Ideally, a bigger stack limit can be set by
+the process (such as the shell) before it starts the application. However, applications that know
+at startup that they will need a bigger stack can increase their stack limit and then call the exec
+system call on themselves to restart with their shared libraries relocated at the bottom of their
+new stack limit.
+
+An alternative would be to place the shared libraries just above the heap limit. However, this
+would mean that the heap limit could not be increased once the binary began running. As
+applications much more frequently want to increase their heap size than their stack size, the
+stack limit was selected as the appropriate location to place the shared libraries.
+
+A process requires the use of some global system resources. The kernel maintains a linked list of
+processes that has an entry for each process in the system. Among other data, the process
+entries record information on scheduling and on virtual-memory allocation. Because the entire
+process address space, including the kernel stack for the process, may be swapped out of main
+memory, the process entry must record enough information to be able to locate the process and
+to bring that process back into memory. In addition, information needed while the process is
+swapped out (e.g., scheduling information) must be maintained in the process entry rather than
+in the thread structure to avoid the kernel swapping in the process only to decide that it is not at
+a high enough priority to be run.
+
+Other global resources associated with a process include space to record information about
+descriptors and page tables that record information about physical-memory utilization.
+
+3.6 Timing Services
+
+The kernel provides several different timing services to processes. These services include timers
+that run in real time and timers that run only while a process is executing.
+
+Real Time
+
+The system’s time offset since January 1, 1970, Universal Coordinated Time (UTC), also known
+as the Epoch, is returned by the system call gettimeofday. Most modern processors (including
+the PC processors) maintain a battery-backup time-of-day register. This clock continues to run
+even if the processor is turned off. When the system boots, it consults the processor’s
+time-of-day register to find out the current time. The system’s time is then maintained by the
+clock interrupts. At each interrupt, the system increments its global time variable by an amount
+equal to the number of microseconds per tick. For the PC, running at 1000 ticks per second,
+each tick represents 1000 microseconds.
+
+External Representation
+
+Time is always exported from the system as microseconds, rather than as clock ticks, to provide
+a resolution-independent format. Internally, the kernel is free to select whatever tick rate best
+trades off clock-interrupt-handling overhead with timer resolution. As the tick rate per second
+increases, the resolution of the system timers improves, but the time spent dealing with
+hardclock interrupts increases. As processors become faster, the tick rate can be increased to
+provide finer resolution without adversely affecting user applications. Systems with real-time
+constraints often run the clock at 5000 or 10,000 ticks per second. As explained in Section 3.4,
+the kernel can usually eliminate most of the interrupts associated with a high tick rate.
+
+All filesystem (and other) timestamps are maintained in UTC offsets from the Epoch.
+Conversion to local time, including adjustment for daylight saving time, is handled externally to
+the system in the C library.
+
+Adjustment of the Time
+
+Often, it is desirable to maintain the same time on all the machines on a network. It is also
+possible to keep more accurate time than that available from the basic processor clock. For
+example, hardware is readily available that listens to the set of radio stations that broadcast UTC
+synchronization signals in the United States. When processes on different machines agree on a
+common time, they will wish to change the clock on their host processor to agree with the
+networkwide time value. One possibility is to change the system time to the network time using
+the settimeofday system call. Unfortunately, the settimeofday system call will result in time
+running backward on machines whose clocks were fast. Time running backward can confuse
+user programs (such as make) that expect time to invariably increase. To avoid this problem,
+the system provides the adjtime system call [Mills, 1992]. The adjtime system call takes a time
+delta (either positive or negative) and changes the rate at which time advances by 10 percent,
+faster or slower, until the time has been corrected. The operating system does the speedup by
+incrementing the global time by 1100 microseconds for each tick and does the slowdown by
+incrementing the global time by 900 microseconds for each tick. Regardless, time increases
+monotonically, and user processes depending on the ordering of file-modification times are not
+affected. However, time changes that take tens of seconds to adjust will affect programs that are
+measuring time intervals by using repeated calls to gettimeofday.
+
+Interval Time
+
+The system provides each process with three interval timers. The real timer decrements in real
+time. An example of use for this timer is a library routine maintaining a wakeup-service queue.
+A SIGALRM signal is delivered to the process when this timer expires. The real-time timer is run
+from the timeout queue maintained by the softclock() routine (see Section 3.4).
+
+The profiling timer decrements both in process virtual time (when running in user mode) and
+when the system is running on behalf of the process. It is designed to be used by processes to
+profile their execution statistically. A SIGPROF signal is delivered to the process when this timer
+expires. Each time that profclock() runs, it checks to see whether the currently running process
+has requested a profiling timer; if it has, profclock() decrements the timer and sends the process
+a signal when zero is reached.
+
+The virtual timer decrements in process virtual time. It runs only when the process is executing
+in user mode. A SIGVTALRM signal is delivered to the process when this timer expires. The
+virtual timer is also implemented in profclock() as the profiling timer is, except that it
+decrements the timer for the current process only if it is executing in user mode and not if it is
+running in the kernel.
+
+3.7 Resource Services
+
+All systems have limits imposed by their hardware architecture and configuration to ensure
+reasonable operation and to keep users from accidentally (or maliciously) creating resource
+shortages. At a minimum, the hardware limits must be imposed on processes that run on the
+system. It is usually desirable to limit processes further, below these hardware-imposed limits.
+The system measures resource utilization and allows limits to be imposed on consumption
+either at or below the hardware-imposed limits.
+
+Process Priorities
+
+The default scheduling policy in the FreeBSD system is managed by the share scheduler that
+gives CPU scheduling priority to processes that have not used CPU time recently. This priority
+scheme tends to favor processes that execute for only short periods of time—for example,
+interactive processes. The priority selected for each process is maintained internally by the
+kernel. The calculation of the priority is affected by the per-process nice variable. Positive nice
+values mean that the process is willing to receive less than its share of the processor. Negative
+values of nice mean that the process wants more than its share of the processor. Most processes
+
+run with the default nice value of zero, asking neither higher nor lower access to the processor.
+It is possible to determine or change the nice currently assigned to a process, to a process group,
+or to the processes of a specified user. Many factors other than nice affect scheduling, including
+the amount of CPU time that the process has used recently, the amount of memory that the
+process has used recently, and the current load on the system.
+
+In addition to the share scheduler described here, the FreeBSD system also has a real-time
+scheduler available. The real-time scheduler allows processes to precisely control their order of
+execution and the amount of time given to each process. The details of the share and real-time
+scheduling algorithms are described in Section 4.4.
+
+Resource Utilization
+
+As a process executes, it uses system resources such as the CPU and memory. The kernel tracks
+the resources used by each process and compiles statistics describing this usage. The statistics
+managed by the kernel are available to a process while the latter is executing. When a process
+terminates, the statistics are made available to its parent via the wait family of system calls.
+
+The resources used by a process are returned by the system call getrusage. The resources used
+by the current process, or by all the terminated children of the current process, may be
+requested. The following information is included:
+
+• The amount of user and system time used by the process
+
+• The memory utilization of the process
+
+• The paging and disk I/O activity of the process
+
+• The number of voluntary and involuntary context switches taken by the process
+
+• The amount of interprocess communication done by the process
+
+The resource-usage information is collected at locations throughout the kernel. The CPU time is
+collected by the statclock() function, which is called either by the system clock in hardclock(), or,
+if an alternate clock is available, by the alternate-clock interrupt process. The kernel scheduler
+calculates memory utilization by sampling the amount of memory that an active process is using
+at the same time that it is recomputing process priorities. The vm_fault() routine recalculates
+the paging activity each time that it starts a disk transfer to fulfill a paging request (see Section
+6.11). The I/O activity statistics are collected each time that the process has to start a transfer to
+
+fulfill a file or device I/O request, as well as when the general system statistics are calculated.
+The IPC communication activity is updated each time that information is sent or received.
+
+Resource Limits
+
+The kernel also supports limiting certain per-process resources. These resources include the
+following:
+
+• The maximum amount of CPU time that can be accumulated
+
+• The maximum bytes that a process can request be locked into memory
+
+• The maximum size of a process’s data segment
+
+• The maximum size of a process’s stack segment
+
+• The maximum amount of private physical memory that a process may have at any given
+moment
+
+• The maximum amount of private or shared physical memory that a process may have at any
+given moment
+
+• The maximum amount of physical memory that a process may have dedicated to socket buffers
+
+• The maximum size of a file that can be created by a process
+
+• The maximum size of a core file that can be created by a process
+
+• The maximum number of simultaneous open files for a process
+
+• The maximum number of simultaneous processes allowed to a user
+
+For each resource controlled by the kernel, two limits are maintained: a soft limit and a hard
+limit. All users can alter the soft limit within the range of 0 to the corresponding hard limit. All
+users can (irreversibly) lower the hard limit, but only the superuser can raise the hard limit. If a
+process exceeds certain soft limits, a signal is delivered to the process to notify it that a resource
+limit has been exceeded. Normally, this signal causes the process to terminate, but the process
+may either catch or ignore the signal. If the process ignores the signal and fails to release
+resources that it already holds, further attempts to obtain more resources will result in errors.
+
+Resource limits are generally enforced at or near the locations that the resource statistics are
+collected. The CPU time limit is enforced in the process context-switching function. The stack
+
+and data-segment limits are enforced by a return of allocation failure once those limits have
+been reached. The file-size limit is enforced by the filesystem.
+
+Filesystem Quotas
+
+In addition to limits on the size of individual files, the kernel optionally enforces limits on the
+total amount of space that a user or group can use on a filesystem. Our discussion of the
+implementation of these limits is deferred to Section 9.4.
+
+3.8 Kernel Tracing Facilities
+
+Operating-system kernels are large and complex pieces of software, encompassing thousands of
+lines of mainly C code, organized into dozens of subsystems and including hundreds of device
+drivers. Understanding what is happening within the operating system while it is running is
+important not only to developers of the code but also to the much larger group of people who
+use the system every day to get their work done. FreeBSD includes several facilities that allows
+users and administrators of the system to understand what is happening inside the system as it
+executes.
+
+System-Call Tracing
+
+The ktrace facility allows a user to get a detailed trace of the order of, arguments to, and results
+from all the system calls done by an application. This information includes such important
+details as pathnames being looked up, type and timing of signals being posted, and even the
+contents of all input and output operations.
+
+The facility is available for any application without the need for prior compilation or inclusion of
+special hooks. Thus, it can be particularly helpful when trying to debug an application for which
+the source code is unavailable.
+
+Tracing can be flexibly applied. It can be started at the time an application begins running or to
+an already running application. It can be applied to individual processes, to all the processes in a
+process group, or through inheritance to all current or future children processes.
+
+The traces are generated in a compact binary format to keep them as dense as possible. The use
+of a binary format also minimizes the time spent collecting and writing the information while
+the application runs and avoids the need to do string processing in the kernel. The binary dump
+is converted to a human-readable format using the kdump program that converts the system
+
+call numbers to names, ioctl values to their macro names, system error numbers to their
+standard error strings, and displays the running time between and during system calls.
+
+A similar facility is provided by the truss command popularized in System V and Solaris.
+Rather than having specialized hooks inside the kernel to collect tracing information, it collects
+its information by stopping and restarting the processes being monitored using the ptrace
+system call. As a result, it has higher overhead and provides less information than ktrace.
+
+DTrace
+
+The information collected by ktrace is limited to the set of information available from its fixed
+set of hooks in the kernel. Further, this set of hooks has to be limited to those pieces of
+information deemed to be most generally useful. If ktrace collected every possibly useful bit of
+information, it would generate an overwhelming amount of data for even trivial applications. Its
+other major limitation is that it collects information only about system calls. When trying to
+track down bugs or performance problems, one needs to analyze the entire software stack that
+includes the application itself, the libraries that it uses, and the system calls that it makes. The
+DTrace facility was developed to address all these issues [Cantrill et al., 2004]. Originally
+written for Sun’s Solaris operating system, DTrace support was added to FreeBSD 8, and is
+present by default in kernels starting with FreeBSD 10.
+
+DTrace greatly expands the set of information from system calls by adding thousands of hooks,
+referred to as tracepoints, that can identify many details of what is happening. To avoid the
+resulting avalanche of data, each tracepoint can be configured to conditionally collect and
+output its information. DTrace defines the D language that allows application developers and
+systems administrators to write a small D-language program to describe the information that
+they want to collect. They can specify the tracepoint that they are interested in inspecting and
+refine the information that they output. For example, a D program might monitor a routine that
+changes a reference counter to collect the highest value that it ever reached, or collect the total
+number of times that a resource was referenced rather than just blindly outputting some
+information every time the routine is called. Only those tracepoints that are useful to the
+analysis are activated, while all others are left dormant. With its ability to trigger only a small
+number of tracepoints at anyone one time, DTrace can collect detailed information on a narrow
+set of interesting events with low overhead and carefully bounded output.
+
+The tracing information is expanded into the rest of the software stack by adding DTrace
+tracepoints to the system libraries and to the application itself. A standard set of tracepoints is
+available with no programming effort required by the library or application developers. The
+standard tracepoints are the set of all functions in a library, application, or the kernel itself, and
+
+include the ability to capture parameter information at every subroutine call and return. In
+addition to these function boundary tracepoints, many system libraries have had additional
+application-specific hooks added by their developers.
+
+The tracing functionality in DTrace is implemented using probes and providers. A probe is a
+specific tracepoint within the running kernel, such as a function boundary, while a provider is a
+kernel module that supports a set of probes. The DTrace system was designed to be extended so
+that new kernel modules or services could have tracepoints that were not envisioned by the
+original authors. The providers found in FreeBSD are listed in Table 3.2. The mac_framework,
+sched, and vfs providers are unique to FreeBSD. A complete discussion of DTrace providers and
+how they are used by developers and administrators can be found in Gregg & Mauro [2011]. In
+this section, we describe only how DTrace interacts with the FreeBSD kernel and do not discuss
+how to use DTrace in general.
+
+Table 3.2 FreeBSD DTrace providers.
+
+Before the advent of DTrace, any system to which logging or tracing was added demonstrated a
+significant probe effect. Consider what happens when a function contains a conditional
+statement that determines whether to report a statistic. Whether or not the statistic is reported,
+the effect of having the conditional statement in the function, compared to no conditional
+statement being present at all, is measurable. The overhead seen by having the conditional
+statement is called the probe effect.
+
+DTrace implements its probes by patching the executable when a probe is activated. For
+example, to monitor a call to a routine, the first instruction of the called routine is replaced with
+
+a call to the probe. The probe then collects its information, executes the instruction its call
+replaced, and returns to the instruction following the one that it patched. When the probe is
+deactivated, the original patched-instruction location with the call to the probe is replaced with
+the instruction that was originally at that location. This technique avoids any probe effect for
+inactive probes. Debuggers, such as lldb, use the same technique to add breakpoints to the
+program they are debugging. Patching an instruction stream that is currently executing is both
+tricky to do safely, and an explicit violation of the security and privacy of data structures on the
+system; thus, super-user privileges are required to enable kernel probes. DTrace is safe to use in
+production systems as it ensures that its patches to the program or kernel cannot cause either to
+behave incorrectly. An example of a precaution taken by DTrace to ensure safe operation is that
+it will not instrument a jump table, an operation that could easily lead to a system failure.
+
+As part of the kernel build process, a separate program, ctfconvert, is executed against all the
+kernel’s object files to generate updated object files that can be understood by DTrace. The
+ctfconvert program takes information from the debugging section of an object file and creates
+a new section .SUNW_ctf that contains type information for each function’s arguments that can
+be used by DTrace. Every type that appears in the .SUNW_ctf section of the object file is
+converted into data that can be used by the function boundary trace provider to associate data
+types with function arguments, allowing userspace D scripts to interrogate function arguments
+in much the same way as the debugger allows a programmer to inspect program data with
+associated type information. All functions found in the debugging section are exposed to the
+user as individual trace-points. The FreeBSD kernel contains over 45,000 function boundary
+tracepoints, or fbt probes, each of which can be triggered on entry to or exit from a routine in the
+kernel. Because the generation of the function boundary tracing probes happens automatically
+at system build time, new probes come into existence whenever new code is added to the
+FreeBSD kernel, relieving developers of the need to add tracepoints to the system by hand, and
+to keep the tracepoints up to date with other code changes. Function boundary tracepoints can
+change with each release of the operating system, which means that function boundary
+tracepoints may change or disappear, so cannot be depended upon in scripts when upgrading
+across major releases, for example, from FreeBSD 9 to FreeBSD 10. Compiler optimization or
+the redefinition of a function as static can also cause a function boundary tracepoint to
+disappear. Statically defined tracepoints (SDT) do not change unless they are specifically
+updated by a programmer and are therefore considered stable across major releases.
+
+Tracepoints are reached through DTrace providers, each of which is a kernel module that
+exposes a uniform interface to the rest of the kernel. All DTrace providers expose a uniform API
+via a set of function pointers embedded in a DTrace-provider operations structure, dtrace_pops.
+Each provider registers itself with the DTrace system by calling the dtrace_register() routine
+that allows DTrace to track all the available providers and expose them to the user through the D
+
+programming language. The dtrace_register() routine passes the dtrace_pops structure for the
+provider as one of its arguments. Provider operations include enabling, disabling, suspending,
+and resuming probes, as well as retrieving argument names and values, from within the probe.
+DTrace understands not only functions but also basic types, such as integers, strings, and
+programmer-defined structures.
+
+When the fbt module is loaded, tracepoints are created for the kernel using the kernel’s linker
+functions. The fbt_provide_module_function() routine is responsible for disassembling the
+entry and exit points of each function in the kernel as well as all the loaded modules, building up
+a list of fbt_probe_t structures that contain the address of the functions that can be probed. The
+fbt_probe_t structure contains three key components used by DTrace when turning tracing on
+or off. The fbtp_patchpoint is the address of the instruction that needs to be replaced when
+tracing is enabled or disabled. When the fbt_provide_module_function() runs, it determines
+the address of the instruction that must later be replaced with a function call to the DTrace
+system during active tracing. The address of that instruction is stored in fbtp_patchpoint. At the
+same time, the instruction that must be replaced during tracing is put into the fbtp_savedval
+element of the structure and the instruction that will be used to cause the entry point to change
+is placed into fbtp_patchval. Whenever the DTrace command enables a tracepoint, the
+fbtp_patchpoint is set to the instruction stored in fbtp_patchval. When tracing is turned off, the
+instruction stored in fbtp_savedval is again placed back into fbtp_patchpoint. Storing the
+instructions during module load time makes the fbt_enable() and fbt_disable() routines shorter
+and safer than they would be if the functions to be traced had to be disassembled whenever the
+user enabled a trace-point.
+
+While the automatic generation of tracepoints for functions is a powerful feature of DTrace, the
+ability to add specific tracepoints not associated with a function boundary is an important part
+of the system. Any subsystem or collection of subsystems can be encapsulated as a provider to
+be monitored by developers and administrators. The collection of locking statistics for
+individual threads is an example of a DTrace provider that was written by hand into the kernel’s
+source code. The DTrace lockstat provider piggybacks on the preexisting lockstat statistics
+collection by adding a probe to each of the lockstat macros.
+
+The FreeBSD kernel provides several synchronization primitives, referred to collectively as locks,
+that are described fully in Section 4.3. To track the locking and unlocking actions of the kernel at
+a low level, it is necessary to know more than just the lock that is being requested. We often
+want to know if it was necessary to wait for the lock, and if so, which other thread blocked us
+from getting it. The information we want from a locking operation is not evident from the
+parameters to the lock call, but is embedded within the code implementing the lock. Locking
+statistics are collected by manually placing macros at key points in the locking-implementation
+
+code to record data about the lock when it is acquired or released. These locking statistics reside
+in the lockstat provider. The macros for collecting the lockstat statistics are written generically
+enough that they can be used in all the locking primitives in the system. When a lock is acquired,
+the macro is given a pointer to the lock object, a Boolean flag telling whether the lock was
+contested, the time that the thread started waiting for the the lock, and the kernel file name and
+the line number within the function from which the lock primitive was called. The macros call
+an appropriate function to collect statistics on how often the lock is acquired, average time that
+it is held, how often it is contested, and when it is contested, as well as the average time that the
+blocked thread had to wait. These statistics identify the contested locks in the kernel. One
+important way of improving system performance is to use finer-grain locking for the most highly
+contested locks in the system. For example, a single global lock controlling access to a hash table
+might be replaced with one lock per hash chain.
+
+The lockstat DTrace provider is only available if the lockstat lock profiling has been compiled
+into the kernel. Each probe is defined by a lockstat_probe structure that contains the function
+and name of the probe, which is exported to the user as well as a probe number and probe
+identifier that the lockstat provider uses when the probes fire.
+
+The macro shown in Figure 3.4 is placed into various locking functions to record data whenever
+a    lock     is    acquired.    The      lockstat      information    is    collected    by     the
+lock_profile_obtain_lock_success() function. The remainder of the macro implements the
+lockstat provider probe. The probe is active if its entry in the lockstat_probemap is non-NULL,
+which occurs only when a probe is activated via the lockstat provider’s lockstat_enable() routine.
+Configuring the kernel to collect lockstat statistics introduces a fixed amount of overhead. The
+lockstat DTrace provider introduces a variable amount of overhead depending on which probes
+are active at any time.
+
+Figure 3.4 Lockstat probe macro.
+
+Kernel Tracing
+
+Any large software system usually includes a logging system to aid in debugging problems that
+arise after the software has been released and FreeBSD is no different. The kernel tracing facility
+(KTR) is a set of logging facilities that can be compiled into the kernel with a configuration
+option. This tracing facility primarily helps debug the kernel as compared to the other tracing
+described in this section that primarily helps debug user-level processes.
+
+Before the addition of KTR, developers would sprinkle calls to printf() throughout their code,
+and conditionally compile them in or out of the kernel using
+
+#ifdef DEBUG
+printf()
+#endif DEBUG
+
+statements. The KTR system introduced a single logging system for the kernel that could be
+shared by the entire source base and centrally controlled from kernel configuration files.
+
+Kernel trace events are described by a ktr_entry structure, shown in Figure 3.5. Each entry
+contains a timestamp, the CPU on which the event occurred, the file and line of source code
+from which the event was logged, a programmer specified description, a pointer to the thread
+that executed the event, and up to six parameters.
+
+Figure 3.5 Kernel trace-entry structure.
+
+Calls into the kernel tracing system are implemented as a set of macros, shown in Figure 3.6.
+Unlike the printf() routine, the kernel tracing facility does
+
+Figure 3.6 Kernel tracing macros.
+
+not allow for a variable number of arguments. Variable argument parsing is computationally
+expensive, and is not appropriate for a kernel logging facility because the extra CPU time
+expended might prevent developers from catching timing-related problems.
+
+When support for the KTR system is compiled into the kernel, there is a statically sized array,
+used as a circular buffer, that contains all the trace events. It is important to size the event buffer
+correctly as it is possible to overwrite entries before they are read out of the kernel if many
+events are logged in a short amount of time.
+
+If enabling KTR recorded all the more than the 1700 defined events, the system would grind to a
+near halt. Thus, the rate of event generation is controlled by tagging each event with a
+programmer-defined event mask. The event mask collects a related set of events so that
+recording them can be turned on or off as a group. When a kernel with KTR is first booted, the
+system’s event mask is cleared so that no events are recorded. The event mask is set either from
+user level, using the debug.ktr.mask sysctl, or in the boot configuration file /boot/loader.conf,
+if events are to be recorded from the time the system boots.
+
+Kernel tracing events can be recorded to disk using the asynchronous logging facility which runs
+as a kernel resident thread. It reads events from the kernel trace buffer and writes them to a file
+specified by the user using a sysctl. Writing events to a file, whether on local disk or a remote
+filesystem, introduces extra I/O load onto the system, which may make it inappropriate for
+finding timing-related problems in the system.
+
+Exercises
+
+3.1 Describe three types of system activity.
+
+3.2 When can a routine executing in the top half of the kernel be preempted? When can it be
+interrupted?
+
+3.3 Why are routines executing in the bottom half of the kernel precluded from using
+information located in the current user process?
+
+3.4 Why does the system defer as much work as possible from high-priority interrupts to
+lower-priority software-interrupt processes?
+
+3.5 What determines the shortest (nonzero) time period that a user process can request when
+setting a timer?
+
+3.6 How does the kernel determine the system call for which it has been invoked?
+
+3.7 How are initialized data represented in an executable file? How are uninitialized data
+represented in an executable file? Why are the representations different?
+
+3.8 Describe how the “#!” mechanism can be used to make programs that require emulation
+appear as though they were normal executables.
+
+3.9 What facilities does the DTrace facility provide that is not available in the ktrace facility?
+
+*3.10 Describe the security implications of not zero filling the stack region at program startup.
+
+*3.11 Why is the conversion from UTC to local time done by user processes rather than in the
+kernel?
+
+*3.12 What is the advantage of having the kernel rather than an application restart an
+interrupted system call?
+
+*3.13 Describe a scenario in which the timer-wheel algorithm used for the callout queue does
+not work well. Suggest an alternative data structure that runs more quickly than does the
+timer-wheel algorithm for your scenario.
+
+*3.14 The SIGPROF profiling timer was originally intended to replace the profil system call to
+collect a statistical sampling of a program’s program counter. Give two reasons why the profil
+facility had to be retained.
+
+**3.15 What weakness in the process-accounting mechanism makes the latter unsuitable for use
+in a commercial environment?
+
+References
+
+Barkley & Lee, 1988.
+
+R. E. Barkley & T. P. Lee, “A Heap-Based Callout Implementation to Meet Real-Time Needs,”
+USENIX Association Conference Proceedings, pp. 213–222, June 1988.
+
+Cantrill et al., 2004.
+
+B. M. Cantrill, M. W. Shapiro, & A. H. Leventhal, “Dynamic Instrumentation of Production
+Systems,” USENIX Annual Technical Conference, General Track, June 2004.
+
+Gregg & Mauro, 2011.
+
+B. Gregg & J. Mauro, DTrace: Dynamic Tracing in Oracle Solaris, Mac OS X and FreeBSD,
+Pearson Education, Upper Saddle River, NJ, 2011.
+
+McCanne & Torek, 1993.
+
+S. McCanne & C. Torek, “A Randomized Sampling Clock for CPU Utilization Estimation and
+Code Profiling,” USENIX Association Conference Proceedings, pp. 387–394, January 1993.
+
+Mills, 1992.
+
+D. L. Mills, “The NTP Time Synchronization Protocol,” RFC 1305, available from
+http://www.faqs.org/rfcs/rfc1305.html, March 1992.
+
+Varghese & Lauck, 1987.
+
+G. Varghese & T. Lauck, “Hashed and Hierarchical Timing Wheels: Data Structures for the
+Efficient Implementation of a Timer Facility,” Proceedings of the Eleventh Symposium on
+Operating Systems Principles, pp. 25–38, November 1987.
+

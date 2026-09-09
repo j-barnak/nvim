@@ -1,0 +1,1906 @@
+Chapter 17
+
+Concurrent copying and compaction
+
+In this chapter we discuss approaches to defragmenting the heap concurrently with the
+mutator, relocating live objects either by concurrent copying or by concurrent compaction.
+Here we consider how the mark-compact approaches of Chapter 3 and the copying ap-
+proaches of Chapter 4 extend to operate concurrently with the mutator.
+     We focus initially on collection techniques based on copying (evacuating or scaveng-
+ing) reachable objects out of a fromspace into a tospace, after which the fromspace can
+be reclaimed. These collectors face the problem that mutators may encounter references
+to either fromspace or tospace objects, although note that replicating collectors relax this
+complication by having mutators continue to operate on fromspace originals whilst the
+collector constructs a replica of the live heap in tospace. We then consider concurrent col-
+lection techniques based on compaction. Typically, such collectors divide the heap into a
+number of regions and then identify only some of these for evacuation.
+     Recall that when scanning object fields the collector must convert all fromspace point-
+ers to tospace pointers, replacing each fromspace pointer with the forwarding address of its
+fromspace target, copying the fromspace target the first time it is encountered. Concurrent
+copying collectors must not only protect the collector against mutation but also protect the
+mutator against concurrent copying. Moreover, concurrent updates by the mutator must
+be propagated to the copies being constructed in tospace by the collector.
+     For copying collectors, a black mutator must by definition only hold tospace pointers.
+If it held fromspace pointers, then the collector would never revisit and forward them, vi-
+olating correctness. This is called the black mutator tospace invariant: the mutator operates
+at all times ahead of the wavefront in tospace. Similarly, a grey mutator must by definition
+only hold fromspace pointers at the beginning of the collector cycle. In the absence of a
+read barrier to forward a fromspace pointer to the tospace copy, the grey mutator cannot
+directly acquire tospace pointers from fromspace objects (since the copying collector does
+not forward pointers stored in fromspace objects). This is called the grey mutator fromspace
+invariant. Of course, for termination of a copying algorithm, all mutator threads must end
+the collection cycle holding only tospace pointers, so any copying collector that allows
+grey mutator threads to continue operating in fromspace must eventually switch them all
+over to tospace by forwarding their roots. Moreover, updates by the mutator in fromspace
+must also be reflected in tospace or else they will be lost.
+
+17.1     Mostly-concurrent copying
+Maintaining a tospace invariant for all mutator threads is perhaps the simplest approach
+to concurrent copying because it guarantees that the mutator threads never see objects that
+
+17.1. MOSTLY-CONCURRENT COPYING                                                           368
+
+the collector is yet to copy, or is in the middle of copying. Establishing the tospace invari-
+ant in a mostly-concurrent world requires stopping all the mutator threads (atomically) to
+sample and forward their roots (copying their targets) at the beginning of the collection
+cycle. At this point, the now-black mutators contain only (grey) tospace pointers, but the
+(unscanned) grey targets will still contain fromspace pointers.
+
+Baker’s algorithm
+Baker’s [1978] black mutator read barrier was first formulated for incremental collection to
+protect against a mutator acquiring one of these fromspace pointers, and was subsequently
+extended by Halstead [1985] for concurrent copying. The read barrier presents the illusion
+to the mutator threads that the collection cycle has completed, by preventing them from
+crossing the collector wavefront boundary between tospace and fromspace.
+     Baker-style concurrent collection is illustrated in Algorithm 17.1, as a revision of the
+non-concurrent copying of Algorithm 4.2. Notice that the read barrier only needs to trig-
+ger when loading from a grey tospace object (ahead of the collector wavefront). Only then
+is the forward operation needed to ensure that the loaded reference is to a tospace object,
+copying any uncopied fromspace object as necessary. As specified here, synchronisation
+between mutator and collector is relatively coarse-grained (at the level of objects): the col-
+lector atomic block scans the next grey object, while the mutator atomic read barrier
+forwards any reference loaded from a grey object. The atomic blocks ensure that a muta-
+tor thread can never load a reference from an object that is in the middle of being scanned
+(to turn it from grey to black).
+     As presented in Algorithm 17.1, atomicity of the Read operation ensures that the muta-
+tor sees the correct state of the src object (grey or not) and the target object (forwarded or
+not), as well as allowing the mutator to copy the target object if it is in fromspace, without
+interfering with ongoing copying by the collector in process. Thus, the mutator’s atomic
+Read operation may incur overhead proportional to the size of the object being copied.
+It is possible to obtain finer-grained atomicity by synchronising each of these operations
+more carefully with the collector.
+     One approach is to allow finer-grained synchronisation using a work list holding field
+addresses rather than object references. A difficulty then is how to distinguish grey fields
+from black fields. The problem is ensuring that the wavefront is easily determined by the
+mutator. At the granularity of objects, it is simple enough to set a grey bit in the header of
+each grey object, but for fields there is not usually a cheap place to store this information
+although side metadata can be used for this purpose [Zhao et al., 2022a,b]. However, with
+Cheney scanning the scan pointer can be advanced (atomically) as each field is scanned,
+so black fields lie behind the scan pointer and grey fields in front. In this case, the read
+barrier might look something like:
+
+    atomic Read(src, i):
+       ref ← src[i]
+       if ref ̸= null && scan ≤ &src[i]                                   /* src[i] is grey */
+          ref ← forward(ref)
+       return ref
+
+Of course, this description leaves out all the machinery needed to advance the wave-
+front atomically through each of the fields. We will see techniques for achieving this
+finer-grained processing in Chapter 19, where minimising interruptions by the collector
+becomes important for real-time systems.
+17.1. MOSTLY-CONCURRENT COPYING                                                    369
+
+Algorithm 17.1: Mostly-concurrent copying
+
+ 1   shared worklist ← empty
+ 2
+
+ 3   collect():
+ 4      atomic
+ 5         flip()
+ 6         for each fld in Roots
+ 7             process(fld)
+ 8      loop
+ 9         atomic
+10             if isEmpty(worklist)
+11                break                                                  /* exit loop */
+12             ref ← remove(worklist)
+13             scan(ref)
+14
+
+15   flip():
+16      fromspace, tospace ← tospace, fromspace
+17      free, top ← tospace, tospace + extent
+18
+
+19   scan(toRef):
+20      for each fld in Pointers(toRef)
+21         process(fld)
+22
+
+23   process(fld):
+24      fromRef ← *fld
+25      if fromRef ̸= null
+26         *fld ← forward(fromRef)                  /* update with tospace reference */
+27
+
+28   forward(fromRef):
+29      toRef ← forwardingAddress(fromRef)
+30      if toRef = null                                  /* not copied (not marked) */
+31         toRef ← copy(fromRef)
+32      return toRef
+33
+
+34   copy(fromRef):
+35      toRef ← free
+36      free ← free + size(fromRef)
+37      if free > top
+38         error "Out of memory"
+39      move(fromRef, toRef)
+40      forwardingAddress(fromRef) ← toRef                                  /* mark */
+41      add(worklist, toRef)
+42      return toRef
+43
+
+44   atomic Read(src, i):
+45      ref ← src[i]
+46      if isGrey(src)
+47         ref ← forward(ref)
+48      return ref
+17.2. BROOKS’S INDIRECTION BARRIER                                                        370
+
+Mostly-concurrent, mostly-copying collection
+Mostly-concurrent collection also naturally applies to mostly-copying collection. Recall that
+a mostly-copying collector must treat ambiguous roots conservatively, pinning all objects
+that they reference. The collector is free to move the remaining objects not directly refer-
+enced by ambiguous roots. It is straightforward to use the brief stop-the-world phase of
+a mostly-concurrent collector to mark (and pin) all the objects referenced by the ambigu-
+ous roots in the mutator thread stacks and registers. At this point all the mutator threads
+are black, and a Baker-style read barrier will ensure that the mutator threads never subse-
+quently acquire references to uncopied objects.
+    DeTreville [1990] used this approach for concurrently collecting Modula-2+ and subse-
+quently for Modula-3 [Cardelli et al., 1992], both systems-oriented programming languages
+whose compilers were not sophisticated enough to generate accurate stack maps. Also, be-
+cause their compilers did not emit an explicit barrier for heap accesses, DeTreville applied
+an Appel et al. read barrier to synchronise the mutator with the collector using virtual
+memory page protection. Detlefs [1990] used the same technique for C++, modifying the
+AT&T C++ compiler to derive automatically the accurate pointer maps for heap objects
+needed to allow copying of objects not referenced directly from ambiguous roots.
+    Subsequently, Hosking [2006] replaced use of coarse-grained virtual memory page pro-
+tection as the read barrier mechanism with compiler-generated object-grained read barrier
+support. The motivation for this was the difficulty of managing page protections atomi-
+cally in the presence of mutator threads that are preemptively scheduled by the operating
+system. Because the read barrier is only needed during the copying phase of collection,
+after all the mutator threads have been stopped to scan their ambiguous roots and make
+them black, it is possible to avoid expensive atomic instructions in the fast path of the
+barrier that checks if the source object is grey. Atomic operations are thus only needed to
+ensure atomicity of the forwarding operation.
+
+17.2     Brooks’s indirection barrier
+An alternative approach to requiring a tospace invariant is to allow the mutator to make
+progress without concern for the wavefront. Brooks [1984] observes that if every object
+(whether in fromspace or tospace) has a non-null forwarding pointer (either to its from-
+space original or to its copy in tospace), then the test on the src object in the read barrier
+can be eliminated. A fromspace object that has not yet been copied will have an indirec-
+tion field that points to itself. When copying an object, the fromspace indirection field is
+atomically updated to refer to the tospace copy. The tospace copy has an indirection field
+that points to itself. All heap accesses, both reads and writes, of pointers, non-pointers
+and mutable values in header words, now always require an unconditional dereference
+operation in order to follow any indirection pointer to the tospace copy if one exists. Thus,
+the Read barrier for the mutator is rewritten by Brooks as in Algorithm 17.2.
+    Now the only problem, other than the need for an additional dependent load, is that the
+read barrier can still read a field ahead of the wavefront that might refer to an uncopied
+fromspace object. Fortunately, the ubiquitous indirection field relaxes the need for the
+tospace invariant imposed by Baker so the mutator is allowed to operate grey and hold
+fromspace references. To ensure termination Brooks imposes a Dijkstra-style write barrier
+to prevent the insertion of fromspace pointers behind the wavefront, as in Algorithm 17.2.
+    Because mutator threads now operate grey, once copying is finished they need a final
+scan of their stacks to replace any remaining unforwarded references. The alternative, as
+17.3. SELF-ERASING READ BARRIERS                                                           371
+
+Algorithm 17.2: Brooks’s indirection barriers
+
+ 1   atomic Read(src, i):
+ 2      src ← forwardingAddress(src)
+ 3      return src[i]
+ 4
+
+ 5   atomic Write(src, i, ref):
+ 6      src ← forwardingAddress(src)
+ 7      if isBlack(src)                                /* src is behind wavefront in tospace */
+ 8         ref ← forward(ref)
+ 9      src[i] ← ref
+
+performed in the original incremental Brooks collector, is simply to scan the thread stacks
+and registers of each mutator thread after each collector increment, in order to redirect any
+references they may hold to copied objects before they can resume.
+
+17.3     Self-erasing read barriers
+Baker-style collectors require a read barrier to preserve their black mutator invariant. Read
+barriers are often considered to be more expensive than write barriers since reads are more
+prevalent than writes. Furthermore, read barriers are conditional: given a Read(src,i),
+they must test whether src[i] is in tospace and evacuate it if not. Cheadle et al. [2004]
+eliminated this test and all overheads in accessing a black tospace object for a Baker-style
+incremental copying collector in the Glasgow Haskell Compiler (GHC). The first word
+of every object (closure) in GHC points to its entry code: the code to execute (enter) when
+the closure is evaluated. They provided two versions of this code. In addition to the
+standard version, a second version scavenged the closure before entering the standard
+code. Let us see how this scheme operated. When the collector was off, the entry-code
+word pointed to the standard, non-scavenging code. However, when an object was copied
+to tospace, this word was hijacked and set to point to the self-scavenging code. If the
+object, now in tospace, was entered, the self-scavenging code was executed first to copy the
+object’s children to tospace. Then the original value of the entry-code word was reinstated.
+Finally, the standard version of the code was entered. The beauty of this scheme was
+that if the closure was evaluated in the future, then its standard code would have been
+entered unconditionally: the read barrier had been erased. The cost of this scheme was
+some duplication of code: Cheadle et al. found the overhead to be 25% over that of a
+stop-the-world copying collector. However, GHC’s later introduction of pointer tagging
+is incompatible with this technique as it eliminates many mutator calls to entry code in
+order to reduce the number of branch prediction misses [Marlow et al., 2007]. Cheadle
+et al. [2008] applied the same technique to flip method-table pointers in the Jikes RVM Java
+virtual machine. To do so, they had to virtualise most accesses to an object (all method
+calls and accesses to fields unless they are static or private). However, they were able
+to recoup some of this cost by using the run-time compiler to inline aggressively. Note that
+a self-healing load barrier is similar in intent, though different in implementation: it also
+seeks to repair the condition that the barrier detects, and updates the slot to prevent the
+barrier action in the future. However, it does so using explicit code, not an indirect call.
+
+17.4       Replication copying
+The Brooks indirection barrier imposes a time and space penalty. Following an indirection
+pointer adds (bounded) overhead to every mutator heap access (both reads and writes,
+pointers and non-pointers), and the indirection pointer adds an additional pointer word
+to the header of every object. It has the advantage of avoiding the need for Baker’s tospace
+invariant which forces the mutator to perform copying work when loading a fromspace
+reference from the heap, while preserving the essential property that accesses (both reads
+and writes) go to the tospace copy whenever one is present. This has the important result
+that heap updates are never lost because they occur either to the fromspace original before
+it is copied or to the tospace copy afterwards.1
+     Replication copying collectors [Nettles et al., 1992; Nettles and O’Toole, 1993] relax this
+requirement by allowing the mutator to continue operating against fromspace originals
+even while the collector is copying them to tospace. That is, the mutator threads obey a
+fromspace invariant, updating the fromspace objects directly, while a write barrier logs all
+updates to fromspace objects to record the differences that must still be applied to their
+tospace copies. In other words, replication copying collectors allow the state of the tospace
+copy to lag behind that of its fromspace original, so long as by the time the collector is fin-
+ished copying, but before it can discard fromspace, all mutator updates have been applied
+from the log to the tospace copy and all mutator roots have been forwarded. Thus, the
+termination condition for collection is that the mutation log is empty, the mutator’s roots
+have all been scanned, and all of the objects in tospace have been scanned.
+     Concurrent replication copying requires synchronisation between the mutator and col-
+lector via the mutation log, and when updating the roots from the mutators. Thread-local
+buffers and work stealing techniques can minimise the synchronisation overhead when
+manipulating the mutation log [Azagury et al., 1999]. The collector must use the muta-
+tion log to ensure that all replicas reach a consistent state before the collection terminates.
+When the collector modifies a replica that has already been scanned, it must rescan the
+replica to make sure that any object referenced as a result of the mutation is also replicated
+in tospace. Termination of the collector requires that each mutator thread be stopped to
+scan its roots. When there are no more objects to scan, the mutator log is empty, and no
+mutator has any remaining references to uncopied objects, then the collection cycle is fin-
+ished. At this point, all the mutator threads are stopped together briefly to switch them
+over to tospace by redirecting their roots.
+     The resulting algorithm imposes only short pauses to sample (and at the end redirect)
+the mutator roots: each mutator thread is stopped separately to scan its roots, with a brief
+stop-the-world phase at the end of the cycle to switch all the threads over to tospace.
+     The downside to replication copying is that every mutation of the heap, not just point-
+ers, needs to be logged by the mutator threads. This imposes a much higher write barrier
+overhead than for traditional pointer-only write barriers, and the mutation log can become
+a bottleneck. For languages that discourage mutation, such as the functional language ML
+used by Nettles and O’Toole, this is less of an issue so performance does not suffer.
+
+Multi-version copying
+Nettles and O’Toole [1993] still require global stop-the-world synchronisation of the muta-
+tor threads to transition them to tospace. Their algorithm is not lock-free because no muta-
+tor can make progress while this transition occurs. Herlihy and Moss [1992] dispense with
+   1 Atomic copying of an object and installation of the forwarding address from the old copy to the new one is
+
+not always simple.
+
+the need for a global transition. They adapt Halstead’s [1985] multiprocessor refinement
+of Baker’s [1978] algorithm, which divides the heap into multiple per-processor regions.
+Each processor has its own fromspace and tospace, and is responsible for evacuating into
+its own tospace any fromspace object it discovers while scanning. Halstead uses locking
+to handle races between processors that compete to copy the same object, and for updates
+to avoid writing to an object while it is being evacuated. He also retains global synchroni-
+sation to have all the processors perform the flip into their tospace before discarding their
+fromspace. To eliminate this global synchronisation, Herlihy and Moss decouple from-
+space reclamation from the flip. They divide each processor region into a single tospace
+plus multiple (zero or more) fromspaces. As copying proceeds, multiple fromspace ver-
+sions of an object can accumulate in different spaces. Only one of these versions is current,
+while the rest are obsolete.
+    Each processor2 alternates between its mutator task and a scanning task that checks
+local variables and its tospace for pointers to fromspace versions. When such a pointer is
+found, the scanner locates the object’s current version. If that version is in a fromspace,
+then it copies it to a new current version in its tospace (the old version is now obsolete).
+    In this way, the processors cooperate to move objects from fromspaces to tospaces, and
+to redirect reachable pointers to the tospaces. Each processor is responsible for scanning its
+own tospace for fromspace pointers, and for copying any fromspace object it finds (includ-
+ing objects in fromspaces of other processors) that does not have a current tospace copy in
+some processor. A processor can flip at any time during its mutator task (when its tospace
+is full and so long as it has sufficient free space to allocate a new tospace), but not in the
+middle of a scan. It cannot free its fromspaces until it can be sure no other processor holds
+references to any of its fromspace objects.
+    To manage versions, Herlihy and Moss maintain a forwarding pointer field next at
+all times in each object, so that each obsolete fromspace version refers to its next version,
+terminating at the current version which has a null forwarding pointer. When copying a
+fromspace object into its own tospace, a scanning processor atomically installs the tospace
+copy at the end of the version chain using compare-and-swap, making it current. Thus,
+every mutator heap access must traverse to the end of the chain of versions before per-
+forming the access. Moreover, to preserve lock-freedom while ensuring that heap updates
+are not lost, every store into an object creates a new version of the object in the mutat-
+ing processor’s tospace, using compare-and-swap to make it current. Thus, scanning and
+copying require no global synchronisation, while preserving all mutator updates.
+    A processor owning fromspaces (the owner) can discard them only if no other scanning
+processor (scanners) holds any of its fromspace pointers. A scan is clean with respect to
+a given owner if the scan completes without finding any pointers to versions in any of
+the owner’s fromspaces, otherwise it is dirty. A round is an interval during which every
+processor starts and completes a scan. A clean round is one in which every scan is clean
+and no processor executes a flip. After a processor executes a flip, the resulting fromspace
+can be reclaimed after completion of a subsequent clean round.
+    An owner detects that another scanner has started and completed a scan using two
+atomic handshake bits, each written by one processor and read by the other. Initially, both
+bits agree. To start a flip, the owner creates a new tospace, marks the old tospace as a
+fromspace, and inverts its handshake bit. At the start of a scan, the scanner reads the
+owner’s handshake bit, performs the scan, and sets its handshake bit to the value read
+from the owner’s. Thus, the handshake bits will agree once the scanner has started and
+completed a scan in the interval since the owner’s bit was inverted.
+
+   2 Herlihy and Moss use the term process for what might now be called a thread, but we continue to use processor
+
+here to match Halstead [1985] and to emphasise that the heap regions should be thought of as per-processor.
+
+    However, an owner must detect that all processes have started and completed a scan,
+and every processor is symmetrically both an owner and a scanner, so the handshake bits
+are arranged into two arrays. An owner array contains the owner handshake bits, indexed
+by owner processor. A 2-dimensional scanner array contains the scanner handshake bits,
+with an element for each owner-scanner pair. Because a scan can complete with respect to
+multiple owners, the scanner must copy the entire owner array into a local array on each
+scan. At the end of the scan, the scanner must set its corresponding scanner bits to these
+previously saved values. An owner detects that the round is complete as soon as its owner
+bit agrees with the bits from all scanners. An owner cannot begin a new round until the
+current round is complete.
+    To detect whether a completed round was clean, the processors share an array of dirty
+bits, indexed by processor. When an owner executes a flip, it sets the dirty bit for all other
+processors. Also, when a scanner finds a pointer into another processor’s fromspace it sets
+that processor’s dirty bit. If an owner’s dirty bit is clear at the end of a round, then the
+round was clean, and it can reclaim its fromspaces. If not, then it simply clears its dirty
+bit and starts a new scan. By associating dirty bits with fromspaces rather than processor
+regions, and having scanners set the dirty bit for the target fromspace when they find a
+pointer, it is also possible to reclaim fromspaces individually rather than all at once.
+    Herlihy and Moss prove safety and liveness (of collector) for their algorithm, but they
+do not explore performance of an actual implementation. The liveness (of collector) argu-
+ment relies on the observation that if each processor always eventually scans, then some
+processor always eventually reclaims its fromspaces. At worst, because each processor will
+eventually exhaust its free spaces, further flips will cease, and all processors will eventu-
+ally focus on scanning until a clean round ensues. Of course, this resource exhaustion has
+the effect of causing blocking in the system as a whole.
+
+Extensions to avoid copy-on-write
+The novelty of this multi-versioning algorithm is that it is entirely lock-free. Its downside
+is the need to create a new version on every heap update, though this may be useful on a
+non-uniform memory architecture multiprocessor to improve locality. Herlihy and Moss
+consider several alternatives to avoiding versioning on every update:
+
+Update in place with CompareAndSwap2. The first extension assumes the availability of
+the CompareAndSwap2 operator which allows both performing the update and ensur-
+ing that the forwarding pointer next remains null as a single atomic operation. Un-
+fortunately, CompareAndSwap2 is not widely implemented on modern multiprocessors.
+Transactional memory might be a viable alternative; in fact, this algorithm inspired the
+work leading to Herlihy and Moss [1993].
+
+Owner update in place. Another approach simply uses compare-and-swap, but it re-
+quires additional fields in the header of object a: seq(a) is a modulo two sequence num-
+ber, index(a) is the index of the slot being updated and value(a) is the new value for
+that slot. Also, the forwarding pointer field next(a) is permitted to hold a sequence
+number, in addition to a pointer or null (this is easy enough to achieve by tagging the
+forwarding pointer field with a low bit to distinguish pointers to suitably aligned ob-
+jects from a sequence number). There only need be two values for sequence numbers:
+if seq(a)=next(a), then the current update is installed, and otherwise it is ignored.
+    To perform a store using the full write barrier, a processor chains down the list of ver-
+sions until it finds the current version (one with null or a sequence number stored in its
+
+Algorithm 17.3: Herlihy and Moss [1992] Owner update in place
+
+ 1    WriteLocal (a, next, i, v):
+ 2       seq ← (next + 1) % 2
+ 3       seq(a) ← seq                                                                      $
+ 4       index(a) ← i
+ 5       value(a) ← v
+ 6       if CompareAndSet(&next(a), next, seq)
+ 7          scan(a[i])
+ 8          a[i] ← v
+ 9       else
+10          Write(a, i, v)
+
+next field). If the current version is local, then the processor performs the WriteLocal op-
+eration illustrated in Algorithm 17.3. This takes the current version a, the observed next
+field (either null or a sequence number), the index i of the slot to be modified, and the
+new value of the slot v. It then uses compare-and-set to install the new sequence number
+in the next field. If successful, then the processor performs a deletion barrier to scan any
+pointer overwritten by the store (this preserves the invariant that scanning has inspected
+every pointer written into tospace), before performing the store. Otherwise, the processor
+locates the newer version and retries the update by invoking the full write barrier. Having
+the owning process update in place is well suited to a non-uniform memory architecture
+where it is more efficient to update local objects.
+    If the object is remote, then the new owner makes a local tospace copy as before, ex-
+cept that after making the copy, but before performing the store, it must check whether
+next(a)=seq(a). If they are equal, then it must first complete the pending update, per-
+forming the deletion barrier to scan the slot indicated by the index field and storing the
+value from the value field into that slot. The same action must be performed when the
+scanner evacuates an object into tospace. This ensures that any writes performed on the
+original object while it is being copied are linearised before writes performed to the copy.
+
+Locking update in place. Finally, there is the alternative of giving up on lock-freedom and
+using compare-and-swap to lock the object while it is updated. As before, only the owner
+of the current version may update in place. The owner locks an object by:
+
+     1. using compare-and-swap to lock the object by installing a distinguished locked value
+        in its next field;
+
+     2. scanning the pointer (if any) being overwritten by the store;
+
+     3. performing the update;
+
+     4. scanning the pointer (if any) being stored; and
+
+     5. unlocking the object by setting next back to null.
+
+Since the owner is the only processor that updates the object in place, there is no need to
+synchronise with the scanner. The deletion barrier in Step 2 ensures that pointers possibly
+seen by other processors will be scanned. The insertion barrier in Step 4 ensures that if the
+object has already been scanned, then the new pointer will not be mistakenly omitted.
+
+Sapphire
+A problem with symmetric division of the heap into independently collected regions per
+processor as done by Halstead [1985] and Herlihy and Moss [1992] is that it ties the heap
+structure to the topology of the multiprocessor. Unfortunately, application heap structures
+and thread-level parallelism may not map so easily to this configuration. Moreover, one
+processor can become a bottleneck because it happens to own a particularly large or knotty
+portion of the heap, causing other processors to wait for it to complete its scanning before
+they can discard their fromspaces, so they may end up stalling if they have no free space
+in which to allocate. It may be possible to steal free space from another processor, but
+this requires the ability to reconfigure the per-processor heap regions dynamically. These
+issues were discussed earlier in Chapter 14. Instead, concurrent collectors place collector
+work asymmetrically on one or more dedicated collector threads, whose priority can easily
+be adjusted to achieve a balance of throughput between mutator and collector threads.
+    Sapphire [Hudson and Moss, 2001, 2003] is a concurrent copying algorithm designed
+to work well in the presence of a large number of mutator threads on small- to medium-
+scale shared memory multiprocessors. It extends previous concurrent replication copying
+algorithms to allow one thread at a time to flip from operating in fromspace to operating
+in tospace, as opposed to having to stop them to transition them all at once over to tospace.
+This minimises the amount of time that any given application thread may need to block to
+support the collector. To cope with mutators operating in both fromspace and tospace at
+the same time, Sapphire requires that they update both the fromspace and tospace copies
+of an object, when both exist.
+
+Transactional Sapphire
+Transactional Sapphire [Ugawa et al., 2018] extends Sapphire with parallel collector threads,
+and introduces transactions, in either hardware or software, for object copying, and a
+simpler mechanism to handle volatile fields in order to support lock-free programs that
+employ fine-grain synchronisation using atomic operations. Like Sapphire, Transactional
+Sapphire assumes that Java programs are well-synchronised, that is that accesses by dif-
+ferent threads to a field should either be protected by a lock or the field should be declared
+volatile. Otherwise, surprising results3 may occur.
+    The Transactional Sapphire collector starts as an incremental update collector sup-
+ported by insertion barriers, before transitioning to a snapshot collector supported by
+deletion barriers (see the discussion in Section 16.6 on page 357). It allocates most ob-
+jects in replicated from- and tospaces. Whereas Hudson and Moss had to adopt a complex
+protocol to manage objects with volatile fields safely, Transactional Sapphire avoids the
+costs and complexities of synchronising accesses to such objects with replicating them by
+allocating these objects (and large objects) in a space managed by mark-sweep collection;
+the volume of these objects is expected to be small. Transactional Sapphire has four major
+groups of phases (Algorithm 17.4). Throughout the Mark and Copy phases, it maintains
+the invariant that mutators read from and write to the originals in fromspace in the repli-
+cated heap; the Flip phase transitions mutators in several steps to accessing tospace objects.
+Most of these phase changes are Type I (see Section 15.3), but changing from ‘collector idle’
+to the StackMark phase and from the Copy phase to the HeapFlip phase requires Type II
+phase changes (the names of intermediate phases are prefixed with ‘Pre’).
+Mark: The first group of phases marks all reachable objects. For objects in replicated
+    spaces, the collector creates an empty shell in tospace and installs forwarding point-
+    ers; for objects in mark-sweep spaces, the collector sets a mark in the object header.
+  3 Of course, in Java ‘surprises’ can also result from unsynchronised accesses to double and long values.
+
+Algorithm 17.4: Transactional Sapphire phases
+
+ 1   Mark:
+ 2      PreMark1                                           /* install Mark phase write barrier */
+ 3      PreMark2                                                     /* toggle allocation colour */
+ 4      StackMark                                                   /* process mutators’ stacks */
+ 5      RootMark                                                     /* blacken global variables */
+ 6      HeapMark                                               /* process collector mark queue */
+ 7      ReferenceProcess                      /* mark reference types and terminate marking */
+ 8
+
+ 9   Copy:
+10      PreCopy                                            /* install Copy phase write barrier */
+11      Copy                                  /* copy fromspace objects to their tospace shells */
+12
+
+13   Flip:
+14      PreFlip1                          /* install the limited self−flip and equality barriers */
+15      PreFlip2                                                /* install the full self−flip barrier */
+16      HeapFlip                              /* flip non−replicated spaces to point to tospace */
+17      RootFlip                                           /* flip global roots to point to tospace */
+18      StackFlip                                      /* flip mutator stacks to point to tospace */
+19
+
+20   Reclaim                                            /* turn off barriers; reclaim fromspace */
+
+Copy: The second group of phases copies fields of reachable objects in fromspace to their
+    replica shells in tospace. During these phases, the mutators read from the originals
+    in fromspace, but must mirror their writes to the tospace copies. The fromspace and
+    tospace copies are kept loosely coherent by relying on the programming language
+    memory model (in this case for Java [Manson et al., 2005; Gosling et al., 2015]). This
+    means that the updates to each copy need not be atomic or simultaneous. Rather, a
+    well-synchronised Java application need only perceive that the values in the copies
+    cohere at application-level synchronisation points. Any changes made by a mutator
+    thread to fromspace copies between two synchronisation points will be propagated
+    to the tospace copies before passing the second synchronisation point. If all threads
+    are at synchronisation points, then the fromspace and tospace copies will be con-
+    sistent with one another. This is important during the third, Flip, group of phases,
+    when mutators can observe both fromspace and tospace copies.
+
+Flip: In this group, the collector forwards pointers in global variables and thread stacks
+      and registers, flipping them one at a time into tospace. Unflipped mutator threads
+      may hold references to both fromspace and tospace copies (even of the same object).
+      Previous concurrent copying collectors either imposed a tospace invariant using a
+      read barrier to redirect mutators out of fromspace [Baker, 1978], or imposed a from-
+      space invariant while replicating and then flipped all at once [Nettles and O’Toole,
+      1993]. Incremental flipping without a read barrier (except for pointer equality tests)
+      means that mutators may access both fromspace and tospace at the same time, which
+      requires slightly tighter synchronisation of updates to both copies.
+
+Reclaim: As mutators and global roots no longer hold fromspace references, the collector
+     can now release the old fromspace.
+
+Algorithm 17.5: Transactional Sapphire write barriers
+
+                                      (a) The Mark phase write barrier
+
+       1   checkAndEnqueue(ref):                                                         /* shade ref */
+       2      if inFromspace(ref)
+       3         if not forwarded(ref)                                                         /* white */
+       4            tobeCopiedQueue.enqueue(ref)
+       5      else
+       6         if not testAndMark(ref)                                                       /* white */
+       7            add(worklist, ref)
+       8
+
+       9   WriteMark (src, i, ref):
+      10       src[i] ← ref
+      11       checkAndEnqueue(ref)
+
+                            (b) The ReferenceProcess phase write barrier
+
+       1   WriteReferenceProcess (src, i, ref):
+       2      checkAndEnqueue(src[i])
+       3      src[i] ← ref
+       4      if isFirstStackScan()
+       5         checkAndEnqueue(ref)          /* active only while switching barriers */
+
+                                      (c) The Copy phase write barrier
+
+       1   WriteCopy (src, i, ref):
+       2      src[i] ← ref
+       3      if inFromspace(src)
+       4         repl ← src.forwardingPointer
+       5         if inFromspace(ref)
+       6              repl[i] ← ref.forwardingPointer
+       7         else
+       8              repl[i] ← ref
+
+Marking. The Mark group of phases comprises six steps. Termination relies on use of
+deletion barriers and allocating new objects black, that is, with replicas in both fromspace
+and tospace.
+    To allocate a new object, the fromspace replica is allocated first,4 after checking that
+there is enough space for both objects; this ensures that although a mutator may be blocked
+until the end of the collection cycle if there is insufficient memory, the subsequent allo-
+cation of the tospace replica can never fail. Maintaining the invariant that there are no
+black-white pointers requires care. Because there is no stop-the-world rendezvous, differ-
+ent mutators may be in different phases. The transition from ‘collector idle’ to the start
+of the main marking phase, StackMark, must therefore be Type II5 (see Section 15.3). The
+
+   4 The original Sapphire allocated new objects black in a separate newspace.
+    5 An alternative design decision might be to allocate grey in this phase, which would allow the phase change
+
+to be Type I, thus removing a handshaking step. However, delaying turning on the deletion barrier would require
+scanning objects newly allocated during the Mark phase.
+
+role of the first intermediate phase, PreMark1, is to install the insertion barrier shown in
+Algorithm 17.5a. Mutators do not perform any marking directly, but rather enqueue ob-
+jects for the collector to process. If the referent ref of a pointer update src.i = ref is
+in fromspace, and if it has not been forwarded (the collector has not created a shell for it),
+the barrier shades the object by adding it to a tobeCopiedQueue. The barrier does not
+create the shell immediately, since that allocation path might include a GC safe-point and
+hence a potential phase change. An unmarked object in a non-replicating space is marked
+and added to a separate work list so that its children can be traced. Each mutator has its
+own queue, so enqueuing does not normally need synchronisation.
+    In the StackMark phase, each collector thread competes to claim and halt a mutator,
+scan its stack and then resume it. The number of mutators blocked at any time is at most
+the number of collector threads, typically significantly fewer than the number of CPU
+cores. As with the mutator barrier, as it scans a mutator’s stack, the collector simply adds
+references found to its work queue rather than immediately creating tospace shells. In the
+RootMark phase, the collector scans global roots — for Jikes RVM, vectors of references
+for static variables and Java Native Interface references. All writes to these vectors are pro-
+tected by an insertion barrier so mutators do not need to be halted for scanning. To support
+load balancing between collector threads, the RootMark phase comprises two stages. The
+first is a global stage in which the master collector measures each vector to balance loads
+in the following stage where all collectors scan the vectors in parallel. It is essential that
+this is global, since the size of a vector’s live area may change as mutators run. If the range
+of a vector were to be computed asynchronously, some slots may be scanned by multiple
+collectors and others not at all. Protecting the vectors with a write barrier allows the live
+area to be enlarged or contracted safely (although contraction may mean that the collector
+traverses dead objects).
+    In the HeapMark phase, collectors traverse reachable objects, creating shells in tospace
+and writing a forwarding pointer to each shell in a distinct word in the fromspace object’s
+header. Care is taken to handle any races between collector and collector, or collector and
+mutator. Roots for the traversals are the queues filled by the collectors in the StackMark
+and RootMark Phases and by the mutator write barrier. Each tospace shell’s header (a
+status word and a back pointer to its fromspace replica) is created immediately. The back
+pointer is used in the Flip Phases to propagate mutator updates to both copies of an object.
+    Until the ReferenceProcess phase, Transactional Sapphire uses the insertion barrier
+shown in Algorithm 17.5a, both for safe initialisation and because insertion barriers pre-
+serve less floating garbage than deletion barriers. In this phase, the algorithm switches on
+both an insertion and a deletion barrier (Algorithm 17.5b), as per Doligez and Gonthier
+[1994], to give both quicker termination and a guarantee of progress. For termination, in-
+sertion barrier techniques require mutator stacks to be scanned repeatedly until no new
+references are found. In contrast, collectors using a deletion barrier do not have to rescan
+stacks. Transactional Sapphire faces two problems here. First, deletion barriers are a black
+mutator technique (see Section 15.2), but the insertion barrier used so far does not prevent
+a mutator from holding a reference to an otherwise unreachable white object. Thus, the
+stacks must be rescanned to blacken them. After each mutator’s stack has been scanned
+again, it suffices that the mutator only use the deletion barrier. Second, Java’s semantics
+allow a mutator to call get at any time on a weak reference whose referent is only weakly-
+reachable, causing the referent to become strongly-reachable if the reference has not yet
+been cleared. Once the referent becomes strongly-reachable, the collector must not clear
+the weak reference, and must retain any objects that just became strongly-reachable. If
+multiple weak reference objects refer to the same target, they must behave consistently: at
+any time, all calls to get on these weak reference objects must either all return null or all
+return a reference to the target. For example, if a and c are weak references to an object b,
+at all times the invariant a.get() = c.get() must hold.
+
+Algorithm 17.6: The collector’s word-copying algorithm using compare-and-swap
+
+ 1   copyWord(p, q):
+ 2      loop
+ 3         currentValue ← *q;
+ 4         toValue ← *p                                                                      $
+ 5         if isPointer(toValue)
+ 6            toValue ← forwardObject(toValue)
+ 7         if toValue = currentValue
+ 8            return
+ 9         if not CompareAndSwap(q, currentValue, toValue)                                   $
+10            return
+
+    Without a stop-the-world phase, this race between the mutator calling get and the col-
+lector attempting to finish marking strongly-reachable objects before proceeding to clear-
+ing reference objects with unmarked referents necessitates the collector to iterate until no
+new calls to get have been made. Transactional Sapphire uses a global state, with values
+normal, tracing, repeat and clearing, to manage this. The collector starts by chang-
+ing the state from normal to tracing. When it believes its tracing work is complete, it
+attempts to change the state atomically to clearing. Meanwhile, any get will attempt
+to set the state atomically to repeat, which will prevent the collector from proceeding
+to clearing references but cause it to continue tracing from the newly greyed referents.
+Note that a further benefit of using a deletion barrier is that the number of weak refer-
+ences at the start of the ReferenceProcessing stage is known, and any new weak reference
+objects will be allocated black, hence termination of marking is guaranteed without a stop-
+the-world pause. In contrast, with an insertion barrier, the collector may have to chase
+references escaping back and forth between a Reference object and the stack repeatedly.
+
+Copying. By the end of the Mark group of phases, all live fromspace objects have been
+marked with forwarding pointers to tospace shells. In the Copy phase, the collector copies
+the contents of each fromspace object into its shell; mutators continue to access fromspace
+objects and to allocate new objects black. The collector first installs the Copy phase write
+barrier (Algorithm 17.5c) in the PreCopy phase. Whenever a mutator writes to a fromspace
+object, this barrier writes the semantically equivalent value to the corresponding field of
+its tospace copy.
+     It is important that mutator updates are never lost, even when the collector copies the
+same object at the same time, and are wait-free. Any concurrent copying collector must
+deal with races between mutators updating and collectors copying an object. The target
+platform for Transactional Sapphire is x86 systems, for which most memory operations
+are guaranteed to be executed in order: only loads may be reordered with preceding store
+instructions. It is assumed that all reference fields are word-aligned: copying word by
+word rather than field by field improves performance, while still handling reference types
+and double-word types in accordance with the Java specification. Transactional Sapphire
+offers three solutions: it can copy an arbitrary number of words atomically and efficiently
+using a compare-and-swap in a loop, it can use hardware transactional memory (such
+as Intel’s Restricted Transactional Memory extensions) or it can use a minimal form of
+software transactional memory.
+     The compare-and-swap method shown in Algorithm 17.6 copies word by word. This
+is efficient because multiple non-reference fields within the same word can be processed
+in a single iteration of the loop, and it also deals correctly with reference fields, which are
+
+Algorithm 17.7: Transactional Sapphire: copying with software transactional memory
+
+ 1    copyObjectTransactional(p, q):
+ 2       for i ← 0 to words(q)                                                 /* copying step */
+ 3          toValue ← p[i]
+ 4          if isPointerField(p, i)
+ 5              buf[i] ← toValue
+ 6              toValue ← forward(toValue)
+ 7          q[i] ← toValue
+ 8
+
+ 9        memoryBarrier
+10
+
+11        for i ← 0 to words(q)                                             /* verification step */
+12           if isPointerField(p, i)
+13              if p[i] ̸= buf[i]
+14                 goto FAIL
+15           else if p[i] ̸= q[i]
+16              goto FAIL
+17
+
+18        return
+19
+
+20    FAIL:
+21       copyObject(p, q)                      /* fall back to copying word at a time with CAS */
+
+word-aligned and sized. If the contents of the old and new words differ, then the collector
+atomically updates the tospace word using a compare-and-swap. Failure means that a
+mutator has updated this word with a newer value so the collector does not need to copy
+this word. Unfortunately, success does not mean that the collector has written the newest
+value, as there is a risk of an ABA problem. If the mutator were to change the values held in
+p and q between line 3 and line 4, then the test in line 7 would fail, so the collector would
+prepare to compare-and-swap toValue into q. In the absence of any further mutator
+action, this compare-and-swap would fail, which is safe as noted above. But if the mutator
+were to update p and q again with their original value, then the compare-and-swap would
+succeed, updating q with a stale toValue! To resolve this, the algorithm double checks in
+the next iteration of the loop. The risk to progress is very small: the mutator would have
+to continually update the words to prevent progress.
+    The simplest hardware transactional memory approach is to copy a single object in
+each transaction, word by word, dereferencing for forwarding where necessary, using nor-
+mal load/store instructions within an XBEGIN. . . XEND block. If the transaction fails, then
+the algorithm falls back to copying using compare-and-swap. Since objects are typically
+smaller than a cache line, it is possible to copy several objects in a single transaction, but
+note that the expected read set of a transaction for a single object may be larger as semantic
+copying requires dereferencing each reference field of a source object. However, the size
+of a transaction can be reduced by visiting objects as part of the heap scan and adding
+them to a ‘to be copied’ list (until it reaches a limit) before initiating the transaction; this
+planning removes scanning traffic from the transaction’s read set and hence also reduces
+the risk of aborts.
+    Previous concurrent copying collectors have also attempted to leverage transactional
+memory, but at some cost. For example, McGachey et al. [2008] describe a lock-free, on-
+the-fly, copying collector in a strongly atomic software transactional memory system that
+
+uses versioning for reads, and strict two-phase locking and eager versioning for writes.
+In order to guarantee consistency, mutators and collectors must wrap reads and writes
+of both reference and scalar fields in transactions (although note that the transactional
+mutator needs such barriers anyway).
+    However, copying does not require such a general purpose transactional memory mech-
+anism, as it is only necessary for fromspace and tospace replicas to be eventually rather
+than immediately consistent, since tospace fields are not read until after the Copy group of
+phases is complete. The Transactional Sapphire garbage collector can therefore use either
+hardware transactions, or a custom software transactional method comprising a copying
+and a verification step for each object; both transactional methods were found to offer
+similar copying speeds and to significantly improve over the original Sapphire technique
+which used compare-and-swap instructions [Ritson et al., 2014]. The copying step imple-
+mented with software transactions semantically copies the object using normal load/store
+instructions. In the verification step, the contents of the tospace replica are compared to the
+fromspace object. If the two are semantically consistent, then the object has been success-
+fully replicated. If any word is found to be inconsistent with its replica, then the object is
+copied again using the fallback compare-and-swap method. A memory fence (MFENCE on
+x86) separating the copying and verification steps is essential, but is the only fence needed.
+Without it, a store to the tospace replica could be reordered after the loads performed in the
+verification step, risking the loss of a mutator store. Anderson et al. [2015] use a broadly
+similar software verification step in Chihuahua, a concurrent, semispace collector, which
+uses Brooks forwarding pointers rather than replication to redirect mutator accesses to the
+most up-to-date location of an object. However, Chihuahua requires the mutator to use not
+only a read barrier — an extra, unconditional dereference to follow the forwarding pointer
+— but also atomic instructions in the write barrier.
+
+Flip. In this phase, the collector flips fromspace references in non-replicated spaces, global
+roots and mutators’ stacks to point to tospace. Before this phase, mutators never access
+tospace objects, but after this phase mutators never access fromspace objects. In order to
+avoid conflicting mutator invariants, another Type II phase transition is needed. During
+this transition, mutators must be ready to deal with references to any space.
+    The PreFlip1 phase installs two barriers: Algorithm 17.8a shows a pointer-equality read
+barrier that tests the equivalence of references to the fromspace and tospace replicas of the
+same object (in preparation for subsequent phases that store tospace references), and Algo-
+rithm 17.8b a double-update write barrier that propagates a write to a fromspace/tospace
+object to its tospace/fromspace replica, respectively. Note that mutators in the PreFlip1
+phase do not yet have access to tospace objects. In the PreFlip2 phase, the full self-flip
+barrier (Algorithm 17.8c) is installed: from now on, this mutator never writes a reference
+to a fromspace object. Note that it was not possible to install this barrier in PreFlip1 as
+other mutators might still have been in a Copy phase, expecting to see only fromspace ref-
+erences. In the HeapFlip and RootFlip phases, the collector flips the non-replicated spaces
+and global roots, respectively. From the StackFlip phase onwards, the allocator must return
+a tospace reference while also allocating a fromspace replica.
+    In summary, Transactional Sapphire extends previous concurrent copying algorithms
+and has much in common with replication schemes. It permits one thread at a time to flip
+from fromspace to tospace rather than all at once, and minimises thread blocking (pauses)
+while avoiding a read barrier for all but pointer-equality tests in the Flip phase. Mutators
+simply update both the fromspace and tospace copies of an object (when both exist) to
+keep them coherent. We have omitted the subtleties of dealing with locks, status words
+and hash codes, and the swapping of the roles of fromspace and tospace; we refer readers
+to Ugawa et al. [2018] for details.
+
+Algorithm 17.8: Transactional Sapphire Flip phase barriers
+
+                              (a) Pointer equivalence read barrier
+
+     1    pointerEQ(p, q)                                                       /* p == q */
+      2      if p = q
+      3         return true
+     4       if inFromspace(p)
+     5          return p.forwardingPointer = q
+     6       if inFromspace(q)
+     7          return q.forwardingPointer = p
+     8       return false
+
+                   (b) PreFlip phase write barrier with limited self-flipping
+
+     1    WritepreFlip (src, i, ref):
+     2       if inFromspace(ref) && inTospace(src)
+     3          ref ← ref.forwardingPointer
+     4       src[i] ← ref
+     5       if inFromspace(src) || inTospace(src)
+     6          repl ← src.forwardingPointer
+     7          if inFromspace(ref) ||
+     8                    (inTospace(ref) && inFromspace(repl))
+     9              repl[i] ← ref.forwardingPointer
+     10         else
+     11             repl[i] ← ref
+
+                                 (c) Full self-flip write barrier
+
+     1    WriteFlip (src, i, ref):
+     2       if inFromspace(ref)
+     3          ref = ref.forwardingPointer
+     4       src[i] ← ref
+     5       if inFromspace(src) || inTospace(src)
+     6          repl ← src.forwardingPointer
+     7          repl[i] ← ref
+
+Platinum
+The Platinum collector [Wu et al., 2020b] aims to deal with long application latency tails
+(caused by garbage collection pauses) and to improve the utilisation of the CPU in a
+mostly-concurrent, generational, replicating collector. They take two measures to address
+CPU utilisation. First, they use fewer collector threads than cores, ensuring that resources
+will be available for mutators to keep running during collection. Second, each collector
+thread is bound to a particular core. When the collector is not running, mutators may use
+any core, but when the collector is running they are restricted to the cores where collec-
+tor threads are not running. This strategy helps guarantee high CPU utilisation for the
+collector threads.
+    Wu et al. also exploit two hardware features found on some modern Intel processors,
+transactional memory and memory protection keys, to keep mutator write barrier over-
+heads low. Memory protection keys allow the programmer to use a system call to asso-
+
+ciate a particular protection key with a range of pages. The programmer can set any access
+restrictions, such as to make the pages read-only, by setting a register that can be accessed
+cheaply without a system call. These additional restrictions can be changed at will, though
+they cannot allow more access rights than the underlying page table entry does. The crit-
+ical point is that protection keys allow different threads to have different access rights to
+the same virtual memory pages.
+    Platinum sets up two protection keys. During collection, one is associated with pages to
+which only the collector threads should have write access, and Platinum arranges that the
+mutators set their protection keys to disallow writes to these pages. The other protection
+key is associated with pages to which mutators do have write access.
+    Platinum uses the heap layout from HotSpot’s Parallel collector: an old generation and
+a young generation split into an eden and two survivor spaces. During collection, mutators
+access only fromspace replicas of objects. Collector threads have write access to most of
+the heap — the Collection region. In contrast, mutators have write access only to the blocks
+that saw recent allocation — the Pinned region — and blocks reserved for allocation — the
+Allocation region. These regions are not scavenged. When the collector copies an object,
+it places forwarding- and back-pointers in the fromspace and tospace replicas. When a
+mutator attempts to modify an object in a page in the Collection region, to which it does
+not have write access, it takes a trap. If the object being mutated has been copied, the trap
+handler adjusts the mutator’s protection key temporarily in order to update the field in
+both copies of the object in a hardware transaction. In contrast, Transactional Sapphire
+protects the collector’s copying in a transaction (hardware or software).
+    As with other mostly-concurrent collectors, Platinum needs an initial and a final stop-
+the-world phase. As usual, in the first pause, the collectors scan thread stacks. How-
+ever, Platinum needs to do more work in the final stop-the-world phase. Because collector
+threads do not scavenge the Pinned and Allocation regions in the concurrent phase, Plat-
+inum must not only update references in thread stacks to objects in the Collection region
+that have been moved but must also sweep these two regions to update any references.
+
+17.5     Concurrent compaction
+Chapter 3 discussed approaches to garbage collection that split into two phases, marking
+and compacting. Recall that compaction is decoupled from the tracing phase that deter-
+mines reachable objects. This allows greater freedom than a copying collector over the
+order in which objects are relocated (by address, say, rather than in order of tracing for
+reachability). It can further give freedom as to which regions are compacted and which are
+left alone. In principle, these compacting collectors could defragment the entire heap one
+region at a time — thus, at the memory overhead of a single region — unlike a copying
+collector which must reserve sufficient space to accommodate all the objects that it copies,
+in the worst case, the size of fromspace.
+
+Compressor
+Compressor [Kermany and Petrank, 2006], presented earlier in Section 3.4 and Section 14.8,
+exploits the freedom allowed by separating marking from copying to perform compaction
+concurrently with the mutator threads.
+   Recall that Compressor first computes an auxiliary ‘first-object’ table that maps a to-
+space page to the first fromspace object that will be moved into the page. Parallel com-
+pactor threads then race to claim an unmapped tospace virtual page, map it to a physical
+page, populate it with its live copies from fromspace pages, and redirect each pointer field
+
+in the copies to refer to tospace. Once all the live objects in a fromspace page have been
+copied, it is immediately unmapped.
+    To enable concurrent compaction, Compressor exploits virtual memory page protec-
+tion primitives similarly to Appel et al. [1988] (where protection served as the read barrier
+for concurrent copying collection in order to prevent the mutator from accessing tospace
+pages whose objects have not yet been copied or which contain unforwarded pointers).
+Ossia et al. [2004] also used protection simply to allow concurrent forwarding of point-
+ers in pages containing compacted objects, but Compressor drives both compaction and
+forwarding using page protection. Compressor protects the tospace pages from read and
+write access (without yet mapping them to physical pages). Computing the first-object
+table and protecting tospace occurs concurrently with mutator threads operating in from-
+space. Compressor then briefly stops all the mutator threads to switch their roots to refer
+to tospace addresses before releasing the threads. Of course, the contents of those pages
+have not yet been copied. At this point, if a mutator accesses a protected tospace page, it
+will trap. Handling the trap requires doing the work of compaction to map and populate
+the page with its copies (the mutator performs incremental compaction work as if it was a
+compactor thread), and forward the references in those copies, before the mutator can re-
+sume and access the page. Note that only the data for this page is copied, thus the handler
+will not evacuate the beginning of an object that starts on the previous page or the end of
+one that continues onto the next page. Concurrent compaction requires that a compactor
+thread be able to access the page while other mutator threads are still protected from ac-
+cess. To support this, Compressor double-maps each physical page when its contents are
+to be copied, once in its ‘natural’ (still-protected) tospace virtual page, and again in an
+unprotected virtual page private to the compactor thread (see also double mapping in Sec-
+tion 11.10). Once the compaction work has been done for that page, the tospace virtual
+page can be unprotected so mutators can proceed, and the private mapping is discarded.
+    In essence, Compressor applies the standard tricolour invariant. Fromspace pages are
+white, protected tospace pages are grey, and unprotected tospace pages are black. Initially,
+the mutator threads operate grey in fromspace while the first-object table is computed
+along with the tospace addresses. When the mutator threads are flipped over to tospace,
+they are black. The protection-driven double mapping read barrier prevents the black
+mutator threads from acquiring stale fromspace references from grey pages that are still in
+the process of being populated with their fromspace copies.
+    Compressor must also handle other aspects of the tricolour invariant. In particular, af-
+ter marking and before the task of determining the first-object table begins, mutators must
+allocate all new objects in tospace to prevent those allocations from interfering with the
+relocation map (otherwise, allocating to a hole in fromspace would interfere). Moreover,
+these newly allocated objects must eventually have their pointer fields scanned after the
+mutators flip to tospace, to redirect any stale fromspace references in those fields over to
+tospace, and similarly for global roots. Thus, both newly allocated tospace objects and the
+global roots must be protected from access by mutators, with traps on their pages forcing
+scanning to redirect their pointers.
+    Because the performance of Compressor depends heavily on the cost of virtual mem-
+ory page mapping and protection primitives, which can be onerous [Hosking and Moss,
+1993b], it is important to batch these operations as much as possible. For example, Com-
+pressor actually protects and double-maps the entire tospace at the beginning of collection
+(to avoid the cost of double mapping each page as it is processed). Similarly, it moves eight
+virtual pages per trap (to better amortise the trap overhead on mutator threads).
+    One downside of Compressor is that when a mutator traps on access to a protected
+tospace page, then it must not only copy all of that page’s objects, it must also forward all
+the pointers in those objects to refer to their relocated (or soon to be relocated) targets. This
+
+can impose significant pauses on the mutator. In a moment, we will discuss the Pauseless
+collector, which reduces the amount of incremental work needed to be performed by a mu-
+tator to copying at most one object (without needing to forward any of the stale fromspace
+references it contains). Before doing so, let us briefly review the way in which Compressor
+drives compaction using page protection, as illustrated in Figure 17.1. The figures show
+the logical grouping of virtual pages into distinct categories (the linear address-ordered lay-
+out of the heap is intentionally not represented).
+Live: pages containing (mostly) live objects (initially dark grey in the figures)
+Condemned: pages containing some live objects, but mostly dead ones, which are good
+    candidates for compaction (light grey in the figures, with dark grey live objects)
+Free: pages currently free but available for allocation (dashed borders)
+New Live: pages in which copied live objects have been allocated but not yet copied
+    (dashed borders, with dashed space allocated for copies)
+Dead: unmapped pages that can be recycled (freed for allocation) once there are no point-
+    ers to them (shown hatched in the figures)
+     Figure 17.1a illustrates the initial state in which live objects have been identified along
+with those to be relocated. For ease of later comparison with Pauseless and its genera-
+tional successor C4, we take the liberty here to restrict compaction only to pages sparsely
+occupied by live objects. In Compressor, live tospace pages containing stale references that
+need forwarding, and tospace pages into which objects are yet to be relocated, must first
+be protected to prevent the mutators from accessing them. Concurrently with the muta-
+tors, the forwarding information for the live objects is prepared on the side in auxiliary
+data structures. At this point, the heap pages are configured as in Figure 17.1b, and the
+mutator roots are all flipped over to refer to only the protected tospace pages. Compaction
+can now proceed concurrently with the mutators, which will trap if they try to access an
+unprocessed tospace page. Trapping on a live tospace page causes all of the references
+in that page to be forwarded to refer to tospace, as in Figure 17.1c. Trapping on a re-
+served tospace page evacuates objects from condemned fromspace pages to fill the page,
+and the references contained in these copied objects are forwarded to refer to tospace (Fig-
+ure 17.1d). When all the live objects in a condemned fromspace page have been evacuated,
+it is completely dead and its physical page can be unmapped and returned to the operating
+system, though its virtual page cannot be recycled until all references to it have been for-
+warded. Compaction ceases when all tospace pages have been processed and unprotected
+(Figure 17.1e). We now contrast this approach with that of the Pauseless and C4 collectors.
+
+Pauseless and C4
+Azul Systems found that stop-the-world collection of the young generation led to long
+pauses in enterprise-scale systems and applications (such as portals, replicated in-memory
+data and messaging systems) that hold a large amount of data for each session. Their
+Pauseless collector [Click et al., 2005; Azul, 2008] and its generational extension, the Contin-
+uously Concurrent Compacting Collector (C4) [Tene et al., 2011], address this problem. Pause-
+less protects fromspace pages that contain objects being moved, instead of protecting to-
+space pages containing moved objects and/or stale pointers. Rather than needing to pro-
+tect all of the tospace pages like Compressor, Pauseless and C4 protect the much smaller
+set of fromspace pages whose objects are actually being moved (focusing on sparsely pop-
+ulated pages that will yield most space), and these pages can be protected incrementally
+
+    Roots
+
+                Live   Live   Live      Condemned           Condemned
+
+              (a) Initial Compressor configuration. All pages are in fromspace.
+
+    Roots
+
+                Live   Live   Live      Condemned           Condemned
+
+    (b) Compute forwarding information, protect all tospace pages (illustrated by the dou-
+    ble horizontal bars). These include those reserved to hold evacuated objects and those
+    Live pages not condemned for evacuation. Then flip mutator roots to tospace. Muta-
+    tors accessing a protected tospace page will now trap.
+
+    Roots
+
+                Live   Live   Live      Condemned           Condemned
+
+    (c) Trapping on a Live page forwards pointers contained in that page to refer to their
+    tospace targets. Unprotect the Live page once all its stale fromspace references have
+    been replaced with tospace references.
+
+    Roots
+
+                Live   Live   Live      Condemned           Condemned
+
+    (d) Trapping on a reserved tospace page evacuates objects from fromspace pages to fill
+    the page. The fields of these objects are updated to point to tospace. Unprotect the
+    tospace page and unmap fully evacuated fromspace pages (releasing their physical
+    pages, shown as hatched).
+
+    Roots
+
+                Live   Live   Live
+
+    (e) Compaction is complete when all Live pages have been scanned to forward ref-
+    erences they contain, and all live objects in condemned pages have been copied into
+    tospace and the references they contain have been forwarded.
+
+Figure 17.1: Compressor
+
+        63                      44   41                     20                      0
+         OOOOOOOOOOOOOOOOOOO SS N ppppppppppppppppppppp aaaaaaaaaaaaaaaaaaaaa
+
+Figure 17.2: C4’s tagged pointer layout. The a bits are the address. The two
+       SS bits identify the space (generation) in which the object resides and N is the
+       NMT bit. The virtual address to which the pointer refers is indicated by the
+       p (page number) bits and the a bits (address within the page).
+
+when they become a source for evacuation. Pauseless uses a self-healing loaded value
+barrier (LVB) to intercept and repair (heal) stale fromspace references before the mutator
+traps trying to use them, copying their target object as necessary. This avoids blocking
+the mutator to evacuate all of the live objects on the protected fromspace page. The ini-
+tial implementation of Pauseless used proprietary hardware to implement the read barrier
+directly as a special load-reference instruction, but on stock hardware Pauseless and C4
+compile the necessary logic inline with every load-reference operation by the mutator.
+    Pauseless steals one address bit from the 64-bit address space to use as a pointer tag.
+This Not-Marked-Through (NMT) bit is used by the LVB during the concurrent marking
+phase of the collector to decide whether the reference has previously been scanned by the
+collector. The collector maintains a desired value for the NMT bit and the LVB ensures that
+every loaded reference has been safely scanned by the collector and points to the current
+location of its safely accessible (unprotected) target object (that is, the evacuated object in
+tospace if it has been copied).
+    The C4 generational collector extends this scheme to support simultaneous and inde-
+pendently active concurrent collections of different generations. While Pauseless main-
+tains a single, global, currently expected value of the NMT state, C4 instead maintains a
+different expected value for each generation. C4 steals an additional pointer tag bit per
+generation to encode the generation in which the referent resides. This allows the LVB
+to quickly check the NMT value for the proper generation, which can differ because col-
+lections of young and old generations proceed independently. Moreover, a reference’s
+generation never changes without relocating its target object. Figure 17.2 shows the layout
+of C4’s tagged pointers in a 64-bit object reference. The tagged pointers must be stripped
+of their tag before they can be dereferenced. The compiler can modify all dereferences to
+strip the tag before use, and reuse the stripped reference where the reuse does not cross a
+GC safe-point. Alternatively, an implementation can multi-map memory or alias address
+ranges so that the tag is effectively ignored.
+    During an active mark phase, if the LVB encounters a loaded reference with a NMT
+state that does not match the expected state for its target generation, the LVB will remedy
+that by logging the reference on the collector’s work list to be scanned. Self-healing repairs
+the slot from which the reference was loaded. Null references are ignored.
+    Likewise, if the LVB also encounters a loaded reference that points to a protected from-
+space page whose live objects are being evacuated, the LVB will obtain the new location of
+the reference’s target (copying the object if it has not yet been evacuated), and repair the
+slot from which the mutator loaded the fromspace reference.
+    The initial implementation of Pauseless and C4 used proprietary hardware which im-
+plemented the LVB as a special single-cycle instruction that implicitly interprets the pointer
+tag bits, but on stock hardware this can be emulated at some cost as instructions inlined
+to interpret the pointer tag explicitly at every load-reference operation by the mutator. Al-
+gorithm 17.9 shows the interpretation of the tags and and pseudocode for a representative
+LVB implementation in C4. Note that the specifics differ with the context in which the LVB
+is generated: interpreter, compiler optimisation level or in the run-time system itself.
+
+Algorithm 17.9: Pauseless/C4 loaded value barrier (LVB)
+
+ 1   Expected[4] = {0, 0, 0, 0}
+ 2
+
+ 3   // Space ID Values:
+ 4   // 00 NULL and non-heap pointers
+ 5   // 01 Old generation references
+ 6   // 10 New generation references
+ 7   // 11 Unused
+ 8
+
+ 9   Read(src, i):
+10      src_ptr ← src & 0x1FFFFFFFFFF                              /* strip tags from reference */
+11      addr ← &src_ptr[i]                                             /* address of source slot */
+12      value ← *addr                                 /* load target reference from source slot */
+13
+
+14       // target referent may need to be marked or may be in protected fromspace page
+15       trigger_mark ← value.NMT ̸= Expected[value.space]
+16       trigger_copy ← protected(value.page)
+17       if trigger_mark || trigger_copy /* may need to mark and/or copy referent */
+18            value ← shade(addr, value, trigger_mark, trigger_copy)
+19       return value
+20
+
+21   shade(addr, value, trigger_mark, trigger_copy):
+22      oldValue ← value
+23      if trigger_mark                                   /* fix the trigger conditions */
+24         value.NMT ← not value.NMT
+25         add(worklist, value)                      /* enqueue to marker’s work list */
+26      if trigger_copy
+27         value ← forward(value)                    /* copy referent if not yet copied */
+28      loop                              /* will only repeat if CAS fails spuriously */
+29         if oldValue = CompareAndSwap(addr, oldValue, value)
+30            return value                         /* CAS succeeded, so we are done */
+31         if oldValue ̸= *addr
+32            return value          /* Another thread updated slot but value is ok */
+
+    Here, the LVB executes first the load, followed by the LVB logic. If the loaded reference
+does not have the expected NMT value for the generation to which it refers then the ref-
+erence needs to be queued for the collector to mark as necessary, also correcting its NMT
+value. If it refers to a protected page (which is currently being evacuated by the collector),
+then the reference needs to be corrected to point to its relocated referent. Both of these
+situations trigger execution of slow path code to correct the situation. When the trigger-
+ing reference points to an object that has not yet been relocated, then the LVB will first
+cooperatively relocate the object before forwarding the reference to point to its new loca-
+tion. Unlike a Brooks-style indirection barrier there is no null check, no memory access,
+no load-use penalty, no need for a forwarding word in the object header and no cache
+footprint imposed on the fast path, making it efficient and predictable.
+
+The Pauseless and C4 garbage collection phases. Both collectors divide their work into
+three main phases, each of which is fully parallel and concurrent.
+
+Mark is responsible for periodically refreshing the mark bits. In the process of doing that,
+    it will set the NMT bit for all references to the desired value (in C4’s case, the desired
+    value for the generation being collected) and gather liveness statistics for each page.
+    The marker starts from the roots (static global variables and mutator stacks) and
+    begins marking reachable objects. The NMT bit assists in making the Mark phase
+    fully concurrent, as described further below.
+
+Relocate uses the most recently available mark bits to find sparse pages with little live
+     data, to compact those pages (relocating their objects), and to free their physical back-
+     ing memory. The Relocate phase starts by protecting sparsely occupied fromspace
+     pages against mutator access and then copies live objects out of those pages. For-
+     warding information maintained on the side tracks the locations of relocated objects.
+     If a mutator loads a reference to a protected page, the LVB will trigger and replace
+     the stale protected-page reference with the correctly forwarded reference. After the
+     page contents have been relocated, the Relocate phase frees the physical memory,
+     which can be immediately recycled by the operating system. Virtual memory cannot
+     be freed until no more stale references to that page remain in the heap. A Relocate
+     phase runs continuously, freeing memory to keep pace with mutator allocation. It
+     runs standalone or concurrently with the next mark phase.
+
+Remap updates every remaining pointer in the heap whose target has been relocated.
+    Collector threads traverse the object graph executing the LVB against every reference
+    in the heap, forwarding stale references as if triggered by a mutator. At the end of this
+    phase, no live heap reference can refer to a page protected by the previous Relocate
+    phase, so virtual memory for those pages is freed. Since both the Remap and Mark
+    phases traverse all live objects, Pauseless and C4 are able to fold them together. The
+    Remap phase for the previous collection cycle runs concurrently with the Mark phase
+    for the current cycle.
+
+    Pauseless and C4 have several qualitative advantages. Firstly, there is no ‘rush’ to fin-
+ish any given phase. No phase imposes a substantial burden on the mutators that needs
+to be relieved by ending the phase quickly. There is no ‘race’ to finish some phase before
+collection can begin again — the Relocate phase runs continuously and can immediately
+free memory at any point. Since all phases are parallel, the collector can keep up with any
+number of mutator threads simply by adding more collector threads. Unlike some other
+concurrent marking collectors, marking is guaranteed to complete in a single traversal re-
+gardless of the mutation rate (there is no need to re-mark — revert to grey — previously
+marked objects, nor to stop the mutators in a final mark step to ensure termination). Col-
+lector threads will compete with mutator threads for CPU time, though any spare CPU can
+be employed by the collector.
+    Secondly, the phases incorporate a self-healing effect, where mutators use the LVB im-
+mediately to correct any mis-tagged reference by replacing it with the corrected reference
+in the slot from which it was loaded (marking and relocating its target as necessary). On
+Azul’s proprietary Vega hardware, this was reported to result in a drop in mutator utilisa-
+tion for a short period (a ‘trap storm’) following a phase shift, with an minimum mutator
+utilisation penalty of approximately 20 milliseconds spread over a few hundred millisec-
+onds. But Pauseless has no stop-the-world pauses where all threads must be simultane-
+ously stopped. We now discuss the phases in more detail.
+
+Mark. The Mark phase manipulates mark bits managed on the side. It begins by clearing
+the current cycle’s mark bits. Each object has two mark bits, one for the current cycle and
+one for the previous cycle.
+
+    The Mark phase then marks all global references, scans each mutator thread’s root set,
+and flips the per-thread expected NMT value. For C4, the root set also includes the remem-
+bered set of references from old to young objects. The remembered set is maintained by a
+precise card marking barrier that leverages the same reference metadata as the LVB to filter
+out unnecessary card marks without need for address range comparisons. Running muta-
+tors cooperate by marking their own root set at a ragged handshake. Blocked (or stalled)
+mutators are marked in parallel by mark phase collector threads. Each mutator thread can
+immediately proceed once its root set has been marked (and expected NMT flipped), but
+the Mark phase cannot proceed until all threads have executed the handshake.
+    After the root sets have been marked, marking proceeds in parallel and concurrently
+with the mutators in the style of Flood et al. [2001]. The markers ignore the NMT bit in
+references loaded from their work lists. The NMT bit is only used for loads from heap
+objects. This continues until all live objects have been marked. New objects are allocated
+in live pages. Because mutators can only hold (and thus store) marked-through references,
+the initial state of the mark bit for new objects does not matter for marking.
+    The NMT bit is crucial to completion of the Mark phase in a single pass over the live
+objects, regardless of stores by the mutator, because the load barrier prevents mutators
+from acquiring unmarked references. A mutator that loads a reference with the wrong
+value in the NMT bit will trigger the LVB to communicate the reference to the marker
+threads. Because it can never acquire an unmarked reference, a mutator can never store
+and propagate an unmarked reference. The self-healing nature of the LVB also stores the
+corrected (marked) reference back to memory, so that particular reference can never trigger
+again in the current cycle. This self-healing effect means that a phase-change will not make
+the mutators wait until the marker threads can flip the NMT bits in the objects on which
+the mutator is working. Instead, each mutator flips each reference it encounters as it runs.
+Steady state NMT triggers are rare.
+    The mutator must take care that updating the triggering reference does not clobber a
+store to the same location by another thread since the NMT-trigger occurred. Thus, the
+LVB uses a compare-and-swap operation so that the memory is only updated if it has not
+changed since the triggering thread read from that location. Because a ragged handshake
+is used to initiate the Mark phase, different mutators may briefly have a different view of
+the desired NMT value. It is possible for mutators on different sides of the handshake to
+compete, possibly more than once, over a single reference’s NMT value triggering in the
+LVB and updating in memory. This can only last until the unflipped thread passes its next
+GC safe-point where it will mark through its stack, and cross the handshake. Note that it is
+not possible for a single thread to hold the same reference twice in its root set with different
+NMT settings, so pointer equality can always be implemented as a direct comparison of
+(loaded) pointer values.
+    The scalability of marking can be improved by reducing cache contention. Pauseless
+held mark bits on the side in a bitmap, which avoids compare-and-swap on object headers,
+but Iyengar et al. [2012a] improve on this for C4 by striping6 cache lines of the bitmap across
+processors, based on the addresses of those lines. A marking thread works only on its own
+stripe. When it finds a pointer whose mark bit lies in a different stripe, it enqueues that
+pointer for another thread to work on, without examining the mark bit. While it is possible
+to have one worker per stripe, they found that four workers per stripe reduced contention
+well enough and usefully reduced the number of queues needed. The queues accumulate
+a fixed number of entries, and when one fills, the thread publishes the group of entries to
+a global pool, where other threads can claim the group and work on it. When a worker’s
+own queue becomes empty, it publishes any partial queues it has for other threads. Iyengar
+  6 Flood et al. [2001] did the same thing; they used the term stride as opposed to stripe.
+
+et al. showed that this striping approach improved scalability, scaling linearly up to the
+number of cores on a socket. They further observed that when a mutator enqueues a
+reference for marking, the referent of the reference is usually in the mutator’s own cache so
+it can be advantageous to process the reference using a marking thread that is topologically
+near the queueing mutator. They found using a topology aware preference when marking
+threads claim queued pointers to mark gave approximately 10% improvement when the
+number of marking threads exceeds the number of cores per socket.
+    C4 permits multiple young generation collections to occur while it is simultaneously
+collecting the old generation. Mostly, these collections are independent, but some cross-
+generational coordination is necessary. Old generation marking starts with a set of young-
+to-old roots gathered by a special young generation collection triggered at the start of every
+old generation collection cycle; further young generation collections running during this
+old generation collection cycle will ignore any new-to-old pointers they find. The collec-
+tors need to synchronise whenever the young generation collector needs to access objects
+that the old generation collector is relocating or otherwise modifying. Examples include
+metadata objects that the collector needs to access to discover an object’s layout, and re-
+membered set cards that the young generation collector reads to discover the source of
+old-to-young pointers. In order to access such objects safely, the young generation collec-
+tor waits briefly until the old generation collector has completed relocating objects on a
+page, at which point the old generation collector waits for the young generation collector.
+After the young generation collector has scanned the card(s), it signals the old generation
+collector to resume relocation.
+    Termination of the Mark phase only needs to worry about the race between a mutator
+having loaded an unmarked reference but not having yet completed the LVB. The LVB
+never spans a GC safe-point, so it is sufficient that all the mutators cross a GC safe-point
+without triggering an LVB. Thus, the Mark phase requests an empty handshake. Any
+references discovered before the handshake will be marked as normal. When all mutators
+have executed the handshake without reporting a new reference for marking, then the
+Mark phase is complete. Otherwise, the marker threads will consume the new references
+for marking and the handshake can be repeated. Because no new references can be created
+with the wrong NMT bit, this process must eventually terminate.
+
+Relocate. The Relocate phase starts by finding sparsely occupied pages. Figure 17.3a
+shows a logical grouping of virtual pages into distinct categories (again, the linear address-
+ordered layout of the heap is intentionally not illustrated). There are references from both
+the mutator roots and live pages into sparse pages whose live objects are to be compacted
+by evacuation. The Relocate phase first builds side arrays to hold forwarding pointers for
+the objects to be relocated. These cannot be held in the fromspace originals because the
+physical storage for the fromspace pages will be reclaimed immediately after copying and
+long before all the fromspace references have been forwarded. The side array of forward-
+ing data is not large because only sparse pages are relocated, so it can be implemented
+easily as a hash table. The Relocate phase then protects the mostly dead condemned pages
+from access by the mutators as in Figure 17.3b. Objects in these pages are now considered
+stale and can no longer be modified. Also, if a mutator loads a reference that points into a
+protected page, then it will trigger the LVB to repair the reference.
+    At the time the fromspace pages are protected, running mutators may have stale ref-
+erences in their root set. These are already past their load barrier and will not get caught
+directly. Instead, the mutators are asked to forward any existing stale references from
+their root set with a ragged handshake, relocating the fromspace targets as necessary (Fig-
+ure 17.3c). Once all the mutators have executed this handshake, copying of the remaining
+
+    Roots
+
+                Live    Live   Live        Condemned           Condemned
+
+                (a) Initial Pauseless configuration. All pages are in fromspace.
+
+    Roots
+
+                Live    Live   Live        Condemned           Condemned
+
+    (b) Compute forwarding information, protect all condemned fromspace pages (illus-
+    trated by the double horizontal bars), but leave tospace pages unprotected. These in-
+    clude those reserved to hold evacuated objects and those live pages not condemned
+    for evacuation.
+
+    Roots
+
+                Live    Live   Live        Condemned           Condemned
+
+    (c) Flip mutator roots to tospace, copying their targets, but leaving the references they
+    contain pointing to fromspace. Mutators accessing an object on a protected fromspace
+    page will trap and wait until the object is copied.
+
+    Roots
+
+                Live    Live   Live        Condemned           Condemned
+
+    (d) Mutators loading a reference to a protected page will now trigger the LVB, copying
+    their targets.
+
+    Roots
+
+                Live    Live   Live
+
+    (e) Compaction is finished when all live objects in condemned pages have been copied
+    to tospace, and all tospace pages have been scanned to forward references they contain.
+
+Figure 17.3: Pauseless
+
+live objects into tospace can proceed concurrently with the mutators. The load barrier
+prevents the mutators from seeing a stale object before it has finished moving.
+    As in the Mark phase, the load barrier in the Relocate phase prevents the mutator
+from loading a stale reference. The self-healing LVB forwards the reference and updates
+the memory location using compare-and-swap. If the fromspace object has not yet been
+copied, then the mutator will copy the object on behalf of the collector rather than waiting.
+The mutator copies the object from the collector’s double mapped view of the page. This is
+illustrated in Figure 17.3d. Large objects that span multiple pages are not relocated, nor are
+objects in mostly live pages. An object that consumes about half of a page can be copied in
+about a millisecond.7
+    To amortise the cost of modifying page protections and forwarding the mutator roots,
+Pauseless batches up groups of sparse pages for compaction, typically protecting (and
+relocating and freeing) a few gigabytes at a time. The rate at which relocation must proceed
+is dictated only by the need to keep up with the allocation rate of the mutators.
+
+Remap. Virtual memory is not freed immediately. The final step of forwarding the remain-
+ing stale references in the live pages and reclaiming virtual memory falls to the Remap
+phase. At the end of the Remap phase, there are no more stale references to the fromspace
+pages so their virtual memory can now be recycled (Figure 17.3e), the side array of for-
+warding pointers can be reclaimed, and the collection cycle is complete. Recall that real
+memory for evacuated pages was reclaimed long before, during the Relocate phase. Fur-
+ther recall that the Remap phase for the current collection cycle runs concurrently with the
+Mark phase for the next cycle.
+
+Operating system extensions. Pauseless and C4 make aggressive and sustained use of
+virtual memory mapping and physical memory manipulation. This functionality can be
+implemented using standard operating system primitives, but the performance and rates
+at which that functionality can be deployed using the standard primitives is prohibitive.
+Pauseless-specific extensions to the operating system’s memory manager result in signifi-
+cant performance improvements [Azul, 2010]. Enterprise Java applications commonly see
+allocation rates of from 200 to 500 megabytes/second per core, which must be matched by
+a sustained garbage collection rate to avoid pauses. In Pauseless/C4, each page will even-
+tually be remapped once (and later unmapped once) in order to reclaim dead object space.
+No physical memory copying is required, so the remap rate is not significantly sensitive
+to memory bandwidth. Instead, the cost of the remapping operations dominate. Typical
+operating systems support remapping with three limitations.
+  1. Each page remap includes an implicit translation lookaside buffer invalidation op-
+     eration. Since translation lookaside buffer invalidations require multiple cross-CPU
+     interrupts (over all cores) the cost of remapping grows with the number of active
+     threads in the program. This happens even when the active threads do not partici-
+     pate in the remapping, or have no interaction with the remapped memory.
+  2. Only small (typically 4-kilobyte) page mappings can be remapped.
+  3. Remap operations are single-threaded within a process (grabbing a common write
+     lock).
+To address these shortcomings, Pauseless/C4 benefits from operating system extensions
+that support bulk remapping with a single system-wide translation lookaside buffer inval-
+idation for a batch of remaps, remapping of large (typically 2-megabyte) page mappings,
+  7 Recall that Pauseless’s pages are quite large.
+
+and multiple concurrent remaps within the same process. These operating system im-
+provements result in approximately three orders of magnitude speedup compared to a
+stock operating system, scaling almost linearly as the number of active threads doubles.
+    Summing up, Pauseless/C4 is designed as a fully parallel, generational and concur-
+rent collector for large multiprocessor systems. It requires no stop-the-world pauses and
+reclaiming of dead objects happens throughout a collector cycle rather than, say, only at
+the end. There are no phases where the collector must race to finish before the mutators
+run out of free memory. Mutators can perceive a period of reduced utilisation during trap
+storms at some phase shifts, but the self-healing property of the LVB serves to recover
+utilisation quickly.
+
+Collie
+Can mutator utilisation be further improved during collection? Collie is another full-heap
+parallel compacting collector that uses transactional memory to ensure consistency [Iyen-
+gar et al., 2012b] and wait-freedom. It was developed on Azul Systems’ Vega system which
+provided hardware assisted transactional memory as well as the self-healing LVB instruc-
+tion used by Pauseless/C4 described above [Click et al., 2005; Tene et al., 2011]. Collie
+extends Pauseless but attempts to compact most objects inside transactions. If a trans-
+action fails to relocate an object, the object is pinned to its location, without compaction,
+but at a mirrored virtual address on a tospace page mapped to the same physical page
+(the fromspace and mirrored tospace addresses differ by only the value of a high-order bit
+not interpreted as an address). An evacuating transaction will fail if there is a potentially
+inconsistent concurrent write or an inconsistent concurrent read of a memory location that
+is written to.
+     Collie relies on the notion of stable referrer sets. A referrer set is the set of locations
+that point to an object. An object’s referrer set is said to be stable after marking completes
+if (i) it does not contain any thread stack or register references before the collector starts
+to relocate the object, and (ii) once relocation begins, no new references are added to the
+object’s referrer set. In other words, an object is guaranteed to be inaccessible to mutators
+as long as its referrer set is stable, and thus can be safely relocated to a fresh location.
+Objects whose referrer sets are either not stable before an attempt to evacuate them or
+which do not remain stable during the evacuation are pinned at their mirrored tospace
+virtual addresses.
+     The stability of an object’s referrer set is identified through a combination of the Collie
+mutator’s load and write barriers, and transactions used by the collector in its compacting
+phase. The write barrier intercepts heap reference stores and pins their target by setting a
+bit in its header. Note that Collie identifies referrer sets conservatively: a write may cause
+some object’s precise referrer set to shrink. Once the compaction phase starts, Collie’s LVB
+ensures that any load of a fromspace reference will cause the barrier to attempt to replace it
+atomically with a mirrored-tospace reference and then reload the reference from the heap
+location (Algorithm 17.10). If the barrier succeeds in replacing the old reference value, it
+has effectively pinned the object. If the replacement fails, then the value at address must
+have been changed, either by a racing mutator or by the collector’s having evacuated the
+target object; either way, the newly loaded reference will be a valid tospace reference.
+     Wait-free concurrent marking is similar to that of Pauseless/C4 but also constructs the
+per-object, heap-stable (containing all heap references to the object) referrer sets. Evalua-
+tion suggests that capping referrer set sizes at four words is sufficient to capture most ob-
+jects. Popular objects with more references than can fit in a referrer set (or objects that fail to
+have a referrer set allocated for them) are pinned. The concurrent compaction phase copies
+live objects to tospace, replacing fromspace references with objects’ tospace addresses. Just
+
+Algorithm 17.10: Collie’s load barrier trap
+
+ 1    GCtrap(address, oldRef):
+ 2       mirror = mirror(oldRef)
+ 3       CompareAndSwap(address, oldRef, mirror)
+ 4       return *address
+
+like Pauseless/C4, Collie compacts at page granularity and releases fromspace physical
+pages early, allowing them to be reused. By the end of the marking phase, Collie has es-
+tablished heap-stable referrer sets but these also include references in thread stacks and
+registers. Thread stacks are next scanned individually in a pre-compaction ragged hand-
+shake, pinning the target of any reference encountered — note that this does not require a
+global rendezvous. This handshake also arms the LVB to trap on the load of any reference
+to an object on a page that was relocatable at the start of the handshake. By the end of the
+handshake, all objects either have stable referrer sets (and so are potentially movable) or
+are pinned.
+    Individually movable objects are moved to tospace by first copying their contents and
+then updating the references in their referrer sets to point at their new locations. The
+copy can be performed outside a transaction since any concurrent mutator access would
+pin the object, but transactional memory is used to update the referrer set atomically with
+respect to other threads. After the transaction is started, each reference in the object’s stable
+referrer set is checked to ensure that it does not point to the object’s tospace mirror’s virtual
+address (which would indicate that the reference in the referrer set has been updated); the
+transaction aborts if any reference to a mirror address is found. Then, each reference in
+the referrer set is replaced with a reference to the object’s new tospace location. Finally,
+the transaction is committed. If a transaction fails or aborts for any reason, the object is
+rendered pinned. The last step of a collection is to fix up references to pinned objects to
+ensure that they point to the objects’ virtual addresses in the mirrored tospace. Because
+the LVB is self-healing, this fixup traversal can be delayed and rolled into the next mark
+phase, just as Pauseless/C4 do.
+    Compared with Pauseless, Collie has been shown to offer significantly better mini-
+mum mutator utilisation (MMU) and improved throughput in the compaction phase on
+Azul’s Vega platform. The aborting load barrier may cause fragmentation as objects are
+pinned on mirrored tospace pages, as with Staccato [McCloskey et al., 2008] or Chicken
+[Pizlo et al., 2008], but this is limited to the working set of the mutators during collec-
+tion. Finally, although Collie was developed on Azul’s Vega specialised hardware which
+was withdrawn in 2013 in favour of software-only solutions, Iyengar et al. expect Collie
+to be implementable on other hardware transactional memory systems such as Intel’s Re-
+stricted Transactional Memory. We are unaware of any attempts to do so and Azul has not
+deployed Collie, believing that C4 offers sufficient performance.
+
+ZGC
+ZGC [Lidén, 2018] is a non-generational, mostly-concurrent, parallel, mark-compact, re-
+gion-based collector.8 ZGC’s original goals were to provide pause times of no more than
+10 milliseconds (today these are typically less than a millisecond) at a throughput no more
+than 15% worse than the OpenJDK G1 collector, and to handle a wide range of heap sizes
+including very large ones.
+     8 We are indebted to Yang and Wrigstad [2022] from whose primer on ZGC we have drawn heavily.
+
+        63                     46     41                                                   0
+        OOOOOOOOOOOOOOOOOOOO F R MM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaOOO
+
+        (a) Non-generational tagged pointer layout. The F bit is used for concurrent mark-
+        ing through with finalisers, the R bit is the relocated bit, and the two MM bits are
+        mark bits.
+
+        63      57                                                     15                  0
+         aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaOOO RRRR MM mm FF rr OOOO
+
+        (b) Generational tagged pointer layout. The four R bits indicate the good colour
+        (only one of which is set at any time), the M and m bits are mark bits for the old
+        and young generations, respectively, the F bits are used for concurrent marking
+        through with finalisers and the two r bits indicate whether the field is tracked in a
+        remembered set.
+
+Figure 17.4: ZGC tagged pointer layouts. The a bits are the address the
+        pointer holds (with 64-bit alignment, the three lower-order bits are 000).
+
+    Like Pauseless , ZGC uses tagged pointers and self-healing load barriers. Figure 17.4a
+shows its tagged pointer layout. A group of four higher-order bits determine a colour. The
+four bits are named F (finalisable), R (relocated), M1 and M0 (marked). A given pointer will
+have only one of R, M0 and M1 set, so these can be thought of as the colour of the pointer.
+We explain on page 403 how F is used in dealing with Java finalisation. At any given time,
+only one of R, M0 or M1 is the good colour; loading pointers of other colours forces a load
+barrier slow path (see Algorithm 17.11). To allow direct access to objects using a pointer of
+any colour, the heap is triple mapped.
+    ZGC is a mostly-concurrent algorithm, with main phases similar to those of Pauseless.
+In particular, the Mark and Remap steps are run side-by-side. The main phases are:
+
+STW1: The initial stop-the-world phase comprises three steps. (i) Flip the good colour
+   to either M0 or M1 (they alternate from cycle to cycle). As will be seen, the previ-
+   ous good colour will have been R, so this colour change immediately invalidates all
+   pointers (causes them to have a bad colour). (ii) Arrange for threads to allocate from
+   fresh regions. All objects in the new regions will be considered live throughout this
+   collection cycle. (iii) Scan the roots, replacing non-null pointers with a version of
+   good colour, obtained by applying the self-healing mark barrier, and push them onto
+   the mark stack. The mark barrier is the same as the load barrier in Algorithm 17.11
+   but does not return a result and therefore is streamlined in the obvious ways.
+
+Mark/Remap: Marking takes the typical steps: pop an item from the marking thread’s
+    mark stack; try to mark the object; and if that succeeds, proceed to process the pointer
+    slots of the object, using the self-healing mark barrier. Marking also records the
+    volume of live data in the marked object’s region. Just as with Pauseless, ZGC may
+    discover a stale reference to a region condemned in the previous collection cycle. The
+    mark barrier remaps these references to point to the new location of their target and
+    tints them with the good colour.
+
+STW2: The second handshake’s purpose is to check if marking is complete, and it may be
+   entered more than once. To reduce the number of times it is needed, ZGC does indi-
+   vidual handshakes with each thread first to ascertain if the thread has any remaining
+   marking work.
+
+Reference Processing/Condemned Regions: This phase combines the identification of con-
+     demned regions (called evacuation candidates in ZGC), namely regions containing
+     objects that should be evacuated, with the processing of weak reference objects. Both
+     the ZGC and Shenandoah collectors handle reference processing in a similar intri-
+     cate fashion, so we cover it separately on page 403. This phase uses the volume of
+     live data associated with each region to determine which regions to evacuate. Since
+     ZGC only allocates into fresh regions, lightly occupied regions waste space. Like
+     other compacting collectors, ZGC prioritises evacuating the most sparsely occupied
+     regions in order to reclaim the most space with the least effort.
+
+STW3: The third stop-the-world handshake establishes an invariant that mutators never
+   see a pointer to an object in a condemned region. It does this by relocating objects in
+   condemned regions referenced by roots and updating the roots to point to the relo-
+   cated copies of their targets. To maintain this invariant, this handshake also changes
+   the good colour to R (for relocated), which immediately invalidates all pointers (they
+   now have a bad colour).
+
+Relocate: In this phase, collector threads relocate objects in condemned regions. If mu-
+     tators encounter a pointer to such an object, they attempt to relocate it, and will
+     self-heal the pointer. As more than one thread may attempt to relocate an object at
+     the same time, ZGC uses a compare-and-swap to set the forwarding address in the
+     relocation table; the winner’s copy will be used and other competing threads will
+     back out of their bump pointer allocations. As usual, a region’s relocation table is
+     kept outside the region so that its physical pages can be reclaimed as soon as all the
+     live objects it contains have been evacuated. Relocation completes when all live ob-
+     jects in condemned regions have been relocated. However, some objects may retain
+     R-coloured pointers. These pointers will be healed, either when a mutator next loads
+     them or, at the latest, by the end of the Map/Remap step of the next collection cycle.
+
+Choosing condemned regions. The policy used by ZGC to choose condemned regions is
+to rank regions according to their occupancy, in order to maximise storage reclaimed per
+byte copied. It selects regions with occupancy of no more than 75%.
+    Yang et al. [2020] suggest using the evacuation mechanism to segregate objects accord-
+ing to their hotness. Their Hot-Cold Segregated Garbage Collector (HCSGC) considers an
+object to be hot if it has been accessed since the last collection cycle. The goal of this new
+policy is not only to reclaim space but also to improve locality. It follows the principle that
+the future order of mutator accesses is likely to follow their past order. Therefore, whereas
+the previous policy aimed to have collector threads do as much evacuation as possible, this
+policy aims to have mutators do it. That way, evacuated objects will be laid out in the order
+they were accessed by mutators, leading to better cache locality and hardware prefetching.
+    HCSGC uses an additional bitmap to indicate whether an object is considered hot. It
+clears this bitmap at the start of each collection cycle. An object’s hot bit will be set by
+a mutator if it encounters the object on the slow path of the load barrier. The object’s
+hot bit will also be set by a collector thread if it encounters an R-coloured pointer to the
+object, which indicates that a mutator accessed the object since the STW3 phase of the last
+collection cycle. Collector threads maintain two allocation regions, one for hot objects and
+one for cold, placing the new copies into one or other region according to their hot bit. In
+contrast, mutators continue to use a single region since all objects they evacuate are hot,
+by definition.
+    To shift evacuation work more to mutators, HCSGC defers the Relocation step of ZGC
+until the start of the next collection cycle (but still before STW1). Relocation will then
+
+Algorithm 17.11: ZGC’s self-healing load barrier
+
+ 1   Read(src, i):
+ 2      addr ← &src[i]
+ 3      value ← *addr
+ 4      if isNull(value) || isGoodColour(value)
+ 5         return value
+ 6      if pointsIntoCondemned(value)
+ 7         good ← remap(value)                      /* looks up forwarding address */
+ 8      else
+ 9         good ← goodColour(value)      /* tints value with current good colour */
+10      push(markStack, good)
+11      selfHeal(addr, value, good)
+12      return good
+13
+
+14   selfHeal(addr, value, good):
+15      if isNull(good)
+16         return
+17      loop
+18         old ← CompareAndSwap(addr, value, good)
+19         if old = value || isNull(old) || isGoodColour(old)
+20            return
+21         value ← old
+
+evacuate objects in condemned regions that mutators have not yet encountered, with most
+of them being placed into collector threads’ regions for cold objects.
+    Yang and Wrigstad [2022] evaluated ZGC using SPECjbb2015, a benchmark suitable
+for testing response time (as opposed to throughput). They found that both typical and
+more extremal pause times are shorter for ZGC— on the order of 1 millisecond versus
+about 3 milliseconds for Shenandoah, and 100 milliseconds or more for OpenJDK’s G1
+and Parallel collectors.
+
+Generational ZGC. Originally, ZGC was not generational but Generational ZGC Karlsson
+[2022] uses two logical generations, each of which can be collected independently and con-
+currently. It uses a different representation of pointer colours from the non-generational
+version, with many more tag bits. This means that it cannot use multiple mappings, and
+instead has its load and store barriers deal with the tag bits explicitly. The load barrier
+strips pointers of their colour as they are loaded, so references in registers and on the stack
+are colourless. This means that it must use a store barrier to restore a proper colour when a
+reference is written to the heap. These store barriers are now responsible for helping mark-
+ing; the load barrier is now only responsible for updating stale pointers after Generational
+ZGC has relocated objects. In these ways, it differs from both non-generational ZGC and
+Pauseless/C4.
+    Figure 17.4b shows the layout of Generational ZGC’s tagged pointers. It uses the
+low-order 16 bits of pointers for colours rather than the four higher-order bits that non-
+generational ZGC uses. Note that this layout also offers the possibility to increase the
+maximum heap size from 16 to 128 terabytes. Of the 16 bits reserved for colours, 12 are
+used. Schematically, the colour bits are RRRRMMmmFFrr0000. The RRRR bits are used by
+the load barrier: exactly one is set in the good colour at any given time, thus encoding
+
+which generation (or neither or both) is being relocated (hence the name, R) as follows.
+These bits encode a relocation parity per generation, which is flipped at the start of the
+corresponding generation’s relocation pause. This parity can be encoded as two bits, let’s
+call them o (for old) and y (for young), and write them as oy. So if for example the number
+is 10 and relocation of an old generation starts, the parity will flip to 00, and if then a
+young relocation starts, it will flip to 01, and so on. The binary number oy denotes the
+index of the corresponding RRRR bit that is expected to be set. This encoding avoids ABA
+problems when phasing out stale pointers. The other bits are explained below.
+    At any given time a current shift factor indicates the number of positions that the good
+colour can be shifted until its low-order set bit just shifts out of low end of the word. On
+an x86 processor such shifting places that bit in the carry flag, and simultaneously checks
+whether the resulting value is zero. A ja (jump above) instruction will branch if both the
+carry and zero flags are 0. Thus, if it branches, the value is a non-null pointer of bad colour.
+A similar technique works for the ARM instruction set. This design avoids any further
+shifting in the fast path case by having the shifted good pointer value be the address of
+the referent. Note that an implication of this is that a pointer’s address bits need to be
+shifted left different numbers of bit positions depending on the current good colour. The
+shift factor is embedded in the shifting instructions for speed, so when the colour changes,
+instructions have to be updated. This is accomplished by faking a flush of the cache of
+generated code to cause the system to take a slow path that patches the shift factors.
+    The MM bits alternate between 01 and 10 according to the marking cycle of the old
+generation; mm acts likewise for the young generation. The FF bits indicate which cycle
+of finaliser reachability bits the collector is currently using for the old generation (young
+generation collections do not check finaliser reachability). Lastly, the rr bits deal with re-
+membered sets, indicating whether the pointer is currently remembered. Values 01 or 10
+(depending on the young generation collection cycle) indicate that the field containing the
+pointer is remembered. The normal (‘cleared’) value for the rr bits is 11, explained be-
+low. Note that all pointer values need to be coloured, including null values, so that all
+remembered set entries get inserted correctly.
+    The store barrier first checks whether any of the old pointer’s colour bits are bad, using
+a testw instruction on the x86 and a mask of bad colour bits (similar methods will work
+on other platforms). This is why this system uses the somewhat space-inefficient coding of
+the alternating cycles as 01 or 10: to make it time-efficient to test whether all the colours
+match the current cycle (have 0 in all the right places). If this test fails, the code branches
+to a slow path that can take action, such as inserting the field into a remembered set, or
+otherwise doing self-healing barrier work for atomic operations appropriate to the phase,
+as in non-generational ZGC. The test mask is updated similarly to the shift factor in the
+load barriers. The store barrier fast path shifts the pointer left by the shift factor and inserts
+the current good colour before doing the actual store. The slow path of the store barrier
+occurs at the first store of a pointer, exactly what is needed for efficient remembered set
+maintenance (as well as snapshot-at-the-beginning marking). We can now explain why the
+normal value of the rr bits is 11: it causes the testw always to conclude the colour is bad,
+forcing a slow path check as to whether the new pointer should be remembered. Notice
+that Generational ZGC uses double-buffered remembered sets and records the locations of
+updated fields precisely in a bitmap. Each old generation region has two remembered set
+bitmaps, one actively used by the store buffers and one used by the collector as a read-only
+record of all old generation fields that potentially point to the young generation. Swapping
+the two bitmaps atomically at the start of each young generation collection means that
+mutator threads do not have to wait for the bitmaps to be cleared, and that store barriers
+do not have to use a memory fence when recording old-young generation pointers.
+
+    A young generation collection works as usual from statics, thread stacks and the re-
+membered set to find all references to young objects, which can be evacuated after marking
+as in non-generational ZGC. One detail here is that if a pointer previously in the remem-
+bered set is found no longer to point into the young generation, then its rr bits are set to the
+‘clear’ value, 11. Young generation collections allow regions to be aged without relocat-
+ing their contents. This cheap promotion allows large objects to be allocated in the young
+generation rather than the old one, as many generational collectors do. On the other hand,
+only full heap collections process weak references or unload classes.
+
+Shenandoah
+Shenandoah [Flood et al., 2016] is a parallel, compacting collection algorithm aimed at pro-
+viding short pause times for applications using large heaps. Like many other modern com-
+pacting collectors, it is a region-based collector that prioritises sparsely occupied regions
+(identified in the marking phase) for evacuation. At the time of writing, Shenandoah
+is non-generational. In 2016 Flood et al. argued that programs such as web caches hold
+onto objects just long enough to defeat generational collectors so, instead, Shenandoah fo-
+cuses its effort on regions with fewer live objects, regardless of whether those objects are
+young or old. They also argued that generational collection requires some kind of remem-
+bered set, typically a card table, accesses to which lead to cache contention. However, it
+is not clear that these concerns still hold and implementation of a generational version of
+Shenandoah is in progress.
+     Shenandoah’s equally sized regions may contain newly allocated objects, older objects
+or a mixture. Its default policy is to choose regions for evacuation with at least 60% garbage
+and to start a collection cycle when 75% of the regions have been allocated. Humongous
+objects larger than a region are only copied during a full, stop-the-world collection.
+     Shenandoah uses a deletion write barrier for marking. Originally, it also used a com-
+bination of this barrier and a Brooks-style read barrier in its evacuation phase, with the
+forwarding pointer placed immediately before the object (thus separate from the Java class
+pointer and the header word used for marking and locking, allowing the indirection bar-
+rier to be simple and thus faster). Shenandoah made some effort to optimise these barriers
+away. First, its compiler employed global value numbering, which can identify and re-
+move redundant barriers. Both load and write barriers can be avoided if the value is newly
+allocated (since it will be in tospace), the value is a null pointer, the value is a constant or
+the value itself came from a write barrier. Further, load barriers can be eliminated if the
+value must be the same in both fromspace and tospace (Java final fields) or the value
+came from a load barrier and there can be no interfering write barrier.
+     However, these barriers have now been replaced in the evacuation phase with a single9
+load barrier applied immediately after loading a reference (Algorithm 17.12). Like the
+Pauseless and ZGC load barriers, this barrier is self-healing — where necessary, the load
+barrier cooperates with the collector to copy not yet evacuated objects — but unlike those
+barriers, it does not use pointer tags. Replacing the read and write barriers with a load
+barrier simplified the implementation and improved its performance in a number of ways.
+(i) The strong tospace invariant that threads only ever see a canonical reference to an object
+makes it easier to reason about the state of collection and objects. (ii) The number of places
+where barriers are inserted is reduced. (iii) Equality tests are simpler because there is only
+one copy of an object. (iv) Barriers are placed where references are loaded rather than
+the typically hotter locations where the references are used. (v) As the fromspace copy is
+  9 Different flavours of this load barrier are used for normal objects and weak references.
+
+Algorithm 17.12: Shenandoah’s self-healing load barrier
+
+ 1   Read(src, i):
+ 2      addr ← &src[i]
+ 3      obj ← *addr
+ 4      if not isGCactive()                            /* fast path: accesses thread−local flag */
+ 5         return obj
+ 6      if not isInCollectionSet(obj)
+ 7         return obj
+ 8
+
+ 9      fwd = resolveForwardee(obj)                       /* access forwarding pointer, if one */
+10      if obj ̸= fwd
+11       CAS(addr, fwd, obj)                                                       /* self−heal */
+12       return fwd
+13
+
+14      fwd = loadSlowpath(obj)               /* once per location with non−forwarded object */
+15      CAS(addr, fwd, obj)
+16      return fwd
+
+no longer used, Shenandoah can write the forwarding pointer into it rather than having
+to dedicate an extra word to the forwarding pointer; this reduces both heap and cache
+pressure. (vi) Finally, rather than being always on, the load barrier can be made conditional
+on whether a collection is in progress and the referent is in a condemned region.
+   The Shenandoah collection cycle consists of the following phases. Note that recent
+improvements have reduced the time spent in stop-the-world phases (on the next page).
+STW1: Initial stop-the-world marking phase to prepare the heap and application threads.
+Mark: Concurrently scan thread stacks using stack barriers (see Section 11.5) to ensure
+    consistency. Trace the heap marking objects. Mutators use a deletion write barrier
+    to ensure consistency. The collector threads use work stealing for load balancing.
+    Note that pointers to objects evacuated in the previous collection cycle are no longer
+    updated in this phase but in a subsequent one.
+STW2: Final stop-the-world marking phase drains marking queues. There is no need to
+   rescan roots as Shenandoah uses a deletion write barrier. This phase also selects
+   condemned regions.
+Concurrent roots and reference processing: Evacuate and update all references in threads
+    and all weak references, and clear and enqueue any unreachable weak references.
+    Evacuate and update all weak roots (such as JNI weak references and some inter-
+    nal structures like the interned string table), and clear unreachable weak roots. Free
+    any regions with no live objects. Unload unused classes and process any remaining
+    strong roots such as references in compiled code regions.
+Relocate: Concurrently evacuate live objects from condemned regions. Shenandoah re-
+     quires that objects in condemned regions not be updated by mutators. Rather, the
+     object must first be copied and may then be updated. Mutators cooperate with col-
+     lector threads in this regard. There may be a race between copying an object and in-
+     stalling the indirection to the new copy, but the algorithm uses a compare-and-swap
+     for the update, so one thread will win the race and the others can simply rewind their
+     allocation pointers.
+
+Update references: Concurrently sweep the heap to update any remaining pointers to
+    evacuated objects.
+Concurrent cleanup: Free the condemned regions.
+
+Reducing stop-the-world time in Shenandoah and ZGC
+The original version of Shenandoah [Flood et al., 2016] completed marking in a stop-the-
+world phase. As well as ensuring that all live objects are marked, this phase dealt with a
+number of issues that are tricky to handle concurrently. These include processing weak
+references and finalisers, and class unloading. Handling these matters took up more than
+half the time of the final mark phase. More recently, Shenandoah and ZGC have adopted
+similar approaches to reduce the time spent in stop-the-world phases. These include using
+stack barriers to allow the collector to process thread stacks concurrently, and concurrent
+reference processing and class unloading. All of these improvements reduced pause times
+substantially.
+
+Concurrent reference processing. As we noted earlier in this chapter, Java’s semantics
+make concurrent reference processing delicate. First, there may be a race between the col-
+lector processing a weak reference by nulling its referent field and a mutator resurrecting
+the referent by making it strongly-reachable. Second, if multiple weak reference objects re-
+fer to the same target, they must behave consistently. ZGC and Shenandoah use five steps
+to process weak references concurrently.
+   1. During the Map/Remap phase of a cycle, marking builds a discovered list of addresses
+      of weak reference objects found whose referent was not strongly marked at the time
+      the weak reference object was discovered. The discovered list is a superset of the
+      weak references that should be cleared. Note that a SoftReference also requires
+      that the system’s policy hold for it (for example, an ‘always clear’ policy or an ‘LRU
+      max heap’ policy, which clears the SoftReference if it has not been used recently
+      enough).
+   2. In stop-the-world phase STW2, resurrection is disabled. Fetching the target of a
+      weak reference (other than a PhantomReference) will return null if the target is
+      not marked or a pointer to its target if it is marked.
+   3. In the concurrent Reference Processing phase, the discovered list is pruned to remove
+      any weak references that should not be cleared and to clear those that should be.
+   4. After this, resurrection is re-enabled.
+   5. Finally, the discovered list is made available to components that use it to post weak
+      reference objects to their registered queues.
+    Objects with finalisers need to be marked specially, as finalisably reachable. This is be-
+cause these objects need to be retained until they are finalised, but not treated as if they are
+strongly-reachable. Three mark states are needed: (strongly) marked, finalisably marked
+and unmarked. Marking propagates the strongly marked and finalisably marked wave-
+fronts together, in one pass. In the case of ZGC, any tagged pointers that are followed in
+this finalisable trace are updated with both F and the good colour. Strong marking is pre-
+ferred: if an object previously marked as finalisable is discovered, its transitive closure is
+strongly marked (in ZGC’s case, clearing the F bit).
+    Class unloading is important for applications that make heavy use of class loaders,
+such as application servers and integrated development environments (IDEs), and is also
+17.6. ISSUES TO CONSIDER                                                                 404
+
+relevant to Java’s anonymous classes and lambdas. Class unloading requires determining
+whether a class loader is reachable, and unlinking and cleaning any unreachable loader,
+class or other data structure including compiled code. This is usually performed in a stop-
+the-world phase, but ZGC and Shenandoah manage class unloading concurrently by us-
+ing compiled method entry barriers, which indicate that the compiled code may have been
+invalidated. The aim is to evacuate and update references in a method before it executes
+and to handle other methods concurrently. A compiled method entry barrier is invoked
+before a method is first executed in a cycle in order to scan the method’s code for embedded
+constants, evacuating the referent and updating the reference. These barriers are enabled
+in the final stop-the-world pause of a collection cycle and disabled when a collector thread
+processes the method or when a Java thread is first about to execute the method.
+
+17.6     Issues to consider
+This chapter has laid out the basic principles of concurrent copying collection and con-
+current compaction to reduce fragmentation, while also avoiding long pauses. As in any
+concurrent collector algorithm, the collector must be protected against mutations that can
+otherwise cause lost objects. But because the collector is moving objects, the mutator must
+also be protected against accessing stale copies. Some algorithms protect the mutator by
+making sure it operates with a tospace invariant so that it can never hold references to
+stale fromspace objects [Baker, 1978]. Others protect the mutator by making it forward to
+tospace copies as they are created but otherwise allow it to continue operating in from-
+space [Brooks, 1984]. Still others permit continued operation in fromspace, so long as
+updates eventually propagate to tospace [Nettles et al., 1992; Nettles and O’Toole, 1993].
+Once copying has finished, all the mutators flip to tospace in a single step. Dispensing with
+this global transition can mean accumulating chains of multiple versions, which mutators
+must traverse to find the most up-to-date copy [Herlihy and Moss, 1992]. Alternatively, by
+performing updates on both copies, mutators can be transitioned one at a time [Hudson
+and Moss, 2001, 2003; Ugawa et al., 2018]. Compaction can be performed in similar ways
+but without the need to copy all objects at every collection [Kermany and Petrank, 2006;
+Click et al., 2005; Azul, 2008; Flood et al., 2016; Lidén, 2018].
+    These approaches may result in longer pauses than non-moving concurrent collection:
+on any given heap access, the mutator may need to wait for an object (or objects) to move
+or indirect to the current version. Indeed, Baker [1992a] devised his Treadmill algorithm
+as an antidote to the churn present in his original copying collector [Baker, 1978]. While
+copying or compaction are needed to avoid fragmentation, they can present particular
+difficulties for applications that are sensitive to prolonged or frequent pauses. Often, such
+applications also operate in environments where memory is unusually constrained, such
+as embedded systems, where defragmentation can be even more important.
+    Many of the concurrent collectors discussed in this chapter rely on parallel threads,
+trading much increased CPU cycles for lower latencies. This increased use of resources
+does not come for free in a multi-tenancy system. In the next chapter, we discuss alterna-
+tive ways to reduce expected latency times with lower total resource use. The following
+Chapter 19 then considers how to manage concurrent copying or concurrent compaction
+while tightly bounding pause times for more demanding applications.

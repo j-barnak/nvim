@@ -1,0 +1,1044 @@
+
+      COVERAGE-GUIDED FUZZING
+                                   8
+                Speed creates a space of initiation, which may be lethal;
+                        its only rule is to leave no trace behind.
+                             —Jean Baudrillard, America
+
+             One of the biggest strengths of mutation-
+            based, black-box fuzzing is that there is very
+          little setup required. After gathering the seed
+       corpus, all you need to do is run the fuzzer and
+wait for crashes or unexpected behaviors that hint at
+potential vulnerabilities, such as memory corruption
+bugs. This is a welcome relief from hours of painstak-
+ing reverse engineering and source code review.
+     However, while this approach worked well in the halcyon days of inse-
+cure code with plenty of low-hanging fruit, black-box fuzzing has become
+less effective against hardened software. Most obvious memory corruption
+bugs have been found and fixed with secure software development practices
+(including fuzzing). In order to find deeper vulnerabilities and boldly go
+where no fuzzer has gone before, modern fuzzers use coverage-guided fuzzing,
+in which future mutations are guided by code coverage data from previous
+inputs. The goal is to maximize code coverage of the fuzzed program so
+
+                   that the fuzzer reaches new and more interesting parts of the program that
+                   haven’t been fuzzed before.
+                       In this chapter, you’ll learn about coverage-guided fuzzing and use AFL++
+                   to discover vulnerabilities in LibreDWG. You’ll write a custom harness and
+                   optimize it by removing fuzz blockers. Then, you’ll use Fuzz Introspector to
+                   analyze fuzz coverage and identify prime fuzzing targets.
+
+      Advantages of Coverage-Guided Fuzzing
+                   In Chapter 7, I referenced the “Fuzzing Like a Caveman” series, which walks
+                   you through building a fuzzer from first principles. Unlike traditional black-
+                   box fuzzing that executes a target program directly, fuzzing “like a modern
+                   human” is done using a highly optimized and instrumented fuzzing harness.
+                        A harness is a specialized, custom-built program that imports and exe-
+                   cutes specific functions from a target library or runs specific parts of a target
+                   executable binary. By acting as a middleman or wrapper around the target,
+                   it can make it easier to fuzz, such as by providing a more convenient inter-
+                   face for inputs or skipping uninteresting parts of the target. The harness can
+                   also enable speed optimizations such as parallel execution.
+                        Without an optimized harness, fuzzing can be extremely slow. Opening
+                   a single document in Microsoft Word is reasonably fast for an ordinary user
+                   with an average computer, but you’re unlikely to achieve thousands of iter-
+                   ations per second without a huge amount of computing resources. Further-
+                   more, not all programs are simple command line tools that accept single-file
+                   inputs. By isolating a specific function or set of instructions with a harness,
+                   you can speed things up by skipping unnecessary parts of the program that
+                   don’t interact with your fuzzed data.
+                        In addition, without a feedback mechanism from instrumentation, the
+                   range of test cases is largely limited to a manually defined template or seed
+                   corpus. This restricts the set of possible mutations to certain template fields
+                   or variants. With coverage-guided fuzzing, mutations that reach more parts
+                   of the program are saved and used to generate additional test cases.
+                        To illustrate why this is so powerful, consider a program that parses the
+                   PNG file format. Other than the cyclic redundancy check mentioned in the
+                   previous chapter, the program should also be able to handle various other
+                   “chunk” types, such as:
+                      •    Image header (IHDR)
+                      •    Palette (PLTE)
+                      •    Image data (IDAT)
+                      •    Background color (bKGD)
+                      •    Image gamma (gAMA)
+                      •    Textual data (tEXt)
+                      •    Transparency (tRNS)
+
+    As well as a switch statement for handling different chunk types, the
+program would include several more branching paths based on the data in
+each type. For example, the image header chunk includes a single-byte in-
+teger that indicates the transmission order of the data: 0 (no interlace) or
+1 (Adam7 interlace). As such, the pseudocode of this hypothetical PNG
+parser would look like this:
+
+def parse_png(data):
+    while data:
+        --snip--
+        if chunk_type == "IHDR":
+            # Handle IHDR chunk
+         ¶ interlace_type = read_byte(chunk_data)
+        elif chunk_type == "PLTE":
+            # Handle PLTE chunk
+        elif chunk_type == "IDAT":
+            # Handle IDAT chunk
+            if interlace_type == NO_INTERLACE:
+                 # Process scanlines normally
+         · elif interlace_type == ADAM7_INTERLACE:
+                 # Process scanlines with Adam7 interlacing
+
+    A black-box fuzzer would have no way to know that flipping the interlace
+type ¶ could trigger new instructions later on ·. Of course, you could man-
+ually specify fixed values in a format template to specifically target Adam7
+interlacing, but this is highly dependent on your own judgment, and you
+could miss other scenarios.
+    The promise of coverage-guided fuzzing is that by instrumenting a pro-
+gram at compile- and runtime, a fuzzer can keep track of each mutated in-
+put’s coverage and iterate on inputs that trigger more coverage. This quickly
+generates more interesting test cases that can find new vulnerabilities with-
+out manual intervention.
+    Additionally, coverage-guided fuzzing can help navigate a fuzzing session
+past validation checks like magic bytes. In a blog post titled “afl-fuzz: Making
+Up Grammar with a Dictionary in Hand”(https://lcamtuf.blogspot.com/2015/
+01/afl-fuzz-making-up-grammar-with.html), Michał Zalewski, the creator of
+American Fuzzy Lop (AFL), shared how a coverage-guided algorithm could
+be used to automatically identify important tokens, such as chunk names, in
+PNG files:
+        The PNG format uses four-byte, human-readable magic values to
+        indicate the beginning of a section, say:
+
+        89 50 4e 47 0d 0a 1a 0a 00 00 00 0d 49 48 44 52 | .PNG........IHDR
+        00 00 00 20 00 00 00 20 02 03 00 00 00 0e 14 92 | ................
+
+        The algorithm in question can identify “IHDR” as a syntax token
+        by piggybacking on top of the deterministic, sequential bit flips
+        that are already being performed by afl-fuzz across the entire file.
+
+                           It works by identifying runs of bytes that satisfy a simple property:
+                           that flipping them triggers an execution path that is distinct from
+                           the product of flipping stuff in the neighboring regions, yet consis-
+                           tent across the entire sequence of bytes.
+
+                        Of course, this can’t help with more complex checks like CRC valida-
+                   tion. You’ll need to identify these bottlenecks either before fuzzing begins,
+                   by studying the format specification, or after an initial round of fuzzing, by
+                   analyzing the overall coverage. The most straightforward way to solve this
+                   problem is to patch it in the source code. However, this risks creating false
+                   positives from crashing test cases that wouldn’t work on the original target.
+                        Most modern fuzzers are coverage-guided because of the advantages
+                   discussed in this section. But this doesn’t mean that “dumb” fuzzers don’t
+                   have a place in your research toolkit. They simply serve a different purpose.
+                   Quick and dirty approaches are useful earlier in the fuzzing workflow to
+                   identify low-hanging fruit or potential problem spots. In addition, “dumb”
+                   fuzzers excel in black-box situations in which the target is difficult to instru-
+                   ment or write a harness for.
+
+      Fuzzing with AFL++
+                   One of the most prolific community fuzzing projects is American Fuzzy Lop
+                   plus plus (AFL++), the successor (and “superior fork”) of the now-defunct
+                   AFL. As a very active community project, AFL++ constantly adds features
+                   that integrate new fuzzing techniques and research. It also addresses many
+                   practical issues commonly experienced by researchers, such as fuzzing binary-
+                   only targets.
+                       While AFL++ distributes container images, I recommend that you build
+                   and install it yourself to avoid resource consumption issues and so you can
+                   debug problems more easily. Follow the instructions at https://github.com/
+                   AFLplusplus/AFLplusplus/blob/stable/docs/INSTALL.md (the examples use
+                   version 4.21c). This will take a while to complete due to the number of build
+                   steps needed:
+
+$ sudo apt-get update
+$ sudo apt-get install -y build-essential python3-dev automake cmake git flex bison
+libglib2.0-dev libpixman-1-dev python3-setuptools cargo libgtk-3-dev
+$ sudo apt-get install -y lld llvm llvm-dev clang
+$ GCC_VER=$(gcc --version|head -n1|sed 's/\..*//'|sed 's/.* //')
+$ sudo apt-get install -y gcc-$GCC_VER-plugin-dev libstdc++-$GCC_VER-dev
+$ sudo apt-get install -y ninja-build
+$ wget https://github.com/AFLplusplus/AFLplusplus/archive/refs/tags/v4.21c.tar.gz
+$ tar -zxf v4.21c.tar.gz
+$ cd AFLplusplus-4.21c
+$ make distrib
+$ sudo make install
+
+                      AFL++ works best on targets with source code because it can add opti-
+                   mized instrumentation at compile time. As such, you’ll start with a known-
+
+  vulnerable version of LibreDWG, an open source C library to read and write
+  files in the DWG (drawing) format.
+       Interestingly, it appears that the developers already performed some
+  fuzzing with the original AFL and Honggfuzz fuzzers, as documented in the
+  HACKING file. You can adapt those instructions to compile the dwgread pro-
+  gram with AFL++ instrumentation:
+
+  $ sudo apt-get install -y autoconf automake libtool pkg-config m4
+  $ git clone https://github.com/LibreDWG/libredwg
+  $ cd libredwg
+  $ git checkout 77a8562
+  $ sh ./autogen.sh
+¶ $ CC=afl-clang-lto ./configure --disable-bindings --disable-dxf
+  --disable-json --disable-shared
+  $ make -C src
+  $ make -C programs dwgread
+
+       Don’t worry too much about the compiler flags for now; AFL++’s cen-
+  tral compiler automatically selects good defaults. For example, it excludes
+  the -fsanitize=address flag used in the original Makefile. This is because san-
+  itizers consume a lot of memory and computational resources, so it’s gener-
+  ally recommended that you start fuzzing without them first. See https://afl
+  -1.readthedocs.io/en/latest/notes_for_asan.html for a deeper discussion of the
+  impacts of sanitizers on fuzzing performance.
+       One of the key choices at this stage is selecting the best instrumentation
+  mode. There are four modes available in AFL++:
+       Link time optimization (LTO) Instruments at link time using a cus-
+       tom AFL linker to prevent edge collisions, where instrumented branches
+       (edges) are randomly assigned the same hash and thus erroneously re-
+       port coverage. It also leads to faster binaries at runtime, but at the cost
+       of longer compilation times.
+       GCC plug-in Similar to the LLVM Pass Framework, the GNU Com-
+       piler Collection (GCC) supports plug-ins that add new features to the
+       compiler. AFL++ includes a custom GCC plug-in to add instrumentation.
+       GCC/Clang Rely on the built-in instrumentation mechanisms of the
+       original compilers, which insert unoptimized assembly-level instructions.
+       LLVM Adds a Low Level Virtual Machine (LLVM) compiler pass that
+       inserts AFL++ instrumentation at compile time. This relies on LLVM-
+       specific features like the LLVM Pass Framework, so it works only with the
+       Clang compiler and not GCC, but it allows many more optimizations.
+      As long as Clang or Clang++ version 11 or above is available, AFL++’s
+  documentation recommends LTO mode. To use this, you specified afl-clang
+  -lto in the CC environment variable ¶. Otherwise, afl-cc will default to afl
+  -clang-fast. This should also be reflected in the compiler output. Compila-
+  tion will take longer due to the link time optimization.
+
+                      Once the target has been compiled, you can begin fuzzing right away
+                  with a single seed corpus file:
+
+                  $ mkdir fuzz-in
+                  $ cp test/test-data/example_2000.dwg fuzz-in/
+                  $ afl-fuzz -i fuzz-in -o fuzz-out -- programs/dwgread ¶ @@
+
+                      To execute the target binary with your fuzzed input, you replace the in-
+                  put filepath command line argument with @@ ¶, which is automatically pop-
+                  ulated by AFL++. If all goes well, your first AFL++ fuzzing session should
+                  begin!
+                      The AFL++ interface should look something like Figure 8-1. Check this
+                  regularly to ensure that the fuzzing session is progressing as expected.
+
+Figure 8-1: The AFL++ status screen
+
+                      Most of the interface is fairly self-explanatory, but you can refer to the
+                  documentation at https://aflplus.plus/docs/status_screen/ for more detail. There
+                  are a few key metrics you should monitor closely:
+                      Last new find This tracks new crashes and hangs, as well as new paths
+                      (in other words, new coverage). If no new coverage is being reached
+                      when you first start fuzzing, this indicates that your inputs may not be
+                      working properly.
+                      Map coverage This corresponds to the “fuzz bitmap” used by AFL++
+                      to represent the code coverage of the fuzzed program. Ideally, your map
+                      density should not be too high (> 70 percent) too early, as that makes it
+                      harder for AFL++ to identify significant changes in code coverage.
+
+                    Item geometry This shows the path depth reached by the fuzzing ses-
+                    sion. In particular, pay attention to stability, which measures the consis-
+                    tency of code coverage for identical inputs. Stability should ideally be
+                    100 percent; otherwise, you’ll get unreliable crashes that you may not be
+                    able to replicate.
+                    Stage progress This contains information about the current fuzzing
+                    actions being executed. While execution speed will vary depending on
+                    your hardware and harness, aim for about 500 executions per second.
+                     These metrics indicate whether you set up your fuzzing session prop-
+                erly. You should quickly identify potential bottlenecks, such as the fuzzing
+                harness, input corpus, or validation checks.
+                     If you run the fuzzing session for long enough, it’ll begin encounter-
+                ing crashes and hangs. AFL++ saves the input that caused a unique crash
+                or hang into fuzz-out/default/crashes/. Since each fuzzing session is random
+                and you may not encounter a crash even after fuzzing for days, one of these
+                crashing inputs is provided in the book’s code repository at chapter-08/
+                aflplusplus-libredwg/crash-1.dwg. Debugging one of the crashing inputs with
+                GDB reveals the following information:
+
+$ gdb --args ./programs/dwgread crash-1.dwg
+(gdb) r
+Starting program: /home/kali/Desktop/libredwg/programs/dwgread crash-1.dwg
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+
+Program received signal SIGSEGV, Segmentation fault.
+0x00005555557e48f3 in bit_calc_CRC (seed=49345, addr=0x555555e625c0 <error: Cannot access ¶
+memory at address 0x555555e625c0>, len=11518) at /home/kali/Desktop/libredwg/src/bits.c:3455
+3455          al = (unsigned char)((*addr) ^ ((unsigned char)(dx & 0xFF))); ·
+
+                    It appears that an out-of-bounds read occurred in the bit_calc_CRC
+                function ¶ due to the addr variable ·. Thanks to the debugging informa-
+                tion added during compilation, GDB was able to highlight the exact lines of
+                code where this occurred. You can also run the backtrace command to view
+                the call stack at the crash:
+
+(gdb) backtrace
+#0 0x00005555557e48f3 in bit_calc_CRC (seed=49345, addr=0x555555e625c0 <error: Cannot access
+    memory at address 0x555555e625c0>, len=11518) at /home/kali/Desktop/libredwg/src/
+    bits.c:3455 ¶
+#1 decode_preR13_auxheader (dat=0x7fffffffc870, dwg=0x7fffffffc8b0) at
+    decode.c:6278
+#2 0x00005555557ec800 in decode_preR13 (dat=0x7fffffffc870, dwg=0x7fffffffc8b0) at
+    decode_r11.c:786
+#3 0x00005555555d1893 in dwg_decode (dat=0x7fffffffc870, dwg=0x7fffffffc8b0) at decode.c:217
+
+#4 0x00005555555be43d in dwg_read_file (filename=<optimized out>, dwg=0x7fffffffc8b0) at
+   /home/kali/Desktop/libredwg/src/dwg.c:261
+#5 0x00005555555be43d in main (argc=<optimized out>, argv=0x7fffffffdeb8)
+
+                        This is a fairly deep call stack, but it’s concerning that the crash is oc-
+                   curring at a CRC function ¶, which suggests that the fuzzing session is stuck
+                   at this check. You can correlate this behavior with the levels on the status
+                   screen, which will eventually plateau. This appears to be a local maximum
+                   where AFL++ is fuzzing only the CRC validation code rather than the rest of
+                   the program.
+                        Nevertheless, this short test demonstrates the power of coverage-guided
+                   fuzzing. Even with an unoptimized harness, minimal inputs, no sanitizers,
+                   and weak coverage, AFL++ is able to “intelligently” explore the program and
+                   eventually trigger crashes. The only ingredient it needs is time.
+
+      Fuzzing Optimizations
+                   “Fuzz and forget” can be an effective strategy. However, while this may work
+                   for a simple program like dwgread, it’s unlikely that using it for a complex
+                   program will scale well. To improve on fuzzing performance, you can try the
+                   optimization techniques described here.
+
+                   Patching Validation Checks
+                   While an out-of-bounds read vulnerability exists in bit_calc_CRC, you want to
+                   find vulnerabilities in other parts of dwgread’s code too. To get there, you
+                   need to pass the CRC validation check.
+                       Take a look at the call site for bit_calc_CRC in Listing 8-1.
+
+int
+decode_preR13_auxheader (Bit_Chain *restrict dat, Dwg_Data *restrict dwg)
+{
+    int error = 0;
+    BITCODE_RS crc, crcc;
+    Dwg_AuxHeader *_obj = &dwg->auxheader;
+    --snip--
+    crcc = bit_calc_CRC ( ¶
+        0xC0C1,
+        &dat->chain[_obj->auxheader_address + 16], // after sentinel (16 bytes)
+        _obj->auxheader_size - 2);                  // minus crc length (2 bytes)
+    crc = bit_read_RS (dat); ·
+    LOG_TRACE ("crc: %04X [RSx] from 0x%x-0x%lx\n", crc,
+                _obj->auxheader_address + 16, dat->byte - 2);
+    if (crc != crcc)
+        {
+             LOG_ERROR ("AUX header CRC mismatch %04X <=> %04X", crc, crcc);
+             error |= DWG_ERR_WRONGCRC; ¸
+        }
+
+    error
+        |= decode_preR13_sentinel (DWG_SENTINEL_R11_AUX_HEADER_END,
+                                   "DWG_SENTINEL_R11_AUX_HEADER_END", dat, dwg);
+    LOG_TRACE ("\n");
+
+    return error;
+}
+
+Listing 8-1: The call site for bit_calc_CRC
+
+                       As part of the DWG format decoding routine, a CRC checksum is calcu-
+                   lated for the header ¶ and compared to the provided CRC checksum ·. If
+                   they don’t match, the function logs an error ¸. This error is propagated up
+                   the call stack to the dwg_decode function, as Listing 8-2 shows.
+
+                   /** dwg_decode
+                     * returns 0 on success.
+                     *
+                     * everything in dwg is cleared
+                     * and then either read from dat, or set to a default.
+                     */
+                   EXPORT int
+                   dwg_decode (Bit_Chain *restrict dat, Dwg_Data *restrict dwg)
+                   {
+                        --snip--
+                        PRE (R_13b1)
+                        {
+                            Dwg_Object *ctrl;
+                          ¶ int error = decode_preR13 (dat, dwg);
+                            if (error <= DWG_ERR_CRITICAL)
+                                 {
+                                     ctrl = &dwg->object[0];
+                                     dwg->block_control = *ctrl->tio.object->tio.BLOCK_CONTROL;
+                                 }
+                          · return error;
+                        }
+                     ¸ VERSIONS (R_13b1, R_2000) { return decode_R13_R2000 (dat, dwg); }
+                        VERSION (R_2004) { return decode_R2004 (dat, dwg); }
+                        VERSION (R_2007) { return decode_R2007 (dat, dwg); }
+                        SINCE (R_2010)
+                        {
+                            read_r2007_init (dwg); // sets loglevel only for now
+                            return decode_R2004 (dat, dwg);
+                        }
+                        --snip--
+                   }
+
+Listing 8-2: The dwg_decode function code
+
+                       The decode_preR13 function ¶ eventually triggers the CRC check, so an
+                  error there will cause the function to return early ·. However, if the CRC
+                  validation passes, it moves on to different decoding routines depending on
+                  the DWG file’s version code ¸.
+                       As discussed in Chapter 7, a CRC checksum is an error-detecting code.
+                  If a single bit changes in the checksum or the data, the validation will fail.
+                  This makes it extremely difficult for a fuzzer to pass the check without out-
+                  side assistance.
+                       However, bypassing this check is unlikely to change the exploitability of
+                  any crashes discovered afterward because it’s relatively easy to recalculate
+                  the correct CRC checksum and replace the CRC checksum in the crashing
+                  inputs. Unlike other format-specific validation checks, it can be easily re-
+                  stored without affecting the bytes that actually caused the crash. This makes
+                  it a good candidate for patching.
+                       If you read the Open Design Alliance’s DWG specification at https://
+                  www.opendesign.com/files/guestdownloads/OpenDesign_Specification_for_.dwg
+                  _files.pdf, you’ll find out that the DWG format actually supports multiple ver-
+                  sions with significant differences among them. For example, the size of the
+                  CRC checksum can range from 8 bits to 64 bits, depending on the version of
+                  the format. There is also an additional data integrity check using a a set of
+                  magic bytes called a sentinel.
+                       This makes patching out the CRC and sentinel validation in LibreDWG
+                  somewhat more complicated than commenting out a single line. For exam-
+                  ple, the bit_check_CRC function is used in some parts of the code, while in
+                  others, the CRC checksum is calculated with bit_calc_CRC and compared to
+                  the expected value that is read from the header.
+                       Thus, to patch the CRC and sentinel validation, you need to perform
+                  several modifications:
+                     •    Change bit_check_CRC to return 1 (interpreted as success) even when
+                          the check fails.
+                     •    Find all instances where the return value of bit_calc_CRC is compared
+                          against an expected value and an error is triggered if they don’t
+                          match. Modify them so they don’t trigger an error.
+                     •    Find all instances where the return value of dwg_sentinel is compared
+                          against a parsed value and an error is triggered if they don’t match.
+                          Modify them so they don’t trigger an error.
+                     •    Find all other instances where a DWG_ERR_WRONGCRC error is thrown.
+                          Modify them so they don’t trigger the error.
+                       While making these changes, make sure that you don’t inadvertently
+                  modify unrelated code. For example, in the bit_check_CRC function in
+                  Listing 8-3, there are two possible failure conditions.
+
+                  /** Read and check old 16bit CRC.
+                   */
+                  int
+                  bit_check_CRC (Bit_Chain *dat, long unsigned int start_address, uint16_t seed)
+
+{
+     uint16_t calculated;
+     uint16_t read;
+     long size;
+     loglevel = dat->opts & DWG_OPTS_LOGLEVEL;
+
+     if (dat->bit > 0)
+         {
+             dat->byte++;
+             dat->bit = 0;
+         }
+
+     if (start_address > dat->byte || dat->byte >= dat->size)
+          {
+              loglevel = dat->opts & DWG_OPTS_LOGLEVEL;
+              LOG_ERROR ("%s buffer overflow at pos %lu-%lu, size %lu",
+                         __FUNCTION__, start_address, dat->byte, dat->size)
+            ¶ return 0;
+          }
+     size = dat->byte - start_address;
+     calculated = bit_calc_CRC (seed, &dat->chain[start_address], size);
+     read = bit_read_RS (dat);
+     LOG_TRACE ("crc: %04X [RSx]\n", read);
+     if (calculated == read)
+          {
+              LOG_HANDLE (" check_CRC %lu-%lu = %ld: %04X == %04X\n",
+                          start_address, dat->byte - 2, size, calculated, read)
+              return 1;
+          }
+     else
+          {
+              LOG_WARN ("check_CRC mismatch %lu-%lu = %ld: %04X <=> %04X\n",
+                        start_address, dat->byte - 2, size, calculated, read)
+            · return 0;
+          }
+}
+
+Listing 8-3: The bit_check_CRC function code
+
+     The buffer overflow check should not be patched to always return 1 ¶,
+or it will lead to false positives during fuzzing. These false positives can-
+not be replicated in the original program. In contrast, patching the CRC
+validation · should still allow you to replicate crashes simply by correcting
+the CRC checksum in the header of the crashing input.
+     As there are a lot of patches to take note of, you can use the Git patch
+file at chapter-08/aflplusplus-libredwg in this book’s code repository to make
+
+                  the necessary changes. While in the libredwg directory, execute the following
+                  commands:
+
+$ cp ~/Desktop/from-day-zero-to-zero-day/chapter-08/aflplusplus-libredwg/remove_crc_sentinel
+.patch .
+$ git apply remove_crc_sentinel.patch
+
+                       After patching these checks, rebuild the program with the new code,
+                  making sure to clear the fuzz-out directory containing your previous fuzzing
+                  session’s output:
+
+                  $ make clean
+                  $ make -C src
+                  $ make -C programs dwgread
+                  $ mv fuzz-out fuzz-out-1
+                  $ afl-fuzz -i fuzz-in -o fuzz-out -- programs/dwgread @@
+
+                     This time, fuzzing the patched binary produces ambiguous results, as
+                  shown in Figure 8-2.
+
+Figure 8-2: The fuzzing session with patched CRC validation
+
+                      For example, in a similar run time compared to the previous fuzzing ses-
+                  sion without the patched CRC validation (about 30 minutes), there aren’t
+                  any new crashes or hangs. However, if you take a closer look at the statistics,
+                  you’ll see that the number of “own finds” has increased by about 20 percent.
+                  This is because the patched binary can reach more parts of the program
+                  without the CRC bottleneck. While the previous fuzzing session could focus
+                  only on the CRC validations, and thus was able to reach the deeply nested
+                  bug in bit_calc_CRC, the new fuzzing session has broader coverage.
+
+    However, while you could probably reach the vulnerability in bit_calc_CRC
+again given enough time, there are also potential vulnerabilities in other
+functions, such as decode_R13_R2000, decode_R2004, and decode_R2007, that you
+may not be able to find with your current input corpus.
+
+Minimizing the Corpus
+When you first started fuzzing dwgread, you used a single input file for the
+corpus. While this was sufficient to get started, it’s not optimal for a com-
+plex file format like DWG, which has multiple variants. The differences
+between the versions are significant enough that it’s unlikely for a coverage-
+guided fuzzer to mutate a DWG 2000 file into a valid DWG 2007 file. In-
+stead, you should use a larger seed corpus.
+    However, if the seed corpus is too large and overlaps in code coverage, it
+can waste fuzzing cycles. For example, two DWG 2000 files with minimal dif-
+ferences in their metadata will be more likely to have similar code coverage
+than a DWG 2000 and a DWG 2007 file. You should select a minimal cor-
+pus that provides the maximum initial coverage. Fortunately, AFL++ has a
+built-in corpus minimization tool called afl-cmin. This tool measures the cov-
+erage of each input file using the instrumented binary and finds the smallest
+subset of inputs that provides the maximum possible coverage.
+    Try minimizing a group of DWG files from test/test-data/2007 with afl-
+cmin, then proceed to fuzz using the new minimized corpus:
+
+$ mv fuzz-out fuzz-out-2
+$ afl-cmin -i test/test-data/2007 -o fuzz-in-cmin -- programs/dwgread @@
+$ afl-fuzz -i fuzz-in-cmin -o fuzz-out -- programs/dwgread @@
+
+This time, you should be able to obtain crashes much faster than before.
+     In Figure 8-3, you can see that despite running for about the same
+amount of time, the “levels” and “own finds” counts of this fuzzing session
+far exceed the counts from the previous sessions. This reflects the greater
+coverage provided by the new corpus.
+
+Figure 8-3: The fuzzing session with the minimized corpus
+
+                      This fuzzing session should also yield a new crash, which you should an-
+                  alyze in GDB. Like before, if you weren’t able to reach this crash due to the
+                  random nature of fuzzing, use the crash-2.dwg file from the book’s example
+                  repository:
+
+$ gdb --args ./programs/dwgread crash-2.dwg
+(gdb) r
+Starting program: /home/kali/Desktop/libredwg/programs/dwgread crash-2.dwg
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+
+Program received signal SIGSEGV, Segmentation fault.
+0x0000555555810645 in ¶ read_data_section (sec_dat=0x7fffffffc1f0, dat=0x7fffffffc880,
+sections_map=<optimized out>, pages_map=0x555555b0fd50, sec_type=<optimized out>) at
+decode_r2007.c:840
+840           r2007_section_page *section_page = section->pages[i];
+(gdb) backtrace
+#0 0x0000555555810645 in read_data_section (sec_dat=0x7fffffffc1f0, dat=0x7fffffffc880,
+    sections_map=<optimized out>, pages_map=0x555555b0fd50,
+    sec_type=<optimized out>) at decode_r2007.c:840
+#1 0x0000555555808d5c in read_2007_section_revhistory (dat=0x7fffffffc880, dwg=0x7fffffffc8c0,
+    sections_map=0x555555b0f410,
+    pages_map=0x555555b0fd50) at decode_r2007.c:2023
+#2 read_r2007_meta_data (dat=0x7fffffffc880, hdl_dat=<optimized out>, dwg=0x7fffffffc8c0) at
+    decode_r2007.c:2466
+#3 0x00005555555d5279 in decode_R2007 (dat=0x7fffffffc880, dwg=0x7fffffffc8c0) at
+    decode.c:3469
+#4 dwg_decode (dat=0x7fffffffc880, dwg=0x7fffffffc8c0) at decode.c:227
+
+#5 0x00005555555be42d in dwg_read_file (filename=<optimized out>, dwg=0x7fffffffc8c0) at
+   /home/kali/Desktop/libredwg/src/dwg.c:261
+#6 0x00005555555be42d in main (argc=<optimized out>, argv=0x7fffffffdec8)
+
+                    The vulnerability occurs in the read_data_section function ¶ located in
+                decode_r2007.c. This is clearly a result of changing your corpus, since the
+                original single seed input was only DWG version 2000.
+                    Unlike the previous vulnerability you discovered in bit_calc_CRC, this vul-
+                nerability can be exploited in a release build of LibreDWG. LibreDWG ex-
+                cludes version 2000 handling (which it groups under “pre-R13”) when built
+                with the --enable-release configuration flag. If you download the official
+                0.12.5 release from http://ftp.gnu.org/gnu/libredwg/libredwg-0.12.5.tar.gz and
+                create a release build, you can confirm this:
+
+                $ tar -xzvf libredwg-0.12.5.tar.gz
+                $ cd libredwg-0.12.5
+                $ ./configure --enable-release
+                $ make
+
+                    Running the release build on the crash file gives you the expected seg-
+                mentation fault. Take note of the environment variables needed to load the
+                shared LibreDWG libraries first:
+
+$ LD_LIBRARY_PATH="./src/.libs:$LD_LIBRARY_PATH" gdb --args ./programs/.libs/dwgread/home/
+kali/Desktop/crash.dwg
+(gdb) r
+Starting program: /home/kali/Downloads/libredwg-0.12.5/programs/.libs/dwgread /home/kali/
+Desktop/crash.dwg
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+ERROR: Invalid num_pages 7274598, skip ¶
+ERROR: Invalid section->pages[0] size
+Warning: Failed to find section_info[1]
+ERROR: Failed to read header section
+Warning: Failed to find section_info[3]
+ERROR: Failed to read class section
+Warning: Failed to find section_info[7]
+ERROR: Failed to read objects section
+Warning: Failed to find section_info[2]
+ERROR: Preview overflow 119 + 0 > 302223
+Warning: thumbnail.size mismatch: 302223 != 0
+
+Program received signal SIGSEGV, Segmentation fault.
+0x00007ffff728a5c4 in read_data_section (sec_dat=sec_dat@entry=0x7fffffffc850, dat=dat@entry=
+0x7fffffffcb20, sections_map=sections_map@entry=0x55555555b410, pages_map=pages_map@entry=
+0x55555555bd50, sec_type=sec_type@entry=SECTION_REVHISTORY) at decode_r2007.c:805
+805           r2007_section_page *section_page = section->pages[i];
+
+                       Interestingly, while many sections in the crash file trigger errors and
+                  warnings due to various checks ¶, this doesn’t prevent execution from reach-
+                  ing the vulnerability. Nevertheless, you should always ensure that your crashes
+                  can work on a release build of the target.
+
+                  Writing a Harness
+                  As mentioned in the introduction to this chapter, one of the advantages of
+                  using a fuzzing harness is that it enables more optimized fuzzing. So far,
+                  you’ve been fuzzing only dwgread, which is an example program from the
+                  LibreDWG library. While this is fine for bootstrapping a quick fuzzing ses-
+                  sion, it’s not optimized for fuzzing and calls only a subset of the APIs pro-
+                  vided by LibreDWG.
+                       To fuzz other APIs, you must write a harness that calls those functions.
+                  In fact, the LibreDWG developers have written a few example programs
+                  specifically for fuzzing, which can be found at examples/dwgfuzz.c and examples/
+                  llvmfuzz.c.
+                       Such harnesses can make use of AFL++’s persistent mode. In this mode,
+                  rather than creating a new process for each fuzz execution, AFL++ creates
+                  a single process and performs all the initialization once before calling the
+                  target function repeatedly with fuzzed inputs. This can increase speed by up
+                  to 10 times.
+                       There is a standard template for writing a harness that defines a func-
+                  tion called LLVMFuzzerTestOneInput. The function name originated from the
+                  libFuzzer fuzzing engine, which used LLVM instrumentation. Over time,
+                  other engines, like AFL and AFL++, also supported this template. All of
+                  ClusterFuzz’s coverage-guided fuzzing engines work with harnesses written
+                  like this, which enables its large-scale fuzzing.
+                       While the LibreDWG developers wrote an LLVMFuzzerTestOneInput harness
+                  in examples/llvmfuzz.c, it’s still large and unwieldy. Instead, it’s more efficient
+                  to focus on a specific API. To practice writing a harness, you can implement
+                  one for the dwg_decode function. Streamline examples/llvmfuzz.c to the code
+                  in Listing 8-4, or use the copy from the book’s code repository at chapter-08/
+                  aflplusplus-libredwg/llvmfuzz.c.
+
+       llvmfuzz.c #include <dwg.h>
+                  #include "bits.h"
+                  #include "decode.h"
+
+                  extern int LLVMFuzzerTestOneInput (const uint8_t *data, size_t size);
+
+                  int LLVMFuzzerTestOneInput (
+                  ¶ const uint8_t *data, size_t size
+                  ) {
+                         Dwg_Data dwg;
+                         Bit_Chain dat = { NULL, 0, 0, 0, 0 };
+
+                   · memset(&dwg, 0, sizeof (dwg));
+
+      dat.chain = (unsigned char *)data;
+      dat.size = size;
+
+    ¸ dwg_decode(&dat, &dwg);
+    ¹ dwg_free(&dwg);
+
+      return 0;
+}
+
+Listing 8-4: A minimal fuzzing harness
+
+    Compatible fuzzers will automatically call LLVMFuzzerTestOneInput with
+the fuzzed input in the data argument and its size in the size argument ¶.
+Within your harness, you initialize the data structures · and pass the fuzzed
+input to the target function ¸. Additionally, you free the working data ¹
+after calling the target function to ensure stability and fuzzing efficiency.
+    Before building the minimized llvmfuzz, you also need to modify the
+compiler flags defined in examples/Makefile.am:
+
+llvmfuzz_CFLAGS                 = $(CFLAGS) $(AM_CFLAGS) \
+                                  -fsanitize=fuzzer -fno-omit-frame-pointer
+
+     This is important because otherwise llvmfuzz would be built with ad-
+ditional sanitizers that significantly increase resource usage. With that in
+mind, proceed to build llvmfuzz and begin fuzzing. This time, instead of
+passing a filepath argument placeholder for the fuzz execution command,
+you can simply run the binary directly because AFL++ will automatically de-
+tect the LLVMFuzzerTestOneInput function:
+
+$ mv fuzz-out fuzz-out-3
+$ make clean
+$ CC=afl-clang-lto ./configure --disable-bindings --disable-dxf
+--disable-json --disable-shared
+$ make -C src
+$ make -C examples llvmfuzz
+$ afl-fuzz -i fuzz-in-cmin -o fuzz-out -- examples/llvmfuzz
+
+   The following initialization messages should also confirm that persistent
+mode is being used:
+
+[+] Persistent mode binary detected.
+[+] Deferred forkserver binary detected.
+[*] Spinning up the fork server...
+[+] All right - fork server is up.
+[*] Using SHARED MEMORY FUZZING feature.
+
+    You should observe a multifold increase in speed; instead of hundreds
+of executions per second, you should be getting thousands most of the time,
+depending on the current input being fuzzed.
+
+                   Fuzzing in Parallel
+                   If you have enough processors or cores, you can run several fuzzers at once
+                   to share test cases while targeting binaries compiled with different sanitizers.
+                   For example, your main fuzzer could fuzz the target compiled without any
+                   sanitizers, while your secondary fuzzer fuzzes the target compiled with Ad-
+                   dressSanitizer. To do so, rename your original compiled target to llvmfuzz-
+                   orig. Next, modify examples/Makefile.am to include AddressSanitizer for
+                   llvmfuzz:
+
+                   llvmfuzz_CFLAGS              = $(CFLAGS) $(AM_CFLAGS) \
+                                                  -fsanitize=fuzzer,address -fno-omit-frame-pointer
+
+                       Recompile it, and rename the output binary to llvmfuzz-asan. Next, start
+                   the two fuzzing sessions in separate terminals with these commands:
+
+                   $ mv fuzz-out fuzz-out-4
+                   $ afl-fuzz -i fuzz-in-cmin -o fuzz-out -M orig -- examples/llvmfuzz-orig
+                   $ afl-fuzz -i fuzz-in-cmin -o fuzz-out -S asan -- examples/llvmfuzz-asan
+
+                        You may notice that the harness compiled with ASan runs slower than
+                   the original harness, but thanks to persistent mode it should still be reason-
+                   ably fast. This will help you catch potential memory corruption vulnerabili-
+                   ties that don’t lead directly to crashes but could still be exploitable.
+
+      Measuring Fuzzing Coverage with afl-cov
+                   So far, you’ve mostly improved the fuzzing speed and efficiency by using
+                   various optimizations in the harness. However, there’s no point reaching
+                   thousands of executions per second if you’re just hitting well-fuzzed and
+                   hardened code paths or a small subset of the available code. Simply opti-
+                   mizing your fuzzing without properly selecting a target is a bad strategy. In-
+                   stead, you should gather the data you need to select a fuzzing target with the
+                   greatest likelihood of surfacing vulnerabilities.
+                        One of the most straightforward ways to evaluate your fuzzing target is
+                   by measuring coverage. You can compile your target with profiling support
+                   to identify the actual code that your fuzzer reaches. This enables you to find
+                   potential blind spots in your fuzzing.
+                        Modifying the build process of different projects can be complex and
+                   often breaks workflows. Luckily, a useful tool called afl-cov provides several
+                   helper scripts to do this.
+                        To run afl-cov on your modified LibreDWG and fuzzing harness, restore
+                   it to the non-ASan version and copy it to a new directory, including the fuzz
+                   session working data in fuzz-out. This is necessary because afl-cov measures
+                   the coverage reached by each test case in the fuzzing queue:
+
+                   $ sudo apt-get install -y lcov libdatetime-perl
+                   $ yes | sudo perl -MCPAN -e 'install Capture::Tiny'
+                   $ git clone https://github.com/vanhauser-thc/afl-cov
+
+                $ cp -r libredwg libredwg-gcov
+                $ cd libredwg-gcov
+                $ make clean
+                $ /home/kali/Desktop/afl-cov/afl-cov-build.sh -c ./configure
+                --disable-bindings --disable-dxf --disable-json --disable-shared
+                $ make -C src
+                $ make -C examples llvmfuzz
+                $ cp ../afl-cov/afl-clang-cov.sh .
+                $ /home/kali/Desktop/afl-cov/afl-cov.sh -v -c
+                /home/kali/Desktop/libredwg-gcov/fuzz-out
+                "/home/kali/Desktop/libredwg-gcov/examples/llvmfuzz @@"
+                $ sed -i 's/src\/src/src/g' fuzz-out/default/cov/lcov/trace.lcov_info_final
+                $ genhtml --ignore-errors unmapped --output-directory fuzz-out/default/cov/web
+                fuzz-out/default/cov/lcov/trace.lcov_info_final
+
+                     The commands also apply a couple of bug fixes to get afl-cov to work
+                properly with your fuzzer. Unfortunately, a lot of the related tooling in fuzzing
+                can be quite experimental or less well maintained, so handling edge cases
+                like Clang support can lead to issues without these fixes.
+                     After generating the report, you should be able to access it directly by
+                opening the generated index.html file in libredwg-gcov/fuzz-out/default/cov/web.
+                The report should look like Figure 8-4.
+
+Figure 8-4: The coverage report for your fuzzer
+
+                    The report tells you how much code coverage your fuzzing session achieved
+                in each source code file and function of the target. In addition, if you click
+                through to the individual source code files, you can see which code was hit
+                by the test cases. For example, take a look at the dwg\_paper\_space\_ref func-
+                tion in src/dwg.c:
+
+/** Returns the paper space block object for the DWG.
+ */
+EXPORT Dwg_Object_Ref *
+
+dwg_paper_space_ref (Dwg_Data *dwg)
+{
+    if (dwg->header_vars.BLOCK_RECORD_PSPACE
+        && dwg->header_vars.BLOCK_RECORD_PSPACE->obj)
+        return dwg->header_vars.BLOCK_RECORD_PSPACE; ¶
+    return dwg->block_control.paper_space && dwg->block_control.paper_space->obj
+               ? dwg->block_control.paper_space
+               : NULL;
+}
+
+                         Here, the coverage report notes that the fuzzer never reached the first
+                     return ¶. This suggests that during fuzzing, neither your seed inputs nor the
+                     mutated test cases met the conditions to reach this code. Consequently, the
+                     fuzzer could not reach any downstream code that could be triggered by this
+                     code path. It may be worth examining these missed edge cases and manually
+                     crafting seed inputs to fuzz these code paths.
+
+      Fuzz Introspector
+                     While afl-cov provides some initial insights into the blind spots of your fuzzer,
+                     it doesn’t really tell you which targets you should fuzz instead. One powerful
+                     tool for this is Fuzz Introspector. Fuzz Introspector is an integral component
+                     of OSS-Fuzz that measures and analyzes the fuzzing status of a project.
+                          Since it’s highly integrated with OSS-Fuzz, it’s easier to run Fuzz Intro-
+                     spector within the OSS-Fuzz framework rather than separately. OSS-Fuzz
+                     comes with a number of helper scripts and Docker containers to run this
+                     tool locally.
+                          In addition, LibreDWG already has an existing integration with OSS-
+                     Fuzz. Project integrations with OSS-Fuzz follow the same pattern:
+                          project.yaml The metadata for the project’s OSS-Fuzz integration that
+                          specifies which fuzzing engines and sanitizers to use. OSS-Fuzz will auto-
+                          matically build various versions of the project via environment variables.
+                          Dockerfile The container building instructions, based on an OSS-Fuzz
+                          builder image. These instructions should download and prepare the
+                          target project for building.
+                          build.sh The actual commands to build the project and fuzzing har-
+                          ness. One key environment variable used in the build commands is
+                          LIB_FUZZING_ENGINE, which allows OSS-Fuzz to inject the different com-
+                          piler configurations.
+                           Clone the OSS-Fuzz project from https://github.com/google/oss-fuzz.git and
+                     find LibreDWG’s integration in the projects/libredwg directory. The Docker-
+                     file is in Listing 8-5.
+
+                     FROM gcr.io/oss-fuzz-base/base-builder
+                     RUN apt-get update && apt-get install -y autoconf libtool texinfo
+                   ¶ RUN git clone https://github.com/LibreDWG/libredwg
+
+          WORKDIR $SRC
+       · COPY build.sh $SRC/build.sh
+          COPY llvmfuzz.options $SRC/llvmfuzz.options
+
+Listing 8-5: The original Dockerfile for LibreDWG’s OSS-Fuzz integration
+
+              The container building instructions clone the main branch of the Libre-
+          DWG source code ¶ and copy the build script into the source directory ·.
+          The base OSS-Fuzz builder image will automatically detect and run it. The
+          script builds a standard release version of LibreDWG and ensures that lib-
+          Fuzzer does not detect leaks during fuzzing.
+              You’re using a customized codebase that has had the fuzz blockers, like
+          CRC validation, removed, so you should modify the Dockerfile to use your
+          local version instead of cloning LibreDWG. Copy your modified libredwg
+          into projects/libredwg and edit the Dockerfile to match Listing 8-6.
+
+Dockerfile FROM gcr.io/oss-fuzz-base/base-builder
+           RUN apt-get update && apt-get install -y autoconf libtool texinfo
+
+          WORKDIR $SRC
+       ¶ COPY libredwg $SRC/libredwg
+       · COPY llvmfuzz_seed_corpus.zip $SRC/llvmfuzz_seed_corpus.zip
+          COPY build.sh $SRC/
+          COPY llvmfuzz.options $SRC/
+
+Listing 8-6: The modified Dockerfile for LibreDWG’s OSS-Fuzz integration
+
+              Along with copying the modified source code into the container
+          image ¶, the Dockerfile also adds a seed corpus to further improve fuzzing
+          coverage ·. OSS-Fuzz allows developers to supply a seed corpus by adding
+          a ZIP archive in a specific filename pattern. Create a ZIP archive of the seed
+          corpus you prepared earlier and place it in the same directory:
+
+          $ git clone https://github.com/google/oss-fuzz
+          $ cd oss-fuzz/projects/libredwg
+          $ cp -r /home/kali/Desktop/libredwg .
+          $ zip llvmfuzz_seed_corpus.zip libredwg/fuzz-in-cmin/*
+
+              Since the seed corpus needs to be passed on as a build artifact, you must
+          also modify the build instructions to match Listing 8-7.
+
+ build.sh cd libredwg
+          sh ./autogen.sh
+          # enable-release to skip unstable preR13. bindings are not fuzzed.
+          ./configure --disable-shared --disable-bindings --enable-release
+          make -C src
+
+          $CC $CFLAGS src/.libs/libredwg.a -I./include -I./src -c examples/llvmfuzz.c
+
+                     $CXX $CXXFLAGS $LIB_FUZZING_ENGINE llvmfuzz.o src/.libs/libredwg.a \
+                         -o $OUT/llvmfuzz
+
+                     cp $SRC/llvmfuzz.options $OUT/llvmfuzz.options
+
+                   ¶ cp $SRC/llvmfuzz_seed_corpus.zip $OUT/llvmfuzz_seed_corpus.zip
+Listing 8-7: The modified build instructions
+
+                          The instruction you add ¶ copies the seed corpus archive to the direc-
+                     tory that stores build artifacts.
+                          You are now ready to run Fuzz Introspector locally via OSS-Fuzz. To do
+                     so, install Docker and add your current user to the Docker group to use it
+                     without elevated permissions. Next, use the OSS-Fuzz helper script to run
+                     Fuzz Introspector on the LibreDWG integration:
+
+                     $ sudo apt install -y docker.io
+                     $ sudo usermod -aG docker $USER
+                     $ su - $USER
+                     $ cd /home/kali/Desktop/oss-fuzz
+                     $ python infra/helper.py introspector libredwg --seconds=30
+
+WARNING              This is a memory-heavy operation that creates and runs multiple Docker containers.
+                     If the containers fail, you may need to adjust your Docker resource usage settings or
+                     run Fuzz Introspector on the host. Pay attention to debugging and error messages. If
+                     you can’t generate it yourself, a pregenerated LibreDWG Fuzz Introspector report is
+                     available in this book’s example repository, at chapter-08/introspector-report.
+                        If all goes well, the helper script will generate a Fuzz Introspector report.
+                     Quickly start a Python web server to serve the report files:
+
+                     $ cd build/out/libredwg/introspector-report/inspector
+                     $ python -m http.server 8080
+
+                          Access the report at http://localhost:8080/fuzz_report.html. The next step
+                     is to analyze it for ways to improve your fuzzing session.
+
+                     Identifying Fuzz Blockers
+                     One of the key uses of the Fuzz Introspector report is to identify fuzz block-
+                     ers that prevent the fuzzer from reaching more lines of code. This is similar
+                     to what afl-cov does, but it uses Clang’s source-based code coverage feature
+                     instead of lcov.
+                          Go to the Fuzz Blockers table in the Fuzzer Details section of the report.
+                     One of the blockers identified by Fuzz Introspector is located within the
+                     read_2007_section_header function in src/decode_r2007.c, as Listing 8-8 shows.
+
+                   ¶ if (bit_search_sentinel (&sec_dat,
+
+                            dwg_sentinel (DWG_SENTINEL_VARIABLE_BEGIN)))
+{
+     BITCODE_RL endbits = 160; // start bit: 16 sentinel + 4 size
+     dwg->header_vars.size = bit_read_RL (&sec_dat);
+     LOG_TRACE ("size: " FORMAT_RL "\n", dwg->header_vars.size);
+     *hdl_dat = sec_dat;
+     // unused: later versions re-use the 2004 section format
+     /*
+     if (dat->from_version >= R_2010 && dwg->header.maint_version > 3)
+         {
+             dwg->header_vars.bitsize_hi = bit_read_RL(&sec_dat);
+             LOG_TRACE("bitsize_hi: " FORMAT_RL " [RL]\n",
+                       dwg->header_vars.bitsize_hi) endbits += 32;
+         }
+     */
+     if (dat->from_version == R_2007) // always true so far
+         {
+             dwg->header_vars.bitsize = bit_read_RL (&sec_dat);
+             LOG_TRACE ("bitsize: " FORMAT_RL " [RL]\n",
+                         dwg->header_vars.bitsize);
+             endbits += dwg->header_vars.bitsize;
+             bit_set_position (hdl_dat, endbits);
+             section_string_stream (dwg, &sec_dat, dwg->header_vars.bitsize,
+                                     &str_dat);
+         }
+
+     dwg_decode_header_variables (&sec_dat, hdl_dat, &str_dat, dwg);
+}
+else
+{
+     DEBUG_HERE;
+     error = DWG_ERR_SECTIONNOTFOUND;
+}
+
+Listing 8-8: The fuzz blocker in decode_r2007.c
+    Due to Fuzz Introspector’s sentinel check ¶, which we overlooked while
+modifying the code earlier, the code path defaults to an error, thereby miss-
+ing out on further parsing of the DWG data. In this case, you should modify
+the source code again to pass this check, as discussed earlier.
+
+Analyzing Function Complexity
+Fuzz Introspector provides another useful analysis, function complexity, that
+highlights functions that reach a lot of code in the project and may be good
+fuzzing targets. The more complex a function is, the more likely it is that it
+might contain buggy code or unsecured functionality. From a developer’s
+perspective, it’s easier to test and secure small, simple functions than ones
+that take up hundreds of lines of code with multiple conditional branches.
+
+                       Fuzz Introspector reports several complicated-sounding metrics.
+                  Cyclomatic complexity,at a high level, simply measures the number of in-
+                  dependent code paths in each function. The accumulated complexity of
+                  a function is an indication of the total complexity of the function and the
+                  functions called by it. Finally, undiscovered complexity refers to the code
+                  paths that were not reached by the current fuzzers.
+                       As Figure 8-5 shows, if you sort by Accumulated Cyclomatic Complexity
+                  in the Project Functions Overview table, you’ll find that dwg_write_file and
+                  dwg_encode rank as the first and second functions.
+
+Figure 8-5: The code complexity of functions in LibreDWG
+
+                       While this seems to suggest that you should fuzz dwg_write_file instead
+                  of dwg_encode, observe that dwg_write_file has very low cyclomatic complex-
+                  ity. Fuzzing a function that makes filesystem calls may also be much slower,
+                  which actually makes dwg_encode the better candidate for a fuzzer. Further-
+                  more, since your custom fuzzer focused only on dwg_decode, it makes sense
+                  there is a lot of undiscovered complexity remaining in dwg_encode.
+                       As this example suggests, there are two ways to apply this data. First,
+                  identify the functions with the highest accumulated complexity. Even if
+                  these functions have been hardened and fuzzed by others, you can use the
+                  code coverage and fuzz blocker data to optimize your fuzzer so that it
+                  reaches new code paths. Second, identify which functions have the highest
+
+        undiscovered complexity (in other words, functions that have not been
+        fuzzed deeply) and write a new fuzzer to target those functions.
+            Compared to afl-cov, Fuzz Introspector provides a lot of higher-level
+        analyses on top of raw data like code coverage. These add meaning to the
+        data and address the most important question a developer or researcher is
+        interested in: Where are the vulnerabilities likely to be?
+            Before closing this section, it’s worth noting that Fuzz Introspector has
+        a tool called Auto-Fuzz that can autogenerate fuzzing harnesses based on
+        coverage data. This feature, which is still in the experimental stage, offers
+        the promise of fully automated fuzzing. However, as you’ve seen, there are
+        always edge cases that require a human in the loop to deal with.
+
+Conclusion
+        The hidden complexity of fuzzing leads many researchers to treat it as a
+        black-box operation. They set up a “good enough” harness and corpus,
+        then “fuzz and forget.” In this chapter, you gained a deeper understanding
+        of AFL++ and its associated tooling so that you can use it more effectively.
+        You learned how to remove fuzz blockers and greatly increased your fuzzing
+        speed by writing a custom harness and using parallelization.
+             Of course, fuzzing is not just a blunt tool for shaking vulnerabilities out
+        of a program (although it can be quite good at this); in combination with
+        coverage analysis, it can help you focus on the more critical parts of a pro-
+        gram. You used afl-cov and Fuzz Introspector in this chapter to find addi-
+        tional fuzz blockers and identify interesting fuzzing targets.
+             Many of the techniques described here require source code to properly
+        debug and instrument the target. While a vast amount of software relies on
+        open source code, it’s not as straightforward to fuzz binary-only targets or
+        managed memory frameworks. The next chapter will fill in these missing
+        pieces as we start to fuzz everything without being limited by the need to
+        have source code or detailed format specifications.
+
+From Day Zero to Zero Day (Early Access) © 2025 by Eugene Lim

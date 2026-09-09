@@ -1,0 +1,1869 @@
+                                                   Chapter 13
+                                                          Applications
+
+The applications running on a system can be studied directly using static and dynamic
+instrumentation, which provides important application context for understanding other events.
+Previous chapters studied applications via the resources they used: CPUs, memory, disks, and
+networking. This resource-based approach can solve many issues, but it may miss clues from the
+application, such as details about the requests it is currently servicing. To complete your observa-
+tion of an application, you need both resource analysis and application-level analysis. With BPF
+tracing, this allows you to study the flow from the application and its code and context, through
+libraries and syscalls, kernel services, and device drivers.
+
+I will use the MySQL database as a case study in this chapter. MySQL database queries are an
+example of application context. Imagine taking the various ways disk I/O was instrumented in
+Chapter 9 and adding query string as another dimension for breakdowns. Now you can see which
+queries are causing the most disk I/O, and their latencies and patterns, and so on.
+
+Learning Objectives:
+    ■   Discover issues of excessive process and thread creation
+    ■   Solve CPU usage issues using profiling
+    ■   Solve off-CPU blocking issues using scheduler tracing
+    ■   Solve excessive I/O issues by showing I/O stack traces
+    ■   Trace application context using USDT probes and uprobes
+    ■   Investigate code paths responsible for lock contention
+    ■   Identify explicit application sleeps
+
+This chapter is supplemental to the prior resource-oriented chapters; for full visibility of the soft-
+ware stack also see:
+
+    ■   Chapter 6, “CPUs”
+    ■   Chapter 7, “Memory”
+    ■   Chapter 8, “File Systems”
+    ■   Chapter 9, “Disk I/O”
+    ■   Chapter 10, “Networking”
+
+Application behavior not covered in those other chapters is covered here: fetching application
+context, thread management, signals, locks, and sleeps.
+
+      13.1         Background
+      An application may be a service that responds to network requests, a program that responds to
+      direct user input, or a program that runs on data from a database or a filesystem, or something
+      else. Applications are typically implemented as user-mode software, visible as processes, and
+      access resources via the syscall interface (or memory mappings).
+
+      13.1.1        Application Fundamentals
+
+      Thread Management
+      For multi-CPU systems, the operating system construct called threads allows applications to
+      efficiently execute work across multiple CPUs in parallel, while sharing the same process address
+      space. Applications can make use of threads in different ways, including:
+          ■   Service thread pool: A pool of threads services network requests, where each thread
+              services one client connection and request at a time. If the request needs to block on a
+              resource, including synchronization locks with other threads in the pool, the thread sleeps.
+              The application may have a fixed number of threads in the pool, or it may increase and
+              decrease them based on client demand. An example is the MySQL database server.
+          ■   CPU thread pool: The application creates one thread per CPU for executing work across
+              them. This is commonly used for batch processing applications, which process one or more
+              queued requests, continuously and without further input, whether that takes minutes,
+              hours, or days. An example is video encoding.
+          ■   Event worker thread: Either one or multiple threads are event workers, processing a queue
+              of client work until the queue is empty and the thread sleeps. Each thread services multiple
+              clients concurrently, piecemeal: executing a part of a client request until it blocks on a later
+              event, then switching to the next client event in the queue to process. Applications that use
+              a single event worker thread may avoid the need for synchronization locks, but they risk
+              becoming single-threaded bound under load. Node.js uses a single event worker thread and
+              benefits from it in this way.
+          ■   Staged Event-Driven Architecture (SEDA): SEDA decomposes application requests into
+              stages, which may be processed by pools of one or more threads [Welsh 01].
+
+      Locks
+      Locks are synchronization primitives for multi-threaded applications; they police access to
+      memory from threads running in parallel, similarly to the way traffic lights regulate access to an
+      intersection. And, like traffic lights, they can halt the flow of traffic, causing wait time (latency).
+      On Linux, applications commonly use locks via the libpthread library, which provides different
+      lock types, including mutual exclusive (mutex), reader-writer, and spin locks.
+
+      While locks protect memory, they can become a source of performance issues. Lock contention
+      occurs when where multiple threads are competing to use one lock, and blocking while waiting
+      their turn.
+                                                                                 13.1 Background     591
+
+Sleeps
+Applications can deliberately sleep for a period of time. Such sleeps may make sense (depending
+on the reason), or may not—and may therefore be opportunities for optimization. If you have
+ever developed applications there may be a time where you’ve thought: “I’ll just add a sleep one
+second here so that the events I’m waiting for have completed; we can delete this sleep later and
+make it event-based.” However, that later never comes, and now end users are wondering why
+some requests take at least one second.
+
+13.1.2       Application Example: MySQL Server
+As an example application to analyze in this chapter, I’ll look at the MySQL database server. This
+service responds to network requests using a service thread pool. Depending on the size of the
+data frequently accessed, it is expected that MySQL will either be disk bound for large working
+sets or CPU bound for small working sets where queries return from its memory cache.
+
+MySQL server is written in C++ and has embedded USDT probes for queries, commands, filesort,
+inserts, updates, network I/O, and other events. Table 13-1 provides some examples.
+
+Table 13-1        MySQL Probe Examples
+USDT Probe                 Arguments
+connection__start          unsigned long connection_id, char *user, char *host
+connection__done           int status, unsigned long connection_id
+command__start             unsigned long connection_id, int command, char *user, char *host
+command__done              int status
+query__start               char *query, unsigned long connection_id, char *db_name, char *user,
+                           char *host
+query__done                int status
+filesort__start            char *db_name, char *table
+filesort__done             int status, unsigned long rows
+net__write__start          unsigned long bytes
+net__write__done           int status
+
+See “mysqld DTrace Probe Reference” in the MySQL Reference Manual for the full list of
+probes [152]. These MySQL USDT probes are only available when MySQL is compiled with
+-DENABLE_DTRACE=1 as a parameter to cmake(1) during the build process. The current
+mysql-server package for Linux does not do this, so you will need to build your own MySQL server
+software to use USDT probes or ask the package maintainers to include this setting.
+
+Since there are many scenarios where USDT probes may not be available for your application, this
+chapter includes MySQL tools that instrument the server using uprobes instead.
+
+      13.1.3       BPF Capabilities
+      BPF tracing tools can provide additional insight beyond application-provided metrics, with
+      custom workload and latency metrics, latency histograms, and visibility of resource usage from
+      within the kernel. These capabilities can answer:
+          ■   What are the application requests? What is their latency?
+          ■   Where is the time spent during application requests?
+          ■   Why is the application on CPU?
+          ■   Why does the application block and switch off CPU?
+          ■   What I/O is the application performing, and why (code path)?
+          ■   What locks is the application blocking on, and for how long?
+          ■   What other kernel resources is the application using, and why?
+
+      These can be answered by instrumenting the application using USDT and probes for request
+      context, kernel resources and blocking events via tracepoints (including syscalls) and kprobes,
+      and via timed sampling of on-CPU stack traces.
+
+      Overhead
+      The overhead application tracing depends on the rate of traced events. Typically, tracing the
+      requests themselves costs negligible overhead, whereas tracing lock contention, off-CPU events,
+      and syscalls can cost noticeable overhead for busy workloads.
+
+      13.1.4       Strategy
+      Here is a suggested overall strategy you can follow for application analysis. The next sections
+      explain these tools in more detail.
+
+         1. Learn what the application does: what is its unit of work? It may already expose its unit
+            of work in application metrics and logs. Also determine what would it mean to improve
+            its performance: higher throughput, lower latency, or lower resource usage (or some
+            combination)?
+
+        2. See if any documentation exists to describe application internals: major components such
+           as libraries and caches, its API, and how it services requests: thread pools, event worker
+           threads, or something else.
+
+        3. Apart from the application’s main unit of work, find out if it uses any background periodic
+           tasks that could impact performance (e.g., a disk flush event that happens every 30
+           seconds).
+
+        4. Check whether USDT probes are available for the application or its programming language.
+
+        5. Perform on-CPU analysis to understand CPU consumption and look for inefficiencies
+           (e.g., using BCC profile(8)).
+
+   6. Perform off-CPU analysis to understand why the application is blocking and look for areas
+      to optimize (e.g., BCC offcputime(8), wakeuptime(8), offwaketime(8)). Focus on blocking
+      time during application requests.
+
+   7. Profile syscalls to understand an application’s use of resources (e.g., BCC syscount(8)).
+
+   8. Browse and execute the BPF tools listed in Chapters 6–10.
+
+   9. Use uprobes to explore application internals: the previous on-CPU and off-CPU analysis
+      stack traces should have identified many functions to begin tracing.
+
+ 10. For distributed computing, consider tracing both server side and client side. For example,
+     with MySQL it may be possible to trace the server as well as clients making requests by
+     tracing the MySQL client library.
+
+It may already be known whether the application is CPU bound, disk bound, or network bound,
+based on the resource it spends most of its time waiting for. After confirming that this assumption
+is true, the limiting resource can be investigated from the appropriate resource chapter in this
+book.
+
+If you wish to write BPF programs to trace application requests, you need to take into account
+how requests are processed. Because service thread pools process a request entirely from the same
+thread, the thread ID (task ID) can be used to associate events from different sources, provided
+they are asynchronous. For example, when a database begins processing a query, the query string
+can be stored in a BPF map keyed on the thread ID. This query string could later be read when disk
+I/O is first initialized, so that disk I/O can be associated with the query that caused it. Other appli-
+cation architectures such as event worker threads require a different approach, since one thread
+processes different requests concurrently, and the thread ID is not unique to one request.
+
+13.2        BPF Tools
+This section covers the BPF tools you can use for application performance analysis and trouble-
+shooting. These are shown in Figure 13-1.
+
+Figure 13-1 BPF tools for application analysis
+
+      These tools are either from the BCC and bpftrace repositories covered in Chapters 4 and 5 or were
+      created for this book. Some tools appear in both BCC and bpftrace. Table 13-2 lists the origins of
+      the tools covered in this section (BT is short for bpftrace).
+
+Table 13-2     Application-Related Tools
+      Tool                  Source       Target         Description
+      execsnoop             BCC/BT       Sched          List new process execution
+      threadsnoop           Book         pthread        List new thread creation
+      profile               BCC          CPUs           Sample on-CPU stack traces
+      threaded              Book         CPUs           Sample on-CPU threads
+      offcputime            BCC          Sched          Show off-CPU time with stack traces
+      offcpuhist            Book         Sched          Show off-CPU stacks with time histograms
+      syscount              BCC          Syscalls       Count syscalls by type
+      ioprofile             Book         I/O            Count stacks on I/O
+      mysqld_qslower        BCC/book     MySQL server   Show MySQL queries slower than a threshold
+      mysqld_clat           Book         MySQL server   Show MySQL command latency as a histogram
+      signals               Book         Signals        Summarize sent signals by target process
+      killsnoop             BCC/BT       Syscalls       Show kill(2) syscalls with sender details
+      pmlock                Book         Locks          Show pthread mutex lock times and user stacks
+      pmheld                Book         Locks          Show pthread mutex held times and user stacks
+      naptime               Book         Syscalls       Show voluntary sleep calls
+
+      For the tools from BCC and bpftrace, see their repositories for full and updated lists of tool
+      options and capabilities. A selection of the most important capabilities are summarized here.
+
+      These tools can be grouped into the following topics:
+
+          ■   CPU-analysis: profile(8), threaded(8), and syscount(8)
+          ■   Off-CPU analysis: offcputime(8), offcpuhist(8), and ioprofile(8)
+          ■   Application context: mysqld_slower(8) and mysqld_clat(8)
+          ■   Thread execution: execsnoop(8), threadsnoop(8), and threaded(8)
+          ■   Lock analysis: rmlock(8) and pmheld(8)
+          ■   Signals: signals(8) and killsnoop(8)
+          ■   Sleep analysis: naptime(8)
+
+      There are also one-liners at the end of this chapter. The following tool sections also include a
+      section on libc frame pointers, as a follow-on from ioprofile(8).
+
+13.2.1        execsnoop
+execsnoop(8), introduced in Chapter 6, is a BCC and bpftrace tool to trace new processes, and can
+identify if applications are using short-lived processes. Example output from an idle server:
+
+# execsnoop
+PCOMM                PID      PPID      RET ARGS
+sh                   17788    17787        0 /bin/sh -c /usr/lib/sysstat/sa1 1 1 -S ALL
+sa1                  17789    17788        0 /usr/lib/sysstat/sa1 1 1 -S ALL
+sadc                 17789    17788        0 /usr/lib/sysstat/sadc -F -L -S DISK 1 1 -S ALL /var/
+log/sysstat
+[...]
+
+This shows that the server was not so idle: it has caught an invocation of the system activ-
+ity recorder. execsnoop(8) is useful for catching unexpected process usage by applications.
+Sometimes applications call shell scripts for functionality, maybe as a temporary workaround
+until it can be coded properly within the application, causing inefficiencies.
+
+See Chapter 6 for more about execsnoop(8).
+
+13.2.2        threadsnoop
+threadsnoop(8)1 traces thread creation via the pthread_create() library call. For example, during
+MySQL server startup:
+
+# threadsnoop.bt
+Attaching 3 probes...
+TIME(ms)       PID       COMM                   FUNC
+2049           14456     mysqld                 timer_notify_thread_func
+2234           14460     mysqld                 pfs_spawn_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 io_handler_thread
+2243           14460     mysqld                 buf_flush_page_cleaner_coordinator
+2274           14460     mysqld                 trx_rollback_or_clean_all_recovered
+2296           14460     mysqld                 lock_wait_timeout_thread
+
+1 Origin: I created it for this book on 15-Feb-2019, inspired by my own execsnoop.
+
+      2296         14460   mysqld              srv_error_monitor_thread
+      2296         14460   mysqld              srv_monitor_thread
+      2296         14460   mysqld              srv_master_thread
+      2296         14460   mysqld              srv_purge_coordinator_thread
+      2297         14460   mysqld              srv_worker_thread
+      2297         14460   mysqld              srv_worker_thread
+      2297         14460   mysqld              srv_worker_thread
+      2298         14460   mysqld              buf_dump_thread
+      2298         14460   mysqld              dict_stats_thread
+      2298         14460   mysqld              _Z19fts_optimize_threadPv
+      2298         14460   mysqld              buf_resize_thread
+      2381         14460   mysqld              pfs_spawn_thread
+      2381         14460   mysqld              pfs_spawn_thread
+
+      This shows the rate of thread creation by examining the TIME(ms) column, as well as who is
+      creating the thread (PID, COMM), and the starting function for the thread (FUNC). This output
+      shows MySQL creating its pools of server worker threads (srv_worker_thread()), I/O handler
+      threads (io_handler_thread()), and other threads for running the database.
+
+      This works by tracing the pthread_create() library call, which is expected to be relatively infre-
+      quent, such that the overhead of this tool should be negligible.
+
+      The source to threadsnoop(8) is:
+
+      #!/usr/local/bin/bpftrace
+
+      BEGIN
+      {
+               printf("%-10s %-6s %-16s %s\n", "TIME(ms)", "PID", "COMM", "FUNC");
+      }
+
+      uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_create
+      {
+               printf("%-10u %-6d %-16s %s\n", elapsed / 1000000, pid, comm,
+                    usym(arg2));
+      }
+
+      The path to your libpthread library may need adjusting in this source.
+
+      The output line can also be adjusted. For example, to include the user-level stack trace:
+
+               printf("%-10u %-6d %-16s %s%s\n", elapsed / 1000000, pid, comm,
+                    usym(arg2), ustack);
+
+This produces:
+
+# ./threadsnoop-ustack.bt
+Attaching 3 probes...
+TIME(ms)    PID     COMM                FUNC
+1555        14976   mysqld              timer_notify_thread_func
+         0x7fb5ced4b9b0
+         0x55f6255756b7
+         0x55f625577145
+         0x7fb5ce035b97
+         0x2246258d4c544155
+
+1729        14981   mysqld              pfs_spawn_thread
+         __pthread_create_2_1+0
+         my_timer_initialize+156
+         init_server_components()+87
+         mysqld_main(int, char**)+1941
+         __libc_start_main+231
+         0x2246258d4c544155
+
+1739        14981   mysqld              io_handler_thread
+         __pthread_create_2_1+0
+         innobase_start_or_create_for_mysql()+6648
+         innobase_init(void*)+3044
+         ha_initialize_handlerton(st_plugin_int*)+79
+         plugin_initialize(st_plugin_int*)+101
+         plugin_register_builtin_and_init_core_se(int*, char**)+485
+         init_server_components()+960
+         mysqld_main(int, char**)+1941
+         __libc_start_main+231
+         0x2246258d4c544155
+[...]
+
+This shows the code path that led to the thread’s creation. For MySQL, the role of the threads was
+already apparent from the starting functions, but this won’t always be the case with all applica-
+tions, and the stack trace may be needed to identify what the new threads are for.
+
+      13.2.3        profile
+      profile(8), introduced in Chapter 6, is a BCC tool that does timed sampling of on-CPU stack traces
+      and is a cheap and coarse way to show which code paths are consuming CPU resources. It was
+      introduced in Chapter 6. For example, using profile(8) to profile a MySQL server:
+
+      # profile -d -p $(pgrep mysqld)
+      Sampling at 49 Hertz of PID 9908 by user + kernel stack... Hit Ctrl-C to end.
+
+      [...]
+
+          my_hash_sort_simple
+          hp_rec_hashnr
+          hp_write_key
+          heap_write
+          ha_heap::write_row(unsigned char*)
+          handler::ha_write_row(unsigned char*)
+          end_write(JOIN*, QEP_TAB*, bool)
+          evaluate_join_record(JOIN*, QEP_TAB*)
+          sub_select(JOIN*, QEP_TAB*, bool)
+          JOIN::exec()
+          handle_query(THD*, LEX*, Query_result*, unsigned long long, unsigned long long)
+          execute_sqlcom_select(THD*, TABLE_LIST*)
+          mysql_execute_command(THD*, bool)
+          Prepared_statement::execute(String*, bool)
+          Prepared_statement::execute_loop(String*, bool, unsigned char*, unsigned char*)
+          mysqld_stmt_execute(THD*, unsigned long, unsigned long, unsigned char*, unsign...
+          dispatch_command(THD*, COM_DATA const*, enum_server_command)
+          do_command(THD*)
+          handle_connection
+          pfs_spawn_thread
+          start_thread
+          -                   mysqld (9908)
+               14
+
+      [...]
+
+          ut_delay(unsigned long)
+          srv_worker_thread
+          start_thread
+          -                   mysqld (9908)
+               16
+
+    _raw_spin_unlock_irqrestore
+    _raw_spin_unlock_irqrestore
+    __wake_up_common_lock
+    __wake_up_sync_key
+    sock_def_readable
+    unix_stream_sendmsg
+    sock_sendmsg
+    SYSC_sendto
+    SyS_sendto
+    do_syscall_64
+    entry_SYSCALL_64_after_hwframe
+    --
+    __send
+    vio_write
+    net_write_packet
+    net_flush
+    net_send_ok(THD*, unsigned int, unsigned int, unsigned long long, unsigned lon...
+    Protocol_classic::send_ok(unsigned int, unsigned int, unsigned long long, unsi...
+    THD::send_statement_status()
+    dispatch_command(THD*, COM_DATA const*, enum_server_command)
+    do_command(THD*)
+    handle_connection
+    pfs_spawn_thread
+    start_thread
+    __clone
+    -                   mysqld (9908)
+         17
+
+The output was hundreds of stack traces and their frequency counts. Only three have
+been included here. The first stack shows MySQL statement becoming a join and finally a
+my_hash_sort_simple() on CPU. The last stack shows a socket send in the kernel: this stack
+has a delimiter between the kernel and user stacks ("–"), which was included due to the profile(8)
+-d option.
+
+Since the output was hundreds of stack traces, it can be helpful to visualize it as a flame graph.
+profile(8) can generate folded format output (-f) for input by the flame graph software. For
+example, with a 30-second profile:
+
+# profile -p $(pgrep mysqld) -f 30 > out.profile01.txt
+# flamegraph.pl --width=800 --title="CPU Flame Graph" < out.profile01.txt \
+    > out.profile01.svg
+
+Figure 13-2 shows the same workload as a flame graph.
+
+Figure 13-2 MySQL server CPU flame graph
+
+      The flame graph shows where the bulk of the CPU time is spent by the widest frames: in the
+      middle, dispatch_command() was present in 69% of samples, and JOIN::exec() was present in
+      19%. These numbers are shown with a mouse-over of each frame, and frames can be clicked to
+      zoom in on more details.
+
+      Apart from explaining CPU consumption, CPU flame graphs also show which functions are
+      executing, which can become possible targets for BPF tracing. This flame graph showed functions
+      such as do_command(), mysqld_stmt_execute(), JOIN::exec(), and JOIN::optimize(): these can all
+      be instrumented directly using uprobes, and their arguments and latency studied.
+
+      This is only working because I’m profiling a MySQL server that has been compiled with frame
+      pointers, with libc and libpthread versions that also have frame pointers. Without this, BPF would
+      be unable to walk the stacks properly. This is discussed in Section 13.2.9.
+
+      See Chapter 6 for more about profile(8) and CPU flame graphs.
+
+13.2.4        threaded
+              2
+threaded(8) samples on-CPU threads for a given process and shows how often they were on-CPU,
+for verifying how well they are multi-threaded. For example, for MySQL server:
+
+# threaded.bt $(pgrep mysqld)
+Attaching 3 probes...
+Sampling PID 2274 threads at 99 Hertz. Ctrl-C to end.
+23:47:13
+@[mysqld, 2317]: 1
+@[mysqld, 2319]: 2
+@[mysqld, 2318]: 3
+@[mysqld, 2316]: 4
+@[mysqld, 2534]: 55
+
+23:47:14
+@[mysqld, 2319]: 2
+@[mysqld, 2316]: 4
+@[mysqld, 2317]: 5
+@[mysqld, 2534]: 51
+
+[...]
+
+This tool prints per-second output, and for this MySQL server workload, it shows that only one
+thread (thread ID 2534) was significantly on CPU.
+
+This is intended to characterize how well multi-threaded applications are spreading work across
+their threads. Since it uses timed sampling, it may miss short wakeups by threads that occur
+between the samples.
+
+Some applications change the thread names. For example, using threaded(8) on the freecol Java
+application from the previous chapter:
+
+# threaded.bt $(pgrep java)
+Attaching 3 probes...
+Sampling PID 32584 threads at 99 Hertz. Ctrl-C to end.
+23:52:12
+@[GC Thread#0, 32591]: 1
+@[VM Thread, 32611]: 1
+@[FreeColClient:b, 32657]: 6
+@[AWT-EventQueue-, 32629]: 6
+@[FreeColServer:-, 974]: 8
+
+2 Origin: I created the first version as threaded.d on 25-Jul-2005 and used it during my performance classes where
+I wrote two sample applications with pools of worker threads, one that included a lock contention issue, and used
+threaded.d to show how other threads were unable to run with the issue. I also developed this version for this book.
+
+      @[FreeColServer:A, 977]: 11
+      @[FreeColServer:A, 975]: 26
+      @[C1 CompilerThre, 32618]: 29
+      @[C2 CompilerThre, 32617]: 44
+      @[C2 CompilerThre, 32616]: 44
+      @[C2 CompilerThre, 32615]: 48
+
+      [...]
+
+      This makes it clear that the CPU time consumed by this application is mostly spent in the
+      compiler threads.
+
+      threaded(8) works by using timed sampling. The overhead should be negligible at this low
+      frequency.
+
+      The source to threaded(8) is:
+
+      #!/usr/local/bin/bpftrace
+
+      BEGIN
+      {
+               if ($1 == 0) {
+                         printf("USAGE: threaded.bt PID\n");
+                         exit();
+               }
+               printf("Sampling PID %d threads at 99 Hertz. Ctrl-C to end.\n", $1);
+      }
+
+      profile:hz:99
+      /pid == $1/
+      {
+               @[comm, tid] = count();
+      }
+
+      interval:s:1
+      {
+               time();
+               print(@);
+               clear(@);
+      }
+
+      This tool requires a PID as an argument, and exits if none was provided ($1 defaults to zero).
+
+13.2.5      offcputime
+offcputime(8), introduced in Chapter 6, is a BCC tool that traces when threads block and leave
+the CPUs, and records the duration they were off-CPU with the stack trace. Example output for
+MySQL server:
+
+# offcputime -d -p $(pgrep mysqld)
+Tracing off-CPU time (us) of PID 9908 by user + kernel stack... Hit Ctrl-C to end.
+
+[...]
+
+    finish_task_switch
+    schedule
+    jbd2_log_wait_commit
+    jbd2_complete_transaction
+    ext4_sync_file
+    vfs_fsync_range
+    do_fsync
+    sys_fsync
+    do_syscall_64
+    entry_SYSCALL_64_after_hwframe
+    --
+    fsync
+    fil_flush(unsigned long)
+    log_write_up_to(unsigned long, bool) [clone .part.56]
+    trx_commit_complete_for_mysql(trx_t*)
+    innobase_commit(handlerton*, THD*, bool)
+    ha_commit_low(THD*, bool, bool)
+    TC_LOG_DUMMY::commit(THD*, bool)
+    ha_commit_trans(THD*, bool, bool)
+    trans_commit(THD*)
+    mysql_execute_command(THD*, bool)
+    Prepared_statement::execute(String*, bool)
+    Prepared_statement::execute_loop(String*, bool, unsigned char*, unsigned char*)
+    mysqld_stmt_execute(THD*, unsigned long, unsigned long, unsigned char*, unsign...
+    dispatch_command(THD*, COM_DATA const*, enum_server_command)
+    do_command(THD*)
+    handle_connection
+    pfs_spawn_thread
+    start_thread
+    -                  mysqld (9962)
+         2458362
+
+      [...]
+
+          finish_task_switch
+          schedule
+          futex_wait_queue_me
+          futex_wait
+          do_futex
+          SyS_futex
+          do_syscall_64
+          entry_SYSCALL_64_after_hwframe
+          --
+          pthread_cond_timedwait@@GLIBC_2.3.2
+          __pthread_cond_timedwait
+          os_event::timed_wait(timespec const*)
+          os_event_wait_time_low(os_event*, unsigned long, long)
+          lock_wait_timeout_thread
+          start_thread
+          __clone
+          -                   mysqld (2311)
+               10000904
+
+          finish_task_switch
+          schedule
+          do_nanosleep
+          hrtimer_nanosleep
+          sys_nanosleep
+          do_syscall_64
+          entry_SYSCALL_64_after_hwframe
+          --
+          __nanosleep
+          os_thread_sleep(unsigned long)
+          srv_master_thread
+          start_thread
+          __clone
+          -                   mysqld (2315)
+               10001003
+
+      The output was hundreds of stacks; only a few have been selected for this example. The first
+      shows a MySQL statement becoming a commit, a log write, and then an fsync(). Then the code
+      path crosses into the kernel ("--") with ext4 handling the fsync, and the thread finally blocks on
+      a jbd2_log_wait_commit() function. The duration mysqld was blocked in this stack while tracing
+      was 2458362 microseconds (2.45 seconds): this is the total across all threads.
+
+The last two stacks show a lock_wait_timeout_thread() waiting for events via pthread_cond_timewait(),
+and the srv_master_thread() sleeping. The output of offcputime(8) can often be dominated by
+such waiting and sleeping threads, which are usually normal behavior and not a performance
+issue. Your task is to find the stacks that are blocking during application requests, which are the
+issue.
+
+Off-CPU Time Flame Graph
+Creating an off-CPU time flame graph provides a way to quickly focus on the blocked stacks of
+interest. The following commands capture 10 seconds of off-CPU stacks and then use my flame
+graph software to generate the flame graph:
+
+# offcputime -f -p $(pgrep mysqld) 10 > out.offcputime01.txt
+# flamegraph.pl --width=800 --color=io --title="Off-CPU Time Flame Graph" \
+    --countname=us < out.offcputime01.txt > out.offcputime01.svg
+
+This produced the flame graph shown in Figure 13-3, where I have used the search feature to high-
+light frames containing "do_command" in magenta: these are the code paths for MySQL requests
+and are what the clients are blocking on.
+
+Figure 13-3 Off-CPU time flame graph for MySQL server, highlighting do_command
+
+      Most of the flame graph in Figure 13-3 is dominated by thread pools waiting for work. The time
+      blocked in server commands is shown by the narrow tower that includes the do_command()
+      frame, highlighted in magenta. Fortunately, flame graphs are interactive, and this tower can be
+      clicked for zoom. This is shown in Figure 13-4.
+
+Figure 13-4 Off-CPU time flame graph zoomed to show server commands
+
+      The mouse pointer is over ext4_sync_file() to show the time spent in this path at the bottom:
+      3.95 seconds in total. This is the bulk of the blocking time in do_command(), and shows the
+      target to optimize to improve server performance.
+
+      bpftrace
+      I wrote a bpftrace version of offcputime(8); see the next section on offcpuhist(8) for the source code.
+
+      Final Notes
+      This off-CPU analysis capability is the companion to CPU analysis by profile(8), and between
+      them, these tools can shed light on a wide range of performance issues.
+
+      The performance overhead of offcputime(8) can be significant, exceeding 5%, depending on
+      the rate of context switches. This is at least manageable: it could be run for short periods in
+
+production as needed. Prior to BPF, performing off-CPU analysis involved dumping all stacks to
+user-space for post processing, and the overhead was usually prohibitive for production use.
+
+As with profile(8), this is only producing full stacks for all code because I’ve recompiled MySQL
+server and system libraries with frame pointers. See Section 13.2.9 for more about this.
+
+See Chapter 6 for more about offcputime(8). Chapter 14 covers additional tools for off-CPU
+analysis: wakeuptime(8) and offwaketime(8).
+
+13.2.6         offcpuhist
+offcpuhist(8)3 is similar to offcputime(8). It traces scheduler events to record off-CPU time with
+stack traces, but it shows the time as histograms instead of sums. Some example output from
+MySQL server:
+
+# offcpuhist.bt $(pgrep mysqld)
+Attaching 3 probes...
+Tracing nanosecond time in off-CPU stacks. Ctrl-C to end.
+
+[...]
+
+@[
+     finish_task_switch+1
+     schedule+44
+     futex_wait_queue_me+196
+     futex_wait+266
+     do_futex+805
+     SyS_futex+315
+     do_syscall_64+115
+     entry_SYSCALL_64_after_hwframe+61
+,
+     __pthread_cond_wait+432
+     pthread_cond_wait@@GLIBC_2.3.2+36
+     os_event_wait_low(os_event*, long)+64
+     srv_worker_thread+503
+     start_thread+208
+     __clone+63
+, mysqld]:
+[2K, 4K)                      134 |@@@@@@@                                                                       |
+[4K, 8K)                      293 |@@@@@@@@@@@@@@@@@                                                             |
+[8K, 16K)                     886 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16K, 32K)                    493 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@                                                  |
+
+3 Origin: I created it for this book on 16-Feb-2019, inspired by my uoffcpu.d tool from the 2011 DTrace book [Gregg 11]
+that displayed user off-CPU stack traces with histograms. This is the first off-CPU analysis tool written for bpftrace.
+
+      [32K, 64K)              447 |@@@@@@@@@@@@@@@@@@@@@@@@@@                         |
+      [64K, 128K)             263 |@@@@@@@@@@@@@@@                                    |
+      [128K, 256K)             85 |@@@@                                               |
+      [256K, 512K)              7 |                                                   |
+      [512K, 1M)                0 |                                                   |
+      [1M, 2M)                  0 |                                                   |
+      [2M, 4M)                  0 |                                                   |
+      [4M, 8M)                306 |@@@@@@@@@@@@@@@@@                                  |
+      [8M, 16M)               747 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@        |
+
+      @[
+           finish_task_switch+1
+           schedule+44
+           schedule_hrtimeout_range_clock+185
+           schedule_hrtimeout_range+19
+           poll_schedule_timeout+69
+           do_sys_poll+960
+           sys_poll+155
+           do_syscall_64+115
+           entry_SYSCALL_64_after_hwframe+61
+      ,
+           __GI___poll+110
+           vio_io_wait+141
+           vio_socket_io_wait+24
+           vio_read+226
+           net_read_packet(st_net*, unsigned long*)+141
+           my_net_read+412
+           Protocol_classic::get_command(COM_DATA*, enum_server_command*)+60
+           do_command(THD*)+192
+           handle_connection+680
+           pfs_spawn_thread+337
+           start_thread+208
+           __clone+63
+      , mysqld]:
+      [2K, 4K)                753 |@@@@@@                                             |
+      [4K, 8K)               2081 |@@@@@@@@@@@@@@@@@@                                 |
+      [8K, 16K)              5759 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+      [16K, 32K)             3595 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                   |
+      [32K, 64K)             4045 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@               |
+      [64K, 128K)            3830 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                 |
+      [128K, 256K)            751 |@@@@@@                                             |
+      [256K, 512K)             48 |                                                   |
+
+[512K, 1M)                16 |                                                           |
+[1M, 2M)                   0 |                                                           |
+[2M, 4M)                   7 |                                                           |
+
+The output has been truncated to show just the last two stack traces. The first shows a bi-modal
+latency distribution as the srv_worker_thread() threads wait for work: the output ranges are
+in nanoseconds, and show one mode around 16 microseconds and another between 8 and
+16 milliseconds (labeled "[8M, 16M)"). The second stack shows many shorter waits in a
+net_read_packet() code path, usually taking less than 128 microseconds.
+
+This works by tracing scheduler events using kprobes. The overhead, like with offcputime(8), can
+be significant, and it is only intended to be run for short durations.
+
+The source to offcpuhist(8) is:
+
+#!/usr/local/bin/bpftrace
+
+#include <linux/sched.h>
+
+BEGIN
+{
+         printf("Tracing nanosecond time in off-CPU stacks. Ctrl-C to end.\n");
+}
+
+kprobe:finish_task_switch
+{
+         // record previous thread sleep time
+         $prev = (struct task_struct *)arg0;
+         if ($1 == 0 || $prev->tgid == $1) {
+                   @start[$prev->pid] = nsecs;
+         }
+
+         // get the current thread start time
+         $last = @start[tid];
+         if ($last != 0) {
+                   @[kstack, ustack, comm, tid] = hist(nsecs - $last);
+                   delete(@start[tid]);
+         }
+}
+
+END
+{
+         clear(@start);
+}
+
+      This records a timestamp for the thread that is leaving the CPU and also records a histogram for
+      the thread that is starting on the CPU, in the one finish_task_switch() kprobe.
+
+      13.2.7        syscount
+                   4
+      syscount(8) is a BCC tool for counting syscalls, which provides a view of resource usage by
+      applications. It can be run system wide, or on individual processes. For example, on MySQL
+      server, with per-second output (-i 1):
+
+      # syscount -i 1 -p $(pgrep mysqld)
+      Tracing syscalls, printing top 10... Ctrl+C to quit.
+      [11:49:25]
+      SYSCALL                            COUNT
+      sched_yield                        10848
+      recvfrom                            6576
+      futex                               3977
+      sendto                              2193
+      poll                                2187
+      pwrite                                128
+      fsync                                 115
+      nanosleep                               1
+
+      [11:49:26]
+      SYSCALL                            COUNT
+      sched_yield                        10918
+      recvfrom                            6957
+      futex                               4165
+      sendto                              2314
+      poll                                2309
+      pwrite                                131
+      fsync                                 118
+      setsockopt                              2
+      close                                   2
+      accept                                  1
+
+      [...]
+
+      This shows that the sched_yield() syscall was most frequent, called over 10,000 times per second.
+      The most frequent syscalls can be explored with tracepoints for the syscall and using this and
+      other tools. For example, BCC stackcount(8) can show the stack traces that led to it, and BCC
+
+      4 Origin: This was created by Sasha Goldshtein on 15-Feb-2017. I developed the first syscount tool using perf(1) on
+      7-Jul-2014, intended as a cheaper version of strace -c and with modes to count by process. It is loosely inspired by
+      my procsystime tool from 22-Sep-2005.
+
+argdist(8) can summarize its arguments. There should also be a man page for each syscall, to
+explain its purpose, arguments, and return value.
+
+syscount(8) also can show the total time in syscalls with the -L option, For example, tracing
+for 10 seconds (-d 10) and summarizing in milliseconds (-m):
+
+# syscount -mL -d 10 -p $(pgrep mysqld)
+Tracing syscalls, printing top 10... Ctrl+C to quit.
+[11:51:40]
+SYSCALL                              COUNT             TIME (ms)
+futex                                42158       108139.607626
+nanosleep                                 9         9000.992135
+fsync                                 1176          4393.483111
+poll                                 22700          1237.244061
+sendto                               22795            276.383209
+recvfrom                             68311            275.933806
+sched_yield                          79759            141.347616
+pwrite                                1352             53.346773
+shutdown                                  1             0.015088
+openat                                    1             0.013794
+
+Detaching...
+
+While tracing, the time in futex(2) was over 108 seconds in total for this 10-second trace: this is
+possible due to multiple threads calling it in parallel. The arguments and code paths will need to
+be inspected to understand the function of futex(2): it is likely called so often as a mechanism to
+wait for work, as was found with the prior offcputime(8) tool.
+
+From top down, the most interesting syscall in this output is fsync(2), with 4393 milliseconds in
+total. This suggests one target for optimization: the file system and storage devices.
+
+See Chapter 6 for more about syscount(8).
+
+13.2.8         ioprofile
+              5
+ioprofile(8) traces I/O-related syscalls—reads, writes, sends, and receives—and shows their counts
+with calling user-level stack traces. For example, on MySQL server:
+
+# ioprofile.bt $(pgrep mysqld)
+Attaching 24 probes...
+Tracing I/O syscall user stacks. Ctrl-C to end.
+^C
+
+5 Origin: I created it for this book on 15-Feb-2019, intending to use it as a new flame graph type in the Vector
+software at my employer. More than any other tool, it exposed how painful it was to not have frame pointers in libc
+and libpthread, and this may inspire a change in the Netflix BaseAMI libraries.
+
+      [...]
+
+      @[tracepoint:syscalls:sys_enter_pwrite64,
+          pwrite64+114
+          os_file_io(IORequest const&, int, void*, unsigned long, unsigned long, dberr_t...
+          os_file_write_page(IORequest&, char const*, int, unsigned char const*, unsigne...
+          fil_io(IORequest const&, bool, page_id_t const&, page_size_t const&, unsigned ...
+          log_write_up_to(unsigned long, bool) [clone .part.56]+2426
+          trx_commit_complete_for_mysql(trx_t*)+108
+          innobase_commit(handlerton*, THD*, bool)+727
+          ha_commit_low(THD*, bool, bool)+372
+          TC_LOG_DUMMY::commit(THD*, bool)+20
+          ha_commit_trans(THD*, bool, bool)+703
+          trans_commit(THD*)+57
+          mysql_execute_command(THD*, bool)+6651
+          Prepared_statement::execute(String*, bool)+1410
+          Prepared_statement::execute_loop(String*, bool, unsigned char*, unsigned char*...
+          mysqld_stmt_execute(THD*, unsigned long, unsigned long, unsigned char*, unsign...
+          dispatch_command(THD*, COM_DATA const*, enum_server_command)+5582
+          do_command(THD*)+544
+          handle_connection+680
+          pfs_spawn_thread+337
+          start_thread+208
+          __clone+63
+      , mysqld]: 636
+
+      [...]
+
+      @[tracepoint:syscalls:sys_enter_recvfrom,
+          __GI___recv+152
+          vio_read+167
+          net_read_packet(st_net*, unsigned long*)+141
+          my_net_read+412
+          Protocol_classic::get_command(COM_DATA*, enum_server_command*)+60
+          do_command(THD*)+192
+          handle_connection+680
+          pfs_spawn_thread+337
+          start_thread+208
+          __clone+63
+      , mysqld]: 24255
+
+The output was hundreds of stacks long, and only a couple have been included here. The first
+stack shows mysqld calling pwrite64(2) from a transaction write and file write code path. The
+second stack shows mysqld reading a packet via recvfrom(2).
+
+An application performing too many I/O or unnecessary I/O is a commonly found performance
+issue. This may be due to log writes that can be disabled, small I/O sizes that should be increased,
+and so on. This tool can help identify these types of issues.
+
+This works by tracing the tracepoints for the syscalls. The overhead may be noticeable as these
+syscalls can be frequent.
+
+The source to ioprofile(8) is:
+
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+         printf("Tracing I/O syscall user stacks. Ctrl-C to end.\n");
+}
+
+tracepoint:syscalls:sys_enter_*read*,
+tracepoint:syscalls:sys_enter_*write*,
+tracepoint:syscalls:sys_enter_*send*,
+tracepoint:syscalls:sys_enter_*recv*
+/$1 == 0 || pid == $1/
+{
+         @[probe, ustack, comm] = count();
+}
+
+An optional PID argument can be provided. Without it, the tool traces the entire system.
+
+13.2.9       libc Frame Pointers
+As an important aside, the ioprofile(8) tool output only contains full stacks because this MySQL
+server is running with a libc that has been compiled with frame pointers. Applications often make
+I/O via libc calls, and libc is often compiled without frame pointers. This means stack walking
+from the kernel back to the application often stops at libc. While this problem is present with
+other tools, it is most noticeable with ioprofile(8), and also brkstack(8) from Chapter 7.
+
+Here is how the problem looks: this MySQL server has frame pointers, but is using the standard
+packaged libc:
+
+# ioprofile.bt $(pgrep mysqld)
+[...]
+@[tracepoint:syscalls:sys_enter_pwrite64,
+    __pwrite+79
+
+           0x2ffffffdc020000
+      , mysqld]: 5
+      [...]
+      @[tracepoint:syscalls:sys_enter_recvfrom,
+           __libc_recv+94
+      , mysqld]: 22526
+
+      The stack traces are incomplete, stopping after one or two frames. Ways to fix this include:
+
+          ■   Recompiling libc with -fno-omit-frame-pointer.
+          ■   Tracing libc interface functions before the frame pointer register has been reused.
+          ■   Tracing the MySQL server functions such as os_file_io(). This is an application-specific
+              approach.
+          ■   Using a different stack walker. See Section 2.4 in Chapter 2 for a summary of other
+              approaches.
+
+      libc is in the glibc package [153], which also provides libpthread and other libraries. It has been
+      previously suggested that Debian provide an alternate libc package with frame pointers [154].
+
+      For more discussion on broken stacks, see Section 2.4 in Chapter 2 and Section 18.8 in Chapter18.
+
+      13.2.10            mysqld_qslower
+      mysqld_qslower(8)6 is a BCC and bpftrace tool to trace MySQL queries on the server that were
+      slower than a threshold. This is also an example of a tool that shows application context: the
+      query string. Example output from the BCC version:
+
+      # mysqld_qslower $(pgrep mysqld)
+      Tracing MySQL server queries for PID 9908 slower than 1 ms...
+      TIME(s)        PID            MS QUERY
+      0.000000       9962    169.032 SELECT * FROM words WHERE word REGEXP '^bre.*n$'
+      1.962227       9962    205.787 SELECT * FROM words WHERE word REGEXP '^bpf.tools$'
+      9.043242       9962     95.276 SELECT COUNT(*) FROM words
+      23.723025 9962         186.680 SELECT count(*) AS count FROM words WHERE word REGEXP
+      '^bre.*n$'
+      30.343233      9962    181.494 SELECT * FROM words WHERE word REGEXP '^bre.*n$' ORDER BY
+      word
+      [...]
+
+      This output shows a time offset for the query, the MySQL server PID, the duration of the query in
+      milliseconds, and the query string. Similar functionality is already available from MySQL’s slow
+
+      6 Origin: I created it for this book on 15-Feb-2019, based on my earlier mysqld_qslower.d tool from the 2011 DTrace
+      book [Gregg 11].
+
+query log; with BPF, this tool can be customized to include details not present in that query log,
+such as disk I/O and other resource usage by the query.
+
+This works by using the MySQL USDT probes: mysql:query__start and mysql:query__done. The
+overhead of this tool is expected to be small to negligible, due to the relative low rate of server
+queries.
+
+BCC
+Command line usage:
+
+mysqld_qslower PID [min_ms]
+
+A minimum millisecond threshold can be provided; otherwise, a default of one millisecond is
+used. If zero is provided, all queries are printed.
+
+bpftrace
+The following is the code for the bpftrace version, developed for this book:
+
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+         printf("Tracing mysqld queries slower than %d ms. Ctrl-C to end.\n",
+              $1);
+         printf("%-10s %-6s %6s %s\n", "TIME(ms)", "PID", "MS", "QUERY");
+}
+
+usdt:/usr/sbin/mysqld:mysql:query__start
+{
+         @query[tid] = str(arg0);
+         @start[tid] = nsecs;
+}
+
+usdt:/usr/sbin/mysqld:mysql:query__done
+/@start[tid]/
+{
+         $dur = (nsecs - @start[tid]) / 1000000;
+         if ($dur > $1) {
+                  printf("%-10u %-6d %6d %s\n", elapsed / 1000000,
+                       pid, $dur, @query[tid]);
+         }
+         delete(@query[tid]);
+         delete(@start[tid]);
+}
+
+      This program uses a positional parameter, $1, for the millisecond latency threshold. If it is not
+      provided, the tool defaults to zero, so all queries are printed.
+
+      Since MySQL server uses a service thread pool, and the same thread will process the entire
+      request, so I can use the thread ID as a unique ID for the request. This is used with the @query and
+      @start maps, so that I can save the query string pointer and start timestamp for each request, and
+      then fetch them when the request completes.
+
+      Some example output:
+
+      # mysqld_qslower.bt -p $(pgrep mysqld)
+      Attaching 4 probes...
+      Tracing mysqld queries slower than 0 ms. Ctrl-C to end.
+      TIME(ms)     PID         MS QUERY
+      984          9908        87 select * from words where word like 'perf%'
+      [...]
+
+      A -p must be used during execution to enable the USDT probes, just as a PID was required with
+      the BCC version. This makes the command line usage:
+      mysqld_qslower.bt -p PID [min_ms]
+
+      bpftrace: uprobes
+      If your mysqld does not have USDT probes compiled in, it is possible to implement a similar tool
+      using uprobes of internal functions. The stack traces seen by previous commands show several
+      possible functions to instrument; for example, from the earlier profile(8) output:
+
+            handle_query(THD*, LEX*, Query_result*, unsigned long long, unsigned long long)
+            execute_sqlcom_select(THD*, TABLE_LIST*)
+            mysql_execute_command(THD*, bool)
+            Prepared_statement::execute(String*, bool)
+            Prepared_statement::execute_loop(String*, bool, unsigned char*, unsigned char*)
+            mysqld_stmt_execute(THD*, unsigned long, unsigned long, unsigned char*, unsign...
+            dispatch_command(THD*, COM_DATA const*, enum_server_command)
+            do_command(THD*)
+
+      The following tool, mysqld_qslower-uprobes.bt, has traced dispatch_command():
+
+      #!/usr/local/bin/bpftrace
+
+      BEGIN
+      {
+                 printf("Tracing mysqld queries slower than %d ms. Ctrl-C to end.\n",
+                    $1);
+                 printf("%-10s %-6s %6s %s\n", "TIME(ms)", "PID", "MS", "QUERY");
+
+}
+
+uprobe:/usr/sbin/mysqld:*dispatch_command*
+{
+           $COM_QUERY = 3;                            // see include/my_command.h
+           if (arg2 == $COM_QUERY) {
+                      @query[tid] = str(*arg1);
+                      @start[tid] = nsecs;
+           }
+}
+
+uretprobe:/usr/sbin/mysqld:*dispatch_command*
+/@start[tid]/
+{
+           $dur = (nsecs - @start[tid]) / 1000000;
+           if ($dur > $1) {
+                      printf("%-10u %-6d %6d %s\n", elapsed / 1000000,
+                           pid, $dur, @query[tid]);
+           }
+           delete(@query[tid]);
+           delete(@start[tid]);
+}
+
+Since dispatch_command() traces more than just queries, this tool ensures that the command
+type is COM_QUERY. The query string is fetched from the COM_DATA argument, where the
+string is the first struct member for queries.
+
+As is the case with uprobes, the traced function names, the arguments, and the logic, are all
+dependent on the version of MySQL (this is tracing 5.7), and this tool may not work on other
+versions if any of these details change. This is why USDT probes are preferred.
+
+13.2.11          mysqld_clat
+mysqld_clat(8)7 is a bpftrace tool I developed for this book. It traces MySQL command latency
+and shows histograms for each command type. For example:
+
+# mysqld_clat.bt
+Attaching 4 probes...
+Tracing mysqld command latencies. Ctrl-C to end.
+^C
+
+7 Origin: I created it for this book on 15-Feb-2019. It’s similar to my mysqld_command.d that I wrote on 25-Jun-2013,
+although this tool is improved: it uses system-wide summaries and command names.
+
+      @us[COM_QUIT]:
+      [4, 8)                    1 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+      @us[COM_STMT_CLOSE]:
+      [4, 8)                    1 |@@@@@@                                                 |
+      [8, 16)                   8 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+      [16, 32)                  1 |@@@@@@                                                 |
+
+      @us[COM_STMT_PREPARE]:
+      [32, 64)                  6 |@@@@@@@@@@@@@@@@@@@@@@@@                               |
+      [64, 128)               13 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+      [128, 256)                3 |@@@@@@@@@@@@                                           |
+
+      @us[COM_QUERY]:
+      [8, 16)                 33 |@                                                       |
+      [16, 32)               185 |@@@@@@@@                                                |
+      [32, 64)             1128 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+      [64, 128)              300 |@@@@@@@@@@@@@                                           |
+      [128, 256)                2 |                                                       |
+
+      @us[COM_STMT_EXECUTE]:
+      [16, 32)             1410 |@@@@@@                                                   |
+      [32, 64)             1654 |@@@@@@@                                                  |
+      [64, 128)           11212 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+      [128, 256)           8899 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                |
+      [256, 512)           5000 |@@@@@@@@@@@@@@@@@@@@@@@                                  |
+      [512, 1K)            1478 |@@@@@@                                                   |
+      [1K, 2K)                  5 |                                                       |
+      [2K, 4K)             1504 |@@@@@@                                                   |
+      [4K, 8K)               141 |                                                        |
+      [8K, 16K)                 7 |                                                       |
+      [16K, 32K)                1 |                                                       |
+
+      This shows that queries took between 8 and 256 microseconds and that statement execution was
+      bimodal, with modes of different latencies.
+
+      This works by instrumenting time (latency) between the USDT probes mysql:command__start
+      and mysql:command__done, and reading the command type from the start probe. The over-
+      head should be negligible, as the rate of commands is typically low (less than a thousand
+      per second).
+
+The source to mysqld_clat(8) is:
+
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+         printf("Tracing mysqld command latencies. Ctrl-C to end.\n");
+
+         // from include/my_command.h:
+         @com[0] = "COM_SLEEP";
+         @com[1] = "COM_QUIT";
+         @com[2] = "COM_INIT_DB";
+         @com[3] = "COM_QUERY";
+         @com[4] = "COM_FIELD_LIST";
+         @com[5] = "COM_CREATE_DB";
+         @com[6] = "COM_DROP_DB";
+         @com[7] = "COM_REFRESH";
+         @com[8] = "COM_SHUTDOWN";
+         @com[9] = "COM_STATISTICS";
+         @com[10] = "COM_PROCESS_INFO";
+         @com[11] = "COM_CONNECT";
+         @com[12] = "COM_PROCESS_KILL";
+         @com[13] = "COM_DEBUG";
+         @com[14] = "COM_PING";
+         @com[15] = "COM_TIME";
+         @com[16] = "COM_DELAYED_INSERT";
+         @com[17] = "COM_CHANGE_USER";
+         @com[18] = "COM_BINLOG_DUMP";
+         @com[19] = "COM_TABLE_DUMP";
+         @com[20] = "COM_CONNECT_OUT";
+         @com[21] = "COM_REGISTER_SLAVE";
+         @com[22] = "COM_STMT_PREPARE";
+         @com[23] = "COM_STMT_EXECUTE";
+         @com[24] = "COM_STMT_SEND_LONG_DATA";
+         @com[25] = "COM_STMT_CLOSE";
+         @com[26] = "COM_STMT_RESET";
+         @com[27] = "COM_SET_OPTION";
+         @com[28] = "COM_STMT_FETCH";
+         @com[29] = "COM_DAEMON";
+         @com[30] = "COM_BINLOG_DUMP_GTID";
+         @com[31] = "COM_RESET_CONNECTION";
+}
+
+      usdt:/usr/sbin/mysqld:mysql:command__start
+      {
+               @command[tid] = arg1;
+               @start[tid] = nsecs;
+      }
+
+      usdt:/usr/sbin/mysqld:mysql:command__done
+      /@start[tid]/
+      {
+               $dur = (nsecs - @start[tid]) / 1000;
+               @us[@com[@command[tid]]] = hist($dur);
+               delete(@command[tid]);
+               delete(@start[tid]);
+      }
+
+      END
+      {
+               clear(@com);
+      }
+
+      This includes a lookup table to convert from a command ID integer to a human-readable string:
+      the command name. These names are from the MySQL server source in include/my_command.h
+      and are also documented in the USDT probe reference [155].
+
+      If USDT probes are not available, this tool can be rewritten to use uprobes of the dispatch_
+      command() function. Instead of reproducing the entire tool, here is a diff that highlights the
+      required changes:
+
+      $ diff mysqld_clat.bt mysqld_clat_uprobes.bt
+      42c42
+      < usdt:/usr/sbin/mysqld:mysql:command__start
+      ---
+      > uprobe:/usr/sbin/mysqld:*dispatch_command*
+      44c44
+      <       @command[tid] = arg1;
+      ---
+      >       @command[tid] = arg2;
+      48c48
+      < usdt:/usr/sbin/mysqld:mysql:command__done
+      ---
+      > uretprobe:/usr/sbin/mysqld:*dispatch_command*
+
+      The command is fetched from a different argument and uprobes are used instead, but the rest of
+      the tool is the same.
+
+13.2.12          signals
+            8
+signals(8) traces process signals and shows a summary distribution of the signal and target
+process. This is a useful troubleshooting tool for investigating why applications may be terminat-
+ing unexpectedly, which may be because they were sent a signal. Example output:
+
+# signals.bt
+Attaching 3 probes...
+Counting signals. Hit Ctrl-C to end.
+^C
+@[SIGNAL, PID, COMM] = COUNT
+
+@[SIGKILL, 3022, sleep]: 1
+@[SIGINT, 2997, signals.bt]: 1
+@[SIGCHLD, 21086, bash]: 1
+@[SIGSYS, 3014, ServiceWorker t]: 4
+@[SIGALRM, 2903, mpstat]: 6
+@[SIGALRM, 1882, Xorg]: 87
+
+This output showed that a SIGKILL was sent to the sleep process with PID 3022 once (it only
+needs to be sent once), while SIGALRM was sent to Xorg PID 1882 a total of 87 times while
+tracing.
+
+It works by tracing the signal:signal_generate tracepoint. Since these are infrequent, the overhead
+is expected to be negligible.
+
+The source to signals(8) is:
+
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+           printf("Counting signals. Hit Ctrl-C to end.\n");
+
+           // from /usr/include/asm-generic/signal.h:
+           @sig[0] = "0";
+           @sig[1] = "SIGHUP";
+           @sig[2] = "SIGINT";
+           @sig[3] = "SIGQUIT";
+           @sig[4] = "SIGILL";
+           @sig[5] = "SIGTRAP";
+           @sig[6] = "SIGABRT";
+
+8 Origin: I created this for this book on 16-Feb-2019, plus earlier versions for other tracers. These were inspired by
+sig.d from the Dynamic Tracing Guide, Jan 2005 [Sun 05].
+
+               @sig[7] = "SIGBUS";
+               @sig[8] = "SIGFPE";
+               @sig[9] = "SIGKILL";
+               @sig[10] = "SIGUSR1";
+               @sig[11] = "SIGSEGV";
+               @sig[12] = "SIGUSR2";
+               @sig[13] = "SIGPIPE";
+               @sig[14] = "SIGALRM";
+               @sig[15] = "SIGTERM";
+               @sig[16] = "SIGSTKFLT";
+               @sig[17] = "SIGCHLD";
+               @sig[18] = "SIGCONT";
+               @sig[19] = "SIGSTOP";
+               @sig[20] = "SIGTSTP";
+               @sig[21] = "SIGTTIN";
+               @sig[22] = "SIGTTOU";
+               @sig[23] = "SIGURG";
+               @sig[24] = "SIGXCPU";
+               @sig[25] = "SIGXFSZ";
+               @sig[26] = "SIGVTALRM";
+               @sig[27] = "SIGPROF";
+               @sig[28] = "SIGWINCH";
+               @sig[29] = "SIGIO";
+               @sig[30] = "SIGPWR";
+               @sig[31] = "SIGSYS";
+      }
+
+      tracepoint:signal:signal_generate
+      {
+               @[@sig[args->sig], args->pid, args->comm] = count();
+      }
+
+      END
+      {
+               printf("\n@[SIGNAL, PID, COMM] = COUNT");
+               clear(@sig);
+      }
+
+      This uses a lookup table to convert the signal number to a readable code. In the kernel source,
+      there is no name for signal number zero; however, it is used for health checks to determine if the
+      target PID is still running.
+
+13.2.13            killsnoop
+               9
+killsnoop(8) is a BCC and bpftrace tool to trace signals sent via the kill(2) syscall. This can show
+who is sending signals but, unlike signals(8), does not trace all signals sent on the system, only
+those sent via kill(2). Example output:
+
+# killsnoop
+TIME          PID       COMM                    SIG    TPID      RESULT
+00:28:00      21086     bash                    9      3593      0
+[...]
+
+This output shows the bash shell sent a signal 9 (KILL) to PID 3593.
+
+This works by tracing the syscalls:sys_enter_kill and syscalls:sys_exit_kill tracepoints. The
+overhead should be negligible.
+
+BCC
+Command line usage:
+
+killsnoop [options]
+
+Options include:
+
+    ■   -x: Only show failed kill syscalls
+    ■   -p PID: Measure this process only
+
+bpftrace
+The following is the code for the bpftrace version, which summarizes its core functionality.
+This version does not support options.
+
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+           printf("Tracing kill() signals... Hit Ctrl-C to end.\n");
+           printf("%-9s %-6s %-16s %-4s %-6s %s\n", "TIME", "PID", "COMM", "SIG",
+                   "TPID", "RESULT");
+}
+
+tracepoint:syscalls:sys_enter_kill
+{
+           @tpid[tid] = args->pid;
+
+9 Origin: I created the first version as kill.d on 9-May-2004 to debug a case of mysterious application terminations.
+I also wrote the BCC version on 20-Sep-2015 and the bpftrace version on 7-Sep-2018.
+
+                 @tsig[tid] = args->sig;
+      }
+
+      tracepoint:syscalls:sys_exit_kill
+      /@tpid[tid]/
+      {
+                 time("%H:%M:%S         ");
+                 printf("%-6d %-16s %-4d %-6d %d\n", pid, comm, @tsig[tid], @tpid[tid],
+                       args->ret);
+                 delete(@tpid[tid]);
+                 delete(@tsig[tid]);
+      }
+
+      The program stores the target PID and signal on the entry to the syscall, so they can be referenced and
+      printed on the exit. This could be enhanced like signals(8) to include a lookup table of signal names.
+
+      13.2.14          pmlock and pmheld
+      The pmlock(8)10 and pmheld(8) bpftrace tools record libpthread mutex lock latency and held
+      times as histograms, with user-level stacks. pmlock(8) can be used to identify an issue of lock
+      contention, and then pmheld(8) can show the cause: which code path is responsible. Starting
+      with pmlock(8) on MySQL server:
+
+      # pmlock.bt $(pgrep mysqld)
+      Attaching 4 probes...
+      Tracing libpthread mutex lock latency, Ctrl-C to end.
+      ^C
+      [...]
+
+      @lock_latency_ns[0x7f3728001a50,
+           pthread_mutex_lock+36
+           THD::Query_plan::set_query_plan(enum_sql_command, LEX*, bool)+121
+           mysql_execute_command(THD*, bool)+15991
+           Prepared_statement::execute(String*, bool)+1410
+           Prepared_statement::execute_loop(String*, bool, unsigned char*, unsigned char*...
+      , mysqld]:
+      [1K, 2K)                     123 |                                                                            |
+      [2K, 4K)                    1203 |@@@@@@@@@                                                                   |
+      [4K, 8K)                    6576 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+      [8K, 16K)                   2077 |@@@@@@@@@@@@@@@@                                                            |
+
+      10 Origin: I created these tools for this book on 17-Feb-2019, inspired by the Solaris lockstat(1M) tool, which also
+      showed various lock times with latency histograms and partial stack traces.
+
+@lock_latency_ns[0x7f37280019f0,
+     pthread_mutex_lock+36
+     THD::set_query(st_mysql_const_lex_string const&)+94
+     Prepared_statement::execute(String*, bool)+336
+     Prepared_statement::execute_loop(String*, bool, unsigned char*, unsigned char*...
+     mysqld_stmt_execute(THD*, unsigned long, unsigned long, unsigned char*, unsign...
+, mysqld]:
+[1K, 2K)                47 |                                                          |
+[2K, 4K)               945 |@@@@@@@@                                                  |
+[4K, 8K)              3290 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                            |
+[8K, 16K)             5702 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+@lock_latency_ns[0x7f37280019f0,
+     pthread_mutex_lock+36
+     THD::set_query(st_mysql_const_lex_string const&)+94
+     dispatch_command(THD*, COM_DATA const*, enum_server_command)+1045
+     do_command(THD*)+544
+     handle_connection+680
+, mysqld]:
+[1K, 2K)                65 |                                                          |
+[2K, 4K)              1198 |@@@@@@@@@@@                                               |
+[4K, 8K)              5283 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[8K, 16K)             3966 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                   |
+
+The last two stacks show latency on lock address 0x7f37280019f0, from code paths involving
+THD::set_query(), and with times usually in the 4 to 16-microsecond range.
+
+Now running pmheld(8):
+
+# pmheld.bt $(pgrep mysqld)
+Attaching 5 probes...
+Tracing libpthread mutex held times, Ctrl-C to end.
+^C
+[...]
+
+@held_time_ns[0x7f37280019c0,
+     __pthread_mutex_unlock+0
+     close_thread_table(THD*, TABLE**)+169
+     close_thread_tables(THD*)+923
+     mysql_execute_command(THD*, bool)+887
+     Prepared_statement::execute(String*, bool)+1410
+, mysqld]:
+[2K, 4K)              3311 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                    |
+[4K, 8K)              4523 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+      @held_time_ns[0x7f37280019f0,
+          __pthread_mutex_unlock+0
+          THD::set_query(st_mysql_const_lex_string const&)+147
+          dispatch_command(THD*, COM_DATA const*, enum_server_command)+1045
+          do_command(THD*)+544
+          handle_connection+680
+      , mysqld]:
+      [2K, 4K)               3848 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                       |
+      [4K, 8K)               5038 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+      [8K, 16K)                  0 |                                                             |
+      [16K, 32K)                 0 |                                                             |
+      [32K, 64K)                 1 |                                                             |
+
+      @held_time_ns[0x7f37280019c0,
+          __pthread_mutex_unlock+0
+          Prepared_statement::execute(String*, bool)+321
+          Prepared_statement::execute_loop(String*, bool, unsigned char*, unsigned char*...
+          mysqld_stmt_execute(THD*, unsigned long, unsigned long, unsigned char*, unsign...
+          dispatch_command(THD*, COM_DATA const*, enum_server_command)+5582
+      , mysqld]:
+      [1K, 2K)               2204 |@@@@@@@@@@@@@@@@@@@@@@@                                       |
+      [2K, 4K)               4803 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+      [4K, 8K)               2845 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                                |
+      [8K, 16K)                  0 |                                                             |
+      [16K, 32K)                11 |                                                             |
+
+      This shows paths that were holding the same lock and the duration it was held, as a histogram.
+
+      There are various courses of action given all this data: the size of thread pools could be tuned to
+      reduce lock contention, and a developer could look at the holding code paths to optimize them
+      to hold the lock for shorter durations.
+
+      It is recommended to output these tools to files for later analysis. For example:
+
+       # pmlock.bt PID > out.pmlock01.txt
+       # pmheld.bt PID > out.pmheld01.txt
+
+      An optional PID can be provided to only trace that process ID, which is also recommended to
+      reduce the overhead on the system. Without it, all pthread lock events system-wide are recorded.
+
+      These tools work by instrumenting libpthread functions using uprobes and uretprobes:
+      pthread_mutex_lock() and pthread_mutex_unlock(). The overhead can be significant, as
+      these lock events can be very extremely frequent. For example, timing them using BCC
+      funccount for one second:
+
+# funccount -d 1 '/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_*lock'
+Tracing 4 functions for
+"/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_*lock"... Hit Ctrl-C to end.
+
+FUNC                                          COUNT
+pthread_mutex_trylock                          4525
+pthread_mutex_lock                            44726
+pthread_mutex_unlock                          49132
+
+At such rates, adding a tiny amount of overhead to each call will add up.
+
+pmlock
+The source to pmlock(8) is:
+
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+         printf("Tracing libpthread mutex lock latency, Ctrl-C to end.\n");
+}
+
+uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_lock
+/$1 == 0 || pid == $1/
+{
+         @lock_start[tid] = nsecs;
+         @lock_addr[tid] = arg0;
+}
+
+uretprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_lock
+/($1 == 0 || pid == $1) && @lock_start[tid]/
+{
+         @lock_latency_ns[usym(@lock_addr[tid]), ustack(5), comm] =
+             hist(nsecs - @lock_start[tid]);
+         delete(@lock_start[tid]);
+         delete(@lock_addr[tid]);
+}
+
+END
+{
+         clear(@lock_start);
+         clear(@lock_addr);
+}
+
+      This records a timestamp and the lock address when pthread_mutex_lock() begins, then fetches
+      these when it ends to calculate the latency and save it with the lock address and stack trace. The
+      ustack(5) can be adjusted to record as many frames as you wish.
+
+      The path to /lib/x86_64-linux-gnu/libpthread.so.0 may need to be adjusted to match your system.
+      Stack traces may not work without frame pointers in the calling software, and libpthread as well.
+      (It may work without libpthread frame pointers since it’s tracing the entry point to the library,
+      and the frame pointer register may not have been reused yet.)
+
+      The latency to pthread_mutex_trylock() is not traced as it is assumed to be fast, as is the purpose
+      of the try-lock call. (This can be verified with BCC funclatency(8).)
+
+      pmheld
+      The source code to pmheld(8) is:
+
+      #!/usr/local/bin/bpftrace
+
+      BEGIN
+      {
+               printf("Tracing libpthread mutex held times, Ctrl-C to end.\n");
+      }
+
+      uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_lock,
+      uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_trylock
+      /$1 == 0 || pid == $1/
+      {
+               @lock_addr[tid] = arg0;
+      }
+
+      uretprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_lock
+      /($1 == 0 || pid == $1) && @lock_addr[tid]/
+      {
+               @held_start[pid, @lock_addr[tid]] = nsecs;
+               delete(@lock_addr[tid]);
+      }
+
+      uretprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_trylock
+      /retval == 0 && ($1 == 0 || pid == $1) && @lock_addr[tid]/
+      {
+               @held_start[pid, @lock_addr[tid]] = nsecs;
+               delete(@lock_addr[tid]);
+      }
+
+uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_unlock
+/($1 == 0 || pid == $1) && @held_start[pid, arg0]/
+{
+           @held_time_ns[usym(arg0), ustack(5), comm] =
+                   hist(nsecs - @held_start[pid, arg0]);
+           delete(@held_start[pid, arg0]);
+}
+
+END
+{
+           clear(@lock_addr);
+           clear(@held_start);
+}
+
+The time is now measured from when the pthread_mutex_lock() or pthread_mutex_trylock()
+function returns—and hence the caller holds the lock—to when it calls unlock().
+
+These tools used uprobes, but libpthread has USDT probes as well, so these tools could be rewrit-
+ten to use them.
+
+13.2.15            naptime
+              11
+naptime(8) traces the nanosleep(2) syscall and shows who is calling it and for what sleep dura-
+tion. I wrote this tool to debug a slow internal build process that would take minutes without
+seemingly doing anything, and I suspected it included voluntary sleeps. The output:
+
+# naptime.bt
+Attaching 2 probes...
+Tracing sleeps. Hit Ctrl-C to end.
+TIME        PPID      PCOMM                   PID       COMM                    SECONDS
+19:09:19 1            systemd                 1975      iscsid                  1.000
+19:09:20 1            systemd                 2274      mysqld                  1.000
+19:09:20 1            systemd                 1975      iscsid                  1.000
+19:09:21 2998         build-init              25137     sleep                   30.000
+19:09:21 1            systemd                 2274      mysqld                  1.000
+19:09:21 1            systemd                 1975      iscsid                  1.000
+19:09:22 1            systemd                 2421      irqbalance              9.999
+[...]
+
+This has caught a sleep for 30 seconds by build-init. I was able to track down that program and
+“tune” this sleep, making my build 10 times faster. This output also shows mysqld and iscsid
+
+11 Origin: I created it for this book on 16-Feb-2019, inspired by Sasha Goldsthein’s SyS_nanosleep() example from
+trace(8), and to debug the slow build described here. The build was of an internal nflx-bpftrace package I was developing.
+
+      threads sleeping for one second every second. (We’ve seen that mysqld sleep in earlier tool outputs.)
+      Sometimes applications can call sleep as a workaround for other issues, and the workaround can
+      stay in the code for years, causing performance problems. This tool can help detect this issue.
+
+      This works by tracing the syscalls:sys_enter_nanosleep tracepoint, and the overhead is expected to
+      be negligible.
+
+      The source to naptime(8) is:
+
+      #!/usr/local/bin/bpftrace
+
+      #include <linux/time.h>
+      #include <linux/sched.h>
+
+      BEGIN
+      {
+                printf("Tracing sleeps. Hit Ctrl-C to end.\n");
+                printf("%-8s %-6s %-16s %-6s %-16s %s\n", "TIME", "PPID", "PCOMM",
+                     "PID", "COMM", "SECONDS");
+      }
+
+      tracepoint:syscalls:sys_enter_nanosleep
+      /args->rqtp->tv_sec + args->rqtp->tv_nsec/
+      {
+                $task = (struct task_struct *)curtask;
+                time("%H:%M:%S ");
+                printf("%-6d %-16s %-6d %-16s %d.%03d\n", $task->real_parent->pid,
+                     $task->real_parent->comm, pid, comm,
+                     args->rqtp->tv_sec, args->rqtp->tv_nsec / 1000000);
+      }
+
+      Parent process details are fetched from the task_struct, but this method is unstable and may
+      require updates if that task_struct changes.
+
+      This tool can be enhanced: the user-level stack trace could be printed out as well to show the code
+      path that led to the sleep (provided that the code path was compiled with frame pointers so that
+      the stack can be walked by BPF).
+
+      13.2.16        Other Tools
+      Another BPF tool is deadlock(8),12 from BCC, which detects potential deadlocks with mutex usage
+      of the form of lock order inversions. It builds a directed graph representing the mutex usage for
+      detecting deadlocks. While the overhead of this tool can be high, it helps debug a difficult issue.
+
+      12 deadlock(8) was developed by Kenny Yu on 01-Feb-2017.
+                                                                         13.3 BPF One-Liners    631
+
+13.3        BPF One-Liners
+These sections show BCC and bpftrace one-liners. Where possible, the same one-liner is imple-
+mented using both BCC and bpftrace.
+
+13.3.1      BCC
+New processes with arguments:
+
+execsnoop
+
+Syscall count by process:
+
+syscount -P
+
+Syscall count by syscall name:
+
+syscount
+
+Sample user-level stacks at 49 Hertz, for PID 189:
+
+profile -U -F 49 -p 189
+
+Count off-CPU user stack traces:
+
+stackcount -U t:sched:sched_switch
+
+Sample all stack traces and process names:
+
+profile
+
+Count libpthread mutex lock functions for one second:
+
+funccount -d 1 '/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_*lock'
+
+Count libpthread conditional variable functions for one second:
+
+funccount -d 1 '/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_*'
+
+13.3.2      bpftrace
+New processes with arguments:
+
+bpftrace -e 'tracepoint:syscalls:sys_enter_execve { join(args->argv); }'
+
+Syscall count by process:
+
+bpftrace -e 'tracepoint:raw_syscalls:sys_enter { @[pid, comm] = count(); }'
+
+Syscall count by syscall name:
+
+bpftrace -e 'tracepoint:syscalls:sys_enter_* { @[probe] = count(); }'
+
+Sample user-level stacks at 49 Hertz, for PID 189:
+
+bpftrace -e 'profile:hz:49 /pid == 189/ { @[ustack] = count(); }'
+
+      Sample user-level stacks at 49 Hertz, for processes named "mysqld":
+      bpftrace -e 'profile:hz:49 /comm == "mysqld"/ { @[ustack] = count(); }'
+
+      Count off-CPU user stack traces:
+
+      bpftrace -e 'tracepoint:sched:sched_switch { @[ustack] = count(); }'
+
+      Sample all stack traces and process names:
+
+      bpftrace -e 'profile:hz:49 { @[ustack, stack, comm] = count(); }'
+
+      Sum malloc() requested bytes by user stack trace (high overhead):
+
+      bpftrace -e 'u:/lib/x86_64-linux-gnu/libc-2.27.so:malloc { @[ustack(5)] =
+          sum(arg0); }'
+
+      Trace kill() signals showing sender process name, target PID, and signal number:
+
+      bpftrace -e 't:syscalls:sys_enter_kill { printf("%s -> PID %d SIG %d\n", comm,
+          args->pid, args->sig); }'
+
+      Count libpthread mutex lock functions for one second:
+
+      bpftrace -e 'u:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_mutex_*lock {
+          @[probe] = count(); } interval:s:1 { exit(); }'
+
+      Count libpthread conditional variable functions for one second:
+
+      bpftrace -e 'u:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_* {
+          @[probe] = count(); } interval:s:1 { exit(); }'
+
+      Count LLC misses by process name:
+
+      bpftrace -e 'hardware:cache-misses: { @[comm] = count(); }'
+
+      13.4        BPF One-Liners Examples
+      Including some sample output, as was done for each tool, is also useful for illustrating one-liners.
+      Here is a selected one-liner with example output.
+
+      13.4.1 Counting libpthread Conditional Variable Functions for One
+      Second
+      # bpftrace -e 'u:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_* {
+          @[probe] = count(); } interval:s:1 { exit(); }'
+      Attaching 19 probes...
+      @[uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_wait@@GLIBC_2.3.2]: 70
+      @[uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_wait]: 70
+      @[uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_init@@GLIBC_2.3.2]: 573
+      @[uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_timedwait@@GLIBC_2.3.2]: 673
+                                                                                   13.5 Summary        633
+
+@[uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_destroy@@GLIBC_2.3.2]: 939
+@[uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_broadcast@@GLIBC_2.3.2]: 1796
+@[uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_broadcast]: 1796
+@[uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_signal]: 4600
+@[uprobe:/lib/x86_64-linux-gnu/libpthread.so.0:pthread_cond_signal@@GLIBC_2.3.2]: 4602
+
+These pthread functions can be frequently called, so to minimize performance overhead only one
+second is traced. These counts show how conditional variables (CVs) are in use: there are timed
+waits for threads waiting on a CV and other threads sending signals or broadcasts to wake them up.
+
+This one-liner can be modified to analyze these further: including the process name, stack traces,
+timed wait durations, and other details.
+
+13.5        Summary
+In this chapter I showed additional BPF tools beyond the prior resource-oriented chapters for
+application analysis, covering application context, thread usage, signals, locks, and sleeps. I used
+MySQL server as an example target application, and read its query context from BPF using both
+USDT probes and uprobes. On-CPU and off-CPU analysis using BPF tools was covered again for
+this example application due to its importance.
+This page intentionally left blank
