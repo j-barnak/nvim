@@ -2642,7 +2642,42 @@ end
 -- learncpp.com and Hypervisor From Scratch are static content; their rendered
 -- articles are committed under Resources/docs (index.tsv + .webcache/<sha>.txt),
 -- so the picker reads them offline - no curl/pandoc, no fetch.
-local function frozen_web_provider(name, prompt)
+-- LWN blocks bulk crawling (HTTP 429 "excessive requests"), so the Kernel Index
+-- cannot be frozen by fetching all ~3900 articles up front. Instead each article
+-- is fetched the first time it is opened and cached thereafter, so the offline
+-- set fills in through normal reading and the rate limiter is never tripped. The
+-- recipe is the one the committed LWN articles were built with: the body is
+-- div.ArticleText and the `lwn` cleaner drops the reader-comment thread.
+local function lwn_fetch(url, article_title, cf, on_done)
+	if not (have("curl") and have("pandoc") and have("python3")) then
+		return on_done(nil, "curl, pandoc and python3 are needed to fetch LWN articles")
+	end
+	local we = vim.fn.stdpath("config") .. "/Resources/tools/webextract.py"
+	local q = vim.fn.shellescape
+	local pipe = table.concat({
+		"curl -fsSL --compressed --max-time 30 -A 'Mozilla/5.0 (personal-docs-archive)' " .. q(url),
+		"python3 " .. q(we) .. " content div.ArticleText " .. q(url) .. " lwn,abs",
+		"pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs",
+		"python3 " .. q(we) .. " clean '' ''",
+	}, " | ")
+	vim.system({ "sh", "-c", pipe }, { text = true, timeout = 60000 }, function(res)
+		vim.schedule(function()
+			local body = vim.trim(res.stdout or "")
+			-- LWN's 429 block page is short and has no ArticleText, so a rate-limit
+			-- (or a subscriber-only article) yields a tiny body: treat as a miss.
+			if res.code ~= 0 or #body < 120 then
+				return on_done(nil, "fetch failed (LWN may be rate-limiting; try again shortly)")
+			end
+			local out = "# " .. article_title .. "\n\n" .. body .. "\n"
+			pcall(vim.fn.mkdir, vim.fn.fnamemodify(cf, ":h"), "p")
+			local fh = io.open(cf, "w")
+			if fh then fh:write(out); fh:close() end
+			on_done(vim.split(out, "\n"))
+		end)
+	end)
+end
+
+local function frozen_web_provider(name, prompt, live)
 	return function()
 		-- Frozen first (the committed index is the one a bare clone gets), with
 		-- the volatile cache as a fallback for an index scraped locally.
@@ -2675,6 +2710,18 @@ local function frozen_web_provider(name, prompt)
 							-- where none is. Link-following and :V degrade gracefully
 							-- (external links notify; unversioned docs say so).
 							render_lines(vim.fn.readfile(cf), "markdown", ddir, title)
+						elseif live then
+							-- Not frozen yet: fetch this one article now (LWN cannot be
+							-- bulk-frozen) and cache it for next time. Strip the "[topic]"
+							-- prefix so the article's own title heads the page.
+							local atitle = title:gsub("^%[.-%]%s*", "")
+							vim.notify("Fetching " .. atitle .. " from LWN (comments stripped) …")
+							lwn_fetch(url, atitle, cf, function(lines, err)
+								if not lines then
+									return vim.notify(atitle .. ": " .. (err or "fetch failed"), vim.log.levels.WARN)
+								end
+								render_lines(lines, "markdown", ddir, title)
+							end)
 						else
 							vim.notify(title .. ": not in the frozen cache", vim.log.levels.WARN)
 						end
@@ -2767,7 +2814,7 @@ local pick_syzkaller_articles = frozen_web_provider("syzkaller-articles", "Syzka
 -- shared by all the articles under them).
 local pick_namespaces_lwn = frozen_web_provider("namespaces-lwn", "Namespaces (LWN)> ")
 local pick_cgroups_lwn = frozen_web_provider("cgroups-lwn", "CGroups (LWN)> ")
-local pick_lwn_index = frozen_web_provider("lwn-index", "LWN article [topic]> ")
+local pick_lwn_index = frozen_web_provider("lwn-index", "LWN article [topic]> ", true)
 -- Fuzzing 101 with LibAFL: epi052's 6-part series + the Atredis workshop, the
 -- MobileHackingLab Android/QEMU-mode writeup, and the FuzzCon 2021 talk slides.
 local pick_fuzzing_101_libafl = frozen_web_provider("fuzzing-101-libafl", "LibAFL (Articles)> ")
