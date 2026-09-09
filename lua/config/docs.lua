@@ -2706,6 +2706,20 @@ local pick_emudev = frozen_web_provider("emudev", "EmuDev> ")
 local pick_c10k = frozen_web_provider("c10k", "C10K> ")
 local pick_bashguide = frozen_web_provider("bashguide", "BashGuide> ")
 local pick_fuzzingbook = frozen_web_provider("fuzzingbook", "Fuzzing Book> ")
+-- Fuzzing reading lists frozen from blog series (SRLabs, stackbits) and, for
+-- AFL++ Under The Hood, one long ritsec.club article re-split at its own section
+-- anchors into 16 chapters plus a 17th from core.gen.tr.
+local pick_fuzzing_made_easy = frozen_web_provider("fuzzing-made-easy", "Fuzzing Made Easy> ")
+local pick_fuzzing_bitdefender = frozen_web_provider("fuzzing-bitdefender", "Fuzzing BitDefender> ")
+local pick_afl_under_the_hood = frozen_web_provider("afl-under-the-hood", "AFL++ Under The Hood> ")
+-- syzkaller write-ups (Collabora 4-part, xairy, slavamoskvin, willsroot, LWN).
+local pick_syzkaller_articles = frozen_web_provider("syzkaller-articles", "Syzkaller Articles> ")
+-- LWN reading lists: Kerrisk's "Namespaces in operation" (+ the two mount-ns
+-- articles) and Neil Brown's "Control groups" series, plus the whole categorized
+-- LWN Kernel Index frozen as one browsable reference (jump topics with <leader>fs).
+local pick_namespaces_lwn = frozen_web_provider("namespaces-lwn", "Namespaces (LWN)> ")
+local pick_cgroups_lwn = frozen_web_provider("cgroups-lwn", "CGroups (LWN)> ")
+local pick_lwn_index = frozen_web_provider("lwn-index", "LWN Kernel Index> ")
 
 -- systemd: a two-level frozen provider. systemd.io groups its docs into named
 -- categories (Booting, Concepts, Interfaces, the two blog series, ...), so the
@@ -2755,6 +2769,64 @@ local function pick_systemd()
 		actions = { ["default"] = function(sel) if sel and sel[1] then pick_chapter(sel[1]) end end },
 	})
 end
+
+-- Generic two-level frozen provider (same shape as pick_systemd): index.tsv is
+-- category<TAB>title<TAB>url, the top entry opens the category list, a category
+-- opens its chapter list, a chapter renders the frozen page. Used for the whole
+-- javascript.info tutorial (parts -> chapters) and the Trail of Bits Testing
+-- Handbook (appsec.guide, grouped by section). Categories keep first-seen order.
+local function frozen_nested_provider(name, top_prompt)
+	local function run()
+		local idxfile = resolve_docs(name .. "/index.tsv") or (frozen_root .. "/" .. name .. "/index.tsv")
+		if vim.fn.filereadable(idxfile) ~= 1 then
+			return vim.notify(name .. ": frozen index missing", vim.log.levels.WARN)
+		end
+		local cats, order = {}, {}
+		for _, l in ipairs(vim.fn.readfile(idxfile)) do
+			local cat, title, url = l:match("^([^\t]+)\t([^\t]+)\t(.+)$")
+			if cat then
+				if not cats[cat] then cats[cat] = {}; order[#order + 1] = cat end
+				cats[cat][#cats[cat] + 1] = { title = title, url = url }
+			end
+		end
+		local ddir = resolve_docs(name) or (frozen_root .. "/" .. name)
+		local function open_doc(title, url)
+			local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+				or (frozen_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt")
+			if vim.fn.filereadable(cf) == 1 then
+				render_lines(vim.fn.readfile(cf), "markdown", ddir, title)
+			else
+				vim.notify(title .. ": not in the frozen cache", vim.log.levels.WARN)
+			end
+		end
+		local function pick_chapter(cat)
+			local items = cats[cat]
+			last_picker = function() pick_chapter(cat) end
+			fzf().fzf_exec(vim.tbl_map(function(it) return it.title end, items), {
+				prompt = cat .. "> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = { ["default"] = function(sel)
+					if not (sel and sel[1]) then return end
+					for _, it in ipairs(items) do
+						if it.title == sel[1] then return open_doc(it.title, it.url) end
+					end
+				end },
+			})
+		end
+		last_picker = run
+		fzf().fzf_exec(order, {
+			prompt = top_prompt,
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel) if sel and sel[1] then pick_chapter(sel[1]) end end },
+		})
+	end
+	return run
+end
+-- javascript.info (The Modern JavaScript Tutorial): 175 articles across 27
+-- chapters in 3 parts. testing-handbook: Trail of Bits' appsec.guide, grouped
+-- by section (Fuzzing, Static Analysis, Web/Burp, Languages, Cryptography).
+local pick_javascript_info = frozen_nested_provider("javascript-info", "JavaScript.info> ")
+local pick_testing_handbook = frozen_nested_provider("testing-handbook", "Testing Handbook> ")
 
 -- LKL (Linux Kernel Library): the Linux kernel built as a userspace library
 -- (github.com/lkl/linux, arch/lkl). A curated sub-picker - each option targets a
@@ -3752,6 +3824,15 @@ local WEB_BOOKS = {
 	{ title = "The C10K Problem (Kegel)", key = "c10k", run = pick_c10k },
 	{ title = "BashGuide + Bash FAQ (Greg's Wiki)", key = "bashguide", run = pick_bashguide },
 	{ title = "The Fuzzing Book (fuzzingbook.org)", key = "fuzzingbook", run = pick_fuzzingbook },
+	{ title = "Fuzzing Made Easy (SRLabs)", key = "fuzzing-made-easy", run = pick_fuzzing_made_easy },
+	{ title = "Fuzzing BitDefender's AntiVirus Engine (stackbits)", key = "fuzzing-bitdefender", run = pick_fuzzing_bitdefender },
+	{ title = "AFL++ Under The Hood (ritsec + core.gen.tr)", key = "afl-under-the-hood", run = pick_afl_under_the_hood },
+	{ title = "Syzkaller Articles (Collabora, xairy, LWN, ...)", key = "syzkaller-articles", run = pick_syzkaller_articles },
+	{ title = "Namespaces in operation (LWN, Kerrisk)", key = "namespaces-lwn", run = pick_namespaces_lwn },
+	{ title = "Control groups (LWN, Neil Brown)", key = "cgroups-lwn", run = pick_cgroups_lwn },
+	{ title = "LWN Kernel Index (categorized reference)", key = "lwn-index", run = pick_lwn_index },
+	{ title = "The Modern JavaScript Tutorial (javascript.info)", key = "javascript-info", run = pick_javascript_info },
+	{ title = "Testing Handbook (Trail of Bits, appsec.guide)", key = "testing-handbook", run = pick_testing_handbook },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
 	{ title = "Algorithms for Modern Hardware (Algorithmica)", key = "algorithmica-hpc", run = pick_algorithmica_hpc },
@@ -3979,6 +4060,15 @@ LOCATION["bashguide"] = { index = "bashguide/index.tsv", unit = "chapter" }
 LOCATION["fuzzingbook"] = { index = "fuzzingbook/index.tsv", unit = "chapter" }
 LOCATION["systemd"] = { index = "systemd/index.tsv", unit = "chapter" }
 LOCATION["lkl"] = { index = "lkl/index.tsv", unit = "chapter" }
+LOCATION["fuzzing-made-easy"] = { index = "fuzzing-made-easy/index.tsv", unit = "chapter" }
+LOCATION["fuzzing-bitdefender"] = { index = "fuzzing-bitdefender/index.tsv", unit = "chapter" }
+LOCATION["afl-under-the-hood"] = { index = "afl-under-the-hood/index.tsv", unit = "chapter" }
+LOCATION["syzkaller-articles"] = { index = "syzkaller-articles/index.tsv", unit = "chapter" }
+LOCATION["namespaces-lwn"] = { index = "namespaces-lwn/index.tsv", unit = "chapter" }
+LOCATION["cgroups-lwn"] = { index = "cgroups-lwn/index.tsv", unit = "chapter" }
+LOCATION["lwn-index"] = { index = "lwn-index/index.tsv", unit = "chapter" }
+LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "chapter" }
+LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
 LOCATION["writing-an-os-in-rust"] = { index = "writing-an-os-in-rust/index.tsv", unit = "chapter" }
 LOCATION["algorithmica-hpc"] = { index = "algorithmica-hpc/index.tsv", unit = "chapter" }

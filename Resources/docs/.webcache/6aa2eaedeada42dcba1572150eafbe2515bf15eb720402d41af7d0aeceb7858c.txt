@@ -1,0 +1,287 @@
+## Table of contents
+
+## Introduction
+
+In the first part of this blog post series, I described how I ported the Bitdefender engine (`bdcore`) to Linux using `loadlibrary`, and how I made the first fuzzing attempts with `honggfuzz`. That approach gave me useful results in terms of instrumentation and target control, but it had serious limitations on the fuzzing side, especially around coverage feedback, throughput, and state management. In case you missed it, you can read it [here](https://stackbits.eu/blog/vulnerability_research_bitdefender_part_1.html).
+
+The stateful nature of the Bitdefender engine made it difficult to maintain a consistent execution environment with a persistent fuzzing approach. The natural next step was to design a snapshot-based fuzzer that could target narrower areas of the engine and restore the engine state after each fuzzing iteration.
+
+This led me to explore [LibAFL](https://github.com/AFLplusplus/LibAFL), a Rust framework for building custom fuzzers. `LibAFL` supports different instrumentation backends and emulators, including LLVM-based compile-time instrumentation and QEMU-based instrumentation. This makes it possible to build fuzzers with a high degree of control over execution, feedback, and state management.
+
+`QEMU`, a well-known emulator that translates guest instructions into host instructions, is supported by `LibAFL` through the `libafl_qemu` crate and the `qemu-libafl-bridge` project. LibAFL can use QEMU both for user-space targets and for full-system fuzzing. In this case, since the Bitdefender engine was running as a user-space target, I used `qemu-user`. At first glance, using QEMU in this project may sound impractical, since the target and host were both x86-64 and the `bdcore.dll` could already be executed natively on Linux. However, QEMU still provided useful control for this scenario, because LibAFL builds its snapshot-based execution model on top of it. The cost is the emulation overhead introduced by QEMU.
+
+The snapshot-based approach made that tradeoff acceptable. By snapshotting close to the code path I wanted to fuzz, I could avoid repeating expensive initialization work and focus each iteration on a narrower region of the engine. In other words, the goal was to pay the QEMU overhead in exchange for better control over state, coverage, and the target boundary.
+
+For the impatient ones, the full fuzzer, together with a few ready-to-use harnesses, can be found [here](https://github.com/cube0x8/LibAFL-BDCore-Fuzzer).
+
+When I started writing the fuzzer, LibAFL was still in its early stages, and the nature of the target exposed several bugs and edge cases. This was not necessarily a bad thing: I was already working on fuzzing for other projects at SONY, and I was digging into LibAFL and emulation anyway.
+
+This gave me the opportunity to better understand LibAFL and contribute to the framework, with help from the Discord, now Zulip, Awesome Fuzzing community, whom I sincerely thank.
+
+## Designing the Snapshot-Based Fuzzer
+
+The snapshot-based fuzzer follows a different execution model from the [persistent fuzzer built with honggfuzz](https://stackbits.eu/blog/vulnerability_research_bitdefender_part_1.html#honggfuzz). The persistent fuzzer used a libFuzzer-style harness and repeatedly called the `ScanFile` entry point exposed by the `loadlibrary` harness. The engine was initialized only once through `CoreInitialization`, since initialization was the main bottleneck, and the same initialized runtime was reused across fuzzing iterations.
+
+`CoreInitialization` ****initializinginitialized once****
+
+`ScanFile` **scan entry-point**
+
+Engine state
+
+input input input
+
+Animations are available on the desktop version.
+
+Persistent fuzzing: `CoreInitialization` is kept alive while `ScanFile` mutates shared state
+
+This improved throughput by removing repeated core initialization time, but it also exposed a problem: the engine kept state between scans, which made it difficult to use early exit points safely to reduce scan time.
+
+The snapshot-based approach changes the picture in another useful way: the fuzzing iteration does not have to start exactly at `ScanFile`. As discussed in the first part, the Bitdefender engine is a very broad target. Random mutations can easily redirect execution toward parsers, internal routines, or plugins that are not relevant for the current campaign. With snapshot fuzzing, I can let the engine reach the component I care about, take the snapshot there, and use that point as the beginning of the fuzzing iteration.
+
+### Runtime Module Resolution
+
+To make this practical, the fuzzer first needs to start with an input that can reach the entry point of the plugin I want to target. At startup, a breakpoint is set at that entry point. When the breakpoint is hit, execution stops in the guest and control returns to LibAFL, giving the fuzzer the chance to snapshot the guest memory and CPU registers and use that point as the beginning of the fuzzing loop.
+
+To set that breakpoint reliably, the fuzzer needs a way to resolve guest addresses at runtime. Hardcoding absolute addresses would be fragile, because mappings can change across machines and ASLR can randomize them. A better approach is to resolve addresses using a `module:+offset` syntax. As mentioned in part 1, Bitdefender plugins are not loaded as standard external libraries: they are deobfuscated, `mmap`ed into memory and dynamically linked at runtime by the XLMRD engine component.
+
+To solve this, in the LibAFL-based fuzzer I added a small utility that records the modules loaded during engine initialization, together with their base addresses and sizes. This is where the custom `loadlibrary` harness becomes useful again: during core initialization, the fuzzer sets breakpoints on the callbacks used by the different WINAPI `peloader` implementations, and uses them to observe when Bitdefender plugins are mapped in memory. Once core initialization is complete, the utility has populated a `Vec<BDModule>` similar to this:
+
+modules
+
+...
+
+\[11\]
+
+name  
+`cevakrnl.xmd`
+
+start_addr  
+`0x7f6db6000`
+
+size  
+`0x111ff8`
+
+range  
+`0x7f6db6000..0x7f6ec7ff8`
+
+\[12\]
+
+name  
+`upx.xmd`
+
+start_addr  
+`0x7f56f0000`
+
+size  
+`0x3498`
+
+range  
+`0x7f56f0000..0x7f56f3498`
+
+\[13\]
+
+name  
+`ceva_emu.cvd`
+
+start_addr  
+`0x7f6ed2000`
+
+size  
+`0xf0378`
+
+range  
+`0x7f6ed2000..0x7f6fc2378`
+
+...
+
+`upx.xmd:+0x1234` resolves to `0x7f56f1234`
+
+`Vec<BDModule>` populated from runtime plugin mappings
+
+With this information available, the fuzzer can use relative notations such as `module:+offset` to resolve concrete guest addresses at runtime, and then use them to set entry and exit breakpoints inside specific plugins:
+
+``` rust
+self.bd_engine.core_initialization(self.qemu);
+
+let entry_point = self.bd_engine.resolve_entry_point("upx.xmd:+0x1510")?;
+let exit_points = self.bd_engine.resolve_exit_points(&[
+    "upx.xmd:+0x1b07".to_string(),
+    "upx.xmd:+0x1c3f".to_string(),
+])?;
+
+self.qemu.set_breakpoint(entry_point);
+for exit_point in exit_points {
+    self.qemu.set_breakpoint(exit_point);
+}
+
+unsafe {
+    let _ = self.qemu.run();
+};
+
+// If we reach this point, the breakpoint at the plugin entry point was hit.
+let pc: GuestAddr = self.qemu.read_reg(Regs::Pc).unwrap().try_into().unwrap();
+println!("Snapshot at {:#x}", pc);
+
+let snapshot_module: &mut SnapshotModule =
+    modules.match_first_type_mut::<SnapshotModule>().unwrap();
+snapshot_module.snapshot(*self.qemu);
+```
+
+In practice, this keeps the campaign focused on the plugin or parser I want to exercise, instead of spending time in setup, teardown, or unrelated parts of the engine.
+
+### Input Injection and API Hooking
+
+Now that the fuzzer knows where to stop and where to resume execution, there is still one problem left to solve: how to provide a new mutated input once execution is already inside the engine.
+
+In the persistent model based on honggfuzz, I could simply pass the path of the file to scan to the `ScanFile` function. But at the plugin entry point, where the snapshot is taken and the fuzzing iteration begins, execution has already moved further into the engine, so the input has to be provided in a different way.
+
+The solution is usually similar across snapshot-based targets: place the input in memory where the target code is going to consume it. Since I used the UPX unpacker as an example in part 1, I will keep using it here as well. The same idea applies to the other unpacker plugins, since their entry points follow the same prototype.
+
+The unpacker plugin entry point was reverse engineered as follows:
+
+``` c
+struct _BD_UNPACK_CALL_ARGS
+{
+    BD_UNPACK_STATE *unpack_state;
+    void *input_stream;
+    void *engine_context;
+    unsigned __int8 *entrypoint_stub;
+    unsigned int entrypoint_stub_size;
+    [...]
+    const char **out_packer_name;
+    const char **out_packer_version;
+};
+
+typedef _BD_UNPACK_CALL_ARGS BD_UNPACK_CALL_ARGS;
+
+BOOL __fastcall _unpack(BD_UNPACK_CALL_ARGS *args);
+```
+
+The `input_stream` field above points to a custom seekable stream object that I call `XYFE`, after the magic value found in the object. This pointer does not directly reference the memory area where the input file is mapped. Instead, it represents a logical view over the object currently being scanned, and maintains information such as the current stream position, the stream size, its backing data source, and a small read cache.
+
+Unpackers access the input through this object using functions equivalent to `read` and `seek`, which I named `XYFE_Seek` and `XYFE_Read`:
+
+``` c
+int32_t __fastcall XYFE_Seek(
+    XYFE *stream,
+    int32_t offset,
+    XYFE_SEEK_ORIGIN origin
+);
+
+uint32_t __fastcall XYFE_Read(
+    XYFE *stream,
+    void *destination,
+    uint32_t requested_size
+);
+```
+
+The implementation of these two APIs reads lazily: when the requested range is not already available in the cache, `XYFE` obtains the corresponding bytes from its backing source and refills the cache.
+
+For snapshot fuzzing, one possible solution would be to inject the mutated input into the `XYFE` object itself, but this immediately raises a problem: `XYFE` is not a simple contiguous buffer, but a more complex object with its own internal state. Recreating it for every input would mean rebuilding that state and reinitializing it with new values, which would be expensive and would increase the risk of creating invalid states or target-specific edge cases.
+
+To solve this, I replaced the engine's `XYFE` stream operations with the simpler [`MemoryBackedStream`](https://github.com/cube0x8/LibAFL-BDCore-Fuzzer/blob/35d45683ed947528604aa07e39cdc0ebe669caeb/src/harness/unpackers/stream.rs#L20) object in the fuzzer. This object stores the mutated input in a contiguous byte vector and implements the same cursor-based semantics: a seek to offset `X` followed by a read of `N` bytes returns `input[X..X+N]`.
+
+In practice, the fuzzer places breakpoints at the plugin's seek/read callsites and emulates those operations from Rust. When the unpacker tries to seek, the fuzzer updates the `MemoryBackedStream` cursor and skips the original guest callsite. When the unpacker tries to read, the fuzzer copies bytes from the current mutated input into the guest destination buffer, returns the number of copied bytes, and resumes execution after the callsite. From the unpacker's point of view, it is still using the normal seek/read interface, but every byte it observes comes from the current fuzzing input.
+
+For the unpacker targets, the stream is not the only input-dependent field that has to be refreshed. The `entrypoint_stub` field points to a guest buffer containing the first `entrypoint_stub_size` bytes at the PE `AddressOfEntryPoint`. When the breakpoint at the unpacker plugin's entry point is hit for the first time, the fuzzer records both the buffer address and its size. Then, for each mutated PE, it extracts the current entry-point bytes and writes them back to that guest buffer before execution resumes. This keeps the unpacker state coherent with the input currently being tested.
+
+With plugin loading, breakpoint resolution, stream emulation, and the entry-point stub update in place, the basic snapshot loop came to life: stop at the plugin entry point, take the snapshot once, execute the target code, stop again at the chosen exit point, restore the snapshot, inject the next mutated input into memory, and repeat the same bounded execution window.
+
+`CoreInitialization` ****initializinginitialized once****
+
+`ScanFile` **scan entry-point**
+
+`_unpack` **upx.xmd entry-point**
+
+*entry* *exit*
+
+Engine state
+
+snapshot
+
+restore
+
+input
+
+Animations are available on the desktop version.
+
+Snapshot fuzzing: execution restarts from the plugin entry point while the engine state is restored after each iteration
+
+### Limitations
+
+The snapshot-based approach comes with clear benefits for the fuzzing process, but it also has important limitations.
+
+To start a scan and reach the unpacker I want to target, for example the UPX entry point, the fuzzer first has to run the `bdclient_x64` harness under QEMU with an input file that is recognized as UPX-packed. That input drives the engine up to the snapshot point, and the state captured there is shaped by that specific file.
+
+For example, the file used to reach the snapshot point has a specific number of sections, a specific entry-point offset, specific section sizes, and other header values that influence the internal state of the engine. It may also have been packed with a specific packer version, while the same unpacker plugin may support multiple variants. Mutations and coverage feedback can still help explore some of this space, because mutated inputs may eventually satisfy different grammars or patterns recognized by the unpacker. However, the state created before the snapshot remains tied to the original file used to reach that point.
+
+This means that the fuzzing campaign is constrained by the initial snapshot state. Some bugs may only be reachable when the engine state is created from files with different section layouts, header values, or packer-specific metadata. If those properties are not present in the file used to create the snapshot, the campaign may never exercise those paths. This is a key, well-known limitation of snapshot-based fuzzing. One way to mitigate it is to run multiple campaigns from different seed files, so each campaign fuzzes the same target code from a different initial state. The trade-off is that this requires more computation and more available cores.
+
+Another important limitation is that targeting a narrower execution window does not solve the mutation problem by itself. Some parsers have strict gate checks, and generic havoc-style mutations can easily make the parser reject the input before reaching the interesting code. This is another place where LibAFL's customization model fits well: the fuzzer can combine generic mutations with target-aware mutators that preserve enough structure to pass those checks. I decided to publish a few custom mutators used for a subset of the campaigns, and you can find them in the `src/mutators` directory of the [LibAFL-BDCore-Fuzzer](https://github.com/cube0x8/LibAFL-BDCore-Fuzzer) repository.
+
+There is also another downside that comes into play: a parser may corrupt memory while processing the input, but the actual crash may happen only later, after the plugin returns and the corrupted state is consumed by downstream code. If the snapshot exit point is placed before that happens, the fuzzer may restore the snapshot and miss the visible crash. This is one of the reasons why [sanitizers](https://stackbits.eu/blog/vulnerability_research_bitdefender_part_2.html#sanitizers) and offline triage remained important in the pipeline.
+
+## Coverage
+
+Using LibAFL together with QEMU was useful not only because it gave us snapshotting capabilities, but also because it provided coverage filters. This made it possible to narrow coverage feedback down to the modules I actually wanted to fuzz.
+
+Using the utility described earlier, which keeps track of the loaded Bitdefender modules together with their base address and size, the fuzzer can build an address allow-list and pass it to LibAFL's QEMU coverage module:
+
+``` rust
+self.bd_engine.core_initialization(self.qemu);
+self.bd_engine.instrument_modules(Some(vec!["upx.xmd".to_string()]));
+
+let edge_cov_address_filter = self
+    .bd_engine
+    .coverage_filter()
+    .map_or_else(StdAddressFilter::default, StdAddressFilter::allow_list);
+
+let edge_coverage_module = StdEdgeCoverageModule::builder()
+    .map_observer(edges_observer.as_mut())
+    .address_filter(edge_cov_address_filter)
+    .build()?;
+```
+
+In this example, only the address ranges belonging to `upx.xmd` are used for edge coverage. Mutations can still exercise other parts of the engine if the control flow reaches them, but they are not rewarded as new coverage for this campaign.
+
+For example, unpackers usually call into the `cevakrnl` engine to set up VM objects, execute operation handlers, or decompress pieces of PE binaries. By setting a coverage filter only on the unpacker module, I can ignore those operations for coverage feedback. If specific parts of other modules become relevant, they can still be added to the coverage filter.
+
+QEMU already adds a substantial cost to the fuzzing process, and edge-based coverage adds more work on top of that. In `libafl_qemu`, the edge coverage module installs hooks around QEMU's translated code and communicates the discovered edges back to LibAFL through the coverage map. Coverage filters reduce this cost by limiting where those hooks and edge bookkeeping are applied. The target still pays the normal emulation cost for code it executes, but unrelated modules do not also pay the additional coverage overhead.
+
+However, coverage is not only about the live coverage map used by the fuzzer. That map is great for feedback and evolves during the campaign, but it is not meant to be a detailed record of every executed edge. For offline coverage analysis, I used DrCov traces:
+
+[`DrCov`](https://dynamorio.org/page_drcov.html) is a file-format that records instruction-level information for each executed basic block, making it easier to understand, at the assembly level, which parts of the target were explored and which corpus changes may be needed to reach the unexplored paths.
+
+Once a DrCov trace is generated, it can be analyzed with a simple parsing utility such as [DrCov-Parser](https://github.com/cube0x8/DrCov-Parser), or loaded directly into IDA Pro with the Lighthouse plugin. Other disassemblers and coverage visualization tools can likely consume it as well, as long as they support the DrCov format.
+
+DrCov became an important component of this work. It was heavily used and automated to improve the coverage of the running campaigns, mostly as an integrated feature in Fuzztron, the scalable fuzzing infrastructure I used internally in STACKBITS to orchestrate fuzzing campaigns. I will leave those details for part 3 of this series.
+
+## Sanitizers
+
+Sanitizers are very popular in fuzzing because they can detect memory corruption bugs, such as buffer overflows and use-after-free issues, that may otherwise go unnoticed because they do not immediately crash the target.
+
+Sanitizers are usually associated with LLVM-based toolchains and white-box fuzzing, where the target is instrumented at compile time. However, the LibAFL and `qemu-libafl-bridge` community also worked on sanitization support for emulated grey-box targets. This is how QASAN, the QEMU AddressSanitizer, came into the picture.
+
+LibAFL provides different QASAN implementations for the target. I used the host-based one: the QASAN runtime is injected into the target process, allocation metadata is reported back to the host side, and QEMU hooks memory read and write instructions. Those accesses are then checked against the shadow memory managed by LibAFL.
+
+This adds significant overhead, but similarly to coverage instrumentation, QASAN can also be configured with address filters so that only specific parts of the target are sanitized. In addition, LibAFL's LLMP launcher can bind workers to specific CPUs, and different subsets of workers can run with different features enabled. This allowed me to reserve one or two CPUs per campaign for QASAN, while keeping the other workers running at full speed without sanitizers or other expensive features.
+
+Compared to compile-time sanitizers, QASAN is more limited. LLVM sanitizers can identify a broader class of memory corruption bugs and undefined behaviors. For example, MSan can detect uses of uninitialized memory, while ASan can detect stack, heap, and global buffer overflows, as well as use-after-free issues. QASAN, instead, is mainly useful for heap-based read/write buffer overflows, use-after-free, and bad-free bugs. This makes it very heap-oriented, which is expected in this setting: without compile-time instrumentation, a grey-box approach loses most of the high-level information needed to reason precisely about stack objects.
+
+To increase the probability of finding bugs that would otherwise go unnoticed, I introduced another tool into the fuzzing pipeline: Valgrind. Valgrind is still a dynamic binary instrumentation tool, so it does not require compile-time instrumentation either, but its `memcheck` tool can detect a wider range of memory errors, including many of the issues detected by QASAN, as well as uses of undefined values and some invalid stack accesses, such as accesses outside the current stack frame.
+
+Valgrind was used heavily through the automated fuzzing infrastructure, Fuzztron. The infrastructure collected files generated by the fuzzer and started separate jobs that ran the `bdclient` harness with `memcheck` enabled, using those files as inputs. The reports were then collected and used to distinguish interesting memory errors from inputs that did not trigger anything useful. This was slow, especially because each run paid the `bdclient` core initialization cost again, but it helped find bugs that may have been missed by using only QASAN during fuzzing.
+
+## Conclusions and next steps
+
+In this post, I showed how the snapshot-based approach allowed me to focus on specific components of the engine, such as unpackers, while keeping better control over state management and coverage feedback.
+
+By combining breakpoints, stream emulation, and entry-point updates, I was able to create a fuzzing loop that restored the engine state after each iteration and explored a tighter execution window. Coverage filters, custom mutators, sanitizers, and offline analysis then helped make the campaigns more effective in practice.
+
+The approach proved to be effective both in terms of exec/s compared to honggfuzz and in terms of bug detection.
+
+![Fuzzing results: exec/s and bugs found with LibAFL/QEMU](https://stackbits.eu/img/libafl_lnk.png)
+
+Several bugs were found and disclosed to Bitdefender through Bugcrowd as they were discovered and triaged. At the time of writing, I am still disclosing bugs, and they are being actively reviewed.
+
+In the next post of this series, I will show how I automated and scaled the fuzzing campaign by orchestrating coverage analysis, deployment, and bug reproduction through a custom fuzzing infrastructure and an AI agent used as a driver for the campaigns.

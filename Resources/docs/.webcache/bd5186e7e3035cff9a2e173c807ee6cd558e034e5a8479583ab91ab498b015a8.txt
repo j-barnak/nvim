@@ -1,0 +1,115 @@
+# Using Syzkaller to Fuzz Your Changes (Collabora, Part 3)
+
+In [Part 1](https://www.collabora.com/news-and-blog/blog/2020/05/12/using-syzkaller-fuzzing-your-changes/news-and-blog/blog/2020/03/26/syzkaller-fuzzing-the-kernel/) and [Part 2](https://www.collabora.com/news-and-blog/blog/2020/05/12/using-syzkaller-fuzzing-your-changes/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/) of this blog series on syzkaller, we introduced the tool, looked at how to install it and how to use it to improve our code base. Now let's have a look at how to properly add a new description and check what happens in a bug situation. To do this, a bug will be introduced to see the tool in action. I chose to modify the `ptrace()` syscall, in the hope that it will not break the entire system if not properly working. This is the syscall definition as per man pages:
+
+    long ptrace(enum __ptrace_request request, pid_t pid, void *addr, void *data);
+
+And some of `ptrace()` definitions in syzkaller:
+
+    ptrace(req flags[ptrace_req], pid pid)
+    ptrace$peek(req flags[ptrace_req_peek], pid pid, addr ptr[out, intptr])
+    ptrace$poke(req flags[ptrace_req_poke], pid pid, addr ptr[out, intptr], data intptr)
+    ptrace$peekuser(req const[PTRACE_PEEKUSR], pid pid, addr intptr)
+    ...
+
+If you want to have a look how `ptrace()` is fuzzed before we modify it, add it to `enable_syscalls` in `config.cfg`:
+
+    "enable_syscalls": [ "ptrace"],
+
+Try to run as this. It will not work since `ptrace()` requires a PID as argument, and there’s no syscall that returns a PID enabled. The tool will warn the user and suggest some syscalls to be enabled:
+
+    disabling ptrace: no syscalls can create resource pid, enable some syscalls that can create it [bpf$BPF_TASK_FD_QUERY clone3 fcntl$getown fcntl$getownex ...]
+
+`getpid()`, I choose you:
+
+    "enable_syscalls": [ "ptrace", "getpid"],
+
+Try to run again, and it should start working. It will take a time to get some real cover, but it should increase as more code is executed, and those messages will appear at syzkaller log:
+
+    ./bin/syz-manager -config=config.cfg
+
+    ...
+    executed 1036, cover 105
+    executed 1056, cover 105
+    executed 1105, cover 162
+    executed 1165, cover 167
+    executed 1203, cover 175
+    executed 1232, cover 175
+    executed 1326, cover 180
+    executed 1356, cover 180
+    executed 1443, cover 184
+    executed 1486, cover 186
+    ...
+
+The cover number is a metric derivated from line of codes, functions called, how many time a loop was iterated and more.
+
+### Modifying ptrace
+
+Let’s break `ptrace()` . I did the following modification on the syscall definition:
+
+     kernel/ptrace.c | 3 +++
+     1 file changed, 3 insertions(+)
+
+    diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+    index 43d6179508d6..8e4e92931d5f 100644
+    --- a/kernel/ptrace.c
+    +++ b/kernel/ptrace.c
+    @@ -1245,6 +1245,9 @@ SYSCALL_DEFINE4(ptrace, long, request, long, pid, unsigned long, addr,
+         struct task_struct *child;
+         long ret;
+     
+    +    if (pid == 0xdeadbeaf)
+    +            BUG();
+    +
+         if (request == PTRACE_TRACEME) {
+             ret = ptrace_traceme();
+             if (!ret)
+
+This way, every time `ptrace()` is called with `0xdeadbeaf` as the PID argument, it should trigger a kernel crash. Instead of just waiting for the tool to reach our bug, let’s give it a hand and describe how to reach the bug. I added the following new definition at `sys/linux/sys.txt`:
+
+    ptrace$broken(req int64, pid const[0xdeadbeaf])
+
+This new description will call the ptrace syscall with a random int64 value as first argument (it’s not required to reach the bug, just for demonstration) and will always use `0xdeadbeaf` as the second one. Since we modified a definition, we need to recompile the tool. This will be done in two steps: extraction of information, rebuild the fuzzer generator.
+
+This command will extract information about the syscall descriptions from the `*.txt` files and from the kernel source for your current architecture (since I'm not cross compiling and working in a amd64, I used this as `-arch` value). It will get information like the syscall number based on the syscall name defined in the syzkaller and definition at kernel source and compare with the description the tool provides to check if they are compatible:
+
+    make bin/syz-extract
+    ./bin/syz-extract -os=linux -sourcedir=$KSRC -arch=amd64 sys.txt
+
+Note that this will only take effect for Linux, specifically the amd64 architecture and for the syscalls described in `sys.txt`. To make it work for all `*.txt` files, just remove the last argument. This step may trigger some warnings saying that some syscalls aren’t supported in any architecture, depending on the current state of your linux-next kernel branch vs the branch used by the syzkaller maintainers. These warnings are usually not fatal, your compiled kernel doesn’t support those syscalls.
+
+After updating and extracting the syscalls definition, the tools need to be rebuilt to generate the updated fuzzer inputs:
+
+    make generate
+    make
+
+Before running, I changed the \`enabled_syscalls\` at configuration file to run just the broken syscall:
+
+    "enable_syscalls": [ "ptrace$broken"],
+
+When run, we should receive notification in the syzkaller log (displayed in the terminal) that the introduced bug has been detected:
+
+    2020/02/17 18:16:49 vm-0: crash: kernel BUG at kernel/ptrace.c:LINE!
+
+Digging a little deeper, we can see that the following call was made, resulting in a kernel bug trace:
+
+    ptrace$broken(0x3, 0xdeadbeaf)
+
+    ...
+
+    [   41.213503] ------------[ cut here ]------------
+    [   41.214502] kernel BUG at kernel/ptrace.c:1249!
+    [   41.215575] invalid opcode: 0000 [#1] SMP KASAN PTI
+    [   41.217170] CPU: 1 PID: 3829 Comm: syz-executor.3 Not tainted 5.6.0-rc1-next-20200214+ #3
+
+### Conclusion and important notes
+
+There you go, the fuzzer captured our crash! There’s an internal tool that will try to generate a C source code that reproduces the bug, in order to make debugging easier. However, it’s not perfect and may not generate a reproducer for your bug. You may have a look at the crash log to figure out how to write a reproducer yourself. Even when it manages to create one, scrutinise what it actually does, it will probably do more than required as it might be unable to properly isolate the parts that triggers the bug. This doesn't by any means reduce the credit which should be given to the tool: the created reproducer will have done most of the work, making your life easier.
+
+As explained in the step where the `syz-extract` tool is used, only descriptions for the amd64 architecture were extracted. If you want to extract from all architectures (as is required to contribute to the project), use `make extract`. This however will require that you have a lot of cross compilers installed (ARM, POWER, MIPS) and due to the parallel cross compiling, this command will run \`make mrproper\` on your kernel source. I suggest backing up your `.config` file, the bzImage and using ccache to avoid loosing too much time with recompilations.
+
+Finally, to learn more about the work we have been doing around futex and the modification that I did myself to syzkaller, see my [merged pull request](https://github.com/google/syzkaller/pull/1602).
+
+And lastly, before opening a pull request yourself, make sure to read both the [Syscall descriptions documentation](https://github.com/google/syzkaller/blob/master/docs/syscall_descriptions.md) and the [Contribuiting guide](https://github.com/google/syzkaller/blob/master/docs/contributing.md)!
+
+**[Continue reading (Using syzkaller, part 4: Driver fuzzing)](https://www.collabora.com/news-and-blog/blog/2020/05/12/using-syzkaller-fuzzing-your-changes/news-and-blog/blog/2020/06/26/using-syzkaller-part-4-driver-fuzzing/)…**

@@ -1,0 +1,329 @@
+# Initializing `afl-fuzz`
+
+To understand how AFL++ fuzzes, it is useful to look at the source code of `afl_fuzz` - the main function can be found [here](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L501 "https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L501").
+
+There are 2 key structures that we will be paying attention to: [`afl_state_t`](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/include/afl-fuzz.h#L427) and [`afl_forkserver_t`](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/include/forkserver.h#L80).
+
+`afl_state_t` is the structure that manages the fuzzer and many of its parameters including mutator parameters, the observers, feedbacks, and more.
+
+`afl_forkserver_t` manages the forkserver. The forkserver is something that we will discuss later, but, at a high level, it is what executes the binary to be fuzzed. This structure contains other key information including the input file and parameters about what the forkserver is doing (Is it Nyx? Qemu?). `afl_forkserver_t` is embedded in `afl_state_t`.
+
+In order to initialize `afl-fuzz` we start at [main](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L501) in `afl-fuzz.c`. There’s a lot here, and most of it is to deal with edge cases like QEMU-mode, Nyx-mode, Frida-mode, etc.
+
+The first important thing we do is get the `map_size`. This will be the size of the shared memory coverage map. To get the `map_size` we call `get_map_size` ([Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L506)) which does the following:
+
+```
+u32 get_map_size(void) {
+
+  uint32_t map_size = DEFAULT_SHMEM_SIZE;
+  char    *ptr;
+  if ((ptr = getenv("AFL_MAP_SIZE")) || (ptr = getenv("AFL_MAPSIZE"))) {
+    map_size = atoi(ptr);
+    if (!map_size || map_size > (1 << 29)) {
+      FATAL("illegal AFL_MAP_SIZE %u, must be between %u and %u", map_size, 64U,
+            1U << 29);
+    }
+    if (map_size % 64) { map_size = (((map_size >> 6) + 1) << 6); }
+  } else if (getenv("AFL_SKIP_BIN_CHECK")) {
+    map_size = MAP_SIZE;
+  }
+  return map_size;
+
+}
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/24503fba5fd2580559223ec3c6ee408dfa15e080/src/afl-common.c#L1302)
+
+By default, we use `DEFAULT_SHMEM_SIZE` which has a size of 8 MB ([Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/include/config.h#L44)). Otherwise, we can set the map size using the `AFL_MAP_SIZE` or `AFL_MAPSIZE` environment variables.
+
+The second important thing we do is initialize the `afl_state_t` and `afl_forkserver_t`:
+
+```
+  afl_state_init(afl, map_size);
+  ...
+  afl_fsrv_init(&afl->fsrv);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L535)
+
+These two functions set a few important variables of note. `afl_state_init` sets the map size to `map_size` as seen below:
+
+```
+afl->shm.map_size = map_size ? map_size : MAP_SIZE;
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/24503fba5fd2580559223ec3c6ee408dfa15e080/src/afl-fuzz-state.c#L86)
+
+`afl_fsrv_init` sets the following variables:
+
+```
+fsrv->out_fd = -1; //set out_fd to -1 by default
+...
+fsrv->use_stdin = true; //by default use stdin
+...
+fsrv->child_pid = -1; //set the child_pid to -1
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L91)
+
+After this, we set `afl->shmem_testcase_mode = 1` ([Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L551)). This will ensure that we always try to use shared memory testcases if possible.
+
+From here, `afl-fuzz` runs through the command line flags and stores them as necessary. A lot of these command line arguments are intended handle AFL’s other operating modes such as QEMU or Frida. However, there is one command line flag we care about: `-o` which represents the output directory:
+
+```
+      case 'o':                                               /* output dir */
+        if (afl->out_dir) { FATAL("Multiple -o options not supported"); }
+        afl->out_dir = optarg;
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L678) Below is the main file setup code:
+
+```
+    if ((afl->tmp_dir = afl->afl_env.afl_tmpdir) != NULL && !afl->in_place_resume)
+...
+  } else {
+    afl->tmp_dir = afl->out_dir;
+  }
+
+  
+  if (!afl->fsrv.out_file) {
+    u32 j = optind + 1;
+    while (argv[j]) {
+      u8 *aa_loc = strstr(argv[j], "@@");
+      if (aa_loc && !afl->fsrv.out_file) {
+        afl->fsrv.use_stdin = 0;
+        default_output = 0;
+        if (afl->file_extension) {
+          afl->fsrv.out_file = alloc_printf("%s/.cur_input.%s", afl->tmp_dir,
+                                            afl->file_extension);
+        } else {
+          afl->fsrv.out_file = alloc_printf("%s/.cur_input", afl->tmp_dir);
+        }
+        detect_file_args(argv + optind + 1, afl->fsrv.out_file,
+                         &afl->fsrv.use_stdin);
+        break;
+      }
+      ++j;
+    }
+  }
+  if (!afl->fsrv.out_file) { setup_stdio_file(afl); }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L1935)
+
+Here, `afl->fsrv.out_file` is the file that inputs will be written to.
+
+In the above code, we do a few things. We firstly go through `argv` and try to find an instance of `@@`. Remember that `@@` will be replaced with the input file if we are passing input as a command line argument. If we find an `@@`, then we do an `alloc_printf` which is functionally an `sprintf` to construct that path that testcases will be written to. We also set `afl->fsrv.use_stdin` to `0` to indicate that we are using command line arguments.
+
+The specific path that is used is `[output dir]/.cur_input`. Note that you can force it to use a directory that is not the output directory by using the `AFL_TMPDIR` environemnt variable ([Source](https://aflplus.plus/docs/env_variables/)). As described in the AFL++ documentation, this is especially useful when you point it to a ramdisk mounted filesystem which will increase performance.
+
+In the case that `@@` is not detected, we then run [`setup_stdio_file`](https://github.com/AFLplusplus/AFLplusplus/blob/24503fba5fd2580559223ec3c6ee408dfa15e080/src/afl-fuzz-init.c#L2132):
+
+```
+void setup_stdio_file(afl_state_t *afl) {
+  if (afl->file_extension) {
+    afl->fsrv.out_file =
+        alloc_printf("%s/.cur_input.%s", afl->tmp_dir, afl->file_extension);
+  } else {
+    afl->fsrv.out_file = alloc_printf("%s/.cur_input", afl->tmp_dir);
+  }
+  unlink(afl->fsrv.out_file);                              /* Ignore errors */
+  afl->fsrv.out_fd =
+      open(afl->fsrv.out_file, O_RDWR | O_CREAT | O_EXCL, DEFAULT_PERMISSION);
+  if (afl->fsrv.out_fd < 0) {
+    PFATAL("Unable to create '%s'", afl->fsrv.out_file);
+  }
+}
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/24503fba5fd2580559223ec3c6ee408dfa15e080/src/afl-fuzz-init.c#L2132)
+
+This is surprisingly similar to the code for command line arguments. However, notice that, as opposed to `@@`, we open the output file. We will see why this is later.
+
+We’re almost ready to launch the fuzzer. Firstly, we have to setup our shared memory descriptors for both the coverage map and the shared memory test cases.
+
+Shared memory testcase setup:
+
+```
+if (afl->shmem_testcase_mode) { setup_testcase_shmem(afl); }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L2008)
+
+As we discussed, `afl->shmem_testcase_mode` is always `1`, so, we run [`setup_testcase_shmem`](https://github.com/AFLplusplus/AFLplusplus/blob/24503fba5fd2580559223ec3c6ee408dfa15e080/src/afl-fuzz-init.c#L2583) which does the following:
+
+```
+void setup_testcase_shmem(afl_state_t *afl) {
+  afl->shm_fuzz = ck_alloc(sizeof(sharedmem_t));
+  // we need to set the non-instrumented mode to not overwrite the SHM_ENV_VAR
+  u8 *map = afl_shm_init(afl->shm_fuzz, MAX_FILE + sizeof(u32), 1);
+  afl->shm_fuzz->shmemfuzz_mode = 1;
+  if (!map) { FATAL("BUG: Zero return from afl_shm_init."); }
+#ifdef USEMMAP
+  setenv(SHM_FUZZ_ENV_VAR, afl->shm_fuzz->g_shm_file_path, 1);
+#else
+  u8 *shm_str = alloc_printf("%d", afl->shm_fuzz->shm_id);
+  setenv(SHM_FUZZ_ENV_VAR, shm_str, 1);
+  ck_free(shm_str);
+#endif
+  afl->fsrv.support_shmem_fuzz = 1;
+  afl->fsrv.shmem_fuzz_len = (u32 *)map;
+  afl->fsrv.shmem_fuzz = map + sizeof(u32);
+}
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/24503fba5fd2580559223ec3c6ee408dfa15e080/src/afl-fuzz-init.c#L2583)
+
+This code does a few important things. Firstly, it creates the actual shared memory region using `afl_shm_init`. Then we set the environment variable `SHM_FUZZ_ENV_VAR`. As we saw, this environment variable is used by instrumentation to setup the share testcase memory region. In addition to setting up environment variables, it also sets the `fsrv` variables. Notice how `afl->fsrv.shmem_fuzz_len = (u32 *)map;`. This is consistent with what we saw earlier we saw that `__afl_fuzz_len = (u32*)map` in the instrumentation setup.
+
+Next, we setup the shared coverage map:
+
+```
+  afl->fsrv.trace_bits =
+      afl_shm_init(&afl->shm, afl->fsrv.map_size, afl->non_instrumented_mode);
+  ...
+    if (map_size <= DEFAULT_SHMEM_SIZE) {
+      afl->fsrv.map_size = DEFAULT_SHMEM_SIZE;  // dummy temporary value
+      char vbuf[16];
+      snprintf(vbuf, sizeof(vbuf), "%u", DEFAULT_SHMEM_SIZE);
+      setenv("AFL_MAP_SIZE", vbuf, 1);
+    }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L2054)
+
+This is fairly similar to how shared testcase memory is setup as we are once again using `afl_shm_init`, Notice how the size is `afl->fsrv.map_size`. Notice how we also get the shared memory size
+
+Once all of this is setup, we are finally ready to start the forkserver. This is done via `afl_fsrv_get_mapsize` which does the following:
+
+```
+u32 afl_fsrv_get_mapsize(afl_forkserver_t *fsrv, char **argv,
+                         volatile u8 *stop_soon_p, u8 debug_child_output) {
+  afl_fsrv_start(fsrv, argv, stop_soon_p, debug_child_output);
+  return fsrv->map_size;
+}
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L1210)
+
+We then call [`afl_fsrv_start`](https://blog.ritsec.club/posts/afl-under-hood/) which does the real work. Most of the beginning of this function is setting up parameters for certain options/operating modes. The real work begins we when we setup the pipes and fork:
+
+```
+if (pipe(st_pipe) || pipe(ctl_pipe)) { PFATAL("pipe() failed"); }
+...
+fsrv->fsrv_pid = fork();
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L582)
+
+From here, we can focus on the child and the parent individually. The code for the child can be seen below:
+
+```
+    if (!fsrv->use_stdin) {
+      dup2(fsrv->dev_null_fd, 0);
+    } else {
+      dup2(fsrv->out_fd, 0);
+      close(fsrv->out_fd);
+    }
+    
+    if (dup2(ctl_pipe[0], FORKSRV_FD) < 0) { PFATAL("dup2() failed"); }
+    if (dup2(st_pipe[1], FORKSRV_FD + 1) < 0) { PFATAL("dup2() failed"); }
+    close(ctl_pipe[0]);
+    close(ctl_pipe[1]);
+    close(st_pipe[0]);
+    close(st_pipe[1]);
+	...
+    /* This should improve performance a bit, since it stops the linker from
+       doing extra work post-fork(). */
+
+    if (!getenv("LD_BIND_LAZY")) { setenv("LD_BIND_NOW", "1", 1); }
+    /* Set sane defaults for sanitizers */
+    set_sanitizer_defaults();
+    fsrv->init_child_func(fsrv, argv);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L654)
+
+The child does not do much. Firstly, if we are using stdin for out input, we replace stdin with a file descriptor pointing to our `out_fd` we set earlier.
+
+Then, we `dup2` to set the read side of the control pipe of `FORKSRV_FD` and the write side of the status pipe to `FORKSRV_FD+1`. This will ensure that the child has access to the correct pipes. We then close all the pipes so that we don’t have any extraneous file descriptors open.
+
+We then run `fsrv->init_child_func(fsrv, argv)` to actually launch the child process.
+
+Let’s move to the parent. The parent is much more complicated. let’s start by reading the code right after the fork:
+
+```
+  close(ctl_pipe[0]);
+  close(st_pipe[1]);
+
+  fsrv->fsrv_ctl_fd = ctl_pipe[1];
+  fsrv->fsrv_st_fd = st_pipe[0];
+
+  /* Wait for the fork server to come up, but don't wait too long. */
+  rlen = 0;
+  if (fsrv->init_tmout) {
+	...
+  } else {
+    rlen = read(fsrv->fsrv_st_fd, &status, 4);
+  }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L715)
+
+We start by closing the read end of the control pipe and the write end of the status pipe as those are exclusively used by the forkserver.
+
+We then set the write end of the control pipe and the read end to forkserver local variables for easier access.
+
+From here, we then read the status variable sent by the forkserver. This status variable is the variable that contains the information about the target binary. As you may recall, this variable was sent by the forkserver [here](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/instrumentation/afl-compiler-rt.o.c#L786).
+
+With this status variable, the forkserver initializes and enables the required options. This can be seen the two snippets below:
+
+```
+      if ((status & FS_OPT_SHDMEM_FUZZ) == FS_OPT_SHDMEM_FUZZ) {
+        if (fsrv->support_shmem_fuzz) {
+          fsrv->use_shmem_fuzz = 1;
+          if (!be_quiet) { ACTF("Using SHARED MEMORY FUZZING feature."); }
+          if ((status & FS_OPT_AUTODICT) == 0 || ignore_autodict) {
+            u32 send_status = (FS_OPT_ENABLED | FS_OPT_SHDMEM_FUZZ);
+            if (write(fsrv->fsrv_ctl_fd, &send_status, 4) != 4) {
+              FATAL("Writing to forkserver failed.");
+            }
+          }
+        } else {
+          FATAL(
+              "Target requested sharedmem fuzzing, but we failed to enable "
+              "it.");
+        }
+      }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L805)
+
+In the above snippet, we deal with enabling shared memory fuzzing. If `fsrv->support_shmem_fuzz != 1` then we cannot support shared memory fuzzing. So, we print out and kill the process. Otherwise, we set `fsrv->use_shmem_fuzz = 1` and we let the child know that shared memory fuzzing is ready to go.
+
+```
+      if ((status & FS_OPT_MAPSIZE) == FS_OPT_MAPSIZE) {
+        u32 tmp_map_size = FS_OPT_GET_MAPSIZE(status);
+        if (!fsrv->map_size) { fsrv->map_size = MAP_SIZE; }
+        fsrv->real_map_size = tmp_map_size;
+        if (tmp_map_size % 64) {
+          tmp_map_size = (((tmp_map_size + 63) >> 6) << 6);
+        }
+        if (!be_quiet) { ACTF("Target map size: %u", fsrv->real_map_size); }
+        if (tmp_map_size > fsrv->map_size) {
+          FATAL(
+              "Target's coverage map size of %u is larger than the one this "
+              "afl++ is set with (%u). Either set AFL_MAP_SIZE=%u and restart"
+              " afl-fuzz, or change MAP_SIZE_POW2 in config.h and recompile "
+              "afl-fuzz",
+              tmp_map_size, fsrv->map_size, tmp_map_size);
+        }
+        fsrv->map_size = tmp_map_size;
+      }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L833)
+
+In the above snippet we deal with the map size. We first get the recieved map size from status and set that to `tmp_map_size`. We then compare that map size to the allocated map size (`fsrv->map_size`). If the recieved map size is bigger than the allocated map size, then we abort because we cannot accomodate such a large map size.
+
+At this point, the forkserver is completely setup and we are ready to investigate the runtime processes of `afl-fuzz`.

@@ -1,0 +1,150 @@
+# `afl-cc`
+
+So, how does coverage instrumentation actually work?
+
+To understand how instrumentation actually works, it is important to understand the compiler wrapper `afl-cc`. `afl-cc` is a C wrapper for the actual compiler (Either `clang` or `gcc`) and sets up all the necessary arguments to perform the instrumentation. The source for `afl-cc` can be found [here](https://github.com/AFLplusplus/AFLplusplus/blob/stable/src/afl-cc.c).
+
+Do note that when you’re using an AFL compiler, you’re likely not using `afl-cc`, but rather `afl-clang-fast`, `afl-clang-lto`, `afl-gcc-fast`, etc. These are actually all symlinks to `afl-cc`. `afl-cc` does all the main handling and differentiates between the compilers.
+
+Anyway, when compiling for AFL, we can use many forms of instrumentation all of which are explained well [here](https://github.com/AFLplusplus/AFLplusplus/blob/stable/docs/env_variables.md#2-settings-for-llvm-and-lto-afl-clang-fast--afl-clang-fast--afl-clang-lto--afl-clang-lto). In this article, we will focus on 2 kinds of instrumentation: PCGUARD instrumentation and LTO instrumentation. PCGUARD intrumentation can be accessed via the `afl-clang-fast` compiler, while LTO instrumentation can be accessed via the `afl-clang-lto` compiler.
+
+Let’s get into the source code of `afl-cc`.
+
+In `afl-cc`, there are three variables we actually care about:
+
+- `compiler_mode`: are we using gcc of LLVM? What kind of LLVM are we using?
+- `instrument_mode`: what kind of instrumentation are we using?
+- `lto_mode`: are we using LTO mode?
+
+In our case, `compiler_mode` is always `LLVM` or `LTO` as demonstrated here:
+
+```
+char *callname = argv[0]
+...
+if (strncmp(callname, "afl-clang-fast", 14) == 0) {
+
+compiler_mode = LLVM;
+
+} else if (strncmp(callname, "afl-clang-lto", 13) == 0 ||
+
+strncmp(callname, "afl-lto", 7) == 0) {
+
+compiler_mode = LTO;
+
+...
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/src/afl-cc.c#L1390)
+
+The above snippet checks `argv[0]` to see if it equals `afl-clang-fast` or `afl-clang-lto` and sets the `compiler_mode` accordingly. Note that because we are focusing on LLVM, these are the only 2 options we will consider. Also note that compiler mode can also be set according to the environment variable `AFL_CC_COMPILER`.
+
+`instrument_mode` is set in 3 places:
+
+For PCGUARD instrumentation, it is set here:
+
+```
+  if (instrument_mode == 0 && compiler_mode < GCC_PLUGIN) {
+...
+      instrument_mode = INSTRUMENT_PCGUARD;
+...
+}
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/src/afl-cc.c#L2171)
+
+LTO instrumentation can be accessed via the `afl-clang-lto` compiler.
+
+```
+  if (compiler_mode == LTO) {
+    if (instrument_mode == 0 || instrument_mode == INSTRUMENT_LTO ||
+        instrument_mode == INSTRUMENT_CFG ||
+        instrument_mode == INSTRUMENT_PCGUARD) {
+      lto_mode = 1;
+      ...
+      instrument_mode = INSTRUMENT_PCGUARD;
+      ...
+    } 
+    ...
+  }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/src/afl-cc.c#L2140)
+
+Notice the `lto_mode = 1`, as we are using `LTO` mode.
+
+Ok, let’s recap. Below are the variables that result :
+
+- `compiler_mode=LLVM`,`instrument_mode=INSTRUMENT_PCGUARD`,`lto_mode=0` - `afl-clang-fast`
+- `compiler_mode=LTO`,`instrument_mode=INSTRUMENT_PCGUARD`,`lto_mode=1` - `afl-clang-lto`
+
+With these variables in mind, we can now move to the compilation step. To understand this, we must visit [`edit_params`](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/src/afl-cc.c#L380).
+
+In `edit_params`, we set the compiler flags for `clang`.
+
+For PCGUARD the following flags are set:
+
+```
+      if (instrument_mode == INSTRUMENT_PCGUARD) {
+		...
+    #if LLVM_MAJOR >= 11                            /* use new pass manager */
+      #if LLVM_MAJOR < 16
+          cc_params[cc_par_cnt++] = "-fexperimental-new-pass-manager";
+      #endif
+          cc_params[cc_par_cnt++] = alloc_printf(
+              "-fpass-plugin=%s/SanitizerCoveragePCGUARD.so", obj_path);
+    #else
+          cc_params[cc_par_cnt++] = "-Xclang";
+          cc_params[cc_par_cnt++] = "-load";
+          cc_params[cc_par_cnt++] = "-Xclang";
+          cc_params[cc_par_cnt++] =
+              alloc_printf("%s/SanitizerCoveragePCGUARD.so", obj_path);
+    #endif
+        }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/src/afl-cc.c#L702)
+
+For LTO the following flags are set:
+
+```
+   if (lto_mode && !have_c) {
+     ...
+#if defined(AFL_CLANG_LDPATH) && LLVM_MAJOR >= 15
+      // The NewPM implementation only works fully since LLVM 15.
+      cc_params[cc_par_cnt++] = alloc_printf(
+          "-Wl,--load-pass-plugin=%s/SanitizerCoverageLTO.so", obj_path);
+#elif defined(AFL_CLANG_LDPATH) && LLVM_MAJOR >= 13
+      cc_params[cc_par_cnt++] = "-Wl,--lto-legacy-pass-manager";
+      cc_params[cc_par_cnt++] =
+          alloc_printf("-Wl,-mllvm=-load=%s/SanitizerCoverageLTO.so", obj_path);
+#else
+      cc_params[cc_par_cnt++] = "-fno-experimental-new-pass-manager";
+      cc_params[cc_par_cnt++] =
+          alloc_printf("-Wl,-mllvm=-load=%s/SanitizerCoverageLTO.so", obj_path);
+#endif
+	...
+}
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/src/afl-cc.c#L649)
+
+Both PCGUARD and LTO load something called an LLVM pass. As I understand, these passes are an opportunity for LLVM (Or, in this case, an out-of-tree plugin) to manipulate the LLVM IR before it is passed to the LLVM backend.
+
+LLVM passes are explained pretty well [here](https://blog.llvm.org/posts/2021-03-26-the-new-pass-manager/) and [here](https://github.com/banach-space/llvm-tutor)
+
+In the case of PCGUARD, the pass manager is `SanitizerCoveragePCGUARD.so`, and in the case of LTO, the pass manager is `SanitizerCoverageLTO.so`.
+
+In addition to our passes, we also include an object file:
+
+```
+if (!shared_linking && !partial_linking)
+          cc_params[cc_par_cnt++] =
+              alloc_printf("%s/afl-compiler-rt.o", obj_path);
+        if (lto_mode)
+          cc_params[cc_par_cnt++] =
+              alloc_printf("%s/afl-llvm-rt-lto.o", obj_path);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/src/afl-cc.c#L1235)
+
+Notice that if we are using `lto_mode`, we also include `afl-llvm-rt-lto.o`.

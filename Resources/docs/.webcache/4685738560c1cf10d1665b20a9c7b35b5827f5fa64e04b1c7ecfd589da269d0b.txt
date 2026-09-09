@@ -1,0 +1,233 @@
+## Table of contents
+
+## Introduction
+
+A few years ago, I began researching Windows antivirus engines. Among the targets I examined at the time, Bitdefender stood out because its heavily obfuscated, modular engine and custom, VM-like loading mechanism presented an interesting technical challenge for reverse engineering, dynamic analysis, and fuzzing. What began as an attempt to understand its internals gradually evolved into a larger engineering effort: running the engine and its supporting modules on Linux, building a standalone harness around the scanning API, and instrumenting the engine for vulnerability research and fuzzing. The work eventually uncovered vulnerabilities in several PE unpacker components. After leaving the project dormant for some time, I recently resumed it, reported the findings to Bitdefender through [Bugcrowd](https://www.bugcrowd.com/), and began documenting the research.
+
+This blog post is the first in a planned four-part series. In this first part, I describe the work required to run and instrument Bitdefender's core antivirus engine on Linux and obtain the granular control needed for instrumentation and vulnerability research. I refer to this component as `bdcore` throughout the post.
+
+Historically, antivirus engines have been attractive targets for vulnerability research because they parse large volumes of untrusted data across many complex file formats. This creates a broad attack surface and makes them well suited to techniques such as fuzzing. The field already has substantial prior work, including the book *The Antivirus Hacker's Handbook* by Joxean Koret and Elias Bachaalany, the Black Hat 2018 talk *Windows Offender: Reverse Engineering Windows Defender's Antivirus Emulator* by Alexei Bulazel, and *A Critical Analysis of Sophos Antivirus* by Tavis Ormandy.
+
+One particularly relevant project is Ormandy's [`loadlibrary`](https://github.com/taviso/loadlibrary), a framework for loading and executing selected Windows DLLs on Linux using a PE loader and reimplementations of the Windows APIs they require. Ormandy later used this approach to research `mpengine.dll`, Microsoft Defender's antivirus engine, in work that resulted in [CVE-2021-31985](https://project-zero.issues.chromium.org/issues/42451305). `loadlibrary` also became the foundation of the Linux harness described in this post, so I will return to it later.
+
+## The target
+
+For this project, I used the engine distributed with Bitdefender Total Security for Windows. At the time, Bitdefender offered a 30-day trial, so acquiring the target was straightforward: I installed the product in a virtual machine and used Sysinternals Process Explorer and Process Monitor to identify the components involved in scanning. The installation spawned several `bdservicehost.exe` processes running as SYSTEM. One of them hosted the Threat Scanner and had `bdcore.dll` loaded into its address space.
+
+![Process Explorer showing bdcore.dll loaded inside a bdservicehost.exe process running as SYSTEM](https://stackbits.eu/img/procexp_bdservicehost.png)
+
+`bdcore.dll` is the central component of Bitdefender Threat Scanner. It bootstraps the engine and loads a large collection of plugins and supporting modules at runtime. These components are distributed in custom, obfuscated formats, including files with `.xmd`, `.cvd`, `.ivd`, and `.rvd` extensions. Reconstructing this loading process required substantial reverse engineering. This post does not attempt to document the engine's internals in detail; instead, it focuses on the components involved in loading and instrumenting the engine on Linux with `loadlibrary`, how those components interact, and the roles they play in the process.
+
+To understand this process at a high level, it is useful to start with the entry points through which the engine is initialized and controlled. `bdcore.dll` exposes several of these, including `CoreInit4` and `CoreSet`.
+
+Engine initialization begins when `CoreInit4` loads the `xlmrd.cvd` and `xlmrd.ivd` components. XLMRD deobfuscates plugin modules, maps them into memory, constructs their export tables at runtime, and returns module handles containing information such as the base address, image size, and export-table pointer. XLMRD therefore forms the foundation of the custom module-loading system and provides Windows-like functions such as `LoadModule` and `GetProcAddress`.
+
+The next plugin in the chain is `orice.rvd`, which initiates the loading of the remaining engine plugins.
+
+Once initialization is complete, a scan is submitted through the `CoreSet` entry point exported by `bdcore.dll`. From there, execution reaches `orice.rvd`, which performs the initial file-handling and object-creation operations before dispatching the input through the engine's scanning pipeline.
+
+The engine is composed of many plugins and supporting modules responsible for scanning different file formats. The project targeted several of these formats, including Windows shortcut (LNK) files (`lnk.xmd`) and PDF files (`pdf.xmd`). The UPX campaign described later is the example chosen for this post, so the following overview traces the PE-processing path relevant to that campaign, from parsing and unpacking to code emulation.
+
+When an input is recognized as a PE file, `cevakrnl.xmd` handles its analysis and routes suspected packed executables to packer-specific plugins. These modules recognize and process executables protected with packers such as UPX and ASProtect by performing operations that may include parsing, deobfuscation or decryption, relocation recovery, and PE reconstruction. Some paths eventually reach `ceva_emu.cvd`, which emulates executable code as part of the analysis.
+
+## Harnessing the engine
+
+Although the scan path spans many internal modules, the interface required by the harness is relatively small. The harness first calls `CoreInit4` once to initialize the global engine state. For each scan, it then creates a fresh instance through `CoreNewInstance` and dispatches the `SCAN` command through `CoreSet`:
+
+``` c
+CoreSet(core_instance, SCAN, 0x0, file_path);
+```
+
+The narrow API surface made it practical to exercise the engine independently of the rest of the Bitdefender product. I still needed to choose an execution environment that would provide the instrumentation and observability required for reverse engineering, debugging, and eventually fuzzing. This left two practical options: reproduce enough of the engine's runtime on Linux, or keep it on Windows and instrument it in its native environment.
+
+I experimented with both approaches, including a Windows setup based on DynamoRIO. The deciding factor, however, was not raw fuzzing throughput but the degree of control I could obtain over the target. A Linux-hosted harness would let me control module loading and API resolution, instrument arbitrary points inside the engine, and use familiar debugging and profiling tools without depending on the rest of the Bitdefender product. In addition, Linux offered a mature ecosystem for fuzzing and crash reproduction, which would become useful once the harness was operational. This justified the additional work required to reproduce the engine's runtime on Linux.
+
+Although the engine consists of many modules, its custom loading mechanism assembles them into a single in-process runtime. From the harness's perspective, `bdcore.dll` acts as the bootstrap component for that runtime, which made it a suitable candidate for experimenting with `loadlibrary`.
+
+[`loadlibrary`](https://github.com/taviso/loadlibrary) is designed to load and execute relatively self-contained Windows DLLs on Linux. In this context, self-contained means that the target does not depend on other Windows DLLs being loaded alongside it; the operating-system APIs it imports are instead supplied by a compatibility layer. This does not prevent `bdcore.dll` from loading its own proprietary plugin modules through the engine's custom loader. The framework's `peloader` component, derived from `ndiswrapper`, maps the PE image into memory, applies relocations, and resolves its imports. It exposes functions such as `pe_load_library` and `link_pe_images` for these operations.
+
+Mapping and linking `bdcore.dll` was only the first step. The compatibility layer also had to provide enough of the Windows runtime behavior exercised by the engine, including filesystem and path handling, heap and virtual-memory operations, synchronization and thread-local storage, environment and system information, registry access, and time-related APIs. Some imports required functional Linux-backed implementations, while narrow stubs were sufficient for others whose full semantics were not needed along the paths under analysis.
+
+The following simplified example maps and links `bdcore.dll`, then invokes its entry point with the process-attach notification:
+
+``` c
+struct pe_image module = {
+    .entry = NULL,
+    .name = "engine/bdcore.dll",
+};
+
+if (pe_load_library(module.name, &module.image, &module.size) == false) {
+    fprintf(stderr, "Could not load the target DLL\n");
+    return EXIT_FAILURE;
+}
+
+link_pe_images(&module, 1);
+
+if (module.entry == NULL ||
+    module.entry(module.image, DLL_PROCESS_ATTACH, NULL) == false) {
+    fprintf(stderr, "DLL process attachment failed\n");
+    return EXIT_FAILURE;
+}
+```
+
+Once process attachment succeeds, the harness can use `get_export` to resolve the small set of exports needed to initialize the engine, create a scan instance, and submit a file:
+
+``` c
+int (WINAPI *CoreInit4)(const char *root_dir, const char *plugin_dir);
+void *(WINAPI *CoreNewInstance)(void);
+int (WINAPI *CoreSet)(void *instance, unsigned int command,
+                      void *argument, void *context);
+
+[...]
+
+if (get_export("CoreInit4", &CoreInit4) == -1 ||
+    get_export("CoreNewInstance", &CoreNewInstance) == -1 ||
+    get_export("CoreSet", &CoreSet) == -1) {
+    fprintf(stderr, "Could not resolve the required engine exports\n");
+    return EXIT_FAILURE;
+}
+
+[...]
+
+if (CoreInit4(root_dir, plugin_dir) != 0) {
+    fprintf(stderr, "Could not initialize the engine\n");
+    return EXIT_FAILURE;
+}
+
+void *core_instance = CoreNewInstance();
+if (core_instance == NULL) {
+    fprintf(stderr, "Could not create a scan instance\n");
+    return EXIT_FAILURE;
+}
+
+[...]
+
+CoreSet(core_instance, SCAN, 0x0, file_path);
+```
+
+The original `loadlibrary` implementation supported 32-bit x86 targets, while the Bitdefender build available to me was 64-bit. I therefore added x86-64 support in [this branch](https://github.com/taviso/loadlibrary/tree/x86_64).
+
+At this point, I was able to initialize `bdcore` and perform an antivirus scan on Linux:
+
+``` bash
+$ ./bdclient_x64 eicar.com
+main(): Initializing the BitDefender core...
+main(): BitDefender core initialized!
+main(): Creating a core instance...
+main(): Core instance created successfully!
+main(): *** Running a scan... ***
+MyScanCallback(): Threat Detected! C:\dummy/eicar.com (C:\dummy/eicar.com) => EICAR-Test-File (not a virus)
+main(): Deleting the core instance...
+main(): Core instance delete successfully.
+```
+
+The complete harness can be found [here](https://github.com/cube0x8/BDClient).
+
+The engine was no longer an opaque component tied to the original Windows product. It was running as a standalone Linux process that I could inspect with GDB, profile, instrument at dynamically resolved addresses, and adapt through the compatibility layer.
+
+This setup also allowed me to run scans under [Valgrind](https://valgrind.org/), a tool I rely on heavily during vulnerability research. During the fuzzing campaigns, I frequently ran [`bddeamon`](https://github.com/cube0x8/BDClient/blob/main/bddeamon.c) under Valgrind. `bddeamon` is another `loadlibrary`-based wrapper that keeps the engine initialized while accepting scan requests. This allowed me to replay fuzzer-generated corpus files through the instrumented process without reinitializing the entire antivirus engine for every file. These scans exposed memory-related errors that led to the discovery of bugs. Valgrind will therefore reappear throughout this series, particularly during crash reproduction and investigation.
+
+With the harness and its supporting analysis workflow in place, fuzzing was the natural next step. The same environment would also remain the foundation for the reverse engineering and vulnerability analysis discussed throughout this series.
+
+## Fuzzing the Bitdefender engine
+
+When setting up a fuzzing campaign for a target like this, the first constraint to account for is engine initialization. Each fresh process must load `bdcore.dll` and its plugins and construct the global engine state before it can scan a single input. Repeating this work for every test case would make the campaign prohibitively slow.
+
+For example, this profile was collected while scanning a 70 KB UPX-packed PE file:
+
+``` bash
+$ ./bdprofiler_x64 --root-system-dir . ./corpus/upx_USBDeview.exe
+BDCore timing profile
+Input: ./corpus/upx_USBDeview.exe
+Module load/link:                0.246 ms
+Core initialization:          3443.295 ms
+Total engine initialization:  3443.541 ms
+Core instance creation:          0.015 ms
+File scan:                     155.609 ms
+```
+
+In this run, initializing the engine took more than 22 times as long as scanning the input, while creating the per-scan core instance was effectively negligible.
+
+This is exactly the kind of problem **persistent fuzzing** is meant to solve. For the UPX campaign described here, the initialization phase should run once, while the fuzzing loop should repeatedly scan mutated PE files through the target unpacker path.
+
+If you have experience with fuzzing, the concept that may come to mind here is **snapshot fuzzing**, since it also avoids repeating expensive initialization work for every test case. At this stage, however, I was not doing snapshot fuzzing yet. The first idea was simpler: initialize the engine once, keep it loaded across iterations, and repeatedly invoke the scanning path with mutated inputs. This led me to experiment with persistent fuzzing, with honggfuzz as the first candidate. Snapshot fuzzing came later, once I had to deal with scan execution bottlenecks and state-related problems between fuzzing iterations.
+
+## Persistent fuzzing with Honggfuzz (and its limits)
+
+Honggfuzz supports persistent targets through a libFuzzer-compatible entry point. I adapted the `loadlibrary`-based harness to expose this interface, allowing `bdcore.dll` to be loaded, linked, and initialized only once. Each fuzzing iteration then created a fresh core instance, submitted the mutated input through the `CoreSet`-based scanning path, and deleted the instance after the scan.
+
+Once the standalone Linux harness was operational (available [here](https://github.com/cube0x8/BDClient/blob/main/fuzzers/honggfuzz_target/persistent-bdclient.cpp)), adapting it to this persistent execution model required relatively little additional work. I could then assemble a corpus of PE files that exercised the target path and run the first campaign using honggfuzz's BTS-based branch coverage.
+
+I selected `upx.xmd` as one of the initial targets. Because UPX is widely used, assembling a corpus of UPX-packed PE32 files was relatively easy. Before starting the campaign, however, I needed to verify that Bitdefender actually routed those files through its UPX unpacker. For this purpose, I used [`intercept`](https://github.com/cube0x8/BDClient/tree/main/intercept), a module in the modified `loadlibrary` framework that allows trampolines to be installed at selected addresses in the loaded target. I placed lightweight trampolines at two relevant locations: the unpacker entry point and a second location reached after successful UPX recognition. Running the corpus in batch mode then showed which seeds reached each stage.
+
+``` bash
+$ ./honggfuzz_target \
+    --root-system-dir . \
+    --trampoline-file trampolines/upx.txt \
+    --batch ./corpus/upx/*
+[...]
+Total files: 123
+Scan failures: 0
+fb upx.xmd:+0x1510: 119
+  ./corpus/upx/upx_ADExplorer.exe
+  ./corpus/upx/upx_ADInsight.exe
+[...]
+fb upx.xmd:+0xb00: 119
+  ./corpus/upx/upx_ADExplorer.exe
+  ./corpus/upx/upx_ADInsight.exe
+[...]
+```
+
+Here, `fb` identifies a feedback-only trampoline, and each counter represents the number of input files that reached that location at least once, rather than the total number of trampoline invocations. Of the 123 seeds, 119, approximately 96.7%, reached the UPX unpacker dispatcher at `upx.xmd:+0x1510`. The same 119 files reached `upx.xmd:+0xb00`, a location reached after successful UPX recognition, and none of the scans failed.
+
+This left me with 119 UPX seeds suitable for the campaign. After retaining only files smaller than 100 KB, the working corpus contained 65 inputs:
+
+![honggfuzz fuzzing campaign running](https://stackbits.eu/img/honggfuzz_screenshot_100k.png)
+
+The screenshot exposes the first problem: throughput. Honggfuzz was processing approximately 90 inputs per second, with an average of 104, despite using eight CPU cores. For a campaign targeting such a deep execution path, this was too slow.
+
+I used `intercept` to install lightweight profiling hooks and identify where each scan was spending its time. The cost was distributed across general scan handlers and later analysis stages, including code emulation. I hooked and bypassed operations that were outside the UPX path whenever this could be done safely. Skipping `ceva_emu.cvd` helped only marginally, however, because emulation accounted for approximately 7% of the total scan time.
+
+Reducing the execution time further required stopping the scan immediately after UPX unpacking. For this purpose, I configured an `intercept` trampoline as an early-exit (`ee`) boundary, returning control to the harness before the remaining scan stages were executed. This avoided a substantial amount of irrelevant work, but it introduced a different problem: leaving the scan early also skipped important end-of-scan **state-management** operations. Because the engine remained loaded across iterations, the resulting state inconsistencies eventually reduced the stability of the persistent harness.
+
+However, throughput was not the only issue. After a few hundred thousand fuzzing iterations, I used the same batch-mode reachability test to examine the 1,048 inputs retained in honggfuzz's queue:
+
+``` bash
+[...]
+Total files: 1048
+Scan failures: 0
+fb upx.xmd:+0x1510: 67
+  ./queue/0390ddad6fd611c2880a41de5004810f.00000400.honggfuzz.cov
+  ./queue/03a49e8b49c4649eff5278bfed678abb.00000418.honggfuzz.cov
+  [...]
+fb upx.xmd:+0xb00: 9
+  ./queue/17a6b50c2d80887fc11b828f6aed0745.00008000.honggfuzz.cov
+  ./queue/369c3de9749d245827bccc92a28e751f.00017978.honggfuzz.cov
+  [...]
+```
+
+Only 67 inputs, approximately 6.4% of the queue, still reached the UPX unpacker dispatcher, and just 9, less than 1%, were successfully recognized as UPX-packed files. This exposed two related but distinct problems.
+
+First, honggfuzz's generic `mangle` mutator could modify structural parts of the PE files that the engine needed in order to follow the intended path.
+
+Second, honggfuzz was collecting BTS coverage across the entire engine. An input that left the UPX path could therefore still be retained if it discovered new coverage in an unrelated parser or analysis module.
+
+To address the feedback side of the problem, I added module-based coverage filtering to honggfuzz's BTS implementation [here](https://github.com/cube0x8/honggfuzz/commit/08b96f4204da263c13346d32ad58bac8b898d18a). With this new modification, the `BDClient` harness published the runtime address ranges of Bitdefender's dynamically loaded modules through shared memory, while honggfuzz used a module allowlist to decide which branch edges could contribute coverage feedback. For the UPX campaign, this allowed the fuzzer to reward edges whose source or destination belonged to `upx.xmd`, while ignoring novelty from unrelated parts of the engine.
+
+This made the feedback more relevant, but it did not improve throughput. BTS still had to collect and process the branch records, and the filter added a module-range lookup for each edge. Coverage filtering therefore introduced additional overhead of its own, and the overall throughput remained low even though it reduced wasted corpus growth.
+
+The input-generation side of the problem, instead, required a different kind of solution: a format-aware mutator. PE files contain distinct regions, such as headers, directories, section contents, and overlay data, so the mutator needed to parse the file and apply targeted mutations to the region of interest while preserving enough of the surrounding structure to keep the target path reachable. This led me to create [PEMutator](https://github.com/cube0x8/PEMutator), which is outside the scope of this post but may deserve a separate write-up.
+
+With the custom PE mutator, I could restrict mutations to the regions relevant to the target path. For the UPX unpacker, for example, I configured it to mutate selected instruction sequences at offsets inspected by `upx.xmd`, while preserving enough of the surrounding PE and instruction structure to keep the unpacker reachable.
+
+Coverage filtering and format-aware mutation therefore addressed different sides of the same problem: the filter restricted what the fuzzer considered interesting, while the mutator increased the probability that generated inputs would continue to reach the intended target.
+
+## Conclusion and next steps
+
+The main objective of this first phase was achieved: `bdcore.dll` and its supporting modules could run inside a standalone Linux process, independently of the rest of the Bitdefender product. The resulting environment provided control over module loading, the Windows API compatibility layer, runtime instrumentation, and the scanning lifecycle, making it suitable for debugging, reverse engineering, and vulnerability research.
+
+The honggfuzz campaign, however, exposed practical limitations in both mutation and feedback, while the nature of the target kept throughput very low. Format-aware mutation with `PEMutator` and module-based coverage filtering improved the focus of the campaign by keeping generated inputs on the intended path and preventing unrelated engine coverage from influencing corpus selection. The coverage filter came with additional processing overhead, while using early exits to avoid unnecessary scan stages introduced instability by skipping state-management operations.
+
+At that point, it made more sense to treat the engine for what it actually was: a heavily stateful target. Rather than trying to reproduce its cleanup logic manually, I moved to a snapshot-based approach that could restore a known-good state after each test case while also narrowing each iteration to the Bitdefender plugin I wanted to test.
+
+That is what I will cover in [Part 2 of this series](https://stackbits.eu/blog/vulnerability_research_bitdefender_part_2.html).

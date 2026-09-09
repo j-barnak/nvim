@@ -1,0 +1,267 @@
+# LLVM Pass Plugins
+
+With the compiler options in mind, let’s take a brief look at the actual pass plugins themselves. However, before we do this, we need to understand the LLVM architecture at a high-level.
+
+The way LLVM works is described below:
+
+![](https://blog.ritsec.club/posts/afl-under-hood/images/LLVM.png)
+
+[Source](https://medium.com/@JMangia/swift-c-llvm-compiler-optimization-842012568bb7)
+
+Basically, LLVM takes the frontend language and coverts it to the LLVM IR. This LLVM IR is optimized and sent through passes (Including ours). Once the LLVM passes are complete, the IR is converted to the backend assembly language.
+
+Because of this, we will see that our plugins are operating on the LLVM IR instead of assembly.
+
+**Take everything I say from here forward with a pound of salt, as I am not familiar with LLVM. If you have a correction or improvement, absolutely feel free to email me. I would love to hear it.**
+
+Let’s start with the PCGUARD plugin: `SanitizerCoveragePCGUARD.so`. The source of this plugin can be found [here](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc). There’s a lot here, so let’s try to focus on the important stuff.
+
+The pass plugin starts at [`instrumentModule`](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L339) which takes in an LLVM module. As I understand, an LLVM module is the program (Or maybe an object file?).
+
+One of the first things we do is set up a global variable for `__afl_area_ptr`:
+
+```
+  AFLMapPtr =
+      new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
+                         GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L398)
+
+Notice that `AFLMapPtr` is instantiated with `GlobalValue::ExternalLinkage` (i.e. an `extern` variable). This is because it is actually declared in afl-compiler-rt.o.c. We will continually access this value for instrumentation.
+
+From here, we add necessary functions, and then we enter [`instrumentFunction`](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L622) for every function:
+
+```
+  for (auto &F : M)
+    instrumentFunction(F, DTCallback, PDTCallback);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L471)
+
+In order to understand the next few lines, it is important to under LLVM blocks. In LLVM, each function is split into “blocks”. According to the LLVM documentation, a block (Represented as the type `BasicBlock`) is a set of continuous IR instructions that terminate on a “terminator instruction” (i.e. a branch). Once a block is entered, it will not exit at any pointer other than the terminator instruction ([Source](https://llvm.org/doxygen/classllvm_1_1BasicBlock.html#details)).
+
+With this in mind, we can understand the first few lines in `instrumentFunction`
+
+```
+ for (auto &BB : F) {
+
+    if (shouldInstrumentBlock(F, &BB, DT, PDT, Options))
+      BlocksToInstrument.push_back(&BB);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L660)
+
+In the above lines, we iterate through each `BasicBlock` in our function and we call `shouldInstrumentBlock`. If we should instrument that block, then we add it to a vector called `BlocksToInstrument` (If you’re not familiar with C++, a vector is very similar to an ArrayList from Java).
+
+Once we have added all our blocks to `BlocksToInstrument`, we then perform instrumentation on them with [`InjectCoverage`](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L803):
+
+```
+InjectCoverage(F, BlocksToInstrument, IsLeafFunc);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L699)
+
+`InjectCoverage` is where the magic happens.
+
+In `InjectCoverage`, we deal with 2 edge cases: calls instructions and select instructions. I’m not going to explain the edge cases here, but for calls, we insert special instrumentation if the call is to a function called `__afl_coverage_interesting` ([Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L900)). Selects are instructions like ternary operators ([Source](https://llvm.org/docs/LangRef.html#select-instruction)), and they induce some special instrumentation.
+
+Beside those edge cases, `InjectCoverage` is not too bad. One very important thing that we do is set up “Section Arrays”. This is done in [`CreateFunctionLocalArrays`](https://github.com/AFLplusplus/AFLplusplus/blob/4f2d9eeaaa6b702ef28eb883f9000321eaf1fe9b/instrumentation/SanitizerCoverageLTO.so.cc#L1535) which is called like so:
+
+```
+CreateFunctionLocalArrays(F, AllBlocks, first + cnt_cov + cnt_sel_inc);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L876)
+
+So, what are these Section Arrays? When we were discussing PCGUARD instrumentation, we talked about how the index into the coverage map (`__afl_area_ptr`) was determined at runtime. More specifically, we get the index from some `DAT_*` variable. Those `DAT_*` variables are actually in our Section Array. So, by creating these Section Arrays, we are actually creating space for those `DAT_*` variables. This can be seen in the function:
+
+```
+const char SanCovGuardsSectionName[] = "sancov_guards";
+...
+void ModuleSanitizerCoverageAFL::CreateFunctionLocalArrays(
+    Function &F, ArrayRef<BasicBlock *> AllBlocks, uint32_t special) {
+
+  if (Options.TracePCGuard)
+    FunctionGuardArray = CreateFunctionLocalArrayInSection(
+        AllBlocks.size() + special, F, Int32Ty, SanCovGuardsSectionName);
+...
+}
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L784)
+
+As can be seen, we create an `int` array of size `AllBlocks.size()` in the section `sancov_guards`.
+
+We can actually see the result of this in Ghidra where we have a section called `sancov_guards`:
+
+![](https://blog.ritsec.club/posts/afl-under-hood/images/sancov_guards.png)
+
+Once this array is created, we can actually insert our instrumentation. This is done in [`InjectCoverageAtBlock`](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L1313). This function is called below:
+
+```
+  if (!AllBlocks.empty())
+    for (size_t i = 0, N = AllBlocks.size(); i < N; i++)
+      InjectCoverageAtBlock(F, *AllBlocks[i], i, IsLeafFunc);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L1150)
+
+This function is where the magic really happens. To understand the instrumentation inserted, let’s take a look at the code:
+
+```
+	BasicBlock::iterator IP = BB.getFirstInsertionPt();
+	...
+	IRBuilder<> IRB(&*IP);
+	...
+    Value *GuardPtr = IRB.CreateIntToPtr(
+        IRB.CreateAdd(IRB.CreatePointerCast(FunctionGuardArray, IntptrTy),
+                      ConstantInt::get(IntptrTy, Idx * 4)),
+        Int32PtrTy);
+
+    LoadInst *CurLoc = IRB.CreateLoad(IRB.getInt32Ty(), GuardPtr);
+    ModuleSanitizerCoverageAFL::SetNoSanitizeMetadata(CurLoc);
+
+    /* Load SHM pointer */
+
+    LoadInst *MapPtr = IRB.CreateLoad(PointerType::get(Int8Ty, 0), AFLMapPtr);
+    ModuleSanitizerCoverageAFL::SetNoSanitizeMetadata(MapPtr);
+
+    /* Load counter for CurLoc */
+
+    Value *MapPtrIdx = IRB.CreateGEP(Int8Ty, MapPtr, CurLoc);
+
+    if (use_threadsafe_counters) {
+	    ...//not relevant
+    } else {
+      LoadInst *Counter = IRB.CreateLoad(IRB.getInt8Ty(), MapPtrIdx);
+      ModuleSanitizerCoverageAFL::SetNoSanitizeMetadata(Counter)
+      /* Update bitmap */
+      Value *Incr = IRB.CreateAdd(Counter, One);
+      if (skip_nozero == NULL) {
+        auto cf = IRB.CreateICmpEQ(Incr, Zero);
+        auto carry = IRB.CreateZExt(cf, Int8Ty);
+        Incr = IRB.CreateAdd(Incr, carry);
+      }
+      StoreInst *StoreCtx = IRB.CreateStore(Incr, MapPtrIdx);
+      ModuleSanitizerCoverageAFL::SetNoSanitizeMetadata(StoreCtx);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L1330)
+
+Ok. The first thing is `GuardPtr`. `GuardPtr` is actually a pointer to the `DAT_*` variable. It is calculated as `(int*)FunctionGuardArray+Idx` where `Idx` is the index of `BB` in `AllBlocks`.
+
+With this, we then dereference `GuardPtr` to get `CurLoc`. This is the actual value of the `DAT_*` variable. This is going to be our index into `__afl_area_ptr`.
+
+After this, we get `__afl_area_ptr` and store it into `MapPtr`.
+
+We then get `MapPtrIdx` by summing `CurLoc` and `MapPtr`. In C, this is functionally `char* MapPtrIdx = (char*)MapPtr + CurLoc`
+
+From here, we then load the value from `MapPtrIdx` and add `1`. If we don’t want `0`, then we add `1` if `*MapPtrIdx+1 == 0`. This is equivalent to the `adc dl, 0x1` we saw in the assembly dump in the Coverage Instrumentation section.
+
+We then store the new coverage value into `MapPtrIdx`.
+
+In C, this roughly comes out to be:
+
+```
+int* FunctionGuardArray = [some offset into sancov_guards];
+char* MapPtr = __afl_area_ptr;
+int* GuardPtr = FunctionGuardArray+Idx;
+int CurLoc = *GuardPtr;
+char* MapPtrIdx = MapPtr[CurLoc];
+char Counter = *MapPtrIdx;
+if(!++Counter){
+	Counter = 1;
+}
+*MapPtrIdx = Counter;
+```
+
+After we insert all our instrumentation, we once again return to `instrumentModule` where we have to do one more thing: insert init functions. These init functions are some of what we find in `.init_array`. This can be seen below:
+
+```
+const char SanCovModuleCtorTracePcGuardName[] =
+    "sancov.module_ctor_trace_pc_guard";
+...
+const char SanCovTracePCGuardInitName[] = "__sanitizer_cov_trace_pc_guard_init";
+...
+const char SanCovGuardsSectionName[] = "sancov_guards";
+...
+  if (FunctionGuardArray)
+    Ctor = CreateInitCallsForSections(M, SanCovModuleCtorTracePcGuardName,
+                                      SanCovTracePCGuardInitName, Int32PtrTy,
+                                      SanCovGuardsSectionName);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L476)
+
+The above function creates an entry in `.init_array` pointing to `sancov.module_ctor_trace_pc_guard`. This constructor is really just a trampoline to `__sanitizer_cov_trace_pc_guard_init` which initializes `sancov_guards`. The parameters for `__sanitizer_cov_trace_pc_guard_init` are the start and end of `sancov_guards` as can be seen below:
+
+```
+  std::tie(CtorFunc, std::ignore) = createSanitizerCtorAndInitFunctions(
+      M, CtorName, InitFunctionName, {Ty, Ty}, {SecStart, SecEnd});
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoveragePCGUARD.so.cc#L306)
+
+This can also be seen in Ghidra:
+
+`init_array` entry:
+
+![](https://blog.ritsec.club/posts/afl-under-hood/images/pcguard_init_array_cov_inst.png)
+
+`__sanitizer_cov_trace_pc_guard_init` call:
+
+![](https://blog.ritsec.club/posts/afl-under-hood/images/pcguard_init_call.png)
+
+And that concludes the PCGUARD instrumentation!
+
+The LTO plugin is surprisingly similar at its core. The only real 2 differences are that instead of loading from `GuardPtr`, we use a global variable as our `CurLoc`, and we use a different init function
+
+This can be seen in the source of [`InjectCoverageAtBlock`](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/instrumentation/SanitizerCoverageLTO.so.cc#L1614)
+
+```
+    ++afl_global_id;
+   ...
+    ConstantInt *CurLoc = ConstantInt::get(Int32Tyi, afl_global_id);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/instrumentation/SanitizerCoverageLTO.so.cc#L1646)
+
+In this case, `afl_global_id` is our index and is incremented each time we insert instrumentation.
+
+In addition, the init functions are different. Specifically, instead of using `sancov.module_ctor_trace_pc_guard`, we use `__afl_auto_init_globals`. In fact, we actually construct that function in IR as seen below:
+
+```
+    Function *f = M.getFunction("__afl_auto_init_globals");
+
+	...
+
+    BasicBlock *bb = &f->getEntryBlock();
+	...
+    BasicBlock::iterator IP = bb->getFirstInsertionPt();
+    IRBuilder<>          IRB(&(*IP));
+	...
+    if (getenv("AFL_LLVM_LTO_DONTWRITEID") == NULL) {
+
+      uint32_t write_loc = afl_global_id;
+
+      write_loc = (((afl_global_id + 8) >> 3) << 3);
+
+      GlobalVariable *AFLFinalLoc =
+          new GlobalVariable(M, Int32Tyi, true, GlobalValue::ExternalLinkage, 0,
+                             "__afl_final_loc");
+      ConstantInt *const_loc = ConstantInt::get(Int32Tyi, write_loc);
+      StoreInst   *StoreFinalLoc = IRB.CreateStore(const_loc, AFLFinalLoc);
+      ModuleSanitizerCoverageLTO::SetNoSanitizeMetadata(StoreFinalLoc);
+    }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/2ff0ff7a903c57f9df5ed1e97370c187ec45a31e/instrumentation/SanitizerCoverageLTO.so.cc#L1009)
+
+In the above code, we essentially insert IR code to set `__afl_final_loc = afl_global_id`.
+
+This can also be seen in Ghidra in a LTO binary:
+
+![](https://blog.ritsec.club/posts/afl-under-hood/images/auto_init_globals_final_loc.png)
+
+And that concludes the instrumentation! Once all of this IR has been inserted, the IR code is sent to the backend and turned into our raw assembly.

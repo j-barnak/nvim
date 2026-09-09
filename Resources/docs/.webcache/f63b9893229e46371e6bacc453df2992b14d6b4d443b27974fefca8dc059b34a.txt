@@ -1,0 +1,1497 @@
+# AFL Internals: Instrumentation (core.gen.tr)
+
+## Introduction
+
+[American Fuzzy Lop](https://github.com/google/AFL) is a fuzzer developed by lcamtuf and many others joined him to make it better. For example, a forkserver is designed by J. Horn for faster target executions. Also, the pre-assembly pass has been replaced by a proper LLVM pass written by L. Szekeres. In this article, I’m going to give a shot to explain the internals since it is almost always pleasant to follow brilliant people’s work.
+
+## The Macro Perspective
+
+There are severals components that make up AFL. Three most important programs are:
+
+- afl-gcc - The GCC front-end that is basically a replacement for gcc as in `CC=afl-gcc` (though it calls & needs gcc),
+
+- afl-as - The assembler that modifies the assembly code before piping it to the GNU assembler, adds instrumentation,
+
+- afl-fuzz - The executable that generates the inputs, executes the binary, tracks the progress and finally maintains & classifies the outputs.
+
+Compilation of AFL is pretty straightforward. The Makefile does say it all:
+
+``` makefile
+afl-gcc: afl-gcc.c $(COMM_HDR) | test_x86
+    $(CC) $(CFLAGS) $@.c -o $@ $(LDFLAGS)
+    set -e;for i in afl-g++ afl-clang afl-clang++; do ln -sf afl-gcc $$i; done
+afl-as: afl-as.c afl-as.h $(COMM_HDR) | test_x86
+    $(CC) $(CFLAGS) $@.c -o $@ $(LDFLAGS)
+    ln -sf afl-as as
+afl-fuzz: afl-fuzz.c $(COMM_HDR) | test_x86
+    $(CC) $(CFLAGS) $@.c -o $@ $(LDFLAGS)
+```
+
+The same binary is used for all other front-ends: `afl-g++`, `afl-clang`, `afl-clang++` and decision is based on `argv[0]`. For the curious, in a Makefile, the following variables are defined in a target context:
+
+- `$@`: the target, left-hand side of the semicolon, usually the binary,
+- `$<`: first prerequisite, first token just after the semicolon, usually the source file,
+- `$^`: all prerequisites, all after the semicolon.
+
+## afl-gcc
+
+The entrypoint is pretty basic:
+
+``` c
+/* Main entry point */
+int main(int argc, char** argv) {
+  if (isatty(2) && !getenv("AFL_QUIET")) {
+    SAYF(cCYA "afl-cc " cBRI VERSION cRST " by <lcamtuf@google.com>\n");
+  } else be_quiet = 1;
+                                                                                           
+  if (argc < 2) {
+    SAYF("\n"
+        ... removed for the sake brevity ...
+        );
+    exit(1);
+  }
+                                                                                           
+  find_as(argv[0]);
+  edit_params(argc, argv);
+  execvp(cc_params[0], (char**)cc_params);
+  FATAL("Oops, failed to execute '%s' - check your PATH", cc_params[0]);
+  return 0;
+}
+```
+
+When `argc < 2`, it shows a help message that says just replace your usual `CC=gcc` (`CC=clang`) with `CC=afl-gcc` (`CC=afl-clang`) depending on you toolchain. The result is saved in the global `static u8* as_path;`.
+
+The program starts with locating the afl-as either in the same directory as afl-gcc or in the one defined by `getenv("AFL_PATH")`. Then, `edit_params()` is called that prepares the parameters for the execution of the real C compiler on the next line.
+
+Recall that `execvp()` replaces the current process (see `execvp(3)`) so `FATAL()` will never be reached unless it fails to execute the compiler.
+
+``` c
+    cc_params[cc_par_cnt++] = "-B";
+    cc_params[cc_par_cnt++] = as_path;
+```
+
+In `edit_params()`, the assembler path is added to parameters with a `-B` switch. In this directory, gcc will look for the binary called as and since we know from the *Makefile* that afl-as is symbolically linked to as, it will use *afl-as* as an assembler.
+
+## afl-as
+
+The core of the compiler front-end is *afl-as.c*. The entrypoint is as follows:
+
+``` c
+/* Main entry point */
+int main(int argc, char** argv) {
+
+  s32 pid;
+  u32 rand_seed;
+  int status;
+  u8* inst_ratio_str = getenv("AFL_INST_RATIO");
+
+  struct timeval tv;
+  struct timezone tz;
+
+  clang_mode = !!getenv(CLANG_ENV_VAR);
+
+  if (isatty(2) && !getenv("AFL_QUIET")) {
+    SAYF(cCYA "afl-as " cBRI VERSION cRST " by <lcamtuf@google.com>\n");
+  } else be_quiet = 1;
+
+  if (argc < 2) {
+    SAYF("\n"
+    ... removed for the sake of brevity ...
+    exit(1);
+  }
+
+  gettimeofday(&tv, &tz);
+  rand_seed = tv.tv_sec ^ tv.tv_usec ^ getpid();
+  srandom(rand_seed);
+  edit_params(argc, argv);
+  if (inst_ratio_str) {
+    if (sscanf(inst_ratio_str, "%u", &inst_ratio) != 1 || inst_ratio > 100)
+      FATAL("Bad value of AFL_INST_RATIO (must be between 0 and 100)");
+  }
+
+  if (getenv(AS_LOOP_ENV_VAR))
+    FATAL("Endless loop when calling 'as' (remove '.' from your PATH)");
+
+  setenv(AS_LOOP_ENV_VAR, "1", 1);
+
+/* When compiling with ASAN, we don't have a particularly elegant way to skip
+   ASAN-specific branches. But we can probabilistically compensate for
+   that... */
+
+  if (getenv("AFL_USE_ASAN") || getenv("AFL_USE_MSAN")) {
+    sanitizer = 1;
+    inst_ratio /= 3;
+  }
+
+  if (!just_version) add_instrumentation();
+
+  if (!(pid = fork())) {
+    execvp(as_params[0], (char**)as_params);
+    FATAL("Oops, failed to execute '%s' - check your PATH", as_params[0]);
+  }
+
+  if (pid < 0) PFATAL("fork() failed");
+  if (waitpid(pid, &status, 0) <= 0) PFATAL("waitpid() failed");
+  if (!getenv("AFL_KEEP_ASSEMBLY")) unlink(modified_file);
+  exit(WEXITSTATUS(status));
+}
+```
+
+Similary, there are two interesting functions called by `main()`. The first one is `edit_params()`. Basically, it copies most of the arguments to a new array for GNU as invocation. The last argument is the input file and this argument is saved in global as in `static u8* input_file = argv[argc-1];`. Instead of the input file, as the last argument, an output file, allocated in a temporary directory, is passed.
+
+``` c
+  modified_file = alloc_printf("%s/.afl-%u-%u.s", tmp_dir, getpid(),
+                               (u32)time(NULL));
+
+wrap_things_up:
+
+  as_params[as_par_cnt++] = modified_file;
+  as_params[as_par_cnt]   = NULL;
+```
+
+Next call is `add_instrumentation()` that does the heavy lifting. After the input file is modified by this function, `fork()` is called. In the child (`0 == fork()`), the assembler is invoked with the new parameters while the parent (`0 != child_pid = fork()`) waits for the child to conclude.
+
+``` c
+$ ls -alt /tmp/.afl*
+total 64
+drwxr-xr-x 13 user  users  4096 May 14 19:37 ..
+drwxr-xr-x  2 user  users  4096 May 14 18:36 .
+-rw-------  1 user  users 27195 May 14 18:36 .afl-269117-1652542607.s
+-rw-------  1 user  users 27195 May 14 18:35 .afl-269063-1652542539.s
+```
+
+Setting the environment variable `AFL_KEEP_ASSEMBLY` to a nonzero value is useful to keep the instrumented assembly files. It is possible to observe these files under the temporary directory after compilation.
+
+## Enrichment
+
+So what is the idea here? Or better, what does `afl-as` is trying to achieve? Basically, AFL aims to find particular inputs that reach every edge that resulted in branching in the target code. However, unless an emulator is used, there is no way to signal the top-level runner in which edge the code is currently on. This problem is solved by instrumentation.
+
+Let’s see how void `add_instrumentation()` works.
+
+``` c
+/* Process input file, generate modified_file. Insert instrumentation in all
+   the appropriate places. */
+static void add_instrumentation(void) {
+  static u8 line[MAX_LINE];
+
+  FILE* inf;
+  FILE* outf;
+  s32 outfd;
+  u32 ins_lines = 0;
+
+  u8  instr_ok = 0, skip_csect = 0, skip_next_label = 0,
+      skip_intel = 0, skip_app = 0, instrument_next = 0;
+
+  if (input_file) {
+    inf = fopen(input_file, "r");
+    if (!inf) PFATAL("Unable to read '%s'", input_file);
+  } else inf = stdin;
+
+  outfd = open(modified_file, O_WRONLY | O_EXCL | O_CREAT, 0600);
+  if (outfd < 0) PFATAL("Unable to write to '%s'", modified_file);
+  outf = fdopen(outfd, "w");
+  if (!outf) PFATAL("fdopen() failed");
+```
+
+First of all, input assembly file is opened as `FILE *inf;` and temporary output file `s32 outfd;`. The function also defines several flags:
+
+- `instr_ok`: Nonzero when we are in a text section,
+- `skip_csect`: Skip 32bit code when compiling 64bit code,
+- `skip_next_label`: Skip labels likes .LBB0,
+- `skip_intel`: Skip Intel style assembly, matches \*.intel_syntax",
+- `skip_app`: Skip code between lines starting with \#APP and \#NO_APP,
+- `instrument_next`: Add instrumentation code before the next instruction.
+
+``` c
+while (fgets(line, MAX_LINE, inf)) {
+/* In some cases, we want to defer writing the instrumentation trampoline
+   until after all the labels, macros, comments, etc. If we're in this
+   mode, and if the line starts with a tab followed by a character, dump
+   the trampoline now. */
+  if (!pass_thru && !skip_intel && !skip_app && !skip_csect && instr_ok &&
+      instrument_next && line[0] == '\t' && isalpha(line[1])) {
+    fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
+            R(MAP_SIZE));
+
+    instrument_next = 0;
+    ins_lines++;
+  }
+  /* Output the actual line, call it a day in pass-thru mode. */
+  fputs(line, outf);
+  if (pass_thru) continue;
+```
+
+The loop starts by reading a line from the input. If certain flags are matched, the instrumentation block located at `trampoline_fmt_{32,64}` is added to the output. Next, the line is copied to the output. Flags like `skip_app`, `skip_csect`, `skip_intel` help decide whether or not the next block is instrumented.
+
+``` c
+if (line[0] == '\t' && line[1] == '.') {
+/* OpenBSD puts jump tables directly inline with the code, which is
+   a bit annoying. They use a specific format of p2align directives
+   around them, so we use that as a signal. */
+
+  if (!clang_mode && instr_ok && !strncmp(line + 2, "p2align ", 8) &&
+      isdigit(line[10]) && line[11] == '\n') skip_next_label = 1;
+
+  if (!strncmp(line + 2, "text\n", 5) ||
+      !strncmp(line + 2, "section\t.text", 13) ||
+      !strncmp(line + 2, "section\t__TEXT,__text", 21) ||
+      !strncmp(line + 2, "section __TEXT,__text", 21)) {
+    instr_ok = 1;
+    continue;
+  }
+
+  if (!strncmp(line + 2, "section\t", 8) ||
+      !strncmp(line + 2, "section ", 8) ||
+      !strncmp(line + 2, "bss\n", 4) ||
+      !strncmp(line + 2, "data\n", 5)) {
+    instr_ok = 0;
+    continue;
+  }
+}
+```
+
+The first line tries to match an assembler directive. Next one tries not to interfere with the `alignment` when we are in a text section (nonzero `instr_ok`). Irrelevant sections are skipped by setting `instr_ok` to zero.
+
+``` c
+/* Detect off-flavor assembly (rare, happens in gdb). When this is
+   encountered, we set skip_csect until the opposite directive is
+   seen, and we do not instrument. */
+if (strstr(line, ".code")) {
+  if (strstr(line, ".code32")) skip_csect = use_64bit;
+  if (strstr(line, ".code64")) skip_csect = !use_64bit;
+}
+```
+
+`skip_csect` flag tries to skip 32-bit code when we are compiling a 64-bit binary.
+
+``` c
+/* Detect syntax changes, as could happen with hand-written assembly.
+   Skip Intel blocks, resume instrumentation when back to AT&T. */
+ if (strstr(line, ".intel_syntax")) skip_intel = 1;
+ if (strstr(line, ".att_syntax")) skip_intel = 0;
+```
+
+Skips Intel syntax assembly.
+
+``` c
+/* Detect and skip ad-hoc __asm__ blocks, likewise skipping them. */
+ if (line[0] == '#' || line[1] == '#') {
+   if (strstr(line, "#APP")) skip_app = 1;
+   if (strstr(line, "#NO_APP")) skip_app = 0;
+ }
+```
+
+Skips ad-hoc blocks between \#APP and \#NO_APP.
+
+``` c
+/* If we're in the right mood for instrumenting, check for function
+   names or conditional labels. This is a bit messy, but in essence,
+   we want to catch:
+
+     ^main:      - function entry point (always instrumented)
+     ^.L0:       - GCC branch label
+     ^.LBB0_0:   - clang branch label (but only in clang mode)
+     ^\tjnz foo  - conditional branches
+
+     ...but not:
+
+     ^# BB#0:    - clang comments
+     ^ # BB#0:   - ditto
+     ^.Ltmp0:    - clang non-branch labels
+     ^.LC0       - GCC non-branch labels
+     ^.LBB0_0:   - ditto (when in GCC mode)
+     ^\tjmp foo  - non-conditional jumps
+
+   Additionally, clang and GCC on MacOS X follow a different convention
+   with no leading dots on labels, hence the weird maze of #ifdefs
+   later on. */
+if (skip_intel || skip_app || skip_csect || !instr_ok ||
+    line[0] == '#' || line[0] == ' ') continue;
+```
+
+First check skips comments like \#.. and \#...,
+
+``` c
+/* Conditional branch instruction (jnz, etc). We append the instrumentation
+   right after the branch (to instrument the not-taken path) and at the
+   branch destination label (handled later on). */
+if (line[0] == '\t') {
+  if (line[1] == 'j' && line[2] != 'm' && R(100) < inst_ratio) {
+    fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
+            R(MAP_SIZE));
+    ins_lines++;
+  }
+  continue;
+}
+```
+
+Next, the instrumentation code `trampoline_fmt_{32,64}` is added depending on the arch of the binary. The conditions are the instruction should be non-conditional branching and instruction ratio must satisfy `R(100) < instr_ratio`.
+
+``` c
+#ifdef __APPLE__
+    /* Apple: L<whatever><digit>: */
+    if ((colon_pos = strstr(line, ":"))) {
+      if (line[0] == 'L' && isdigit(*(colon_pos - 1))) {
+#else
+    /* Everybody else: .L<whatever>: */
+    if (strstr(line, ":")) {
+      if (line[0] == '.') {
+#endif /* __APPLE__ */
+        /* .L0: or LBB0_0: style jump destination */
+#ifdef __APPLE__
+        /* Apple: L<num> / LBB<num> */
+        if ((isdigit(line[1]) || (clang_mode && !strncmp(line, "LBB", 3)))
+            && R(100) < inst_ratio) {
+#else
+        /* Apple: .L<num> / .LBB<num> */
+        if ((isdigit(line[2]) || (clang_mode && !strncmp(line + 1, "LBB", 3)))
+            && R(100) < inst_ratio) {
+#endif /* __APPLE__ */
+          /* An optimization is possible here by adding the code only if the   
+             label is mentioned in the code in contexts other than call / jmp. 
+             That said, this complicates the code by requiring two-pass        
+             processing (messy with stdin), and results in a speed gain        
+             typically under 10%, because compilers are generally pretty good  
+             about not generating spurious intra-function jumps.               
+                                                                               
+             We use deferred output chiefly to avoid disrupting                
+             .Lfunc_begin0-style exception handling calculations (a problem on 
+             MacOS X). */
+
+          if (!skip_next_label) instrument_next = 1; else skip_next_label = 0;
+        }
+      } else {
+        /* Function label (always instrumented, deferred mode). */
+        instrument_next = 1;
+      }
+    }
+  }
+```
+
+This one is the maze that has been mentioned in the comments section before. So we have already instrumented when the condition is false, this one instruments when the condition is true. If the parser matches any branch labels such as ^.LXX or ^.LBBX_X, it enables the flag `instrument_next` so that the loop prologue would do the necessary adjustments.
+
+``` c
+if (ins_lines)
+  fputs(use_64bit ? main_payload_64 : main_payload_32, outf);
+
+if (input_file) fclose(inf);
+fclose(outf);
+```
+
+Finally, `main_payload_{32,64}` is written to the output file before closing it and sending it to the GNU as for the assembly.
+
+## Instrumentation
+
+In this section, I’ll try to explain how adding `trampoline_fmt_{32,64}` and `main_payload_{32,64}` allows it to signal the fuzzer. They are both defined in afl-as.h. For the sake of simplicity, I’ll follow the 32bit version. Let’s start with `trampoline_fmt_32`.
+
+``` asm
+static const u8* trampoline_fmt_32 =
+  "\n" 
+  "/* --- AFL TRAMPOLINE (32-BIT) --- */\n"
+  "\n"                                     
+  ".align 4\n"                             
+  "\n"                                     
+  "leal -16(%%esp), %%esp\n"               
+  "movl %%edi,  0(%%esp)\n"                
+  "movl %%edx,  4(%%esp)\n"                
+  "movl %%ecx,  8(%%esp)\n"                
+  "movl %%eax, 12(%%esp)\n"                
+  "movl $0x%08x, %%ecx\n"                  
+  "call __afl_maybe_log\n"                 
+  "movl 12(%%esp), %%eax\n"                
+  "movl  8(%%esp), %%ecx\n"                
+  "movl  4(%%esp), %%edx\n"                
+  "movl  0(%%esp), %%edi\n"                
+  "leal 16(%%esp), %%esp\n"                
+  "\n"                                     
+  "/* --- END --- */\n"                    
+  "\n";
+```
+
+Recall this code block is added to every edge of the program. Basically, it loads the address `%esp-16` (space for 4 32bit registers) to `%esp` and saves registers `%edi`, `%edx`, `%ecx`, `%eax` in that location and calls `__afl_maybe_log` with the parameter in %ecx. The value of this parameter is `R(MAP_SIZE)`. `MAP_SIZE` is defined in *config.h* as `(1 << MAP_SIZE_POW2)` where `MAP_SIZE_POW2` is 16. `R()` picks a random number and it is defined in *types.h* as follows:
+
+``` c
+#define R(x) (random() % (x))
+```
+
+Therefore instrumentation code tags every edge with a random number between 0 and 64k. If your code has more edges than 64k, try increasing this value. After the call, registers are restored as well as the stack pointer `%esp`.
+
+``` c
+static const u8* main_payload_32 = 
+  "\n" "/* --- AFL MAIN PAYLOAD (32-BIT) --- */\n" "\n"
+  ".text\n"
+  ".att_syntax\n"
+  ".code32\n"
+  ".align 8\n" "\n"
+
+  "__afl_maybe_log:\n" "\n"
+  "  lahf\n"
+  "  seto %al\n" "\n"
+  "  /* Check if SHM region is already mapped. */\n" "\n"
+  "  movl  __afl_area_ptr, %edx\n"
+  "  testl %edx, %edx\n"
+  "  je    __afl_setup\n" "\n"
+  "__afl_store:\n"
+```
+
+Prelude of the `main_payload_32` denotes we are injecting code in ATT syntax and want it to be aligned at 256 bytes boundary. `__afl_maybe_log` starts with saving status flags into the AH register \$ (AH \leftarrow EFLAGS(SF:ZF:0:AF:0:PF:1:CF)) \$. `seto` sets AL if OF is true. Next, the code checks whether the `__afl_area_ptr` is initialized and calls `__afl_setup` if not.
+
+``` asm
+  ".align 8\n" "\n"
+  "__afl_setup:\n" "\n"
+  "  /* Do not retry setup if we had previous failures. */\n" "\n"
+  "  cmpb $0, __afl_setup_failure\n"
+  "  jne  __afl_return\n" "\n"
+  "/* Map SHM, jumping to __afl_setup_abort if something goes wrong.\n"
+  "   We do not save FPU/MMX/SSE registers here, but hopefully, nobody\n"
+  "   will notice this early in the game. */\n" "\n"
+  "  pushl %eax\n"
+  "  pushl %ecx\n" "\n"
+  "  pushl $.AFL_SHM_ENV\n"
+  "  call  getenv\n"
+  "  addl  $4, %esp\n" "\n"
+  "  testl %eax, %eax\n"
+  "  je    __afl_setup_abort\n" "\n"
+  "  pushl %eax\n"
+  "  call  atoi\n"
+  "  addl  $4, %esp\n" "\n"
+  "  pushl $0          /* shmat flags    */\n"
+  "  pushl $0          /* requested addr */\n"
+  "  pushl %eax        /* SHM ID         */\n"
+  "  call  shmat\n"
+```
+
+This code block call getenv to get the value of an environment variable called `__AFL_SHM_ID` defined in config.h as follows:
+
+``` c
+#define SHM_ENV_VAR         "__AFL_SHM_ID"
+```
+
+The value of this variable is exactly the one returned by `shmget()` in *afl_fuzz.c*. Basically, the fuzzer maps a shared memory region passed the id of this region to the instrumented binary via this environment. The memory region is then mapped in the binary via a call to `shmat`. The return value in %eax is the mapped address and saved in `__afl_area_ptr`.
+
+``` c
+"  pushl $0          /* shmat flags    */\n"
+"  pushl $0          /* requested addr */\n"
+"  pushl %eax        /* SHM ID         */\n"
+"  call  shmat\n"
+"  addl  $12, %esp\n" "\n"
+"  cmpl $-1, %eax\n"
+"  je   __afl_setup_abort\n" "\n"
+"  /* Store the address of the SHM region. */\n" "\n"
+"  movl %eax, __afl_area_ptr\n"
+"  movl %eax, %edx\n"
+```
+
+Since now we know what `__afl_area_ptr` points to, let’s go back to `__afl_maybe_log` and see how it stores the values:
+
+``` c
+  "__afl_store:\n" "\n"
+  "/* Calculate and store hit for the code location specified in ecx. There\n"
+  "   is a double-XOR way of doing this without tainting another register,\n"
+  "   and we use it on 64-bit systems; but it's slower for 32-bit ones. */\n"
+#ifndef COVERAGE_ONLY
+  "  movl __afl_prev_loc, %edi\n"
+  "  xorl %ecx, %edi\n"
+  "  shrl $1, %ecx\n"
+  "  movl %ecx, __afl_prev_loc\n"
+#else
+  "  movl %ecx, %edi\n"
+#endif /* ^!COVERAGE_ONLY */
+  "\n"
+#ifdef SKIP_COUNTS
+  "  orb  $1, (%edx, %edi, 1)\n"
+#else
+  "  incb (%edx, %edi, 1)\n"
+#endif /* ^SKIP_COUNTS */
+  "\n"
+  "__afl_return:\n"
+  "\n"
+  "  addb $127, %al\n"
+  "  sahf\n"
+  "  ret\n"
+```
+
+Recall that `%ecx` stores the random number that denotes the edge. First, previous location seen by the execution is saved in `__afl_prev_loc`. It is zero when the program starts. Also, `%edx` points to `__afl_area_ptr` so the location `(%edx, %edi, 1)` points to the offset for the current edge in shared memory region. This value is a byte and incremented each time we pass through this branch. Finally, in `__afl_return`, flags are restored for execution to continue.
+
+## The Forkserver
+
+``` c
+"__afl_forkserver:\n" "\n"
+"  /* Enter the fork server mode to avoid the overhead of execve() calls. */"
+"  pushl %eax\n"
+"  pushl %ecx\n"
+"  pushl %edx\n" "\n"
+"\n"
+```
+
+The forkserver basically tries to eliminate the overhead of restart the process again and again. The prelude start by saving some registers.
+
+``` c
+"/* Phone home and tell the parent that we're OK. (Note that signals with\n"
+"  no SA_RESTART will mess it up). If this fails, assume that the fd is\n"
+"  closed because we were execve()d from an instrumented binary, or because\n"
+"  the parent doesn't want to use the fork server. */\n"
+"\n"
+"  pushl $4          /* length    */\n"
+"  pushl $__afl_temp /* data      */\n"
+"  pushl $" STRINGIFY((FORKSRV_FD + 1)) "  /* file desc */\n"
+"  call  write\n"
+"  addl  $12, %esp\n"
+```
+
+The above code writes 4 bytes pointed by `__afl_temp` to one of the forkservers file descriptor. The variable is defined at the end as follows:
+
+``` asm
+"  .comm   __afl_temp, 4, 32\n"
+```
+
+Similarly, FORKSERVER_FD is defined in config.h as follows:
+
+``` c
+#define FORKSRV_FD          198
+```
+
+``` asm
+"\n"
+"  cmpl  $4, %eax\n"
+"  jne   __afl_fork_resume\n"
+"\n"
+```
+
+The result is compared with 4 to see whether the write is successful or not.
+
+``` c
+"__afl_fork_wait_loop:\n" "\n"
+"  /* Wait for parent by reading from the pipe. Abort if read fails. */\n"
+"  pushl $4          /* length    */\n"
+"  pushl $__afl_temp /* data      */\n"
+"  pushl $" STRINGIFY(FORKSRV_FD) "        /* file desc */\n"
+"  call  read\n"
+"  addl  $12, %esp\n"
+"\n"
+"  cmpl  $4, %eax\n"
+"  jne   __afl_die\n"
+"\n"
+```
+
+This basically waits for server to respond before continuing any execution and calls `fork()` afterwards. Recall, we write to `FORKSERVER_FD+1` and read from `FORKSERVER`.
+
+``` c
+"/* Once woken up, create a clone of our process. This is an excellent use\n"
+"   case for syscall(__NR_clone, 0, CLONE_PARENT), but glibc boneheadedly\n"
+"   caches getpid() results and offers no way to update the value, breaking\n"
+"   abort(), raise(), and a bunch of other things :-( */\n"
+"\n"
+"  call fork\n"
+"\n"
+"  cmpl $0, %eax\n"
+"  jl   __afl_die\n"
+"  je   __afl_fork_resume\n"
+```
+
+If the return value is zero, that means we are in the child so the follow-up is `__afl_fork_resume`.
+
+``` asm
+"__afl_fork_resume:\n" "\n"
+"  /* In child process: close fds, resume execution. */\n" "\n"
+"  pushl $" STRINGIFY(FORKSRV_FD) "\n"
+"  call  close\n"
+"\n"
+"  pushl $" STRINGIFY((FORKSRV_FD + 1)) "\n"
+"  call  close\n"
+"\n"
+"  addl  $8, %esp\n"
+"\n"
+"  popl %edx\n"
+"  popl %ecx\n"
+"  popl %eax\n"
+"  jmp  __afl_store\n"
+```
+
+In `__afl_fork_resume`, two forkserver file descriptors are closed and code jumps to `__afl_store` to save edge id in %ecx as usual. Finally, let’s get back to the parent process.
+
+``` asm
+"  /* In parent process: write PID to pipe, then wait for child. */\n"
+"  movl  %eax, __afl_fork_pid\n"
+"\n"
+"  pushl $4              /* length    */\n"
+"  pushl $__afl_fork_pid /* data      */\n"
+"  pushl $" STRINGIFY((FORKSRV_FD + 1)) "      /* file desc */\n"
+"  call  write\n"
+"  addl  $12, %esp\n"
+```
+
+Saves the PID in `__afl_fork_pid` and tells the forkserver about it.
+
+``` asm
+"  pushl $0             /* no flags  */\n"
+"  pushl $__afl_temp    /* status    */\n"
+"  pushl __afl_fork_pid /* PID       */\n"
+"  call  waitpid\n"
+"  addl  $12, %esp\n"
+"\n"
+"  cmpl  $0, %eax\n"
+"  jle   __afl_die\n"
+```
+
+Waits for child to conclude and saves the status in `__afl_temp`.
+
+``` c
+"  /* Relay wait status to pipe, then loop back. */\n" "\n"
+"  pushl $4          /* length    */\n"
+"  pushl $__afl_temp /* data      */\n"
+"  pushl $" STRINGIFY((FORKSRV_FD + 1)) "  /* file desc */\n"
+"  call  write\n"
+"  addl  $12, %esp\n"
+"\n"
+"  jmp __afl_fork_wait_loop\n"
+"\n"
+```
+
+Tells the child exit status to the forkserver and jumps to `__afl_fork_wait_loop`. Let’s see the loop body.
+
+``` asm
+"__afl_fork_wait_loop:\n" "\n"
+"  /* Wait for parent by reading from the pipe. Abort if read fails. */\n"
+"  pushl $4          /* length    */\n"
+"  pushl $__afl_temp /* data      */\n"
+"  pushl $" STRINGIFY(FORKSRV_FD) "        /* file desc */\n"
+"  call  read\n"
+"  addl  $12, %esp\n"
+"\n"
+"  cmpl  $4, %eax\n"
+"  jne   __afl_die\n"
+"\n"
+```
+
+Reads 4 bytes from the forkserver. Probably, this read call returns when the current child concludes and we will start a new child soon.
+
+``` asm
+"/* Once woken up, create a clone of our process. This is an excellent use\n"
+"   case for syscall(__NR_clone, 0, CLONE_PARENT), but glibc boneheadedly\n"
+"   caches getpid() results and offers no way to update the value, breaking\n"
+"   abort(), raise(), and a bunch of other things :-( */\n"
+"\n"
+"  call fork\n"
+"\n"
+"  cmpl $0, %eax\n"
+"  jl   __afl_die\n"
+"  je   __afl_fork_resume\n"
+```
+
+Yup, just fork and have a new child. Child does the right thing and jumps to `__afl_fork_resume`.
+
+``` asm
+"  /* In parent process: write PID to pipe, then wait for child. */\n"
+"  movl  %eax, __afl_fork_pid\n"
+"\n"
+"  pushl $4              /* length    */\n"
+"  pushl $__afl_fork_pid /* data      */\n"
+"  pushl $" STRINGIFY((FORKSRV_FD + 1)) "      /* file desc */\n"
+"  call  write\n"
+"  addl  $12, %esp\n"
+"\n"
+"  pushl $0             /* no flags  */\n"
+"  pushl $__afl_temp    /* status    */\n"
+"  pushl __afl_fork_pid /* PID       */\n"
+"  call  waitpid\n"
+"  addl  $12, %esp\n"
+"\n"
+"  cmpl  $0, %eax\n"
+"  jle   __afl_die\n"
+"\n"
+"  /* Relay wait status to pipe, then loop back. */\n"
+"\n"
+"  pushl $4          /* length    */\n"
+"  pushl $__afl_temp /* data      */\n"
+"  pushl $" STRINGIFY((FORKSRV_FD + 1)) "  /* file desc */\n"
+"  call  write\n"
+"  addl  $12, %esp\n"
+"\n"
+"  jmp __afl_fork_wait_loop\n"
+```
+
+This is exactly the same as before. Waits for the child to conclude, save the exit status and relay this information back to the server so that the server would know how the input did.
+
+This concludes the instrumentation code overview.
+
+## afl-fuzz
+
+Let’s see how the runner manages the target, gathers information and achieves coverage.
+
+Let’s cover some relevant calls. After parsing arguments, signal handlers are installed. For instance the following handles timeouts while running the target.
+
+``` c
+static void handle_timeout(int sig) {
+  if (child_pid > 0) {
+    child_timed_out = 1;
+    kill(child_pid, SIGKILL);
+  } else if (child_pid == -1 && forksrv_pid > 0) {
+    child_timed_out = 1;
+    kill(forksrv_pid, SIGKILL);
+  }
+}
+```
+
+Next, shared memory region is initialized and an environment variable is set so that the instrumentation can locate the memory region for registering edges.
+
+``` c
+/* Configure shared memory and virgin_bits. This is called at startup. */
+EXP_ST void setup_shm(void) {
+  u8* shm_str;
+
+  if (!in_bitmap) memset(virgin_bits, 255, MAP_SIZE);
+
+  memset(virgin_tmout, 255, MAP_SIZE);
+  memset(virgin_crash, 255, MAP_SIZE);
+
+  shm_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
+
+  if (shm_id < 0) PFATAL("shmget() failed");
+  atexit(remove_shm);
+  shm_str = alloc_printf("%d", shm_id);
+
+  /* If somebody is asking us to fuzz instrumented binaries in dumb mode,
+     we don't want them to detect instrumentation, since we won't be sending
+     fork server commands. This should be replaced with better auto-detection
+     later on, perhaps? */
+  if (!dumb_mode) setenv(SHM_ENV_VAR, shm_str, 1);
+  ck_free(shm_str);
+  trace_bits = shmat(shm_id, NULL, 0);
+  if (trace_bits == (void *)-1) PFATAL("shmat() failed");
+}
+```
+
+The target memory regions are defined at the beginning of *afl-fuzz.c* as follows:
+
+``` c
+EXP_ST u8* trace_bits;                /* SHM with instrumentation bitmap  */
+EXP_ST u8  virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing */
+           virgin_tmout[MAP_SIZE],    /* Bits we haven't seen in tmouts   */
+           virgin_crash[MAP_SIZE];    /* Bits we haven't seen in crashes  */
+SHM_ENV_VAR is defined in config.h:
+
+#define SHM_ENV_VAR         "__AFL_SHM_ID"
+```
+
+After setting up shared memory, initial testcases are loaded into a queue in `static void read_testcases(void)`.
+
+``` c
+for (i = 0; i < nl_cnt; i++) {
+  struct stat st;
+                                                                                      
+  u8* fn = alloc_printf("%s/%s", in_dir, nl[i]->d_name);
+  u8* dfn = alloc_printf("%s/.state/deterministic_done/%s",
+                            in_dir, nl[i]->d_name);
+  u8  passed_det = 0;
+                                                                                      
+  free(nl[i]); /* not tracked */
+                                                                                      
+  if (lstat(fn, &st) || access(fn, R_OK))
+    PFATAL("Unable to access '%s'", fn);
+                                                                                      
+  /* This also takes care of . and .. */
+  if (!S_ISREG(st.st_mode) || !st.st_size
+     || strstr(fn, "/README.testcases")) {
+    ck_free(fn);
+    ck_free(dfn);
+    continue;
+  }
+                                                                                      
+  if (st.st_size > MAX_FILE)
+    FATAL("Test case '%s' is too big (%s, limit is %s)", fn,
+          DMS(st.st_size), DMS(MAX_FILE));
+                                                                                      
+  /* Check for metadata that indicates that deterministic fuzzing
+     is complete for this entry. We don't want to repeat deterministic
+     fuzzing when resuming aborted scans, because it would be pointless
+     and probably very time-consuming. */
+  if (!access(dfn, F_OK)) passed_det = 1;
+  ck_free(dfn);
+  add_to_queue(fn, st.st_size, passed_det);
+}
+```
+
+Basically, here fn denotes the testcase filename and it is passed to `add_to_queue()`. Then, `perform_dry_run()` is called that calls `calibrate_case()` in which the forkserver is fired up.
+
+``` c
+void init_forkserver(char **argv)
+```
+
+So the idea is explained here. I’ll try to go over the function once more here. Basically, it create two pipes one for state and the other for control and forks.
+
+``` c
+EXP_ST void init_forkserver(char** argv) {
+  static struct itimerval it;
+  int st_pipe[2], ctl_pipe[2];
+  int status;
+  s32 rlen;
+                                                                               
+  ACTF("Spinning up the fork server...");
+  if (pipe(st_pipe) || pipe(ctl_pipe)) PFATAL("pipe() failed");
+  forksrv_pid = fork();
+  if (forksrv_pid < 0) PFATAL("fork() failed");
+```
+
+In the child, it basically tries to get/set sane limits.
+
+``` c
+  if (!forksrv_pid) {
+    struct rlimit r;
+    /* Umpf. On OpenBSD, the default fd limit for root users is set to
+       soft 128. Let's try to fix that... */
+    if (!getrlimit(RLIMIT_NOFILE, &r) && r.rlim_cur < FORKSRV_FD + 2) {
+      r.rlim_cur = FORKSRV_FD + 2;
+      setrlimit(RLIMIT_NOFILE, &r); /* Ignore errors */
+    }
+                                                                               
+    if (mem_limit) {
+      r.rlim_max = r.rlim_cur = ((rlim_t)mem_limit) << 20;
+#ifdef RLIMIT_AS
+      setrlimit(RLIMIT_AS, &r); /* Ignore errors */
+#else
+      /* This takes care of OpenBSD, which doesn't have RLIMIT_AS, but
+         according to reliable sources, RLIMIT_DATA covers anonymous
+         maps - so we should be getting good protection against OOM bugs. */
+      setrlimit(RLIMIT_DATA, &r); /* Ignore errors */
+#endif /* ^RLIMIT_AS */
+    }
+    /* Dumping cores is slow and can lead to anomalies if SIGKILL is delivered 
+       before the dump is complete. */
+    r.rlim_max = r.rlim_cur = 0;
+    setrlimit(RLIMIT_CORE, &r); /* Ignore errors */
+```
+
+Then, it ties stdout and stderr to /dev/null and also stdin if out_file is empty.
+
+``` c
+    /* Isolate the process and configure standard descriptors. If out_file is
+       specified, stdin is /dev/null; otherwise, out_fd is cloned instead. */
+    setsid();
+    dup2(dev_null_fd, 1);
+    dup2(dev_null_fd, 2);
+    if (out_file) {
+      dup2(dev_null_fd, 0);
+    } else {
+      dup2(out_fd, 0);
+      close(out_fd);
+    }
+```
+
+The following block is interesting as it ties child side of the control pipe to FORKSRV_FD and state side of the forkserver to FORKSRV_FD+1. After all goes OK, unncessary descriptors are closed.
+
+``` c
+    /* Set up control and status pipes, close the unneeded original fds. */
+    if (dup2(ctl_pipe[0], FORKSRV_FD) < 0) PFATAL("dup2() failed");
+    if (dup2(st_pipe[1], FORKSRV_FD + 1) < 0) PFATAL("dup2() failed");
+                                                                               
+    close(ctl_pipe[0]);
+    close(ctl_pipe[1]);
+    close(st_pipe[0]);
+    close(st_pipe[1]);
+                                                                               
+    close(out_dir_fd);
+    close(dev_null_fd);
+    close(dev_urandom_fd);
+    close(fileno(plot_file));
+```
+
+Finally, options regarding to ASAN and MSAN are set in the environment and the target binary is executed via an execv() call. Recall that the target binary will stop at a read() call at the first instrumentation edge and wait for forkserver.
+
+``` c
+    /* This should improve performance a bit, since it stops the linker from
+       doing extra work post-fork(). */
+                                                                                         
+    if (!getenv("LD_BIND_LAZY")) setenv("LD_BIND_NOW", "1", 0);
+    /* Set sane defaults for ASAN if nothing else specified. */
+    setenv("ASAN_OPTIONS", "abort_on_error=1:"
+                           "detect_leaks=0:"
+                           "symbolize=0:"
+                           "allocator_may_return_null=1", 0);
+                                                                                         
+    /* MSAN is tricky, because it doesn't support abort_on_error=1 at this
+       point. So, we do this in a very hacky way. */
+    setenv("MSAN_OPTIONS", "exit_code=" STRINGIFY(MSAN_ERROR) ":"
+                           "symbolize=0:"
+                           "abort_on_error=1:"
+                           "allocator_may_return_null=1:"
+                           "msan_track_origins=0", 0);
+                                                                                         
+    execv(target_path, argv);
+    /* Use a distinctive bitmap signature to tell the parent about execv()
+       falling through. */
+    *(u32*)trace_bits = EXEC_FAIL_SIG;
+    exit(0);
+  } 
+```
+
+Meanwhile the forkserver parent proceeds as follows;
+
+``` c
+  /* Close the unneeded endpoints. */
+  close(ctl_pipe[0]);
+  close(st_pipe[1]);
+
+  fsrv_ctl_fd = ctl_pipe[1];
+  fsrv_st_fd  = st_pipe[0];
+```
+
+Closes the child side of the pipes and now `fsrv_ctl_fd` will be written and `fsrv_st_fd` will be read by the parent.
+
+``` c
+  /* Wait for the fork server to come up, but don't wait too long. */
+  it.it_value.tv_sec = ((exec_tmout * FORK_WAIT_MULT) / 1000);
+  it.it_value.tv_usec = ((exec_tmout * FORK_WAIT_MULT) % 1000) * 1000;
+                                                                            
+  setitimer(ITIMER_REAL, &it, NULL);
+```
+
+Set the timer if anything goes wrong during `fork()`.
+
+``` c
+  rlen = read(fsrv_st_fd, &status, 4);
+                                                                            
+  it.it_value.tv_sec = 0;
+  it.it_value.tv_usec = 0;
+                                                                            
+  setitimer(ITIMER_REAL, &it, NULL);
+  /* If we have a four-byte "hello" message from the server, we're all set. 
+     Otherwise, try to figure out what went wrong. */
+  if (rlen == 4) {
+    OKF("All right - fork server is up.");
+    return;
+  }
+  if (child_timed_out)
+    FATAL("Timeout while initializing fork server (adjusting -t may help)");
+                                                                            
+  if (waitpid(forksrv_pid, &status, 0) <= 0)
+    PFATAL("waitpid() failed");
+```
+
+Above code reads the hello message of 4 bytes and determines if the `fork()` call is successful. The rest of the function has more checks and omitted for brevity. All we have now is a channel that which we will communicate with the target: `fsrv_ctl_fd` for writes and `fsrv_st_fd` for reads.
+
+## The Fuzzing Loop
+
+The main fuzzing loop appears in *afl-fuzz.c* as follows:
+
+``` c
+while (1) {
+  u8 skipped_fuzz;
+  cull_queue();
+                                                                   
+  if (!queue_cur) {
+    queue_cycle++;
+    current_entry     = 0;
+    cur_skipped_paths = 0;
+    queue_cur         = queue;
+                                                                   
+    while (seek_to) {
+      current_entry++;
+      seek_to--;
+      queue_cur = queue_cur->next;
+    }
+                                                                   
+    show_stats();
+                                                                   
+    if (not_on_tty) {
+      ACTF("Entering queue cycle %llu.", queue_cycle);
+      fflush(stdout);
+    }
+                                                                   
+    /* If we had a full queue cycle with no new finds, try
+       recombination strategies next. */
+    if (queued_paths == prev_queued) {
+      if (use_splicing) cycles_wo_finds++; else use_splicing = 1;
+    } else cycles_wo_finds = 0;
+                                                                   
+    prev_queued = queued_paths;
+    if (sync_id && queue_cycle == 1 && getenv("AFL_IMPORT_FIRST")) 
+      sync_fuzzers(use_argv);
+  }
+  skipped_fuzz = fuzz_one(use_argv);
+  if (!stop_soon && sync_id && !skipped_fuzz) {
+    if (!(sync_interval_cnt++ % SYNC_INTERVAL))
+      sync_fuzzers(use_argv);
+  }
+  if (!stop_soon && exit_1) stop_soon = 2;
+  if (stop_soon) break;
+                                                                   
+  queue_cur = queue_cur->next;
+  current_entry++;
+}
+```
+
+Loop body starts with `cull_queue()` that basically selects the testcase to run. `sync_fuzzers()` synchronizes this instance among other instances if there are any (ie. multi-core fuzzing). The main fuzzing function is naturally `fuzz_one()`. Exit from this infinite loop is controlled by the variable `stop_soon`.
+
+## static u8 fuzz_one(char \*\*argv);
+
+`fuzz_one()` starts with variable definitions. Then, it looks for one in the queue and maps the test data into memory pointed by `in_buf`. This buffer is then copied into `out_buf` which will be the input for the target.
+
+``` c
+static u8 fuzz_one(char** argv) {
+  s32 len, fd, temp_len, i, j;
+  u8  *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
+  u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
+  u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
+  u8  ret_val = 1, doing_det = 0;
+  u8  a_collect[MAX_AUTO_EXTRA];
+  u32 a_len = 0;
+
+  .. skipped for brevity ..
+
+  /* Map the test case into memory. */
+  fd = open(queue_cur->fname, O_RDONLY);
+  if (fd < 0) PFATAL("Unable to open '%s'", queue_cur->fname);
+  len = queue_cur->len;
+  orig_in = in_buf = mmap(0, len, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+  if (orig_in == MAP_FAILED) PFATAL("Unable to mmap '%s'", queue_cur->fname);
+  close(fd);
+ /* We could mmap() out_buf as MAP_PRIVATE, but we end up clobbering every
+    single byte anyway, so it wouldn't give us any performance or memory usage
+    benefits. */
+  out_buf = ck_alloc_nozero(len);
+  subseq_tmouts = 0;
+  cur_depth = queue_cur->depth;
+  /*******************************************
+   * CALIBRATION (only if failed earlier on) *
+
+  .. skipped for brevity ..
+  memcpy(out_buf, in_buf, len);
+  .. skipped for brevity ..
+```
+
+After this point, all fuzzing stages are applied on `out_buf` and target is run to alter `trace_bits`. We are ready to see a fuzzing stage. Let’s cover a stage here and see how the results are evaluated.
+
+Here is the code block for the *bitflip 2/1*.
+
+``` c
+ /* Two walking bits. */
+ stage_name  = "bitflip 2/1";
+ stage_short = "flip2";
+ stage_max   = (len << 3) - 1;
+                                                                    
+ orig_hit_cnt = new_hit_cnt;
+ for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+   stage_cur_byte = stage_cur >> 3;
+   FLIP_BIT(out_buf, stage_cur);
+   FLIP_BIT(out_buf, stage_cur + 1);
+   if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+   FLIP_BIT(out_buf, stage_cur);
+   FLIP_BIT(out_buf, stage_cur + 1);
+ }
+ new_hit_cnt = queued_paths + unique_crashes;
+ stage_finds[STAGE_FLIP2]  += new_hit_cnt - orig_hit_cnt;
+ stage_cycles[STAGE_FLIP2] += stage_max;
+```
+
+`len` is multiplied by 8 in stage_max since we are walking over every bit. This stage basically flips two consecutive bits and runs the target. `FLIP_BIT` macro is defined as follows:
+
+``` c
+#define FLIP_BIT(_ar, _b) do { \
+    u8* _arf = (u8*)(_ar); \
+    u32 _bf = (_b); \
+    _arf[(_bf) >> 3] ^= (128 >> ((_bf) & 7)); \ 
+  } while (0)
+```
+
+After the stage concludes, the results are saved in stage_finds and stage_cycles. The only call here is to `common_fuzz_stuff()`. Arguments are the command line arguments, the test data along with its integral length.
+
+``` c
+EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
+  u8 fault;
+                                                                      
+  if (post_handler) {
+    out_buf = post_handler(out_buf, &len);
+    if (!out_buf || !len) return 0;
+  }
+  write_to_testcase(out_buf, len);
+  fault = run_target(argv, exec_tmout);
+  if (stop_soon) return 1;
+  if (fault == FAULT_TMOUT) {
+    if (subseq_tmouts++ > TMOUT_LIMIT) {
+      cur_skipped_paths++;
+      return 1;
+    }
+  } else subseq_tmouts = 0;
+  /* Users can hit us with SIGUSR1 to request the current input
+     to be abandoned. */
+  if (skip_requested) {
+     skip_requested = 0;
+     cur_skipped_paths++;
+     return 1;
+  }
+  /* This handles FAULT_ERROR for us: */
+  queued_discovered += save_if_interesting(argv, out_buf, len, fault);
+  if (!(stage_cur % stats_update_freq) || stage_cur + 1 == stage_max)
+    show_stats();
+  return 0;
+}
+```
+
+The function writes the testcase, runs the target and looks for a timeout. Finally, calls `save_if_interesting()` to see if there are any interesting results.
+
+``` c
+static void write_to_testcase(void* mem, u32 len) {
+  s32 fd = out_fd;
+  if (out_file) {
+    unlink(out_file); /* Ignore errors. */
+    fd = open(out_file, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) PFATAL("Unable to create '%s'", out_file);
+  } else lseek(fd, 0, SEEK_SET);
+                                                             
+  ck_write(fd, mem, len, out_file);
+  if (!out_file) {
+    if (ftruncate(fd, len)) PFATAL("ftruncate() failed");
+    lseek(fd, 0, SEEK_SET);
+  } else close(fd);
+}
+```
+
+`write_to_testcase()` is pretty straightforward. Let’s see the `run_target()`.
+
+``` c
+/* Execute target application, monitoring for timeouts. Return status
+   information. The called program will update trace_bits[]. */
+static u8 run_target(char** argv, u32 timeout) {
+  static struct itimerval it;
+  static u32 prev_timed_out = 0;
+  static u64 exec_ms = 0;
+                                                                                    
+  int status = 0;
+  u32 tb4;
+  child_timed_out = 0;
+  /* After this memset, trace_bits[] are effectively volatile, so we
+     must prevent any earlier operations from venturing into that
+     territory. */
+  memset(trace_bits, 0, MAP_SIZE);
+  MEM_BARRIER();
+```
+
+This starts with clearing out the `trace_bits` and calls a `MEM_BARRIER()` so that it waits for memory write to finish.
+
+``` c
+  /* If we're running in "dumb" mode, we can't rely on the fork server
+     logic compiled into the target program, so we will just keep calling
+     execve(). There is a bit of code duplication between here and
+     init_forkserver(), but c'est la vie. */
+  if (dumb_mode == 1 || no_forkserver) {
+
+  .. skipped_for_brevity ..
+
+  } else {
+    s32 res;
+    /* In non-dumb mode, we have the fork server up and running, so simply
+       tell it to have at it, and then read back PID. */
+    if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4) {
+      if (stop_soon) return 0;
+      RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+    }
+```
+
+Let’s call the child to say that we are ready. `prev_timed_out` will be zero in the first run.
+
+``` c
+    if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4) {
+      if (stop_soon) return 0;
+      RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+    }
+    if (child_pid <= 0) FATAL("Fork server is misbehaving (OOM?)");
+  }
+```
+
+Child returns the PID of itself.
+
+``` c
+  /* Configure timeout, as requested by user, then wait for child
+     to terminate. */  
+  it.it_value.tv_sec = (timeout / 1000);                                            
+  it.it_value.tv_usec = (timeout % 1000) * 1000;                                    
+                                                                                    
+  setitimer(ITIMER_REAL, &it, NULL);                                                
+                                                                                    
+  /* The SIGALRM handler simply kills the child_pid and sets
+     child_timed_out. */    
+  if (dumb_mode == 1 || no_forkserver) {                                            
+    if (waitpid(child_pid, &status, 0) <= 0) PFATAL("waitpid() failed");            
+  } else {                                                                          
+    s32 res;                                                                        
+    if ((res = read(fsrv_st_fd, &status, 4)) != 4) {                                
+      if (stop_soon) return 0;                                                      
+      RPFATAL(res, "Unable to communicate with fork server (OOM?)");                
+    }                                                                               
+  }                                                                                 
+  if (!WIFSTOPPED(status)) child_pid = 0;                                           
+```
+
+Read the status of the child and wait until it concludes or crashes.
+
+``` c
+  getitimer(ITIMER_REAL, &it);                                                      
+  exec_ms = (u64) timeout - (it.it_value.tv_sec * 1000 +                            
+                             it.it_value.tv_usec / 1000);                           
+                                                                                    
+  it.it_value.tv_sec = 0;                                                           
+  it.it_value.tv_usec = 0;                                                          
+                                                                                    
+  setitimer(ITIMER_REAL, &it, NULL);                                                
+  total_execs++;                                                                    
+  /* Any subsequent operations on trace_bits must not be moved by the               
+     compiler below this point. Past this location, trace_bits[] behave             
+     very normally and do not have to be treated as volatile. */                    
+  MEM_BARRIER();                                                                    
+  tb4 = *(u32*)trace_bits;                                                          
+```
+
+Execute another `MEM_BARRIER()` to sync shared memory and now we have the trace generated by the instrumentation that belongs to the current test case. Next, there is a call to `classify_counts()` to classify our findings. The rest is error handling for various causes.
+
+``` c
+#ifdef WORD_SIZE_64                                                                 
+  classify_counts((u64*)trace_bits);                                                
+#else                                                                               
+  classify_counts((u32*)trace_bits);                                                
+#endif /* ^WORD_SIZE_64 */                                                          
+                                                                                    
+  prev_timed_out = child_timed_out;                                                 
+  /* Report outcome to caller. */                                                   
+  if (WIFSIGNALED(status) && !stop_soon) {                                          
+    kill_signal = WTERMSIG(status);                                                 
+    if (child_timed_out && kill_signal == SIGKILL) return FAULT_TMOUT;              
+    return FAULT_CRASH;                                                             
+  }                                                                                 
+                                                                                    
+  /* A somewhat nasty hack for MSAN, which doesn't support abort_on_error and       
+     must use a special exit code. */                                               
+  if (uses_asan && WEXITSTATUS(status) == MSAN_ERROR) {                             
+    kill_signal = 0;                                                                
+    return FAULT_CRASH;                                                             
+  }                                                                                 
+
+ /* A somewhat nasty hack for MSAN, which doesn't support abort_on_error and        
+     must use a special exit code. */                                               
+  if (uses_asan && WEXITSTATUS(status) == MSAN_ERROR) {                             
+    kill_signal = 0;                                                                
+    return FAULT_CRASH;                                                             
+  }                                                                                 
+                                                                                    
+  if ((dumb_mode == 1 || no_forkserver) && tb4 == EXEC_FAIL_SIG)                    
+    return FAULT_ERROR;                                                             
+                                                                                    
+  /* It makes sense to account for the slowest units only if the testcase
+     was run under the user defined timeout. */                                                
+  if (!(timeout > exec_tmout) && (slowest_exec_ms < exec_ms)) {                     
+    slowest_exec_ms = exec_ms;                                                      
+  }                                                                                 
+  return FAULT_NONE;                                                                
+}
+```
+
+`classify_counts()` is nothing more than a hand-crafted logarithmic classifier depending on the hitcount. If the hitcount is 6, it’ll be 8, if the hitcount is 55 then it’ll be 64, etc.
+
+``` c
+static const u8 count_class_lookup8[256] = {                                   
+  [0]           = 0,                                                           
+  [1]           = 1,                                                           
+  [2]           = 2,                                                           
+  [3]           = 4,                                                           
+  [4 ... 7]     = 8,                                                           
+  [8 ... 15]    = 16,                                                          
+  [16 ... 31]   = 32,                                                          
+  [32 ... 127]  = 64,                                                          
+  [128 ... 255] = 128                                                          
+};
+
+static u16 count_class_lookup16[65536];
+EXP_ST void init_count_class16(void) {                                         
+  u32 b1, b2;                                                                  
+  for (b1 = 0; b1 < 256; b1++)                                                 
+    for (b2 = 0; b2 < 256; b2++)                                               
+      count_class_lookup16[(b1 << 8) + b2] =                                   
+        (count_class_lookup8[b1] << 8) | count_class_lookup8[b2];              
+}
+
+#ifdef WORD_SIZE_64
+  .. skipped for brevity ..
+#else
+static inline void classify_counts(u32* mem) {                                 
+  u32 i = MAP_SIZE >> 2;                                                       
+  while (i--) {                                                                
+    /* Optimize for sparse bitmaps. */                                         
+    if (unlikely(*mem)) {                                                      
+      u16* mem16 = (u16*)mem;                                                  
+                                                                               
+      mem16[0] = count_class_lookup16[mem16[0]];                               
+      mem16[1] = count_class_lookup16[mem16[1]];                               
+    }                                                                          
+    mem++;                                                                     
+  }                                                                            
+}
+#endif /* ^WORD_SIZE_64 */
+```
+
+## Saving Interesting Cases
+
+This is the last piece in our puzzle. Once we figure out whether the current execution leads to anything interesting we’ll save and probably favor it in our queue.
+
+``` c
+/* Check if the result of an execve() during routine fuzzing is interesting,       
+   save or queue the input test case for further analysis if so. Returns 1 if      
+   entry is saved, 0 otherwise. */
+static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {         
+  u8  *fn = "";                                                                    
+  u8  hnb;                                                                         
+  s32 fd;                                                                          
+  u8  keeping = 0, res;                                                            
+                                                                                   
+  if (fault == crash_mode) {                                                       
+     .. skipped for brevity ..
+  }
+  switch (fault) {                                                                 
+    case FAULT_TMOUT:                                                              
+      /* Timeouts are not very interesting, but we're still obliged to keep        
+         a handful of samples. We use the presence of new bits in the              
+         hang-specific bitmap as a signal of uniqueness. In "dumb" mode, we        
+         just keep everything. */                                                  
+                                                                                   
+      total_tmouts++;                                                              
+      if (unique_hangs >= KEEP_UNIQUE_HANG) return keeping;                        
+                                                                                   
+      if (!dumb_mode) {                                                            
+                                                                                   
+#ifdef WORD_SIZE_64                                                                
+        simplify_trace((u64*)trace_bits);                                          
+#else                                                                              
+        simplify_trace((u32*)trace_bits);                                          
+#endif /* ^WORD_SIZE_64 */                                                         
+                                                                                   
+        if (!has_new_bits(virgin_tmout)) return keeping;                           
+      }                                                                            
+                                                                                   
+      unique_tmouts++;                                                             
+      /* Before saving, we make sure that it's a genuine hang by re-running        
+         the target with a more generous timeout (unless the default timeout       
+         is already generous). */                                                  
+      if (exec_tmout < hang_tmout) {                                               
+        u8 new_fault;                                                              
+        write_to_testcase(mem, len);
+        new_fault = run_target(argv, hang_tmout);                                  
+                                                                                   
+        /* A corner case that one user reported bumping into: increasing the       
+           timeout actually uncovers a crash. Make sure we don't discard it if     
+           so. */                                                                  
+        if (!stop_soon && new_fault == FAULT_CRASH) goto keep_as_crash;            
+                                                                                   
+        if (stop_soon || new_fault != FAULT_TMOUT) return keeping;                 
+      }                                                                            
+#ifndef SIMPLE_FILES                                                               
+      fn = alloc_printf("%s/hangs/id:%06llu,%s", out_dir,                          
+                        unique_hangs, describe_op(0));                             
+#else                                                                              
+      fn = alloc_printf("%s/hangs/id_%06llu", out_dir,                             
+                        unique_hangs);                                             
+#endif /* ^!SIMPLE_FILES */                                                        
+      unique_hangs++;                                                              
+      last_hang_time = get_cur_time();                                             
+      break;                                                                       
+```
+
+This basically saves timeouts unless unique_hangs `>= KEEP_UNIQUE_HANGS`. Upper bounds are defined in config.h as
+
+``` c
+#define KEEP_UNIQUE_HANG    500
+#define KEEP_UNIQUE_CRASH   5000
+```
+
+It also handles the case where it is really no a hang but a crash but timeout value was too low to see that. Finally it allocated a filename to write the testcase for later use in `fn`. Let’s see what `simplify_trace()` does.
+
+``` c
+/* Destructively simplify trace by eliminating hit count information
+   and replacing it with 0x80 or 0x01 depending on whether the tuple
+   is hit or not. Called on every new crash or timeout, should be
+   reasonably fast. */
+static const u8 simplify_lookup[256] = {
+  [0]         = 1,
+  [1 ... 255] = 128
+};
+
+#ifdef WORD_SIZE_64
+ .. skipped for brevity ..
+#else
+static void simplify_trace(u32* mem) {
+  u32 i = MAP_SIZE >> 2;
+  while (i--) {
+    /* Optimize for sparse bitmaps. */
+    if (unlikely(*mem)) {
+      u8* mem8 = (u8*)mem;
+      mem8[0] = simplify_lookup[mem8[0]];
+      mem8[1] = simplify_lookup[mem8[1]];
+      mem8[2] = simplify_lookup[mem8[2]];
+      mem8[3] = simplify_lookup[mem8[3]];
+    } else *mem = 0x01010101;
+    mem++;
+  }
+}
+#endif /* ^WORD_SIZE_64 */
+```
+
+This basically simplifies the trace map once more and replaces the values with 1 or 128 depending on whether or not there is a hit. So far so good, let’s see how crashes are handled.
+
+``` c
+    case FAULT_CRASH:
+keep_as_crash:
+      /* This is handled in a manner roughly similar to timeouts,
+         except for slightly different limits and no need to re-run test
+         cases. */
+      total_crashes++;
+      if (unique_crashes >= KEEP_UNIQUE_CRASH) return keeping;
+      if (!dumb_mode) {
+#ifdef WORD_SIZE_64
+        simplify_trace((u64*)trace_bits);
+#else
+        simplify_trace((u32*)trace_bits);
+#endif /* ^WORD_SIZE_64 */
+        if (!has_new_bits(virgin_crash)) return keeping;
+      }
+      if (!unique_crashes) write_crash_readme();
+#ifndef SIMPLE_FILES
+      fn = alloc_printf("%s/crashes/id:%06llu,sig:%02u,%s", out_dir,
+                        unique_crashes, kill_signal, describe_op(0));
+#else
+      fn = alloc_printf("%s/crashes/id_%06llu_%02u", out_dir, unique_crashes,
+                        kill_signal);
+#endif /* ^!SIMPLE_FILES */
+      unique_crashes++;
+                                                                                   
+      last_crash_time = get_cur_time();
+      last_crash_execs = total_execs;
+      break;
+    case FAULT_ERROR: FATAL("Unable to execute target application");
+    default: return keeping;
+  } 
+```
+
+Similarly, unless `unique_crashes >= KEEP_UNIQUE_CRASH`, we keep this testcase. If this is first crash, it writes a readme to the standard output.
+
+``` c
+ /* If we're here, we apparently want to save the crash or hang
+     test case, too. */
+  fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) PFATAL("Unable to create '%s'", fn);
+  ck_write(fd, mem, len, fn);
+  close(fd);
+   
+  ck_free(fn);
+  return keeping;
+}
+```
+
+Finally, in the epilogue, we save the testcase into a file named by `fn` and write the test data. `describe_op()` generates a substring for the filename that relates the testcase.
+
+## Conclusion
+
+In this article, I’ve tried to go over the details of the instrumentation of a target by AFL Fuzzer. The instrumentation code is injected in the pre-assembly phase by an assembly text parser. Edges are instrumented at runtime by injecting a call to the a function that flips the bits in a memory region shared with the runner thereby increasing the hitcount. This allows fuzzer to achieve code coverage and guides it to the depths of the branches.
+
+To make the process execution fast, a forkserver is designed that basically stops at the entrypoint and clones the image when a signal is sent by the server. High execution speeds are achieved through this mechanism.
+
+Fuzzer stages are located in `fuzz_one()` and this is a huge function with all fuzzer stages are executed sequentially. However, I was only able to show a sample bitflip stage in this article.
+
+Until next time!

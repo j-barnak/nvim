@@ -1,0 +1,122 @@
+# Using Syzkaller: Driver Fuzzing (Collabora, Part 4)
+
+Following the previous entries of this series on Syzkaller ([part 1](https://www.collabora.com/news-and-blog/blog/2020/06/26/using-syzkaller-part-4-driver-fuzzing/news-and-blog/blog/2020/03/26/syzkaller-fuzzing-the-kernel/), [part 2](https://www.collabora.com/news-and-blog/blog/2020/06/26/using-syzkaller-part-4-driver-fuzzing/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/) and [part 3](https://www.collabora.com/news-and-blog/blog/2020/06/26/using-syzkaller-part-4-driver-fuzzing/news-and-blog/blog/2020/05/12/using-syzkaller-fuzzing-your-changes/)) where we learned about Syzkaller and how to use it to help us catch bugs in the Linux kernel code, we will now take a deeper dive and see how it could be enhanced and used for other purposes, such as fuzzing specific V4L2 drivers.
+
+### Motivation and starting point
+
+One of our current lines of work at Collabora involves V4L2 drivers, with tasks like improving the support of stateless codecs such as Hantro. A fuzzer can be an invaluable tool during the development and debugging process if we can make it fuzz the particular code we're interested in.
+
+Syzkaller comes with a set of system calls [descriptions](https://github.com/google/syzkaller/tree/master/sys) for a variety of operating systems. For Linux, most system calls are already [defined](https://github.com/google/syzkaller/tree/master/sys/linux), although some subsystems are better supported than others. USB and socket-related syscalls are some examples of thorough and specific descriptions, and the Syzkaller executor includes pseudo-syscalls to assist with USB and network fuzzing.
+
+V4L2, however, is only supported in the sense that the involved system calls (including the myriad V4L2 ioctls) and data structures are described. This is already useful and, equipped with those descriptions, Syzkaller has been able to find many V4L2 [bugs](https://www.spinics.net/lists/linux-media/msg168211.html). But the fuzzing process contains a lot of randomness and, while that's a good thing in many cases when it comes to fuzzing, due to the complexity of the V4L2 API, simply randomizing the system calls and its inputs may not be enough to reach most of the code in some drivers, especially in drivers with complicated interfaces such as those based on the [Request API](https://www.kernel.org/doc/html/latest/media/uapi/mediactl/request-api.html), including stateless drivers.
+
+Some operations on these drivers are grouped together in a previously allocated request and referenced using a request descriptor. This request descriptor must be used in some way in all the system calls that are part of the request so, most of the time, randomizing this descriptor won't yield any interesting results.
+
+Additionally, there are some operations that involve many system calls that must be issued in a specific order with some concrete arguments in order to make certain parts of a driver run. Again, randomizing inputs is valuable in this scenario too, but letting the fuzzer freely randomize everything with no additional guidance other than code coverage would make it very difficult to cover some parts of the code.
+
+If we are targeting a particular driver, we will want to run some system calls on the device file that that driver handles. To do this, we can describe additional `open` or `openat` syscalls for our test case that operate on a concrete device file, but that would impose certain restrictions on the test image and kernel. For example, `/dev/video0` may point to different devices depending on your kernel configuration, so the user may need to reconfigure the test kernel and/or filesystem to make it match Syzkaller's descriptions or vice versa.
+
+Finally, we also may want to execute some literal C code blocks or helper functions in our tests. This way we would be able to perform some static operations that won't be fuzzed, such as preparing a test environment before the actual fuzzing begins.
+
+### Features and ideas
+
+Based on these requirements, we began thinking about which features would be nice to have in order help Syzkaller focus on a particular driver. Basically, we want to be able to:
+
+1.  Define a system call execution order.
+2.  Save state and data between syscalls.
+3.  Target specific device files.
+4.  Define C code blocks in an easy way.
+
+Talking about this with Syzkaller maintainer Dmitry Vyukov in the mailing list, he mentioned that before adding new features he is interested in extending the current set of syscall descriptions and making full use of the current features. The first step is therefore to analyze what features Syzkaller already provides and how to make the best use of them, and then extend them whenever necessary and propose new features.
+
+Points 1 and 2 are already supported, in a way, by *resources*. In [syzlang](https://github.com/google/syzkaller/blob/master/docs/syscall_descriptions_syntax.md) (the Syzkaller syscall description language), resources represent values that are produced by a syscall and consumed by another. When we describe a syscall that returns or produces a resource and another one that uses it as an input, we are implicitly defining a dependency relationship between the two of them, a loose ordering constraint and a way of passing data between them. There are a lot of examples about this in Syzkaller descriptions:
+
+    resource fd[int32]: -1
+
+    open(file ptr[in, filename], flags flags[open_flags], mode flags[open_mode]) fd
+    read(fd fd, buf buffer[out], count len[buf])
+
+This defines `fd` as an integer resource that is returned by `open()` and used by `read()`. It doesn't mean that all the test programs that Syzkaller will generate will call `read` *after* `open`, but this is the way to tell it that you want it to generate test programs that call `open` and save the resulting descriptor to pass it to subsequent `read` calls.
+
+### Enhancing Syzkaller and fuzzing specific V4L2 drivers
+
+Now let's try to put Syzkaller to work in a specific driver. In our case, we would like to target a V4L2 driver, and a good way to start is using one of the virtual ones, such as vim2m. This will let us fuzz a specific part of the V4L2 core (the M2M framework) without having to use special hardware.
+
+The initial V4L2 descriptions are all in one huge [file](https://github.com/google/syzkaller/blob/master/sys/linux/dev_video4linux.txt) containing all the supported system calls, data structures and flags. In the config file for our test we can specify which syscalls we want to enable in order to restrict the search space of the fuzzer, but even if we do that, flags like the V4L2 buffer type will be randomized whenever possible, which will produce a lot of unnecessary fuzzing (the vim2m driver is concerned with output and capture buffers only).
+
+So a first step towards efficient driver fuzzing is to split this big syscall description into smaller chunks with narrower definitions, so we went ahead and did that for the vim2m driver. These [changes](https://github.com/google/syzkaller/commit/c5e085d96d1cdc855365b7fd9c1825b886f266f6) are already part of Syzkaller.
+
+Using these new descriptions we can now launch Syzkaller using a simple config file that simply enables the specific `openat$vim2m` call defined for vim2m and all ioctls. Syzkaller will only enable those which have the resource produced by `openat$vim2m` as an input:
+
+    "enable_syscalls": [ 
+            "openat$vim2m",
+            "ioctl"
+    ]
+
+Instead of using any possible V4L2 buffer type for the ioctls, it will use only the two types defined in [vim2m](https://github.com/google/syzkaller/blob/master/sys/linux/dev_video4linux_vim2m.txt).
+
+To make all these syscalls use the appropriate device file for the vim2m driver (point 3 of our desired features), we found a nice and straightforward way that does not require any additional Syzkaller code by using udev rules to generate symlinks to the appropriate devices. In this case, a symlink named `/dev/vim2m` pointing to the `dev/videoX` device managed by vim2m. We added [this](https://github.com/google/syzkaller/commit/8648bd1f6db679aa078a7d25327f8ae792514774) to the image-creating scripts to generate the appropriate udev rules automatically. This should be easy to extend to other drivers.
+
+Here's what a Syzkaller program looks like using this configuration:
+
+```
+r0 = openat$vim2m(0xffffffffffffff9c, &(0x7f0000000440)='/dev/vim2m\x00', 0x2, 0x0)
+ioctl$vim2m_VIDIOC_CREATE_BUFS(r0, 0xc100565c, &(0x7f0000000480)={0x0, 0x401, 0x0, {0x2, @pix_mp={0x0, 0x0, 0x0, 0x0, 0x0, [{0x81, 0xbdd4}, {0x1000, 0x918}, {0x2, 0x4}, {0x7, 0x4}, {0x8001, 0x2}, {0x80000000, 0x6}, {0x82, 0x10000}, {0x0, 0x8146}], 0x80, 0x4, 0x8, 0x0, 0x3}}, 0x1})
+```
+
+and here it is translated to C code:
+
+    // autogenerated by syzkaller (https://github.com/google/syzkaller)
+
+    #define _GNU_SOURCE
+
+    #include 
+    #include 
+    #include 
+    #include 
+    #include 
+    #include <sys/syscall.h>
+    #include <sys/types.h>
+    #include 
+
+    uint64_t r[1] = {0xffffffffffffffff};
+
+    int main(void)
+    {
+      syscall(__NR_mmap, 0x1ffff000ul, 0x1000ul, 0ul, 0x32ul, -1, 0ul);
+      syscall(__NR_mmap, 0x20000000ul, 0x1000000ul, 7ul, 0x32ul, -1, 0ul);
+      syscall(__NR_mmap, 0x21000000ul, 0x1000ul, 0ul, 0x32ul, -1, 0ul);
+      intptr_t res = 0;
+      memcpy((void*)0x20000440, "/dev/vim2m\000", 11);
+      res = syscall(__NR_openat, 0xffffffffffffff9cul, 0x20000440ul, 2ul, 0ul);
+      if (res != -1)
+        r[0] = res;
+      *(uint32_t*)0x20000480 = 0;
+      *(uint32_t*)0x20000484 = 0x401;
+      *(uint32_t*)0x20000488 = 0;
+      ...
+      *(uint32_t*)0x20000578 = 0;
+      *(uint32_t*)0x2000057c = 0;
+      syscall(__NR_ioctl, r[0], 0xc100565c, 0x20000480ul);
+      return 0;
+    }
+
+As we defined, `openat()` opens the `/dev/vim2m` device and then the file descriptor it returns is used by the `VIDIOC_CREATE_BUFS` ioctl. Note that Syzkaller will still generate some programs that don't follow these requirements. What we described simply allows Syzkaller to generate better guided code, but it won't prevent it from generating other, more randomized, programs.
+
+Lastly, we worked on a small proof of concept to use user-defined literal C functions as part of the generated programs (point 4 of our feature list above). The way to do this in Syzkaller is through pseudo-syscalls, which are defined as part of the *executor*. Although adding more static code to Syzkaller is discouraged, it is good to know there is the possibility of doing it. This will let us do things like:
+
+- Setting up a test environment to leave the system in a certain state before fuzzing.
+- Creating wrappers for more primitive system calls.
+- Forging input binary data.
+
+Pseudo-syscalls and how to write them is now [documented](https://github.com/google/syzkaller/commit/79bb873bd7c4dd844a6db412589de5be473c36c6).
+
+These changes can be used and adapted to many different drivers. Of course, in order to make a detailed description for a particular driver you need to be as familiar with it -- or, at least with its interface -- as possible. But the general ideas apply just the same.
+
+For example, to fuzz a real driver such as Hantro, we would have to target a different set of files and therefore need to define different udev rules to create the appropriate symlinks. We may also need to define additional syscall descriptions, or redefine some of the existing ones to work on a more restricted set of parameters and benefit from creating some pseudo-syscalls that perform more complex operation sequences in a controlled way. And, of course, we would have to use real hardware as a target. We will see a concrete example of all this in the next installment of this series.
+
+### Conclusion
+
+Syzkaller is a very promising project and a much needed tool for Linux kernel testing and debugging. This is an example of how easy it is to jump in and make it better. The changes we submitted have already been helpful in fuzzing code that was previously [unreachable](https://www.spinics.net/lists/linux-media/msg171459.html).
+
+We hope this will help [syzbot](https://syzkaller.appspot.com/upstream) find more V4L2-related bugs and that it will be a good starting point for anyone who wants to keep contributing to improve Syzkaller.

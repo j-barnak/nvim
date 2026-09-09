@@ -1,0 +1,156 @@
+# Using Syzkaller to Detect Programming Bugs in Linux (Collabora, Part 2)
+
+In my [previous blog post](https://www.collabora.com/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/news-and-blog/blog/2020/03/26/syzkaller-fuzzing-the-kernel/), we discussed the importance of testing, what is fuzzing, and how the syzkaller fuzzes the kernel in order to find bugs. Now, let’s install the tool and starting using it to improve our code base.
+
+The kernel source will be expected to be found in the `$KSRC` directory. The syscall descriptions are based on linux-next, so if something fails or triggers a warning that a specific syscall isn’t defined, consider changing to the current linux-next/master branch.
+
+Your kernel should be specifically configured to enhance the performance of syzkaller and to enable it to be properly fuzzed. The following configs are necessary:
+
+    CONFIG_KCOV=y
+    CONFIG_KCOV_INSTRUMENT_ALL=y
+    CONFIG_KCOV_ENABLE_COMPARISONS=y
+    CONFIG_DEBUG_FS=y
+    CONFIG_CONFIGFS_FS=y
+    CONFIG_SECURITYFS=y
+
+To be able to navigate through the code coverage in the web interface, `CONFIG_DEBUG_INFO` must also be enabled. To get the most of the power of syzkaller, there are more configuration options that can be enabled, the more the better [honorable mention for KASAN](https://www.kernel.org/doc/html/latest/dev-tools/kasan.html). After modifying the configuration, build the kernel again, since we will need a compiled kernel in next steps. Also, it’s required to have the following tools:
+
+- Go
+- QEMU
+- git
+- OpenSSH
+- A recent C compiler with coverage support (both current GCC and Clang versions should work)
+
+To get the Go toolchain and syzkaller source, run:
+
+    go get golang.org/dl/go1.12
+    go get -u -d github.com/google/syzkaller/...
+
+This doesn’t seem a very canonical way of downloading and installing a package, but since this project is created by Go developers, I believe that their suggestion is currently the best approach. Syzkaller should now be at `~/go/src/github.com/google/syzkaller`. Not a very convenient path, but this can be solved with a symlink or the `PATH` variable. In this example, it will be defined by the following variable:
+
+    export SYZPATH=~/go/src/github.com/google/syzkaller
+
+A basic rootfs for the virtual machines can be created using a script provided by syzkaller that requires the debootstrap package. Choose a directory in which to store rootfs images (which is stored as \`\$IMAGES\` below), then run:
+
+    export IMAGES=$(pwd)
+    bash $SYZPATH/tools/create-image.sh
+
+Use `-h` to explore the other options provided by this tool. In summary, it will create a basic Debian image with the tools that we need and a SSH server to copy and run commands across virtual machines.
+
+### Verifying your setup
+
+Just to make sure everything is working fine and avoid some troubleshooting in the future, check if the ssh is properly working. First, boot the machine:
+
+    qemu-system-x86_64 \
+      -kernel $KSRC/arch/x86/boot/bzImage \
+      -append "console=ttyS0 root=/dev/sda debug earlyprintk=serial slub_debug=QUZ"\
+      -hda $IMAGES/stretch.img \
+      -net user,hostfwd=tcp::10021-:22 -net nic \
+      -enable-kvm \
+      -nographic \
+      -m 2G \
+      -smp 2 \
+      -pidfile vm.pid \
+      2>&1 | tee vm.log
+
+It’s possible to login as `root` if debugging is necessary.
+
+At the host system, try to access it:
+
+    ssh -i $IMAGES/stretch.id_rsa -p 10021 -o "StrictHostKeyChecking no" root@localhost
+
+When done, kill the VM with `kill $(cat $IMAGES/vm.pid)`.
+
+### Build and configure syzkaller and its tools
+
+Now we have a working rootfs, we are almost ready. Go ahead and build syzkaller and its tools:
+
+    cd $SYZPATH/
+    make -j8
+
+We need to create a work directory, where the tool will create a database and store results. Having a separate directory is a good way to organize information as it allows us to have different databases for different syscalls or for different configurations. To do that, just create different directories and set the one you want to work with in the configuration file. Any name works, but those starting with `workdir*` will be ignored by git, as per a rule in `.gitignore` file.
+
+    mkdir workdir
+
+To define the behavior of the tool, create a configuration file somewhere, here called as `config.cfg`. This example should be enough for an initial run:
+
+    {
+            "target": "linux/amd64",
+            "http": "127.0.0.1:56741",
+            "workdir": "$SYZPATH/workdir",
+            "kernel_obj": "$KSRC",
+            "image": "$IMAGES/stretch.img",
+            "sshkey": “$IMAGES/stretch.id_rsa",
+            "syzkaller": "$SYZPATH",
+            "procs": 8,
+            "type": "qemu",
+            "vm": {
+                    "count": 2,
+                    "kernel": "$KSRC/arch/x86/boot/bzImage",
+                    "cpu": 2,
+                    "mem": 2048
+            }
+    }
+
+The contents of the above file are as follows:
+
+- `target`: operating system/architecture to be fuzzed
+- `http`: IP address and port of where syzkaller’s web interface will be exposed
+- `workdir`: the work directory to be used, as explained above
+- `kernel_obj`: kernel source directory
+- `image`: bootstraped distro image
+- `sshkey`: SSH key to be used to access the VMs
+- `syzkaller`: path to syzkaller source
+- `procs`: number of parallel tests inside each VM
+- `type`: virtual machine hypervisor/device to be used
+- `vm`: virtual machine configuration:
+  - `count`: number of VM’s to spawn
+  - `kernel`: kernel image to fuzz
+  - `cpu`: number of cores simulate in each VM (just as `-smp` at QEMU)
+  - `mem`: RAM size of VM (just as `-m` at QEMU)
+
+By default, all syscall are fuzzed (we will see how to change that later). We can now start the fuzzer, specifying the configuration file:
+
+    ./bin/syz-manager -config=config.cfg
+
+    2020/02/17 14:22:01 loading corpus...
+    2020/02/17 14:22:01 serving http on http://127.0.0.1:56741
+    2020/02/17 14:22:01 serving rpc on tcp://[::]:46009
+    2020/02/17 14:22:01 booting test machines...
+    2020/02/17 14:22:01 wait for the connection from test machine...
+    ...
+
+Open the URL provided and you should be able to check the web interface. It’s a convenient way to navigate through the features, check coverage reports, crashes and corpus. Notice that the server may seem unresponsive for a few seconds while the tool is performing some heavy operations, so be patient.
+
+[![](https://www.collabora.com/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/assets/images/blog/syzkaller_0.png "Collabora - syzkaller web interface")](https://www.collabora.com/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/assets/images/blog/syzkaller_0.png)
+
+This is what the main dashboard looks like. In the first section, you can read the current status fo the tool, like the uptime, number of syscalls enabled, crashes and fuzzer execution statistics. In the second one, you have a list of crashes, how many times it happened. It may also export a report and a C reproducer of the crash. The last section is the log, the same log that the tool outputs in the terminal with live information about the tool progress.
+
+Clicking in corpus, you can see the set of syscalls that produces the current coverage. If a syscall can't increase the coverage, it will not be saved in this database.
+
+[![](https://www.collabora.com/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/assets/images/blog/syzkaller_1.png "Collabora - syzkaller syscalls")](https://www.collabora.com/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/assets/images/blog/syzkaller_1.png)
+
+The list shows a link for the coverage that this syscall had produce as well as the name of the syscall description. Clicking on the name, you can see the input of this corpus. For instance, this is an exemple of `syz_mount_image$ext4`:
+
+    syz_mount_image$ext4(0x0, &(0x7f0000000040)='./file0\x00', 0x0, 0x0, 0x0, 0x0, 0x0)
+
+Clicking in a coverage report in the corpus page will show the coverage for this particular input. Clicking in the coverage link in the main dashboard will show the global coverage, for the current corpus.
+
+[![](https://www.collabora.com/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/assets/images/blog/syzkaller_2.png "Collabora - syzkaller global coverage")](https://www.collabora.com/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/assets/images/blog/syzkaller_2.png)
+
+This is the current coverage of the file `usercopy.c` for the current corpus. An explanation about the coverage colors can be found [in the documentation](https://github.com/google/syzkaller/blob/master/docs/coverage.md).
+
+And we are done! This is the basic usage of syzkaller. [Dig into the documentation](https://github.com/google/syzkaller/tree/master/docs) for more details and [see this source file](https://github.com/google/syzkaller/blob/master/pkg/mgrconfig/config.go) for more options for the configuration. I found the following ones to be very useful to add at `config.cfg` file:
+
+- `"enable_syscalls": [ "eventfd", "read$eventfd", ... ]`: only those syscalls will be fuzzed. If they depend on another syscall to work (e.g. `open()`) syzkaller will ask you to enable it. Using `read` will trigger all definitions for this syscalls, including the eventfd one. Using `read$eventfd` will trigger just the eventfd one.
+- `"disable_syscalls": ["ioctl$int_int", “mmap”, ... ]`: all syscalls will be fuzzed, except those defined here.
+
+Those new options may be added anywhere at the config file, with the exception inside the `vm` curly braces.
+
+### Summary
+
+Now you should be ready to starting using syzkaller. Remember that the tool needs some some time to starting showing some results. Join the [mailing list](mailto:syzkaller@googlegroups.com) to get in touch with developers, see new bugs found by the tool and to report the crashes that you found.
+
+In the final part of this series, we are going to see how to modify syzkaller in order to stress your own changes and improve testing in our development process.
+
+**[Continue reading (Using syzkaller, part 3: Fuzzing your changes)](https://www.collabora.com/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/news-and-blog/blog/2020/05/12/using-syzkaller-fuzzing-your-changes/)…**

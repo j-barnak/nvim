@@ -1,0 +1,245 @@
+# Runtime of `afl-fuzz`
+
+The runtime process of AFL lies in a single do-while loop:
+
+```
+    do {
+      if (likely(!afl->old_seed_selection)) {
+        if (unlikely(prev_queued_items < afl->queued_items ||
+                     afl->reinit_table)) {
+          // we have new queue entries since the last run, recreate alias table
+          prev_queued_items = afl->queued_items;
+	          create_alias_table(afl);
+        }
+        do {
+          afl->current_entry = select_next_queue_entry(afl);
+        } while (unlikely(afl->current_entry >= afl->queued_items));
+        afl->queue_cur = afl->queue_buf[afl->current_entry];
+      }
+      skipped_fuzz = fuzz_one(afl);
+	...
+      if (unlikely(!afl->stop_soon && exit_1)) { afl->stop_soon = 2; }
+      if (unlikely(afl->old_seed_selection)) {
+        while (++afl->current_entry < afl->queued_items &&
+               afl->queue_buf[afl->current_entry]->disabled) {};
+        if (unlikely(afl->current_entry >= afl->queued_items ||
+                     afl->queue_buf[afl->current_entry] == NULL ||
+                     afl->queue_buf[afl->current_entry]->disabled)) {
+          afl->queue_cur = NULL;
+        } else {
+          afl->queue_cur = afl->queue_buf[afl->current_entry];
+        }
+      }
+    } while (skipped_fuzz && afl->queue_cur && !afl->stop_soon);
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz.c#L2558)
+
+In the above snippet, we essentially setup the fuzzing queue. I believe this queue represents the next entries to fuzz, but, honestly, I’m not an expert at the actual mutation internals of AFL.
+
+However, the meat of the fuzzing happens at [`fuzz_one`](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz-one.c#L5806). `fuzz_one` is a massive function which performs a lot of the mutation functionality, and it really deserves its own article. For the purposes of this article, I am going to skip to where the input is written to the forkserver and forkserver launched.
+
+The input is written in the aptly-named function [`common_fuzz_stuff`](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz-run.c#L1030). Below is the relevant snippet:
+
+```
+u8 __attribute__((hot))
+common_fuzz_stuff(afl_state_t *afl, u8 *out_buf, u32 len) {
+  u8 fault;
+  if (unlikely(len = write_to_testcase(afl, (void **)&out_buf, len, 0)) == 0)   {
+    return 0;
+  }
+  fault = fuzz_run_target(afl, &afl->fsrv, afl->fsrv.exec_tmout);
+  ...
+}
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz-run.c#L1030)
+
+We first run [`write_to_testcase`](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz-run.c#L77) which, as the name suggests, writes the test case to the input file. `write_to_testcase` deals with a lot of edge cases. However, the main work is really done in [`afl_fsrv_write_to_testcase`](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L1221). The source for it can be seen below:
+
+```
+if (likely(fsrv->use_shmem_fuzz)) {
+    if (unlikely(len > MAX_FILE)) len = MAX_FILE;
+    *fsrv->shmem_fuzz_len = len;
+    memcpy(fsrv->shmem_fuzz, buf, len);
+	...
+  } else {
+    s32 fd = fsrv->out_fd;
+    if (!fsrv->use_stdin && fsrv->out_file) {
+      if (unlikely(fsrv->no_unlink)) {
+        ...
+      } else {
+        unlink(fsrv->out_file);                           /* Ignore errors. */
+        fd = open(fsrv->out_file, O_WRONLY | O_CREAT | O_EXCL,
+                  DEFAULT_PERMISSION);
+      }
+      if (fd < 0) { PFATAL("Unable to create '%s'", fsrv->out_file); }
+    } else if (unlikely(fd <= 0)) {
+      // We should have a (non-stdin) fd at this point, else we got a problem.
+      FATAL(
+          "Nowhere to write output to (neither out_fd nor out_file set (fd is "
+          "%d))",
+          fd);
+    } else {
+      lseek(fd, 0, SEEK_SET);
+    }
+    // fprintf(stderr, "WRITE %d %u\n", fd, len);
+    ck_write(fd, buf, len, fsrv->out_file);
+    if (fsrv->use_stdin) {
+      if (ftruncate(fd, len)) { PFATAL("ftruncate() failed"); }
+      lseek(fd, 0, SEEK_SET);
+    } else {
+      close(fd);
+    }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L1259)
+
+The first if statement is regarding if we are using shared memory fuzzing. If we are (`fsrv->use_shmem_fuzz != 0`), then we simply `memcpy` our input into the shared memory buffer and write the length.
+
+If we are using some form of file-input, then we instead hit the else statement.
+
+We start out by getting the `fd`. If we are not using `stdin`, then we enter the if statement. This if statement unlinks (Deletes) the old `fsrv->out_file` and creates a new one. If we are using `stdin`, then we simply `lseek` to the beginning.
+
+Once we do this, we write our data to the file via `ck_write`. Once this is complete we are essentially home free. If we are using `stdin`, then we also `ftruncate` the file to a length of `len`. This ensures that the data from the last iteration is not left over. We then perform one final `lseek` to ensure that the child will read from the beginning.
+
+At this point, the mutated input is written. All we need to do is restart the forkserver. This is done in [`fuzz_run_target`](https://github.com/AFLplusplus/AFLplusplus/blob/ea14f3fd40e32234989043a525e3853fcb33c1b6/src/afl-fuzz-run.c#L45). This function, in reality, simply starts a timer and calls [`afl_fsrv_run_target`](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L1340). A lot of this function is dealing with alternate operating modes of AFL, so I have placed the relevant code below:
+
+```
+fsrv_run_result_t __attribute__((hot))
+afl_fsrv_run_target(afl_forkserver_t *fsrv, u32 timeout,
+                    volatile u8 *stop_soon_p) {
+
+  s32 res;
+  u32 exec_ms;
+  u32 write_value = fsrv->last_run_timed_out;
+
+...
+  /* After this memset, fsrv->trace_bits[] are effectively volatile, so we
+     must prevent any earlier operations from venturing into that
+     territory. */
+...
+  memset(fsrv->trace_bits, 0, fsrv->map_size);
+  MEM_BARRIER(); //commit all writes
+
+
+  /* we have the fork server (or faux server) up and running
+  First, tell it if the previous run timed out. */
+
+  if ((res = write(fsrv->fsrv_ctl_fd, &write_value, 4)) != 4) {
+
+    if (*stop_soon_p) { return 0; }
+    RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+  }
+
+  fsrv->last_run_timed_out = 0;
+
+  if ((res = read(fsrv->fsrv_st_fd, &fsrv->child_pid, 4)) != 4) {
+
+    if (*stop_soon_p) { return 0; }
+    RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+  }
+  
+...
+
+  exec_ms = read_s32_timed(fsrv->fsrv_st_fd, &fsrv->child_status, timeout,
+                           stop_soon_p);
+
+  if (exec_ms > timeout) {
+
+    /* If there was no response from forkserver after timeout seconds,
+    we kill the child. The forkserver should inform us afterwards */
+
+    s32 tmp_pid = fsrv->child_pid;
+    if (tmp_pid > 0) {
+
+      kill(tmp_pid, fsrv->child_kill_signal);
+      fsrv->child_pid = -1;
+
+    }
+
+    fsrv->last_run_timed_out = 1;
+    if (read(fsrv->fsrv_st_fd, &fsrv->child_status, 4) < 4) { exec_ms = 0; }
+
+  }
+
+  if (!exec_ms) {
+
+    if (*stop_soon_p) { return 0; }
+    SAYF("\n" cLRD "[-] " cRST
+         "Unable to communicate with fork server. Some possible reasons:\n\n"
+         "    - You've run out of memory. Use -m to increase the the memory "
+         "limit\n"
+         "      to something higher than %llu.\n"
+         "    - The binary or one of the libraries it uses manages to "
+         "create\n"
+         "      threads before the forkserver initializes.\n"
+         "    - The binary, at least in some circumstances, exits in a way "
+         "that\n"
+         "      also kills the parent process - raise() could be the "
+         "culprit.\n"
+         "    - If using persistent mode with QEMU, "
+         "AFL_QEMU_PERSISTENT_ADDR "
+         "is\n"
+         "      probably not valid (hint: add the base address in case of "
+         "PIE)"
+         "\n\n"
+         "If all else fails you can disable the fork server via "
+         "AFL_NO_FORKSRV=1.\n",
+         fsrv->mem_limit);
+    RPFATAL(res, "Unable to communicate with fork server");
+
+  }
+
+  if (!WIFSTOPPED(fsrv->child_status)) { fsrv->child_pid = -1; }
+
+  fsrv->total_execs++;
+
+  /* Any subsequent operations on fsrv->trace_bits must not be moved by the
+     compiler below this point. Past this location, fsrv->trace_bits[]
+     behave very normally and do not have to be treated as volatile. */
+
+  MEM_BARRIER();
+
+  /* Report outcome to caller. */
+
+  /* Was the run unsuccessful? */
+  if (unlikely(*(u32 *)fsrv->trace_bits == EXEC_FAIL_SIG)) {
+
+    return FSRV_RUN_ERROR;
+
+  }
+
+  ...
+
+  /* success :) */
+  return FSRV_RUN_OK;
+
+}
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L1340)
+
+Let’s go through this function line-by-line.
+
+We start out by doing a `memset` with `0` on `fsrv->trace_bits` or the coverage map. This ensures that the coverage map is zeroed out and reset for the next run.
+
+Once that is done, we write to the child via the `ctl_pipe`. This wakes the child up for the next run.
+
+We then read the child PID from the status pipe. Recall that the forkserver writes the child pid after the fork to the status pipe ([Source](https://github.com/AFLplusplus/AFLplusplus/blob/4f2d9eeaaa6b702ef28eb883f9000321eaf1fe9b/instrumentation/afl-compiler-rt.o.c#L1222)).
+
+Assuming this was successful, we then do a `read_s32_timed` of the child status. `read_s32_timed` is a timed read. So, after the given timeout value has expired, the read will return regardless of if anything has actually been read. This helps ensure that `afl-fuzz` is not waiting forever for what could be a hanging child. The value read at `read_s32_timed` is the same value passed from `__afl_start_forkserver` [here](https://github.com/AFLplusplus/AFLplusplus/blob/24503fba5fd2580559223ec3c6ee408dfa15e080/instrumentation/afl-compiler-rt.o.c#L1244).
+
+Once this has been returned, we check if the timeout has expired. If the timeout expired, then we run some error code. We then run the following code:
+
+```
+if (!WIFSTOPPED(fsrv->child_status)) { fsrv->child_pid = -1; }
+```
+
+[Source](https://github.com/AFLplusplus/AFLplusplus/blob/7101192865893e00b9029d0cb898a3ca3015d50b/src/afl-forkserver.c#L1524)
+
+This code checks if the child is stopped. If the child is not stopped (i.e. exited), then we simply set `fsrv->child_pid = -1` which clears the PID for the next run. Recall that a child can only be stopped if persistent mode is being used, and if persistent mode is being used, the child will be restarted. As a result, if persistent mode is being used, it is not useful to set `fsrv->child_pid = -1` as the `child_pid` will be reused.
+
+This loop of mutate-write-execute will run endlessly until either something goes catastrophically wrong, or we tell the fuzzer to stop.

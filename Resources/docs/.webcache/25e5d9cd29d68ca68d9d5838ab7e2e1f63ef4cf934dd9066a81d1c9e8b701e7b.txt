@@ -1,0 +1,79 @@
+# Syzkaller: Fuzzing the Kernel (Collabora, Part 1)
+
+Testing is an obligatory step in software development, though sometimes engineers may skip or undervalue it. Not only do you want to make sure things are working as you planned, you also want to make sure that you did not break anything that was previously working (i.e. you don't want to introduce any regressions).
+
+If you wait until your code is merged before properly testing it and find that something is wrong, you will have to spend more time fixing it than if you'd spotted the bug during development. If it reaches the mainline code base, other developers may be impacted by the bug. If the bug is found only after a release, a much wider group could be impacted and may require a fix to be backported and provided as a bugfix. A simple fix may become a more complex one as time passes, as changes made by another developer to other parts of the code base may expect the buggy behavior. When testing is taken seriously, more bugs will be discovered earlier, potentially before the code is merged, avoiding the above added work.
+
+Let's focus on a specific category of bugs, those in kernel system call implementations (or just syscalls, for short). They are the main entry point for users to access functionality and resources provided by the operating system, from opening files to configuring a device. What happens when a user's input is not what the kernel expected? The only correct answer is that the kernel should warn the user that they have given invalid input, by returning an appropriate error code. User input that leads to unexpected behavior; that crashes the system; that gives permissions incorrectly or unexpectedly scales privilege is a kernel bug. Given that, syscalls are an important part of kernel testing, since they are a potential point of failure.
+
+The code base of the Linux Kernel project changes rapidly and is deployed in devices around the world, thus performing proper testing is crucial. As Linus Torvalds says, the first rule of kernel development is that we don’t break userspace. This means that if a user application is working in a release, it should work in the same way in any of the following releases. Despite current efforts, the state of kernel testing is not enough. The code base has almost 3 million lines of source files, but only a small part is being tested during development.
+
+Actively involved in the testing community and a proponent of furthering [automated testing in FOSS](https://www.collabora.com/news-and-blog/blog/2020/03/26/syzkaller-fuzzing-the-kernel/news-and-blog/blog/2018/10/18/on-the-low-adoption-of-automated-testing-in-foss/), Collabora is one of the key players in the [KernelCI project](https://www.collabora.com/news-and-blog/blog/2020/03/26/syzkaller-fuzzing-the-kernel/news-and-blog/news-and-events/a-new-home-for-kernelci.html), which powers kernelci.org with automated testing for the upstream Linux kernel. Collabora also maintains a LAVA instance, which is used to continuously [test kernel and development code bases against Chromebooks](https://www.collabora.com/news-and-blog/blog/2020/03/26/syzkaller-fuzzing-the-kernel/about-us/our-work/kernelci-more-than-just-boot-testing.html) and other reference platforms.
+
+### Fuzzing as testing
+
+Whilst modifying the futex syscall, we knew that we needed to take extra care to ensure the code properly protected against malicious user input or values that trigger unexpected corner case errors. To help with that, we combined fuzzing tests to the existing testing framework. Fuzzing is an automated way to give random values as input to a piece of software, in the hope of spotting errors caused by problematic combinations of input that the developers hadn't previously tried.
+
+Blindly generating test inputs also leads to a very large space of possible values to try, most of which can be trivially proven to be correctly handled, so instead of randomly testing from the set of all possible inputs, we may limit our set by providing a description of how the syscalls’ arguments are expected to be used. By doing this we can provide randomized testing over a larger set of calls with the available resources.
+
+Another fuzzing optimization technique is called coverage guided fuzzing. It measures the code coverage achieved by each input it gives and tries to maximize the code coverage of the inputs it generates. Every input that increases the coverage is mutated in order to increase the overall reach of the testing (i.e. accessing more functions, branches). The set of inputs for a fuzz target is called a corpus.
+
+[Syzkaller](https://github.com/google/syzkaller) is an unsupervised kernel fuzzer that uses both techniques described above to apply fuzzing to syscalls. It has been widely adopted by the kernel community as a valuable tool to detect bugs in the kernel source code, and has achieved [significant success](https://github.com/google/syzkaller/blob/master/docs/linux/found_bugs.md). In this post, I’m going to share my experience using it and how can you modify to test your code as well.
+
+### How it works
+
+[![](https://www.collabora.com/news-and-blog/blog/2020/03/26/syzkaller-fuzzing-the-kernel/assets/images/blog/syzkaller-process_structure.png "syzkaller - process structure")](https://www.collabora.com/news-and-blog/blog/2020/03/26/syzkaller-fuzzing-the-kernel/assets/images/blog/syzkaller-process_structure.png)
+
+In a simplified overview, syzcaller has “manager software” to control the test system. It spawns multiple virtual machines with fuzzers inside them that generate and run small programs which invoke syscalls using the afore mentioned randomized values to fuzz them. Using RPC, the VMs communicate the coverage achieved and any trace information resulting from the fuzzing with the host machine. The manager stores this information in a local database, and exposes a web-based interface where you can navigate through the information. Instead of using virtual machines, you may also use a real machine.
+
+### Describing syscalls
+
+Probably the most special asset of syzkaller is the collection of syscall definitions, since this is the core of the tool. It provides a [simple language](https://github.com/google/syzkaller/blob/master/docs/syscall_descriptions_syntax.md) to describe them in syscall invocation templates. For instance, let’s have a look at how the `open()` syscall is in man pages:
+
+    int open(const char *pathname, int flags, mode_t mode);
+
+And now how it's [described in syzkaller](https://github.com/google/syzkaller/blob/d0d8e8bc776b3fd53659a8067a1eb6f69141d2eb/sys/linux/sys.txt#L77):
+
+    open(file ptr[in, filename], flags flags[open_flags], mode flags[open_mode]) fd
+
+The language used for the template makes the description similar to how it’s typically defined in the documentation. Now digging at each parameter:
+
+- `file ptr[in, filename]`: the first argument, called file, is an input pointer containing a filename string.
+- `flags flags[open_flags]`: the flags argument is any of the flags defined at `open_flags` array
+  - `open_flags = O_WRONLY, O_RDWR, O_APPEND, ...`
+- `mode flags[open_mode]`: mode argument is any of the flags defined at open_mode array
+  - `open_mode = S_IRUSR, S_IWUSR, S_IXUSR, ... `
+- `fd`: the return value will be stored here, to be later used on other syscall descriptions. `fd` is a special type used for [file descriptors](https://github.com/google/syzkaller/blob/d0d8e8bc776b3fd53659a8067a1eb6f69141d2eb/sys/linux/sys.txt#L56). It contains the value returned by open, but, if it is not assigned a value, it will contain -1.
+
+The returned value stored at `fd`` can then be used by the following syscalls:`
+
+    read(fd fd, buf buffer[out], count len[buf])
+    write(fd fd, buf buffer[in], count len[buf])
+
+If you want, instead of using `fd`, you could, for instance, fuzz with random positive integer values ranging from 0 to 5000000 with int64\[0:5000000\]. This however might not be efficient, since it’s more likely to reach more kernel code reading/writing from/to an actual open file rather than a random non-existent file descriptor. `buffer` is an arbitrarily-sized array of random int8 values. It can be an input argument or an output one, depending on `in/out` value. `len[buf]` will then match the length of the \`buf\` argument.
+
+Such definitions will be used by the fuzzer to generate small programs. It will also export textual representations of the call and arguments like this:
+
+    r0 = open(&(0x7f0000000000)="./file0", 0x3, 0x9)
+    read(r0, &(0x7f0000000000), 42)
+    close(r0)
+
+The textual representation is just exposed to help human readers, in the inner mechanisms it will use a in-memory AST-like representation with custom data sctructures. `&(0x7f0000000000)` is the memory address to be used in this pointer argument and "./file0" is the string interpretation of data in this address.
+
+Those descriptions will then be used by the fuzzer to actually do the syscalls inside the VMs. The tool will generate lots of these little programs, always seeking to increase the code coverage. Let’s now take a look at the ioctl syscall. This ioctl syscall is an intentionally fairly generic call, allowing it to be used in a lot of different kernel subsystems for many different purposes. Syzkaller provides a generic description:
+
+    ioctl(fd fd, cmd intptr, arg buffer[in])
+
+But it also provides more specific ones, accordingly to the use of each subsystem:
+
+    ioctl$DRM_IOCTL_VERSION(fd fd_dri, cmd const[DRM_IOCTL_VERSION], arg ptr[in, drm_version])
+    ioctl$VIDIOC_QUERYCAP(fd fd_video, cmd const[VIDIOC_QUERYCAP], arg ptr[out, v4l2_capability])
+    ...
+
+Using the `$` operator, you may define different ways to use a syscall for a particular use case or subsystem.
+
+### Summary
+
+So far, we've discussed the benefits of fuzzing in a large project that needs to expose a stable ABI, such as the Linux kernel. We've also explored the specific requirements of a kernel fuzzer, like the ability to describe the system calls interface through a high level language, that can be derived from the source code. In the next part of this blog series, we will review how to actually write the interface description and use it to generate fuzzed entries for syszkaller, and how it all fits together to detect real programming bugs in the Linux kernel code.
+
+**[Continue reading (Using syzkaller, part 2: Detecting programming bugs in the Linux kernel)](https://www.collabora.com/news-and-blog/blog/2020/03/26/syzkaller-fuzzing-the-kernel/news-and-blog/blog/2020/04/17/using-syzkaller-to-detect-programming-bugs-in-linux/)…**
