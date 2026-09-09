@@ -2665,6 +2665,8 @@ local pick_abs = frozen_web_provider("abs", "Bash Guide> ")
 local pick_studyplan_cpp = frozen_web_provider("studyplan-pro-cpp", "Pro C++> ")
 local pick_studyplan_dsa = frozen_web_provider("studyplan-dsa", "DSA> ")
 local pick_lyah = frozen_web_provider("lyah", "LYAH> ")
+local pick_qiling_docs = frozen_web_provider("qiling-docs", "Qiling docs> ")
+local pick_capstone_docs = frozen_web_provider("capstone-docs", "Capstone docs> ")
 local pick_sf = frozen_web_provider("software-foundations-lf", "Software Foundations> ")
 local pick_wyah = frozen_web_provider("write-you-a-haskell", "Write You a Haskell> ")
 local pick_lkmpg = frozen_web_provider("lkmpg", "LKMPG> ")
@@ -3755,6 +3757,8 @@ LOCATION["abs"] = { index = "abs/index.tsv", unit = "chapter" }
 LOCATION["studyplan-pro-cpp"] = { index = "studyplan-pro-cpp/index.tsv", unit = "chapter" }
 LOCATION["studyplan-dsa"] = { index = "studyplan-dsa/index.tsv", unit = "chapter" }
 LOCATION["lyah"] = { index = "lyah/index.tsv", unit = "chapter" }
+LOCATION["qiling-docs"] = { index = "qiling-docs/index.tsv", unit = "chapter" }
+LOCATION["capstone-docs"] = { index = "capstone-docs/index.tsv", unit = "chapter" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
 LOCATION["write-you-a-haskell"] = { index = "write-you-a-haskell/index.tsv", unit = "chapter" }
 LOCATION["lkmpg"] = { index = "lkmpg/index.tsv", unit = "chapter" }
@@ -3978,19 +3982,19 @@ local providers = {
 	{ name = "angr", key = "angr", run = register_versioned("angr", vspec(simple.angr, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "angr" })) },
 	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = register_versioned("bap", { src_url = "https://github.com/BinaryAnalysisPlatform/bap", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "BAP", docs_mode = "latest", docs_fn = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") }) },
 	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI" })) },
-	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone" })) },
+	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone", docs_mode = "latest", docs_fn = pick_capstone_docs })) },
 	{ name = "Binary Ninja API", key = "binja", run = register_versioned("binja", vspec(simple.binja, "v[0-9]+\\.[0-9]+\\.[0-9]+-stable", { label = "Binary Ninja API", diskpat = "^v%d" })) },
 	{ name = "LIEF", key = "lief", run = make_simple("lief", simple.lief) },
 	{ name = "pyelftools", key = "pyelftools", run = register_versioned("pyelftools", vspec(simple.pyelftools, "v[0-9]+\\.[0-9]+", { label = "pyelftools" })) },
 	{ name = "QBinDiff", key = "qbindiff", run = register_versioned("qbindiff", vspec(simple.qbindiff, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBINDiff" })) },
-	{ name = "Qiling", key = "qiling", run = register_versioned("qiling", vspec(simple.qiling, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Qiling" })) },
+	{ name = "Qiling", key = "qiling", run = register_versioned("qiling", vspec(simple.qiling, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Qiling", docs_mode = "latest", docs_fn = pick_qiling_docs })) },
 	{ name = "PANDA", key = "panda", run = make_simple("panda", simple.panda) },
 	{ name = "Volatility", key = "volatility", run = register_versioned("volatility", vspec(simple.volatility, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Volatility" })) },
 	{ name = "syzkaller", key = "syzkaller", run = make_simple("syzkaller", simple.syzkaller) },
 	{ name = "Unicorn", key = "unicorn", run = register_versioned("unicorn", vspec(simple.unicorn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Unicorn" })) },
 	{ name = "Keystone", key = "keystone", run = register_versioned("keystone", vspec(simple.keystone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Keystone" })) },
 	{ name = "pwntools", key = "pwntools", run = register_versioned("pwntools", vspec(simple.pwntools, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "pwntools", diskpat = "^%d" })) },
-	{ name = "UEFI (edk2)", key = "uefi", run = register_versioned("uefi", vspec(simple.uefi, "edk2-stable[0-9]+", { label = "UEFI (edk2)", diskpat = "^edk2%-stable%d" })) },
+	{ name = "UEFI (edk2)", key = "uefi", run = register_versioned("uefi", vspec(simple.uefi, "edk2-stable[0-9]+", { label = "UEFI (edk2)", diskpat = "^edk2%-stable%d", docs_mode = "latest", docs_fn = make_wiki("uefi-wiki", "https://github.com/tianocore/tianocore.github.io.wiki.git", "EDK II Wiki> ") })) },
 	{ name = "coreboot", key = "coreboot", run = register_versioned("coreboot", vspec(simple.coreboot, "[0-9]+\\.[0-9]+", { label = "coreboot", diskpat = "^%d" })) },
 	{ name = "U-Boot", key = "uboot", run = register_versioned("uboot", vspec(simple.uboot, "v[0-9]{4}\\.[0-9]+", { label = "U-Boot" })) },
 	{ name = "Android (bionic internals)", key = "android", run = make_simple("android", simple.android) },
