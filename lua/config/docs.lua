@@ -2947,6 +2947,62 @@ local function pick_lkl()
 		end },
 	})
 end
+-- Unicorn (CPU emulator): a sub-picker like LKL. The in-tree docs, the
+-- unicorn-engine.org tutorial plus three write-ups (frozen web), and the Python
+-- and Rust bindings, the C test suite and the samples browsed from a light
+-- sparse checkout; "Explore source" clones the full engine. gs / :Src resolve via
+-- SRC_URLS["unicorn"] elsewhere. The bindings/tests carry their own tests, so
+-- each binding view shows both the binding and its tests.
+local UNICORN_URL = "https://github.com/unicorn-engine/unicorn"
+local UNICORN_SPARSE = "/docs /bindings /tests /samples /README.md"
+local pick_unicorn_articles = frozen_web_provider("unicorn-articles", "Unicorn Tutorial & Articles> ")
+local function pick_unicorn()
+	local function browse(kind)
+		local function go(d)
+			if kind == "docs" then
+				pick_files(d .. "/docs", "-e md -e rst -e txt", "Unicorn docs> ")
+			elseif kind == "python" then
+				pick_files(d .. "/bindings/python", "-e py -e md -e txt -e rst", "Unicorn Python bindings & tests> ")
+			elseif kind == "rust" then
+				pick_files(d .. "/bindings/rust", "-e rs -e toml -e md -e txt", "Unicorn Rust bindings & tests> ")
+			elseif kind == "tests" then
+				pick_files(d .. "/tests", "-e c -e h -e py -e rs -e md -e txt", "Unicorn test suite> ")
+			elseif kind == "samples" then
+				pick_files(d .. "/samples", "-e c -e h", "Unicorn samples> ")
+			end
+		end
+		local found = resolve_docs("unicorn/master", "docs")
+		if found then return go(found) end
+		if not have("git") then
+			return vim.notify("git is needed to fetch the Unicorn source", vim.log.levels.WARN)
+		end
+		ensure_repo(data_root .. "/unicorn/master", UNICORN_URL, UNICORN_SPARSE, "docs", go)
+	end
+	last_picker = pick_unicorn
+	fzf().fzf_exec({
+		"Documentation (docs/)",
+		"Tutorial & Articles (unicorn-engine.org, Quarkslab, IIJ, reverse.put.as)",
+		"Python bindings & tests (bindings/python)",
+		"Rust bindings & tests (bindings/rust)",
+		"C test suite (tests/)",
+		"Samples (samples/)",
+		"Explore source (full engine)",
+	}, {
+		prompt = "Unicorn> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = { ["default"] = function(sel)
+			if not (sel and sel[1]) then return end
+			local c = sel[1]
+			if c:match("^Documentation") then browse("docs")
+			elseif c:match("^Tutorial") then pick_unicorn_articles()
+			elseif c:match("^Python") then browse("python")
+			elseif c:match("^Rust") then browse("rust")
+			elseif c:match("^C test") then browse("tests")
+			elseif c:match("^Samples") then browse("samples")
+			else require("config.src").open("unicorn/master", UNICORN_URL, nil, nil, nil, false) end
+		end },
+	})
+end
 -- Bochs top-level entry: the manuals (frozen "Bochs Documentation" web book)
 -- and the emulator source live in one place, so clicking "Bochs" no longer
 -- drops straight into C++. Documentation is first (and preselected) because
@@ -4130,6 +4186,7 @@ LOCATION["syzkaller-articles"] = { index = "syzkaller-articles/index.tsv", unit 
 LOCATION["namespaces-lwn"] = { index = "namespaces-lwn/index.tsv", unit = "chapter" }
 LOCATION["cgroups-lwn"] = { index = "cgroups-lwn/index.tsv", unit = "chapter" }
 LOCATION["lwn-index"] = { index = "lwn-index/index.tsv", unit = "chapter" }
+LOCATION["unicorn-articles"] = { index = "unicorn-articles/index.tsv", unit = "chapter" }
 LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "chapter" }
 LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
@@ -4369,7 +4426,7 @@ local providers = {
 	{ name = "PANDA", key = "panda", run = make_simple("panda", simple.panda) },
 	{ name = "Volatility", key = "volatility", run = register_versioned("volatility", vspec(simple.volatility, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Volatility" })) },
 	{ name = "syzkaller", key = "syzkaller", run = make_simple("syzkaller", simple.syzkaller) },
-	{ name = "Unicorn", key = "unicorn", run = register_versioned("unicorn", vspec(simple.unicorn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Unicorn" })) },
+		{ name = "Unicorn (docs, tutorial, bindings & tests, articles)", key = "unicorn", run = pick_unicorn },
 	{ name = "Keystone", key = "keystone", run = register_versioned("keystone", vspec(simple.keystone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Keystone" })) },
 	{ name = "pwntools", key = "pwntools", run = register_versioned("pwntools", vspec(simple.pwntools, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "pwntools", diskpat = "^%d" })) },
 	{ name = "UEFI (edk2)", key = "uefi", run = register_versioned("uefi", vspec(simple.uefi, "edk2-stable[0-9]+", { label = "UEFI (edk2)", diskpat = "^edk2%-stable%d", docs_mode = "latest", docs_fn = make_wiki("uefi-wiki", "https://github.com/tianocore/tianocore.github.io.wiki.git", "EDK II Wiki> ") })) },
