@@ -2742,12 +2742,12 @@ local pick_afl_under_the_hood = frozen_web_provider("afl-under-the-hood", "AFL++
 -- syzkaller write-ups (Collabora 4-part, xairy, slavamoskvin, willsroot, LWN).
 local pick_syzkaller_articles = frozen_web_provider("syzkaller-articles", "Syzkaller Articles> ")
 -- LWN reading lists: Kerrisk's "Namespaces in operation" (+ the two mount-ns
--- articles) and Neil Brown's "Control groups" series. The whole categorized LWN
--- Kernel Index is a nested provider (letter -> topic -> its article list), so
--- pick_lwn_index is assigned below, after frozen_nested_provider is defined.
+-- articles) and Neil Brown's "Control groups" series. The LWN Kernel Index is a
+-- flat list of its 555 topics (e.g. "Memory management"); picking a topic opens a
+-- chapter of that topic's LWN articles. index.tsv is Topic<TAB>url.
 local pick_namespaces_lwn = frozen_web_provider("namespaces-lwn", "Namespaces (LWN)> ")
 local pick_cgroups_lwn = frozen_web_provider("cgroups-lwn", "CGroups (LWN)> ")
-local pick_lwn_index
+local pick_lwn_index = frozen_web_provider("lwn-index", "LWN Kernel Index (topic)> ")
 -- Fuzzing 101 with LibAFL: epi052's 6-part series + the Atredis workshop, the
 -- MobileHackingLab Android/QEMU-mode writeup, and the FuzzCon 2021 talk slides.
 local pick_fuzzing_101_libafl = frozen_web_provider("fuzzing-101-libafl", "LibAFL (Articles)> ")
@@ -2865,9 +2865,6 @@ end
 -- by section (Fuzzing, Static Analysis, Web/Burp, Languages, Cryptography).
 local pick_javascript_info = frozen_nested_provider("javascript-info", "JavaScript.info> ")
 local pick_testing_handbook = frozen_nested_provider("testing-handbook", "Testing Handbook> ")
--- LWN Kernel Index: 555 topics grouped by first letter; each topic is a chapter
--- listing that topic's LWN articles. index.tsv is letter<TAB>topic<TAB>url.
-pick_lwn_index = frozen_nested_provider("lwn-index", "LWN Kernel Index> ")
 
 -- LKL (Linux Kernel Library): the Linux kernel built as a userspace library
 -- (github.com/lkl/linux, arch/lkl). A curated sub-picker - each option targets a
