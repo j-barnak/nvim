@@ -1518,11 +1518,14 @@ local simple = {
 		prompt = "syzkaller> ",
 	},
 	unicorn = {
+		-- Docs are ONLY the in-tree docs/ (COMPILE/FAQ/... markdown) - clean and
+		-- helpful. The bindings, tests and samples are reached with :Src / "Explore
+		-- source", which clones the whole engine at the chosen tag.
 		url = "https://github.com/unicorn-engine/unicorn",
-		sparse = "/docs /samples /bindings",
+		sparse = "/docs",
 		marker = "docs",
-		browse = "",
-		exts = "-e md -e rst -e txt -e c -e py",
+		browse = "/docs",
+		exts = "-e md -e rst -e txt",
 		prompt = "Unicorn> ",
 	},
 	keystone = {
@@ -2952,60 +2955,12 @@ end
 -- sparse checkout; "Explore source" clones the full engine. gs / :Src resolve via
 -- SRC_URLS["unicorn"] elsewhere. The bindings/tests carry their own tests, so
 -- each binding view shows both the binding and its tests.
-local UNICORN_URL = "https://github.com/unicorn-engine/unicorn"
-local UNICORN_SPARSE = "/docs /bindings /tests /samples /README.md"
-local pick_unicorn_articles = frozen_web_provider("unicorn-articles", "Unicorn Tutorial & Articles> ")
-local function pick_unicorn()
-	local function browse(kind)
-		local function go(d)
-			if kind == "docs" then
-				pick_files(d .. "/docs", "-e md -e rst -e txt", "Unicorn docs> ")
-			elseif kind == "python" then
-				pick_files(d .. "/bindings/python", "-e py -e md -e txt -e rst", "Unicorn Python bindings & tests> ")
-			elseif kind == "rust" then
-				pick_files(d .. "/bindings/rust", "-e rs -e toml -e md -e txt", "Unicorn Rust bindings & tests> ")
-			elseif kind == "tests" then
-				pick_files(d .. "/tests", "-e c -e h -e py -e rs -e md -e txt", "Unicorn test suite> ")
-			elseif kind == "samples" then
-				pick_files(d .. "/samples", "-e c -e h", "Unicorn samples> ")
-			end
-		end
-		-- Marker is "bindings" (not "docs"): an older Unicorn clone fetched only
-		-- docs+samples, and keying on "docs" would treat that stale tree as complete
-		-- so the bindings/tests views came up empty. Requiring "bindings" makes such
-		-- a clone miss the cache and re-fetch with the full sparse set below.
-		local found = resolve_docs("unicorn/master", "bindings")
-		if found then return go(found) end
-		if not have("git") then
-			return vim.notify("git is needed to fetch the Unicorn source", vim.log.levels.WARN)
-		end
-		ensure_repo(data_root .. "/unicorn/master", UNICORN_URL, UNICORN_SPARSE, "bindings", go)
-	end
-	last_picker = pick_unicorn
-	fzf().fzf_exec({
-		"Documentation (docs/)",
-		"Tutorial & Articles (unicorn-engine.org, Quarkslab, IIJ, reverse.put.as)",
-		"Python bindings & tests (bindings/python)",
-		"Rust bindings & tests (bindings/rust)",
-		"C test suite (tests/)",
-		"Samples (samples/)",
-		"Explore source (full engine)",
-	}, {
-		prompt = "Unicorn> ",
-		fzf_opts = { ["--no-multi"] = true },
-		actions = { ["default"] = function(sel)
-			if not (sel and sel[1]) then return end
-			local c = sel[1]
-			if c:match("^Documentation") then browse("docs")
-			elseif c:match("^Tutorial") then pick_unicorn_articles()
-			elseif c:match("^Python") then browse("python")
-			elseif c:match("^Rust") then browse("rust")
-			elseif c:match("^C test") then browse("tests")
-			elseif c:match("^Samples") then browse("samples")
-			else require("config.src").open("unicorn/master", UNICORN_URL, nil, nil, nil, false) end
-		end },
-	})
-end
+-- The tutorial + three write-ups are a frozen web book in Books (WEB_BOOKS).
+-- Unicorn :Docs itself is the versioned provider below (register_versioned):
+-- pick a release tag, then Browse Documentation (docs/ only - clean) or Explore
+-- source, which clones the whole engine AT THAT TAG so the Python/Rust bindings,
+-- their tests, the C test suite and the samples are all browsable through :Src.
+local pick_unicorn_articles = frozen_web_provider("unicorn-articles", "Unicorn Articles & Tutorial> ")
 -- Bochs top-level entry: the manuals (frozen "Bochs Documentation" web book)
 -- and the emulator source live in one place, so clicking "Bochs" no longer
 -- drops straight into C++. Documentation is first (and preselected) because
@@ -3955,6 +3910,7 @@ local WEB_BOOKS = {
 	{ title = "Testing Handbook (Trail of Bits, appsec.guide)", key = "testing-handbook", run = pick_testing_handbook },
 	{ title = "LibAFL (Articles)", key = "fuzzing-101-libafl", run = pick_fuzzing_101_libafl },
 	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
+	{ title = "Unicorn Engine (Articles & Tutorial)", key = "unicorn-articles", run = pick_unicorn_articles },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
 	{ title = "Algorithms for Modern Hardware (Algorithmica)", key = "algorithmica-hpc", run = pick_algorithmica_hpc },
@@ -4429,7 +4385,7 @@ local providers = {
 	{ name = "PANDA", key = "panda", run = make_simple("panda", simple.panda) },
 	{ name = "Volatility", key = "volatility", run = register_versioned("volatility", vspec(simple.volatility, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Volatility" })) },
 	{ name = "syzkaller", key = "syzkaller", run = make_simple("syzkaller", simple.syzkaller) },
-		{ name = "Unicorn (docs, tutorial, bindings & tests, articles)", key = "unicorn", run = pick_unicorn },
+			{ name = "Unicorn", key = "unicorn", run = register_versioned("unicorn", vspec(simple.unicorn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Unicorn" })) },
 	{ name = "Keystone", key = "keystone", run = register_versioned("keystone", vspec(simple.keystone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Keystone" })) },
 	{ name = "pwntools", key = "pwntools", run = register_versioned("pwntools", vspec(simple.pwntools, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "pwntools", diskpat = "^%d" })) },
 	{ name = "UEFI (edk2)", key = "uefi", run = register_versioned("uefi", vspec(simple.uefi, "edk2-stable[0-9]+", { label = "UEFI (edk2)", diskpat = "^edk2%-stable%d", docs_mode = "latest", docs_fn = make_wiki("uefi-wiki", "https://github.com/tianocore/tianocore.github.io.wiki.git", "EDK II Wiki> ") })) },
