@@ -348,10 +348,15 @@ case "$SLUG" in
   # -contents dot-leader "9.9 X ... 132" and any prose sentence are excluded), then
   # at least three spaces (the right-aligned folio gap, never an inline number) and
   # a trailing page number. Validated per book to match only running heads.
-  the-garbage-collection-handbook|bpf-performance-tools|systems-performance|\
+  bpf-performance-tools|systems-performance|\
   distributed-systems|tcp-ip-illustrated-vol-1|computer-organization-and-design|\
   modern-processor-design|mastering-stm32)
     FURN='^[0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}[ ]*$' ;;
+  # GC Handbook: same section-head form, plus the Taylor & Francis blank-page
+  # production stamp that leaks at some chapter ends (a standalone line; the
+  # acknowledgments sentence that names the publisher wraps and never matches ^$).
+  the-garbage-collection-handbook)
+    FURN='^([0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}|Taylor & Francis( Group)?)[ ]*$' ;;
   # H&P separates its running head from the folio with a box-drawing bullet (the
   # same U+25A0 it uses as a list marker at line START). Its folios are arabic OR
   # letter-dashed ("D-45"). Verso: "<folio> ■ Appendix X / Chapter N <title>";
