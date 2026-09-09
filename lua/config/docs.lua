@@ -3665,6 +3665,7 @@ local BOOKS = {
 		{ title = "Rootkits and Bootkits (Matrosov et al.)", fmt = "pdf", slug = "rootkits", file = "Rootkits.pdf" },
 		{ title = "File System Forensic Analysis (Carrier)", fmt = "pdf", slug = "file-system-forensic-analysis", file = "File-System-Forensics-Analysis.pdf" },
 		{ title = "From Day Zero to Zero Day", fmt = "pdf", slug = "from-day-zero-to-zero-day", file = "FromDayZeroToZeroDay.pdf" },
+		{ title = "Android Security Internals (Elenkov)", fmt = "pdf", slug = "android-security-internals", file = "AndroidSecurityInternals.pdf" },
 		{ title = "The Art of Memory Forensics", fmt = "pdf", file = "TheArtOfMemoryForensics.pdf" },
 		{ title = "Attacking Network Protocols (Forshaw)", fmt = "pdf", slug = "attacking-network-protocols", file = "attacking-network-protocols.pdf" },
 		{ title = "Practical Binary Analysis", fmt = "epub", file = "PBA.epub" },
