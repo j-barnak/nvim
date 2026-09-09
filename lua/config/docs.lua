@@ -1442,7 +1442,7 @@ local simple = {
 	},
 	capstone = {
 		url = "https://github.com/capstone-engine/capstone",
-		sparse = "/docs /include",
+		sparse = "/docs /include /bindings",
 		marker = "docs",
 		browse = "",
 		exts = "-e md -e rst -e txt -e h",
@@ -1450,7 +1450,7 @@ local simple = {
 	},
 	binja = {
 		url = "https://github.com/Vector35/binaryninja-api",
-		sparse = "/docs /examples",
+		sparse = "/docs /examples /python /rust",
 		marker = "docs",
 		browse = "",
 		exts = "-e md -e rst -e py -e cpp -e txt",
@@ -1458,7 +1458,7 @@ local simple = {
 	},
 	lief = {
 		url = "https://github.com/lief-project/LIEF",
-		sparse = "/doc /examples",
+		sparse = "/doc /examples /api",
 		marker = "doc",
 		browse = "",
 		exts = "-e rst -e md -e py -e cpp -e txt",
@@ -1571,7 +1571,7 @@ local simple = {
 	},
 	uboot = {
 		url = "https://github.com/u-boot/u-boot",
-		sparse = "/doc",
+		sparse = "/doc /examples",
 		marker = "doc",
 		browse = "/doc",
 		exts = "-e rst -e md -e txt",
