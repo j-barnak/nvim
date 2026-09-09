@@ -4385,7 +4385,7 @@ local providers = {
 	{ name = "PANDA", key = "panda", run = make_simple("panda", simple.panda) },
 	{ name = "Volatility", key = "volatility", run = register_versioned("volatility", vspec(simple.volatility, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Volatility" })) },
 	{ name = "syzkaller", key = "syzkaller", run = make_simple("syzkaller", simple.syzkaller) },
-			{ name = "Unicorn", key = "unicorn", run = register_versioned("unicorn", vspec(simple.unicorn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Unicorn" })) },
+			{ name = "Unicorn", key = "unicorn", run = register_versioned("unicorn", vspec(simple.unicorn, "[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Unicorn", vsort = true, diskpat = "^v?%d", minmajor = 0 })) },
 	{ name = "Keystone", key = "keystone", run = register_versioned("keystone", vspec(simple.keystone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Keystone" })) },
 	{ name = "pwntools", key = "pwntools", run = register_versioned("pwntools", vspec(simple.pwntools, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "pwntools", diskpat = "^%d" })) },
 	{ name = "UEFI (edk2)", key = "uefi", run = register_versioned("uefi", vspec(simple.uefi, "edk2-stable[0-9]+", { label = "UEFI (edk2)", diskpat = "^edk2%-stable%d", docs_mode = "latest", docs_fn = make_wiki("uefi-wiki", "https://github.com/tianocore/tianocore.github.io.wiki.git", "EDK II Wiki> ") })) },

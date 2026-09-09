@@ -146,19 +146,26 @@ local function ensure_clone(name, url, cb, ref, sub)
 	if vim.fn.isdirectory(dir .. "/.git") == 1 then
 		return cb(dir)
 	end
-	-- A versioned name ("linux/v6.12") whose PARENT is itself an old flat clone
-	-- from before this provider was versioned: creating the new tree inside that
-	-- working tree would nest one git repo in another and silently double the
-	-- disk (the kernel's flat clone here is 3.2 GB). Refuse, and say exactly what
-	-- to remove; using the stale tree instead would hand back a checkout that
-	-- does not match the docs being read, which is the bug versioning fixes.
+	-- A versioned name ("linux/v6.12", "unicorn/v2.1.4") whose PARENT is itself an
+	-- old flat clone from before this provider was versioned: creating the new tree
+	-- inside that working tree would nest one git repo in another and silently
+	-- double the disk. A small stale clone (a transitioned provider like unicorn,
+	-- tens of MB) is removed automatically so the per-version tree just works; only
+	-- a LARGE tree (a multi-GB kernel checkout) still refuses with instructions,
+	-- since silently deleting gigabytes is the surprise worth avoiding.
 	local parent = vim.fs.dirname(dir)
 	if parent ~= data_root and vim.fn.isdirectory(parent .. "/.git") == 1 then
-		return vim.notify(
-			("Src: %s is an old unversioned clone. Remove it to use per-version trees:\n  rm -rf %s")
-				:format(parent, parent),
-			vim.log.levels.ERROR
-		)
+		local mb = tonumber((vim.fn.system({ "du", "-sm", parent }) or ""):match("^(%d+)"))
+		if not mb or mb > 1024 then -- unknown size or > 1 GB: too big to delete silently
+			return vim.notify(
+				("Src: %s is a large old unversioned clone. Remove it to use per-version trees:\n  rm -rf %s")
+					:format(parent, parent),
+				vim.log.levels.ERROR
+			)
+		end
+		vim.notify(("Src: replacing old unversioned %s clone (%d MB) with per-version trees …")
+			:format(vim.fs.basename(parent), mb))
+		vim.fn.delete(parent, "rf")
 	end
 	-- Guarded: vim.fn.mkdir raises, so an unwritable data dir turned gs into
 	-- an E739 traceback instead of a message. Make the PARENT, not data_root,
