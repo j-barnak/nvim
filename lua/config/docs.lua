@@ -3520,6 +3520,20 @@ local function pick_elf_tis()
 	pick_files(out, "-e txt", "ELF (TIS)> ")
 end
 
+-- AMD64 APM: the AMD64 Architecture Programmer's Manual, the AMD counterpart to
+-- the Intel SDM and next to it in the picker. AMD's own PDF links are broken
+-- (they 302 to a search hub), so unlike the SDM these two volumes are frozen
+-- chapter books committed under Resources/docs, browsed straight from disk.
+-- Vol 1 is Application Programming, Vol 2 is System Programming.
+local function pick_apm(vol)
+	if not have("fd") then
+		return vim.notify("fd is needed to browse the AMD64 APM", vim.log.levels.WARN)
+	end
+	local rel = "amd-apm-vol" .. vol
+	local out = resolve_docs(rel) or (frozen_root .. "/" .. rel)
+	pick_files(out, "-e txt", "AMD64 APM v" .. vol .. "> ")
+end
+
 -- Aya: the book (aya-rs.dev) and the crate reference (docs.rs) under one entry.
 local function pick_aya()
 	fzf().fzf_exec({ "Book (aya-rs.dev)", "Crate reference (docs.rs)" }, {
@@ -3808,6 +3822,8 @@ LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit 
 LOCATION["writing-an-os-in-rust"] = { index = "writing-an-os-in-rust/index.tsv", unit = "chapter" }
 LOCATION["algorithmica-hpc"] = { index = "algorithmica-hpc/index.tsv", unit = "chapter" }
 LOCATION["elf-tis"] = { rel = "books/books-compilers/elf-specification", marker = ".complete", unit = "chapter" }
+LOCATION["amd-apm-vol1"] = { rel = "amd-apm-vol1", marker = ".complete", unit = "chapter" }
+LOCATION["amd-apm-vol2"] = { rel = "amd-apm-vol2", marker = ".complete", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
 	LOCATION[key] = { network = true }
@@ -3988,6 +4004,8 @@ local providers = {
 	{ name = "Intel SDM Vol 2", key = "sdm2", run = function() pick_sdm(2) end },
 	{ name = "Intel SDM Vol 3", key = "sdm3", run = function() pick_sdm(3) end },
 	{ name = "Intel SDM Vol 4", key = "sdm4", run = function() pick_sdm(4) end },
+	{ name = "AMD64 APM Vol 1 (Application Programming)", key = "amd-apm-vol1", run = function() pick_apm(1) end },
+	{ name = "AMD64 APM Vol 2 (System Programming)", key = "amd-apm-vol2", run = function() pick_apm(2) end },
 	{ name = "C standard (C23 draft)", key = "cstd", run = function() pick_pdf("c-draft", "C draft> ") end },
 	{ name = "C++ standard (draft)", key = "cppstd", run = function() pick_pdf("cpp-draft", "C++ draft> ") end },
 	{ name = "DWARF 5 spec", key = "dwarf", run = function() pick_pdf("dwarf5", "DWARF 5> ") end },
