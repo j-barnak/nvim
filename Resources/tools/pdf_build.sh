@@ -350,9 +350,15 @@ case "$SLUG" in
   # a trailing page number. Validated per book to match only running heads.
   the-garbage-collection-handbook|bpf-performance-tools|systems-performance|\
   distributed-systems|tcp-ip-illustrated-vol-1|computer-organization-and-design|\
-  modern-processor-design|mastering-stm32|\
-  computer-architecture-a-quantitative-approach)
+  modern-processor-design|mastering-stm32)
     FURN='^[0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}[ ]*$' ;;
+  # H&P separates its running head from the folio with a box-drawing bullet (the
+  # same U+25A0 it uses as a list marker at line START). Its folios are arabic OR
+  # letter-dashed ("D-45"). Verso: "<folio> ■ Appendix X / Chapter N <title>";
+  # recto: "<N.N|X.N> <title> ■ <folio>". Both require the ■ to be preceded by a
+  # folio/section number, so a "■ text" list item (■ at line start) never matches.
+  computer-architecture-a-quantitative-approach)
+    FURN='^ *([0-9]{1,4}|[A-M]-[0-9]+) +■ +(Appendix [A-M]|Chapter [0-9]+)|^ *([0-9]+[.][0-9]+|[A-M][.][0-9]+) .* +■ +([0-9]{1,4}|[A-M]-[0-9]+) *$' ;;
   # rust-under-the-hood: an Anna's-Archive per-page email/date watermark.
   rust-under-the-hood) FURN='^lanchonbeef@gmail[.]com 24 Aug 2025$' ;;
   # from-day-zero-to-zero-day: the Early-Access per-page copyright line.
