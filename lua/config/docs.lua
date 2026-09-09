@@ -2044,12 +2044,12 @@ local SRC_WARN = {
 -- carries ctags excludes.
 -- LibAFL has ~28 crates (many tiny utility crates); the book's Crate List names
 -- only the handful a fuzzer author works with. :Src sparse-checks-out exactly
--- those, plus /fuzzers so every example fuzzer is browsable (crates.html).
+-- exactly those (crates.html); the example fuzzers are intentionally left out.
 local LIBAFL_SRC_SPARSE = table.concat({
 	"/crates/libafl", "/crates/libafl_bolts", "/crates/libafl_sugar",
 	"/crates/libafl_derive", "/crates/libafl_targets", "/crates/libafl_cc",
 	"/crates/libafl_frida", "/crates/libafl_qemu", "/crates/libafl_nyx",
-	"/crates/libafl_concolic", "/fuzzers",
+	"/crates/libafl_concolic",
 }, " ")
 local VERSIONED = {
 	qemu = { url = "https://github.com/qemu/qemu" },
