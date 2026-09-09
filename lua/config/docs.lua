@@ -2822,6 +2822,8 @@ local pick_fuzzing_101_libafl = frozen_web_provider("fuzzing-101-libafl", "LibAF
 -- Akamai's definitive guide (both frozen via the Wayback Machine, which is the
 -- only way past their Cloudflare/JS-render walls; cached under the live URLs).
 local pick_ptrace_injection = frozen_web_provider("ptrace-injection", "Ptrace Injection (Articles)> ")
+-- PCIe deep-dive: two ctf.re (Gbps) tutorials plus the Wikipedia overview.
+local pick_pcie_articles = frozen_web_provider("pcie-articles", "PCIe (Articles)> ")
 -- Docker docs: the official get-started/reference/best-practices pages plus
 -- softchris's five-part "Learn Docker from the beginning" tutorial.
 local pick_docker = frozen_web_provider("docker", "Docker docs> ")
@@ -3973,6 +3975,7 @@ local WEB_BOOKS = {
 	{ title = "Testing Handbook (Trail of Bits, appsec.guide)", key = "testing-handbook", run = pick_testing_handbook },
 	{ title = "LibAFL (Articles)", key = "fuzzing-101-libafl", run = pick_fuzzing_101_libafl },
 	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
+	{ title = "PCIe (Articles)", key = "pcie-articles", run = pick_pcie_articles },
 	{ title = "Unicorn Engine (Articles & Tutorial)", key = "unicorn-articles", run = pick_unicorn_articles },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
@@ -4209,6 +4212,7 @@ LOCATION["namespaces-lwn"] = { index = "namespaces-lwn/index.tsv", unit = "chapt
 LOCATION["cgroups-lwn"] = { index = "cgroups-lwn/index.tsv", unit = "chapter" }
 LOCATION["lwn-index"] = { index = "lwn-index/index.tsv", unit = "chapter" }
 LOCATION["unicorn-articles"] = { index = "unicorn-articles/index.tsv", unit = "chapter" }
+LOCATION["pcie-articles"] = { index = "pcie-articles/index.tsv", unit = "chapter" }
 LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "chapter" }
 LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
