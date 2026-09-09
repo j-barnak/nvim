@@ -1801,15 +1801,19 @@ local function versioned_tags(name, url, spec, cb)
 	-- Versions already fetched stay selectable even when the remote filter would
 	-- exclude them now (an old major, or a tag deleted upstream): losing access
 	-- to something already on disk is never the right answer.
+	-- Dedup on a version's v-stripped key so an on-disk clone from an older naming
+	-- ("v2.1.4") is not listed alongside the same release fetched under the current
+	-- naming ("2.1.4") - which showed up as a duplicate in the picker.
 	local function withdisk(list)
 		local seen = {}
+		local function key(v) return (v:gsub("^v", "")) end
 		for _, v in ipairs(list) do
-			seen[v] = true
+			seen[key(v)] = true
 		end
 		for _, d in ipairs(vim.fn.glob(data_root .. "/" .. name .. "/*", false, true)) do
 			local v = vim.fs.basename(d)
-			if not seen[v] and vim.fn.isdirectory(d) == 1 and v:match(diskpat) then
-				seen[v] = true
+			if not seen[key(v)] and vim.fn.isdirectory(d) == 1 and v:match(diskpat) then
+				seen[key(v)] = true
 				list[#list + 1] = v
 			end
 		end
