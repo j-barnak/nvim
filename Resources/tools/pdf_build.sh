@@ -340,6 +340,18 @@ case "$SLUG" in
   talking-compilers-with-chatgpt) FURN='^(This material is freely available|For typos or suggestions, please contact Fernando|Send comments, typos and suggestions to)' ;;
   disarming-code) FURN='^([0-9?][0-9? ]{0,4} +D ?i ?s ?a ?r ?m ?i ?n ?g +C ?o ?d ?e$|(C ?h ?a ?p ?t ?e ?r|A ?p ?p ?e ?n ?d ?i ?x) ?[0-9AB]{1,2} ?([:.] ?[A-Za-z0-9/]|[A-Z0-9/]).{0,200}$)' ;;
   learn-programming-with-ocaml) FURN='^([0-9]+ +(Chapter [0-9]+[.].*|BIBLIOGRAPHY|INDEX)|[0-9]+[.][0-9]+[.] .+ [0-9]+|(BIBLIOGRAPHY|INDEX) +[0-9]+)$' ;;
+  # Books whose per-page running head is "<section-number> <Title>  <folio>"
+  # (section head on one edge, folio right-aligned) and which folio.awk's learn
+  # pass does not attest (its folio does not march in a simple offset, or the head
+  # lands mid-column under -layout). The pattern is deliberately narrow: a
+  # dotted-decimal section number, a Title with NO period in it (so a table-of
+  # -contents dot-leader "9.9 X ... 132" and any prose sentence are excluded), then
+  # at least three spaces (the right-aligned folio gap, never an inline number) and
+  # a trailing page number. Validated per book to match only running heads.
+  the-garbage-collection-handbook|bpf-performance-tools|systems-performance|\
+  distributed-systems|tcp-ip-illustrated-vol-1|computer-organization-and-design|\
+  modern-processor-design|mastering-stm32|file-system-forensic-analysis)
+    FURN='^[0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}[ ]*$' ;;
 esac
 # Per-slug code-listing repair (book_fix above). programming-with-posix-threads
 # is a Ghostscript print of an OCR'd Word .doc: its text layer carries the wrong
