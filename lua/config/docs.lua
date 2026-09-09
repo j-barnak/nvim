@@ -1594,10 +1594,10 @@ local simple = {
 	},
 	libafl = {
 		-- READING docs only (source code lives in :Src): the LibAFL Book
-		-- (docs/src) and every crate/fuzzer/util README (libafl_qemu, libafl_nyx,
+		-- (docs/src) and every crate/util README (libafl_qemu, libafl_nyx,
 		-- libafl_frida, libafl_bolts, libafl_sugar, libafl_targets, …).
 		url = "https://github.com/AFLplusplus/LibAFL",
-		sparse = "/docs /crates /fuzzers /utils /bindings /README.md /MIGRATION.md /CONTRIBUTING.md /TROPHIES.md", -- all readable docs; /docs keeps docs/listings for the book's {{#include}} targets
+		sparse = "/docs /crates /utils /bindings /README.md /MIGRATION.md /CONTRIBUTING.md /TROPHIES.md", -- all readable docs; /docs keeps docs/listings for the book's {{#include}} targets
 		marker = "docs/src",
 		browse = "",
 		exts = "-e md -e rst -e txt -e adoc", -- no -e rs: Rust source is :Src only
@@ -2044,12 +2044,12 @@ local SRC_WARN = {
 -- carries ctags excludes.
 -- LibAFL has ~28 crates (many tiny utility crates); the book's Crate List names
 -- only the handful a fuzzer author works with. :Src sparse-checks-out exactly
--- exactly those (crates.html); the example fuzzers are intentionally left out.
+-- those, plus /fuzzers so every example fuzzer is browsable (crates.html).
 local LIBAFL_SRC_SPARSE = table.concat({
 	"/crates/libafl", "/crates/libafl_bolts", "/crates/libafl_sugar",
 	"/crates/libafl_derive", "/crates/libafl_targets", "/crates/libafl_cc",
 	"/crates/libafl_frida", "/crates/libafl_qemu", "/crates/libafl_nyx",
-	"/crates/libafl_concolic",
+	"/crates/libafl_concolic", "/fuzzers",
 }, " ")
 local VERSIONED = {
 	qemu = { url = "https://github.com/qemu/qemu" },
