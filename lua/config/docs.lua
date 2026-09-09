@@ -1961,6 +1961,8 @@ end
 -- Non-`simple` providers whose docs still have a real upstream source repo, so
 -- gs works from them too (doxygen libs, sqlite, rust, ghidra, the bap wiki).
 local SRC_URLS = {
+	-- Bochs docs are the frozen web manuals; "explore source" means the emulator.
+	["bochs-docs"] = "https://github.com/bochs-emu/Bochs",
 	libnyx = "https://github.com/nyx-fuzz/libnyx",
 	["nyx-packer"] = "https://github.com/nyx-fuzz/packer",
 	["qemu-libafl-bridge"] = "https://github.com/AFLplusplus/qemu-libafl-bridge",
@@ -2604,8 +2606,15 @@ local function frozen_web_provider(name, prompt)
 						end
 						local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
 							or (frozen_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt")
+						local ddir = resolve_docs(name) or (frozen_root .. "/" .. name)
 						if vim.fn.filereadable(cf) == 1 then
-							render_lines(vim.fn.readfile(cf), "markdown", nil, title)
+							-- Pass the provider's committed docs dir (not nil) so the
+							-- viewer wires :Src / gs: gs_source keys on the dir's
+							-- first path segment and resolves a source repo where one
+							-- is mapped (e.g. bochs-docs -> Bochs), or says so plainly
+							-- where none is. Link-following and :V degrade gracefully
+							-- (external links notify; unversioned docs say so).
+							render_lines(vim.fn.readfile(cf), "markdown", ddir, title)
 						else
 							vim.notify(title .. ": not in the frozen cache", vim.log.levels.WARN)
 						end
