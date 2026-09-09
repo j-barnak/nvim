@@ -405,6 +405,7 @@ local function render_lines(lines, ft, dir, title)
 		cursorline = true,
 		wrap = prose,
 		linebreak = prose,
+		colorcolumn = "", -- no 72/80-col ruler in the reading pane
 	}
 	for k, v in pairs(wo) do
 		vim.api.nvim_set_option_value(k, v, { scope = "local", win = win })
@@ -417,6 +418,9 @@ local function render_lines(lines, ft, dir, title)
 	-- filetype last, while `win` is current, so ftplugin setlocal stays scoped.
 	vim.bo[buf].filetype = ft or "markdown"
 	vim.bo[buf].modifiable = false
+	-- Re-clear colorcolumn AFTER filetype: a markdown/ftplugin FileType autocmd
+	-- re-applies the user's global ruler (cc=72) onto this window otherwise.
+	vim.api.nvim_set_option_value("colorcolumn", "", { scope = "local", win = win })
 
 	vim.keymap.set("n", "q", function()
 		render_seq = render_seq + 1 -- an in-flight render must not reopen a closed viewer
@@ -3581,6 +3585,7 @@ local BOOKS = {
 		{ title = "Elements of Programming", fmt = "pdf", slug = "elements-of-programming", file = "eop.pdf" },
 	} },
 	{ module = "Rust", key = "books-rust", items = {
+		{ title = "Rust Under the Hood (Ahluwalia)", fmt = "pdf", slug = "rust-under-the-hood", file = "Rust Under the Hood -- Deepa Ahluwalia, Sandeep Ahluwalia -- 2024 -- Independently Published -- 9788320364460 -- 6beb7de3c93e2b512daedd8a1af5de7a -- Anna’s Archive.pdf" },
 		{ title = "Command-Line Rust", fmt = "epub", file = "Command-line Rust _ a project-based primer for writing Rust -- Ken Youens-Clark -- 2024 Updated Edition, 2024 -- O'Reilly Media, Incorporated; -- 9781098109400 -- 462825f45d6c0c1f3254f43a9f8062ee -- Anna’s Archive.epub" },
 		{ title = "Programming Rust (2e)", fmt = "epub", file = "Programming Rust_ Fast, Safe Systems Development, -- Jim Blandy & Jason Orendorff & Leonora F _ S_ Tindall -- 2nd Edition, 2021 -- O'Reilly Media -- 42c3a550a65cf7d0fe19185d1c57c56e -- Anna’s Archive.epub" },
 		{ title = "Rust in Action", fmt = "epub", file = "Rust_In_Action.epub" },
@@ -3598,6 +3603,7 @@ local BOOKS = {
 		{ title = "Blue Fox: Arm Assembly Internals and Reverse Engineering", fmt = "pdf", slug = "blue-fox-arm-assembly-internals", file = "blue-fox-arm-assembly.pdf" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
+		{ title = "TCP/IP Illustrated, Volume 1 (Fall & Stevens, 2e)", fmt = "pdf", slug = "tcp-ip-illustrated-vol-1", file = "TCP-IP-Illustrated-Vol-1.pdf" },
 		{ title = "Distributed Systems (Tanenbaum & van Steen, 4e)", fmt = "pdf", slug = "distributed-systems", file = "Distributed_Systems_4.pdf" },
 		{ title = "The Design and Implementation of the FreeBSD OS", fmt = "pdf", slug = "the-design-and-implementation-of-the-freebsd-operating-system", file = "The-Design-and-Implementation-of-the-FreeBSD-OS.pdf" },
 		{ title = "An Introduction to Computer Networks (Dordal)", fmt = "pdf", slug = "an-introduction-to-computer-networks", file = "an-introduction-to-computer-networks.pdf" },
@@ -3674,6 +3680,9 @@ local BOOKS = {
 		{ title = "Surreptitious Software: Obfuscation, Watermarking, and Tamperproofing", fmt = "pdf", slug = "surreptitious-software", file = "surreptitious-software.pdf" },
 	} },
 	{ module = "Architecture", key = "books-arch", items = {
+		{ title = "Computer Architecture: A Quantitative Approach (H&P)", fmt = "pdf", slug = "computer-architecture-a-quantitative-approach", file = "Computer-Architecture-A-Quanitative-Approach.pdf" },
+		{ title = "Computer Organization and Design (P&H)", fmt = "pdf", slug = "computer-organization-and-design", file = "Computer-Organization-and-Design-The-HW-SW-Interface.pdf" },
+		{ title = "Modern Processor Design (Shen & Lipasti)", fmt = "pdf", slug = "modern-processor-design", file = "Modern-Processor-Design.pdf" },
 		{ title = "The Garbage Collection Handbook", fmt = "pdf", slug = "the-garbage-collection-handbook", file = "The Garbage Collection Handbook. The Art of Automatic Memory Managemen.pdf" },
 		{ title = "A Primer on Memory Consistency and Cache Coherence", fmt = "pdf", slug = "a-primer-on-memory-consistency-and-cache-coherence", file = "A Primer on Memory Consistency and Cache Coherence (2nd ed).pdf" },
 		{ title = "Shared-Memory Synchronization", fmt = "pdf", slug = "shared-memory-synchronization", file = "Shared-Memory Synchronization (2nd ed).pdf" },
@@ -3717,6 +3726,7 @@ local BOOKS = {
 		{ title = "Retrocomputing with Clash", fmt = "pdf", slug = "retrocomputing-with-clash", file = "retroclash.pdf" },
 	} },
 	{ module = "Firmware", key = "books-firmware", items = {
+		{ title = "Mastering STM32 (Noviello)", fmt = "pdf", slug = "mastering-stm32", file = "Mastering-STM32.pdf" },
 		{ title = "Beyond BIOS", fmt = "epub", file = "Beyond BIOS - Vincent Zimmer,Michael Rothman,Suresh Marisetty.epub" },
 	} },
 	{ module = "Windows", key = "books-windows", items = {

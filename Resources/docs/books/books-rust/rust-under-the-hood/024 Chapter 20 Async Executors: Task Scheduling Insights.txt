@@ -1,0 +1,468 @@
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                    Chapter 20
+                                      Async Executors: Task Scheduling Insights
+
+                                    This chapter continues the previous chapters on Rust async/await. If you have not read them yet, we
+                                    recommend you read them first:
+                                      •     “Async/Await: Internal State Machine Dynamics” - goto
+                                      •     “Nested Async/Await: Desugaring to Loops” - patrol
+
+                                    In this chapter, we will learn how the async executor schedules tasks. We will explore the workings of a
+                                    basic async executor and its implementation in Rust. We will analyze the async scheduling of the goto
+                                    and patrol functions from the previous chapters.
+
+                                    Async Executor Overview
+                                    Let us recap what we have learned about async executors in general and the simple async executor in
+                                    particular.
+
+                                          Learn More: Single Threaded Async Executor
+                                    A single-threaded async executor manages the execution of tasks in an asynchronous context using only a
+                                    single thread. It operates by multiplexing multiple tasks onto the same thread and switching between them
+                                    whenever a task voluntarily suspends its execution—usually because it is waiting for an I/O operation or a
+                                    timer.
+                                    A single-threaded executor internally operates with an event loop and a task queue. It places a scheduled
+                                    future for execution in the task queue. Entering the event loop, the executor repeatedly retrieves and polls
+                                    futures from the queue. If a future is not ready—usually due to a pending I/O operation—it relinquishes
+                                    control to the executor, allowing it to proceed to the next task. When a future becomes ready, the executor
+                                    resolves it, enabling the caller of the async function to retrieve its result.
+
+                                          Simple Async Local Executor
+                                    We will use the simple async local executor in our study of the async internals. The following table links the
+                                    source code for both the executor and the example asynchronous code.
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                     GitHub Link                                                       Description
+                                     https://github.com/enlightware/simple-async-local-                enlightware’s single-threaded polling
+                                     executor                                                          executor.
+                                     https://github.com/eventhelix/simple-async-local-executor         eventhelix’s fork of enlightware’s
+                                                                                                       single-threaded polling executor.
+                                     https://github.com/eventhelix/simple-async-local-                 game-units.rs example from
+                                     executor/blob/main/examples/game-units.rs                         eventhelix’s fork of the single-threaded
+                                                                                                       polling executor.
+
+                                    The code in the preceding links is dual licensed under the MIT and Apache 2.0 licenses.
+
+                                    goto and patrol Functions
+                                    To recap, here are the goto and patrol functions from the previous chapters:
+
+                                    #[derive(Default)]
+                                    struct Unit {
+                                        /// The 1-D position of the unit. The unit can only move along this axis.
+                                        pub pos: i32,
+                                    }
+                                    type UnitRef = Rc<RefCell<Unit>>;
+
+                                    /// A future that will move the unit towards `target_pos` at each step,
+                                    /// and complete when the unit has reached that position.
+                                    struct UnitGotoFuture {
+                                        unit: UnitRef,
+                                        target_pos: i32,
+                                    }
+                                    impl Future for UnitGotoFuture {
+                                        type Output = ();
+                                        fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
+                                            let unit_pos = self.unit.borrow().pos;
+                                            if unit_pos == self.target_pos {
+                                                Poll::Ready(())
+                                            } else {
+                                                self.unit.borrow_mut().pos
+                                                            += (self.target_pos - unit_pos).signum();
+                                                Poll::Pending
+                                            }
+                                        }
+                                    }
+
+                                    /// Helper async function to write unit behavior nicely
+                                    async fn goto(unit: UnitRef, pos: i32) {
+                                        UnitGotoFuture {
+                                            unit,
+                                            target_pos: pos,
+                                        }
+                                        .await;
+                                    }
+
+                                    /// Let a unit go back and forth between two positions
+                                    async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                   Chapter 20 Async Executors: Task Scheduling Insights
+                                         loop {
+                                             goto(unit.clone(), poses[0]).await;
+                                             goto(unit.clone(), poses[1]).await;
+                                         }
+                                    }
+
+                                    Async Executors: Scheduling and Task Management
+                                    An async executor is responsible for running async tasks. It schedules the tasks and wakes them when they
+                                    are ready to proceed.
+                                    Let us look at a simple async executor. In the following code, the main function spawns async tasks and
+                                    then starts executing the tasks. Typically, an async executor runs the tasks until they are complete. In our
+                                    example, we simulate the executor by calling the Executor::step() method in a loop. We limit the
+                                    number of steps to 30 to run the example in the Rust playground.
+
+                                    fn main() {
+                                        let executor = Executor::default();
+                                        let units: [UnitRef; 2] = Default::default();
+                                        executor.spawn(patrol(units[0].clone(), [-5, 5]));
+                                        // executor.spawn(patrol(units[1].clone(), [-1,1]));
+                                        for _ in 0..30 {
+                                            executor.step();
+                                        }
+                                    }
+
+                                    The Executor::step() method schedules async tasks. When the function starts, it will look for any new
+                                    spawned tasks and add them to the task_queue. Then, it will loop through the task_queue and execute
+                                    the tasks. The executor will add a task to the pending_tasks list if it is not ready. The next step will use
+                                    the pending_tasks list as the task_queue. The Executor::step() method returns true if any tasks
+                                    await completion. The flowchart of the Executor::step() method follows:
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+
+                                    The Rust code for the Executor::step() method follows:
+
+                                    pub fn step(&self) -> bool {
+                                        // Dummy waker and context (not used as we poll all tasks)
+                                        let waker = dummy_waker();
+                                        let mut context = Context::from_waker(&waker);
+                                        // Append new tasks created since the last step into the task queue
+                                        let mut task_queue = self.inner.task_queue.borrow_mut();
+                                        task_queue.append(&mut self.inner.new_tasks.borrow_mut());
+
+                                          // Loop over all tasks and poll them. If a task is not ready,
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                 Chapter 20 Async Executors: Task Scheduling Insights
+                                             // add it to the pending tasks.
+                                             let mut pending_tasks = Vec::new();
+                                             let mut any_left = false;
+                                             for mut task in task_queue.drain(..) {
+                                                 match task.poll(&mut context) {
+                                                     Poll::Ready(()) => {} // task done
+                                                     Poll::Pending => {
+                                                         pending_tasks.push(task);
+                                                         any_left = true;
+                                                     }
+                                                 }
+                                             }
+                                             // Keep pending tasks for the next step
+                                             *task_queue = pending_tasks;
+                                             any_left // Return true if there are still tasks to run
+                                    }
+
+                                    Scheduling and Execution of goto and patrol Tasks in the Async
+                                    Executor
+                                    Now that we have seen how the async executor works, let us learn how the executor schedules the goto
+                                    and patrol functions. We will use the following sequence diagrams to understand how the executor
+                                    schedules the async tasks.
+                                    The following parts comprise the complete flow:
+                                        1.    Spawn an Async Task
+                                        2.    Start Executing Async Tasks
+                                        3.    Continue Execution of Async Tasks
+
+                                    Spawn an Async Task
+                                    The following sequence diagram illustrates an executor spawning a task and executing it. An explanation of
+                                    the numbered steps follows the diagram.
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+
+                                      1.    The main function creates the executor using the default method.
+                                      2.    The executor returns to the main.
+                                      3.    The main function creates the patrol_closure, capturing unit[0] and [5, -5] in the closure
+                                            environment and sets its initial state to  Patrol::Start(0).
+                                      4.    The executor creates a new task from the closure and stores it in the new_tasks list.
+                                      5.    The executor returns to the main function.
+
+                                    Start Executing Async Tasks
+                                    The following sequence diagram shows how the executor executes the patrol task. A detailed explanation
+                                    of the numbered steps follows the diagram.
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                               Chapter 20 Async Executors: Task Scheduling Insights
+
+                                    1.   main calls Executor::step() to execute the first task.
+
+                                            –    The executor looks for new spawned tasks and adds them to the task_queue.
+                                    2.   The executor cycles through the task_queue, running the tasks it finds. In this case, it discovers a
+                                         single task within the task_queue. Subsequently, it invokes the poll method on this task.
+
+                                    3.   The task scheduled here contains the patrol_closure. The task involves the poll method of the
+                                         patrol_closure.
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                      4.    The patrol_closure, in the     Patrol::Start state, begins from the function’s start. The
+                                            closure environment captures unit and poses[0] to create the goto_closure, setting its initial
+                                            state to   Goto::Start.
+
+                                            async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+                                                loop {
+                                                   goto(unit.clone(), poses[0]).await;
+                                                    goto(unit.clone(), poses[1]).await;
+                                                }
+                                            }
+
+                                      5.    The patrol_closure polls the goto_closure to find if it has reached the first position specified
+                                            in poses[0]. The poll method call of the goto_closure results from the .await marked with the
+                                                arrow in the preceding code snippet.
+
+                                      6.    The goto_closure creates a UnitGotoFuture.
+
+                                      7.    The goto_closure polls UnitGotoFuture. The poll method of UnitGotoFuture checks if the
+                                            unit has reached the pos. In this case, the unit has yet to reach the pos position.
+
+                                      8.    The poll method returns Poll::Pending to the goto_closure. The goto_closure sets its state
+                                            to    Goto::Waiting.
+
+                                      9.    The goto_closure returns Poll::Pending to the patrol_closure. The patrol_closure sets
+                                            its state to Patrol::WaitingToReachPosition0.
+
+                                      10. The patrol_closure returns Poll::Pending to the task.
+
+                                      11. The task returns Poll::Pending to the executor.
+
+                                      12. Since the task is not ready, the executor adds the task to the pending_tasks list for future
+                                          scheduling. The executor returns to the Executor::step() caller.
+
+                                    Continue Execution of Async Tasks
+                                    The following sequence diagram shows how the executor continues the execution of the patrol task. A
+                                    detailed explanation of the numbered steps follows the diagram.
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                               Chapter 20 Async Executors: Task Scheduling Insights
+
+                                    The executor continues to run if any events are scheduled. In our example, the scheduler calls
+                                    Executor::step() in a loop. At each step, polling of the goto_closure moves the unit closer to the pos.
+                                    Now we will see how the goto_closure returns Poll::Ready to the patrol_closure when the unit
+                                    reaches the pos. We start at step 6 in the preceding sequence diagram.
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                      6.    Once the unit reaches the pos, the goto_closure returns Poll::Ready to the patrol_closure.
+                                            The patrol_closure then polls the goto_closure again. The     shows the .await point in the
+                                            patrol_closure.
+
+                                            async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+                                                loop {
+                                                        goto(unit.clone(), poses[0]).await;
+                                                       goto(unit.clone(), poses[1]).await;
+                                                }
+                                            }
+
+                                      7.    The UnitGotoFuture returns Poll::Ready to the goto_closure.
+
+                                      8.    The goto_closure returns Poll::Ready to the patrol_closure. The goto_closure sets its
+                                            state to  Goto::Done.
+
+                                      9.    The Poll::Ready return helps us advance the execution until we hit the next .await point (  in
+                                            the following code snippet). The goto_closure captures the unit and poses[1] in the closure
+                                            environment. The initial state of the closure is set to Goto::Start.
+
+                                            async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+                                                loop {
+                                                       goto(unit.clone(), poses[0]).await;
+                                                      goto(unit.clone(), poses[1]).await;
+                                                }
+                                            }
+
+                                      10. The patrol_closure triggers the following poll to move the unit to the next pos position.
+
+                                    The patrol_closure, now at the next .await point, enters the
+                                    Patrol::WaitingToReachPosition1 state. It then returns Poll::Pending to the task, which returns
+                                    Poll::Pending to the executor. Subsequently, the executor schedules the task for later by adding it to
+                                    the pending_tasks list and then returns to the Executor::step() caller.
+
+                                    The patrol function has an infinite loop; returning Poll::Ready from the goto_closure does not
+                                    terminate the patrol_closure. The patrol_closure will continue to poll the goto_closure until the
+                                    unit reaches the next pos position.
+
+                                       Experiment: Spawning Two Async Tasks; Infinite Loops in Async
+                                    Functions
+                                    We have created a Rust playground (https://bit.ly/45geQYh) to experiment with the code. You can modify
+                                    the code and run it to see the trace output.
+                                    Here is the main function that implements the executor. We see that the units array has two units. We
+                                    have spawned a task corresponding to the first unit. We have commented out the code to spawn the second
+                                    task.
+
+                                    pub fn main() {
+                                        let executor = Executor::default();
+                                        let units: [UnitRef; 2] = Default::default();
+                                        executor.spawn(patrol(units[0].clone(), [-5, 5]));
+                                        // executor.spawn(patrol(units[1].clone(), [-1,1]));
+                                        let print_poses = || {
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                   Chapter 20 Async Executors: Task Scheduling Insights
+                                                 println!(
+                                                     "Unit poses: {}",
+                                                     units
+                                                         .iter()
+                                                         .map(|unit| unit.borrow().pos.to_string())
+                                                         .collect::<Vec<_>>()
+                                                         .join(", ")
+                                                 );
+                                             };
+                                             print_poses();
+                                             for _ in 0..30 {
+                                                 executor.step();
+                                                 print_poses();
+                                             }
+                                    }
+
+                                    Now, let us conduct the following experiments:
+                                        •     Spawning Two Tasks
+                                        •     Confirming That the patrol Future Never Returns poll::Ready
+
+                                    Spawning Two Tasks
+                                        1.    Click the RUN ▶ button on the top left of the Rust playground window. You will see the following
+                                              output. The units[0] unit is moving between -5 and 5. The units[1] unit is not moving because
+                                              we have not yet spawned the second async task.
+
+                                              Unit poses: 0, 0
+                                              Unit poses: -1, 0
+                                              Unit poses: -2, 0
+                                              Unit poses: -3, 0
+                                              Unit poses: -4, 0
+                                              Unit poses: -5, 0
+                                              Unit poses: -4, 0
+                                              Unit poses: -3, 0
+                                              Unit poses: -2, 0
+                                              Unit poses: -1, 0
+
+                                        2.    Now scroll to the end of the code in the Rust playground and uncomment the following line to
+                                              spawn the second async task.
+
+                                              executor.spawn(patrol(units[1].clone(), [-1,1]));
+
+                                        3.    To run the code, click the RUN ▶ button on the top left. The units[1] unit moves between -5 and
+                                              5. The units[1] unit moves between -1 and 1. You will see the following output.
+
+                                              Unit poses: 0, 0
+                                              Unit poses: -1, -1
+                                              Unit poses: -2, 0
+                                              Unit poses: -3, 1
+                                              Unit poses: -4, 0
+                                              Unit poses: -5, -1
+                                              Unit poses: -4, 0
+                                              Unit poses: -3, 1
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                              Unit poses: -2, 0
+                                              Unit poses: -1, -1
+
+                                    This example shows that the two spawned tasks run independently in a single thread. The excerpt from the
+                                    Executor::step method shows how the executor runs multiple tasks. The executor calls each task’s poll
+                                    function in a loop. If the task is not ready, the executor pushes the task to the end of the queue. If the task is
+                                    ready, the executor discards the task.
+
+                                    pub fn step(&self) -> bool {
+                                    // ✄--- snip ---
+                                        let mut pending_tasks = Vec::new();
+                                        let mut any_left = false;
+                                        for mut task in task_queue.drain(..) {
+                                            match task.poll(&mut context) {
+                                                Poll::Ready(()) => {} // task done
+                                                Poll::Pending => {
+                                                    pending_tasks.push(task);
+                                                    any_left = true;
+                                                }
+                                            }
+                                        }
+                                    // ✄--- snip ---
+                                    }
+
+                                    Confirming That the patrol Future Never Returns Poll::Ready
+                                    In our example, the patrol function never returns Poll::Ready because when an await on goto()
+                                    returns Poll::Ready, we change the target position and await the goto() future for the new target
+                                    position.
+                                    Comments in the following code snippet show the state of the patrol function when the goto future
+                                    returns Poll::Ready.
+
+                                    async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+                                        loop {
+                                            goto(unit.clone(), poses[0]).await;
+                                            // We reach here only when the unit reaches the target position
+                                            // poses[0] and the goto future poll returns Poll::Ready. If the
+                                            // goto future poll had returned Poll::Pending we would have
+                                            // returned from the patrol closure to the executor after saving
+                                            // the state     WaitingToReachPosition0 in the closure.
+
+                                                goto(unit.clone(), poses[1]).await;
+                                                // We reach here only when the unit reaches the target position
+                                                // poses[1] and the goto future poll returns Poll::Ready. If the
+                                                // goto future poll had returned Poll::Pending we would have
+                                                // returned from the patrol closure to the executor after saving
+                                                // the state     WaitingToReachPosition1 in the closure.
+                                          }
+                                    }
+
+                                    We can confirm this by adding prints in the step function.
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                  Chapter 20 Async Executors: Task Scheduling Insights
+                                    pub fn step(&self) -> bool {
+                                    // ✄--- snip ---
+                                        let mut pending_tasks = Vec::new();
+                                        let mut any_left = false;
+                                            for mut task in task_queue.drain(..) {
+                                                match task.poll(&mut context) {
+                                                    Poll::Ready(()) => {
+                                                        println!("Poll::Ready\n");
+                                                    } // task done
+                                                    Poll::Pending => {
+                                                        pending_tasks.push(task);
+                                                        println!("Poll::Pending\n");
+                                                        any_left = true;
+                                                    }
+                                                }
+                                            }
+                                    // ✄--- snip ---
+                                    }
+
+                                    You can run the code in the Rust playground (https://bit.ly/3YqcWSv). You will see that Poll::Ready is
+                                    never printed.
+
+                                          Key Takeaways
+                                      •    Spawning an async task has nothing to do with the operating system. It is just a closure scheduled
+                                           to be executed by the executor.
+
+                                      •    A .await suspends the execution of an async task if the future is not ready. The executor will call
+                                           the poll function again to check if the future is ready.
+
+                                      •    The method returns Poll::Pending if the future is not ready. It returns Poll::Ready if the future
+                                           is ready.
+
+                                      •    If await is called inside an infinite loop, the function will never return Poll::Ready as it continues
+                                           in the loop. Even a function with an infinite loop will return Poll::Pending if the future is not
+                                           ready.
+
+                                    Note: Unlike the real-world async executors, the simple async scheduler in this chapter calls the poll
+                                    method of a future at every step. In a practical scenario, an executor will invoke the poll method only
+                                    when the future is ready to progress.
+
+lanchonbeef@gmail.com 24 Aug 2025
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                           Part G
+                                    Transformations and
+                                        Takeaways
+
+                                      Rust Under the Hood Companion (https://eventhelix.com/ruth/)
+                                         • Compiler Explorer and Rust Playground links
+                                         • Report and see Errata
+                                         • Feedback and Reviews
+lanchonbeef@gmail.com 24 Aug 2025

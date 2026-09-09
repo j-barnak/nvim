@@ -776,6 +776,32 @@ elif [ "$4" = book ] && [ "$SLUG" = rootkits ]; then
     ty { print $2"\t"t }
   ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = tcp-ip-illustrated-vol-1 ]; then
+  # No outline. Each chapter opens with the bare chapter number on its own line
+  # then the title, which no generic pattern matches. Boundaries below are the
+  # printed chapter openings (verified against the page carrying "<N>\n<Title>");
+  # front matter (pages 1-29) is auto-emitted before the first boundary.
+  { printf '30\tPreface to the Second Edition\n'
+    printf '40\t1 Introduction\n'
+    printf '70\t2 The Internet Address Architecture\n'
+    printf '118\t3 Link Layer\n'
+    printf '204\t4 ARP: Address Resolution Protocol\n'
+    printf '220\t5 The Internet Protocol (IP)\n'
+    printf '272\t6 System Configuration: DHCP and Autoconfiguration\n'
+    printf '338\t7 Firewalls and Network Address Translation (NAT)\n'
+    printf '392\t8 ICMPv4 and ICMPv6: Internet Control Message Protocol\n'
+    printf '474\t9 Broadcasting and Local Multicasting (IGMP and MLD)\n'
+    printf '512\t10 User Datagram Protocol (UDP) and IP Fragmentation\n'
+    printf '550\t11 Name Resolution and the Domain Name System (DNS)\n'
+    printf '618\t12 TCP: The Transmission Control Protocol (Preliminaries)\n'
+    printf '634\t13 TCP Connection Management\n'
+    printf '686\t14 TCP Timeout and Retransmission\n'
+    printf '730\t15 TCP Data Flow and Window Management\n'
+    printf '766\t16 TCP Congestion Control\n'
+    printf '832\t17 TCP Keepalive\n'
+    printf '844\t18 Security: EAP, IPsec, TLS, DNSSEC, and DKIM\n'
+    printf '972\tGlossary of Acronyms\n'
+    printf '1002\tIndex\n'; } > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = the-design-and-implementation-of-the-freebsd-operating-system ]; then
   # A 1152-page scan with no outline. Boundaries are the printed chapter openings
   # (printed page == PDF page here), taken from the book's own Contents and each

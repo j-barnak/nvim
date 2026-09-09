@@ -1,0 +1,877 @@
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                   Chapter 19
+                                     Nested Async/Await: Desugaring to Loops
+
+                                    This chapter builds on the previous one, which covered the desugaring and assembly code generation for
+                                    async/await. This chapter will explore the desugaring and assembly code generated for nested async/await
+                                    constructs in Rust. Additionally, we will examine how async functions deal with infinite loops.
+
+                                    patrol Function Awaits goto Function in an Infinite Loop
+                                    Our primary focus will be on the patrol function. The patrol function is an async function that moves a
+                                    unit between two positions. The core of the patrol function involves the goto function, which directs the
+                                    unit to move to a particular position. By utilizing the goto function, the patrol function continuously
+                                    toggles the unit’s movement between the two positions, poses[0] and poses[1], creating an infinite loop
+                                    of patrolling. The .await waits for the goto function to reach the target position.
+
+                                    Here is the code representation of the patrol function:
+
+                                    async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+                                        loop {
+                                            goto(unit.clone(), poses[0]).await;
+                                            goto(unit.clone(), poses[1]).await;
+                                        }
+                                    }
+
+                                    patrol and goto Functions: Nested Async/Await Constructs
+                                    Here is the complete code for the patrol, goto functions and the Unit struct. We looked at the goto
+                                    function in the “Async/Await: Internal State Machine Dynamics” chapter. Here, we will explore the patrol
+                                    function in detail.
+
+                                    #[derive(Default)]
+                                    struct Unit {
+                                        /// The 1-D position of the unit. The unit can only move along this axis.
+                                        pub pos: i32,
+                                    }
+                                    type UnitRef = Rc<RefCell<Unit>>;
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                    /// A future that will move the unit towards `target_pos` at each step,
+                                    /// and complete when the unit has reached that position.
+                                    struct UnitGotoFuture {
+                                        unit: UnitRef,
+                                        target_pos: i32,
+                                    }
+                                    impl Future for UnitGotoFuture {
+                                        type Output = ();
+                                        fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
+                                            let unit_pos = self.unit.borrow().pos;
+                                            if unit_pos == self.target_pos {
+                                                Poll::Ready(())
+                                            } else {
+                                                self.unit.borrow_mut().pos
+                                                                     += (self.target_pos - unit_pos).signum();
+                                                Poll::Pending
+                                            }
+                                        }
+                                    }
+
+                                    /// Helper async function to write unit behavior nicely
+                                    async fn goto(unit: UnitRef, pos: i32) {
+                                        UnitGotoFuture {
+                                            unit,
+                                            target_pos: pos,
+                                        }
+                                        .await;
+                                    }
+
+                                    /// Let a unit go back and forth between two positions
+                                    async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+                                        loop {
+                                            goto(unit.clone(), poses[0]).await;
+                                            goto(unit.clone(), poses[1]).await;
+                                        }
+                                    }
+
+                                    A bit of a refresher on the goto function: it takes a UnitRef and a pos as input and returns a
+                                    UnitGotoFuture instance. The UnitGotoFuture instance implements the Future trait and has a poll
+                                    method that moves the unit towards the pos at each step and completes when the unit has reached that
+                                    position.
+                                    After this brief recap, let us dig deeper into the patrol function’s async machinery.
+
+                                    Desugaring the Patrol Function into a State Machine
+                                    Before exploring the generated assembly, let us see how we might desugar the async patrol function into
+                                    a state machine. The transformation of the async patrol function into a state machine results in a
+                                    structure resembling the following code:
+
+                                    // The state machine enum
+                                    #[repr(u8)]
+                                    enum PatrolFuture {
+                                        // Initial state
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                   Chapter 19 Nested Async/Await: Desugaring to Loops
+                                        Start(UnitRef, [i32; 2]),
+                                        // Waiting for goto to complete
+                                        WaitingToReachPosition0(UnitRef, [i32; 2],
+                                                                Pin<Box<dyn Future<Output = ()>>>),
+                                        WaitingToReachPosition1(UnitRef, [i32; 2],
+                                                                Pin<Box<dyn Future<Output = ()>>>),
+                                        // Final state (which is unreachable)
+                                        Done,
+                                    }
+
+                                    // Implementing Future for PatrolFuture
+                                    impl Future for PatrolFuture {
+                                        type Output = ();
+
+                                        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>)
+                                                -> Poll<Self::Output> {
+                                            // Convert the pinned reference to &mut PatrolFuture
+                                            let this = self.get_mut();
+
+                                            loop {
+                                                match this {
+                                                    // In the start state, create a goto future
+                                                    // and move to the waiting state
+                                                    PatrolFuture::Start(unit, poses) => {
+                                                        let fut = Box::pin(goto(unit.clone(), poses[0]));
+                                                        *this = PatrolFuture::WaitingToReachPosition0(
+                                                                            unit.clone(), *poses, fut);
+                                                    }
+                                                    // In the waiting state for goto1, poll the goto future and
+                                                    // move to the next waiting state if it is ready
+                                                    PatrolFuture::WaitingToReachPosition0(
+                                                                            unit, poses, ref mut fut) => {
+                                                        match Pin::as_mut(fut).poll(cx) {
+                                                            Poll::Ready(()) => {
+                                                                let fut = Box::pin(goto(unit.clone(), poses[1]));
+                                                                *this =
+                                                                    PatrolFuture::WaitingToReachPosition1(
+                                                                            unit.clone(), *poses, fut);
+                                                            }
+                                                            Poll::Pending => return Poll::Pending,
+                                                        }
+                                                    }
+                                                    // In the waiting state for goto2, poll the goto future
+                                                    // and move back to the start state if it is ready
+                                                    PatrolFuture::WaitingToReachPosition1(unit, poses,
+                                                                                           ref mut fut) => {
+                                                        match Pin::as_mut(fut).poll(cx) {
+                                                            Poll::Ready(()) => *this = PatrolFuture::Start(
+                                                                                           unit.clone(), *poses),
+                                                            Poll::Pending => return Poll::Pending,
+                                                        }
+                                                    }
+                                                    // In the done state (which is unreachable), return ready
+                                                    PatrolFuture::Done => return Poll::Ready(()),
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                                       }
+                                                  }
+                                            }
+                                    }
+
+                                    // The original async function is equivalent to creating a new
+                                    // PatrolFuture instance
+                                    fn patrol(unit: UnitRef, pos: [i32; 2]) -> impl Future<Output = ()> {
+                                        PatrolFuture::Start(unit.clone(), pos)
+                                    }
+
+                                    We see in the preceding code that the patrol function is desugared into a state machine that consists of
+                                    three key states: Start, WaitingToReachPosition0, and WaitingToReachPosition1.
+
+                                        •       The Start state is the initial state, creating a new goto future and moving to the
+                                                WaitingToReachPosition0 state.
+                                        •       The WaitingToReachPosition0 state polls the goto future and moves to the
+                                                WaitingToReachPosition1 state if the future is ready.
+                                        •       The WaitingToReachPosition1 state polls the goto future and returns to the Start state if the
+                                                future is ready. The move back to Start implements the infinite loop behavior of the patrol
+                                                function.
+
+                                            Learn More: What Is the              Pin in the Signature of the poll Method?
+                                    The Pin type in Rust guarantees that the data at a particular memory location will not move and its
+                                    memory will not get invalidated. This guarantee is crucial in asynchronous programming, mainly when
+                                    working with Futures.
+
+                                    The definition of the poll method is as follows:
+
+                                    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>
+
+                                    Note that self is wrapped in Pin as a Future might be self-referential, potentially referencing another part
+                                    of itself. Moving such a future could invalidate that reference, leading to undefined behavior. The Pin
+                                    wrapper prevents this by ensuring that the data inside cannot move, allowing safe referencing. Regarding
+                                    the poll method, this setup effectively promises that neither the future nor anything it references will
+                                    move during the poll’s duration.
+
+                                       Learn More: How Can Closures Create Self-Referential Structures in Async
+                                    Rust?
+                                    In Rust, closures capture their environment, allowing them to use variables from the scope in which they
+                                    are defined. The closure stores this captured data within itself, a key aspect since Rust treats closures as
+                                    values that can be passed around and have lifetimes like any other value.
+                                    In async programming, you often chain futures together, frequently using closures within combinators like
+                                    map, and_then, or in async blocks. These closures capture variables from their surrounding environment,
+                                    which can result in self-referential structures.
+                                    Consider this example:
+
+                                    let future = async {
+                                       let data = get_some_data().await;
+                                       let reference = &data;
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                  Chapter 19 Nested Async/Await: Desugaring to Loops
+                                         do_something_with(reference).await;
+                                    };
+
+                                    Here, reference is a reference to data. But data lives within the Future created by the async block - it is
+                                    part of the future’s state. So, this Future contains a reference to its internal state.
+
+                                    If this future were to move, the location of data in memory would change, and reference would still point
+                                    to the old area, leading to undefined behavior. By using Pin, we can ensure that once the future is created,
+                                    it can no longer move, preserving the validity of reference.
+
+                                    Understanding Async: Closures, State Machines, and Async
+                                    Runtime
+                                    Closures and State Machines
+                                    We have looked at the desugared code for the patrol function. The generated assembly of the async code
+                                    uses closures to implement the state machine. We explored the mapping of async functions to closures
+                                    when we looked at the goto function in the previous async deep dive.
+
+                                    The compiler converts the patrol function into a closure that takes two inputs: the closure environment
+                                    and the task context. The closure environment is a struct containing the state of the state machine. The task
+                                    context is a struct that holds the task’s state executing the future. The closure returns a Poll value, either
+                                    Poll::Pending or Poll::Ready. The Poll::Pending value indicates that the future is not ready, and
+                                    the Poll::Ready value indicates that the future is ready.
+
+                                    The following diagram shows the closure environment for the patrol function. The environment is a
+                                    struct that contains the environment of the patrol closure. The environment also includes the closure
+                                    environment for the goto closure. The environment is passed to the closure as a mutable reference.
+
+                                    The second input to the closure is the task context used to schedule waking up the task when the future is
+                                    ready. An example of a task context follows. We will not explore the task context as the patrol and goto
+                                    functions do not use it.
+
+                                    The closure also keeps track of the state of the state machine in the state field. The closure updates the
+                                    state field whenever the state machine moves to a new state. As we saw with the desugared code, the
+                                    state machine starts in the Start state and moves to the WaitingToReachPosition0 state on the
+                                    creation of the goto future. The state machine then moves to the WaitingToReachPosition1 state when
+                                    the poses[0] goto future is ready. The state machine returns to the Start state when the poses[1]
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                    goto future is ready. The move back to Start implements the infinite loop behavior of the patrol
+                                    function.
+                                    The following diagram shows the state machine for the patrol function.
+
+                                    Role of the Async Runtime and Infinite Async Loops
+                                    The following sequence diagram shows an example of interactions between three participants: an executor,
+                                    a patrol closure, and a goto closure. We will look at the first two loop iterations of the infinite loop in the
+                                    patrol function.
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                            Chapter 19 Nested Async/Await: Desugaring to Loops
+                                    First loop iteration:
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                    Second loop iteration:
+
+                                    The process, as described in the sequence diagram, is enumerated here with numbers that match the
+                                    sequence diagram.
+                                      1.    The Executor invokes the patrol closure with the poll method, passing the closure environment
+                                            and context as arguments.
+                                      2.    patrol is now in the       Start state. The patrol closure then invokes the goto closure with the
+                                            poll method, passing the goto environment with poses[0] and context as arguments, signaling
+                                            the unit to move to the first position.
+                                      3.    The goto closure is in the moving state and returns Poll::Pending to the patrol closure.
+                                      4.    patrol enters the       WaitingToReachPosition0 state and returns Poll::Pending to the
+                                            executor.
+                                      5.    The Executor again invokes the patrol closure with the poll method.
+                                      6.    The patrol closure invokes the goto closure with the poll method, passing the same arguments.
+                                      7.    Upon reaching poses[0] , goto returns Poll::Ready to the patrol closure.
+                                      8.    The patrol closure then invokes the goto closure with the poll method, passing poses[1] to
+                                            signal the unit to move to the second position.
+                                      9.    goto moves to the second position, returning Poll::Pending to patrol.
+                                      10.   patrol enters the       WaitingToReachPosition1 state and returns Poll::Pending to the
+                                            executor.
+                                      11.   The Executor invokes patrol with the poll method.
+                                      12.   patrol invokes goto with the poll method, passing the same arguments.
+                                      13.   Upon reaching poses[1], goto returns Poll::Ready to patrol, which re-enters the          Start
+                                            state.
+                                      14.   The process repeats in the second loop iteration, starting with patrol invoking goto to move to
+                                            the first position again.
+                                      15.   The goto closure is in the moving state and returns Poll::Pending to the patrol closure.
+                                      16.   patrol enters the       WaitingToReachPosition0 state and returns Poll::Pending to the
+                                            executor.
+                                    This process will continue indefinitely, signifying the infinite loop behavior of the patrol function. The
+                                    executor is only responsible for invoking the patrol closure and does not need to have any knowledge
+                                    about the infinite loop behavior.
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                  Chapter 19 Nested Async/Await: Desugaring to Loops
+
+                                    Flowchart of the patrol Async Function State Machine
+                                    This section looks at a high-level flowchart of the patrol function. The flowchart shows the states of the
+                                    patrol function and the transitions between the states. Note that the flowchart is a simplified
+                                    representation that shows the states and transitions relevant to this chapter’s discussion.
+                                    The patrol state machine has the following states:
+
+                                      •          Start (0): This is the patrol state machine’s initial state. The state machine prepares the
+                                             goto closure environment and polls the first await point. The next section describes the polling
+                                             procedure.
+                                      •          WaitingToReachPosition0 (3): The state machine is in this state when the first await
+                                             point is polled (described in the next section).
+                                      •          WaitingToReachPosition1 (4): The state machine is in this state when the second await
+                                             point is polled (described in the second await point polling section).
+
+                                    Polling the First Await Point
+                                          marks the first await point in the patrol function.
+
+                                    async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+                                        loop {
+                                            goto(unit.clone(), poses[0]).await; //
+                                            goto(unit.clone(), poses[1]).await;
+                                        }
+                                    }
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                    The goto closure environment has already been initialized within the patrol closure environment for the
+                                    first await point. The goto closure is polled. The result of the first await point poll determines the further
+                                    action.
+                                      •      If the first await point returns Poll::Ready, the patrol function prepares the environment for
+                                             the poses[1] await point and invokes the goto closure for the second await point.
+                                      •      If the first await point returns Poll::Pending, the patrol function sets the state to
+                                             WaitingToReachPosition0 (3) and returns Poll::Pending.
+                                      •      If the second await point returns Poll::Pending, the patrol function sets the state to
+                                             WaitingToReachPosition1 (4) and returns Poll::Pending.
+                                      •      If the second await point returns Poll::Ready, the patrol function sets the state to    Start
+                                             (0) and jumps to continue the infinite loop.
+
+                                    Polling the Second Await Point
+                                          marks the second await point in the patrol function.
+
+                                    async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+                                        loop {
+                                            goto(unit.clone(), poses[0]).await;
+                                            goto(unit.clone(), poses[1]).await; //
+                                        }
+                                    }
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                     Chapter 19 Nested Async/Await: Desugaring to Loops
+                                    At this stage, the ‘goto’ closure environment is already initialized within the patrol closure environment
+                                    for the second await point. Upon polling the goto closure, the outcome of this second await point
+                                    determines the further course of action.
+
+                                         •   If the second await point returns Poll::Ready, the patrol function sets the state to            Start
+                                             (0) and jumps to continue the infinite loop.
+                                         •   If the second await point returns Poll::Pending, the patrol function sets the state to
+                                             WaitingToReachPosition1 (4) and returns Poll::Pending.
+
+                                    Understand Nested Async/Await Generated Assembly
+                                    We now understand the high-level flow of the async code. Let us look at the generated assembly code.
+
+                                    Input and Output Registers
+                                    This assembly code, generated from a patrol closure, takes two inputs: the closure environment stored in
+                                    rdi, and the task context stored in rsi. The output is stored in rax and can be Poll::Pending or
+                                    Poll::Ready.
+
+                                    The code starts by saving the callee-saved registers and then moving the task context and closure
+                                    environment to r14 and rbx, respectively. The code then loads the state from the closure environment and
+                                    uses a jump table to determine which block of code to execute based on the state.
+
+                                    State Machine Jump Table
+                                    The compiler splits the generated assembly code into five code blocks, as shown in the following table:
+
+                                     State Id     Code Block                                Code Block Behavior
+                                     0                Start                                 Executes before the first future is polled
+                                     1                Error handling 1                      Throws an exception
+                                     2                Error handling 2                      Panics
+                                     3                WaitingToReachPosition0               Waits for the first future to resolve
+                                     4                WaitingToReachPosition1               Waits for the second future to resolve
+
+                                    At the start of the function, the code uses the current state of the closure to select the code block for
+                                    execution. It employs a state-indexed jump table to make this selection. Here follows the definition of the
+                                    patrol function’s jump table:
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                    .LJTI58_0:
+
+                                    .long      .LBB58_1-.LJTI58_0  ;     Start (0): Code executed before the
+                                                                   ; first future is polled
+                                    .long      .LBB58_3-.LJTI58_0 ;      State 1: Throw an exception.
+                                    .long      .LBB58_2-.LJTI58_0 ;      State 2: Panic.
+                                    .long      .LBB58_6-.LJTI58_0 ;      WaitingToReachPosition0 (3)
+                                    .long      .LBB58_16-.LJTI58_0 ;     WaitingToReachPosition1 (4)
+
+                                    Start State
+                                    The     Start state performs the following actions:
+
+                                      1.    Load the captured unit and poses from the closure environment into registers. Also, save an
+                                            additional copy of these values in the closure environment.
+                                      2.    Increment the reference count for the captured unit.
+                                      3.    Save the unit and poses[0] in the goto closure environment.
+
+                                    States WaitingToReachPosition0 and WaitingToReachPosition1
+                                    For a clearer understanding of the code, let us break down the sequences executed within the patrol
+                                    function for states 3 ( WaitingToReachPosition0) and 4 ( WaitingToReachPosition1):
+
+                                      1.    When executing state 3 or state 4, increment the reference count for the captured unit.
+                                      2.    If the reference count becomes zero, trigger an undefined behavior and halt the process. Proceed to
+                                            the following step only if the reference count is greater than zero.
+                                      3.    Prepare UnitGotoFuture and store the address of the goto closure environment within the
+                                            closure environment.
+                                      4.    Invoke the goto closure.
+                                      5.    If the future is not ready, save the current state and return the function.
+                                      6.    In case the future is ready, check the state of the goto closure.
+                                      7.    Accordingly, decrement the reference count for the captured unit.
+                                      8.    If the reference count drops to zero, deallocate the unit.
+                                    The function updates the state in the closure environment, and the function returns with either
+                                    Poll::Pending or Poll::Ready in rax.
+
+                                    Annotated Patrol Closure Assembly Code
+                                    Now, we are ready to dig into the generated assembly code.
+                                    The Rust code for the patrol function is repeated here for easy cross-referencing with the assembly code.
+
+                                    async fn patrol(unit: UnitRef, poses: [i32; 2]) {
+                                        loop {
+                                            goto(unit.clone(), poses[0]).await;
+                                            goto(unit.clone(), poses[1]).await;
+                                        }
+                                    }
+
+                                    Before diving into the assembly code, let us examine the input and output registers. The closure
+                                    environment resides in rdi, while the task context is in rsi. The output, stored in rax, can be
+                                    Poll::Pending or Poll::Ready. The following figure displays the memory the rdi register pointed to,
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                   Chapter 19 Nested Async/Await: Desugaring to Loops
+                                    with annotations indicating each field’s offset within the closure environment. It is important to note that
+                                    the closure environments for patrol also encompass the closure environment for the goto closure.
+
+                                          Input:
+
+                                      •      rdi: The closure environment
+                                      •      rsi: The task_context
+
+                                          Output:
+
+                                      •   rax: Poll::Pending or Poll::Ready
+                                    playground::patrol::{{closure}}:
+                                    push    r15                         ; Save the callee-saved registers
+                                    push    r14
+                                    push    rbx
+
+                                    mov            r14, rsi                     ; Store the task_context in r14.
+                                    mov            rbx, rdi                     ; Store the closure environment in rbx.
+
+                                          Jump to code block based on closure state
+
+                                    Index into the jump table using the state in the closure environment and jump to the code block
+                                    corresponding to the state.
+
+                                    movzx          eax, byte ptr [rdi + 32] ; Load the state to select the block to
+                                                                            ; execute. The 32nd byte stores the state
+                                                                            ; of the closure environment.
+
+                                    lea rcx, [rip + .LJTI58_0]                  ; Load the address of the jump table in rcx.
+                                                                                ; The jump table is a list of offsets from
+                                                                                ; the start of the jump table to each block.
+
+                                    movsxd         rax, dword ptr [rcx + 4*rax] ; Get the jump offset from the entry
+                                                                                ; corresponding to the state. The index
+                                                                                ; in rax is multiplied by 4 because the
+                                                                                ; jump table is an array of 32-bit jump
+                                                                                ; offsets indexed by the state.
+
+                                    add rax, rcx                         ; Add the jump offset to the jump table to
+                                                                         ; determine the address of the block to execute.
+
+                                    jmp rax                              ; Jump to the correct block.
+
+                                    .LBB58_1:
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                       Start (0): Code executed before the first future is polled. At this point, rbx contains the closure
+                                    environment, and r14 contains the context.
+
+                                    mov rcx, qword ptr [rbx]                 ; Load the captured poses array from
+                                                                             ; the closure environment.
+
+                                    mov rax, qword ptr [rbx + 24]            ; Load the captured Rc<RefCell<Unit>>
+                                                                             ; from the closure environment.
+
+                                    mov qword ptr [rbx + 8], rax             ; Store the captured Rc<RefCell<Unit>>
+                                                                             ; in a local variable saved in the
+                                                                             ; closure environment.
+
+                                    mov qword ptr [rbx + 16], rcx            ; Store the captured poses array in a
+                                                                             ; local variable saved in the closure
+                                                                             ; environment.
+
+                                    jmp .LBB58_4                             ; Jump to the next block.
+
+                                          State (2): Panic.
+
+                                    .LBB58_2:
+                                    lea rdi, [rip + str.1]
+                                    lea rdx, [rip + .L__unnamed_24]
+                                    mov esi, 34
+                                    call    qword ptr [rip + core::panicking::panic@GOTPCREL]
+
+                                    ;      State (1): Throw exception.
+
+                                    .LBB58_3:
+                                        ud2
+
+                                          Start (0): Getting ready to wait for poses[0].
+
+                                    At this point, rbx contains the closure environment, and rax points to Rc<RefCell<Unit>>. Increment the
+                                    Rc<RefCell<Unit>> reference count.
+
+                                    .LBB58_4:
+                                    inc qword ptr [rax] ; Increment the strong reference count for
+                                                        ; Rc<RefCell<Unit>>. The strong reference count is
+                                                        ; stored in the first 8 bytes of the Rc<RefCell<Unit>>.
+
+                                    je     .LBB58_28            ; If the reference count is 0, jump to error handling.
+
+                                    mov ecx, dword ptr [rbx + 16] ; Load poses[0] from the closure environment
+                                                                  ; Clone the Rc<RefCell<Unit>> to get a new
+                                                                  ; reference to the Unit stored in the
+                                                                  ; closure environment
+
+                                    mov qword ptr [rbx + 56], rax ; Copy the Rc<RefCell<Unit>> to the
+                                                                  ; goto::{{closure}} environment
+
+                                    mov dword ptr [rbx + 64], ecx ; Save the poses[0] to the
+                                                                  ; goto::{{closure}} environment
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                   Chapter 19 Nested Async/Await: Desugaring to Loops
+                                    mov byte ptr [rbx + 68], 0              ; Set the initial state for the
+                                                                            ; goto::{{closure}} to     Goto::Start (0)
+
+                                         WaitingToReachPosition0 (3): Waiting to reach poses[0].
+
+                                    .LBB58_6:
+                                    lea r15, [rbx + 40]                     ; Load the address of the environment for
+                                                                            ; the goto::{{closure}}
+
+                                    mov rdi, r15                            ; Load the address of the environment to the
+                                                                            ; first argument register
+
+                                    mov rsi, r14                            ; Load the task_context to the second
+                                                                            ; argument register
+
+                                    call       playground::goto::{{closure}} ; Call the goto::{{closure}}
+
+                                    test    al, al                          ; Check if the future is ready
+                                    jne .LBB58_25                           ; The Future is not ready.
+                                                                            ; Save state and return
+
+                                         The future is ready. Continue executing the patrol closure.
+
+                                    movzx      eax, byte ptr [rbx + 68] ; Load the state of the goto closure
+
+                                    test       eax, eax                         ; Check if the goto's state is 0
+
+                                    je    .LBB58_11                             ; Goto's state is 0. Proceed to the next
+                                                                                ; goto closure after decrementing the
+                                                                                ; reference count for goto's unit at
+                                                                                ; offset 56 in patrol::{{closure}}'s
+                                                                                ; environment
+
+                                    cmp eax, 3                                  ; Check if the goto's state is 3
+
+                                    jne .LBB58_14                               ; The goto's state is not 0 or 3, proceed
+                                                                                ; to the next goto closure without
+                                                                                ; decrementing the reference count
+                                                                                ; for goto's unit
+
+                                       goto is in state (3). Decrement the reference count using the goto::{{closure}} environment’s
+                                    unit at offset 40 in patrol::{{closure}}’s environment.
+
+                                    mov rdi, qword ptr [r15]                    ; Load the Rc<RefCell<Unit>> from the
+                                                                                ; goto::{{closure}} environment
+
+                                    dec qword ptr [rdi]                         ; Decrement the reference count for unit
+
+                                    jne .LBB58_14                               ; The reference count is not 0. Do not
+                                                                                ; deallocate the unit at offset 40 in
+                                                                                ; patrol::{{closure}}'s environment
+
+                                    jmp .LBB58_12                               ; Reference count is 0. Jump to the next
+                                                                                ; block to deallocate the unit
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                    .LBB58_11:
+
+                                    mov rdi, qword ptr [rbx + 56] ; Load Rc<RefCell<Unit>> from environment
+
+                                    dec qword ptr [rdi]                   ; Decrement the reference count for unit
+
+                                    jne .LBB58_14                         ; The reference count is not 0. Do not
+                                                                          ; deallocate the unit
+
+                                    .LBB58_12:
+
+                                    dec qword ptr [rdi + 8]               ; Decrement the reference count for unit
+                                    jne .LBB58_14                         ; Reference count is not 0.
+                                                                          ; Jump to the next block
+
+                                    mov esi, 32                           ; Load the size of the allocation
+                                    mov edx, 8                            ; Load the alignment of the allocation
+
+                                    call       qword ptr [rip + __rust_dealloc@GOTPCREL] ; Deallocate the allocation
+
+                                    .LBB58_14:
+
+                                    mov rax, qword ptr [rbx + 8] ; Load Rc<RefCell<Unit>> from the environment
+
+                                    inc qword ptr [rax]                  ; Increment the reference count for unit
+                                    je .LBB58_28                         ; The reference count is 0. Jump to
+                                                                         ; undefined behavior.
+
+                                    Prepare to wait for goto::{{closure}} environment.
+
+                                    mov ecx, dword ptr [rbx + 20]           ; Load poses[1] from the environment
+
+                                    mov qword ptr [rbx + 56], rax           ; Store the Rc<RefCell<Unit>> in the
+                                                                            ; goto::{{closure}} environment
+
+                                    mov dword ptr [rbx + 64], ecx           ; Store the poses[1] in the
+                                                                            ; goto::{{closure}} environment
+
+                                    mov byte ptr [rbx + 68], 0              ; Store the goto closure's initial
+                                                                            ; state -     Goto::Start (0)
+
+                                          WaitingToReachPosition1 (4): Waiting to reach poses[1].
+
+                                    .LBB58_16:
+                                    lea r15, [rbx + 40] ; Get the address of the goto closure environment
+
+                                    mov rdi, r15                ; Load the address of the goto closure environment
+                                                                ; to the first argument register
+
+                                    mov rsi, r14                ; Load the task_context to the second argument register
+
+                                    call       playground::goto::{{closure}} ; Call the goto closure
+
+                                    test       al, al           ; Check if the future is ready
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                     Chapter 19 Nested Async/Await: Desugaring to Loops
+                                    jne .LBB58_26         ; The future is not ready yet. Save state and return
+
+                                    movzx   eax, byte ptr [rbx + 68] ; Load the goto closure state
+
+                                    test   eax, eax            ; Check if the state is 0
+                                    je .LBB58_21               ; The state is 0. Jump to the next block
+
+                                    cmp eax, 3                 ; Check if goto's state is 3
+                                    jne .LBB58_24              ; The state is not 3. Jump to the next block
+
+                                    mov rdi, qword ptr [r15] ; Load the goto closure environment unit
+                                    dec qword ptr [rdi]      ; Decrement the reference count for unit
+                                    jne .LBB58_24            ; Reference count is not 0, jump to the next block
+
+                                    jmp .LBB58_22              ; Reference count is 0. Jump to the next block
+
+                                    .LBB58_21:
+
+                                    mov rdi, qword ptr [rbx + 56] ; Load Rc<RefCell<Unit>> from the environment
+
+                                    dec qword ptr [rdi]             ; Decrement the strong reference count for unit
+
+                                    jne .LBB58_24                   ; The reference count is not 0. Skip
+                                                                    ; deallocating the unit
+
+                                    .LBB58_22:
+
+                                    ; Strong reference count is 0, decrement the weak reference count
+                                    dec qword ptr [rdi + 8]     ; Decrement the weak reference count for unit
+
+                                    jne .LBB58_24                 ; The weak reference count is not 0. Jump to
+                                                                  ; the next block
+
+                                    ; The weak reference count is 0. Deallocate the unit
+                                    mov esi, 32                 ; Size of unit
+                                    mov edx, 8                  ; Alignment of unit
+
+                                    call    qword ptr [rip + __rust_dealloc@GOTPCREL] ; Deallocate the unit
+
+                                    .LBB58_24:
+
+                                    mov rax, qword ptr [rbx + 8] ; rax = Rc<RefCell<Unit>> from the environment
+
+                                    jmp .LBB58_4 ; Jump to the beginning of the loop to the code handling
+                                                 ;     Start (0). Note that the compiler does not explicitly
+                                                 ; update the state variable to 0. It just jumps to the
+                                                 ; beginning of the loop.
+
+                                    .LBB58_25:
+
+                                    mov al, 3         ; Set the state to "    WaitingToReachPosition0 (3)" for the
+                                                      ; next call to the function.
+                                    jmp .LBB58_27     ; Jump to return
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                    .LBB58_26:
+
+                                    mov al, 4              ; Set the state to "    WaitingToReachPosition1 (4)" for
+                                                           ; the next call to the function.
+
+                                       The function is about to return. Store the updated state so that in the next call, it will continue from the
+                                    correct code block.
+
+                                    .LBB58_27:
+                                    mov byte ptr [rbx + 32], al ; Store the updated state
+                                    mov al, 1                   ; Return Poll::Pending
+
+                                    pop rbx
+                                    pop r14
+                                    pop r15
+                                    ret
+
+                                       The reference count is 0 after an increment, jump to undefined behavior. This condition should never
+                                    happen.
+
+                                    .LBB58_28:
+
+                                    ud2                    ; Undefined instruction
+                                    ud2
+                                    jmp .LBB58_31          ; Drop memory and unwind the stack
+
+                                    .LBB58_31:
+
+                                    mov r14, rax
+                                    mov rdi, r15
+                                    call    core::ptr::drop_in_place<playground::goto::{{closure}}>
+                                    mov rdi, qword ptr [rbx + 8]
+                                    call    core::ptr::drop_in_place<playground::UnitGotoFuture>
+                                    mov byte ptr [rbx + 32], 2
+                                    mov rdi, r14
+                                    call    _Unwind_Resume@PLT
+                                    ud2
+
+                                          Jump table for the patrol closure.
+
+                                    .LJTI58_0:
+
+                                    .long       .LBB58_1-.LJTI58_0  ;             Start (0): Code executed before
+                                                                    ;          the first future is polled.
+                                    .long       .LBB58_3-.LJTI58_0 ;              State 1: Throw exception.
+                                    .long       .LBB58_2-.LJTI58_0 ;              State 2: Panic.
+                                    .long       .LBB58_6-.LJTI58_0 ;              WaitingToReachPosition0 (3)
+                                    .long       .LBB58_16-.LJTI58_0 ;             WaitingToReachPosition1 (4)
+
+                                          Vtable for the patrol closure.
+
+                                    .L__unnamed_25:
+
+                                    ; Destructor for the FnOnce trait object
+
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                                                                                 Chapter 19 Nested Async/Await: Desugaring to Loops
+                                    .quad     core::ptr::drop_in_place<playground::patrol::{{closure}}>
+
+                                    ; Size of object: 72 bytes (H). Alignment of object: 8 bytes (\b).
+                                    .asciz "H\000\000\000\000\000\000\000\b\000\000\000\000\000\000"
+
+                                    ; call_once method of the FnOnce trait
+                                    .quad   playground::patrol::{{closure}}
+
+                                          Experiment: Executing Async Functions on .await
+                                    Code
+                                    Let us work with the following example in the Rust playground (https://bit.ly/3rI1Hso):
+
+                                    use std::time::Duration;
+                                    use tokio::time::sleep;
+
+                                    async fn async_fn() {
+                                        println!("Async function execution started.");
+                                        sleep(Duration::from_secs(2)).await;
+                                        println!("Async function execution finished.");
+                                    }
+
+                                    #[tokio::main]
+                                    async fn main() {
+                                        println!("Main function execution started.");
+                                        let future = async_fn(); // Save the future returned by async_fn
+                                        println!("Main function before awaiting the async function.");
+                                        future.await; // Here we start the execution of async_fn
+                                        println!("Main function execution finished.");
+                                    }
+
+                                    Run
+                                    Use the RUN button to run the code (top-left button in the Rust playground). You should see the following
+                                    output:
+
+                                    Main function execution started.
+                                    Main function before awaiting the async function.
+                                    Async function execution started.
+                                    Async function execution finished.
+                                    Main function execution finished.
+
+                                    Explanation
+                                    This example demonstrates an essential aspect of Rust’s asynchronous programming model: an async
+                                    function does not start executing immediately upon being called. Instead, it returns a Future, a value
+                                    representing a computation that will be completed in the future.
+                                    The key learning points are:
+                                      •     Calling an async function returns a Future without executing the function’s body at that moment.
+
+                                      •     The returned Future symbolizes the ongoing computation of the async function, which does not
+                                            initiate until you await the Future.
+lanchonbeef@gmail.com 24 Aug 2025
+
+                                    Part F Closures and Async/Await
+                                      •     To start the execution of the Future, you use the .await keyword, as demonstrated in the main
+                                            function with the future.await call.
+
+                                      •     The async function’s code, such as print statements and the delay in async_fn, remains
+                                            unexecuted until the Future is awaited. This behavior is observable in the console output, where
+                                            "Async function execution started" appears only after "Main function before
+                                            awaiting the async function".
+
+                                    Explore the Assembly Code
+                                      1.    Now set the Optimization level to RELEASE using the second drop-down menu from the left.
+                                      2.    Switch the leftmost button to ASM to see the assembly code.
+
+                                    Some interesting searches to navigate the assembly code:
+
+                                     Search for                                Description
+                                     playground::main:                         The main function calls main::{{closure}}, which emerges
+                                                                               from the expansion of #[tokio::main]. Search for a
+                                                                               playground::main::{{closure}} call. Look for a call to
+                                                                               playground::main::{{closure}}
+                                     playground::main::{{closure}}:            The main function invokes a closure, main::{{closure}},
+                                                                               which begins with a jump table. Search for the call to
+                                                                               tokio::time::sleep and trace the execution paths following
+                                                                               the sleep function.
+
+                                           Key Takeaways
+                                      •     The compiler generates a state machine for each nested async function. The state machine is a
+                                            struct with a state variable and a closure environment. The state variable keeps track of the current
+                                            state of the function. The closure environment stores the arguments and local variables of the
+                                            function.
+
+                                      •     The closure environment of the outer async function contains the closure environment of the inner
+                                            async function. A large number of local variables and arguments can result in a notably larger
+                                            closure environment.
+
+                                      •     Even an async function with an infinite loop will return Poll::Pending when a future in the loop
+                                            is pending. When the future becomes ready, the executor calls the function again, and the loop
+                                            continues when the polled future returns Poll::Ready. The loop continues executing until it
+                                            reaches a pending future. At this point, the function returns Poll::Pending. The executor will call
+                                            the function again when the future becomes ready.
+
+                         •            The execution of an async function does not commence immediately upon its invocation. Instead, the
+                                      function returns a Future, representing a computation that will be completed later. The returned
+                                      Future embodies the ongoing computation of the async function, which only begins when you await it.
+                                      We saw this behavior in the Rust playground example.
+
