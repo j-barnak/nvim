@@ -2742,12 +2742,14 @@ local pick_afl_under_the_hood = frozen_web_provider("afl-under-the-hood", "AFL++
 -- syzkaller write-ups (Collabora 4-part, xairy, slavamoskvin, willsroot, LWN).
 local pick_syzkaller_articles = frozen_web_provider("syzkaller-articles", "Syzkaller Articles> ")
 -- LWN reading lists: Kerrisk's "Namespaces in operation" (+ the two mount-ns
--- articles) and Neil Brown's "Control groups" series. The LWN Kernel Index is a
--- flat list of its 555 topics (e.g. "Memory management"); picking a topic opens a
--- chapter of that topic's LWN articles. index.tsv is Topic<TAB>url.
+-- articles) and Neil Brown's "Control groups" series. The LWN Kernel Index lists
+-- every indexed article labeled by its topic ("[Memory management] Time to thrash
+-- the 2.6 VM?"); picking one opens that topic's chapter (its full article list).
+-- index.tsv is "[Topic] Article Title"<TAB>topic-url (the 555 topic caches are
+-- shared by all the articles under them).
 local pick_namespaces_lwn = frozen_web_provider("namespaces-lwn", "Namespaces (LWN)> ")
 local pick_cgroups_lwn = frozen_web_provider("cgroups-lwn", "CGroups (LWN)> ")
-local pick_lwn_index = frozen_web_provider("lwn-index", "LWN Kernel Index (topic)> ")
+local pick_lwn_index = frozen_web_provider("lwn-index", "LWN article [topic]> ")
 -- Fuzzing 101 with LibAFL: epi052's 6-part series + the Atredis workshop, the
 -- MobileHackingLab Android/QEMU-mode writeup, and the FuzzCon 2021 talk slides.
 local pick_fuzzing_101_libafl = frozen_web_provider("fuzzing-101-libafl", "LibAFL (Articles)> ")
