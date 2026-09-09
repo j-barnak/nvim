@@ -141,7 +141,7 @@ end
 -- slash, so a versioned project keeps one tree per version (the kernel: docs
 -- are already per-version, and source that disagreed with the docs you are
 -- reading is worse than no source at all).
-local function ensure_clone(name, url, cb, ref, sub)
+local function ensure_clone(name, url, cb, ref, sub, sparse)
 	local dir = data_root .. "/" .. name
 	if vim.fn.isdirectory(dir .. "/.git") == 1 then
 		return cb(dir)
@@ -175,17 +175,39 @@ local function ensure_clone(name, url, cb, ref, sub)
 	end
 	vim.notify("Cloning " .. name .. " source (shallow, first time) …")
 	local tmp = dir .. ".tmp"
-	local script = table.concat({
-		"rm -rf " .. shq(tmp) .. " " .. shq(dir),
-		-- `sub` recurses git submodules (AFL++ vendors qemuafl/unicornafl/… as
-		-- submodules; without this they come down as empty gitlink placeholders).
-		-- --shallow-submodules keeps each submodule a depth-1 clone.
-		"git -c core.autocrlf=false clone --depth=1 --single-branch --no-tags "
-			.. (sub and "--recurse-submodules --shallow-submodules " or "")
-			.. (ref and ("--branch " .. shq(ref) .. " ") or "")
-			.. shq(url) .. " " .. shq(tmp),
-		"mv " .. shq(tmp) .. " " .. shq(dir),
-	}, " && ")
+	local steps
+	if sparse and sparse ~= "" then
+		-- Scoped source: some projects (LibAFL) have dozens of crates but the
+		-- reader only wants the handful the book's Crate List names, plus the
+		-- example fuzzers. Blobless + --no-cone sparse-checkout materializes only
+		-- those paths, so ctags/gs index just them and the clone stays small.
+		local paths = table.concat(vim.tbl_map(shq, vim.split(sparse, " ", { trimempty = true })), " ")
+		steps = {
+			"rm -rf " .. shq(tmp) .. " " .. shq(dir),
+			"git -c core.autocrlf=false clone -n --depth=1 --single-branch --no-tags --filter=blob:none "
+				.. (ref and ("--branch " .. shq(ref) .. " ") or "")
+				.. shq(url) .. " " .. shq(tmp),
+			"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone " .. paths,
+			"git -C " .. shq(tmp) .. " checkout",
+		}
+		if sub then -- init only the submodules that live under a checked-out path
+			steps[#steps + 1] = "git -C " .. shq(tmp) .. " submodule update --init --recursive --depth 1"
+		end
+		steps[#steps + 1] = "mv " .. shq(tmp) .. " " .. shq(dir)
+	else
+		steps = {
+			"rm -rf " .. shq(tmp) .. " " .. shq(dir),
+			-- `sub` recurses git submodules (AFL++ vendors qemuafl/unicornafl/… as
+			-- submodules; without this they come down as empty gitlink placeholders).
+			-- --shallow-submodules keeps each submodule a depth-1 clone.
+			"git -c core.autocrlf=false clone --depth=1 --single-branch --no-tags "
+				.. (sub and "--recurse-submodules --shallow-submodules " or "")
+				.. (ref and ("--branch " .. shq(ref) .. " ") or "")
+				.. shq(url) .. " " .. shq(tmp),
+			"mv " .. shq(tmp) .. " " .. shq(dir),
+		}
+	end
+	local script = table.concat(steps, " && ")
 	vim.system({ "sh", "-c", script }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()
 			if res.code ~= 0 or vim.fn.isdirectory(dir .. "/.git") == 0 then
@@ -199,7 +221,7 @@ end
 -- Open in the current (docs) window; restore_fn re-renders the doc on :q.
 -- The picker opens IMMEDIATELY (fd files + ripgrep are instant even on the
 -- kernel); ctags indexes in the background and <C-]> lights up when ready.
-function M.open(name, url, restore_fn, excl, ref, sub)
+function M.open(name, url, restore_fn, excl, ref, sub, sparse)
 	if not (have("git") and have("ctags")) then
 		return vim.notify("git and ctags are needed for source exploration", vim.log.levels.WARN)
 	end
@@ -213,7 +235,7 @@ function M.open(name, url, restore_fn, excl, ref, sub)
 				vim.notify("ctags index ready: " .. vim.fs.basename(dir))
 			end)
 		end
-	end, ref, sub)
+	end, ref, sub, sparse)
 end
 
 return M

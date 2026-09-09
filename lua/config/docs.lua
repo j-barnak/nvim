@@ -1295,7 +1295,7 @@ end
 local simple = {
 	bcc = {
 		url = "https://github.com/iovisor/bcc",
-		sparse = "/docs /examples",
+		sparse = "/docs /examples /tools /README.md /QUICKSTART.md /INSTALL.md /FAQ.txt /LINKS.md",
 		marker = "examples",
 		browse = "",
 		exts = "-e md -e rst -e py -e c -e cc -e h -e lua -e txt",
@@ -1310,7 +1310,7 @@ local simple = {
 		sparse = "/bochs",
 		marker = "bochs/cpu",
 		browse = "/bochs",
-		exts = "-e cc -e cpp -e h -e c -e txt -e README",
+		exts = "-e cc -e cpp -e h -e c -e txt -e README -e dbk",
 		prompt = "Bochs source> ",
 	},
 	-- The tools' own tree: herd/libdir holds the .cat memory models (aarch64,
@@ -1319,15 +1319,15 @@ local simple = {
 	-- Read with the manuals in the herd7 provider.
 	herdtools7 = {
 		url = "https://github.com/herd/herdtools7",
-		sparse = "/doc /herd/libdir /catalogue /README.md /INSTALL.md /CHANGES.txt",
+		sparse = "/doc /herd/libdir /catalogue /readers-guide /asllib/doc /asllib/README.md /README.md /INSTALL.md /CHANGES.txt",
 		marker = "herd/libdir",
 		browse = "",
-		exts = "-e cat -e litmus -e md -e txt -e tex -e cfg -e def -e bell",
+		exts = "-e cat -e litmus -e md -e txt -e tex -e cfg -e def -e bell -e asl",
 		prompt = "herdtools7> ",
 	},
 	qemu = {
 		url = "https://github.com/qemu/qemu",
-		sparse = "/docs",
+		sparse = "/docs /README.rst",
 		marker = "docs",
 		browse = "/docs",
 		exts = "-e rst -e md -e txt",
@@ -1336,18 +1336,18 @@ local simple = {
 	libbpf = {
 		-- /docs is thin sphinx autodoc; the real API is the header comments in /src.
 		url = "https://github.com/libbpf/libbpf",
-		sparse = "/docs /src",
+		sparse = "/docs /src /README.md",
 		marker = "docs",
 		browse = "",
-		exts = "-e rst -e md -e txt -e h",
+		exts = "-e rst -e md -e h",
 		prompt = "libbpf> ",
 	},
 	drgn = {
 		url = "https://github.com/osandov/drgn",
-		sparse = "/docs",
+		sparse = "/docs /README.rst",
 		marker = "docs",
 		browse = "/docs",
-		exts = "-e rst -e md -e py -e txt",
+		exts = "-e rst -e md", -- no -e py: helper scripts are :Src only
 		prompt = "drgn> ",
 	},
 	sdl2 = {
@@ -1379,10 +1379,10 @@ local simple = {
 		-- coresight), instrumentation, custom mutators, utils. (The submodules
 		-- are the QEMU/Unicorn/Frida forks, covered by their own providers.)
 		url = "https://github.com/AFLplusplus/AFLplusplus",
-		sparse = "/docs /instrumentation /qemu_mode /unicorn_mode /frida_mode /nyx_mode /coresight_mode /custom_mutators /utils /dictionaries",
+		sparse = "/README.md /docs /instrumentation /qemu_mode /unicorn_mode /frida_mode /nyx_mode /coresight_mode /custom_mutators /utils /dictionaries",
 		marker = "docs",
 		browse = "",
-		exts = "-e md -e rst -e c -e cpp -e h -e py -e txt",
+		exts = "-e md -e rst -e txt -e adoc", -- READMEs across the mode dirs; C/py source is :Src only
 		prompt = "AFL++> ",
 	},
 	python = {
@@ -1395,7 +1395,7 @@ local simple = {
 	},
 	llvm = {
 		url = "https://github.com/llvm/llvm-project",
-		sparse = "/llvm/docs /clang/docs /clang-tools-extra/docs /lld/docs /lldb/docs /flang/docs /mlir/docs /polly/docs /bolt/docs /compiler-rt/docs /libc/docs /libcxx/docs /libunwind/docs /openmp/docs",
+		sparse = "/llvm/docs /clang/docs /clang-tools-extra/docs /lld/docs /lldb/docs /flang/docs /mlir/docs /polly/docs /bolt/docs /compiler-rt/docs /libc/docs /libcxx/docs /libunwind/docs /openmp/docs /offload/docs /orc-rt/docs /utils/docs /libsycl/docs /llvm-libgcc/docs",
 		marker = "llvm/docs",
 		browse = "",
 		exts = "-e rst -e md",
@@ -1406,7 +1406,7 @@ local simple = {
 		sparse = "/docs",
 		marker = "docs",
 		browse = "/docs",
-		exts = "-e rst -e md -e pandoc -e txt",
+		exts = "-e rst -e md -e pandoc -e pod -e txt",
 		prompt = "Xen> ",
 	},
 	-- reverse-engineering / binary-analysis / fuzzing tooling
@@ -1422,7 +1422,7 @@ local simple = {
 	triton = {
 		-- Triton has no in-repo prose docs; its C++ API headers (doxygen comments) are the reference.
 		url = "https://github.com/JonathanSalwan/Triton",
-		sparse = "/src",
+		sparse = "/src/libtriton/includes /README.md",
 		marker = "src",
 		browse = "/src/libtriton/includes",
 		exts = "-e hpp -e h",
@@ -1430,7 +1430,7 @@ local simple = {
 	},
 	angr = {
 		url = "https://github.com/angr/angr",
-		sparse = "/docs",
+		sparse = "/docs /README.md",
 		marker = "docs",
 		browse = "/docs",
 		exts = "-e rst -e md",
@@ -1438,7 +1438,7 @@ local simple = {
 	},
 	qbdi = {
 		url = "https://github.com/QBDI/QBDI",
-		sparse = "/docs /examples",
+		sparse = "/docs /examples /README.rst",
 		marker = "docs",
 		browse = "",
 		exts = "-e rst -e md -e cpp -e c -e py -e txt",
@@ -1446,7 +1446,7 @@ local simple = {
 	},
 	capstone = {
 		url = "https://github.com/capstone-engine/capstone",
-		sparse = "/docs /include /bindings",
+		sparse = "/docs /include /bindings /README.md /BUILDING.md",
 		marker = "docs",
 		browse = "",
 		exts = "-e md -e rst -e txt -e h",
@@ -1457,12 +1457,12 @@ local simple = {
 		sparse = "/docs /examples /python /rust",
 		marker = "docs",
 		browse = "",
-		exts = "-e md -e rst -e py -e cpp -e txt",
+		exts = "-e md -e rst -e py -e cpp",
 		prompt = "Binary Ninja> ",
 	},
 	lief = {
 		url = "https://github.com/lief-project/LIEF",
-		sparse = "/doc /examples /api",
+		sparse = "/doc /examples /api/python/examples",
 		marker = "doc",
 		browse = "",
 		exts = "-e rst -e md -e py -e cpp -e txt",
@@ -1470,7 +1470,7 @@ local simple = {
 	},
 	pyelftools = {
 		url = "https://github.com/eliben/pyelftools",
-		sparse = "/doc /examples /scripts",
+		sparse = "/doc /examples /scripts /README.md",
 		marker = "doc",
 		browse = "",
 		exts = "-e rst -e md -e py -e txt",
@@ -1478,24 +1478,24 @@ local simple = {
 	},
 	qbindiff = {
 		url = "https://github.com/quarkslab/qbindiff",
-		sparse = "/doc",
+		sparse = "/doc /README.md",
 		marker = "doc",
 		browse = "/doc",
-		exts = "-e rst -e md -e py -e txt",
+		exts = "-e rst -e md", -- no -e py: example scripts are :Src only
 		prompt = "QBinDiff> ",
 	},
 	qiling = {
 		-- Upstream /docs/*.md are just redirect stubs to docs.qiling.io; the real,
 		-- runnable documentation is the example scripts, so browse those.
 		url = "https://github.com/qilingframework/qiling",
-		sparse = "/docs /examples", marker = "docs", browse = "",
+		sparse = "/docs /examples /README.md /ARCHITECTURE.md /ARCHITECTURE", marker = "docs", browse = "",
 		exts = "-e py -e md -e rst -e txt",
 		prompt = "Qiling example> ",
 	},
 	panda = {
 		-- /docs is QEMU-inherited; PANDA's own docs live in /panda/docs.
 		url = "https://github.com/panda-re/panda",
-		sparse = "/panda/docs",
+		sparse = "/panda/docs /panda/plugins /panda/python /README.md",
 		marker = "panda/docs",
 		browse = "/panda/docs",
 		exts = "-e md -e rst -e txt",
@@ -1503,7 +1503,7 @@ local simple = {
 	},
 	volatility = {
 		url = "https://github.com/volatilityfoundation/volatility3",
-		sparse = "/doc",
+		sparse = "/doc /README.md /API_CHANGES.md",
 		marker = "doc",
 		browse = "/doc",
 		exts = "-e rst -e md -e txt",
@@ -1511,10 +1511,10 @@ local simple = {
 	},
 	syzkaller = {
 		url = "https://github.com/google/syzkaller",
-		sparse = "/docs",
+		sparse = "/docs /README.md",
 		marker = "docs",
 		browse = "/docs",
-		exts = "-e md -e txt",
+		exts = "-e md",
 		prompt = "syzkaller> ",
 	},
 	unicorn = {
@@ -1522,7 +1522,7 @@ local simple = {
 		-- helpful. The bindings, tests and samples are reached with :Src / "Explore
 		-- source", which clones the whole engine at the chosen tag.
 		url = "https://github.com/unicorn-engine/unicorn",
-		sparse = "/docs",
+		sparse = "/docs /README.md",
 		marker = "docs",
 		browse = "/docs",
 		exts = "-e md -e rst -e txt",
@@ -1531,10 +1531,10 @@ local simple = {
 	keystone = {
 		-- include/keystone/keystone.h is the actual API; bindings/samples show use.
 		url = "https://github.com/keystone-engine/keystone",
-		sparse = "/docs /samples /include /bindings",
+		sparse = "/docs /samples /include /bindings /README.md",
 		marker = "docs",
 		browse = "",
-		exts = "-e md -e rst -e txt -e c -e py -e h",
+		exts = "-e md -e rst -e txt -e c -e h",
 		prompt = "Keystone> ",
 	},
 	android = {
@@ -1545,7 +1545,7 @@ local simple = {
 		-- The headers are source, so they belong to :Src, which already resolves
 		-- this provider to the same repo.
 		url = "https://github.com/aosp-mirror/platform_bionic",
-		sparse = "/docs /linker",
+		sparse = "/docs /linker /android-changes-for-ndk-developers.md /README.md",
 		marker = "docs",
 		browse = "",
 		exts = "-e md",
@@ -1553,7 +1553,7 @@ local simple = {
 	},
 	pwntools = {
 		url = "https://github.com/Gallopsled/pwntools",
-		sparse = "/docs /examples",
+		sparse = "/docs /examples /README.md",
 		marker = "docs",
 		browse = "",
 		exts = "-e rst -e md -e py -e txt",
@@ -1562,15 +1562,15 @@ local simple = {
 	uefi = {
 		-- MdePkg/Include is the UEFI/PI API (protocols, services, types).
 		url = "https://github.com/tianocore/edk2",
-		sparse = "/MdePkg",
+		sparse = "/MdePkg/Include",
 		marker = "MdePkg",
 		browse = "/MdePkg/Include",
-		exts = "-e h -e md",
+		exts = "-e h",
 		prompt = "UEFI (edk2 MdePkg)> ",
 	},
 	coreboot = {
 		url = "https://github.com/coreboot/coreboot",
-		sparse = "/Documentation",
+		sparse = "/Documentation /README.md",
 		marker = "Documentation",
 		browse = "/Documentation",
 		exts = "-e md -e rst -e txt",
@@ -1578,7 +1578,7 @@ local simple = {
 	},
 	uboot = {
 		url = "https://github.com/u-boot/u-boot",
-		sparse = "/doc /examples",
+		sparse = "/doc",
 		marker = "doc",
 		browse = "/doc",
 		exts = "-e rst -e md -e txt",
@@ -1586,20 +1586,21 @@ local simple = {
 	},
 	nyx = {
 		url = "https://github.com/nyx-fuzz/Nyx",
-		sparse = "/docs",
+		sparse = "/docs /README.md",
 		marker = "docs",
 		browse = "/docs",
 		exts = "-e md -e rst -e txt",
 		prompt = "Nyx> ",
 	},
 	libafl = {
-		-- The LibAFL Book (docs/src), the example fuzzers, and every crate's
-		-- own docs/README (libafl, libafl_bolts, libafl_qemu, libafl_asan, …).
+		-- READING docs only (source code lives in :Src): the LibAFL Book
+		-- (docs/src) and every crate/fuzzer/util README (libafl_qemu, libafl_nyx,
+		-- libafl_frida, libafl_bolts, libafl_sugar, libafl_targets, …).
 		url = "https://github.com/AFLplusplus/LibAFL",
-		sparse = "/docs/src /docs/listings /fuzzers /crates", -- listings: the book's {{#include}} targets
+		sparse = "/docs /crates /fuzzers /utils /bindings /README.md /MIGRATION.md /CONTRIBUTING.md /TROPHIES.md", -- all readable docs; /docs keeps docs/listings for the book's {{#include}} targets
 		marker = "docs/src",
 		browse = "",
-		exts = "-e md -e rs -e txt",
+		exts = "-e md -e rst -e txt -e adoc", -- no -e rs: Rust source is :Src only
 		prompt = "LibAFL> ",
 	},
 	-- DynamoRIO: open-source dynamic binary instrumentation (Intel Pin alternative)
@@ -1644,7 +1645,7 @@ local simple = {
 	armtf = {
 		-- Arm Trusted Firmware-A: EL3/secure world, PSCI, SMCCC, boot flow.
 		url = "https://github.com/ARM-software/arm-trusted-firmware",
-		sparse = "/docs",
+		sparse = "/docs /readme.rst",
 		marker = "docs",
 		browse = "/docs",
 		exts = "-e rst -e md",
@@ -1652,10 +1653,10 @@ local simple = {
 	},
 	bpftrace = {
 		url = "https://github.com/bpftrace/bpftrace",
-		sparse = "/docs /man",
+		sparse = "/docs /man /tools/README.md /README.md",
 		marker = "docs",
 		browse = "",
-		exts = "-e md -e rst -e txt",
+		exts = "-e md -e rst -e txt -e adoc",
 		prompt = "bpftrace> ",
 	},
 	ebpf = {
@@ -1703,7 +1704,7 @@ local simple = {
 		sparse = "/lldb/docs",
 		marker = "lldb/docs",
 		browse = "/lldb/docs",
-		exts = "-e rst -e md",
+		exts = "-e rst -e md -e txt",
 		prompt = "lldb> ",
 	},
 	macho = {
@@ -1894,7 +1895,7 @@ local function make_versioned(name, spec)
 					end
 					if sel[1] == "Explore source" then
 						return require("config.src").open(
-							name .. "/" .. version, src_url, nil, spec.excl, version, spec.submodules)
+							name .. "/" .. version, src_url, nil, spec.excl, version, spec.submodules, spec.src_sparse)
 					end
 					-- docs_mode "latest": docs live in a separate repo not tagged
 					-- per release (wiki/website/book) or generated from headers, so
@@ -2041,6 +2042,15 @@ local SRC_WARN = {
 -- Providers browsed per release tag: gs must resolve the source to the SAME tag
 -- as the docs being read. The kernel keeps its own branch below because it also
 -- carries ctags excludes.
+-- LibAFL has ~28 crates (many tiny utility crates); the book's Crate List names
+-- only the handful a fuzzer author works with. :Src sparse-checks-out exactly
+-- those, plus /fuzzers so every example fuzzer is browsable (crates.html).
+local LIBAFL_SRC_SPARSE = table.concat({
+	"/crates/libafl", "/crates/libafl_bolts", "/crates/libafl_sugar",
+	"/crates/libafl_derive", "/crates/libafl_targets", "/crates/libafl_cc",
+	"/crates/libafl_frida", "/crates/libafl_qemu", "/crates/libafl_nyx",
+	"/crates/libafl_concolic", "/fuzzers",
+}, " ")
 local VERSIONED = {
 	qemu = { url = "https://github.com/qemu/qemu" },
 	-- Docs are per ACK branch, so the source must be too. The branch name is the
@@ -2076,7 +2086,7 @@ local VERSIONED = {
 	codeql = { url = simple.codeql.url },
 	lldb = { url = simple.lldb.url },
 	dynamorio = { url = simple.dynamorio.url },
-	libafl = { url = simple.libafl.url, submodules = true },
+	libafl = { url = simple.libafl.url, submodules = true, src_sparse = LIBAFL_SRC_SPARSE },
 }
 -- Books whose companion source is a real upstream repo worth exploring. Every
 -- book's docs cache lives under docs/books/<key>/<slug>, so the shared "books"
@@ -2088,7 +2098,7 @@ gs_source = function(dir)
 	if not dir then
 		return
 	end
-	local srcname, url, excl, ref, gs_sub
+	local srcname, url, excl, ref, gs_sub, gs_sparse
 	-- First path segment under the docs cache is the provider name (simple
 	-- providers live at <name>/master, others at <name>/… or <name>/<ver>).
 	local name = dir:match("/docs/([^/]+)")
@@ -2112,6 +2122,7 @@ gs_source = function(dir)
 		local ver = dir:match("/docs/" .. name .. "/([^/]+)")
 		srcname = name .. (ver and ("/" .. ver) or "")
 		url, excl, ref, gs_sub = VERSIONED[name].url, VERSIONED[name].excl, ver, VERSIONED[name].submodules
+		gs_sparse = VERSIONED[name].src_sparse
 	elseif name and simple[name] then
 		srcname, url = name, simple[name].url
 	elseif name == "linux" then
@@ -2135,7 +2146,7 @@ gs_source = function(dir)
 	}
 	require("config.src").open(srcname, url, function()
 		render_lines(restore.lines, restore.ft, dir, restore.title)
-	end, excl, ref, gs_sub)
+	end, excl, ref, gs_sub, gs_sparse)
 end
 
 -- ── doxygen providers: doxygen (XML) -> moxygen -> per-class/group Markdown ─
@@ -4400,7 +4411,7 @@ local providers = {
 	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = register_versioned("dynamorio", vspec(simple.dynamorio, "release_[0-9]+\\.[0-9]+\\.[0-9]+", { label = "DynamoRIO", diskpat = "^release_%d" })) },
 	{ name = "TinyInst (Project Zero DBI)", key = "tinyinst", run = make_simple("tinyinst", simple.tinyinst) },
 	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
-	{ name = "LibAFL", key = "libafl", run = register_versioned("libafl", vspec(simple.libafl, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LibAFL", diskpat = "^%d", submodules = true })) },
+	{ name = "LibAFL", key = "libafl", run = register_versioned("libafl", vspec(simple.libafl, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LibAFL", diskpat = "^%d", submodules = true, src_sparse = LIBAFL_SRC_SPARSE })) },
 	{ name = "CodeQL", key = "codeql", run = register_versioned("codeql", vspec(simple.codeql, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "CodeQL" })) },
 	{ name = "lld (LLVM linker)", key = "lld", run = make_simple("lld", simple.lld) },
 	{ name = "lldb", key = "lldb", run = register_versioned("lldb", vspec(simple.lldb, "llvmorg-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "lldb", diskpat = "^llvmorg%-%d" })) },
