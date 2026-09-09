@@ -350,9 +350,19 @@ case "$SLUG" in
   # a trailing page number. Validated per book to match only running heads.
   the-garbage-collection-handbook|bpf-performance-tools|systems-performance|\
   distributed-systems|tcp-ip-illustrated-vol-1|computer-organization-and-design|\
-  modern-processor-design|mastering-stm32|file-system-forensic-analysis|\
+  modern-processor-design|mastering-stm32|\
   computer-architecture-a-quantitative-approach)
     FURN='^[0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}[ ]*$' ;;
+  # rust-under-the-hood: an Anna's-Archive per-page email/date watermark.
+  rust-under-the-hood) FURN='^lanchonbeef@gmail[.]com 24 Aug 2025$' ;;
+  # from-day-zero-to-zero-day: the Early-Access per-page copyright line.
+  from-day-zero-to-zero-day) FURN='^From Day Zero to Zero Day [(]Early Access[)] © 2025 by Eugene Lim$' ;;
+  # file-system-forensic-analysis: a QuarkXPress production stamp ("...qxd DATE
+  # TIME Page xix") and the ALLCAPS running head that names the current section
+  # ("ANALYSIS TECHNIQUES") - the real section headings are title-case, so a
+  # multi-word ALLCAPS line is always the running head, never body text.
+  file-system-forensic-analysis)
+    FURN='^([A-Za-z0-9_]+[.]qxd[^ ]*[ ].*Page [ivxlcdm0-9]+|[A-Z][A-Z]+([ ][A-Z]+)+)[ ]*$' ;;
 esac
 # Per-slug code-listing repair (book_fix above). programming-with-posix-threads
 # is a Ghostscript print of an OCR'd Word .doc: its text layer carries the wrong
