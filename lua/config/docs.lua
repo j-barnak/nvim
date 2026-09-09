@@ -1515,7 +1515,7 @@ local simple = {
 	},
 	unicorn = {
 		url = "https://github.com/unicorn-engine/unicorn",
-		sparse = "/docs /samples",
+		sparse = "/docs /samples /bindings",
 		marker = "docs",
 		browse = "",
 		exts = "-e md -e rst -e txt -e c -e py",
