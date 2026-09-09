@@ -44,7 +44,10 @@ end
 -- 'tags' is global-local; set it buffer-local for files under this repo, and
 -- give those buffers an instant, index-free `gd` (ripgrep for the symbol's
 -- definition) that works before ctags finishes. <C-]> uses ctags once ready.
-local function scope_tags(dir, tagfile)
+-- `restore_fn` (when source was entered from a doc via gs) also binds `D` in
+-- every source buffer, so the reader can jump straight back to the doc they
+-- came from without hunting for the docs window or :q-ing out.
+local function scope_tags(dir, tagfile, restore_fn)
 	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile" }, {
 		group = vim.api.nvim_create_augroup("SrcTags:" .. dir, { clear = true }),
 		pattern = dir .. "/*",
@@ -54,6 +57,10 @@ local function scope_tags(dir, tagfile)
 				local w = vim.fn.expand("<cword>")
 				fzf().grep({ cwd = dir, no_esc = true, search = "\\b" .. w .. "\\s*\\(", prompt = "def " .. w .. "> " })
 			end, { buffer = ev.buf, silent = true, desc = "src: definitions (ripgrep)" })
+			if restore_fn then
+				vim.keymap.set("n", "D", function() vim.schedule(restore_fn) end,
+					{ buffer = ev.buf, silent = true, desc = "src: back to documentation" })
+			end
 		end,
 	})
 end
@@ -94,7 +101,7 @@ local function open_picker(win, dir, tagfile, restore_fn)
 		-- at this repo's .srctags. So all three existing maps just work here.
 		pcall(vim.cmd, "lcd " .. vim.fn.fnameescape(dir))
 	end
-	scope_tags(dir, tagfile)
+	scope_tags(dir, tagfile, restore_fn)
 	if restore_fn then
 		arm_restore(win, dir, restore_fn)
 	end
