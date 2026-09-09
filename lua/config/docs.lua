@@ -2678,6 +2678,30 @@ local pick_lazyfoo_sdl3 = frozen_web_provider("lazyfoo-sdl3", "SDL3> ")
 local pick_qemu_internals = frozen_web_provider("qemu-internals", "QEMU> ")
 local pick_jit_series = frozen_web_provider("jit-series", "JIT> ")
 local pick_bochs_docs = frozen_web_provider("bochs-docs", "Bochs docs> ")
+-- Bochs top-level entry: the manuals (frozen "Bochs Documentation" web book)
+-- and the emulator source live in one place, so clicking "Bochs" no longer
+-- drops straight into C++. Documentation is first (and preselected) because
+-- that is what most readers reach for; "Explore source" opens the tree for
+-- gs/:Src. Both remain reachable on their own too (Documentation also shows
+-- in the Books list).
+local function pick_bochs()
+	fzf().fzf_exec({ "Documentation (User + Developer manuals)", "Explore source" }, {
+		prompt = "Bochs> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if not (sel and sel[1]) then
+					return
+				end
+				if sel[1]:match("^Documentation") then
+					pick_bochs_docs()
+				else
+					make_simple("bochs", simple.bochs)()
+				end
+			end,
+		},
+	})
+end
 local pick_decompilation = frozen_web_provider("decompilation-wiki", "Decompilation> ")
 local pick_philopp = frozen_web_provider("writing-an-os-in-rust", "Writing an OS in Rust> ")
 local pick_algorithmica_hpc = frozen_web_provider("algorithmica-hpc", "HPC> ")
@@ -3889,7 +3913,7 @@ VERSIONED_PICK.ghidra = pick_ghidra
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
 	{ name = "BCC", key = "bcc", run = register_versioned("bcc", vspec(simple.bcc, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "BCC" })) },
-	{ name = "Bochs (x86/x64 emulator)", key = "bochs", run = make_simple("bochs", simple.bochs) },
+	{ name = "Bochs (x86/x64 emulator)", key = "bochs", run = pick_bochs },
 	{ name = "QEMU", key = "qemu", run = register_versioned("qemu", {
 		url = simple.qemu.url,
 		sparse = simple.qemu.sparse,
