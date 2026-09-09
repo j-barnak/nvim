@@ -1,0 +1,1239 @@
+# Fuzzing101 with LibAFL - Part I.V: Speed Improvements to Part I
+
+November 11, 2021 • 51 min read
+
+### Updated: Feb 1, 2025 // LibAFL Version 0.15.0
+
+Twitter user [Antonio Morales](https://twitter.com/nosoynadiemas?lang=en) created the [Fuzzing101](https://github.com/antonio-morales/Fuzzing101) repository in August of 2021. In the repo, he has created exercises and solutions meant to teach the basics of fuzzing to anyone who wants to learn how to find vulnerabilities in real software projects. The repo focuses on [AFL++](https://github.com/AFLplusplus/AFLplusplus) usage, but this series of posts aims to solve the exercises using [LibAFL](https://github.com/AFLplusplus/LibAFL) instead. We’ll be exploring the library and writing fuzzers in Rust in order to solve the challenges in a way that closely aligns with the suggested AFL++ usage.
+
+Since this series will be looking at Rust source code and building fuzzers, I’m going to assume a certain level of knowledge in both fields for the sake of brevity. If you need a brief introduction/refresher to/on coverage-guided fuzzing, please take a look [here](https://github.com/antonio-morales/Fuzzing101#what-is-fuzzing). As always, if you have any questions, please don’t hesitate to reach out.
+
+This post will cover a few ways to improve the speed of our fuzzer from [Part I](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/) of this series. The companion code for this exercise can be found at my [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+
+Previous posts:
+
+- [Part I: Fuzzing Xpdf](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/)
+
+------------------------------------------------------------------------
+
+# Quick Reference
+
+This is just a summary of the different components used in the upcoming post. It’s meant to be used later as an easy way of determining which components are used in which posts.
+
+```
+{
+  "Fuzzer": {
+    "type": "StdFuzzer",
+    "Corpora": {
+      "Input": "InMemoryCorpus",
+      "Output": "OnDiskCorpus"
+    },
+    "Input": "BytesInput",
+    "Observers": [
+      "StdMapObserver": {
+        "coverage map": "EDGES_MAP",
+      }
+      "TimeObserver",
+      "HitcountsMapObserver"
+    ],
+    "Feedbacks": {
+      "Pure": ["MaxMapFeedback", "TimeFeedback"],
+      "Objectives": ["MaxMapFeedback", "TimeoutFeedback"]
+    },
+    "State": {
+      "StdState"
+    },
+    "Monitor": "MultiMonitor",
+    "EventManager": "LlmpRestartingEventManager",
+    "Scheduler": "IndexesLenTimeMinimizerScheduler",
+    "Executors": [
+      "InProcessExecutor",
+    ],
+    "Mutators": [
+      "StdScheduledMutator": {
+        "mutations": "havoc_mutations"
+      }
+    ],
+    "Stages": ["StdMutationalStage"]
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+# Intro
+
+[@domenuk](https://twitter.com/domenuk) made a comment about the first post in this series:
+
+> if you want to be really fast during fuzzing, you generally want the in-process executor instead of a forkserver
+
+For the first post, I wanted to keep things relatively simple. In my mind, one process executing another as a child is a little easier to wrap your head around compared to how the in-process execution works, especially if you’re new to all of this fuzzing stuff. Additionally, a forkserver is what afl++ will use unless you enable persistent mode (which is another way of saying “in-process executor”).
+
+I was already considering writing about increasing part 1’s fuzzer’s performance prior to @domenuk’s suggestion, but his comment sealed my fate. So, here we go, we’ll be looking at increasing the performance of our first fuzzer in the following ways:
+
+- swapping out `afl-clang-fast` for `afl-clang-lto` during compilation
+- pass input to the program through shared memory instead of via a file on-disk
+- implement an in-process executor instead of a forkserver
+
+Let’s go!
+
+# Step 1: Compiler Swap
+
+This section will deal with using `afl-clang-lto` instead of `afl-clang-fast`. But why? I’m glad you asked! Here’s an excerpt from the TL;DR in the [afl++ documentation on afl-clang-lto](https://github.com/AFLplusplus/AFLplusplus/blob/stable/instrumentation/README.lto.md):
+
+> - Use afl-clang-lto/afl-clang-lto++ because it is faster and gives better coverage than anything else that is out there in the AFL world
+> - You can use it together with llvm_mode: laf-intel and the instrument file listing features and can be combined with cmplog/Redqueen
+> - AUTODICTIONARY feature!
+
+If you’re unfamiliar with adding a dictionary to your fuzzer, here’s another excerpt from the same documentation:
+
+> AUTODICTIONARY feature: While compiling, a dictionary based on string comparisons is automatically generated and put into the target binary. This dictionary is transfered to afl-fuzz on start. This improves coverage statistically by 5-10%
+
+So, by switching to `afl-clang-lto`, we get a faster fuzzer with increased code coverage. In case you needed any more convincing, it’s also what the [afl++ documentation says to use](https://github.com/AFLplusplus/AFLplusplus#1-instrumenting-that-target), if your system and target support it.
+
+Ok, now we know why we want to swap compilers, let’s make it happen!
+
+## build.rs
+
+Currently, the build script uses `afl-clang-fast` to instrument Xpdf, so we’ll start making our changes there. Instead of just swapping out the compilers, let’s do two builds of Xpdf, so we can run a comparison on both to see if our change increased our speed.
+
+If you read the first post in the series, you may remember that our build script will perform our `configure`, `make`, and `make install` steps for building Xpdf. All we’re going to do is perform those steps twice, once for each compiler. We’ll then store the builds in separate folders (`built-with-(lto|fast)`).
+
+```
+for (build_dir, compiler) in [("fast", "afl-clang-fast"), ("lto", "afl-clang-lto")] {
+    // configure with `compiler` and set install directory to ./xpdf/built-with-`build_dir`
+    Command::new("./configure")
+        .arg(&format!("--prefix={}/built-with-{}", xpdf_dir, build_dir))
+        .env("CC", format!("/usr/local/bin/{}", compiler))
+        .env("CXX", format!("/usr/local/bin/{}++", compiler))
+        .current_dir(&xpdf_dir)
+        .status()
+        .expect(&format!(
+            "Couldn't configure xpdf to build using afl-clang-{}",
+            compiler
+        ));
+
+    // make && make install
+    Command::new("make")
+        .current_dir(&xpdf_dir)
+        .status()
+        .expect("Couldn't make xpdf");
+
+    Command::new("make")
+        .arg("install")
+        .current_dir(&xpdf_dir)
+        .status()
+        .expect("Couldn't install xpdf");
+}
+```
+
+We’ll also need to update our `make clean` command to take care of the new build directories.
+
+```
+// clean doesn't know about the built-with-* directories we use to build, remove them as well
+Command::new("rm")
+    .arg("-r")
+    .arg("-f")
+    .arg(&format!("{}/built-with-lto", xpdf_dir))
+    .arg(&format!("{}/built-with-fast", xpdf_dir))
+    .current_dir(&xpdf_dir)
+    .status()
+    .expect("Couldn't clean xpdf's built-with-* directories");
+```
+
+That takes care of the build script for now, let’s see what’s next.
+
+## main.rs
+
+Let’s hop over to the fuzzer’s source code next. In it, we can see that in part one, we hardcoded the path to `pdftotext` into our ForkserverExecutor.
+
+```
+let fork_server = ForkserverExecutor::builder()
+    .program("./xpdf/install/bin/pdftotext")
+    .parse_afl_cmdline(["@@"])
+    -------------8<-------------
+)
+```
+
+Since we’re compiling two builds of `pdftotext`, it would be way cooler if we could switch between them without recompiling the fuzzer. To make that dream a reality, let’s add a command line option that controls the path to pdftotext.
+
+Even though we’re in the main.rs section, we need to add the [clap crate](https://github.com/clap-rs/clap) as a dependency, so let’s make a quick detour and do that.
+
+> exercise-1.5/Cargo.toml
+
+```
+-------------8<-------------
+[dependencies]
+libafl = {version = "0.15.0"}
+clap = "3.2"
+```
+
+Ok, back to main.rs; let’s write a quick function that will parse either `lto` or `fast` from the command line and returns a the choice as a `String`.
+
+```
+use clap::{App, Arg};
+
+-------------8<-------------
+
+/// parse -c/--compiler from cli; return "fast" or "lto"
+fn get_compiler_from_cli() -> String {
+    let matches = App::new("fuzzer")
+        .arg(
+            Arg::new("compiler")
+                .possible_values(&["fast", "lto"])
+                .short('c')
+                .long("compiler")
+                .value_name("COMPILER")
+                .about("choose your afl-clang variant (default: fast)")
+                .takes_value(true)
+                .default_value("fast"),
+        )
+        .get_matches();
+
+    String::from(matches.value_of("compiler").unwrap())
+}
+```
+
+With the function written, we can call it from `main`, as well as update the path in our ForkserverExecutor.
+
+```
+fn main() {
+    let compiler = get_compiler_from_cli();
+
+    //
+    // Component: Corpus
+    //
+-------------8<-------------
+    let fork_server = ForkserverExecutor::builder()
+        .program(format!("./xpdf/built-with-{}/bin/pdftotext", compiler))
+        .parse_afl_cmdline(["@@"])
+        .coverage_map_size(MAP_SIZE)
+        .build(tuple_list!(time_observer, edges_observer))?;
+-------------8<-------------
+```
+
+Not too bad, now we can build and switch between both compilers. Let’s move on to the comparison.
+
+## time-comparison.sh
+
+In order to see if our change made any impact, we need to perform some kind of comparison. We can write up a quick shell script that performs the following actions
+
+- run each fuzzer a few times with a given timeout
+- for each run, take note of the total number of executions
+- divide the number of executions by the timeout
+- average all of the runs together
+- spit out the results
+
+Here’s what that all looks like in code
+
+> exercise-1.5/time-comparison.sh
+
+```
+#!/bin/bash
+
+function exec-fuzzer() {
+  # parameters:
+  #   fuzzer: should be either "lto" or "fast"
+  #   timeout: in seconds
+  #   cpu: which core to bind, default is 7
+  fuzzer="${1}"
+  timeout="${2}"
+  declare -i cpu="${3}" || 7
+  
+  # last_update should look like this
+  # [Stats #0] clients: 1, corpus: 425, objectives: 0, executions: 23597, exec/sec: 1511
+  last_update=$(timeout "${timeout}" taskset -c "${cpu}" ../target/release/exercise-one-point-five-solution -c "${fuzzer}" | grep Stats | tail -1)
+
+  # regex + cut below will return the total # of executions
+  total_execs=$(echo $last_update | egrep -o "executions: ([0-9]+)" | cut -f2 -d' ')
+  
+  execs_per_sec=$((total_execs/"${timeout}"))
+
+  echo $execs_per_sec
+}
+
+function average_of_five_runs() {
+  # parameters:
+  #   fuzzer: should be either "lto" or "fast"
+  fuzzer="${1}"
+  declare -i total_execs_per_sec=0
+  declare -i total_runs=5
+  timeout=120
+
+  for i in $(seq 1 "${total_runs}");
+  do
+    current=$(exec-fuzzer "${fuzzer}" "${timeout}")
+    total_execs_per_sec=$((total_execs_per_sec+current))
+    echo "[${fuzzer}][${i}] - ${current} execs/sec"
+  done
+
+  final=$((total_execs_per_sec/total_runs))
+  echo "[${fuzzer}][avg] - ${final} execs/sec"
+}
+
+average_of_five_runs fast
+average_of_five_runs lto
+```
+
+As an aside, speed isn’t the only measurement of fuzzer performance. Also, the way we’re measuring executions by using this script is fraught with oodles of imperfections. Long story short: don’t get too hung up on this script, or think that it’s even a good idea really, we just needed a quick/dirty a way to demonstrate the impact we made on the fuzzer’s speed.
+
+Ok, with the disclaimer out of the way, here are the results.
+
+```
+./time-comparison.sh
+════════════════════════════
+
+[fast][1] - 1129 execs/sec
+[fast][2] - 970 execs/sec
+[fast][3] - 1050 execs/sec
+[fast][4] - 1112 execs/sec
+[fast][5] - 1096 execs/sec
+[fast][avg] - 1071 execs/sec
+[lto][1] - 1016 execs/sec
+[lto][2] - 1246 execs/sec
+[lto][3] - 1151 execs/sec
+[lto][4] - 1208 execs/sec
+[lto][5] - 1217 execs/sec
+[lto][avg] - 1167 execs/sec
+```
+
+We can see that over the course of five runs, the lto fuzzer was ~9% faster! It may not seem like much, but that’s a big deal. We’ll chalk that up as a win and move on to the next improvement.
+
+# Step 2: Shared Memory Fuzzing
+
+Our next attempt at making things go faster is removing the filesystem from our fuzzing workflow. Currently, our workflow looks something like this:
+
+- get testcase from corpus
+- mutate testcase
+- write mutated testcase to disk (.cur_input)
+- fork/exec new child process (./pdftotext ./.cur_input)
+  - child reads .cur_input from disk
+- repeat
+
+Our goal in implementing shared memory fuzzing is to remove the reads and writes to disk. Instead, our testcase will be pulled from the InMemoryCorpus, mutated in memory, and passed to the fuzz target (`pdftotext`) via a shared memory map. The process isn’t too difficult, as afl has included some helpful macros to assist with this task. It boils down to finding likely places in the source where we can insert the following macros.
+
+```
+__AFL_FUZZ_INIT();  // after #includes, before main
+-------------8<-------------
+// typically in main
+unsigned char *buf = __AFL_FUZZ_TESTCASE_BUF;
+int len = __AFL_FUZZ_TESTCASE_LEN;
+```
+
+The [afl++ docs](https://github.com/AFLplusplus/AFLplusplus/blob/stable/instrumentation/README.persistent_mode.md#5-shared-memory-fuzzing) say that the usual speed increase seen after shared memory fuzzing is added is typically around a 2x performance boost. Let’s see if we can hit that mark.
+
+## main.rs
+
+We’ll begin by modifying our fuzzer, as that’s the simplest change we’ll need to make for this improvement. All we really need to do is update our ForkserverExecutor to use a shared memory provider and then remove `pdftotext`’s `@@` parameter.
+
+```
+let fork_server = ForkserverExecutor::builder()
+    .program("./xpdf/install/bin/pdftotext")
+    .shmem_provider(&mut shmem_provider)
+    .coverage_map_size(MAP_SIZE)
+    .build(tuple_list!(time_observer, edges_observer))?;
+)
+.unwrap();
+```
+
+That’s really it for `main.rs`, pretty easy huh?
+
+## Investigating Xpdf
+
+In order to usher our fuzzer into its shared memory future, we need to modify some of the Xpdf source code. The modifications we make here are necessarily specific to Xpdf, but the general steps should be the same for other fuzz targets. Our first order of business is to read the source in order to figure out how and where our input file gets parsed. The goal is to replace the file read logic with the `unsigned *char buf` macro we saw earlier.
+
+We’ll start hunting in `pdftotext.cc`’s main function. The main function starts out by declaring variables, parsing command line values, and setting up its global state via a config file. None of that is interesting for us (right now), but after the initial setup, we see where the `PDFDoc` is created.
+
+> [repo source](https://github.com/epi052/fuzzing-101-solutions/blob/part-1.5-steps-1-2/exercise-1/xpdf/xpdf/pdftotext.cc#L89)
+
+```
+int main(int argc, char *argv[]) {
+  PDFDoc *doc;
+  GString *fileName;
+-------------8<-------------
+  doc = new PDFDoc(fileName, ownerPW, userPW);
+-------------8<-------------
+}
+```
+
+The `fileName` variable is passed into the PDFDoc constructor, so likely the from-disk read of the file happens somewhere in the PDFDoc code.
+
+Here we see the PDFDoc constructor in `PDFDoc.h`
+
+> [repo source](https://github.com/epi052/fuzzing-101-solutions/blob/part-1.5-steps-1-2/exercise-1/xpdf/xpdf/PDFDoc.h#L35)
+
+```
+class PDFDoc {
+public:
+
+  PDFDoc(GString *fileNameA, GString *ownerPassword = NULL,
+	  GString *userPassword = NULL, void *guiDataA = NULL);
+-------------8<-------------
+```
+
+As well as the implementation in `PDFDoc.cc`
+
+> [repo source](https://github.com/epi052/fuzzing-101-solutions/blob/part-1.5-steps-1-2/exercise-1/xpdf/xpdf/PDFDoc.cc#L53)
+
+```
+PDFDoc::PDFDoc(GString *fileNameA, GString *ownerPassword,
+	       GString *userPassword, void *guiDataA) {
+  Object obj;
+  GString *fileName1, *fileName2;
+-------------8<-------------
+  fileName = fileNameA;
+  fileName1 = fileName;
+-------------8<-------------
+  if (!(file = fopen(fileName1->getCString(), "rb"))) {
+-------------8<-------------
+  // create stream
+  obj.initNull();
+  str = new FileStream(file, 0, gFalse, 0, &obj);
+
+  ok = setup(ownerPassword, userPassword);
+}
+```
+
+Within the implementation, we can trace the `fileNameA` parameter all the way down to the `FileStream` constructor. That breadcrumb leads us to `Stream.cc`. Unfortunately for us, FileStream is a user-defined class that wraps IO stream related functions. It doesn’t use an `unsigned char` array like we need to setup the macro discussed above.
+
+Luckily though, they’ve also implemented a `MemStream` class, that **DOES** use a character array, huzzah!
+
+> [repo source](https://github.com/epi052/fuzzing-101-solutions/blob/part-1.5-steps-1-2/exercise-1/xpdf/xpdf/Stream.cc#L702)
+
+```
+MemStream::MemStream(char *bufA, Guint startA, Guint lengthA, Object *dictA):
+    BaseStream(dictA) {
+  buf = bufA;
+  start = startA;
+  length = lengthA;
+  bufEnd = buf + start + length;
+  bufPtr = buf + start;
+  needFree = gFalse;
+}
+```
+
+We’re also lucky to find that MemStream has the same API as FileStream, which makes it a drop-in replacement. All we need to do is replace the FileStream constructor in PDFDoc with a MemStream constructor, and we should be good to go. Let’s get started!
+
+## Parser.cc
+
+With the analysis out of the way, there aren’t too many alterations needed. First, we need to add an include for `unistd` because one of the macros ends up needing it. While we’re near the top of the file, we can also insert the `__AFL_FUZZ_INIT` macro below the \#includes and above the PDFDoc constructor.
+
+```
+#include <unistd.h>
+-------------8<-------------
+#define headerSearchSize 1024	// read this many bytes at beginning of
+				//   file to look for '%PDF'
+
+__AFL_FUZZ_INIT();
+
+//------------------------------------------------------------------------
+// PDFDoc
+//------------------------------------------------------------------------
+
+PDFDoc::PDFDoc(GString *fileNameA, GString *ownerPassword,
+	       GString *userPassword, void *guiDataA) {
+-------------8<-------------
+```
+
+With that done, we can alter the constructor to use the MemStream. Additionally, there’s a bunch of code related to writing the output file (which we’re not using but gets triggered with a default case anyway), so we’re going to go ahead and remove that. After gutting the output file code, the entire constructor looks like what’s shown below.
+
+```
+PDFDoc::PDFDoc(GString *fileNameA, GString *ownerPassword,
+	       GString *userPassword, void *guiDataA) {
+  Object obj;
+  GString *fileName1, *fileName2;
+
+  ok = gFalse;
+  errCode = errNone;
+
+  guiData = guiDataA;
+
+  file = NULL;
+  str = NULL;
+  xref = NULL;
+  catalog = NULL;
+#ifndef DISABLE_OUTLINE
+  outline = NULL;
+#endif
+
+  unsigned char *buf = __AFL_FUZZ_TESTCASE_BUF;
+  int len = __AFL_FUZZ_TESTCASE_LEN;
+
+  // create stream
+  obj.initNull();
+
+  str = new MemStream((char *) buf, 0, (Guint) len, &obj);
+  ok = setup(ownerPassword, userPassword);
+}
+```
+
+There’s only a little more work to do to finish things off, so let’s keep on keepin’ on.
+
+## pdftotext.cc
+
+For now, all we need to do in `pdftotext.cc` is to remove the commandline parsing logic, which is shown below. We could get away with passing a dummy file as an argument, but there’s not really a need for it anymore, so why not remove it?
+
+```
+  exitCode = 99;
+
+  // parse args
+  ok = parseArgs(argDesc, &argc, argv);
+  if (!ok || argc < 2 || argc > 3 || printVersion || printHelp) {
+    fprintf(stderr, "pdftotext version %s\n", xpdfVersion);
+    fprintf(stderr, "%s\n", xpdfCopyright);
+    if (!printVersion) {
+      printUsage("pdftotext", "<PDF-file> [<text-file>]", argDesc);
+    }
+    goto err0;
+  }
+  fileName = new GString(argv[1]);
+
+  // read config file
+  globalParams = new GlobalParams(cfgFileName);
+```
+
+Ok, that’s enough for now. Next up, we can test out our changes!
+
+## Results
+
+After recompiling Xpdf and our fuzzer, we see a pretty large speed increase! Taking a random sample of the output shows we’re in the ballpark of a 2x speedup, which is exactly what we were hoping for.
+
+```
+cargo make clean
+cargo build --release
+taskset -c 6 ../target/release/exercise-one-point-five-solution -c lto
+```
+
+```
+[Stats #0] clients: 1, corpus: 615, objectives: 0, executions: 567834, exec/sec: 1961
+[Stats #0] clients: 1, corpus: 615, objectives: 0, executions: 567834, exec/sec: 2040
+[Testcase #0] clients: 1, corpus: 616, objectives: 0, executions: 570189, exec/sec: 2261
+[Stats #0] clients: 1, corpus: 616, objectives: 0, executions: 571831, exec/sec: 2270
+[Stats #0] clients: 1, corpus: 616, objectives: 0, executions: 575641, exec/sec: 2203
+[Stats #0] clients: 1, corpus: 616, objectives: 0, executions: 575641, exec/sec: 2185
+```
+
+But wait, there’s more! We can strip out some more code from pdftotext.cc’s main function and go even faster. The first comment and the first line of code under it let us know that we’re reading a file off disk, so let’s get rid of that.
+
+```
+  // read config file
+  globalParams = new GlobalParams(cfgFileName);
+  if (textEncName[0]) {
+    globalParams->setTextEncoding(textEncName);
+  }
+  if (textEOL[0]) {
+    if (!globalParams->setTextEOL(textEOL)) {
+      fprintf(stderr, "Bad '-eol' value on command line\n");
+    }
+  }
+  if (noPageBreaks) {
+    globalParams->setTextPageBreaks(gFalse);
+  }
+  if (quiet) {
+    globalParams->setErrQuiet(quiet);
+  }
+  // get mapping to output encoding
+  if (!(uMap = globalParams->getTextEncoding())) {
+    error(-1, "Couldn't get text encoding");
+    delete fileName;
+    goto err1;
+  }
+```
+
+There’s also this code that writes the converted pdf out to its text file. Let’s yeet that into the sun as well.
+
+```
+  // write text file
+  textOut = new TextOutputDev(textFileName->getCString(),
+			      physLayout, rawOrder, htmlMeta);
+  if (textOut->isOk()) {
+    doc->displayPages(textOut, firstPage, lastPage, 72, 72, 0,
+		      gFalse, gTrue, gFalse);
+  } else {
+    delete textOut;
+    exitCode = 2;
+    goto err3;
+  }
+  delete textOut;
+```
+
+The rest of main could be cleaned up to remove anything not directly related to PDFDoc and its methods, but we’ll leave well enough alone for now. After a recompile of Xpdf, we can spin up the fuzzer again.
+
+```
+[Stats #0] clients: 1, corpus: 438, objectives: 0, executions: 54787, exec/sec: 3378
+[Testcase #0] clients: 1, corpus: 439, objectives: 0, executions: 55233, exec/sec: 3430
+[Stats #0] clients: 1, corpus: 439, objectives: 0, executions: 55233, exec/sec: 3478
+[Testcase #0] clients: 1, corpus: 440, objectives: 0, executions: 55386, exec/sec: 3528
+[Stats #0] clients: 1, corpus: 440, objectives: 0, executions: 55386, exec/sec: 3575
+[Testcase #0] clients: 1, corpus: 441, objectives: 0, executions: 55458, exec/sec: 3621
+[Stats #0] clients: 1, corpus: 441, objectives: 0, executions: 55733, exec/sec: 3581
+[Stats #0] clients: 1, corpus: 441, objectives: 0, executions: 55733, exec/sec: 3542
+```
+
+Not too bad! Around a 3x speedup for not too much effort, beyond the initial analysis. Things are looking pretty good right now, but we can likely do even better by swapping out our executor, which we’ll take a look at next.
+
+# Step 3: Executor Swap
+
+Our final step in our search for that ever elusive “perf” that [@gamozolabs](https://twitter.com/gamozolabs) is always talking about, is swapping out our ForkserverExecutor for an InProcessExecutor. The structure of the in-process fuzzer is going to be quite a bit different than what we’ve used so far. Our current fuzzer is a standalone binary that executes an external program over and over. We’re going to throw that paradigm out the window in the upcoming section.
+
+Our plan of attack is to create a fuzz target ([harness.cc](#harnesscc)) and a LibAFL-backed compiler ([compiler.rs](#compilerrs)) that we’ll use to compile the fuzz target. We’ll also modify our standalone fuzzer so that it’s a static library that we’ll link to our fuzz target using our compiler.
+
+Those are the broad-stroke steps we’ll take to swap out our executor. As mentioned at the start of this post, this is generally a sizable increase a fuzzer’s performance. Let’s see if that holds true for us.
+
+## Statically Compile Xpdf
+
+We’ll begin our swap by statically compiling Xpdf. We’re starting here because this is really the make-or-break step. If we can’t statically compile Xpdf as a library, we’re likely better off exploring other alternatives like persistent mode fuzzing. The statically compiled xpdf library will eventually be linked to our fuzz target so we can exercise the code we’re interested in fuzzing.
+
+To kick things off, and because we’re lazy (in the good hacker way), we’ll google around to see if anyone has already done the work for us. It turns out there’s a project on github called [libxpdf](https://github.com/ashutoshvarma/libxpdf), which sounds like it’s exactly what we need, nice!
+
+Unfortunately, they only provide releases back to verison 4.02, a whole major version newer than what we’re targeting. That means we’re on our own for building Xpdf 3.02. Well, kind of, we can still rely heavily on the work done in the libxpdf repository, it’ll just require a little extra work on our part.
+
+### Make to CMake
+
+If we examine the Xpdf repo at any point past version 4.0, we can see that they moved their build system from Make to CMake. This is a hurdle (at least to me, if you know of an easier conversion method, i’m all ears), but not a huge hurdle. We can simply grab the CMake related files from the 4.0+ repo and jam them in our local 3.02 repo.
+
+What we’re looking for are all of the files in the 4.0 folder that have anything to do with CMake. We need to start by finding all of those files and placing them in our 3.02 folder at the same relative location. Since there were so few, I just manually `mv`’d them.
+
+```
+find xpdf | grep cmake
+════════════════════════════
+
+xpdf/cmake-config.txt
+xpdf/splash/CMakeLists.txt
+xpdf/xpdf/CMakeLists.txt
+xpdf/goo/CMakeLists.txt
+xpdf/CMakeLists.txt
+xpdf/external/external.cmake
+xpdf/cmake/mimick_find.cmake
+xpdf/fofi/CMakeLists.txt
+```
+
+With those files in place in our 3.02 folder, we can try to build using CMake. We’ll use the “out of source” building strategy recommended by CMake, which just means we’ll build in a directory that’s unrelated to the target and give cmake the location of the CMakeLists.txt as an argument.
+
+> fuzzing-101-solutions/exercise-1.5
+
+```
+mkdir build 
+cd build
+cmake ../xpdf
+```
+
+When we do this, there are a bunch of errors, mostly about trying to compile files that don’t exist. To get things working, we just need to iteratively build/error out/modify the CMake files until we can build our target. Ultimately, the following changes were required to get everything working.
+
+For the two files below, each highlighted line needs to be removed.
+
+> xpdf-4.02/fofi/CMakeLists.txt
+
+```
+include_directories("${PROJECT_SOURCE_DIR}")
+include_directories("${PROJECT_BINARY_DIR}")
+include_directories("${PROJECT_SOURCE_DIR}/goo")
+
+add_library(fofi_objs OBJECT
+  FoFiBase.cc
+  FoFiEncodings.cc
+  FoFiIdentifier.cc
+  FoFiTrueType.cc
+  FoFiType1.cc
+  FoFiType1C.cc
+)
+
+add_library(fofi
+  $<TARGET_OBJECTS:fofi_objs>
+)
+```
+
+> xpdf-4.02/xpdf/CMakeLists.txt
+
+```
+add_library(xpdf_objs OBJECT
+  AcroForm.cc
+  Annot.cc
+  Array.cc
+  BuiltinFont.cc
+  BuiltinFontTables.cc
+  Catalog.cc
+  CharCodeToUnicode.cc
+  CMap.cc
+  ${COLOR_MANAGER_SOURCE}
+  Decrypt.cc
+  Dict.cc
+  Error.cc
+  FontEncodingTables.cc
+  Form.cc
+  Function.cc
+  Gfx.cc
+  GfxFont.cc
+  GfxState.cc
+  GlobalParams.cc
+  JArithmeticDecoder.cc
+  JBIG2Stream.cc
+  JPXStream.cc
+  Lexer.cc
+  Link.cc
+  NameToCharCode.cc
+  Object.cc
+  OptionalContent.cc
+  Outline.cc
+  OutputDev.cc
+  Page.cc
+  Parser.cc
+  PDF417Barcode.cc
+  PDFDoc.cc
+  PDFDocEncoding.cc
+  PSTokenizer.cc
+  SecurityHandler.cc
+  Stream.cc
+  TextString.cc
+  UnicodeMap.cc
+  UnicodeRemapping.cc
+  UnicodeTypeTable.cc
+  UTF8.cc
+  XFAForm.cc
+  XRef.cc
+  Zoox.cc
+)
+
+if (HAVE_SPLASH)
+  set(SPLASH_LIB splash)
+  set(SPLASH_OBECTS $<TARGET_OBJECTS:splash_objs>)
+  set(SPLASH_OUTPUT_DEV_SRC "SplashOutputDev.cc")
+else()
+  set(SPLASH_LIB "")
+  set(SPLASH_OBECTS "")
+  set(SPLASH_OUTPUT_DEV_SRC "")
+endif()
+
+add_library(xpdf STATIC
+  $<TARGET_OBJECTS:xpdf_objs>
+  $<TARGET_OBJECTS:goo_objs>
+  $<TARGET_OBJECTS:fofi_objs>
+  ${SPLASH_OBECTS}
+  $<TARGET_OBJECTS:${PNG_LIBRARIES}>
+  $<TARGET_OBJECTS:${ZLIB_LIBRARIES}>
+  $<TARGET_OBJECTS:${FREETYPE_LIBRARY}>
+  PreScanOutputDev.cc
+  PSOutputDev.cc
+  ${SPLASH_OUTPUT_DEV_SRC}
+  TextOutputDev.cc
+  HTMLGen.cc
+  WebFont.cc
+  ImageOutputDev.cc
+)
+```
+
+Now, we shoud be able to statically compile xpdf with afl++.
+
+> fuzzing-101-solutions/exercise-1.5/build
+
+```
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=afl-clang-lto -DCMAKE_CXX_COMPILER=afl-clang-lto++ ../xpdf/
+make
+```
+
+When we look in `/build`, we can see our libraries.
+
+```
+ls -al */*.a 
+════════════════════════════
+
+-rw-rw-r-- 1 epi epi   417288 Nov 13 20:02 goo/libgoo.a
+-rw-rw-r-- 1 epi epi   898772 Nov 13 20:02 fofi/libfofi.a
+-rw-rw-r-- 1 epi epi   964732 Nov 13 20:03 splash/libsplash.a
+-rw-rw-r-- 1 epi epi 12133702 Nov 13 20:03 xpdf/libxpdf.a
+```
+
+Not too shabby! Now we have an instrumented static library that we can use when fuzzing (we’ll swap out the afl compilers for our own later). Before we start modifying our fuzzer, let’s write the code will make use of our newly compiled library (aka our fuzz target/harness/the code we’ll end up fuzzing)… Onward!
+
+## harness.cc
+
+First up, we can get some nomenclature out of the way. What we’re about to write is (in my experience) typically called a harness. In libFuzzer’s documentation, it’s called a fuzz target. They’re the same thing, but harness is easier to type, so we’ll stick with that.
+
+A harness is simply a function that accepts a byte array and the byte array’s size as parameters, and then uses them to call the target library under test. We need to keep the following things in mind when building a harness (modified from [libFuzzer docs](https://llvm.org/docs/LibFuzzer.html#fuzz-target)):
+
+- The fuzzing engine will execute the fuzz target many times with different inputs in the same process.
+- It must not exit() on any input.
+- It must be fast. Try avoiding cubic or greater complexity, logging, or excessive memory consumption.
+
+Because our harness will be executed within the same process over and over, we need to make sure we’re not leaking memory or reaching code that calls `exit`. We also want to limit the amount of code to only what’s strictly necessary to exercise the path we want our fuzzer to take. Since we already have a driver program that we know to be vulnerable (`pdftotext`), we can simply look there to see what our harness should be doing.
+
+Our goal here is to keep the semantics of the original program, but rip out its guts to make it easier to fuzz (rough quote from [@h0mbre](https://twitter.com/h0mbre_)). We’re primarily interested in the code that creates a `PDFDoc` or calls methods on the instantiated object. Below is all we’ll need to replicate that behavior in our harness.
+
+> xpdf/xpdf/pdftotext.cc
+
+```
+  doc = new PDFDoc(fileName, ownerPW, userPW);
+
+  if (!doc->isOk()) {
+    -------------8<-------------
+  }
+
+
+  if (!doc->okToCopy()) {
+    -------------8<-------------
+  }
+
+  if (lastPage < 1 || lastPage > doc->getNumPages()) {
+    lastPage = doc->getNumPages();
+  }
+
+  delete doc;
+```
+
+After extracting the code we care about, we can write our harness. The `LLVMFuzzerTestOneInput` function signature seen below is one that many (all?) major fuzzing frameworks support. That means we can write a single harness and use it with libFuzzer, AFL++, Honggfuzz, etc…
+
+```
+#include <fstream>
+#include <iostream>
+#include <stdint.h>
+#include "PDFDoc.h"
+#include "goo/gtypes.h"
+#include "XRef.h"
+
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    int lastPage = 0;
+
+    GString *user_pw = NULL;
+    GString *owner_pw = NULL;
+    GString *filename = NULL;
+
+    Object obj;
+    obj.initNull();
+
+    // stream is cleaned up when doc's destructor fires
+    MemStream *stream = new MemStream((char *)data, 0, size, &obj);
+
+    PDFDoc *doc = new PDFDoc(stream, owner_pw, user_pw);
+
+    if (doc->isOk() && doc->okToCopy()) {
+        lastPage = doc->getNumPages();
+    }
+
+    if (doc) { delete doc; }
+
+    return 0;
+}
+```
+
+Take note that we’re using the `MemStream` object we found earlier in our analysis to keep our byte array in memory. Also, we’ve kept our code to a minimum, cleaned up all of our allocations, and called all the constructors/methods the original program called. That does it for our harness, let’s move on to the compiler.
+
+## gmem.cc
+
+There’s one more small modification we need to make to the xpdf code. Specifically in `xpdf/goo/gmem.cc`. Recall from above that our code in/used-by the harness can not `exit` from any input. Well, there just so happens to be a code path that our fuzzer will exercise that results in a call to `exit(1)`.
+
+We can fix this by replacing the calls to exit with calls to `std::abort()`. Calling abort will allow the fuzzer to catch the crash and restart, where a call to exit would simply bork our efforts.
+
+```
+  if (objSize <= 0 || nObjs < 0 || nObjs >= INT_MAX / objSize) {
+#if USE_EXCEPTIONS
+    throw GMemException();
+#else
+    fprintf(stderr, "nObjs: %d objSize\n", nObjs, objSize);
+    fprintf(stderr, "Bogus memory allocation size\n");
+    // exit(1);
+    std::abort();
+#endif
+  }
+  return gmalloc(n);
+}
+
+void *greallocn(void *p, int nObjs, int objSize) GMEM_EXCEP {
+  int n;
+
+  if (nObjs == 0) {
+    if (p) {
+      gfree(p);
+    }
+    return NULL;
+  }
+  n = nObjs * objSize;
+  if (objSize <= 0 || nObjs < 0 || nObjs >= INT_MAX / objSize) {
+#if USE_EXCEPTIONS
+    throw GMemException();
+#else
+    fprintf(stderr, "p: %p nObjs: %d objSize %d\n", p, nObjs, objSize);
+    fprintf(stderr, "Bogus memory allocation size\n");
+    // exit(1);
+    std::abort();
+
+#endif
+```
+
+## compiler.rs
+
+The compiler code sounds scary, but it’s almost completely boilerplate. First though, we need to make a few changes to our project structure to support the new code.
+
+We need to add `libafl_cc` as a project dependency, as well as `libafl_targets` and `libafl_bolts`. We also need to change the crate type to a static library.
+
+> fuzzing-101-solutions/exercise-1.5/Cargo.toml
+
+```
+[dependencies]
+libafl = { version = "0.15.0" }
+libafl_cc = { version = "0.15.0" }
+libafl_targets = { version = "0.15.0", features = [
+    "libfuzzer",
+    "sancov_pcguard_hitcounts",
+] }
+libafl_bolts = { version = "0.15.0" }
+
+[lib]
+name = "exerciseonepointfive"
+crate-type = ["staticlib"]
+```
+
+Also, our compiler will be an executable binary. We can use rust’s `bin` folder convention to say that any file in the `src/bin` folder should be compiled into a standalone executable.
+
+> fuzzing-101-solutions/exercise-1.5/
+
+```
+mkdir src/bin
+```
+
+Cool, now we can add our compiler code. If you take a look at the fuzzer examples in the LibAFL repo, most of them make use of the same compiler code. What’s shown below is slightly modified for clarity.
+
+> fuzzing-101-solutions/exercise-1.5/src/bin/compiler.rs
+
+```
+use libafl_cc::{ClangWrapper, CompilerWrapper, ToolWrapper};
+use std::env;
+
+pub fn main() {
+    let cwd = env::current_dir().unwrap();
+    let args: Vec<String> = env::args().collect();
+
+    let mut cc = ClangWrapper::new();
+
+    let is_cpp = env::current_exe().unwrap().ends_with("compiler_pp");
+
+    if let Some(code) = cc
+        .cpp(is_cpp)
+        .silence(true)
+        .parse_args(&args)
+        .expect("Failed to parse the command line")
+        .link_staticlib(&cwd, "exerciseonepointfive")
+        .add_arg("-fsanitize-coverage=trace-pc-guard")
+        .run()
+        .expect("Failed to run the wrapped compiler")
+    {
+        std::process::exit(code);
+    }
+}
+```
+
+Some things to note about the code above:
+
+- `"compiler_pp"` will be the name of our c++ compiler wrapper
+- we’re passing the name of our crate’s static library as a param to the `.link_staticlib` call
+- `"-fsanitize-coverage=trace-pc-guard"` is a SanitizerCoverage option discussed [here](https://clang.llvm.org/docs/SanitizerCoverage.html#introduction), but basically allows us to track edge coverage
+
+Ok, finally, we just need to add our c++ compiler, that will simpy call in to the compiler code above.
+
+> fuzzing-101-solutions/exercise-1.5/src/bin/compiler_pp.rs
+
+```
+pub mod compiler;
+
+fn main() {
+    compiler::main()
+}
+```
+
+Sweet! We have a c and cpp compiler, backed by clang, that adds SanitizerCoverage based coverage instrumentation to whatever it compiles.
+
+## lib.rs
+
+Now it’s time to actually make the executor swap. To begin, we’ll need to rename `main.rs` to `lib.rs`, since our fuzzer is going to be a static library.
+
+> fuzzing-101-solutions/exercise-1.5/src/
+
+```
+mv main.rs lib.rs
+```
+
+### libafl_main
+
+After that, we can start making modifications to the fuzzer. Keeping with the binary-\>library switch theme, we need to rename the main function and add the `no_mangle` attribute. The no_mangle attribute instructs rustc to retain this symbol’s name as-is, otherwise it may end up looking something like \_ZN6afl_main17heb3ea72ba341fa07E.
+
+```
+#[no_mangle]
+fn libafl_main() -> Result<(), Error> {
+-------------8<-------------
+```
+
+### Edge coverage
+
+Next, we need to update how our edge coverage is observed. In our ForkserverExecutor based fuzzer, we got a pointer to shared memory from the `__AFL_SHM_ID` environment variable automatically, but since this fuzzer now uses an InProcessExecutor, we need to use `EDGES_MAP` from the `libafl_targets` crate’s coverage module.
+
+When we used `afl-clang-[fast|lto]` for instrumentation, the edge coverage map pointed to by \_\_AFL_SHM_ID was inserted by the compiler and we could use that variable to get a pointer to the map. This time around, we’re using `libafl_cc`, which uses the SanitizerCoverage backend. In the end, the \_\_AFL_SHM_ID environment variable won’t be populated, so we need to use the EDGES_MAP exposed by libafl_targets.
+
+> special thanks to @toka from the Awesome Fuzzing discord server for taking the time to help me with/explain this
+
+Due to [LibAFL API updates](https://aflplus.plus/libafl-book/design/migration-0.9.html#observer-changes), the preferred method of creating a `StdMapObserver` that utilizes the `EDGES_MAP` mentioned above, is to use the [`std_edges_map_observer`](https://docs.rs/libafl_targets/latest/libafl_targets/coverage/fn.std_edges_map_observer.html) function, as shown below.
+
+```
+let edges_observer = HitcountsMapObserver::new(unsafe { std_edges_map_observer("edges") }).track_indices();
+```
+
+### Monitor component
+
+Because we’re going to be running the harness in the same process space as the fuzzer, anything that is printed to stdout/err by the harness will be present in the fuzzer. We don’t want to see a bunch of garbage cluttering up our fuzzer statistics, so we’ll swap out our old SimpleMonitor component for a [MultiMonitor](https://github.com/AFLplusplus/LibAFL/blob/main/libafl/src/monitors/multi.rs#L16). The `Monitor` component is the new name for the older Stats component. The Stats and State components were too similarly named, so now we have the Monitor component instead.
+
+The MultiMonitor will display cumulative and per-client statistics. It uses LibAFL’s Low Level Messaging Protocol (LLMP) for communication between the broker and client(s). The broker is spawned the first time the fuzzer is run, and any fuzzer process that starts while the broker is active are considered clients. Of note, upon the first client connection to the broker, the output will show that there are 2 active clients.
+
+When asked about this behavior, @domenukk had this to say:
+
+> The 0th client is the client that opens a network socket and listens for other clients and potentially brokers. It’s still a client from llmp’s perspective, so it’s more or less an implementation detail.
+
+The actual code is just as simple as the SimpleMonitor we’re replacing.
+
+```
+let monitor = MultiMonitor::new(|s| {
+    println!("{}", s);
+});
+```
+
+But with that change, our broker instance prints our stats, while each client’s stdout/err will be printed to their respective terminals.
+
+```
+broker terminal
+════════════════════════════
+
+[LibAFL/libafl/src/bolts/llmp.rs:600] "We're the broker" = "We're the broker"
+Doing broker things. Run this tool again to start fuzzing in a client.
+[LibAFL/libafl/src/bolts/llmp.rs:2187] "New connection" = "New connection"
+[LibAFL/libafl/src/bolts/llmp.rs:2187] addr = 127.0.0.1:36678
+[LibAFL/libafl/src/bolts/llmp.rs:2187] stream.peer_addr().unwrap() = 127.0.0.1:36678
+[Stats       #1]  (GLOBAL) clients: 2, corpus: 0, objectives: 0, executions: 0, exec/sec: 0
+                  (CLIENT) corpus: 0, objectives: 0, executions: 0, exec/sec: 0, edges: 299/17128 (1%)
+[4:39 PM]
+```
+
+```
+client terminal
+════════════════════════════
+
+We're the client (internal port already bound by broker, Os {
+    code: 98,
+    kind: AddrInUse,
+    message: "Address already in use",
+})
+Connected to port 1337
+[LibAFL/libafl/src/events/llmp.rs:833] "Spawning next client (id {})" = "Spawning next client (id {})"
+[LibAFL/libafl/src/events/llmp.rs:833] ctr = 0
+```
+
+### EventManager component
+
+In the forkserver version of our fuzzer, we used a SimpleEventManager. This time around, we’ll need a [LlmpRestartingEventManager](https://docs.rs/libafl/0.15.0/libafl/events/llmp/restarting/struct.LlmpRestartingEventManager.html). The LlmpRestartingEventManager performs the same base functions as the SimpleEventManager, but can also restart its associated fuzzer, saving the fuzzer’s state between separate executions. This means that each time a child crashes or times out, the LlmpRestartingEventManager will spawn a new process and keep the fuzzing going. In the call to [setup_restarting_mgr_std](https://docs.rs/libafl/0.15.0/libafl/events/llmp/restarting/fn.setup_restarting_mgr_std.html), we pass in our MultiMonitor, the port on which the broker will listen (1337), and `EventConfig::AlwaysUnique`. The EventConfig is simply used by the LlmpRestartingEventManager to distinguish individual fuzzers by their configuration.
+
+One of the reasons we’ll want restarting behavior is to essentially ‘clean out the bits’ from 1000’s of old executions of the harness, so we can start with a clean slate.
+
+```
+let (state, mut mgr) = match setup_restarting_mgr_std(monitor, 1337, EventConfig::AlwaysUnique)
+{
+    Ok(res) => res,
+    Err(err) => match err {
+        Error::ShuttingDown => {
+            return Ok(());
+        }
+        _ => {
+            panic!("Failed to setup the restarting manager: {}", err);
+        }
+    },
+};
+```
+
+### State component
+
+Next up, we need to grab the State from the EventManager. On the initial pass, `setup_restarting_mgr_std` from above returns `(None, LlmpRestartingEventManager)`. On each successive execution (i.e. on a fuzzer restart), it returns the state from the prior run that was saved off in shared memory. The code below handles the initial None value by providing a default StdState. After the first restart, we’ll simply unwrap the `Some(StdState)` returned from the call to setup_restarting_mgr_std.
+
+```
+let mut state = state.unwrap_or_else(|| {
+    StdState::new(
+        // random number generator with a time-based seed
+        StdRand::with_seed(current_nanos()),
+        input_corpus,
+        timeouts_corpus,
+        // feedbacks that store the data related to the feedbacks that should be
+        // persisted in the State.
+        &mut feedback,
+        &mut objective
+    )
+    .unwrap()
+});
+```
+
+### Harness component
+
+The code below is a Rust closure. It’s responsible for accepting some bytes that have been mutated by the fuzzer and sending them off to our `LLVMFuzzerTestOneInput` function in `harness.cc`.
+
+```
+let mut harness = |input: &BytesInput| {
+    let target = input.target_bytes();
+    let buffer = target.as_slice();
+    unsafe { libfuzzer_test_one_input(buffer) };
+    ExitKind::Ok
+};
+```
+
+### Executor component
+
+Here we have the component of the hour, the [InProcessExecutor](https://docs.rs/libafl/0.15.0/libafl/executors/inprocess/type.InProcessExecutor.html)! We’ll need to pass in all of the components to the `with_timeout` constructor so we can maintain the same timeout behavior we had before.
+
+```
+let mut in_proc_executor = InProcessExecutor::with_timeout(
+    &mut harness,
+    tuple_list!(edges_observer, time_observer),
+    &mut fuzzer,
+    &mut state,
+    &mut mgr,
+    Duration::from_millis(5000),
+)
+.unwrap();
+```
+
+### Fuzzer component
+
+Finally, we have the Fuzzer component. Instead of using the `fuzz_loop` method again, that loops forever. We’ll instead use [fuzz_loop_for](https://docs.rs/libafl/0.15.0/libafl/fuzzer/trait.Fuzzer.html#method.fuzz_loop_for), which will only run 10,000 fuzz iterations before proceeding. That will allow the fuzzer to exit and restart, getting us that clean slate every so often.
+
+Since were using this fuzz_loop_for in a restarting scenario to only run for 10,000 iterations before exiting, we need to ensure we call [on_restart](https://docs.rs/libafl/0.15.0/libafl/events/trait.EventRestarter.html#tymethod.on_restart) and pass it our current State. This way, the state will be available in the next, respawned, fuzzer process.
+
+```
+fuzzer
+    .fuzz_loop_for(&mut stages, &mut in_proc_executor, &mut state, &mut mgr, 10000)
+    .unwrap();
+
+mgr.on_restart(&mut state).unwrap();
+```
+
+## Makefile.toml
+
+With all of the necessary changes in place, we can write the glue that makes everything work. I recently came across the [cargo make](https://github.com/sagiegurari/cargo-make) project, and it is incredibly robust. We’ll be using it here to manage our build and clean steps. The primary motivation for us to use this project instead of `build.rs` is that Rust’s build scripts don’t have an analagous cleanup script. In the past I’ve usually just augmented my build script with a Makefile, but NO MORE! Now, it’s `Makefile.toml` or bust.
+
+At a high level, we can run `cargo make rebuild` to clean up everything, build the compilers, and then use the compilers to compile xpdf and our harness.
+
+> exercise-1.5/Makefile.toml
+
+```
+[tasks.clean]
+dependencies = ["cargo-clean", "afl-clean", "clean-xpdf"]
+
+[tasks.afl-clean]
+script = '''
+rm -rf .cur_input* timeouts fuzzer fuzzer.o libexerciseonepointfive.a
+'''
+
+[tasks.clean-xpdf]
+cwd = "xpdf"
+script = """
+make --silent clean
+rm -rf built-with-* ../build/*
+"""
+
+[tasks.cargo-clean]
+command = "cargo"
+args = ["clean"]
+
+[tasks.rebuild]
+dependencies = ["afl-clean", "clean-xpdf", "build-compilers", "build-xpdf", "build-fuzzer"]
+
+[tasks.build-compilers]
+script = """
+cargo build --release
+cp -f ../target/release/libexerciseonepointfive.a .
+"""
+
+[tasks.build-xpdf]
+cwd = "build"
+script = """
+cmake ../xpdf -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=$(pwd)/../../target/release/compiler -DCMAKE_CXX_COMPILER=$(pwd)/../../target/release/compiler_pp
+make
+"""
+
+[tasks.build-fuzzer]
+script = """
+../target/release/compiler_pp -I xpdf/goo -I xpdf/fofi -I xpdf/splash -I xpdf/xpdf -I xpdf -o fuzzer harness.cc build/*/*.a -lm -ldl -lpthread -lstdc++ -lgcc -lutil -lrt
+"""
+```
+
+After we run `cargo run rebuild`, we’re left with the `fuzzer` binary in the `exercise-1.5` directory.
+
+> fuzzing-101-solutions/exercise-1.5
+
+```
+ls -al fuzzer
+════════════════════════════
+
+-rwxrwxr-x  1 epi epi 24446960 Nov 13 20:03 fuzzer
+```
+
+## Results
+
+Ok, to see how much impact we’ve made, we need two terminal windows (or panes if you’re fancy like that). We’ll run `fuzzer` in each window.
+
+> window 1: the broker
+
+```
+taskset -c 4 ./build/fuzzer
+════════════════════════════
+
+[LibAFL/libafl/src/bolts/llmp.rs:600] "We're the broker" = "We're the broker"
+Doing broker things. Run this tool again to start fuzzing in a client.
+```
+
+> window 2: the client
+
+```
+taskset -c 6 ./fuzzer
+════════════════════════════
+
+We're the client (internal port already bound by broker, Os {
+    code: 98,
+    kind: AddrInUse,
+    message: "Address already in use",
+})
+Connected to port 1337
+[LibAFL/libafl/src/events/llmp.rs:833] "Spawning next client (id {})" = "Spawning next client (id {})"
+[LibAFL/libafl/src/events/llmp.rs:833] ctr = 0
+Awaiting safe_to_unmap_blocking
+-------------8<-------------
+We're a client, let's fuzz :)
+First run. Let's set it all up
+Loading file "./corpus/sample.pdf" ...
+We imported 1 inputs from disk.
+-------------8<-------------
+```
+
+Once the client is up and running, we can check how we’re doing in the broker window.
+
+```
+[Stats       #1]  (GLOBAL) clients: 2, corpus: 454, objectives: 7, executions: 195316, exec/sec: 13500
+                  (CLIENT) corpus: 454, objectives: 7, executions: 195316, exec/sec: 13500, timeout_edges: 619/17129 (3%), edges: 614/17129 (3%)
+[Stats       #1]  (GLOBAL) clients: 2, corpus: 454, objectives: 7, executions: 195316, exec/sec: 13500
+                  (CLIENT) corpus: 454, objectives: 7, executions: 195316, exec/sec: 13500, timeout_edges: 619/17129 (3%), edges: 614/17129 (3%)
+[Testcase    #1]  (GLOBAL) clients: 2, corpus: 455, objectives: 7, executions: 196431, exec/sec: 13569
+                  (CLIENT) corpus: 455, objectives: 7, executions: 196431, exec/sec: 13635, timeout_edges: 619/17129 (3%), edges: 614/17129 (3%)
+[Stats       #1]  (GLOBAL) clients: 2, corpus: 455, objectives: 7, executions: 196431, exec/sec: 13087
+                  (CLIENT) corpus: 455, objectives: 7, executions: 196431, exec/sec: 12573, timeout_edges: 619/17129 (3%), edges: 614/17129 (3%)
+[Stats       #1]  (GLOBAL) clients: 2, corpus: 455, objectives: 7, executions: 196431, exec/sec: 12092
+                  (CLIENT) corpus: 455, objectives: 7, executions: 196431, exec/sec: 11641, timeout_edges: 619/17129 (3%), edges: 614/17129 (3%)
+```
+
+Nice! We’ve sped up our original fuzzer by an order of magnitude, give or take. You can see from the output, there’s pretty large variations on my machine. What’s even cooler is now we can run another instance of the fuzzer for each available core on the machine.
+
+That’s it for this post. In the next one, we’ll tackle exercise \#2 from Fuzzing101!
+
+# Additional Resources
+
+1.  [Fuzzing101](https://github.com/antonio-morales/Fuzzing101)
+2.  [AFL++](https://github.com/AFLplusplus/AFLplusplus)
+3.  [LibAFL](https://github.com/AFLplusplus/LibAFL)
+4.  [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+5.  [libxpdf](https://github.com/ashutoshvarma/libxpdf)
+6.  [libFuzzer Docs](https://llvm.org/docs/LibFuzzer.html)
+7.  [SanitizerCoverage - trace-pc-guard](https://clang.llvm.org/docs/SanitizerCoverage.html#tracing-pcs-with-guards)
+
+------------------------------------------------------------------------
+
+Share: [Twitter](https://twitter.com/intent/tweet?text=Fuzzing101%20with%20LibAFL%20-%20Part%20I.V%3A%20Speed%20Improvements%20to%20Part%20I&url=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-07-fuzzing-101-with-libafl-part-15%2F) [Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-07-fuzzing-101-with-libafl-part-15%2F)

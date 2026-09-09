@@ -1,0 +1,1018 @@
+# Fuzzing101 with LibAFL - Part II: Fuzzing libexif
+
+November 16, 2021 • 35 min read
+
+### Updated: Feb 8, 2025 // LibAFL Version 0.15.1
+
+Twitter user [Antonio Morales](https://twitter.com/nosoynadiemas?lang=en) created the [Fuzzing101](https://github.com/antonio-morales/Fuzzing101) repository in August of 2021. In the repo, he has created exercises and solutions meant to teach the basics of fuzzing to anyone who wants to learn how to find vulnerabilities in real software projects. The repo focuses on [AFL++](https://github.com/AFLplusplus/AFLplusplus) usage, but this series of posts aims to solve the exercises using [LibAFL](https://github.com/AFLplusplus/LibAFL) instead. We’ll be exploring the library and writing fuzzers in Rust in order to solve the challenges in a way that closely aligns with the suggested AFL++ usage.
+
+Since this series will be looking at Rust source code and building fuzzers, I’m going to assume a certain level of knowledge in both fields for the sake of brevity. If you need a brief introduction/refresher to/on coverage-guided fuzzing, please take a look [here](https://github.com/antonio-morales/Fuzzing101#what-is-fuzzing). As always, if you have any questions, please don’t hesitate to reach out.
+
+This post will cover fuzzing libexif in order to solve [Exercise 2](https://github.com/antonio-morales/Fuzzing101/tree/main/Exercise%202). The companion code for this exercise can be found at my [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+
+Previous posts:
+
+- [Part I: Fuzzing Xpdf](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/)
+- [Part I.V: Speed Improvements to Part I](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/)
+
+------------------------------------------------------------------------
+
+# Quick Reference
+
+This is just a summary of the different components used in the upcoming post. It’s meant to be used later as an easy way of determining which components are used in which posts.
+
+```
+{
+  "Fuzzer": {
+    "type": "StdFuzzer",
+    "Corpora": {
+      "Input": "InMemoryCorpus",
+      "Output": "OnDiskCorpus"
+    },
+    "Input": "BytesInput",
+    "Observers": [
+      "StdMapObserver": {
+        "coverage map": "EDGES_MAP",
+      },
+      "TimeObserver",
+      "HitcountsMapObserver"
+    ],
+    "Feedbacks": {
+      "Pure": ["MaxMapFeedback", "TimeFeedback"],
+      "Objectives": ["MaxMapFeedback", "CrashFeedback"]
+    },
+    "State": {
+      "StdState"
+    },
+    "Stats": "SimpleStats",
+    "EventManager": "SimpleEventManager",
+    "Scheduler": "IndexesLenTimeMinimizerScheduler",
+    "Executors": [
+      "InProcessExecutor",
+    ],
+    "Mutators": [
+      "StdScheduledMutator": {
+        "mutations": "havoc_mutations"
+      }
+    ],
+    "Stages": ["StdMutationalStage"]
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+# Intro
+
+Welcome back! This post will cover fuzzing [libexif](https://github.com/libexif/libexif) in the hopes of finding [CVE-2009-3895](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2009-3895) and [CVE-2012-2836](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2012-2836) in libexif 0.6.14.
+
+According to Mitre, CVE-2009-3895 is a heap-based buffer overflow in the `exif_entry_fix` function in `libexif/exif-entry.c` and CVE-2012-2836 is an out-of-bounds read in the `exif_data_load_data` function in `exif-data.c`. Both vulnerabilities can cause a denial of service.
+
+Now that we know what our goals are, let’s jump in!
+
+# Exercise 2 Setup
+
+Let’s start by adding a new rust project named exercise-2 to our fuzzing-101-solutions workspace.
+
+## exercise-2
+
+First, we’ll modify our top-level Cargo.toml to include the new project.
+
+> fuzzing-101-solutions/Cargo.toml
+
+```
+[workspace]
+members = [
+    "exercise-1",
+    "exercise-1.5",
+    "exercise-2"
+]
+```
+
+And then create the project itself.
+
+```
+cargo new --lib exercise-2
+════════════════════════════
+
+Created library `exercise-2` package
+```
+
+## libexif
+
+Next, let’s grab our target library: libexif.
+
+> fuzzing-101-solutions/exercise-2
+
+```
+wget https://github.com/libexif/libexif/archive/refs/tags/libexif-0_6_14-release.tar.gz
+tar -xf libexif-0_6_14-release.tar.gz
+mv libexif-libexif-0_6_14-release libexif
+```
+
+Once complete, our directory structure should look similar to what’s below.
+
+```
+exercise-2/
+├── Cargo.toml
+├── libexif
+│   ├── aolserver
+│   │   ├── Makefile
+-------------8<-------------
+└── src
+    └── lib.rs
+```
+
+With the source downloaded, we’ll need to statically compile the library. We’ll start with the dependencies.
+
+```
+sudo apt-get install autopoint libtool gettext libpopt-dev
+```
+
+After which we can create and run the following:
+
+> fuzzing-101-solutions/exercise-2
+
+```
+mkdir build
+cd libexif
+autoreconf -fvi
+./configure --enable-shared=no --prefix="$(pwd)/../build/"
+make
+make install
+```
+
+After the commands above have been run, we should have a static library in our build folder; nice!
+
+```
+ls -al ../build/lib/libexif.a
+════════════════════════════
+
+-rw-r--r-- 1 epi epi 907526 Nov 15 20:12 ../build/lib/libexif.a
+```
+
+That will do as a confirmation that we’re properly setup. We’ll revisit compilation with instrumentation later.
+
+## Makefile.toml
+
+Before we move on, let’s codify everything we have so far into a `Makefile.toml`. In case you missed it in Part 1.5, the [cargo make project](https://github.com/sagiegurari/cargo-make) is my new favorite way of managing what I used to spread across `build.rs` and `Makefile` solutions.
+
+```
+[tasks.clean]
+dependencies = ["cargo-clean", "libexif-clean", "build-clean"]
+
+[tasks.cargo-clean]
+command = "cargo"
+args = ["clean"]
+
+[tasks.libexif-clean]
+command = "make"
+args = ["-C", "libexif", "clean", "-i"]
+
+[tasks.build-clean]
+command = "rm"
+args = ["-rf", "build/"]
+
+[tasks.build]
+dependencies = ["clean", "build-libexif"]
+command = "cargo"
+args = ["build"]
+
+[tasks.build-libexif]
+cwd = "libexif"
+script = """
+mkdir ../build
+autoreconf -fi
+./configure --enable-shared=no --prefix="$(pwd)/../build/"
+make -i
+make install
+"""
+```
+
+# Fuzzer setup
+
+Ok, we’ve got a lot of the scaffolding in place, now we can start on the fuzzer itself! We’ll be writing another in-process fuzzer, since the fuzz target is almost tailor-made for in-process fuzzing. To keep things interesting, we’ll find some places along the way where we can deviate from the last post to learn new things about LibAFL and fuzzing in general. Let’s go!
+
+## Cargo.toml
+
+We’ll kick things off by adding our dependencies. We’ll need all of the same dependencies we used last time.
+
+```
+[dependencies]
+libafl = { version = "0.15.1" }
+libafl_cc = { version = "0.15.1" }
+libafl_targets = { version = "0.15.1", features = [
+    "libfuzzer",
+    "sancov_pcguard_hitcounts",
+    "sancov_cmplog",
+] }
+libafl_bolts = { version = "0.15.1" }
+clap = "3.0.0-beta.5"
+```
+
+We also need to specify that our crate should be compiled as a static library.
+
+```
+[lib]
+name = "exercisetwo"
+crate-type = ["staticlib"]
+```
+
+That’s it for Cargo.toml, let’s move on.
+
+## corpus
+
+As before, we’ll need some sort of baseline input to feed to our fuzzer. One strategy for getting input data is to check if the fuzz target has any unit/integration tests. If so, they may have some well-crafted input for those test cases. When we look at the [libexif repo](https://github.com/libexif/libexif), we can see there is a `test` folder and a `testdata` folder nested within. Inside testdata, there are a few image files that we can use for our corpus, nice!
+
+We can use the following commands to build our input corpus. First, we make our `corpus` and `solutions` directory.
+
+> fuzzing-101-solutions/exercise-2
+
+```
+mkdir corpus solutions
+cd corpus
+```
+
+Then do a sparse checkout of libexif at its most recent commit. This will allow us to only grab the `test/testdata` we need, instead of downloading the entire repo.
+
+> fuzzing-101-solutions/exercise-2/corpus
+
+```
+git clone --no-checkout --filter=blob:none https://github.com/libexif/libexif.git
+```
+
+Next, we can use our git-foo to download the test data.
+
+> fuzzing-101-solutions/exercise-2/corpus
+
+```
+cd libexif
+git checkout master -- test/testdata
+```
+
+Finally, we’ll move all the .jpg files into the corpus directory and clean up the libexif folder.
+
+> fuzzing-101-solutions/exercise-2/corpus/libexif
+
+```
+mv test/testdata/*.jpg ../
+cd ..
+rm -rvf libexif
+```
+
+If all went well, we should have a corpus that looks similar to what’s shown below.
+
+```
+-rw-rw-r-- 1 epi epi  9132 Nov 16 06:28 pentax_makernote_variant_4.jpg
+-rw-rw-r-- 1 epi epi  1918 Nov 16 06:28 pentax_makernote_variant_3.jpg
+-rw-rw-r-- 1 epi epi  1346 Nov 16 06:28 pentax_makernote_variant_2.jpg
+-rw-rw-r-- 1 epi epi  9604 Nov 16 06:28 olympus_makernote_variant_5.jpg
+-rw-rw-r-- 1 epi epi 11458 Nov 16 06:28 olympus_makernote_variant_4.jpg
+-rw-rw-r-- 1 epi epi  6140 Nov 16 06:28 olympus_makernote_variant_3.jpg
+-rw-rw-r-- 1 epi epi  2850 Nov 16 06:28 olympus_makernote_variant_2.jpg
+-rw-rw-r-- 1 epi epi  3978 Nov 16 06:28 fuji_makernote_variant_1.jpg
+-rw-rw-r-- 1 epi epi  2026 Nov 16 06:28 canon_makernote_variant_1.jpg
+```
+
+Sweet! We have our input corpus and solutions directory.
+
+## harness.c
+
+Recall that a harness is a function that accepts a byte array and the byte array’s size as parameters, and then uses them to call the target library under test. Once again, we can leverage the libexif repo to get started with our harness. If we take a look in the [libexif test folder](https://github.com/libexif/libexif/tree/master/test), we can see that there is a very handy looking file named [test-fuzzer-persistent.c](https://github.com/libexif/libexif/blob/master/test/test-fuzzer-persistent.c).
+
+Taking a look at the contents of test-fuzzer-persistent.c, it’s an afl fuzz harness already, so we can definitely use it as our base. We’ll make the changes below so that the harness will work with our in-process executor:
+
+- remove the afl macros
+- remove any print/log statements
+- rename main to LLVMFuzzerTestOneInput
+- fix up any problems due to different versions of libexif being used
+
+Additionally, we’ll need our own `main` function that we can use later for crash triage. Our main function should simply read in a file and call LLVMFuzzerTestOneInput. We’ll put main behind an `ifdef` so that we can compile it in when we’re ready, and not before.
+
+Here’s what our final harness looks like after making the changes above.
+
+```
+#include <string.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+
+#include "libexif/exif-data.h"
+#include "libexif/exif-loader.h"
+// removed the include for "libexif/exif-system.h" because it doesn't exist in this version
+// 
+// need to add exif-system.h's #define manually 
+#define UNUSED(param) UNUSED_PARAM_##param __attribute__((unused))
+
+/** Callback function handling an ExifEntry. */
+void content_foreach_func(ExifEntry *entry, void *callback_data);
+void content_foreach_func(ExifEntry *entry, void *UNUSED(callback_data))
+{
+	char buf[2001];
+
+	/* ensure \0 */
+	buf[sizeof(buf)-1] = 0;
+	buf[sizeof(buf)-2] = 0;
+	exif_tag_get_name(entry->tag);
+	exif_format_get_name(entry->format);
+	exif_entry_get_value(entry, buf, sizeof(buf)-1);
+	if (buf[sizeof(buf)-2] != 0) abort();
+}
+
+
+/** Callback function handling an ExifContent (corresponds 1:1 to an IFD). */
+void data_foreach_func(ExifContent *content, void *callback_data);
+void data_foreach_func(ExifContent *content, void *callback_data)
+{
+	exif_content_get_ifd(content);
+	exif_content_foreach_entry(content, content_foreach_func, callback_data);
+}
+
+static int test_exif_data (ExifData *d)
+{
+	unsigned int i, c;
+	char v[1024];
+	ExifMnoteData *md;
+
+    exif_byte_order_get_name (exif_data_get_byte_order (d));
+
+	md = exif_data_get_mnote_data (d);
+	exif_mnote_data_ref (md);
+	exif_mnote_data_unref (md);
+
+	c = exif_mnote_data_count (md);
+	for (i = 0; i < c; i++) {
+		const char *name = exif_mnote_data_get_name (md, i);
+		if (!name) continue;
+		exif_mnote_data_get_name (md, i);
+		exif_mnote_data_get_title (md, i);
+		exif_mnote_data_get_description (md, i);
+		exif_mnote_data_get_value (md, i, v, sizeof (v));
+	}
+
+	return 0;
+}
+
+/** Main program. */
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+	int		i;
+	ExifData	*d;
+	ExifLoader	*loader = exif_loader_new();
+	unsigned int	xbuf_size;
+	unsigned char	*xbuf;
+	FILE		*f;
+	struct		stat stbuf;
+
+    d = exif_data_new_from_data(data, size);
+
+    /* try the exif loader */
+    exif_data_foreach_content(d, data_foreach_func, NULL);
+    test_exif_data (d);
+
+    xbuf = NULL;
+    exif_data_save_data (d, &xbuf, &xbuf_size);
+    free (xbuf);
+
+    exif_data_set_byte_order(d, EXIF_BYTE_ORDER_INTEL);
+
+    xbuf = NULL;
+    exif_data_save_data (d, &xbuf, &xbuf_size);
+    free (xbuf);
+
+    exif_data_unref(d);
+
+	return 0;
+}
+
+#ifdef TRIAGE_TESTER
+int main(int argc, char* argv[]) {
+    struct stat st;
+    char *filename = argv[1];
+
+    // get file size
+    stat(filename, &st);
+
+    FILE *fd = fopen(filename, "rb");
+
+    char *buffer = (char *)malloc(sizeof(char) * (st.st_size));
+
+    fread(buffer, sizeof(char), st.st_size, fd);
+
+    LLVMFuzzerTestOneInput(buffer, st.st_size);
+
+    free(buffer);
+    fclose(fd);
+}
+#endif
+```
+
+Good stuff, we have what is almost certainly a better harness than we would have written ourselves, and we got it with a minimal amount of effort.
+
+## ex2_compiler.rs
+
+Our next stop is the compiler. Recall from Part 1.5 that it’s almost completely boilerplate and that we need to drop it into `src/bin` in order for cargo to automatically compile it as a standalone executable. We’ll go ahead and create the bin folder.
+
+> exercise-2/src
+
+```
+mkdir bin
+```
+
+And then the compiler itself. Since we’re using a Rust workspace, each standalone executable must have a unique name. Because we used `compiler.rs` in exercise-1, we can’t reuse the name here, so we’ll just prefix `ex2_` and stick with that convention from here on out.
+
+> exercise-2/src/bin/ex2_compiler.rs
+
+```
+use libafl_cc::{ClangWrapper, CompilerWrapper, ToolWrapper};
+use std::env;
+
+pub fn main() {
+    let cwd = env::current_dir().unwrap();
+    let args: Vec<String> = env::args().collect();
+
+    let mut cc = ClangWrapper::new();
+
+    if let Some(code) = cc
+        .cpp(false)
+        // silence the compiler wrapper output, needed for some configure scripts.
+        .silence(true)
+        .parse_args(&args)
+        .expect("Failed to parse the command line")
+        .link_staticlib(&cwd, "exercisetwo")
+        .add_arg("-fsanitize-coverage=trace-pc-guard")
+        .add_arg("-fsanitize=address")
+        .run()
+        .expect("Failed to run the wrapped compiler")
+    {
+        std::process::exit(code);
+    }
+}
+```
+
+We’ve only made a few changes to the compiler from last time:
+
+- updated the static library name to reflect our current project
+- added `-fsanitize=address` to our compiler flags
+
+The `-fsanitize=address` argument will instrument our fuzz target using [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html), or ASAN for short. ASAN detects memory errors such as:
+
+- Out-of-bounds memory access
+- Use-after-free
+- double-free
+
+Some memory errors don’t result in a crash, but are still interesting. Detection of those kinds of bugs is where ASAN shines. Due to the fact that both of our goal CVEs deal with out-of-bounds access (one is read, one is write), we’ll use this as an opportunity to play with ASAN.
+
+Unfortunately, in adding ASAN, we’re also incurring a performance cost. According to the llvm docs, the typical slowdown introduced by ASAN is ~2x.
+
+In a real-world scenario, we’d want to run at least one fuzzer/fuzz target with ASAN, and other fuzzers/fuzz targets with different configurations enabled. For now, we’ll simply add ASAN and be done with it. We’ll get into multiple configurations in a later post.
+
+Ok, the compiler and harness are ready. Let’s take a moment and solidify our build steps.
+
+## Makefile.toml
+
+In order to finalize our build steps in Makefile.toml, we’ll need a dummy `lib.rs`, which can be seen below.
+
+> exercise-2/src/lib.rs
+
+```
+use libafl::Error;
+use libafl_targets::libfuzzer_test_one_input;
+
+#[no_mangle]
+fn libafl_main() -> Result<(), Error> {
+    libfuzzer_test_one_input(&[]);
+    Ok(())
+}
+```
+
+With that done, we can revise our original Makefile.toml with our final build steps.
+
+> exercise-2/Makefile.toml
+
+```
+-------------8<-------------
+[tasks.build-compilers]
+command = "cargo"
+args = ["build", "--release"]
+
+[tasks.copy-project-to-build]
+script = """
+mkdir -p build/
+cp ${CARGO_MAKE_WORKING_DIRECTORY}/../target/release/ex2_compiler build/
+cp ${CARGO_MAKE_WORKING_DIRECTORY}/../target/release/libexercisetwo.a build/
+"""
+
+[tasks.build-fuzzer]
+cwd = "build"
+command = "./ex2_compiler"
+args = ["-I", "../libexif/libexif", "-I", "../libexif", "-o", "fuzzer", "../harness.c", "lib/libexif.a"]
+
+[tasks.build-triager]
+cwd = "build"
+command = "./ex2_compiler"
+args = ["-D", "TRIAGE_TESTER", "-I", "../libexif/libexif", "-I", "../libexif", "-o", "triager", "../harness.c", "lib/libexif.a"]
+
+[tasks.build-libexif]
+cwd = "libexif"
+env = { "CC" = "${CARGO_MAKE_WORKING_DIRECTORY}/build/ex2_compiler", "LLVM_CONFIG" = "llvm-config-19"}
+script = """
+autoreconf -fi
+./configure --enable-shared=no --prefix="${CARGO_MAKE_WORKING_DIRECTORY}/../build/"
+make -i
+make install -i
+"""
+```
+
+When we run `cargo make build`, we should be rewarded with a `fuzzer` binary in our build directory.
+
+> exercise-2/build
+
+```
+ls -al fuzzer
+════════════════════════════
+
+-rwxrwxr-x 1 epi epi 9823000 Nov 17 07:01 fuzzer
+```
+
+That’s it, from now on, we should be able to manage our build process exclusively through `cargo make`. Now we can get to the fuzzer itself.
+
+# Writing the Fuzzer
+
+Alright, since this isn’t our first rodeo anymore, we need a way to still examine components, but not rehash the same material we’ve covered in previous posts. To that end, we’ll use a quick-reference description of components/topics we’ve seen before. Additionally, we’ll provide links back to where we first saw them in the series. That should be a fair-enough tradeoff for folks that come specifically to this article and for those that have read prior posts. If you peek ahead, you’ll see an example of what we’re describing now in the [Components: Corpus + Input](#components-corpus-input) section.
+
+Similar to the last post, we’ll follow the workflow outlined below:
+
+- build our static library (lib.rs)
+- build our compilers (compiler.rs)
+- use the compilers to build the fuzz target
+- use the compilers to build the fuzzer, which links in our library, our harness, and the fuzz target
+- commence the fuzzing
+
+## Components: Corpus + Input
+
+InMemoryCorpus:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#components-corpus-input)
+- **purpose**: holds all of our current testcases in memory
+- **why**: an in-memory corpus prevents disk access and should improve the speed at which we manipulate testcases
+
+OnDiskCorpus:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#components-corpus-input)
+- **purpose**: location at which fuzzer solutions are stored
+- **why**: solutions on disk can be used for crash triage
+
+BytesInput:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#components-corpus-input)
+- **purpose**: represents data received from some external source
+- **why**: it’s the standard fuzzing input
+
+```
+let corpus_dirs = vec![PathBuf::from("./corpus")];
+
+let input_corpus = InMemoryCorpus::<BytesInput>::new();
+
+let solutions_corpus = OnDiskCorpus::new(PathBuf::from("./solutions")).unwrap();
+```
+
+## Component: Observer
+
+StdMapObserver (result of `std_edges_map_observer` call):
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#edge-coverage)
+- **purpose**: retrieves the state of a coverage map that will get updated by the target
+- **why**: `MAX_EDGES_NUM` is not known at compile time, so can’t use `ConstMapObserver`
+
+HitcountsMapObserver:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-observer)
+- **purpose**: augments the edge coverage provided by the `StdMapObserver` with a bucketized branch-taken counter
+- **why**: can distinguish between interesting control flow changes, like a block executing twice when it normally happens once
+
+TimeObserver:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-observer)
+- **purpose**: provides information about the current testcase to the fuzzer
+- **why**: track the start time and how long it took the last testcase to execute
+
+```
+let edges_observer = HitcountsMapObserver::new(unsafe { std_edges_map_observer("edges") }).track_indices();
+
+let time_observer = TimeObserver::new("time");
+```
+
+## Component: Feedback
+
+MaxMapFeedback:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-feedback)
+- **purpose**: determines if there is a value in the coverage map that is greater than the current maximum value for the same entry
+- **why**: decides whether a new input is interesting based on its coverage map
+
+TimeFeedback:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-feedback)
+- **purpose**: keeps track of testcase execution time
+- **why**: decides if the value of its TimeObserver is interesting, but can’t mark a testcase as interesting on its own
+
+The only Feedback component we’re using, but haven’t covered previously is the [CrashFeedback](https://docs.rs/libafl/0.15.1/libafl/feedbacks/type.CrashFeedback.html) component. As one might expect, a CrashFeedback reports that a testcase is interesting if it causes the target to crash. As a reminder, when a testcase is considered **interesting** that testcase is added to the corpus for further mutation.
+
+```
+let mut feedback = feedback_or!(
+    MaxMapFeedback::new(&edges_observer),
+    TimeFeedback::new(&time_observer)
+);
+
+let objective = feedback_and_fast!(
+    CrashFeedback::new(),
+    MaxMapFeedback::new(&edges_observer)
+);
+```
+
+## Component: Monitor
+
+MultiMonitor:
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#stats-monitor-component)
+- **purpose**: displays cumulative and per-client fuzzer statistics
+- **why**: puts logging in a separate terminal; nice for in-process fuzzing where stdout/err stomps on logs or must be nulled out
+
+```
+let monitor = MultiMonitor::new(|s| {
+    println!("{}", s);
+});
+```
+
+## Component: EventManager
+
+LlmpRestartingEventManager:
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#eventmanager-component)
+- **purpose**: restarts the fuzzer on crash/timeout, sends statistics to the broker, and stores state between fuzzcases
+- **why**: more robust than other options; offers us a clean slate every so often
+
+```
+    let (state, mut mgr) = match setup_restarting_mgr_std(monitor, 1337, EventConfig::AlwaysUnique)
+    {
+        Ok(res) => res,
+        Err(err) => match err {
+            Error::ShuttingDown => {
+                return Ok(());
+            }
+            _ => {
+                panic!("Failed to setup the restarting manager: {}", err);
+            }
+        },
+    };
+```
+
+## Component: State
+
+StdState:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-state)
+- **purpose**: stores the current state of the fuzzer
+- **why**: it’s basically our only choice at the moment
+
+```
+let mut state = state.unwrap_or_else(|| {
+    StdState::new(
+        StdRand::with_seed(current_nanos()),
+        input_corpus,
+        timeouts_corpus,
+        &mut feedback,
+        &mut objective,
+    )
+    .unwrap()
+});
+```
+
+## Component: Scheduler
+
+QueueScheduler:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-scheduler)
+- **purpose**: contains corpus testcases
+- **why**: provides the backing queue for a corpus minimizer
+
+IndexesLenTimeMinimizerScheduler:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-scheduler)
+- **purpose**: the minimization policy applied to the corpus
+- **why**: prioritizes quick/small testcases that exercise all of the entries registered in the coverage map’s metadata
+
+```
+let scheduler = IndexesLenTimeMinimizerScheduler::new(&edges_observer, QueueScheduler::new());
+```
+
+## Component: Fuzzer
+
+StdFuzzer:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-fuzzer)
+- **purpose**: houses our other components
+- **why**: it’s basically our only choice at the moment
+
+```
+let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
+```
+
+## Component: Harness
+
+libFuzzer Harness:
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#harness-component)
+- **purpose**: accepts bytes that have been mutated by the fuzzer and sends them off to an LLVMFuzzerTestOneInput function
+- **why**: the fn(bytes, len) signature is useful in most fuzzing frameworks; conforming to that structure allows for flexibility later on
+
+```
+let mut harness = |input: &BytesInput| {
+    let target = input.target_bytes();
+    let buffer = target.as_slice();
+    unsafe { libfuzzer_test_one_input(buffer) };
+    ExitKind::Ok
+};
+```
+
+## Component: Executor
+
+InProcessExecutor:
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#executor-component)
+- **purpose**: libfuzzer-like executor, that will simply call a function (i.e. the harness)
+- **why**: it’s built for speeeeeeed! should be paired with a restarting event manager for error-handling
+
+TimeoutExecutor:
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#executor-component)
+- **purpose**: sets a timeout before each target run
+- **why**: protects against slow testcases and can be used w/ other components to tag timeouts/hangs as interesting
+
+```
+let mut in_proc_executor = InProcessExecutor::with_timeout(
+    &mut harness,
+    tuple_list!(edges_observer, time_observer),
+    &mut fuzzer,
+    &mut state,
+    &mut mgr,
+    Duration::from_millis(5000),
+)
+.unwrap();
+```
+
+## Component: Mutator + Stage
+
+StdScheduledMutator:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#components-mutator-stage)
+- **purpose**: schedules mutations internally
+- **why**: schedules one of the embedded mutations on each call
+
+StdMutationalStage:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#components-mutator-stage)
+- **purpose**: one step in the fuzzing process, operates on a single testcase
+- **why**: default mutational stage; pairs with a range of mutations that will be applied one-by-one (i.e. havoc)
+
+```
+let mutator = StdScheduledMutator::new(havoc_mutations());
+
+let mut stages = tuple_list!(StdMutationalStage::new(mutator));
+```
+
+# Running the Fuzzer
+
+At this point, we’ve wrapped up everything we need to run our fuzzer, so let’s get going!
+
+## Build the Fuzzer
+
+First, we’ll build everything using our `cargo make` build task.
+
+```
+cargo make build
+```
+
+After building everything, we’re left with our `build` directory looking something like this:
+
+```
+ls -al build/
+════════════════════════════
+
+-rwxrwxr-x 1 epi epi  2339120 Nov 20 06:33 ex2_compiler
+-rw-rw-r-- 1 epi epi 36255506 Nov 20 06:33 libexercisetwo.a
+drwxrwxr-x 3 epi epi     4096 Nov 20 06:33 include
+drwxrwxr-x 3 epi epi     4096 Nov 20 06:33 lib
+drwxrwxr-x 4 epi epi     4096 Nov 20 06:33 share
+-rwxrwxr-x 1 epi epi 22040696 Nov 20 06:33 fuzzer
+```
+
+## Commence Fuzzing!
+
+Even with everything built, there’s still one thing we need to cover before we can kick off our fuzzer.
+
+Recall that we added the flag for AddressSanitizer to our compiler. By default, ASAN will call `exit` when it detects a memory issue. We can’t have ASAN calling exit every time our target makes an OOB read/write, because that will hose our in-process executor, bringing everything to a screeching halt.
+
+We’ll need to tell ASAN to fail in a way that our fuzzer can both detect, and from which it can recover. We do that by passing the following environment variable to our fuzzer:
+
+```
+ASAN_OPTIONS=abort_on_error=1
+```
+
+This tells ASAN to call `abort` instead of `exit` when it finds a bug, which is exactly what we had to do to get Xpdf working with an in-process executor in Part 1.5 (this feels like a pattern…). Ok, now we’re ready to begin.
+
+> window 1: the broker
+
+```
+taskset -c 4 ./build/fuzzer
+════════════════════════════
+
+[LibAFL/libafl/src/bolts/llmp.rs:600] "We're the broker" = "We're the broker"
+Doing broker things. Run this tool again to start fuzzing in a client.
+```
+
+> window 2: the client
+
+```
+ASAN_OPTIONS=abort_on_error=1 taskset -c 6 ./fuzzer
+════════════════════════════
+
+We're the client (internal port already bound by broker, Os {
+    code: 98,
+    kind: AddrInUse,
+    message: "Address already in use",
+})
+Connected to port 1337
+[LibAFL/libafl/src/events/llmp.rs:833] "Spawning next client (id {})" = "Spawning next client (id {})"
+[LibAFL/libafl/src/events/llmp.rs:833] ctr = 0
+Awaiting safe_to_unmap_blocking
+-------------8<-------------
+First run. Let's set it all up
+Loading file "./corpus/pentax_makernote_variant_2.jpg" ...
+Loading file "./corpus/olympus_makernote_variant_5.jpg" ...
+Loading file "./corpus/olympus_makernote_variant_2.jpg" ...
+Loading file "./corpus/fuji_makernote_variant_1.jpg" ...
+Loading file "./corpus/pentax_makernote_variant_3.jpg" ...
+Loading file "./corpus/olympus_makernote_variant_3.jpg" ...
+Loading file "./corpus/pentax_makernote_variant_4.jpg" ...
+Loading file "./corpus/olympus_makernote_variant_4.jpg" ...
+Loading file "./corpus/canon_makernote_variant_1.jpg" ...
+-------------8<-------------
+```
+
+## Results
+
+It didn’t take long at all for the fuzzer to find an issue. The speed at which we found the first crash could be due to the fact that we used testcases from the project. One or more of the input testcases could be tailored to find one of the CVE’s for which we’re looking.
+
+```
+[Objective   #1]  (GLOBAL) run time: 0h-1m-2s, clients: 2, corpus: 163, objectives: 1, executions: 11138, exec/sec: 556                                                                            
+                  (CLIENT) corpus: 163, objectives: 1, executions: 11138, exec/sec: 537, edges: 800/2190 (36%), obj_edges: 113/2190 (5%)  
+[Stats       #1]  (GLOBAL) run time: 0h-1m-2s, clients: 2, corpus: 163, objectives: 1, executions: 11138, exec/sec: 519                                                                            
+                  (CLIENT) corpus: 163, objectives: 1, executions: 11138, exec/sec: 502, edges: 801/2190 (36%), obj_edges: 113/2190 (5%)  
+[Testcase    #1]  (GLOBAL) run time: 0h-1m-2s, clients: 2, corpus: 164, objectives: 1, executions: 11314, exec/sec: 489                                                                            
+                  (CLIENT) corpus: 164, objectives: 1, executions: 11314, exec/sec: 476, edges: 801/2190 (36%), obj_edges: 113/2190 (5%)  
+```
+
+Below is a snippet of the output shown when ASAN detects an issue.
+
+```
+==2015851==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x60300002bfa4 at pc 0x0000004d68b0 bp 0x7ffec83d8a30 sp 0x7ffec83d8a28                                                        
+READ of size 1 at 0x60300002bfa4 thread T0
+-------------8<-------------
+SUMMARY: AddressSanitizer: heap-buffer-overflow /home/epi/PycharmProjects/fuzzing-101-solutions/exercise-2/libexif/libexif/exif-data.c:726:12 in exif_data_load_data                               
+Shadow bytes around the buggy address:                                                                                                                                                             
+  0x0c067fffd7a0: fd fd fa fa fd fd fd fd fa fa fd fd fd fd fa fa                                                                                                                                  
+  0x0c067fffd7b0: fd fd fd fa fa fa fd fd fd fd fa fa fd fd fd fa                                                                                                                                  
+  0x0c067fffd7c0: fa fa fd fd fd fd fa fa fd fd fd fa fa fa fd fd                                                                                                                                  
+  0x0c067fffd7d0: fd fd fa fa fd fd fd fa fa fa fd fd fd fd fa fa                                                                                                                                  
+  0x0c067fffd7e0: fd fd fd fa fa fa fd fd fd fa fa fa fd fd fd fa                                                                                                                                  
+=>0x0c067fffd7f0: fa fa 00 00[04]fa fa fa 00 00 00 00 fa fa 00 00                                                                                                                                  
+  0x0c067fffd800: 00 00 fa fa 00 00 00 00 fa fa 00 00 00 fa fa fa                                                                                                                                  
+  0x0c067fffd810: 00 00 00 00 fa fa 00 00 00 fa fa fa 00 00 00 00                                                                                                                                  
+  0x0c067fffd820: fa fa 00 00 00 fa fa fa 00 00 00 00 fa fa 00 00                                                                                                                                  
+  0x0c067fffd830: 00 fa fa fa 00 00 00 00 fa fa 00 00 00 fa fa fa                                                                                                                                  
+  0x0c067fffd840: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa                                                                                                                                  
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+  Shadow gap:              cc
+```
+
+Sweet! Our fuzzer is finding bugs, and finding them pretty quickly at that. Let’s move on to our final step.
+
+# Triage
+
+Now that we have a fuzzer that’s finding crashes, we need to ascertain whether or not we’ve met our goal. Recall that we set out to find [CVE-2009-3895](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2009-3895) and [CVE-2012-2836](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2012-2836). Let’s find out how we did.
+
+As an aside, if you’d like to see how Antonio Morales handled triage for this exercise using Eclipse, head over to the [Triage section](https://github.com/antonio-morales/Fuzzing101/tree/main/Exercise%202#triage) of Exercise 2.
+
+## AFLTriage
+
+After running the fuzzer with two clients for about ten minutes we have 36 testcases that caused a crash or a timeout.
+
+```
+[Stats       #2]  (GLOBAL) run time: 0h-11m-38s, clients: 3, corpus: 453, objectives: 36, executions: 122999, exec/sec: 2057
+                  (CLIENT) corpus: 165, objectives: 13, executions: 13695, exec/sec: 1696, obj_edges: 393/2190 (17%), edges: 801/2190 (36%)
+```
+
+We could examine each of the 36 inputs manually, but the likelihood of all 36 being unique bugs is pretty darn low. Let’s automate some of the tedium by using a tool recently released by [@Digital_Cold](https://twitter.com/Digital_Cold) named [AFLTriage](https://github.com/quic/AFLTriage). AFLTriage will perform triage, ASAN parsing, and crash deduplication for us in parallel using GDB, which sounds amazing. We can build AFLTriage by running the following commands:
+
+```
+git clone https://github.com/quic/AFLTriage.git
+cd AFLTriage
+cargo build --release
+```
+
+After that, we need to rebuild our harness so that it is a standalone program that accepts a filename as its first argument (we already set this up when we wrote the harness).
+
+```
+cargo make build-triager
+```
+
+We’re left with a new binary in our `build` folder named `triager`. Now we can run `afltriage`; we just need to pass it our directory of crashing testcases, a place to store its reports, and the path to the binary it should execute. Similar to our forkserver fuzzer from Part 1, afltriage uses the `@@` notation as a placeholder for the path to a file.
+
+> fuzzing-101-solutions/exercise-2
+
+```
+../AFLTriage/target/release/afltriage -i ./solutions/ -o ./reports/ ./build/triager @@
+════════════════════════════
+
+AFLTriage v1.0.0 by Grant Hernandez
+
+[+] GDB is working (GNU gdb (Ubuntu 10.1-2ubuntu2) 10.1.90.20210411-git - Python 3.9.5 (default, May 11 2021, 08:20:37))
+[+] Image triage cmdline: ./build/triager @@
+[+] Will write text reports to directory "./reports/"
+[+] Triaging plain directory ./solutions/ (36 files)
+[+] Triage timeout set to 60000ms
+[+] Profiling target...
+[+] Target profile: time=38.429576ms, mem=1KB
+[+] Debugged profile: t=278.696173ms (7.32x), mem=45212KB (45212.00x)
+[+] System memory available: 17943452 KB
+[+] System cores available: 8
+[+] Triaging 36 testcases
+[+] Using 8 threads to triage
+[+] Triaging   [36/36 00:00:01] [####################] CRASH detected in exif_get_sshort due to a fault at or near 0x0000000000000005 leading to SIGSEGV (si_signo=11) / SEGV_MAPERR (si_code=1)
+[+] Triage stats [Crashes: 36 (unique 10), No crash: 0, Timeout: 0, Errored: 0]
+```
+
+Alright, AFLTriage thinks we have ten unique crashes, let’s take a look at the reports directory.
+
+```
+ls -al reports
+════════════════════════════
+
+-rw-rw-r-- 1 epi epi  6519 Nov 20 07:24 afltriage_SIGSEGV_exif_get_sshort_3882219556b9583ce63a8b510ce169b2.txt
+-rw-rw-r-- 1 epi epi  8687 Nov 20 07:24 afltriage_ASAN_heap-buffer-overflow_READ_exif_data_load_data_b965a22363af745a7e5d3b952177631e.txt
+-rw-rw-r-- 1 epi epi 10681 Nov 20 07:24 afltriage_ASAN_heap-buffer-overflow_READ_exif_entry_get_value_f8a5a368646cf8484298dd0549da6e12.txt
+-rw-rw-r-- 1 epi epi 14930 Nov 20 07:24 afltriage_ASAN_heap-buffer-overflow_READ_exif_get_slong_10dc0343b742d1361b75b9ca77806a1d.txt
+-rw-rw-r-- 1 epi epi 11171 Nov 20 07:24 afltriage_ASAN_heap-buffer-overflow_READ_exif_data_load_data_thumbnail_08c43c81b046912c217a7b7d268324d8.txt
+-rw-rw-r-- 1 epi epi 10885 Nov 20 07:24 afltriage_ASAN_heap-buffer-overflow_READ_exif_entry_get_value_de23312d5ba8a25eb9fd5fa2a5c3cb8d.txt
+-rw-rw-r-- 1 epi epi 13955 Nov 20 07:24 afltriage_ASAN_heap-buffer-overflow_READ_exif_get_sshort_20e77b08886ef153e634dcdd574a2247.txt
+-rw-rw-r-- 1 epi epi  9907 Nov 20 07:24 afltriage_ASAN_heap-buffer-overflow_READ_exif_mnote_data_canon_load_f6e4912ca65a0c0a84d17066921e2409.txt
+-rw-rw-r-- 1 epi epi 14060 Nov 20 07:24 afltriage_ASAN_heap-buffer-overflow_READ_exif_get_slong_ae7febc73f8879eaed1694cc6f42a8e3.txt
+-rw-rw-r-- 1 epi epi  6515 Nov 20 07:24 afltriage_SIGSEGV_exif_get_sshort_7a1234087b7a3f918b511628066c8705.txt
+```
+
+The two SIGSEGV files appear to have crashed in the same function (`exif_get_sshort`). On closer examination, their call stack is **almost** the same, however, they call `exif_get_short` from different cases in a switch statement.
+
+```
+570:     case MNOTE_CANON_TAG_PANORAMA:                               │ 506:     case MNOTE_CANON_TAG_FOCAL_LENGTH:
+571:         CF (entry->format, EXIF_FORMAT_SHORT, val, maxlen);      │ 507:         CF (entry->format, EXIF_FORMAT_SHORT, val, maxlen);
+572:         vs = exif_get_short (entry->data + t * 2, entry->order); │ 508:         vs = exif_get_short (entry->data + t * 2, entry->order);
+```
+
+So, ultimately the same bug, however, it is one of the bugs we’re looking for, so that’s pretty cool! When examining the ASAN reports, they also have slightly different stack traces but amount to the same bug, which is coincidentally the other one we were looking for!
+
+This was my first time using AFLTriage and I like it a lot. I can see this becoming my goto tool for this kind of work.
+
+There we have it; we looked at ASAN, wrote a fuzzer, found some bugs and checked out a new triaging tool. Not too bad! In the next post we’ll solve Exercise 3 and take a look at something we haven’t seen before (no, I don’t know what that’ll be yet…).
+
+# Additional Resources
+
+1.  [Fuzzing101](https://github.com/antonio-morales/Fuzzing101)
+2.  [LibAFL](https://github.com/AFLplusplus/LibAFL)
+3.  [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+4.  [libexif](https://github.com/libexif/libexif)
+5.  [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html)
+6.  [AFLTriage](https://github.com/quic/AFLTriage)
+
+------------------------------------------------------------------------
+
+Share: [Twitter](https://twitter.com/intent/tweet?text=Fuzzing101%20with%20LibAFL%20-%20Part%20II%3A%20Fuzzing%20libexif&url=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-07-fuzzing-101-with-libafl-part-2%2F) [Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-07-fuzzing-101-with-libafl-part-2%2F)

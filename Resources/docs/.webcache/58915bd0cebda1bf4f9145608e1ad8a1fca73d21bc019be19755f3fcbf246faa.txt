@@ -1,0 +1,889 @@
+# Fuzzing101 with LibAFL - Part V: Fuzzing LibXML2
+
+January 18, 2022 • 31 min read
+
+Twitter user [Antonio Morales](https://twitter.com/nosoynadiemas?lang=en) created the [Fuzzing101](https://github.com/antonio-morales/Fuzzing101) repository in August of 2021. In the repo, he has created exercises and solutions meant to teach the basics of fuzzing to anyone who wants to learn how to find vulnerabilities in real software projects. The repo focuses on [AFL++](https://github.com/AFLplusplus/AFLplusplus) usage, but this series of posts aims to solve the exercises using [LibAFL](https://github.com/AFLplusplus/LibAFL) instead. We’ll be exploring the library and writing fuzzers in Rust in order to solve the challenges in a way that closely aligns with the suggested AFL++ usage.
+
+Since this series will be looking at Rust source code and building fuzzers, I’m going to assume a certain level of knowledge in both fields for the sake of brevity. If you need a brief introduction/refresher to/on coverage-guided fuzzing, please take a look [here](https://github.com/antonio-morales/Fuzzing101#what-is-fuzzing). As always, if you have any questions, please don’t hesitate to reach out.
+
+This post will cover fuzzing LibXML2 in order to solve [Exercise 5](https://github.com/antonio-morales/Fuzzing101/tree/main/Exercise%205). The companion code for this exercise can be found at my [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+
+Previous posts:
+
+- [Part I: Fuzzing Xpdf](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/)
+- [Part I.V: Speed Improvements to Part I](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/)
+- [Part II: Fuzzing libexif](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-2/)
+- [Part III: Fuzzing tcpdump](https://epi052.gitlab.io/notes-to-self/blog/2021-11-20-fuzzing-101-with-libafl-part-3/)
+- [Part IV: Fuzzing libtiff](https://epi052.gitlab.io/notes-to-self/blog/2021-11-26-fuzzing-101-with-libafl-part-4/)
+
+------------------------------------------------------------------------
+
+# Quick Reference
+
+This is just a summary of the different components used in the upcoming post. It’s meant to be used later as an easy way of determining which components are used in which posts.
+
+```
+{
+  "Sugar": {
+    "type": "QemuBytesCoverageSugar",
+    "components": {
+      "Fuzzer": {
+        "type": "StdFuzzer",
+        "Corpora": {
+          "Input": "CachedOnDiskCorpus",
+          "Output": "OnDiskCorpus"
+        },
+        "Input": "BytesInput",
+        "Observers": [
+          "HitcountsMapObserver": {
+            "coverage map":    
+              "libafl_targets::edges::EDGES_MAP",
+          },
+          "TimeObserver",
+          "HitcountsMapObserver"
+        ],
+        "Feedbacks": {
+          "Pure": ["MaxMapFeedback", "TimeFeedback"],
+          "Objectives": ["TimeoutFeedback", "CrashFeedback"]
+        },
+        "State": {
+          "StdState"
+        },
+        "Monitor": "MultiMonitor",
+        "EventManager": "LlmpRestartingEventManager",
+        "Scheduler": "IndexesLenTimeMinimizerScheduler",
+        "Executors": [
+          "QemuExecutor",
+          "TimeoutExecutor"
+        ],
+        "Mutators": [
+          "StdScheduledMutator": {
+            "mutations": ["havoc_mutations", "tokens_mutations"]
+          }
+        ],
+        "Stages": ["StdMutationalStage"]
+      }
+    }
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+# Intro
+
+Welcome back! This post will cover fuzzing [libxml2](https://gitlab.gnome.org/GNOME/libxml2) in the hopes of finding [CVE-2017-9048](https://nvd.nist.gov/vuln/detail/CVE-2017-9048/) in version 2.9.4.
+
+According to the post on Openwall, libxml2 contains a stack-based buffer overflow in `valid.c`’s `xmlSnprintfElementContent` function.
+
+We’ll attempt to build a fuzzer that can trigger this buffer overflow. The catch is that we’re not going to be writing our fuzzer in rust this time. Today’s fuzzer will be written in python, using LibAFL’s python bindings. Fear not! There’s still rust code to examine, especially with regard to how the python interacts with the underlying rust. Just be warned, that this post will look a little different… Change is good, not scary, just roll with it.
+
+Now that our goal is clear, let’s jump in!
+
+# Exercise 5 Setup
+
+Just like our other exercises, we’ll start with overall project setup.
+
+## exercise-5
+
+Normally, we’d start by adding our new cargo project to the workspace… Not this time! We do need to setup our python virtual environment though, so let’s do that.
+
+First, we’ll initialize our new virtual environment using [poetry](https://python-poetry.org/). Poetry replaced pipenv for me a while ago, if you’ve never used it, it’s worth a try.
+
+> fuzzing-101-solutions/
+
+```
+mkdir exercise-5
+cd exercise-5
+poetry init -n
+```
+
+The `poetry init` command will drop a `pyproject.toml` file in our current directory. The `pyproject.toml` file contains metadata about our project, along with dependencies, and is very similar in purpose to a Cargo.toml.
+
+```
+ls -al
+════════════════════════════
+
+-rw-rw-r--  1 epi epi  295 Jan 17 09:57 pyproject.toml
+```
+
+Once we have initialized our project directory, we’ll need to add our dependencies:
+
+- [invoke](https://www.pyinvoke.org/): **a task execution tool** - we’ll write something like a Makefile in python and use invoke to execute the tasks it contains
+- [maturin](https://pypi.org/project/maturin/): **builds pyo3 crates as python packages** - will turn LibAFL’s [pyo3](https://pyo3.rs/) bindings into a python library
+- [lief](https://github.com/lief-project/LIEF): **a Library to Instrument Executable Formats** - will serve a purpose similar to EasyElf from LibAFL
+- [rich](https://rich.readthedocs.io/en/stable/introduction.html): **a python library for writing *rich* text** - going to be clutch when we need to view any output from python, especially inspecting modules/functions
+
+> LibAFL is already cloned in the parent directory; it’s a dependency, just not one we add here (ref: v0.8.1)
+
+> fuzzing-101-solutions/exercise-5
+
+```
+poetry add maturin invoke lief rich
+```
+
+With all of our dependencies installed, we’ll need to drop into a new shell environment.
+
+```
+poetry shell
+```
+
+Now that our environment is setup, we can confirm that our dependencies are installed.
+
+```
+Python 3.10.6 (default, Nov 18 2021, 16:00:48) 
+loaded: ['sys', 'Path', 'pprint']
+>>> from rich import print
+>>> 
+```
+
+That’s enough setup for now, let’s move on to the target setup.
+
+## libXML2
+
+Let’s go ahead and grab our target library: libXML2.
+
+> fuzzing-101-solutions/exercise-5
+
+```
+wget http://xmlsoft.org/download/libxml2-2.9.4.tar.gz
+tar xf libxml2-2.9.4.tar.gz
+mv libxml2-2.9.4 libxml
+rm libxml2-2.9.4.tar.gz
+```
+
+Once complete, our directory structure should look similar to what’s below.
+
+```
+exercise-5
+├── libxml2
+│   ├── acinclude.m4
+│   ├── aclocal.m4
+-------------8<-------------
+├── poetry.lock
+└── pyproject.toml
+```
+
+Like we’ve done in the past, let’s make sure we can build everything normally. We’ll start with creating our `build` directory.
+
+> fuzzing-101-solutions/exercise-5
+
+```
+mkdir build
+```
+
+Followed by configuring and compiling xmllib2.
+
+> fuzzing-101-solutions/exercise-5/libxml2
+
+```
+./configure --prefix=$(pwd)/../build --disable-shared --without-debug --without-ftp --without-http --without-legacy --without-python LIBS='-ldl'
+make
+make install
+```
+
+Once complete, our build directory will look like this:
+
+```
+ls -al ../build/
+════════════════════════════
+
+drwxrwxr-x 2 epi epi 4096 Jan 18 18:39 bin
+drwxrwxr-x 3 epi epi 4096 Jan 18 18:39 include
+drwxrwxr-x 4 epi epi 4096 Jan 18 18:39 lib
+drwxrwxr-x 6 epi epi 4096 Jan 18 18:39 share
+```
+
+That will do as a confirmation that we can build our target. We’ll codify those steps in the next section.
+
+## tasks.py
+
+Once again, we’ll solidify all of our currently known build steps. However, this time we’ll make use of the `invoke` library that we installed as a dependency earlier.
+
+To get started with `invoke`, all we need to do is create a file called `tasks.py`, import the task decorator, and decorate a few functions. Each decorated function becomes a command we can … *invoke* … with the following syntax:
+
+```
+invoke CMD ...
+```
+
+Below, we can see the code that performs the same build steps we just executed (along with `clean` and `rebuild` commands).
+
+```
+from pathlib import Path
+
+from invoke import task
+
+PROJ_DIR = Path(__file__).parent
+XML_DIR = PROJ_DIR / "libxml2"
+BUILD_DIR = PROJ_DIR / "build"
+
+
+def run(ctx, cmd, workdir=None, hide=False):
+    """execute the given command"""
+    if workdir is not None:
+        with ctx.cd(workdir):
+            return ctx.run(cmd, pty=True, hide=hide)
+
+    return ctx.run(cmd, pty=True, hide=hide)
+
+
+@task
+def build(ctx, force=False):
+    """download and compile libxml2"""
+    if not XML_DIR.exists():
+        run(ctx, "wget http://xmlsoft.org/download/libxml2-2.9.4.tar.gz")
+        run(ctx, "tar xf libxml2-2.9.4.tar.gz")
+        run(ctx, f"mv libxml2-2.9.4 {XML_DIR}")
+        run(ctx, f"rm libxml2-2.9.4.tar.gz")
+
+    if not BUILD_DIR.exists() or force:
+        BUILD_DIR.mkdir(parents=True, exist_ok=True)
+
+        cmd = (
+            f"./configure --prefix={BUILD_DIR} --disable-shared --without-debug --without-ftp"
+            f" --without-http --without-legacy --without-python LIBS='-ldl'"
+        )
+
+        run(ctx, cmd, workdir=XML_DIR)
+        run(ctx, "make -j $(nproc)", workdir=XML_DIR)
+        run(ctx, "make install", workdir=XML_DIR)
+
+
+@task
+def clean(ctx):
+    """remove build/ directory"""
+    run(ctx, f"rm -rf {BUILD_DIR}")
+
+
+@task(pre=[clean, build])
+def rebuild(ctx):
+    """call clean then build"""
+    ...
+```
+
+With the code in place, we can check what the cli to our python Makefile looks like.
+
+```
+inv build -h 
+════════════════════════════
+
+Usage: inv[oke] [--core-opts] build-xml [--options] [other tasks here ...]
+
+Docstring:
+  download and compile libxml2
+
+Options:
+  -f, --force
+```
+
+So, the function params become command line options/arguments and docstrings become help, nice! Let’s go ahead and perform a test run of our build task.
+
+> fuzzing-101-solutions/exercise-5
+
+```
+rm -rf build/
+invoke build
+```
+
+And then see that we’re still building our target correctly.
+
+```
+ls -al build/
+════════════════════════════
+
+drwxrwxr-x 2 epi epi 4096 Jan 18 18:42 bin
+drwxrwxr-x 3 epi epi 4096 Jan 18 18:42 include
+drwxrwxr-x 4 epi epi 4096 Jan 18 18:42 lib
+drwxrwxr-x 6 epi epi 4096 Jan 18 18:42 share
+```
+
+Nice work!
+
+# Fuzzer Setup
+
+Ok, the target is ready to build, now we can get started on gathering the pieces required for the fuzzer. We’ll be writing a qemu-based fuzzer again (like in [part 4](https://epi052.gitlab.io/notes-to-self/blog/2021-11-26-fuzzing-101-with-libafl-part-4/)), but this time, we’ll be leveraging a high-level wrapper to get the job done quickly and easily. We’ll still explore some source code and spice things up as we go, but the actual fuzzer code may feel like cheating compared to the work we did in part 4. Let’s dig in!
+
+## pylibafl.whl
+
+One of the first things we should do is build our libafl bindings and get them into our virtualenv. In order to do that, we’ll use another one of our dependencies: `maturin`. Maturin will allow us to build the `LibAFL/bindings/pylibafl` crate as a python wheel file.
+
+To build our wheel, we need to run the command below.
+
+> fuzzing-101-solutions/LibAFL/bindings/pylibafl
+
+```
+maturin build --release
+-------------8<-------------
+Built wheel for CPython 3.9 to /home/epi/PycharmProjects/fuzzing-101-solutions/LibAFL/bindings/pylibafl/target/wheels/pylibafl-0.7.0-cp39-cp39-linux_x86_64.whl
+```
+
+After the command completes, we should be able to simply install the wheel using our virtualenv’s `pip` command. Just to be sure, we’ll make sure we’re in our virtualenv shell before installing.
+
+```
+which pip
+/home/epi/.cache/pypoetry/virtualenvs/exercise-5-zJz1HqB3-py3.9/bin/pip
+```
+
+Ok, `which` tells us that the first resolved `pip` command belongs to our virtualenv; excellent! Now we can install.
+
+```
+pip install target/wheels/pylibafl-0.8.1-cp310-cp310-linux_x86_64.whl
+════════════════════════════
+
+Processing ./target/wheels/pylibafl-0.8.1-cp310-cp310-linux_x86_64.whl
+Installing collected packages: pylibafl
+Successfully installed pylibafl-0.8.1
+```
+
+Let’s check our installation before proceeding.
+
+```
+Python 3.10.6 (default, Nov 18 2021, 16:00:48) 
+loaded: ['sys', 'Path', 'pprint']
+>>> from pylibafl import sugar
+>>> from pylibafl import qemu
+>>> 
+```
+
+Sweet! We’ve built our python bindings for LibAFL and installed them in our virtualenv. Let’s add these steps to our `tasks.py` (for future us, they tend to forget things…).
+
+```
+@task
+def build_afl(ctx, force=False):
+    """compile pylibafl and install it using pip"""
+    pylib = "../LibAFL/bindings/pylibafl"
+
+    result = ctx.run("pip freeze", hide=True)
+
+    if "pylibafl-0.8.1-cp310-cp310-linux_x86_64.whl" not in result.stdout or force:
+        run(ctx, "maturin build --release", workdir=pylib)
+        run(
+            ctx,
+            "pip install --force-reinstall target/wheels/pylibafl-0.8.1-cp310-cp310-linux_x86_64.whl",
+            workdir=pylib,
+        )
+```
+
+That’s all for our bindings, let’s keep moving.
+
+## corpus
+
+Yet again, we’re in need of an input corpus. We’ll use a few files from `libxml2`’s test directory.
+
+Since the bug we’re looking for deals with Document Type Definition (DTD) validation logic, let’s grab a DTD file and add it to our corpus. If you’ve never dealt with or heard of DTDs, they define the structure and the legal elements/attributes of an XML document, and are used to determine if an xml document is valid. They can provide an attack vector similar to that of Xml eXternal Entities (XXE).
+
+> fuzzing-101-solutions/exercise-5
+
+```
+cp libxml2/test/dtd9 corpus/
+```
+
+Pretty simple, let’s see what’s next.
+
+## harness.c
+
+Ok, here’s where we have some work to do, but not too much. We’ll use [Google’s libxml2 harness](https://github.com/google/fuzzer-test-suite/blob/master/libxml2-v2.9.2/target.cc) (shown below) as our base.
+
+The harness will attempt to create an XML document tree from the given bytes using [xmlReadMemory](http://xmlsoft.org/html/libxml-parser.html#xmlReadMemory). If successful, we’ll free the allocated memory using `xmlFreeDoc`.
+
+```
+#include "libxml/HTMLparser.h"
+#include "libxml/parser.h"
+#include "libxml/tree.h"
+#include "libxml/xmlversion.h"
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+  xmlDocPtr doc;
+
+  /* xmlDocPtr	xmlReadMemory		(const char * buffer,
+                                       int size,
+                                       const char * URL,
+                                       const char * encoding,
+                                       int options)
+  */
+  doc = xmlReadMemory((const char *)data, size, "doesnt-matter.xml", NULL, 0);
+
+  if (doc) {
+    xmlFreeDoc(doc);
+  }
+
+  return 0;
+}
+
+int main() {
+  char buf[10] = {0};
+  LLVMFuzzerTestOneInput((const uint8_t *)buf, 10);
+}
+```
+
+So far, so good. However, recall that we want our fuzzer to reach DTD related code paths. The `options` parameter in `xmlReadMemory` allows us to add a few DTD related options to how we’re parsing XML. We’ll use all of the DTD related options (and a few others for good measure) from the [xmlParserOption](http://xmlsoft.org/html/libxml-parser.html#xmlParserOption) enum.
+
+```
+  int options = XML_PARSE_NOENT | XML_PARSE_DTDLOAD | XML_PARSE_DTDATTR |
+                XML_PARSE_DTDVALID | XML_PARSE_HUGE | XML_PARSE_IGNORE_ENC |
+                XML_PARSE_XINCLUDE | XML_PARSE_NOCDATA;
+```
+
+After that, we’ll update our call to `xmlReadMemory` to include the new options.
+
+```
+  doc = xmlReadMemory((const char *)data, size, "doesnt-matter.xml", NULL, options);
+```
+
+We’ll also want a way to test our crashing inputs, so we’ll modify main to read in a file and pass that to the function.
+
+```
+#define MAXLEN 0x10000
+char source[MAXLEN];
+
+-------------8<-------------
+
+int main(int argc, char **argv) {
+  if (argc == 2) {
+    FILE *fp = fopen(argv[1], "rb");
+    size_t newLen = fread(source, sizeof(char), MAXLEN, fp);
+    fclose(fp);
+  }
+  LLVMFuzzerTestOneInput((const uint8_t *)source, MAXLEN);
+}
+```
+
+Our final step is adding the harness compilation command to `tasks.py`.
+
+```
+@task(pre=[build_xml])
+def build_harness(ctx):
+    """compile harness.c; store result in build/"""
+    run(ctx, "gcc -o harness harness.c -I $(pwd)/build/include/libxml2 -L $(pwd)/build/lib/ -lxml2 -lm -llzma -lz")
+    run(ctx, "mv harness build/")
+```
+
+Let’s compile and make sure all is well.
+
+```
+ls -al build/harness 
+════════════════════════════
+
+-rwxrwxr-x 1 epi epi 5891704 Jan 19 06:21 build/harness
+```
+
+```
+./build/harness corpus/dtd9
+echo $?
+0
+```
+
+All systems nominal, let’s go!
+
+# Writing the Fuzzer
+
+For the following sections, keep in mind that we’re still examining each component, but will only cover **new** material in-depth. Components/code seen in previous posts will have a quick-reference description and a link to the original discourse.
+
+Since [part 4](https://epi052.gitlab.io/notes-to-self/blog/2021-11-26-fuzzing-101-with-libafl-part-4/) went pretty deep into qemu-based fuzzing with libafl, for this fuzzer, we’ll take a step back and use the high-level wrapper: `QemuBytesCoverageSugar`.
+
+Let’s get to it!
+
+## Enumerating the API
+
+Before we get into the components, it might be nice if we looked at some ways to figure out how to use the python api. One way is reading the rust code, but since we’re doing all these python things, let’s use our `rich` dependency to figure things out!
+
+Since `rich` is already in our virtual environment, let’s just spin up a REPL. After that, we’ll import rich’s `inspect` function. `inspect` can generate a report on any Python object. It’s a fantastic debug aid, and can be used to quickly gather information about interfaces.
+
+For funsies, let’s run `inspect(inspect)` to figure out how to use it.
+
+```
+Python 3.10.6 (default, Nov 18 2021, 16:00:48) 
+[GCC 10.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+loaded: ['sys', 'Path', 'pprint']
+>>> from rich import inspect
+>>> inspect(inspect)
+╭──────────────────────────── <function inspect at 0x7f8b71ab2280> ─────────────────────────────╮
+│ def inspect(obj: Any, *, console: Optional[ForwardRef('Console')] = None, title:              │
+│ Optional[str] = None, help: bool = False, methods: bool = False, docs: bool = True, private:  │
+│ bool = False, dunder: bool = False, sort: bool = True, all: bool = False, value: bool = True) │
+│ -> None:                                                                                      │
+│                                                                                               │
+│ Inspect any Python object.                                                                    │
+│                                                                                               │
+│ * inspect(<OBJECT>) to see summarized info.                                                   │
+│ * inspect(<OBJECT>, methods=True) to see methods.                                             │
+│ * inspect(<OBJECT>, help=True) to see full (non-abbreviated) help.                            │
+│ * inspect(<OBJECT>, private=True) to see private attributes (single underscore).              │
+│ * inspect(<OBJECT>, dunder=True) to see attributes beginning with double underscore.          │
+│ * inspect(<OBJECT>, all=True) to see all attributes.                                          │
+│                                                                                               │
+│ Args:                                                                                         │
+│     obj (Any): An object to inspect.                                                          │
+│     title (str, optional): Title to display over inspect result, or None use type. Defaults   │
+│ to None.                                                                                      │
+│     help (bool, optional): Show full help text rather than just first paragraph. Defaults to  │
+│ False.                                                                                        │
+│     methods (bool, optional): Enable inspection of callables. Defaults to False.              │
+│     docs (bool, optional): Also render doc strings. Defaults to True.                         │
+│     private (bool, optional): Show private attributes (beginning with underscore). Defaults   │
+│ to False.                                                                                     │
+│     dunder (bool, optional): Show attributes starting with double underscore. Defaults to     │
+│ False.                                                                                        │
+│     sort (bool, optional): Sort attributes alphabetically. Defaults to True.                  │
+│     all (bool, optional): Show all attributes. Defaults to False.                             │
+│     value (bool, optional): Pretty print value. Defaults to True.                             │
+│                                                                                               │
+│ 35 attribute(s) not shown. Run inspect(inspect) for options.                                  │
+╰───────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+Awesome! Now we know what we can pass to `inspect` to get more information about the target object. Let’s see what the `qemu` module has to offer.
+
+```
+>>> inspect(qemu, all=True)
+╭─────────────────────────────────────── <module 'qemu'> ───────────────────────────────────────╮
+│           __all__ = ['regs', 'mmap', 'MapInfo', 'GuestMaps', 'SyscallHookResult', 'Emulator'] │
+│           __doc__ = None                                                                      │
+│        __loader__ = None                                                                      │
+│              mmap = <module 'mmap'>                                                           │
+│          __name__ = 'qemu'                                                                    │
+│       __package__ = None                                                                      │
+│              regs = <module 'regs'>                                                           │
+│          __spec__ = None                                                                      │
+│          Emulator = def Emulator(...)                                                         │
+│         GuestMaps = def GuestMaps(...)                                                        │
+│           MapInfo = def MapInfo(...)                                                          │
+│ SyscallHookResult = def SyscallHookResult(...)                                                │
+╰───────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+Ok, we have some top-level modules and classes. We know we’re going to need the Emulator, so let’s check that out.
+
+```
+>>> inspect(qemu.Emulator, methods=True)
+╭───────── <class 'builtins.Emulator'> ──────────╮
+│ def Emulator(...)                              │
+│                                                │
+│       binary_path = def binary_path(...)       │
+│         flush_jit = def flush_jit(...)         │
+│               g2h = def g2h(...)               │
+│               h2g = def h2g(...)               │
+│         load_addr = def load_addr(...)         │
+│         map_fixed = def map_fixed(...)         │
+│       map_private = def map_private(...)       │
+│          mprotect = def mprotect(...)          │
+│          num_regs = def num_regs(...)          │
+│          read_mem = def read_mem(...)          │
+│          read_reg = def read_reg(...)          │
+│ remove_breakpoint = def remove_breakpoint(...) │
+│       remove_hook = def remove_hook(...)       │
+│               run = def run(...)               │
+│    set_breakpoint = def set_breakpoint(...)    │
+│          set_hook = def set_hook(...)          │
+│  set_syscall_hook = def set_syscall_hook(...)  │
+│             unmap = def unmap(...)             │
+│         write_mem = def write_mem(...)         │
+│         write_reg = def write_reg(...)         │
+╰────────────────────────────────────────────────╯
+```
+
+Well, that’s certainly cool, but we’re missing some key information: namely the method signatures. For instance, here’s what an `argparse.ArgumentParser` looks like when `inspect`ed.
+
+```
+>>> inspect(ArgumentParser, methods=True)
+╭─────────────────────────────────────────────────────────────────────────────── <class 'argparse.ArgumentParser'> ───────────────────────────────────────────────────────────────────────────────╮
+│ def ArgumentParser(prog=None, usage=None, description=None, epilog=None, parents=[], formatter_class=<class 'argparse.HelpFormatter'>, prefix_chars='-', fromfile_prefix_chars=None,            │
+│ argument_default=None, conflict_handler='error', add_help=True, allow_abbrev=True, exit_on_error=True):                                                                                         │
+│                                                                                                                                                                                                 │
+│ Object for parsing command line strings into Python objects.                                                                                                                                    │
+│                                                                                                                                                                                                 │
+│                 add_argument = def add_argument(self, *args, **kwargs):                                                                                                                         │
+│                                add_argument(dest, ..., name=value, ...)                                                                                                                         │
+│                                add_argument(option_string, option_string, ..., name=value, ...)                                                                                                 │
+│           add_argument_group = def add_argument_group(self, *args, **kwargs):                                                                                                                   │
+│ add_mutually_exclusive_group = def add_mutually_exclusive_group(self, **kwargs):                                                                                                                │
+----------------------------------------------------8<----------------------------------------------------
+```
+
+So, because of how the python bindings are generated, we can’t get the class/method signatures (this is also a common issue with some of CPython’s builtin C code). All this means is that we will need to read some source code to figure out how things work, which isn’t a bad thing. However, we’ll save reading the source for when we need it for a particular component.
+
+Ok, detour’s over, let’s get back to the fuzzer!
+
+## Component: Emulator
+
+- **first-seen**: [Part 4](https://epi052.gitlab.io/notes-to-self/blog/2021-11-26-fuzzing-101-with-libafl-part-4/#component-emulator)
+- **purpose**: provides methods necessary for interacting with the emulated binary
+- **why**: for emulation, we need an emulator… this is the way
+
+Alright, we kind of know how to use a python Emulator, but we don’t know how to instantiate it. Let’s check the source! In `LibAFL/libafl_qemu/src/emu.rs` there is an embedded module named `pybind` that’s only there when the `python` feature-flag is enabled.
+
+```
+#[cfg(feature = "python")]
+pub mod pybind {
+  -------------8<-------------
+}
+```
+
+Within pybind, we see the Emulator definition and implementation.
+
+```
+    -------------8<-------------
+    #[pyclass(unsendable)]
+    pub struct Emulator {
+        pub emu: super::Emulator,
+    }
+
+    #[pymethods]
+    impl Emulator {
+        #[allow(clippy::needless_pass_by_value)]
+        #[new]
+        fn new(args: Vec<String>, env: Vec<(String, String)>) -> Emulator {
+            Emulator {
+                emu: super::Emulator::new(&args, &env),
+            }
+        }
+      -------------8<-------------
+```
+
+The attributes we’re seeing are mostly from [pyo3](https://pyo3.rs/master/class.html#defining-a-new-class). For instance, `#[pyclass(unsendable)]` is what tells pyo3 that this struct should be defined as a custom Python class. The unsendable parameter just means that the struct itself is not Send (in the rust sense).
+
+The `#[new]` attribute is how the code tells pyo3 that this method is a [constructor](https://pyo3.rs/master/class.html#constructor). So, we now know the constructor signature, which will allow us to create our Emulator by passing it a list of arguments and a list of key/values representing environment variables.
+
+Since there’s so little code we need to write, we’re going to be extra fancy and make our own class, because why not? Our class will parse the command line arguments you’d expect for a libafl fuzzer, so we’ll capture those in our class at instantiation.
+
+```
+@dataclass
+class Fuzzer:
+    """Wrapper for QemuBytesCoverageSugar-based fuzzer"""
+
+    target: str
+    input: list[str]
+    output: str
+    cores: list[int]
+    port: int
+    num_iterations: int
+```
+
+Then, within our `run` method, we’ll use our hard-won knowledge and create an emulator.
+
+```
+def run(self):
+    emulator = qemu.Emulator(["qemu-x86_64", self.target], [])
+```
+
+After that, we’ll parse the target binary using `lief` and get a pointer to our harness’s entrypoint.
+
+```
+elf = lief.parse(self.target)
+harness_func = elf.get_function_address("LLVMFuzzerTestOneInput")
+```
+
+Then, we’ll reserve some space for our input bytes in memory.
+
+```
+input_bytes = emulator.map_private(0, MAX_SIZE, qemu.mmap.ReadWrite)
+```
+
+After which, we’ll account for position independence by adding the emulator’s base address to the harness entrypoint, if necessary.
+
+```
+if elf.is_pie:
+    harness_func += emulator.load_addr()
+```
+
+Next, we’ll set a breakpoint on the entrypoint and emulate execution until we arrive there.
+
+```
+emulator.set_breakpoint(harness_func)
+emulator.run()
+```
+
+Then, we’ll save off the stack pointer and return address, from the point of view of the entrypoint.
+
+```
+rsp = emulator.read_reg(qemu.regs.Rsp)
+ret_addr = int.from_bytes(emulator.read_mem(rsp, 8), "little")
+```
+
+Finally, we’ll remove the entrypoint breakpoint and place a new breakpoint at the address where we want execution to stop.
+
+```
+emulator.remove_breakpoint(harness_func)
+emulator.set_breakpoint(ret_addr)
+```
+
+If you read [part 4](https://epi052.gitlab.io/notes-to-self/blog/2021-11-26-fuzzing-101-with-libafl-part-4/) of this series, the steps above should look incredibly familiar. That makes sense, because we’re performing the same overall steps, just in python.
+
+We’ve got our emulator into the state we want it before passing it off to the Executor. Not too shabby… Let’s keep it up!
+
+## Component: Harness
+
+Harness as a closure:
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#harness-component)
+- **purpose**: accepts bytes that have been mutated by the fuzzer and runs the emulated binary via the Emulator
+- **why**: allows us to capture outer scope and is what the `QemuBytesCoverageSugar.run` expects as its second argument
+
+Unlike our fuzzer from part 4, we’re not using QemuHelpers to reset registers and manipulate input bytes, so we’ll handle that in our harness.
+
+First, we’ll limit the size of the input to what we allocated in the emulator.
+
+```
+def harness(in_bytes):
+    """internal harness function passed to the fuzzer, similar to a rust closure"""
+
+    if len(in_bytes) > MAX_SIZE:
+        in_bytes = in_bytes[:MAX_SIZE]
+```
+
+Then, we’ll write the bytes coming into the harness to the reserved space in memory.
+
+```
+emulator.write_mem(input_bytes, in_bytes)
+```
+
+After that, we’ll write the first and second arguments destined for the `LLVMFuzzerTestOneInput` entrypoint into their respective registers.
+
+```
+emulator.write_reg(qemu.regs.Rdi, input_bytes)
+emulator.write_reg(qemu.regs.Rsi, len(in_bytes))
+```
+
+With that done, we’ll set the stack pointer to the location we saved off earlier, when our emulator was at the entrypoint’s breakpoint.
+
+```
+emulator.write_reg(qemu.regs.Rsp, rsp)
+```
+
+Finally, we’ll set the instruction pointer to the address of the entrypoint and then call `.run`.
+
+```
+emulator.write_reg(qemu.regs.Rip, harness_func)
+emulator.run()
+```
+
+There we go, a nice little harness that, along with the setup performed earlier, gives us persistent mode fuzzing, excellent!
+
+## Component: QemuBytesCoverageSugar
+
+Similar to [part 3](https://epi052.gitlab.io/notes-to-self/blog/2021-11-20-fuzzing-101-with-libafl-part-3/), this may feel like cheating. Doubly so, since the code is in python!
+
+The last thing our code needs to do is instantiate the `QemuBytesCoverageSugar` and then call its `.run` method, which is shown below.
+
+```
+def run(self):
+    -------------8<-------------
+
+    sugar.QemuBytesCoverageSugar(
+        self.input, self.output, self.port, self.cores, iterations=self.num_iterations
+    ).run(emulator, harness)
+```
+
+That’s it! That’s our entire class, which is pretty slick! Since we haven’t covered the commandline parser used to populate QemuBytesCoverageSugar, let’s do that now.
+
+## CLI
+
+There’s not much surprising here, and it’s all vanilla python, so we won’t spend any time on explanations.
+
+```
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--target", default="build/harness")
+    parser.add_argument("-i", "--input", default=["corpus"], nargs="+")
+    parser.add_argument("-o", "--output", default="solutions")
+    parser.add_argument("-c", "--cores", default=[7], nargs="+", type=int)
+    parser.add_argument("-p", "--port", default=1337, type=int)
+    parser.add_argument("-n", "--num-iterations", default=50_000, type=int)
+
+    parsed = parser.parse_args()
+
+    fuzzer = Fuzzer(**vars(parsed))
+    fuzzer.run()
+```
+
+# Running the Fuzzer
+
+Everything is ready for us to give our fuzzer a try, let’s see how it goes!
+
+## Build the Fuzzer
+
+First, we’ll build everything using our `inv build` build task.
+
+```
+inv build
+```
+
+After building everything, we’re left with our `build` directory looking something like this:
+
+```
+ls -al build
+════════════════════════════
+
+drwxrwxr-x  2 epi epi    4096 Jan 22 06:13 bin
+-rwxrwxr-x  1 epi epi 6975112 Jan 22 06:40 harness
+drwxrwxr-x  3 epi epi    4096 Jan 22 06:13 include
+drwxrwxr-x  4 epi epi    4096 Jan 22 06:13 lib
+drwxrwxr-x  6 epi epi    4096 Jan 22 06:13 share
+```
+
+At this point we’re ready to get things started.
+
+## Commence Fuzzing!
+
+Alright, this is it, let’s kick off our fuzzer.
+
+```
+python fuzzer.py -c 1 2 3 4 5 6
+```
+
+```
+[Testcase    #1]  (GLOBAL) run time: 0h-0m-3s, clients: 2, corpus: 401, objectives: 0, executions: 18264, exec/sec: 6088
+                  (CLIENT) corpus: 401, objectives: 0, executions: 18264, exec/sec: 6088, edges: 3365/3365 (100%)
+[Stats       #1]  (GLOBAL) run time: 0h-0m-3s, clients: 2, corpus: 401, objectives: 0, executions: 18264, exec/sec: 6088
+                  (CLIENT) corpus: 401, objectives: 0, executions: 18264, exec/sec: 6088, edges: 3369/3369 (100%)
+```
+
+Sick! Everything looks good.
+
+## Results
+
+After letting the fuzzer churn a while, we confirm that we’ve found hit some objectives. Sweet jumps!
+
+```
+[Stats       #6]  (GLOBAL) run time: 9h-6m-35s, clients: 7, corpus: 36869, objectives: 3, executions: 214731860, exec/sec: 44515 
+                  (CLIENT) corpus: 6545, objectives: 1, executions: 47935465, exec/sec: 14837, edges: 8908/8932 (99%) 
+[Testcase    #6]  (GLOBAL) run time: 9h-6m-35s, clients: 7, corpus: 36870, objectives: 3, executions: 214734790, exec/sec: 42980 
+                  (CLIENT) corpus: 6546, objectives: 1, executions: 47938395, exec/sec: 14494, edges: 8908/8932 (99%) 
+[Stats       #3]  (GLOBAL) run time: 9h-6m-35s, clients: 7, corpus: 36870, objectives: 3, executions: 214734790, exec/sec: 42206 
+                  (CLIENT) corpus: 6524, objectives: 0, executions: 54188671, exec/sec: 20908, edges: 8883/8883 (100%)
+[Stats       #6]  (GLOBAL) run time: 9h-6m-41s, clients: 7, corpus: 36870, objectives: 3, executions: 214757808, exec/sec: 10824 
+                  (CLIENT) corpus: 6546, objectives: 1, executions: 47961413, exec/sec: 488, edges: 8908/8932 (99%)   
+[Stats       #3]  (GLOBAL) run time: 9h-6m-44s, clients: 7, corpus: 36870, objectives: 3, executions: 214822431, exec/sec: 21767 
+                  (CLIENT) corpus: 6524, objectives: 0, executions: 54253294, exec/sec: 4123, edges: 8883/8883 (100%) 
+[Stats       #1]  (GLOBAL) run time: 9h-6m-49s, clients: 7, corpus: 36870, objectives: 3, executions: 214880473, exec/sec: 21635 
+                  (CLIENT) corpus: 6482, objectives: 2, executions: 47107140, exec/sec: 5967, edges: 8873/8897 (99%)  
+[Stats       #3]  (GLOBAL) run time: 9h-6m-49s, clients: 7, corpus: 36870, objectives: 3, executions: 214880473, exec/sec: 21643 
+                  (CLIENT) corpus: 6524, objectives: 0, executions: 54253294, exec/sec: 5672, edges: 8883/8883 (100%)
+[Testcase    #3]  (GLOBAL) run time: 9h-6m-49s, clients: 7, corpus: 36874, objectives: 3, executions: 214895089, exec/sec: 22287 
+                  (CLIENT) corpus: 6528, objectives: 0, executions: 54267910, exec/sec: 6904, edges: 8883/8883 (100%) 
+```
+
+# Outro
+
+There we have it; we learned about how rust and python interact, in the context of libafl, and wrote a fuzzer while doing it. I like the idea of python bindings, but while writing this fuzzer/post, I found myself wanting more customization than the bindings provide. Additionally, rust is high-level enough that it doesn’t feel too onerous to just use rust from the get-go. Bottom line, I enjoy knowing they’re there, but I don’t think I’ll reach for them very often.
+
+In the next post we’ll solve Exercise 6 in some kind of interesting way, I’m sure.
+
+# Additional Resources
+
+1.  [Fuzzing101](https://github.com/antonio-morales/Fuzzing101)
+2.  [LibAFL](https://github.com/AFLplusplus/LibAFL)
+3.  [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+4.  [poetry](https://python-poetry.org/)
+5.  [invoke](https://www.pyinvoke.org/)
+6.  [maturin](https://pypi.org/project/maturin/)
+7.  [lief](https://github.com/lief-project/LIEF)
+8.  [rich](https://rich.readthedocs.io/en/stable/introduction.html)
+
+------------------------------------------------------------------------
+
+Share: [Twitter](https://twitter.com/intent/tweet?text=Fuzzing101%20with%20LibAFL%20-%20Part%20V%3A%20Fuzzing%20LibXML2&url=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2022-01-17-fuzzing-101-with-libafl-part-5%2F) [Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2022-01-17-fuzzing-101-with-libafl-part-5%2F)

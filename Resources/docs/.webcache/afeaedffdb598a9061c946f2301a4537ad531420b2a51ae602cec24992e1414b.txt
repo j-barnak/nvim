@@ -1,0 +1,1137 @@
+# Fuzzing101 with LibAFL - Part III: Fuzzing tcpdump
+
+November 21, 2021 • 42 min read
+
+### Updated: Feb 9, 2025 // LibAFL Version 0.15.1
+
+Twitter user [Antonio Morales](https://twitter.com/nosoynadiemas?lang=en) created the [Fuzzing101](https://github.com/antonio-morales/Fuzzing101) repository in August of 2021. In the repo, he has created exercises and solutions meant to teach the basics of fuzzing to anyone who wants to learn how to find vulnerabilities in real software projects. The repo focuses on [AFL++](https://github.com/AFLplusplus/AFLplusplus) usage, but this series of posts aims to solve the exercises using [LibAFL](https://github.com/AFLplusplus/LibAFL) instead. We’ll be exploring the library and writing fuzzers in Rust in order to solve the challenges in a way that closely aligns with the suggested AFL++ usage.
+
+Since this series will be looking at Rust source code and building fuzzers, I’m going to assume a certain level of knowledge in both fields for the sake of brevity. If you need a brief introduction/refresher to/on coverage-guided fuzzing, please take a look [here](https://github.com/antonio-morales/Fuzzing101#what-is-fuzzing). As always, if you have any questions, please don’t hesitate to reach out.
+
+This post will cover fuzzing tcpdump in order to solve [Exercise 3](https://github.com/antonio-morales/Fuzzing101/tree/main/Exercise%203). The companion code for this exercise can be found at my [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+
+Previous posts:
+
+- [Part I: Fuzzing Xpdf](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/)
+- [Part I.V: Speed Improvements to Part I](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/)
+- [Part II: Fuzzing libexif](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-2/)
+
+------------------------------------------------------------------------
+
+# Quick Reference
+
+This is just a summary of the different components used in the upcoming post. It’s meant to be used later as an easy way of determining which components are used in which posts.
+
+```
+{
+  "Sugar": {
+    "type": "ForkserverBytesCoverageSugar",
+    "components": {
+      "Fuzzer": {
+        "type": "StdFuzzer",
+        "Corpora": {
+          "Input": "CachedOnDiskCorpus",
+          "Output": "OnDiskCorpus"
+        },
+        "Input": "BytesInput",
+        "Observers": [
+          "ConstMapObserver": {
+            "coverage map": "StdShMemProvider::new_shmem",
+          },
+          "TimeObserver",
+          "HitcountsMapObserver"
+        ],
+        "Feedbacks": {
+          "Pure": ["MaxMapFeedback", "TimeFeedback"],
+          "Objectives": ["TimeoutFeedback", "CrashFeedback"]
+        },
+        "State": {
+          "StdState"
+        },
+        "Monitor": "MultiMonitor",
+        "EventManager": "RestartingMgr",
+        "Scheduler": "IndexesLenTimeMinimizerScheduler",
+        "Executors": [
+          "TimeoutForkserverExecutor",
+        ],
+        "Mutators": [
+          "StdScheduledMutator": {
+            "mutations": "havoc_mutations"
+          }
+        ],
+        "Stages": ["StdMutationalStage"]
+      }
+    }
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+# Intro
+
+Welcome back! This post will cover fuzzing [tcpdump](https://github.com/the-tcpdump-group/tcpdump) in the hopes of finding [CVE-2017-13028](https://www.cvedetails.com/cve/CVE-2017-13028/) in version 4.9.1.
+
+According to Mitre regarding CVE-2017-13028, tcpdump’s BOOTP parser contains an out-of-bounds read in `print-bootp.c`’s `bootp_print` function.
+
+In case you’ve never heard of the Bootstrap Protocol (BOOTP), it’s a networking protocol similar to DHCP. Eventually, DHCP ended up taking BOOTP’s place in most scenarios. If you’d like some other resources on BOOTP, here’s [the rfc](https://datatracker.ietf.org/doc/html/rfc951) and a more approachable blurb [here](https://networklessons.com/cisco/ccie-routing-switching-written/bootp-bootstrap-protocol)
+
+Now that our goal is clear, let’s jump in!
+
+# Exercise 3 Setup
+
+Just like our other exercises, we’ll start with overall project setup.
+
+## exercise-3
+
+First, we’ll modify our top-level Cargo.toml to include the new project.
+
+> fuzzing-101-solutions/Cargo.toml
+
+```
+[workspace]
+members = [
+    "exercise-1",
+    "exercise-1.5",
+    "exercise-2"
+    "exercise-3"
+]
+```
+
+And then create the project itself.
+
+```
+cargo new exercise-3
+════════════════════════════
+
+Created binary (application) `exercise-3` package
+```
+
+## tcpdump
+
+Next, let’s grab our target library: tcpdump, as well as its dependency: libpcap.
+
+> fuzzing-101-solutions/exercise-3
+
+```
+wget https://github.com/the-tcpdump-group/tcpdump/archive/refs/tags/tcpdump-4.9.1.tar.gz
+tar -xzvf tcpdump-4.9.1.tar.gz
+mv tcpdump-tcpdump-4.9.1 tcpdump
+rm tcpdump-4.9.1.tar.gz
+```
+
+```
+wget https://github.com/the-tcpdump-group/libpcap/archive/refs/tags/libpcap-1.8.0.tar.gz
+tar -xzvf libpcap-1.8.0.tar.gz
+mv libpcap-libpcap-1.8.0/ libpcap
+rm libpcap-1.8.0.tar.gz
+```
+
+Once complete, our directory structure should look similar to what’s below.
+
+```
+exercise-3
+├── Cargo.toml
+├── libpcap
+│   ├── aclocal.m4
+-------------8<-------------
+├── src
+│   └── main.rs
+└── tcpdump
+    ├── aclocal.m4
+-------------8<-------------
+```
+
+Like we’ve done in the past, let’s make sure we can build everything normally. We’ll start with creating our `build` directory.
+
+> fuzzing-101-solutions/exercise-3
+
+```
+mkdir build
+```
+
+Followed by statically compiling libpcap.
+
+```
+cd libpcap/
+./configure --enable-shared=no --prefix=$(pwd)/../build
+make
+make install
+```
+
+Once complete, our build directory will look like this:
+
+```
+ls -al ../build/
+════════════════════════════
+
+drwxr-xr-x 2 epi epi 4096 Nov 20 15:04 lib
+drwxrwxr-x 3 epi epi 4096 Nov 20 15:04 share
+drwxr-xr-x 3 epi epi 4096 Nov 20 15:04 include
+drwxr-xr-x 2 epi epi 4096 Nov 20 15:04 bin
+```
+
+Next, let’s build tcpdump.
+
+> fuzzing-101-solutions/exercise-3/tcpdump
+
+```
+CPPFLAGS=-I"$(pwd)/../build/include/" LDFLAGS="-L$(pwd)/../build/lib/" ./configure --prefix="$(pwd)/../build/"
+make
+make install
+```
+
+We can confirm that our build succeeded by checking the following paths:
+
+```
+ls -al build/sbin/tcpdump build/lib/libpcap.a 
+════════════════════════════
+
+-rw-r--r-- 1 epi epi 3381012 Nov 20 15:04 build/lib/libpcap.a
+-rwxr-xr-x 1 epi epi 6205872 Nov 20 15:08 build/sbin/tcpdump
+```
+
+That will do as a confirmation that we’re properly setup. We’ll revisit compilation with instrumentation later.
+
+## Makefile.toml
+
+Once again, we’ll solidify all of our currently known build steps, along with a few standard ones, into our `Makefile.toml`.
+
+```
+# composite tasks
+[tasks.clean]
+dependencies = ["clean-cargo", "clean-libpcap", "clean-tcpdump", "clean-build-dir"]
+
+[tasks.build]
+dependencies = ["clean", "copy-project-to-build", "build-libpcap", "build-tcpdump"]
+
+# clean up tasks
+[tasks.clean-cargo]
+command = "cargo"
+args = ["clean"]
+
+[tasks.clean-libpcap]
+command = "make"
+args = ["-C", "libpcap", "clean"]
+
+[tasks.clean-tcpdump]
+command = "make"
+args = ["-C", "tcpdump", "clean"]
+
+[tasks.clean-build-dir]
+command = "rm"
+args = ["-rf", "build/"]
+
+# build tasks
+[tasks.copy-project-to-build]
+script = """
+mkdir -p build/
+"""
+
+[tasks.build-libpcap]
+cwd = "libpcap"
+script = """
+./configure --enable-shared=no --prefix="${CARGO_MAKE_WORKING_DIRECTORY}/../build/"
+make
+make install
+"""
+
+[tasks.build-tcpdump]
+cwd = "tcpdump"
+script = """
+CPPFLAGS=-I"${CARGO_MAKE_WORKING_DIRECTORY}/../build/include/" LDFLAGS="-L${CARGO_MAKE_WORKING_DIRECTORY}/../build/lib/" ./configure --prefix="${CARGO_MAKE_WORKING_DIRECTORY}/../build/"
+make
+make install
+"""
+```
+
+We can perform a test run of our build task
+
+```
+cargo make build
+```
+
+And then see that we’re still building our targets correctly.
+
+```
+ls -al build/sbin/tcpdump build/lib/libpcap.a 
+════════════════════════════
+
+-rw-r--r-- 1 epi epi 3381012 Nov 20 15:04 build/lib/libpcap.a
+-rwxr-xr-x 1 epi epi 6205872 Nov 20 15:08 build/sbin/tcpdump
+```
+
+# Fuzzer Setup
+
+Ok, the target is ready to build, now we can get started on gathering the pieces required for the fuzzer. We’ll be writing a forkserver fuzzer again, but this time, we’ll be leveraging a high-level wrapper to get the job done quickly and easily. We’ll still explore some source code and spice things up as we go, but the actual fuzzer code may feel like cheating compared to past posts. Let’s dig in!
+
+## Cargo.toml
+
+We’ll start by adding our dependencies.
+
+If you’ve been following along with previous posts, you may notice a new dependency: [libafl_sugar](https://docs.rs/libafl_sugar/0.15.1/libafl_sugar/). The libafl_sugar crate provides a very high-level API with which we can quickly spin up a fuzzer with very little code.
+
+```
+clap = "3.0.0-beta.5"
+libafl = { version = "0.15.1" }
+libafl_sugar = { version = "0.15.1" }
+libafl_targets = { version = "0.15.1" }
+```
+
+That’s it for Cargo.toml, let’s move on.
+
+## corpus
+
+As usual, we’ll need an input corpus. Our strategy of looking in the project’s repo for testcases bears fruit once again! There are a lot of pcaps, and we can even see pcaps that were added as a result of CVE-2017-13028. However, let’s skip those and simply create a sample pcap ourselves using [scapy](https://scapy.readthedocs.io/en/latest/introduction.html).
+
+We’ll need a virtual environment in which to install scapy.
+
+> fuzzing-101-solutions/exercise-3
+
+```
+poetry init -n
+poetry add scapy
+```
+
+The [poetry](https://python-poetry.org/) commands above created a new virtual environment and installed scapy. Now, we can write a very short script that writes a BOOTP packet out to a pcap file.
+
+> fuzzing-101-solutions/exercise-3/create-bootp.py
+
+```
+from scapy.all import *
+
+PCAP_OUT = "corpus/bootp-testcase.pcap"
+
+# create a somewhat normal looking baseline packet, port 68 is bootp server
+base = IP(dst="127.1.1.1") / UDP(dport=68)
+
+# add BOOTP header
+pkt = base / BOOTP(op=1)  # bootp opcode: BOOTREQUEST
+
+pcap = PcapWriter(PCAP_OUT, sync=True)
+pcap.write_header(pkt)  # pcap header, read by libpcap
+pcap.write_packet(pkt)  # actual packet
+```
+
+With that done, we can execute our script to populate our corpus.
+
+```
+poetry run python create-bootp.py
+```
+
+After we run the script, we can check our corpus’s sole testcase.
+
+```
+./build/sbin/tcpdump -r corpus/bootp-testcase.pcap
+════════════════════════════
+
+reading from file corpus/bootp-testcase.pcap, link-type IPV4 (Raw IPv4)
+17:20:23.931131 IP view-localhost.bootps > localhost.bootpc: BOOTP/DHCP, Request from 00:00:00:00:00:00 (oui Ethernet), length 236
+```
+
+Easy, peasy, lemon-squeezy! Let’s keep it moving.
+
+## Makefile.toml
+
+Let’s take a moment to finalize our build steps before proceeding. We need to add instrumentation to our tcpdump and libpcap builds. Since we’re not writing a libfuzzer-style harness/compiler combo, we’ll use `afl-clang-lto` for instrumentation and add ASAN for good measure. Of note, we’re also adding the `cap_sys_admin` capability to tcpdump so it won’t require us to use `sudo` every time we run the binary, though we will get a sudo prompt during the build process.
+
+> once the exercise is complete, you should remove the tcpdump with cap_sys_admin
+
+```
+-------------8<-------------
+[tasks.build-libpcap]
+env = { "CC" = "afl-clang-lto", "LLVM_CONFIG" = "llvm-config-19", "AFL_USE_ASAN" = "1" }
+cwd = "libpcap"
+script = """
+./configure --enable-shared=no --prefix="${CARGO_MAKE_WORKING_DIRECTORY}/../build/"
+make
+make install
+"""
+
+[tasks.build-tcpdump]
+# environment variables in table `build-tcpdump.env` below
+cwd = "tcpdump"
+script = """
+./configure --prefix="${CARGO_MAKE_WORKING_DIRECTORY}/../build/"
+make
+make install
+sudo setcap cap_sys_admin+epi ../build/sbin/tcpdump
+mkdir -p ../solutions
+"""
+
+[tasks.build-tcpdump.env]
+"CC" = "afl-clang-lto"
+"LLVM_CONFIG" = "llvm-config-19"
+"AFL_USE_ASAN" = "1"
+"CFLAGS" = "-I${CARGO_MAKE_WORKING_DIRECTORY}/../build/include/"
+"LDFLAGS" = "-L${CARGO_MAKE_WORKING_DIRECTORY}/../build/lib/"
+```
+
+Ok, that should do it for fuzzer setup, next is the fuzzer itself!
+
+# Writing the Fuzzer
+
+## Component: ForkserverBytesCoverageSugar
+
+References:
+
+[ForkserverBytesCoverageSugar API Entry](https://docs.rs/libafl_sugar/0.15.1/libafl_sugar/forkserver/struct.ForkserverBytesCoverageSugar.html)
+
+Ok, I mentioned this might feel like cheating… Below, we see the only piece we need in our program’s `main.rs` to get our fuzzer going: the [ForkserverBytesCoverageSugar](https://github.com/AFLplusplus/LibAFL/blob/main/libafl_sugar/src/forkserver.rs#L37) component. As of right now, the ForkserverBytesCoverageSugar isn’t in version 0.6.1 (the most current release when this was initially written. Now we’re on 0.15.1, but the post can retain the source code analysis), so, we’ll need to examine the source to determine how to use it.
+
+We can see from the docs that the ForkserverBytesCoverageSugar struct uses the builder pattern. It’s also not terribly difficult to see which methods we’ll need to call in order to get our fuzzer running. For instance, in the snippet below, we can see that `configuration` and `timeout` are optional values, due to their type being wrapped with an `Option`. Conversely, `input_dirs` and `output_dir` each have a concrete type, letting us know these are required to be set when building the struct.
+
+ForkserverBytesCoverageSugar is derived from a TypedBuilder, which is part of the [typed-builder](https://github.com/idanarye/rust-typed-builder) project. I had never heard of typed-builder, but it sounds very useful. It provides compile time verification for structs built using the builder pattern, along with some other quality of life features, I definitely plan to keep it in mind for the future.
+
+```
+#[derive(TypedBuilder)]
+pub struct ForkserverBytesCoverageSugar<'a> {
+    /// Laucher configuration (default is random)
+    #[builder(default = None, setter(strip_option))]
+    configuration: Option<String>,
+    /// Timeout of the executor
+    #[builder(default = None, setter(strip_option))]
+    timeout: Option<u64>,
+    /// Input directories
+    input_dirs: &'a [PathBuf],
+    /// Output directory
+    output_dir: PathBuf,
+-------------8<-------------
+```
+
+After looking through the struct’s member definitions, we arrive at the following code to define our fuzzer.
+
+> exercise-3/src/main.rs
+
+```
+mod parser;
+
+use libafl_sugar::ForkserverBytesCoverageSugar;
+use libafl::bolts::core_affinity::Cores;
+
+fn main() {
+    let parsed_opts = parser::parse_args();
+    let cores = Cores::from_cmdline(&parsed_opts.cores).expect("Failed to parse cores");
+
+    ForkserverBytesCoverageSugar::builder()
+        .input_dirs(&[parsed_opts.input])
+        .output_dir(parsed_opts.output)
+        .cores(&cores)
+        .program(parsed_opts.target)
+        .arguments(&parsed_opts.args)
+        .build()
+        .run()
+}
+```
+
+That’s our entire `main` function, pretty slick! Since we haven’t covered the commandline parser invoked at the top of the main function, let’s do that now.
+
+## parser.rs
+
+Our ForkserverBytesCoverageSugar struct expected quite a few options to be specified. We could have hard-coded them into `main.rs`, but that wouldn’t be very cash money of us, and we’d also have to recompile every time we wanted to change our fuzzer’s behavior. Instead, we can use [clap](https://github.com/clap-rs/clap) to write a quick commandline interface.
+
+If you’ve never used structopt, and haven’t been playing with clap’s 3.0 beta releases, you may not have seen the parser syntax used below. We’re using clap’s [derive macros](https://docs.rs/clap/3.0.0-beta.5/clap/index.html#using-derive-macros) to specify our interface, as well as turn the parsed `&str` types into what we actually need them to be.
+
+According to the clap docs, using a struct with derive macros “is the simplest method of use, but sacrifices some flexibility”. Since our fuzzer’s cli isn’t terribly complex, that should be ok.
+
+On each struct member, we use the docstring to populate the help statement, while the `#[clap(...)]` attribute is where we set per-argument options (`required=true`, etc…). The `short` and `long` arguments to the clap attribue instruct the library to derive the short and long cli option names from the member’s name. For example, the `output` struct member becomes `-o|--output`. Also, my favorite thing about defining our parser this way, is that calling `parse` will attempt to cast the parsed `&str` values to the type of the corresponding member, i.e. `-o solutions` becomes a `Pathbuf` automatically, which is super cool.
+
+The full implementation is shown below.
+
+```
+use clap::Parser;
+use std::path::PathBuf;
+
+#[derive(Parser)]
+pub struct FuzzerOptions {
+    /// output solutions directory
+    #[clap(short, long, default_value = "solutions")]
+    pub output: PathBuf,
+
+    /// input corpus directory
+    #[clap(short, long, default_value = "corpus", multiple_values = true)]
+    pub input: PathBuf,
+
+    /// which cores to bind, i.e. --cores 0 1 2
+    #[clap(short, long)]
+    pub cores: String,
+
+    /// target binary to execute
+    #[clap(short, long, required = true, takes_value = true)]
+    pub target: String,
+
+    /// arguments to pass to the target binary
+    #[clap(
+        short,
+        long,
+        allow_hyphen_values = true,
+        multiple_values = true,
+        takes_value = true
+    )]
+    pub args: Vec<String>,
+}
+
+pub fn parse_args() -> FuzzerOptions {
+    FuzzerOptions::parse()
+}
+```
+
+Now that we’ve broken out the parser into its own module, not only can we use it for our current fuzzer, but we can use it in any future fuzzer as well… Not too shabby! Let’s keep on keepin’ on.
+
+# Running the Fuzzer
+
+Everything is ready for us to give our fuzzer a try, let’s see how it goes!
+
+## Build the Fuzzer
+
+First, we’ll build everything using our `cargo make` build task.
+
+```
+cargo make build
+```
+
+After building everything, we’re left with our `build` directory looking something like this:
+
+```
+ls -al build
+════════════════════════════
+
+-rwxrwxr-x 1 epi epi 26788792 Nov 22 07:38 exercise-3
+drwxr-xr-x 2 epi epi     4096 Nov 22 07:38 lib
+drwxrwxr-x 3 epi epi     4096 Nov 22 07:38 share
+drwxr-xr-x 3 epi epi     4096 Nov 22 07:38 include
+drwxr-xr-x 2 epi epi     4096 Nov 22 07:38 bin
+drwxr-xr-x 2 epi epi     4096 Nov 22 07:40 sbin
+```
+
+At this point we can give it a try to ensure everything works properly.
+
+```
+./build/exercise-3 -i corpus/ -o solutions/ -c 0 -t ./build/sbin/tcpdump --args -vr @@
+```
+
+When the command above is run, the fuzzer simply hangs… That’s less than awesome. Let’s figure out what’s going wrong in the next section.
+
+## Debugging the Fuzzer
+
+Ok, so, the fuzzer hangs, but we have no idea why. The reason we have no clue is that all output from the target binary is suppressed when using ForkserverBytesCoverageSugar. So, we need to allow stdout/err from the fuzz target to show up in our terminal. In order to make that happen we need to checkout a local copy of libafl, update the following files by commenting out the highlighted lines, and rebuild our fuzzer. We’ll also modify our option parser and pass a boolean into `ForkserverBytesCoverageSugar::debug_output` for good measure.
+
+```
+git clone https://github.com/AFLplusplus/LibAFL.git
+```
+
+/home/epi/projects/fuzzing-101-solutions/LibAFL/libafl/src/executors/forkserver.rs
+
+The issue with stdout is due to the interplay between the sugar’d forkserver settings and those found in the base forkserver implementation. In the sugar’d forkserver, the `stdout_file` option is hardcoded to `/dev/null`.
+
+> libafl_sugar/src/forkserver.rs
+
+```
+        #[cfg(unix)]
+        let launcher = launcher.stdout_file(Some("/dev/null"));
+        match launcher.build().launch() {
+            Ok(()) => (),
+            Err(Error::ShuttingDown) => log::info!("\nFuzzing stopped by user. Good Bye."),
+            Err(err) => panic!("Fuzzingg failed {err:?}"),
+        }
+```
+
+The `/dev/null` setting is then inherited by the child process that the forkserver implementation spawns.
+
+```
+        let (stdout, stderr) = if debug_output {
+            (Stdio::inherit(), Stdio::inherit())
+        } else {
+            (Stdio::null(), Stdio::null())
+        };
+```
+
+So, a simple fix is to just change `/dev/null` to `/dev/stdout`.
+
+```
+        #[cfg(unix)]
+        let launcher = launcher.stdout_file(Some("/dev/stdout"));
+        match launcher.build().launch() {
+            Ok(()) => (),
+            Err(Error::ShuttingDown) => log::info!("\nFuzzing stopped by user. Good Bye."),
+            Err(err) => panic!("Fuzzingg failed {err:?}"),
+        }
+```
+
+With that out of the way, we can add our new command line flag and ensure we pass it into the builder’s `debug_output` method.
+
+> exercise-3/src/parser.rs
+
+```
+    /// debug mode
+    #[clap(short, long)]
+    pub debug: bool,
+```
+
+> exercise-3/src/main.rs
+
+```
+    ForkserverBytesCoverageSugar::builder()
+        .input_dirs(&[parsed_opts.input])
+        .output_dir(parsed_opts.output)
+        .cores(&cores)
+        .program(parsed_opts.target)
+        .debug_output(parsed_opts.debug)
+        .arguments(&parsed_opts.args)
+        .build()
+        .run()
+```
+
+Once we rerun the fuzzer, we’re shown a traceback, of which a snippet is shown below.
+
+```
+thread 'main' panicked at LibAFL/libafl_sugar/src/forkserver.rs:201:43:
+called `Result::unwrap()` on an `Err` value: IllegalState("The target map size is 98816 but the allocated map size is 65536. Increase the initial size of the forkserver map to at least that size using the forkserver builder's `coverage_map_size`.", ErrorBacktrace)
+-------------8<-------------
+```
+
+The important part of the output is the part of the message instructing us to `set AFL_MAP_SIZE to 98816`. The coverage map used by ForkserverBytesCoverageSugar is [65536](https://github.com/AFLplusplus/LibAFL/blob/main/libafl_sugar/src/forkserver.rs#L86). When we added ASAN to our instrumentation, the coverage map size needed to track everything grew beyond that default size. We can fix the problem by, first: embiggening the map size used by ForkserverBytesCoverageSugar.
+
+```
+impl ForkserverBytesCoverageSugar<'_> {
+    /// Runs the fuzzer.
+    #[expect(clippy::too_many_lines)]
+    pub fn run(&mut self) {
+        // a large initial map size that should be enough
+        // to house all potential coverage maps for our targets
+        // (we will eventually reduce the used size according to the actual map)
+        const MAP_SIZE: usize = 98_816;
+
+        let conf = match self.configuration.as_ref() {
+```
+
+Second: specifying the same during build and execution.
+
+```
+[tasks.build-libpcap]
+env = { "CC" = "afl-clang-lto", "LLVM_CONFIG" = "llvm-config-19", "AFL_MAP_SIZE" = "98816", "AFL_USE_ASAN" = "1" }
+-------------8<-------------
+[tasks.build-tcpdump.env]
+"CC" = "afl-clang-lto"
+"LLVM_CONFIG" = "llvm-config-19"
+"AFL_USE_ASAN" = "1"
+"AFL_MAP_SIZE" = "98816"
+-------------8<-------------
+```
+
+Ok, after we rebuild everything, that will get us ready to…
+
+## Commence Fuzzing!
+
+Alright, this is it, let’s kick off our fuzzer again! While we’re at it, let’s spin up a few additional cores.
+
+```
+AFL_MAP_SIZE=98816 ASAN_OPTIONS=abort_on_error=1 ./build/exercise-3 -i corpus/ -o solutions/ -c 0 1 2 3 -t ./build/sbin/tcpdump --args -vr @@
+```
+
+## Results
+
+Ok, normally, this is where we celebrate finding the bug and dole out the high-fives. Unfortunately, after 13 hours of fuzzing on four cores, we still haven’t found any crashes. I suspect this is largely due to our haphazardly developed initial corpus.
+
+```
+[Stats       #1]  (GLOBAL) run time: 13h-14m-59s, clients: 5, corpus: 4697, objectives: 0, executions: 10418217, exec/sec: 593
+                  (CLIENT) corpus: 1174, objectives: 0, executions: 2615242, exec/sec: 116, shared_mem: 3081/98816 (3%)
+[Stats       #3]  (GLOBAL) run time: 13h-15m-6s, clients: 5, corpus: 4697, objectives: 0, executions: 10419122, exec/sec: 577
+                  (CLIENT) corpus: 1175, objectives: 0, executions: 2610368, exec/sec: 245, shared_mem: 3081/98816 (3%)
+[Stats       #2]  (GLOBAL) run time: 13h-15m-8s, clients: 5, corpus: 4697, objectives: 0, executions: 10420013, exec/sec: 583
+                  (CLIENT) corpus: 1173, objectives: 0, executions: 2610915, exec/sec: 119, shared_mem: 3081/98816 (3%)
+[Stats       #4]  (GLOBAL) run time: 13h-15m-10s, clients: 5, corpus: 4697, objectives: 0, executions: 10420922, exec/sec: 597
+                  (CLIENT) corpus: 1175, objectives: 0, executions: 2584397, exec/sec: 87, shared_mem: 3081/98816 (3%)
+```
+
+Since we’re still finding new edges and the corpus is still growing, we’ll let it run a while longer and see if it bears fruit by tomorrow morning. If it doesn’t we’ll try something different.
+
+# Minimizing the Corpus
+
+Ok, it’s tomorrow morning and here is the status of the fuzzer.
+
+```
+[Stats       #1]  (GLOBAL) run time: 21h-27m-45s, clients: 5, corpus: 5740, objectives: 0, executions: 16353121, exec/sec: 1118
+                  (CLIENT) corpus: 1435, objectives: 0, executions: 4108014, exec/sec: 64, shared_mem: 3521/98816 (4%)
+[Stats       #2]  (GLOBAL) run time: 21h-27m-45s, clients: 5, corpus: 5741, objectives: 0, executions: 16353871, exec/sec: 1120
+                  (CLIENT) corpus: 1434, objectives: 0, executions: 4108905, exec/sec: 69, shared_mem: 3516/98816 (3%)
+[Stats       #3]  (GLOBAL) run time: 21h-27m-45s, clients: 5, corpus: 5742, objectives: 0, executions: 16354479, exec/sec: 1123
+                  (CLIENT) corpus: 1435, objectives: 0, executions: 4103586, exec/sec: 135, shared_mem: 3516/98816 (3%)
+[Stats       #4]  (GLOBAL) run time: 21h-27m-45s, clients: 5, corpus: 5743, objectives: 0, executions: 16354489, exec/sec: 1123
+                  (CLIENT) corpus: 1436, objectives: 0, executions: 4032616, exec/sec: 853, shared_mem: 3516/98816 (3%)
+```
+
+We’re still finding new coverage, which is good, but we still haven’t found the bug we expect to find. Fear not! We’ll use this as an opportunity to touch on corpus minimization. Our goal in minimizing the corpus is to ensure that we have the smallest corpus possible that still exercises all of our currently known coverage. Additionally, we can take the minimized corpus and ensure that each testcase uses the smallest number of bytes possible to exercise the coverage for which it’s responsible. Let’s walk through each of these steps.
+
+## optimin
+
+While poking around the afl++ repo, looking for `afl-cmin`, I came across [optimin](https://github.com/HexHive/fuzzing-seed-selection). It appears to be an improvement upon `afl-cmin` that uses a SAT solver to reduce the corpus. It sounds like the new hotness, so we’ll give it a try.
+
+> UPDATE 2025-02-09: the AFL++ team removed optimin from their `utils` folder “because it loses coverage due to a bug and is unmaintained”. I’ve provided a link to the original repo instead to maintain the original post’s flow. The build steps below should be adjusted to account for the new repo url and filesystem paths.
+
+### Build
+
+We can build optimin pretty easily with the following commands.
+
+```
+git clone https://github.com/AFLplusplus/AFLplusplus.git
+cd AFLplusplus/utils/optimin
+./build_optimin.sh
+mv optimin ../../../exercise-3
+```
+
+Now we should have optimin available for us to run.
+
+### Setup
+
+Before we can run `optimin`, we need to do a little prep-work.
+
+First, we need to copy the current working corpus from the `solutions/queue` directory into new directory.
+
+> I prefer to have backups of the corpus et al while performing minimization, in case something goes awry
+
+```
+ls -al solutions/queue
+════════════════════════════
+
+-------------8<-------------
+-rw-rw-r-- 1 epi epi     68 Nov 23 05:26 101d5bcf0398432c
+-rw-rw-r-- 1 epi epi      0 Nov 23 05:27 .edf747f38f3a3ed9.lafl_lock
+-rw-rw-r-- 1 epi epi     60 Nov 23 05:27 edf747f38f3a3ed9
+-rw-rw-r-- 1 epi epi      0 Nov 23 05:27 .5823e948f978dd70.lafl_lock
+-rw-rw-r-- 1 epi epi    240 Nov 23 05:27 5823e948f978dd70
+-rw-rw-r-- 1 epi epi      0 Nov 23 05:27 .44c1a3e537f1b09e.lafl_lock
+-rw-rw-r-- 1 epi epi     53 Nov 23 05:27 44c1a3e537f1b09e
+```
+
+```
+cp -r solutions/queue/* queue_for_cmin
+ls -al queue_for_cmin
+════════════════════════════
+
+-------------8<-------------
+-rw-rw-r-- 1 epi epi     43 Nov 23 05:26 ffaef2b98d20713c
+-rw-rw-r-- 1 epi epi     53 Nov 23 05:26 ffa60238f4e305fe
+-rw-rw-r-- 1 epi epi     41 Nov 23 05:26 ff94e6a08790193a
+-rw-rw-r-- 1 epi epi      4 Nov 23 05:26 ff771aa8788e3615
+-rw-rw-r-- 1 epi epi    119 Nov 23 05:26 ff6ebe339681a681
+-rw-rw-r-- 1 epi epi    172 Nov 23 05:26 ff6c65bc78bde552
+```
+
+### Execute
+
+With our new `queue_for_cmin` folder, we can run optimin. We’ll need to pass it some of the same environment variables we use while fuzzing in order for it to work correctly.
+
+```
+AFL_MAP_SIZE=98816 ASAN_OPTIONS=abort_on_error=1 ./optimin -f -i queue_for_cmin -o cminnified ./build/sbin/tcpdump -vr @@
+════════════════════════════
+
+[*] Locating seeds in 'queue_for_cmin'...
+[+]   Completed in 0 s
+[*] Testing the target binary with 'queue_for_cmin/61b18997c08102bd`...
+[+]   Completed in 0 s
+[+] OK, 47 tuples recorded
+[*] Running afl-showmap on 5791 seeds...
+[*] Reading from directory 'queue_for_cmin'...
+[*] Spinning up the fork server...
+[+] All right - fork server is up.
+[*] Target map size: 98816
+[*] Scanning 'queue_for_cmin'...
+[+]   Completed in 60 s
+[*] Generating constraints...
+[+]   Completed in 0 s
+[*] Solving...
+[+]   Completed in 3 s
+[*] Copying 509 seeds to 'cminnified'...
+[+]   Completed in 0 s
+[+] Done!
+```
+
+As shown in the output above, optimin reduced our 5791 files down to 509, nice! Next up is phase two of our minimization process.
+
+# Minimizing the Testcases
+
+Phase two is testcase minimization. For each testcase file, we’ll attempt to remove as much data from the testcase as possible, while still ensuring that the binary reaches the same coverage it did before the minimization.
+
+## afl-tmin
+
+The tool we’ll use for this section is [afl-tmin](https://github.com/google/AFL/blob/master/afl-tmin.c). This tool will modify each file in our culled corpus so that it only contains the bytes necessary to still hit its intended code paths.
+
+### Build
+
+Just like optimin, we’ll need to build afl-tmin from souce.
+
+```
+cd AFLplusplus/
+make afl-tmin
+mv afl-tmin ../exercise-3
+```
+
+### Execute
+
+Next, we’ll use my personal wrapper for afl-tmin to execute it in parallel (afl-tmin only operates on a single file at a time). The script below is based on the [afl-ptmin.sh script seen here](https://foxglovesecurity.com/2016/03/15/fuzzing-workflows-a-fuzz-job-from-start-to-finish/).
+
+```
+#!/usr/bin/env python3
+import argparse
+import subprocess
+from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor
+
+
+def absolute_path(unvalidated):
+    """ Helper to turn relative paths to absolute and validate they exist """
+    path = Path(unvalidated).resolve()
+
+    if path.exists():
+        return str(path)
+    else:
+        raise argparse.ArgumentTypeError(f"{str(path)} does not exist; exiting.")
+
+
+def main(user_input):
+    """ Kicks off N number of processes in order to run afl-tmin against the input directory """
+    commands = list()
+
+    for file in Path(user_input.input).iterdir():
+        outfile = Path(user_input.output) / file.stem
+
+        tmp_cmd = [
+            user_input.afl_tmin_path,
+            "-i",
+            str(file),
+            "-o",
+            str(outfile),
+            "--",
+            user_input.target,
+        ]
+
+        if user_input.args:
+            tmp_cmd += user_input.args
+
+        commands.append(tmp_cmd)
+
+    with ProcessPoolExecutor(max_workers=user_input.cores) as executor:
+        executor.map(subprocess.run, commands)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "input", type=absolute_path, help="directory used as input to afl-tmin"
+    )
+    parser.add_argument(
+        "output",
+        type=absolute_path,
+        help="directory to store results after running afl-tmin",
+    )
+    parser.add_argument("target", type=absolute_path, help="path to fuzz target")
+    parser.add_argument(
+        "-a",
+        "--args",
+        help="arguments passed to fuzz target (hint: must be last in cli)",
+        nargs=argparse.REMAINDER,
+    )
+    parser.add_argument(
+        "-c", "--cores", default=6, type=int, help="number of CPU cores to use"
+    )
+    parser.add_argument(
+        "--afl-tmin-path",
+        type=absolute_path,
+        default="./afl-tmin",
+        help="path to afl-tmin binary",
+    )
+
+    args = parser.parse_args()
+
+    main(args)
+```
+
+```
+AFL_MAP_SIZE=98816 ASAN_OPTIONS=abort_on_error=1:symbolize=0 ./afl-tmin-threaded.py cminnified tminnified ./build/sbin/tcpdump --args -vr @@
+```
+
+Even with the wrapper script, this step can take awhile, but once it’s complete we’re ready to start fuzzing again!
+
+# Running the Fuzzer (again)
+
+Before we start round two, we need to clean things up a bit.
+
+> I still prefer to keep old the corpus around, just in case
+
+```
+mv corpus corpus.old
+mv tminnified corpus
+rm -rvf solutions/queue
+```
+
+Good stuff, now we can restart the fuzzer. However, let’s throw a few extra cores at it this time.
+
+```
+AFL_MAP_SIZE=98816 ASAN_OPTIONS=abort_on_error=1 ./build/exercise-3 -i corpus/ -o solutions/ -c 0 1 2 3 4 5 -t ./build/sbin/tcpdump --args -vr @@
+════════════════════════════
+
+[Stats       #3]  (GLOBAL) run time: 0h-0m-59s, clients: 7, corpus: 2737, objectives: 0, executions: 5159, exec/sec: 1921
+                  (CLIENT) corpus: 514, objectives: 0, executions: 2486, exec/sec: 1907, shared_mem: 3501/98816 (3%)
+[Stats       #4]  (GLOBAL) run time: 0h-0m-59s, clients: 7, corpus: 2738, objectives: 0, executions: 5186, exec/sec: 1925
+                  (CLIENT) corpus: 429, objectives: 0, executions: 510, exec/sec: 2, shared_mem: 3494/98816 (3%)
+[Stats       #5]  (GLOBAL) run time: 0h-0m-59s, clients: 7, corpus: 2738, objectives: 0, executions: 5186, exec/sec: 1927
+                  (CLIENT) corpus: 437, objectives: 0, executions: 583, exec/sec: 4, shared_mem: 3485/98816 (3%)
+[Stats       #6]  (GLOBAL) run time: 0h-0m-59s, clients: 7, corpus: 2738, objectives: 0, executions: 5186, exec/sec: 1928
+                  (CLIENT) corpus: 494, objectives: 0, executions: 509, exec/sec: 2, shared_mem: 3521/98816 (4%)
+[Stats       #2]  (GLOBAL) run time: 0h-0m-59s, clients: 7, corpus: 2738, objectives: 0, executions: 5186, exec/sec: 1929
+                  (CLIENT) corpus: 422, objectives: 0, executions: 533, exec/sec: 3, shared_mem: 3480/98816 (3%)
+[Stats       #1]  (GLOBAL) run time: 0h-1m-0s, clients: 7, corpus: 2738, objectives: 0, executions: 5186, exec/sec: 1870
+                  (CLIENT) corpus: 441, objectives: 0, executions: 538, exec/sec: 3, shared_mem: 3490/98816 (3%)
+```
+
+Sweet! I’m basically live blogging this for whatever reason, so let’s check back this evening and see if we’ve had any luck.
+
+------------------------------------------------------------------------
+
+> Narrator voice: they did not have any luck
+
+Ok, I was pretty tired last night and didn’t dink with anything. The current fuzzer status is shown below.
+
+```
+[Stats       #6]  (GLOBAL) run time: 22h-29m-15s, clients: 7, corpus: 8718, objectives: 0, executions: 24869599, exec/sec: 2673                                                                    
+                  (CLIENT) corpus: 1462, objectives: 0, executions: 3910855, exec/sec: 96, shared_mem: 4389/98816 (4%)                                                                             
+[Stats       #1]  (GLOBAL) run time: 22h-29m-16s, clients: 7, corpus: 8718, objectives: 0, executions: 24869708, exec/sec: 2681                                                                    
+                  (CLIENT) corpus: 1449, objectives: 0, executions: 4169076, exec/sec: 763, shared_mem: 4385/98816 (4%)                                                                            
+[Stats       #4]  (GLOBAL) run time: 22h-29m-19s, clients: 7, corpus: 8718, objectives: 0, executions: 24870010, exec/sec: 2581                                                                    
+                  (CLIENT) corpus: 1454, objectives: 0, executions: 4182239, exec/sec: 568, shared_mem: 4385/98816 (4%)                                                                            
+[Stats       #5]  (GLOBAL) run time: 22h-29m-22s, clients: 7, corpus: 8718, objectives: 0, executions: 24870862, exec/sec: 1172                                                                    
+                  (CLIENT) corpus: 1450, objectives: 0, executions: 4202902, exec/sec: 120, shared_mem: 4382/98816 (4%)                                                                            
+[Stats       #2]  (GLOBAL) run time: 22h-29m-26s, clients: 7, corpus: 8718, objectives: 0, executions: 24871727, exec/sec: 706                                                                     
+                  (CLIENT) corpus: 1446, objectives: 0, executions: 4180823, exec/sec: 178, shared_mem: 4384/98816 (4%)                                                                            
+[Stats       #3]  (GLOBAL) run time: 22h-29m-30s, clients: 7, corpus: 8718, objectives: 0, executions: 24872605, exec/sec: 702                                                                     
+```
+
+We’re still finding new coverage, but judging from our lack of crashes, we don’t appear to be finding the branches that we want to hit. Let’s move on to round three and see if we can have better success with a different strategy.
+
+# Visualizing Coverage
+
+Alright, the intuition we should be feeling at this point is that the size/complexity of libpcap and tcpdump is forcing our fuzzer to explore a bunch of code paths that aren’t interesting to us. Since we know the path we want to hit from the CVE (`bootp_print` function in `print-bootp.c`), let’s check if our fuzzer is making it anywhere near that code.
+
+## afl-cov
+
+We’ll determine what code our fuzzer has explored by generating a coverage report. The coverage report will allow us to drill down into the source code and see exactly what lines/branches we are/aren’t hitting during execution. In order to generate our report, we’ll use [afl-cov](https://github.com/vanhauser-thc/afl-cov).
+
+### Setup
+
+Let’s begin by getting our dependencies installed. We’ll need `lcov` to generate the final web report, and the `afl-cov` project itself.
+
+```
+sudo apt install lcov
+```
+
+```
+git clone https://github.com/vanhauser-thc/afl-cov.git
+```
+
+Next, we’ll need to get a working directory prepped, preferably outside of the fuzzing directory.
+
+> fuzzing-101-solutions
+
+```
+mkdir exercise-3-gcov
+mkdir exercise-3-gcov/build
+cp -r exercise-3/libpcap exercise-3-gcov
+cp -r exercise-3/tcpdump exercise-3-gcov
+cp -r exercise-3/solutions exercise-3-gcov
+```
+
+We can also remove the lock files from our copied `solutions` directory.
+
+```
+find exercise-3-gcov/solutions/queue -empty -delete
+```
+
+Ok, now our working directory should look like this:
+
+```
+ls -al exercise-3-gcov
+════════════════════════════
+
+drwxrwxr-x  7 epi epi  4096 Nov 23 19:45 build
+drwxrwxr-x  6 epi epi 32768 Nov 24 06:04 tcpdump
+drwxrwxr-x 14 epi epi 12288 Nov 24 06:04 libpcap
+drwxrwxr-x  5 epi epi  4096 Nov 24 06:04 solutions
+```
+
+That’s all of the prepwork needed, let’s move on to the builds.
+
+### Build
+
+Before we can generate a coverage report, we need to instrument our fuzz target (tcpdump+libpcap) with a different set of instrumentation than we used for fuzzing. Specifically, we’ll need the `-fprofile-arcs` and `-ftest-coverage` flags passed to our compiler. Additionally, we’ll need to add `--coverage` to our linker args, since we’ll use clang insted of gcc.
+
+Thankfully, we don’t need to bother too much about all of this, as afl-cov provides a handy shell script to deal with all of that for us. We can see the build script in action below.
+
+> exercise-3-gcov/libpcap
+
+```
+make clean
+/opt/afl-cov/afl-cov-build.sh -c ./configure --prefix=$(pwd)/../build; make
+make install
+```
+
+> exercise-3-gcov/tcpdump
+
+```
+make clean 
+CFLAGS=-I$(pwd)/../build/include/ LDFLAGS=-L$(pwd)/../build/lib/ /opt/afl-cov/afl-cov-build.sh -c ./configure --prefix=$(pwd)/../build ; make
+make install
+sudo setcap cap_sys_admin+epi ../build/sbin/tcpdump
+```
+
+### Satisfy Constraints
+
+Before we can run afl-cov, we need to adjust the filenames that libafl generated, as they don’t jive with what afl-cov expects. The simple python script below is enough to allow us to proceed, we just need to be in `solutions/queue` when we run it.
+
+```
+from pathlib import Path
+
+for i, path in enumerate(Path().iterdir()):
+    print(path.rename(f"id:{i:06}"))
+```
+
+> exercise-3-gcov/solutions/queue
+
+```
+python3 ../../rename.py
+════════════════════════════
+
+-------------8<-------------
+id:013113
+id:013114
+id:013115
+```
+
+### Execute
+
+Alright, now we can run afl-cov. There’s another handy wrapper script that abstracts away most of the command complexity, leaving us with two parameters to specify: our solutions directory, and the command line needed to invoke our fuzz target.
+
+```
+/opt/afl-cov/afl-cov.sh -c solutions "./build/sbin/tcpdump -vr @@"
+════════════════════════════                                     
+
+*** Imported 13116 new test cases from: /home/epi/PycharmProjects/fuzzing-101-solutions/exercise-3-gcov/solutions/queue
+                                                                                                 
+    [+] AFL test case: id:000000 (0 / 13116), cycle: 0 
+    [+] AFL test case: id:000001 (1 / 13116), cycle: 0 
+    [+] AFL test case: id:000002 (2 / 13116), cycle: 0 
+    [+] AFL test case: id:000003 (3 / 13116), cycle: 0 
+
+-------------8<-------------
+
+    [+] Processed 13116 / 13116 test cases.
+
+    [+] Final zero coverage report: /home/epi/PycharmProjects/fuzzing-101-solutions/exercise-3-gcov/solutions/cov/zero-cov
+    [+] Final positive coverage report: /home/epi/PycharmProjects/fuzzing-101-solutions/exercise-3-gcov/solutions/cov/pos-cov
+        lines......: 16.3% (7348 of 45011 lines)
+        functions..: 24.5% (366 of 1495 functions)
+    [+] Final lcov web report: /home/epi/PycharmProjects/fuzzing-101-solutions/exercise-3-gcov/solutions/cov/web/index.html
+```
+
+### Analysis
+
+Lastly, we just need to open up the html file afl-cov just produced. When we do, we’re presented with the following:
+
+![lcov-home](https://epi052.gitlab.io/notes-to-self/img/fuzzing-part-3/lcov-home.png)
+
+We can use the website to drill down into `tcpdump`, where we see `print-bootp.c`’s summary.
+
+![bootp-summary](https://epi052.gitlab.io/notes-to-self/img/fuzzing-part-3/bootp-summary.png)
+
+As suspected, we’re not even hitting the code we care about. Let’s see how we can fix that in the next section.
+
+# Forcing Immutability
+
+Even though our fuzzer would likely reach the bootp code eventually, let’s help it along by jamming an immutable bootp header into our fuzzer’s output. Inserting static data that forces a certain code path can be useful for reaching stubborn code paths. A similar technique is used when dealing with things like CRC and cryptographic checks. We can patch binaries/source in order to reach code paths that our fuzzer would otherwise have difficulty exploring naturally.
+
+## libafl/executors/forkserver.rs
+
+A simple way of adding some static data to our fuzzer is to simply modify the forkserver implementation. We already know that it writes its data out to a file named `.cur_input`. We’ll just prepend our header onto the bytes that get written to that file. The header itself is simply a hexdump of the input file we created with `create-bootp.py`.
+
+> libafl/executors/forkserver.rs
+
+```
+        if self.uses_shmem_testcase {
+            debug_assert!(
+                self.map.is_some(),
+                "The uses_shmem_testcase() bool can only exist when a map is set"
+            );
+            // # Safety
+            // Struct can never be created when uses_shmem_testcase is true and map is none.
+            let map = unsafe { self.map.as_mut().unwrap_unchecked() };
+            // The first four bytes declares the size of the shmem.
+            map.as_slice_mut()[..SHMEM_FUZZ_HDR_SIZE]
+                .copy_from_slice(&input_size_in_bytes[..SHMEM_FUZZ_HDR_SIZE]);
+            map.as_slice_mut()[SHMEM_FUZZ_HDR_SIZE..(SHMEM_FUZZ_HDR_SIZE + input_size)]
+                .copy_from_slice(&input_bytes.as_slice()[..input_size]);
+        } else {
+            let mut immutable_header = vec![
+                // pcap header
+                0xd4, 0xc3, 0xb2, 0xa1, 0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0xe4, 0x00, 0x00, 0x00, 0xb7, 0xc8, 0x9e, 0x61,
+                0x3b, 0x35, 0x0e, 0x00, 0x08, 0x01, 0x00, 0x00, 0x08, 0x01, 0x00, 0x00,
+                // ip header next
+                0x45, 0x00, 0x01, 0x08, 0x00, 0x01, 0x00, 0x00, 0x40, 0x11, 0x7a, 0xe1, 0x7f, 0x00,
+                0x00, 0x01, 0x7f, 0x01, 0x01, 0x01, // udp header next
+                0x00, 0x43, 0x00, 0x44, 0x00, 0xf4, 0xf7, 0x7a,
+                // everything after is bootp
+            ];
+
+            immutable_header.extend_from_slice(&input_bytes.as_slice()[..input_size]);
+
+            self.input_file.write_buf(&immutable_header)?;
+        }
+```
+
+Our code begins in the `else` branch and starts out with our pcap header that `tcpdump` and `libpcap` expect to see when reading from a file. Followed by the IP and UDP packet headers. Since all mutational stages have completed at this point in the code, none of the bytes in the `immutable_header` will ever change.
+
+After the header, we simply add on the mutated bytes.
+
+That’s really all we need at this point, let’s rebuild the fuzzer and then set a watch on .cut_input to make sure our header is static.
+
+![immutable](https://epi052.gitlab.io/notes-to-self/img/fuzzing-part-3/immutable.gif)
+
+Everything looks good, now we can let the fuzzer run and check back later.
+
+------------------------------------------------------------------------
+
+> Narrator voice: 7 hours later…
+
+Effin’ A Cotton, we’ve got some crashes!
+
+```
+[Stats       #1]  (GLOBAL) run time: 7h-15m-41s, clients: 7, corpus: 4156, objectives: 0, executions: 8889243, exec/sec: 594
+                  (CLIENT) corpus: 691, objectives: 6, executions: 1482704, exec/sec: 98, shared_mem: 2272/98816 (2%)
+[Stats       #6]  (GLOBAL) run time: 7h-15m-47s, clients: 7, corpus: 4156, objectives: 0, executions: 8889962, exec/sec: 584
+                  (CLIENT) corpus: 705, objectives: 6, executions: 1478511, exec/sec: 97, shared_mem: 2273/98816 (2%)
+[Stats       #5]  (GLOBAL) run time: 7h-15m-49s, clients: 7, corpus: 4156, objectives: 0, executions: 8890672, exec/sec: 1195
+                  (CLIENT) corpus: 686, objectives: 6, executions: 1481949, exec/sec: 84, shared_mem: 2273/98816 (2%)
+[Stats       #4]  (GLOBAL) run time: 7h-15m-50s, clients: 7, corpus: 4156, objectives: 0, executions: 8891476, exec/sec: 1163
+                  (CLIENT) corpus: 688, objectives: 6, executions: 1482101, exec/sec: 105, shared_mem: 2273/98816 (2%)
+[Stats       #3]  (GLOBAL) run time: 7h-15m-51s, clients: 7, corpus: 4156, objectives: 0, executions: 8892088, exec/sec: 1756
+                  (CLIENT) corpus: 691, objectives: 6, executions: 1483806, exec/sec: 86, shared_mem: 2272/98816 (2%)
+[Stats       #2]  (GLOBAL) run time: 7h-15m-56s, clients: 7, corpus: 4156, objectives: 0, executions: 8892884, exec/sec: 588
+                  (CLIENT) corpus: 695, objectives: 6, executions: 1483813, exec/sec: 90, shared_mem: 2273/98816 (2%)
+```
+
+Alright, this post spiraled a bit, but that’s ok. We explored some things we otherwise wouldn’t have covered until later posts, which isn’t a bad thing. Hopefully we’ll see eachother again in Part 4, but it’s bye for now!
+
+# Additional Resources
+
+1.  [Fuzzing101](https://github.com/antonio-morales/Fuzzing101)
+2.  [LibAFL](https://github.com/AFLplusplus/LibAFL)
+3.  [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+4.  [libafl_sugar](https://docs.rs/libafl_sugar/0.15.1/libafl_sugar/)
+5.  [scapy](https://scapy.readthedocs.io/en/latest/introduction.html)
+6.  [typed-builder](https://github.com/idanarye/rust-typed-builder)
+7.  [clap](https://github.com/clap-rs/clap)
+
+------------------------------------------------------------------------
+
+Share: [Twitter](https://twitter.com/intent/tweet?text=Fuzzing101%20with%20LibAFL%20-%20Part%20III%3A%20Fuzzing%20tcpdump&url=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-20-fuzzing-101-with-libafl-part-3%2F) [Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-20-fuzzing-101-with-libafl-part-3%2F)

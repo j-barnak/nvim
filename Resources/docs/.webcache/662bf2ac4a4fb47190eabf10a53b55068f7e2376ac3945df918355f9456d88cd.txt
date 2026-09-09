@@ -1,0 +1,1459 @@
+# Fuzzing101 with LibAFL - Part IV: Fuzzing LibTIFF
+
+November 27, 2021 • 57 min read
+
+### Updated: Dec 23, 2025 // LibAFL Version 0.15.4
+
+Twitter user [Antonio Morales](https://twitter.com/nosoynadiemas?lang=en) created the [Fuzzing101](https://github.com/antonio-morales/Fuzzing101) repository in August of 2021. In the repo, he has created exercises and solutions meant to teach the basics of fuzzing to anyone who wants to learn how to find vulnerabilities in real software projects. The repo focuses on [AFL++](https://github.com/AFLplusplus/AFLplusplus) usage, but this series of posts aims to solve the exercises using [LibAFL](https://github.com/AFLplusplus/LibAFL) instead. We’ll be exploring the library and writing fuzzers in Rust in order to solve the challenges in a way that closely aligns with the suggested AFL++ usage.
+
+Since this series will be looking at Rust source code and building fuzzers, I’m going to assume a certain level of knowledge in both fields for the sake of brevity. If you need a brief introduction/refresher to/on coverage-guided fuzzing, please take a look [here](https://github.com/antonio-morales/Fuzzing101#what-is-fuzzing). As always, if you have any questions, please don’t hesitate to reach out.
+
+This post will cover fuzzing libtiff in order to solve [Exercise 4](https://github.com/antonio-morales/Fuzzing101/tree/main/Exercise%204). The companion code for this exercise can be found at my [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+
+Previous posts:
+
+- [Part I: Fuzzing Xpdf](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/)
+- [Part I.V: Speed Improvements to Part I](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/)
+- [Part II: Fuzzing libexif](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-2/)
+- [Part III: Fuzzing tcpdump](https://epi052.gitlab.io/notes-to-self/blog/2021-11-20-fuzzing-101-with-libafl-part-3/)
+
+------------------------------------------------------------------------
+
+# Quick Reference
+
+This is just a summary of the different components used in the upcoming post. It’s meant to be used later as an easy way of determining which components are used in which posts.
+
+```
+{
+  "Fuzzer": {
+    "type": "StdFuzzer",
+    "Corpora": {
+      "Input": "OnDiskCorpus",
+      "Output": "OnDiskCorpus"
+    },
+    "Input": "BytesInput",
+    "Observers": [
+      "VariableMapObserver": {
+        "coverage map": "EDGES_MAP",
+      },
+      "TimeObserver",
+      "HitcountsMapObserver"
+    ],
+    "Feedbacks": {
+      "Pure": ["MaxMapFeedback", "TimeFeedback"],
+      "Objectives": ["MaxMapFeedback", "CrashFeedback"]
+    },
+    "State": {
+      "StdState": {
+        "metadata": ["Tokens"]
+      },
+    },
+    "Launcher": {
+      "Monitor": "MultiMonitor",
+      "EventManager": "LlmpRestartingEventManager",
+    },
+    "Scheduler": "IndexesLenTimeMinimizerScheduler",
+    "Executors": [
+      "QemuExecutor": {
+        "EmulatorModules": ["StdEdgeCoverageModule", "QemuFSModule", "QemuGPRegModule", "AsanGuestModule"]
+      },
+    ],
+    "Mutators": [
+      "HavocScheduledMutator": {
+        "mutations": ["havoc_mutations", "token_mutations"]
+      }
+    ],
+    "Stages": ["StdMutationalStage"]
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+# Intro
+
+Before anything, I just want to thank all the awesome folks in the fuzzing discord. They’re incredibly knowledgeable and helped me immensely while working through this series of posts.
+
+Welcome back! This post will cover fuzzing [libtiff](https://gitlab.com/libtiff/libtiff) in the hopes of finding [CVE-2016-9297](https://www.cvedetails.com/cve/CVE-2016-9297/) in version 4.0.6.
+
+According to Mitre regarding CVE-2017-13028, the `TIFFFetchNormalTag` function in LibTiff 4.0.6 allows remote attackers to cause a denial of service (out-of-bounds read) via crafted `TIFF_SETGET_C16ASCII` or `TIFF_SETGET_C32_ASCII` tag values.
+
+We’re going to switch it up this time and arbitrarily enforce some constraints on our session. We’re going to fuzz the `tiffinfo` binary, but we’re going to treat it as a blackbox binary, i.e. pretend we don’t have source code and only have the binary itself to work with. But wait, there’s more! We’re also going to compile it for a different architecture than our host machine. This will allow us to explore LibAFL from a binary-only fuzzing perspective.
+
+Now that our goal is clear, let’s jump in!
+
+# Exercise 4 Setup
+
+Just like our other exercises, we’ll start with overall project setup.
+
+## exercise-4
+
+First, we’ll modify our top-level Cargo.toml to include the new project.
+
+> fuzzing-101-solutions/Cargo.toml
+
+```
+[workspace]
+members = [
+    "exercise-1",
+    "exercise-2",
+    "exercise-3",
+    "exercise-4"
+]
+```
+
+And then create the project itself.
+
+```
+cargo new exercise-4
+════════════════════════════
+
+Created binary (application) `exercise-4` package
+```
+
+## libtiff
+
+Next, let’s grab our target library: libtiff
+
+> fuzzing-101-solutions/exercise-4
+
+```
+wget http://download.osgeo.org/libtiff/tiff-4.0.6.tar.gz
+tar xf tiff-4.0.6.tar.gz
+mv tiff-4.0.6 tiff
+rm tiff-4.0.6.tar.gz
+```
+
+Once complete, our directory structure should look similar to what’s below.
+
+```
+exercise-4
+├── Cargo.toml                                                   
+├── src                                      
+│   └── main.rs                               
+└── tiff                                  
+    ├── aclocal.m4                           
+-------------8<-------------
+```
+
+Like we’ve done in the past, let’s make sure we can build everything normally. We’ll start with creating our `build` directory.
+
+> fuzzing-101-solutions/exercise-4
+
+```
+mkdir build
+```
+
+Recall from the intro that we’re going to cross-compile for a different architecture. Specifically, we’ll be cross-compiling for the 64-bit arm architecture, aka **aarch64**. In order to do that, we’ll need an alternate gcc toolchain. The command to install the toolchain (for apt-based distros) is below.
+
+```
+sudo apt install gcc-aarch64-linux-gnu
+```
+
+After that, we use our aarch64 toolchain to compile libtiff.
+
+```
+cd tiff/
+./configure --prefix="$(pwd)/../build/" --target aarch64-unknown-linux-gnu --disable-cxx --host x86_64-unknown-linux-gnu CC=aarch64-linux-gnu-gcc
+make
+make install
+```
+
+Once complete, our build directory will look like this:
+
+```
+ls -al ../build/
+════════════════════════════
+
+drwxrwxr-x 2 epi epi 4096 Nov 26 14:32 include
+drwxrwxr-x 2 epi epi 4096 Nov 26 14:32 bin
+drwxrwxr-x 4 epi epi 4096 Nov 26 14:32 share
+drwxrwxr-x 3 epi epi 4096 Nov 26 14:32 lib
+```
+
+We can confirm that our build succeeded by checking for the architecture of our target binary in the `bin` folder.
+
+```
+file ../build/bin/tiffinfo
+════════════════════════════
+
+../build/bin/tiffinfo: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux-aarch64.so.1, BuildID[sha1]=d10ed7cea8959c9f50fe97c2b552b093eec9fb57, for GNU/Linux 3.7.0, with debug_info, not stripped
+```
+
+That will do as a confirmation that we’re properly setup.
+
+## Makefile.toml
+
+Once again, we’ll solidify all of our currently known build steps, along with a few standard ones, into our `Makefile.toml`.
+
+```
+# composite tasks
+[tasks.clean]
+dependencies = ["clean-cargo", "clean-build-dir"]
+
+[tasks.build]
+command = "true"
+args = []
+dependencies = [
+    "build-directories",
+    "build-cargo",
+    "copy-project-to-build",
+    "configure-libtiff",
+    "build-libtiff",
+]
+
+# clean up task
+[tasks.clean-cargo]
+command = "cargo"
+args = ["clean"]
+
+[tasks.clean-libtiff]
+command = "make"
+args = ["-C", "tiff", "clean"]
+
+[tasks.clean-build-dir]
+command = "rm"
+args = ["-rf", "build/"]
+
+# build tasks
+[tasks.build-cargo]
+command = "cargo"
+args = ["build", "--release"]
+
+[tasks.build-directories]
+command = "mkdir"
+args = ["-p", "corpus", "crashes", "build"]
+
+[tasks.copy-project-to-build]
+command = "cp"
+args = ["../target/release/exercise-4", "build/"]
+
+[tasks.configure-libtiff]
+cwd = "tiff"
+script = """
+./configure --prefix="${CARGO_MAKE_WORKING_DIRECTORY}/../build/" --target aarch64-unknown-linux-gnu --disable-cxx --host x86_64-unknown-linux-gnu CC=aarch64-linux-gnu-gcc
+"""
+
+[tasks.build-libtiff]
+cwd = "tiff"
+script = """
+make
+make install
+"""
+```
+
+We can perform a test run of our build task
+
+```
+cargo make build
+```
+
+And then see that we’re still building our targets correctly.
+
+```
+file ./build/bin/tiffinfo
+════════════════════════════
+
+../build/bin/tiffinfo: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux-aarch64.so.1, BuildID[sha1]=d10ed7cea8959c9f50fe97c2b552b093eec9fb57, for GNU/Linux 3.7.0, with debug_info, not stripped
+```
+
+# QEMU Setup
+
+As noted previously, we’ll be treating `tiffinfo` as if we can’t compile it from source. That means we’ll need a way to inject instrumentation into the target. Additionally, we’re dealing with a 64-bit ARM target, which means we’ll need a way to execute non-native cpu instructions. In order to solve both of these problems, we’ll turn to [QEMU](https://www.qemu.org/)! More specifically, we’re going to use [LibAFL’s QEMU bindings](https://github.com/AFLplusplus/LibAFL/tree/main/crates/libafl_qemu), which recently got a very nice overhaul from [@andreafioraldi](https://twitter.com/andreafioraldi).
+
+According to the QEMU wiki, “QEMU is a generic and open source machine emulator and virtualizer”. We’re interested in QEMU’s user-mode emulation capability, which we’ll leverage to run our aarch64 binary on an x86_64 host machine. QEMU is able to run non-native binaries by executing the target (ARM) instructions using an emulated CPU. During emulated execution, QEMU captures the syscalls made by the target program and forwards them to our host’s kernel. The LibAFL bindings go a step further and, in addition to execution, use QEMU to insert instrumentation at (emulated) runtime. Knowing how we plan to solve our execution and instrumentation problems, let’s check out setting up QEMU.
+
+## debootstrap
+
+One common issue when running non-native binaries via qemu-user is that of missing library dependencies. When emulating a dynamically linked aarch64 binary, the binary will expect a linker like `/lib/ld-linux-aarch64.so.1` and libraries like `libc.so.6` and `libm.so.6`. The binary will expect these dependencies to have been compiled for the same architecture for which it was compiled. Therein lies the crux of the issue: the binary expects ARM libraries that our x86_64 host doesn’t provide. We’ll fix this problem by using [debootstrap](https://wiki.debian.org/Debootstrap). debootstrap is a tool which will install a Debian-based filesystem into a given subdirectory on an already running/installed operating system. Essentially, it creates an entire root filesystem. More importantly, it can build that filesystem with a different architecture’s libraries. We can easily create an aarch64 root filesystem with the following commands:
+
+```
+sudo apt update -y && sudo apt install debootstrap
+mkdir jammy-rootfs
+sudo debootstrap --arch=arm64 jammy jammy-rootfs/
+```
+
+The `debootstrap` command takes awhile to run, but once complete, results in an entire linux filesystem at the specified location, which is pretty slick.
+
+```
+ls -altr jammy-rootfs/
+total 20484
+drwxr-xr-x   2 root root     4096 Apr 19  2021 sys
+drwxr-xr-x   2 root root     4096 Apr 19  2021 proc
+drwxr-xr-x   2 root root     4096 Apr 19  2021 home
+drwxr-xr-x   2 root root     4096 Apr 19  2021 boot
+lrwxrwxrwx   1 root root        8 Dec 26 07:25 sbin -> usr/sbin
+-------------8<-------------
+```
+
+We can check a few things to make sure we have an aarch64-based rootfs.
+
+```
+file jammy-rootfs/lib/aarch64-linux-gnu/ld-2.33.so 
+jammy-rootfs/lib/aarch64-linux-gnu/ld-2.33.so: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, BuildID[sha1]=5c21282c155fd5993099aacf76da8a6cf9176b3c, stripped
+```
+
+```
+file jammy-rootfs/usr/lib/aarch64-linux-gnu/libc-2.33.so 
+jammy-rootfs/usr/lib/aarch64-linux-gnu/libc-2.33.so: ELF 64-bit LSB shared object, ARM aarch64, version 1 (GNU/Linux), dynamically linked, interpreter /lib/ld-linux-aarch64.so.1, BuildID[sha1]=ad13636ad72bcdff7c0f5fe32b97a4e6bb919a11, for GNU/Linux 3.7.0, stripped
+```
+
+Nice, we’ve got aarch64 versions of ld and glibc! That’s all we need to do for QEMU until we’re ready to run the target binary, so let’s keep it moving.
+
+## Makefile.toml
+
+We’ll also take a moment to update our `Makefile.toml`. Whenever we compile our fuzzer and use the LibAFL QEMU bindings, two architecture specific shared objects will be created by `libafl_qemu`. To keep everything together, we’ll want to move those shared objects into our build folder.
+
+To codify the movement of one of them into our build process, we just need to update the `copy-project-to-build` key. We’ll also need to ensure that the ASAN shared object is built with the cross compiler by specifying the `CROSS_CC` environment variable when building with `cargo`.
+
+```
+[tasks.build-cargo]
+env = {CROSS_CC = "aarch64-linux-gnu-gcc"}
+-------------8<-------------
+
+[tasks.copy-project-to-build]
+command = "cp"
+args = [
+    "../target/release/exercise-4",
+    "../target/release/qemu-libafl-bridge/build/libqemu-aarch64.so",
+    "../target/release/libqasan.so",
+    "build/",
+]
+```
+
+With the target and QEMU ready to go, we’re ready to start writing our fuzzer!
+
+# Parser Setup
+
+There used to be a whole section about creating a wholly separate crate from the [parser.rs](https://github.com/epi052/fuzzing-101-solutions/blob/main/exercise-3/src/parser.rs) module we wrote in [part 3](https://epi052.gitlab.io/notes-to-self/blog/2021-11-20-fuzzing-101-with-libafl-part-3/#parser-rs) here, but thankfully, that code was made a lot more robust and included into LibAFL!
+
+[libafl::bolts::cli](https://github.com/AFLplusplus/LibAFL/blob/main/crates/libafl_bolts/src/cli.rs)
+
+With that included, we’ve got a parser we can reuse from here on out and is as simple as adding a line to our Cargo.toml to integrate \***chef’s kiss**\*. Let’s keep it moving.
+
+# Fuzzer Setup
+
+Ok, we have an aarch64 rootfs and a blackbox binary of the same architecture; now we can start gathering the requisite pieces of our fuzzer. Thankfully, the style of fuzzer we’ll be writing is mostly self-contained. We’ll be using LibAFL’s `Launcher`, which does essentially the same thing we’ve done with `LlmpRestartingEventManager` in previous fuzzers, but wrapped in a nicer interface. Also, we’ll be using `libafl_qemu` to deal with the QEMU related bits of the fuzzer.
+
+## Analysis
+
+We should take a moment to lay out our overall strategy. In order to figure out how to proceed, we need to do some analysis on the target.
+
+We know that the CVE advisory cites the `TIFFFetchNormalTag` function as the cause of the issue. In my experience, that kind of information may or may not be accurate. If we dig a little deeper, the comment in the libtiff repo for the commit that fixes the problem reads:
+
+> in TIFFFetchNormalTag(), make sure that values of tags with TIFF_SETGET_C16_ASCII / TIFF_SETGET_C32_ASCII access are null terminated, to avoid potential read outside buffer in \_TIFFPrintField().
+
+So, the fix was applied in `TIFFFetchNormalTag`, but the problem is actually in `_TIFFPrintField`. Looking in binary ninja, using cross references, we can learn that in order to reach `_TIFFPrintField`, our code needs to take a path similar to what’s shown below.
+
+```
+tiffinfo
+└──❯ TIFFPrintDirectory
+    └──❯ _TIFFPrintField
+```
+
+The `tiffinfo` function is only called from `main`.
+
+![tiffinfo-xref](https://epi052.gitlab.io/notes-to-self/img/fuzzing-part-4/tiffinfo-xref.png)
+
+We can see in `main` that the value returned from `TIFFOpen` is eventually passed into `tiffinfo`.
+
+![open-to-info](https://epi052.gitlab.io/notes-to-self/img/fuzzing-part-4/open-to-info.png)
+
+It’s relatively safe to assume that `TIFFOpen` is a wrapper around `fopen` (or similar), and that the opened file is passed into `tiffinfo`.
+
+Looking at `TIFFClientOpen`, which is called by `TIFFOpen`, we can start at the return value to see if we can figure out what’s being returned. It looks like we’re interested in the `x23` variable.
+
+![open-return](https://epi052.gitlab.io/notes-to-self/img/fuzzing-part-4/open-return.png)
+
+If we go back up to the start, we see a `malloc` call’s return value populating our variable of interest. The very next thing that happens is a call to `memset` on the same value. After memset, initial values are set at offsets into the malloc’d memory.
+
+![struct-init](https://epi052.gitlab.io/notes-to-self/img/fuzzing-part-4/struct-init.png)
+
+It appears as though `TIFFClientOpen` is not only going to read in the file, but will also parse it into a data structure. All of this gathered information will assist us in choosing how we go about fuzzing the target.
+
+## Fuzzing Strategy
+
+Ok, we need to determine how we want to get input into `tiffinfo`. We know that it accepts some parsed data structure as its first argument. We have a few options for how we proceed.
+
+We could:
+
+- run the target in gdb under normal conditions, set a breakpoint on `tiffinfo`, and dump the memory of the first arg to disk. The memdump could then be our starting point for mutation.
+- blindly throw data at `tiffinfo`’s first argument, and let coverage guidance figure out what the data should look like
+- execute a large chunk of `main`, allowing `TIFFOpen` to be called, and hooking the read syscall to pass mutated data down to `tiffinfo`
+
+Of these three options, we’ll go with the third, since it’s apt to be a strategy we’re likely to reuse for other fuzzing scenarios.
+
+## Cargo.toml
+
+As usual, we’ll start by adding our dependencies. The primary difference compared to other posts is the `libafl_qemu` crate (and the `qemu_cli` feature flag to turn on the cli parser discussed earlier, of course 😁), which provides those QEMU bindings we discussed earlier. Also, since we’re targeting an aarch64 binary, we need to turn on the `aarch64` feature flag for the libafl_qemu crate.
+
+```
+[dependencies]
+libafl = { version = "0.15.4" }
+libafl_qemu = { version = "0.15.4", features = ["aarch64"] }
+libafl_bolts = { version = "0.15.4" }
+libafl_targets = { version = "0.15.4" }
+```
+
+The `aarch64` feature flag just exposes the `libafl_qemu::aarch64` module and brings the public parts of it into the top-level libafl_qemu namespace such as the `Regs` enum, which will be aarch64-specific as a result (snippet shown below).
+
+```
+// libafl_qemu/lib.rs
+// ════════════════════════════
+
+#[cfg(cpu_target = "aarch64")]
+pub mod aarch64;
+#[cfg(all(cpu_target = "aarch64", not(feature = "clippy")))]
+pub use aarch64::*;
+```
+
+That’s it for Cargo.toml, let’s move on.
+
+## corpus
+
+Checking the LibTiff repo, we see that there are images provided under `tiff/test/images/`. Since our goal is to find CVE-2017-13028, which cites the `TIFFFetchNormalTag` function as its entrypoint, we’ll want to grab a few `.tiff` files for our corpus.
+
+```
+mkdir corpus
+cp tiff/test/images/*.tiff corpus
+```
+
+After which, our `corpus` directory should look similar to what’s below.
+
+```
+-rw-r--r--  1 epi epi    166 Dec 27 07:19 logluv-3c-16b.tiff
+-rw-r--r--  1 epi epi  12322 Dec 27 07:19 palette-1c-4b.tiff
+-rw-r--r--  1 epi epi   3312 Dec 27 07:19 palette-1c-1b.tiff
+-rw-r--r--  1 epi epi   3289 Dec 27 07:19 miniswhite-1c-1b.tiff
+-rw-r--r--  1 epi epi   4068 Dec 27 07:19 minisblack-2c-8b-alpha.tiff
+-rw-r--r--  1 epi epi  24001 Dec 27 07:19 minisblack-1c-8b.tiff
+-rw-r--r--  1 epi epi  47733 Dec 27 07:19 minisblack-1c-16b.tiff
+-rw-r--r--  1 epi epi  71470 Dec 27 07:19 rgb-3c-8b.tiff
+-rw-r--r--  1 epi epi 142670 Dec 27 07:19 rgb-3c-16b.tiff
+-rw-r--r--  1 epi epi  27576 Dec 27 07:19 quad-tile.jpg.tiff
+-rw-r--r--  1 epi epi  25548 Dec 27 07:19 palette-1c-8b.tiff
+```
+
+As stated earlier, there’s not many external components for us this time around (no compiler, no harness.c, etc…). As a result, we’re ready to start writing the fuzzer (for real this time), so let’s get after it!
+
+# Writing the Fuzzer
+
+For the following sections, keep in mind that we’re still examining each component, but will only cover **new** material in-depth. Components/code seen in previous posts will have a quick-reference description and a link to the original discourse.
+
+## Components: Corpus + Input
+
+InMemoryCorpus:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#components-corpus-input)
+- **purpose**: holds all of our current testcases in memory
+- **why**: an in-memory corpus prevents disk access and should improve the speed at which we manipulate testcases
+
+OnDiskCorpus:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#components-corpus-input)
+- **purpose**: location at which fuzzer solutions are stored
+- **why**: solutions on disk can be used for crash triage
+
+```
+let fuzzer_options = cli::parse_args();
+
+let corpus_dirs = fuzzer_options.input.as_slice();
+
+let input_corpus = OnDiskCorpus::new(fuzzer_options.output.join("queue"))?;
+
+let solutions_corpus = OnDiskCorpus::new(fuzzer_options.output)?;
+```
+
+## Component: Emulator
+
+References:
+
+- [Emulator API Entry](https://docs.rs/libafl_qemu/0.15.4/libafl_qemu/emu/struct.Emulator.html)
+
+An `Emulator` provides the methods necessary to interact with the emulated target binary. In the new API, we first initialize `Qemu` and then use an `EmulatorBuilder` (or `Emulator::empty()`) to compose our emulator with different instrumentation modules.
+
+```
+let qemu_args: Vec<String> = fuzzer_options.qemu_args.iter().cloned().collect();
+let qemu_args_refs: Vec<&str> = qemu_args.iter().map(|s| s.as_str()).collect();
+
+let qemu = Qemu::init(&qemu_args_refs).unwrap();
+```
+
+Once we have an instantiated `Emulator`, we’ll want to get it into the proper state before handing it off to the `QemuExecutor`. We’ll start the process by loading our fuzz target from disk using libafl_qemu’s `EasyElf` struct and then getting a pointer to the target’s `main` function.
+
+```
+let mut buffer = Vec::new();
+let elf = EasyElf::from_file(qemu.binary_path(), &mut buffer)?;
+
+let main_ptr = elf.resolve_symbol("main", qemu.load_addr()).unwrap();
+```
+
+Since we’re not interested in parsing command line arguments every time we execute the target with new input, we’ll run until we hit `main`, and then set our entrypoint to be past the getopt code by adding a static offset to our main pointer. The offset can be found using a disassembler (binary ninja shown below).
+
+![adjusted-main](https://epi052.gitlab.io/notes-to-self/img/fuzzing-part-4/adjusted-main.png)
+
+While we’re at it, we’ll grab an address near the end of `main` that will mark the end of our emulated execution.
+
+While choosing a stopping point, we need to pay special attention to the `optind` variable. The optind variable is the index of the next argument that should be handled by the `getopt` function.
+
+The for loop that we’re inserting ourselves into is trying to run a bunch of code for each file passed on the command line. If we allow optind to increment each time our fuzzer runs a testcase, the access into the argv array (`argv[optind]`) will happily walk into our environment variables and then eventually off into the wild blue yonder, causing a segfault (not the good kind).
+
+If we look closely at the disassembly, we can see that before the return, the compiler has placed the increment/branch logic at the bottom of the loop. This means, we simply need to choose an offset prior to optind getting incremented.
+
+![ret-addr](https://epi052.gitlab.io/notes-to-self/img/fuzzing-part-4/ret-addr.png)
+
+In case you need a referesher on arm assembly, the first three instructions in the basic block are as follows:
+
+- `ldr x0, [x27, #0xf88]` - load the optind variable’s address into register x0
+- `ldr w1, [x0]` - dereference the optind variable’s address, and load it into w1
+- `add w1, w1, #0x1` - increment the optind variable
+
+There we go, `main+0x144` will work for the end address.
+
+Armed with those two offsets from main, we’ll set a breakpoint on the start address and emulate execution until we arrive there.
+
+```
+let adjusted_main_ptr = main_ptr + 0x178;
+let ret_addr = main_ptr + 0x144;
+
+qemu.entry_break(adjusted_main_ptr);
+```
+
+At this point, the emulator is paused at our entry point. The state of the registers as they are now will be what’s captured in our `QemuGPRegModule` as the ‘known good’ state. The QemuGPRegModule will allow us to reset registers and the program counter to these values from within the fuzzer loop, effectively making this a persistent mode fuzzer.
+
+We’ll also place a breakpoint at the address where we want execution to stop.
+
+```
+qemu.set_breakpoint(ret_addr);
+```
+
+Finally, we’ll reserve some space for our `BytesInput` in memory. Reserving memory like this will allow us to manage it during calls to `mmap` and `munmap`.
+
+```
+let input_addr = qemu.map_private(0, MMAP_SIZE, MmapPerms::ReadWrite).unwrap();
+```
+
+## Component: Harness
+
+Harness as a closure:
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#harness-component)
+- **purpose**: accepts bytes that have been mutated by the fuzzer and runs the emulated binary via the Emulator
+- **why**: allows us to capture outer scope and is what the QemuExecutor expects as its first argument (`FnMut(Input) -> ExitKind`)
+
+Even though we’ve used a closure as our harness before, this one is a little different. In the new API, our harness is responsible for running the emulator and mapping the exit reasons to the fuzzer’s `ExitKind`.
+
+Thankfully, all our harness really needs to do is call `self.qemu.run()` and allow execution to flow until it hits the `ret_addr` breakpoint we set earlier. Common exit reasons like hitting a breakpoint (at our return address) are mapped to `ExitKind::Ok`, while errors return `ExitKind::Crash`.
+
+```
+fn run(&self, _input: &BytesInput) -> ExitKind {
+    unsafe {
+        match self.qemu.run() {
+            Ok(QemuExitReason::Breakpoint(addr)) if addr == self.ret_addr => ExitKind::Ok,
+            Ok(_) => ExitKind::Ok,
+            Err(_) => ExitKind::Crash,
+        }
+    }
+}
+```
+
+## Component: Client Runner
+
+The Client Runner is essentially the ‘main’ function for each client to run. The core code will look the same as our other fuzzers, but this time, it will be wrapped in a closure that will be passed to the `Launcher` for actual execution. The majority of the remaining components will be contained within this closure.
+
+The parameters for the closure are `Option<StdState>`, `LlmpRestartingEventManager`, and `usize`. Those parameters are mostly managed by the `Launcher` and not really something we need to worry about.
+
+```
+let mut run_client = |state: Option<_>, mut mgr, _core_id| {
+    //
+    // Component: Observer
+    //
+-------------8<-------------
+    fuzzer.fuzz_loop(&mut stages, &mut executor, &mut state, &mut mgr)?;
+
+    Ok(())
+};
+```
+
+## Component: Observer
+
+HitcountsMapObserver:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-observer)
+- **purpose**: augments the edge coverage provided by the `StdMapObserver` with a bucketized branch-taken counter
+- **why**: can distinguish between interesting control flow changes, like a block executing twice when it normally happens once
+
+TimeObserver:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-observer)
+- **purpose**: provides information about the current testcase to the fuzzer
+- **why**: track the start time and how long it took the last testcase to execute
+
+References:
+
+- [VariableMapObserver API Entry](https://docs.rs/libafl/latest/libafl/observers/map/struct.VariableMapObserver.html)
+
+The `VariableMapObserver` is similar to other MapObservers we’ve seen before, but uses a variable map size. We’ll wrap it in a `HitcountsMapObserver` to get AFL-style bucketed coverage. In the new API, we also need to call `.track_indices()` (provided by the `CanTrack` trait) to enable certain schedulers to work correctly.
+
+```
+let mut edges_observer = unsafe {
+    HitcountsMapObserver::new(VariableMapObserver::from_mut_slice(
+        "edges",
+        OwnedMutSlice::from_raw_parts_mut(
+            libafl_targets::edges_map_mut_ptr(),
+            libafl_targets::EDGES_MAP_DEFAULT_SIZE,
+        ),
+        addr_of_mut!(libafl_targets::MAX_EDGES_FOUND),
+    ))
+    .track_indices()
+};
+
+let time_observer = TimeObserver::new("time");
+```
+
+## Component: Feedback
+
+MaxMapFeedback:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-feedback)
+- **purpose**: determines if there is a value in the coverage map that is greater than the current maximum value for the same entry
+- **why**: decides whether a new input is interesting based on its coverage map
+
+TimeFeedback:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-feedback)
+- **purpose**: keeps track of testcase execution time
+- **why**: decides if the value of its TimeObserver is interesting, but can’t mark a testcase as interesting on its own
+
+CrashFeedback:
+
+- **first-seen**: [Part 2](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-2/#component-feedback)
+- **purpose**: examines the `ExitKind` of the current harness’s run
+- **why**: decides if the current testcase is interesting based on whether the testcase resulted in an `ExitKind::crash` or not
+
+```
+let mut feedback = feedback_or!(
+    MaxMapFeedback::new(&edges_observer),
+    TimeFeedback::new(&time_observer)
+);
+
+let mut objective = feedback_and_fast!(
+    CrashFeedback::new(),
+    MaxMapFeedback::with_name("edges_objective", &edges_observer)
+);
+```
+
+## Component: State
+
+StdState:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-state)
+- **purpose**: stores the current state of the fuzzer
+- **why**: it’s basically our only choice at the moment
+
+References:
+
+- [AFL Dictionaries](https://lcamtuf.blogspot.com/2015/01/afl-fuzz-making-up-grammar-with.html)
+- [Tokens API Entry](https://docs.rs/libafl/latest/libafl/mutators/token_mutations/struct.Tokens.html)
+
+```
+let mut state = state.unwrap_or_else(|| {
+    StdState::new(
+        StdRand::with_seed(current_nanos()),
+        input_corpus.clone(),
+        solutions_corpus.clone(),
+        &mut feedback,
+        &mut objective,
+    )
+    .unwrap()
+});
+```
+
+We’ve covered `StdState` before, but this time, we’re adding some metadata to our state in the form of `Tokens`. If you’re familiar with AFL’s idea of dictionaries, then you’re in luck! Tokens cover the same concept, just with a new name. The new nomenclature was selected because the `KEY`s are ignored by fuzzers (AFL included) and can be omitted. The only part that ever mattered to the fuzzer was the `VALUE`, thus the name change to a token.
+
+```
+if state.metadata_map().get::<Tokens>().is_none() && !fuzzer_options.tokens.is_empty() {
+    let tokens = Tokens::new().add_from_files(&fuzzer_options.tokens)?;
+    state.add_metadata(tokens);
+}
+```
+
+While we’re on the subject of tokens, let’s figure out what our token file will contain. There are plenty of resources out there for generating your own set of tokens, based on your target. Additionally, if we were using `afl-clang-lto` to compile our binary, we’d get a set of tokens extracted and integrated into our fuzzer for free!
+
+All that’s cool, but we’re going to take the path of least resistance, based on our current set of circumstances. Instead of generating our own tokens, we’ll use a set that’s already available for the tiff file format.
+
+This unofficial AFL repo’s [dictionaries folder](https://github.com/rc0r/afl-fuzz/tree/master/dictionaries) contains a few ready-made dictionaries (i.e. sets of tokens). We’ll grab the `tiff.dict` file and save it to disk in our `tiff/` directory.
+
+```
+wget https://raw.githubusercontent.com/rc0r/afl-fuzz/master/dictionaries/tiff.dict -O tiff/tiff.dict
+```
+
+Now, our fuzzer will have a set of tokens available during its mutation stages, which is pretty choice.
+
+## Component: Scheduler
+
+QueueScheduler:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-scheduler)
+- **purpose**: contains corpus testcases
+- **why**: provides the backing queue for a corpus minimizer
+
+IndexesLenTimeMinimizerScheduler:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-scheduler)
+- **purpose**: the minimization policy applied to the corpus
+- **why**: prioritizes quick/small testcases that exercise all of the entries registered in the coverage map’s metadata
+
+```
+let scheduler = IndexesLenTimeMinimizerScheduler::new(&edges_observer, QueueScheduler::new());
+```
+
+## Component: Fuzzer
+
+StdFuzzer:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#component-fuzzer)
+- **purpose**: houses our other components
+- **why**: it’s basically our only choice at the moment
+
+```
+let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
+```
+
+## Component: QemuHelper
+
+The `QemuFSModule` and syscall hook (discussed below) help us bridge the gap between mutated inputs and the emulated target.
+
+References:
+
+- [EmulatorModule API Entry](https://docs.rs/libafl_qemu/0.15.4/libafl_qemu/modules/trait.EmulatorModule.html)
+
+### QemuFSModule
+
+We saw earlier that we’re essentially ignoring the mutated `BytesInput` that’s coming into our harness. That’s because our mutated input will be handled by our custom `QemuHelper` and our hooked syscalls (discussed next).
+
+Our `QemuHelper`’s main purpose is to assist us with passing information/performing tasks that cross the divide between our harness closure and other parts of our code (the syscall hook, for instance). If the LibAFL authors didn’t provide this kind of solution, we’d be stuck using `lazy_static` or global mut’s in order to achieve the same result. QemuHelpers can be thought of as plugins for the QemuExecutor.
+
+Our helper/plugin will store the buffer generated by calling `BytesInput::target_bytes()` and the address of our managed memory.
+
+```
+#[derive(Default, Debug)]
+struct QemuFilesystemBytesHelper {
+    bytes: Vec<u8>,
+    mmap_addr: u64,
+}
+```
+
+Next, we’ll implement the `EmulatorModule` trait.
+
+We’ll use the `first_exec` method to register our syscall hook. This is called once when the fuzzer starts. On every successive iteration, `pre_exec` is called, where we’ll populate our buffer with the latest mutated input.
+
+```
+impl<I, S> EmulatorModule<I, S> for QemuFSModule
+where
+    I: HasTargetBytes + Unpin,
+    S: Unpin + HasMetadata,
+{
+    fn first_exec<ET>(
+        &mut self,
+        _qemu: Qemu,
+        emulator_modules: &mut EmulatorModules<ET, I, S>,
+        _state: &mut S,
+    ) where
+        ET: EmulatorModuleTuple<I, S>,
+    {
+        emulator_modules.pre_syscalls(Hook::Function(syscall_hook::<ET, I, S>));
+    }
+
+    fn pre_exec<ET>(
+        &mut self,
+        _qemu: Qemu,
+        _emulator_modules: &mut EmulatorModules<ET, I, S>,
+        _state: &mut S,
+        input: &I,
+    ) where
+        ET: EmulatorModuleTuple<I, S>,
+    {
+        let target = input.target_bytes();
+        let mut buf = target.as_slice();
+
+        if buf.len() > MMAP_SIZE {
+            buf = &buf[0..MMAP_SIZE];
+        }
+
+        self.bytes.clear();
+        self.bytes.extend_from_slice(buf);
+    }
+}
+```
+
+### QemuGPRegModule
+
+The `QemuGPRegModule` is responsible for resetting registers to a known good state in its `pre_exec` method. This allows us to restart our persistent loop from exactly the same state every time.
+
+```
+#[derive(Default, Debug, Clone)]
+pub struct QemuGPRegModule {
+    pub register_state: Vec<(i32, u64)>,
+    pub pc: u64,
+    pub sp: u64,
+    pub ret_addr: u64,
+}
+```
+
+`QemuGPRegModule::new` is responsible for saving all current register values, including the Program Counter (PC) and Stack Pointer (SP). The `restore` method then writes these values back into the emulator.
+
+```
+impl QemuGPRegModule {
+    pub fn new(qemu: Qemu, ret_addr: u64) -> Self {
+        let mut register_state = Vec::new();
+        for reg_idx in 0..qemu.num_regs() {
+            if let Ok(reg_val) = qemu.read_reg(reg_idx) {
+                register_state.push((reg_idx, reg_val));
+            }
+        }
+
+        let pc = qemu.read_reg(Regs::Pc).unwrap_or(0);
+        let sp = qemu.read_reg(Regs::Sp).unwrap_or(0);
+
+        Self { register_state, pc, sp, ret_addr }
+    }
+
+    fn restore(&self, qemu: Qemu) {
+        for (reg_idx, reg_val) in &self.register_state {
+            let _ = qemu.write_reg(*reg_idx, *reg_val);
+        }
+        let _ = qemu.write_reg(Regs::Pc, self.pc);
+        let _ = qemu.write_reg(Regs::Sp, self.sp);
+    }
+}
+```
+
+Inside `pre_exec` we’ll simply call `.restore()`, which completes our QemuGPRegisterHelper logic.
+
+```
+impl<I, S> EmulatorModule<I, S> for QemuGPRegModule {
+    fn pre_exec<ET>(
+        &mut self,
+        qemu: Qemu,
+        _emulator_modules: &mut EmulatorModules<ET, I, S>,
+        _state: &mut S,
+        _input: &I,
+    ) where
+        ET: EmulatorModuleTuple<I, S>,
+    {
+        self.restore(qemu);
+    }
+}
+```
+
+That’s it for our `QemuHelper`s, next we’ll look at our syscall hook.
+
+## Component: Syscall Hook
+
+The syscall hook now accepts the `EmulatorModules` tuple, which allows us to access our custom modules (like `QemuFSModule` and `QemuGPRegModule`) from within the hook.
+
+```
+pub fn syscall_hook<ET, I, S>(
+    qemu: Qemu,
+    modules: &mut EmulatorModules<ET, I, S>,
+    _state: Option<&mut S>,
+    syscall: i32,
+    x0: GuestAddr,
+    x1: GuestAddr,
+    x2: GuestAddr,
+    // ... remaining args
+) -> SyscallHookResult
+where
+    ET: EmulatorModuleTuple<I, S>,
+    I: HasTargetBytes + Unpin,
+    S: Unpin + HasMetadata,
+{
+  // ...
+}
+```
+
+Once execution flows into the syscall hook, we’ll need to determine if the hooked syscall is one that we’re interested in.
+
+For our purposes, we want to hook `read` for the reasons already discussed, but we also want to hook `exit`, `exit_group`, `mmap`, and `munmap`.
+
+Since there are a few branches to look at, we’ll take them one at a time.
+
+### mmap hook
+
+In the mmap hook, instead of allowing mmap to allocate memory, we want to return the address of the memory we created with the `emu.map_private` call during Emulator setup.
+
+```
+let syscall = syscall as i64;
+
+if syscall == SYS_mmap {
+    let fs_helper = modules.get_mut::<QemuFSModule>().unwrap();
+    SyscallHookResult::Skip(fs_helper.mmap_addr)
+}
+```
+
+### munmap hook
+
+In our munmap hook, we’re simply checking to see if the address being unmapped is our managed memory location. If it is, we’ll return success, but leave the memory as-is. If it’s any other address, we’ll let the real munmap handle things.
+
+```
+else if syscall == SYS_munmap {
+    let fs_helper = modules.get_mut::<QemuFSModule>().unwrap();
+    if x0 == fs_helper.mmap_addr {
+        SyscallHookResult::Skip(0)
+    } else {
+        SyscallHookResult::Run
+    }
+}
+```
+
+### read hook
+
+The read syscall hook is the most complex, but it’s not too crazy. Even so, we’ll chunk it up a bit.
+
+Just like the others, we’ll start by getting our QemuFilesystemBytesHelper instance.
+
+```
+else if syscall == SYS_read {
+    let fs_helper = modules.get_mut::<QemuFSModule>().unwrap();
+```
+
+Then, we’ll determine up to what offset into `QemuFilesystemBytesHelper.bytes` we’ll read.
+
+```
+  let current_len = fs_helper.bytes.len();
+
+  let offset: usize = if x2 == 0 {
+      // ask for nothing, get nothing
+      0
+  } else if x2 as usize <= current_len {
+      // normal non-negative read that's less than the current mutated buffer's total
+      // length
+      x2.try_into().unwrap()
+  } else {
+      // length requested is more than what our buffer holds, so we can read up to the
+      // end of the buffer
+      current_len
+  };
+```
+
+Next, we’ll remove the bytes from the buffer using `drain`.
+
+```
+  let drained = fs_helper.bytes.drain(..offset).as_slice().to_owned();
+```
+
+After that, we’ll write the contents that we removed from the buffer into the address with which `read` was called. Finally, we’ll return the number of bytes we read from the buffer by returning `SyscallHookResult::Skip(length)`.
+
+```
+  if offset > 0 {
+      let drained = fs_helper.bytes.drain(..offset).as_slice().to_owned();
+      qemu.write_mem(x1 as GuestAddr, &drained).unwrap();
+      SyscallHookResult::Skip(drained.len() as u64)
+  } else {
+      SyscallHookResult::Skip(0)
+  }
+}
+```
+
+For our final hook, we have the `exit` and `exit_group` syscalls. When either of the exit syscalls are called, we’ll jump directly to our return address instead. This allows the fuzzer to complete the current iteration successfully even on error paths, whereas calling `exit` would terminate the process.
+
+```
+else if syscall == SYS_exit || syscall == SYS_exit_group {
+    let reg_module = modules.get_mut::<QemuGPRegModule>().unwrap();
+    let _ = qemu.write_reg(Regs::Pc, reg_module.ret_addr);
+    SyscallHookResult::Skip(0)
+}
+```
+
+### All Other Syscalls
+
+For any other syscall, we return `SyscallHookResult::Run`. This tells LibAFL-QEMU to allow the original syscall to execute normally.
+
+```
+else {
+  SyscallHookResult::Run
+}
+```
+
+That’s all for syscalls, let’s press!
+
+## Component: Executor
+
+TimeoutExecutor:
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#executor-component)
+- **purpose**: sets a timeout before each target run
+- **why**: protects against slow testcases and can be used w/ other components to tag timeouts/hangs as interesting
+
+References:
+
+- [QemuExecutor API Entry](https://docs.rs/libafl_qemu/latest/libafl_qemu/executor/struct.QemuExecutor.html)
+
+In order to create a `QemuExecutor`, we first need to compose our `Emulator` with the necessary modules. This replaces the old `QemuHooks` pattern.
+
+```
+let modules = tuple_list!(
+    StdEdgeCoverageModule::builder()
+        .map_observer(edges_observer.as_mut())
+        .build()?,
+    QemuFSModule::new(input_addr),
+    gp_helper.clone(),
+    AsanGuestModule::new(&env, NopAddressFilter)
+);
+
+let emulator = Emulator::empty()
+    .modules(modules)
+    .build_with_qemu(qemu)?;
+```
+
+The `QemuExecutor` is an in-process executor backed by QEMU. It now takes the `Emulator` instance directly. This gives us an executor that will execute testcases within the same process, eliminating much of the overhead associated with fork/exec.
+
+> \[!NOTE\] To use the `AsanGuestModule`, ensure your target binary is compiled with `-fsanitize=address`.
+
+```
+let mut executor = libafl_qemu::QemuExecutor::new(
+    emulator,
+    &mut harness_fn,
+    tuple_list!(edges_observer, time_observer),
+    &mut fuzzer,
+    &mut state,
+    &mut mgr,
+    fuzzer_options.timeout,
+)?;
+```
+
+## Component: Mutator + Stage
+
+HavocScheduledMutator:
+
+- **first-seen**: [Part 1](https://epi052.gitlab.io/notes-to-self/blog/2021-11-01-fuzzing-101-with-libafl/#components-mutator-stage)
+- **purpose**: schedules mutations internally
+- **why**: handles havoc and token mutations in a single scheduled mutator
+
+References:
+
+- [tokens_mutations API Entry](https://docs.rs/libafl/latest/libafl/mutators/token_mutations/index.html)
+- [Tokens API Entry](https://docs.rs/libafl/latest/libafl/mutators/token_mutations/struct.Tokens.html)
+
+The only difference in the code below, when compared to our first look at these components, is the addition of `tokens_mutations`. When calling `.merge`, we’re simply adding two additional Mutators to our normal `havoc_mutations`.
+
+- `TokenInsert` - Inserts a random token at a random position in the `Input`
+- `TokenReplace` - replaces a random part of the input with one of the tokens we loaded earlier
+
+```
+let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
+
+let mut stages = tuple_list!(StdMutationalStage::new(mutator));
+```
+
+## Component: Monitor
+
+MultiMonitor:
+
+- **first-seen**: [Part 1.5](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/#stats-monitor-component)
+- **purpose**: displays cumulative and per-client fuzzer statistics
+- **why**: handles fuzzer introspection reporting for us
+
+```
+let monitor = MultiMonitor::new(|s| {
+    println!("{}", s);
+});
+```
+
+## Component: Launcher
+
+References:
+
+- [Launcher API Entry](https://docs.rs/libafl/latest/libafl/bolts/launcher/struct.Launcher.html)
+- [Launcher Book Entry](https://aflplus.plus/libafl-book/message_passing/spawn_instances.html#launcher)
+
+Our last component is the `Launcher`. A Launcher is responsible for spawning one or more fuzzer instances in parallel. The Launcher struct follows the builder pattern we saw when using `ForkserverBytesCoverageSugar` in [part 3](https://epi052.gitlab.io/notes-to-self/blog/2021-11-20-fuzzing-101-with-libafl-part-3/#component-forkserverbytescoveragesugar). Underneath the hood, Launcher is using our old friend `LlmpRestartingEventManager`.
+
+Creating a Launcher is fairly simple, and shown below.
+
+```
+match Launcher::builder()
+    .shmem_provider(StdShMemProvider::new()?)
+    .broker_port(fuzzer_options.broker_port)
+    .configuration(EventConfig::from_build_id())
+    .monitor(monitor)
+    .run_client(&mut run_client)
+    .cores(&fuzzer_options.cores)
+    .stdout_file(Some(fuzzer_options.stdout.as_str()))
+    .build()
+    .launch()
+{
+    Ok(()) => Ok(()),
+    Err(Error::ShuttingDown) => {
+        println!("Fuzzing stopped by user. Good bye.");
+        Ok(())
+    }
+    Err(err) => panic!("Failed to run launcher: {:?}", err),
+}
+```
+
+That’s our last component! If you’ve actually read all of this post, I’m happy for you, or I’m sorry, whichever makes more sense. Either way, thanks for sticking with me, we’re almost done.
+
+# Running the Fuzzer
+
+At this point, we’ve wrapped up everything we need to run our fuzzer, so let’s get going!
+
+## Build the Fuzzer
+
+> **Note:** In upgrading from 0.10.1 to 0.15.4, the API evolved significantly toward a more modular design using `EmulatorModules`.
+
+First, we’ll build everything using our `cargo make` build task.
+
+```
+cargo make build
+```
+
+Next, we need to grab the cross-compiled, architecture-specific libqemu that we alluded to earlier.
+
+```
+find ../target | grep libqemu-aarch64.so
+════════════════════════════
+
+../target/debug/build/libafl_qemu-5be2e7fdb1fcf3f3/out/qemu-libafl-bridge/build/qemu-bundle/usr/local/lib/x86_64-linux-gnu/libqemu-aarch64.so
+../target/debug/build/libafl_qemu-5be2e7fdb1fcf3f3/out/qemu-libafl-bridge/build/libqemu-aarch64.so.p
+../target/debug/build/libafl_qemu-5be2e7fdb1fcf3f3/out/qemu-libafl-bridge/build/libqemu-aarch64.so
+```
+
+We’re interested in the last one.
+
+```
+cp ../target/debug/build/libafl_qemu-5be2e7fdb1fcf3f3/out/qemu-libafl-bridge/build/libqemu-aarch64.so build/
+```
+
+After building everything and copying the wayward .so, we’re left with our `build` directory looking something like this:
+
+```
+ls -al build/
+════════════════════════════
+
+drwxrwxr-x  2 epi epi     4096 Jan  9 06:00 bin
+-rwxrwxr-x  1 epi epi 27712640 Jan  9 05:59 exercise-4
+drwxrwxr-x  2 epi epi     4096 Jan  9 06:00 include
+drwxrwxr-x  3 epi epi     4096 Jan  9 06:00 lib
+-rwxrwxr-x  1 epi epi    82472 Jan  9 05:59 libqasan.so
+-rwxrwxr-x  1 epi epi 52204808 Jan  9 05:59 libqemu-aarch64.so
+drwxrwxr-x  4 epi epi     4096 Jan  8 08:48 share
+```
+
+## Commence Fuzzing!
+
+Even with everything built, there’s still one thing we need to cover before we can kick off our fuzzer.
+
+Since we’re hooking some of the syscalls related to filesystem operations, it would behoove us to have an input file that’s reasonable. For instance, the maximum size of our managed memory region is `2**20` or `1048576`. Whenever our target calls glibc’s `stat`, we’d like it to return values that mostly make sense.
+
+Also, the way we’ve structure the persistent loop in the fuzzer means that the target will continually call `fopen`, `read`, `mmap`, `fstatat` etc, all against the same file, over and over. Since we’re hooking `read`, the contents of the file doesn’t matter, but we could at least provide a file of the same size so that our input won’t be truncated by the target. To do that, we’ll just create a file of an appropriate size.
+
+```
+python3 -c "import pathlib; pathlib.Path('infile').write_bytes(b'\x00' * 2**20)"
+
+ls -al infile
+-rw-rw-r-- 1 epi epi 1048576 Jan  9 06:39 infile
+```
+
+Ok, now we’re ready to begin.
+
+```
+./build/exercise-4 -i corpus -o output --cores 1-7 --tokens tiff/tiff.dict -- ./build/exercise-4 -L ./jammy-rootfs -L /usr/aarch64-linux-gnu ./build/bin/tiffinfo -Dcjrsw infile
+```
+
+```
+spawning on cores: Cores { cmdline: "1-7", ids: [CoreId { id: 1 }, CoreId { id: 2 }, CoreId { id: 3 }, CoreId { id: 4 }, CoreId { id: 5 }, CoreId { id: 6 }, CoreId { id: 7 }] }
+child spawned and bound to core 1
+child spawned and bound to core 2
+child spawned and bound to core 3
+child spawned and bound to core 4
+child spawned and bound to core 5
+child spawned and bound to core 6
+child spawned and bound to core 7
+```
+
+```
+[Stats       #3]  (GLOBAL) run time: 0h-0m-30s, clients: 8, corpus: 14, objectives: 0, executions: 3455573, exec/sec: 115.2k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 694845, exec/sec: 23.15k, edges: 160/220 (72%)
+[Stats       #4]  (GLOBAL) run time: 0h-0m-30s, clients: 8, corpus: 14, objectives: 0, executions: 3798789, exec/sec: 126.6k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 689365, exec/sec: 22.97k, edges: 160/220 (72%)
+[Stats       #5]  (GLOBAL) run time: 0h-0m-30s, clients: 8, corpus: 14, objectives: 0, executions: 4142467, exec/sec: 138.0k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 685901, exec/sec: 22.86k, edges: 160/220 (72%)
+[Stats       #6]  (GLOBAL) run time: 0h-0m-30s, clients: 8, corpus: 14, objectives: 0, executions: 4486438, exec/sec: 149.3k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 689003, exec/sec: 22.95k, edges: 160/220 (72%)
+[Stats       #7]  (GLOBAL) run time: 0h-0m-30s, clients: 8, corpus: 14, objectives: 0, executions: 4827201, exec/sec: 160.7k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 683297, exec/sec: 22.77k, edges: 160/220 (72%)
+[Stats       #1]  (GLOBAL) run time: 0h-0m-45s, clients: 8, corpus: 14, objectives: 0, executions: 5171249, exec/sec: 115.0k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 1025229, exec/sec: 22.78k, edges: 160/220 (72%)
+[Stats       #2]  (GLOBAL) run time: 0h-0m-45s, clients: 8, corpus: 14, objectives: 0, executions: 5522303, exec/sec: 122.8k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 1054663, exec/sec: 23.44k, edges: 160/220 (72%)
+[Stats       #3]  (GLOBAL) run time: 0h-0m-45s, clients: 8, corpus: 14, objectives: 0, executions: 5874553, exec/sec: 130.5k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 1047095, exec/sec: 23.26k, edges: 160/220 (72%)
+[Stats       #4]  (GLOBAL) run time: 0h-0m-45s, clients: 8, corpus: 14, objectives: 0, executions: 6218737, exec/sec: 138.2k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 1033549, exec/sec: 22.96k, edges: 160/220 (72%)
+[Stats       #5]  (GLOBAL) run time: 0h-0m-45s, clients: 8, corpus: 14, objectives: 0, executions: 6560568, exec/sec: 145.7k
+                  (CLIENT) corpus: 2, objectives: 0, executions: 1027732, exec/sec: 22.83k, edges: 160/220 (72%)
+```
+
+## Results
+
+After letting the fuzzer churn a while, we can confirm that we’ve found a bug. Normally, the crash output would be in our log or printed to the terminal. Unfortunately, the target spews a ton of warning/error output during fuzzing, so I chose to send all that junk to `/dev/null` and cheat a bit on confirmation. I just compiled the target as x86_64 with ASAN… `¯\_(ツ)_/¯`
+
+```
+TIFFReadDirectoryCheckOrder: Warning, Invalid TIFF directory; tags are not sorted in ascending order.                                      
+TIFFReadDirectory: Warning, Unknown field with tag 28 (0x1c) encountered.
+TIFFReadDirectory: Warning, Unknown field with tag 347 (0x15b) encountered.
+TIFFReadDirectory: Warning, Wrong "StripByteCounts" field, ignoring and calculating from imagelength.
+TIFF Directory at offset 0x67f4 (26612)                                                          
+  Image Width: 512 Image Length: 384                                                             
+  Tile Width: 128 Tile Length: 128                                                               
+  Bits/Sample: 8                                                                                 
+  Sample Format: unsigned integer                                                                
+  Compression Scheme: None                                                                       
+  Photometric Interpretation: YCbCr                                                              
+  YCbCr Subsampling: 2, 2                                                                        
+  Orientation: row 0 top, col 0 lhs                                                              
+  Samples/Pixel: 3                                                                               
+  Min Sample Value: 0      
+  Max Sample Value: 255                       
+  Planar Configuration: single image plane
+  Reference Black/White:     
+     0:     0   255          
+     1:   128   255          
+     2:   128   255          
+=================================================================
+==1092821==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x6020000000b1 at pc 0x0000002afe32 bp 0x7ffdaf1de3d0 sp 0x7ffdaf1ddb90
+READ of size 2 at 0x6020000000b1 thread T0
+    #0 0x2afe31 in fputs (/home/epi/PycharmProjects/fuzzing-101-solutions/exercise-4/tiffinfo-x86+0x2afe31)
+    #1 0x472eff in _TIFFPrintField /home/epi/PycharmProjects/fuzzing-101-solutions/exercise-4/tiff/libtiff/tif_print.c:127:4
+    #2 0x472eff in TIFFPrintDirectory /home/epi/PycharmProjects/fuzzing-101-solutions/exercise-4/tiff/libtiff/tif_print.c:641:5
+    #3 0x347b2f in tiffinfo /home/epi/PycharmProjects/fuzzing-101-solutions/exercise-4/tiff/tools/tiffinfo.c:449:2
+    #4 0x3451fa in main /home/epi/PycharmProjects/fuzzing-101-solutions/exercise-4/tiff/tools/tiffinfo.c:152:6
+    #5 0x7f0738ba0564 in __libc_start_main csu/../csu/libc-start.c:332:16
+    #6 0x29669d in _start (/home/epi/PycharmProjects/fuzzing-101-solutions/exercise-4/tiffinfo-x86+0x29669d)
+```
+
+# Outro
+
+There we have it; we learned a lot about `libafl_qemu`, fuzzed an aarch64 target, wrote a cli parsing crate, and probably some other stuff. Go us! In the next post we’ll solve Exercise 5. I’m leaning toward exploring the python bindings next. If you have a strong preference for the next focus area, drop me a message (unless you’re that guy that asks for windows stuff… you know who you are 🙃)
+
+------------------------------------------------------------------------
+
+# Appendix: Enabling ASAN Guest Mode (and Fixes Required)
+
+LibAFL provides `AsanGuestModule` for AddressSanitizer support in QEMU usermode fuzzing. However, enabling this for AArch64 targets required some troubleshooting. This section documents the issues encountered, the debugging process, and the solutions—both actual LibAFL bugs and workflow/build challenges specific to our setup.
+
+## Overview of Issues
+
+Three challenges were encountered when enabling `AsanGuestModule`:
+
+1.  **Shadow Memory Layout (LibAFL Bug)**: The default 64-bit shadow layout in `libafl_asan` uses x86_64’s 47-bit address space layout, but AArch64 uses a full 48-bit userspace VA. This causes AArch64 PIE binaries (loaded at high addresses) to access the forbidden “ShadowGap”, resulting in SIGSEGV.
+
+2.  **Guest Library Build Process (Workflow Issue)**: Understanding how `qemu-libafl-bridge` produces the final `.so` file and ensuring it’s built for the correct architecture required some investigation.
+
+3.  **Module Type Erasure (Workflow Issue)**: Making ASAN runtime-optional by wrapping `AsanGuestModule` causes TCG hooks to fail due to type lookup issues.
+
+## Issue 1: Shadow Layout (Critical)
+
+> **Update (December 2025)**: Thanks to **WorksButNotTested** from the fuzzing discord for providing the detailed analysis below. The initial debugging was done independently, but their explanation clarified the root cause—specifically, the difference between x86_64’s 47-bit user VA and AArch64’s 48-bit user VA.
+
+### Symptoms
+
+When running with ASAN enabled, the guest panics with errors like:
+
+```
+thread 'tests::atoi_test_leading_whitespace_3' (13418) panicked at crates/libafl_asan/src/test.rs:95:10:
+   called `Result::unwrap()` on an `Err` value: InvalidMemoryAddress(187649985212826)
+```
+
+### Root Cause Analysis
+
+The error address `187649985212826` = `0xAAAAAAB5F19A`. This is **not** a 52-bit address as one might initially expect, but a valid **48-bit** AArch64 address.
+
+The key insight from the fuzzing discord: the original ASAN implementation was copied from Intel’s documentation at [AddressSanitizerAlgorithm](https://github.com/google/sanitizers/wiki/addresssanitizeralgorithm). However, that documentation is for x86_64, which uses **canonical addresses**:
+
+- **x86_64**: Only **47 bits** of address space is exposed to usermode (0x000000000000 - 0x00007fffffffffff), with the other half (addresses with 0xFF… prefix) reserved for kernel space.
+- **AArch64**: A full **48-bit** virtual address is valid in userspace (0x000000000000 - 0x0000ffffffffffff).
+
+This difference means the x86_64 shadow memory layout doesn’t work for AArch64 binaries.
+
+LLVM documents the correct layouts in [asan_mapping.h](https://github.com/llvm/llvm-project/blob/main/compiler-rt/lib/asan/asan_mapping.h):
+
+**x86_64 (47-bit user VA)**:
+
+```
+[0x10007fff8000, 0x7fffffffffff]   HighMem
+[0x02008fff7000, 0x10007fff7fff]   HighShadow
+[0x00008fff7000, 0x02008fff6fff]   ShadowGap (FORBIDDEN)
+[0x00007fff8000, 0x00008fff6fff]   LowShadow
+[0x000000000000, 0x00007fff7fff]   LowMem
+SHADOW_OFFSET: 0x7fff8000
+```
+
+**AArch64 (48-bit VA)**:
+
+```
+[0x201000000000, 0xffffffffffff]   HighMem
+[0x041200000000, 0x200fffffffff]   HighShadow
+[0x001200000000, 0x0411ffffffff]   ShadowGap (FORBIDDEN)
+[0x001000000000, 0x0011ffffffff]   LowShadow
+[0x000000000000, 0x000fffffffff]   LowMem
+SHADOW_OFFSET: 0x001000000000
+```
+
+### Fix: Use Architecture-Specific Shadow Layouts
+
+The proper fix is to modify `LibAFL/crates/libafl_asan/src/shadow/guest.rs` to use conditional compilation based on `target_arch`:
+
+```
+// x86_64 uses 47-bit userspace VA due to canonical address split
+#[cfg(all(target_pointer_width = "64", target_arch = "x86_64"))]
+impl ShadowLayout for DefaultShadowLayout {
+    // Default Linux/x86_64 mapping (47-bit user VA):
+    const SHADOW_OFFSET: usize = 0x7fff8000;
+    const LOW_MEM_OFFSET: GuestAddr = 0x0;
+    const LOW_MEM_SIZE: usize = 0x00007fff8000;
+    const LOW_SHADOW_OFFSET: GuestAddr = 0x00007fff8000;
+    const LOW_SHADOW_SIZE: usize = 0xffff000;
+    const HIGH_SHADOW_OFFSET: GuestAddr = 0x02008fff7000;
+    const HIGH_SHADOW_SIZE: usize = 0xdfff0001000;
+    const HIGH_MEM_OFFSET: GuestAddr = 0x10007fff8000;
+    const HIGH_MEM_SIZE: usize = 0x6fff80008000;
+    // ...
+}
+
+// AArch64 uses full 48-bit userspace VA
+#[cfg(all(target_pointer_width = "64", target_arch = "aarch64"))]
+impl ShadowLayout for DefaultShadowLayout {
+    // Default Linux/AArch64 (48-bit VMA) mapping:
+    const SHADOW_OFFSET: usize = 0x001000000000;
+    const LOW_MEM_OFFSET: GuestAddr = 0x0;
+    const LOW_MEM_SIZE: usize = 0x10000000000;
+    const LOW_SHADOW_OFFSET: GuestAddr = 0x001000000000;
+    const LOW_SHADOW_SIZE: usize = 0x2000000000;
+    const HIGH_SHADOW_OFFSET: GuestAddr = 0x041200000000;
+    const HIGH_SHADOW_SIZE: usize = 0x1bfe00000000;
+    const HIGH_MEM_OFFSET: GuestAddr = 0x201000000000;
+    const HIGH_MEM_SIZE: usize = 0xdff000000000;
+    // ...
+}
+```
+
+Additionally, `qemu-libafl-bridge/libafl/hook.c` needs a corresponding update to its `SHADOW_BASE` constant:
+
+```
+#if TARGET_LONG_BITS == 64
+  #if defined(TARGET_AARCH64)
+    #define SHADOW_BASE (0x001000000000)
+  #else
+    #define SHADOW_BASE (0x7fff8000)
+  #endif
+#endif
+```
+
+## Issue 2: Guest Library Build Process (Workflow)
+
+### Challenge
+
+Understanding how the ASAN guest library (`.so` file) is produced by the build system and ensuring it’s compiled for the correct target architecture.
+
+### Solution
+
+The `qemu-libafl-bridge` build process produces architecture-specific ASAN libraries. For AArch64 targets, you need to ensure the guest library is cross-compiled:
+
+```
+cd LibAFL/crates/libafl_qemu/libafl_qemu_asan/libafl_qemu_asan_guest
+rustup target add aarch64-unknown-linux-gnu
+RUSTFLAGS="-C linker=aarch64-linux-gnu-gcc" cargo build --release --target aarch64-unknown-linux-gnu
+```
+
+Copy the output to your build directory:
+
+```
+cp ../target/aarch64-unknown-linux-gnu/release/libafl_qemu_asan_guest.so ./build/
+```
+
+Alternatively, integrate this into your `Makefile.toml` to automate the process (see the exercise-4 repository for an example).
+
+## Issue 3: Making ASAN Runtime-Optional (Workflow)
+
+### Challenge
+
+Making ASAN support optional at runtime (via a CLI flag) while maintaining type safety with LibAFL’s module system.
+
+### Solution
+
+The ASAN TCG instrumentation hooks use `modules.get::<AsanGuestModule<F>>().unwrap()` to retrieve the module. Wrapping it in a custom type breaks this lookup. Instead, use conditional dispatch with a generic function:
+
+```
+fn fuzz<ET>(
+    qemu_args: Vec<String>,
+    modules: ET,
+    // ... other args
+) -> Result<(), Error>
+where
+    ET: EmulatorModuleTuple<BytesInput, ClientState> + Debug,
+{
+    // Standard modules prepended
+    let modules = (edges_module, (filesystem_module, (gp_module, modules)));
+    let mut emulator = Emulator::empty()
+        .modules(modules)
+        .qemu_parameters(qemu_args)
+        .build()?;
+    // ... rest of fuzzer
+}
+
+// In run_client:
+if asan_enabled {
+    let asan_module = AsanGuestModule::new(&env_vars, NopAddressFilter);
+    fuzz(qemu_args, tuple_list!(asan_module), /* ... */)
+} else {
+    fuzz(qemu_args, tuple_list!(), /* ... */)
+}
+```
+
+This pattern is used by LibAFL’s `qemu_launcher` example and allows the type system to correctly resolve the module tuple.
+
+## Complete Build Steps
+
+To reproduce the ASAN-enabled fuzzer:
+
+```
+# 1. Install aarch64 rust target
+rustup target add aarch64-unknown-linux-gnu
+
+# 2. Apply shadow layout fix to LibAFL
+# Edit: LibAFL/crates/libafl_asan/src/shadow/guest.rs
+# Add the AArch64-specific ShadowLayout implementation with correct 48-bit VA constants
+# (see Issue 1 above for the full code)
+
+# 3. Build everything (Makefile.toml now handles ASAN guest library build)
+cd /path/to/exercise-4
+cargo make build
+
+# 4. Run the fuzzer with ASAN enabled
+./build/exercise-4 -i corpus -o output -A --cores 1 --tokens tiff/tiff.dict \
+  -- ./build/exercise-4 -L ./jammy-rootfs -L /usr/aarch64-linux-gnu \
+  ./build/bin/tiffinfo -Dcjrsw infile
+```
+
+The `-A` flag enables ASAN. You should see:
+
+```
+ASAN enabled: true
+Loading ASAN: .../build/libafl_qemu_asan_guest.so
+[Client Heartbeat #1] corpus: 5, objectives: 4, executions: 32, exec/sec: 2.119, edges: 97.462%
+```
+
+# Additional Resources
+
+1.  [Fuzzing101](https://github.com/antonio-morales/Fuzzing101)
+2.  [LibAFL](https://github.com/AFLplusplus/LibAFL)
+3.  [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+4.  [libtiff](https://gitlab.com/libtiff/libtiff)
+5.  [QEMU](https://www.qemu.org/)
+
+------------------------------------------------------------------------
+
+Share: [Twitter](https://twitter.com/intent/tweet?text=Fuzzing101%20with%20LibAFL%20-%20Part%20IV%3A%20Fuzzing%20LibTIFF&url=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-26-fuzzing-101-with-libafl-part-4%2F) [Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-26-fuzzing-101-with-libafl-part-4%2F)

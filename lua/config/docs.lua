@@ -1764,10 +1764,33 @@ end
 --                 it for non-v tag shapes (e.g. "^llvmorg%-%d", "^release%-%d").
 -- The tag INDEX (a text file of tags) is the only thing cached eagerly; no
 -- version's docs/source is fetched until chosen, and a tag never moves.
+-- Prefix-insensitive version sort (newest first): pull the numeric components
+-- out of a tag and compare them, so a bare "6.1.10616" ranks above a
+-- "v5.0.7648-stable" that plain `sort -Vr` floats to the top because 'v' > '6'.
+-- Opt-in (spec.vsort) so only the one provider that mixes bare and v-prefixed
+-- tag shapes (Binary Ninja: v5 stable + v6 dev) is reordered.
+local function vkey(s)
+	local nums = {}
+	for n in s:gmatch("%d+") do nums[#nums + 1] = tonumber(n) end
+	return nums
+end
+local function vsort_desc(list)
+	table.sort(list, function(a, b)
+		local ka, kb = vkey(a), vkey(b)
+		for i = 1, math.max(#ka, #kb) do
+			local x, y = ka[i] or -1, kb[i] or -1
+			if x ~= y then return x > y end
+		end
+		return a > b
+	end)
+	return list
+end
+
 local function versioned_tags(name, url, spec, cb)
 	spec = spec or {}
 	local idx = data_root .. "/" .. name .. "/tags.txt"
 	local diskpat = spec.diskpat or "^v?%d"
+	local function done(list) return cb(spec.vsort and vsort_desc(list) or list) end
 	-- Versions already fetched stay selectable even when the remote filter would
 	-- exclude them now (an old major, or a tag deleted upstream): losing access
 	-- to something already on disk is never the right answer.
@@ -1786,14 +1809,14 @@ local function versioned_tags(name, url, spec, cb)
 		return list
 	end
 	if vim.fn.filereadable(idx) == 1 then
-		return cb(withdisk(vim.fn.readfile(idx)))
+		return done(withdisk(vim.fn.readfile(idx)))
 	end
 	-- No index yet, but versions may already be downloaded. Offer those rather
 	-- than demanding a network fetch: refusing to open content that is sitting
 	-- on disk is the worst possible answer on a machine with no network.
 	local ondisk = withdisk({})
 	if #ondisk > 0 and not have("git") then
-		return cb(ondisk)
+		return done(ondisk)
 	end
 	if not have("git") then
 		return vim.notify("git not found (needed to list " .. name .. " versions)", vim.log.levels.WARN)
@@ -1826,7 +1849,7 @@ local function versioned_tags(name, url, spec, cb)
 				return vim.notify("Could not list " .. name .. " versions:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
 			end
 			vim.fn.writefile(list, idx)
-			cb(withdisk(list))
+			done(withdisk(list))
 		end)
 	end)
 end
@@ -2720,6 +2743,12 @@ local pick_syzkaller_articles = frozen_web_provider("syzkaller-articles", "Syzka
 local pick_namespaces_lwn = frozen_web_provider("namespaces-lwn", "Namespaces (LWN)> ")
 local pick_cgroups_lwn = frozen_web_provider("cgroups-lwn", "CGroups (LWN)> ")
 local pick_lwn_index = frozen_web_provider("lwn-index", "LWN Kernel Index> ")
+-- Fuzzing 101 with LibAFL: epi052's 6-part series + the Atredis workshop, the
+-- MobileHackingLab Android/QEMU-mode writeup, and the FuzzCon 2021 talk slides.
+local pick_fuzzing_101_libafl = frozen_web_provider("fuzzing-101-libafl", "LibAFL (Articles)> ")
+-- Docker docs: the official get-started/reference/best-practices pages plus
+-- softchris's five-part "Learn Docker from the beginning" tutorial.
+local pick_docker = frozen_web_provider("docker", "Docker docs> ")
 
 -- systemd: a two-level frozen provider. systemd.io groups its docs into named
 -- categories (Booting, Concepts, Interfaces, the two blog series, ...), so the
@@ -3833,6 +3862,8 @@ local WEB_BOOKS = {
 	{ title = "LWN Kernel Index (categorized reference)", key = "lwn-index", run = pick_lwn_index },
 	{ title = "The Modern JavaScript Tutorial (javascript.info)", key = "javascript-info", run = pick_javascript_info },
 	{ title = "Testing Handbook (Trail of Bits, appsec.guide)", key = "testing-handbook", run = pick_testing_handbook },
+	{ title = "LibAFL (Articles)", key = "fuzzing-101-libafl", run = pick_fuzzing_101_libafl },
+	{ title = "Docker docs (official + softchris tutorial)", key = "docker", run = pick_docker },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
 	{ title = "Algorithms for Modern Hardware (Algorithmica)", key = "algorithmica-hpc", run = pick_algorithmica_hpc },
@@ -4069,6 +4100,8 @@ LOCATION["cgroups-lwn"] = { index = "cgroups-lwn/index.tsv", unit = "chapter" }
 LOCATION["lwn-index"] = { index = "lwn-index/index.tsv", unit = "chapter" }
 LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "chapter" }
 LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
+LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
+LOCATION["docker"] = { index = "docker/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
 LOCATION["writing-an-os-in-rust"] = { index = "writing-an-os-in-rust/index.tsv", unit = "chapter" }
 LOCATION["algorithmica-hpc"] = { index = "algorithmica-hpc/index.tsv", unit = "chapter" }
@@ -4288,7 +4321,13 @@ local providers = {
 	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = register_versioned("bap", { src_url = "https://github.com/BinaryAnalysisPlatform/bap", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "BAP", docs_mode = "latest", docs_fn = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") }) },
 	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI" })) },
 	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone", docs_mode = "latest", docs_fn = pick_capstone_docs })) },
-	{ name = "Binary Ninja API", key = "binja", run = register_versioned("binja", vspec(simple.binja, "v[0-9]+\\.[0-9]+\\.[0-9]+-stable", { label = "Binary Ninja API", diskpat = "^v%d" })) },
+	-- Stable tags are "vN.N.N-stable"; Binary Ninja 6 is (so far) only tagged on
+	-- the dev channel as bare "6.N.NNNNN" (the "dev/" prefix is stripped by the
+	-- ls-remote reducer), so match those too to surface v6 now, newest first. The
+	-- "vN.-stable" alternative still picks up "v6.N.N-stable" once it is pushed.
+	-- Only major 6 is admitted as a bare number (v5 has ~800 dev tags that would
+	-- otherwise flood the picker). diskpat accepts both "v5..." and "6..." on disk.
+	{ name = "Binary Ninja API", key = "binja", run = register_versioned("binja", vspec(simple.binja, "v[0-9]+\\.[0-9]+\\.[0-9]+-stable|6\\.[0-9]+\\.[0-9]+", { label = "Binary Ninja API", diskpat = "^v?%d", vsort = true })) },
 	{ name = "LIEF", key = "lief", run = make_simple("lief", simple.lief) },
 	{ name = "pyelftools", key = "pyelftools", run = register_versioned("pyelftools", vspec(simple.pyelftools, "v[0-9]+\\.[0-9]+", { label = "pyelftools" })) },
 	{ name = "QBinDiff", key = "qbindiff", run = register_versioned("qbindiff", vspec(simple.qbindiff, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBINDiff" })) },

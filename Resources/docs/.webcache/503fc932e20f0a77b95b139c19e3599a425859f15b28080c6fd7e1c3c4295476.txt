@@ -1,0 +1,746 @@
+# Fuzzing101 with LibAFL - Part I: Fuzzing Xpdf
+
+November 2, 2021 • 29 min read
+
+### Updated: Feb 1, 2025 // LibAFL Version 0.15.0
+
+Twitter user [Antonio Morales](https://twitter.com/nosoynadiemas?lang=en) created the [Fuzzing101](https://github.com/antonio-morales/Fuzzing101) repository in August of 2021. In the repo, he has created exercises and solutions meant to teach the basics of fuzzing to anyone who wants to learn how to find vulnerabilities in real software projects. The repo focuses on [AFL++](https://github.com/AFLplusplus/AFLplusplus) usage, but this series of posts aims to solve the exercises using [LibAFL](https://github.com/AFLplusplus/LibAFL) instead. We’ll be exploring the library and writing fuzzers in Rust in order to solve the challenges in a way that closely aligns with the suggested AFL++ usage.
+
+Since this series will be looking at Rust source code and building fuzzers, I’m going to assume a certain level of knowledge in both fields for the sake of brevity. If you need a brief introduction/refresher to/on coverage-guided fuzzing, please take a look [here](https://github.com/antonio-morales/Fuzzing101#what-is-fuzzing). As always, if you have any questions, please don’t hesitate to reach out.
+
+This post will cover fuzzing Xpdf in order to solve [Exercise 1](https://github.com/antonio-morales/Fuzzing101/tree/main/Exercise%201). The companion code for this exercise can be found at my [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+
+Other posts in the series:
+
+- [Part I.V: Speed Improvements to Part I](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-1.5/)
+- [Part II: Fuzzing libexif](https://epi052.gitlab.io/notes-to-self/blog/2021-11-07-fuzzing-101-with-libafl-part-2/)
+- [Part III: Fuzzing tcpdump](https://epi052.gitlab.io/notes-to-self/blog/2021-11-20-fuzzing-101-with-libafl-part-3/)
+- [Part IV: Fuzzing libtiff](https://epi052.gitlab.io/notes-to-self/blog/2021-11-26-fuzzing-101-with-libafl-part-4/)
+- [Part V: Fuzzing libxml2](https://epi052.gitlab.io/notes-to-self/blog/2022-01-17-fuzzing-101-with-libafl-part-5/)
+
+------------------------------------------------------------------------
+
+# Quick Reference
+
+This is just a summary of the different components used in the upcoming post. It’s meant to be used later as an easy way of determining which components are used in which posts.
+
+```
+{
+  "Fuzzer": {
+    "type": "StdFuzzer",
+    "Corpora": {
+      "Input": "InMemoryCorpus",
+      "Output": "OnDiskCorpus"
+    },
+    "Input": "BytesInput",
+    "Observers": [
+      "TimeObserver",
+      "HitcountsMapObserver",
+      "ConstMapObserver": {
+        "coverage map": "StdShMemProvider::new_map",
+      }
+    ],
+    "Feedbacks": {
+      "Pure": ["MaxMapFeedback", "TimeFeedback"],
+      "Objectives": ["MaxMapFeedback", "TimeoutFeedback"]
+    },
+    "State": {
+      "StdState"
+    },
+    "Monitor": "SimpleMonitor",
+    "EventManager": "SimpleEventManager",
+    "Scheduler": "IndexesLenTimeMinimizerScheduler",
+    "Executors": [
+      "ForkserverExecutor",
+    ],
+    "Mutators": [
+      "StdScheduledMutator": {
+        "mutations": "havoc_mutations"
+      }
+    ],
+    "Stages": ["StdMutationalStage"]
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+# LibAFL Background
+
+LibAFL, the **Advanced Fuzzing Library**, is a collection of reusable fuzzer components written in Rust. It is fast, multi-platform, no_std compatible, and scales well over cores and machines. LibAFL is written and maintained by [Andrea Fioraldi](https://twitter.com/andreafioraldi), [Dominik Maier](https://twitter.com/domenuk), [s1341](https://twitter.com/srubenst1341), [Dongjia Zhang](https://github.com/tokatoka) and [Addison Crump](https://github.com/addisoncrump). Some of these same folks maintain AFL++! You can learn more about the motivation behind LibAFL and the different components in the [rC3 talk](https://www.youtube.com/watch?v=3RWkT1Q5IV0).
+
+Without further ado, let’s get started.
+
+# Exercise 1 Setup
+
+Our first step is walking through the setup steps for Rust, Xpdf, and AFL++. If you’re wondering why we’ll need AFL++ when we plan to use LibAFL, it’s because we’ll use AFL++‘s compiler for instrumentation once or twice before we try out some different instrumentation backends.
+
+As far as setup, my assumption is that you’re on some flavor of linux. Any linux package manager commands will be given as debian-flavor commands (`apt`).
+
+## Install Rust
+
+This one’s easy.
+
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Further information is [here](https://www.rust-lang.org/tools/install) in case you need it.
+
+## Install AFL++
+
+These steps are derived from [AFL++‘s install instructions](https://github.com/AFLplusplus/AFLplusplus/blob/stable/docs/INSTALL.md).
+
+### Install dependencies
+
+```
+sudo apt-get update
+sudo apt-get install -y build-essential python3-dev automake cmake git flex bison libglib2.0-dev libpixman-1-dev python3-setuptools cargo libgtk-3-dev
+# try to install llvm 19 and install the distro default if that fails
+sudo apt-get install -y lld-19 llvm-19 llvm-19-dev clang-19 || sudo apt-get install -y lld llvm llvm-dev clang
+sudo apt-get install -y gcc-$(gcc --version|head -n1|sed 's/\..*//'|sed 's/.* //')-plugin-dev libstdc++-$(gcc --version|head -n1|sed 's/\..*//'|sed 's/.* //')-dev
+sudo apt-get install -y ninja-build # for QEMU mode
+```
+
+### Checkout and build AFL++
+
+```
+git clone https://github.com/AFLplusplus/AFLplusplus && cd AFLplusplus
+export LLVM_CONFIG="llvm-config-19"
+make distrib
+```
+
+### Test your installation
+
+```
+./afl-fuzz -h
+════════════════════════════
+
+afl-fuzz++4.31a based on afl by Michal Zalewski and a large online community
+
+afl-fuzz [ options ] -- /path/to/fuzzed_app [ ... ]
+
+Required parameters:
+  -i dir        - input directory with test cases (or '-' to resume, also see
+                  AFL_AUTORESUME)
+  -o dir        - output directory for fuzzer findings
+
+Execution control settings:
+  -P strategy   - set fix mutation strategy: explore (focus on new coverage),
+                  exploit (focus on triggering crashes). You can also set a
+                  number of seconds after without any finds it switches to
+                  exploit mode, and back on new coverage (default: 1000)
+  -p schedule   - power schedules compute a seed's performance score:
+                  explore(default), fast, exploit, seek, rare, mmopt, coe, lin
+                  quad -- see docs/FAQ.md for more information
+  -f file       - location read by the fuzzed program (default: stdin or @@)
+-------------8<-------------
+```
+
+## Project Directory Setup
+
+In order to keep us on track for the upcoming rust code/build setup, we’re going to deviate from the directory structure recommended by the Fuzzing101 README. Since we know that we’ll be creating multiple Rust projects (one for each exercise), we’ll start out with a Rust [workspace](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html).
+
+The first step in creating a workspace for our Rust project directories is to simply make a directory.
+
+```
+cd $HOME
+mkdir fuzzing-101-solutions
+cd fuzzing-101-solutions
+```
+
+`fuzzing-101-solutions` will be the top level directory that houses all of our different exercise specific projects. In the top level directory, we need to create a `Cargo.toml` file that tells Rust and cargo that this is a workspace. Since all of our projects in the workspace are going to be fuzzers, we’ll globally modify the release profile settings as well.
+
+> fuzzing-101-solutions/Cargo.toml
+
+```
+[workspace]
+
+members = [
+    "exercise-1",
+]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+debug = true
+```
+
+- `lto=true` :: perform link-time optimizations across all crates within the dependency graph
+- `codegen-units=1` :: controls how many “code generation units” a crate will be split into; higher codegen-units **MAY** produce slower code (max value 256)
+- `opt-level=3` :: controls the level of optimizations; 3 == “all optimizations”
+- `debug=true` :: controls the amount of debug information included in the compiled binary; true == “full debug info”
+
+After that, we can create our first solution project.
+
+```
+cargo new exercise-1
+```
+
+Having run the commands above, we’re left with a directory structure that looks like this.
+
+```
+fuzzing-101-solutions/
+├── Cargo.toml
+└── exercise-1
+    ├── Cargo.toml
+    ├── .git
+    │   ├── description
+    │   -------------8<-------------
+    ├── .gitignore
+    └── src
+        └── main.rs
+```
+
+Now we can proceed with the fuzz target setup.
+
+## Install Xpdf
+
+These steps are pulled directly from [Exercise 1’s README](https://github.com/antonio-morales/Fuzzing101/tree/main/Exercise%201#download-and-build-your-target). However, we’ll modify them a bit to take our slightly different folder structure into account.
+
+### Download Xpdf 3.02
+
+The following set of steps will download Xpdf version 3.02 into a folder ultimately named `xpdf`.
+
+```
+cd fuzzing-101-solutions/exercise-1
+wget https://dl.xpdfreader.com/old/xpdf-3.02.tar.gz
+tar xvf xpdf-3.02.tar.gz
+rm xpdf-3.02.tar.gz
+mv xpdf-3.02 xpdf
+```
+
+Our directory structure now looks like this
+
+```
+fuzzing-101-solutions/
+├── Cargo.toml
+├── exercise-1
+│   ├── Cargo.toml
+│   ├── .git
+│   │   ├── config
+│   │   -------------8<-------------
+│   ├── .gitignore
+│   └── src
+│       └── main.rs
+└── xpdf
+    ├── aclocal.m4
+    ├── aconf2.h
+    -------------8<-------------
+```
+
+The [Fuzzing101 README](https://github.com/antonio-morales/Fuzzing101/tree/main/Exercise%201#download-and-build-your-target) recommends building Xpdf with `gcc` at this point as a test. Feel free to do so if you like.
+
+# Fuzzer Setup
+
+## The Goal
+
+In order to write our fuzzer, we should take a look at our goal.
+
+According to Fuzzing101:
+
+> the goal is to find a crash/PoC for [CVE-2019-13288](https://www.cvedetails.com/cve/CVE-2019-13288/) in XPDF 3.02.
+>
+> CVE-2019-13288 is a vulnerability that may cause an infinite recursion via a crafted file.
+>
+> Since each called function in a program allocates a stack frame on the stack, if a function is recursively called so many times it can lead to stack memory exhaustion and program crash.
+>
+> As a result, a remote attacker can leverage this for a DoS attack.
+
+Alright, we know what we want to accomplish, and have gathered all of the dependencies, let’s go!
+
+## Cargo.toml
+
+Our first stop will be the `Cargo.toml` file in the `exercise-1` directory. We’ll begin by telling cargo that we plan to use a build script, as well as adding LibAFL as a dependency.
+
+> exercise-1/Cargo.toml
+
+```
+[package]
+name = "exercise-one-solution"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+libafl = { version = "0.15.0" }
+libafl_bolts = { version = "0.15.0" }
+```
+
+## build.rs
+
+Next up, we’ll add a `build.rs` file to our `exercise-1` directory, resulting in a directory structure like what’s shown below.
+
+```
+fuzzing-101-solutions/
+├── Cargo.toml
+├── exercise-1
+│   ├── Cargo.toml
+│   ├── build.rs
+-------------8<-------------
+```
+
+Build scripts are useful when one needs to perform some set of actions at build time. Typical uses are building/linking to external C libraries or doing some sort of code generation before building a project. By placing a file named `build.rs` in the root of our project directory, we’re telling `cargo` to compile and execute build.rs just before building our project.
+
+The `build.rs` file is where we’ll configure and build Xpdf using AFL++‘s compiler. More specifically, we’ll use `alf-clang-fast`, since that’s what Fuzzing101 recommends for this exercise.
+
+`build.rs` is essentially a program unto itself, so we’ll begin with its imports and its main function.
+
+```
+use std::env;
+use std::process::Command;
+
+fn main() {
+    // todo 
+}
+```
+
+Within the main function, we can configure **when** the build script should be run (after the initial build). We’ll do that the the [rerun-if-changed](https://doc.rust-lang.org/cargo/reference/build-scripts.html#cargorerun-if-changedpath) directive. These directives tell `cargo` to re-run the build script if any of the files at the given paths have changed. More specifically, if their **mtime** timestamp has updated or not.
+
+```
+println!("cargo:rerun-if-changed=build.rs");
+println!("cargo:rerun-if-changed=src/main.rs");
+```
+
+After that, we’re going to programatically execute the same commands that we would have run if we were to manually build Xpdf from the command line. Those commands are listed below to give you an idea of what `build.rs` is trying to accomplish.
+
+```
+# these are example commands that will be executed automatically by build.rs
+# and were taken almost verbatim from Fuzzing101's README
+cd fuzzing-101-solutions/exercise-1/xpdf
+make clean
+rm -rf install 
+export LLVM_CONFIG=llvm-config-19
+CC=afl-clang-fast CXX=afl-clang-fast++ ./configure --prefix=./install
+make
+make install
+```
+
+Here’s what the first of the commands above looks like when written as a [Command](https://doc.rust-lang.org/std/process/struct.Command.html#) in Rust.
+
+```
+let cwd = env::current_dir().unwrap().to_string_lossy().to_string();
+let xpdf_dir = format!("{}/xpdf", cwd);
+
+// make clean; remove any leftover gunk from prior builds
+Command::new("make")
+    .arg("clean")
+    .current_dir(xpdf_dir.clone())
+    .status()
+    .expect("Couldn't clean xpdf directory");
+```
+
+The rest of the commands follow the same kind of pattern. The entirety of `build.rs` is shown below.
+
+> exercise-1/build.rs
+
+```
+use std::env;
+use std::process::Command;
+
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/main.rs");
+
+    let cwd = env::current_dir().unwrap().to_string_lossy().to_string();
+    let xpdf_dir = format!("{}/xpdf", cwd);
+
+    // make clean; remove any leftover gunk from prior builds
+    Command::new("make")
+        .arg("clean")
+        .current_dir(xpdf_dir.clone())
+        .status()
+        .expect("Couldn't clean xpdf directory");
+
+    // clean doesn't know about the install directory we use to build, remove it as well
+    Command::new("rm")
+        .arg("-r")
+        .arg("-v")
+        .arg("-f")
+        .arg(&format!("{}/install", xpdf_dir))
+        .current_dir(xpdf_dir.clone())
+        .status()
+        .expect("Couldn't clean xpdf's install directory");
+
+    // export LLVM_CONFIG=llvm-config-19
+    env::set_var("LLVM_CONFIG", "llvm-config-19");
+
+    // configure with afl-clang-fast and set install directory to ./xpdf/install
+    Command::new("./configure")
+        .arg(&format!("--prefix={}/install", xpdf_dir))
+        .env("CC", "/usr/local/bin/afl-clang-fast")
+        .env("CXX", "/usr/local/bin/afl-clang-fast++")
+        .current_dir(xpdf_dir.clone())
+        .status()
+        .expect("Couldn't configure xpdf to build using afl-clang-fast");
+
+    // make && make install
+    Command::new("make")
+        .current_dir(xpdf_dir.clone())
+        .status()
+        .expect("Couldn't make xpdf");
+
+    Command::new("make")
+        .arg("install")
+        .current_dir(xpdf_dir)
+        .status()
+        .expect("Couldn't install xpdf");
+}
+```
+
+If everything is configured correctly up to this point, we should be able to run
+
+```
+cargo build
+```
+
+After which, the `xpdf/install` directory should look like this.
+
+```
+xpdf/install
+├── bin
+│   ├── pdffonts
+│   ├── pdfimages
+│   ├── pdfinfo
+│   ├── pdftops
+│   └── pdftotext
+├── etc
+│   └── xpdfrc
+└── man
+    ├── man1
+    │   ├── pdffonts.1
+    │   ├── pdfimages.1
+    │   ├── pdfinfo.1
+    │   ├── pdftops.1
+    │   └── pdftotext.1
+    └── man5
+        └── xpdfrc.5
+```
+
+The binaries in the `xpdf/install/bin` folder were all compiled with `afl-clang-fast`, and as such, are instrumented for fuzzing!
+
+## corpus
+
+I promise, we’re getting to the fuzzer soon, but before we do, we need a few sample PDF files to populate our input corpus. It’s just a few `wget` commands, so nothing too onerous.
+
+```
+cd fuzzing-101-solutions/exercise-1
+mkdir corpus
+cd corpus
+wget https://github.com/mozilla/pdf.js-sample-files/raw/master/helloworld.pdf
+wget http://www.africau.edu/images/default/sample.pdf
+wget https://www.melbpc.org.au/wp-content/uploads/2017/10/small-example-pdf-file.pdf
+```
+
+That’s it! These three PDF files will make up the initial input for our fuzzer.
+
+# Writing the Fuzzer
+
+Ok, now we’re closing in on the good stuff. `main.rs` will house our fuzzer’s logic. Ultimately, the fuzzer is going to be put together piece-by-piece using different components from LibAFL. The majority of this code was derived from the [forkserver_simple](https://github.com/AFLplusplus/LibAFL/tree/main/fuzzers/forkserver/forkserver_simple) example in the LibAFL repo. We’re using a forkserver along with `afl-clang-fast` to keep somewhat in-line with what one would expect to see when following along with Fuzzing101’s recommendation.
+
+As we go through `main.rs`, we’ll attempt to dig in to why certain components were chosen and how they map to different fuzzing concepts.
+
+Ok, I think that’s enough preamble, let’s get started.
+
+## Components: Corpus + Input
+
+References:
+
+- [Corpus Book Entry](https://aflplus.plus/libafl-book/core_concepts/corpus.html)
+- [Corpus API Entry](https://docs.rs/libafl/0.15.0/libafl/corpus/trait.Corpus.html)
+- [Input Book Entry](https://aflplus.plus/libafl-book/core_concepts/input.html)
+- [Input API Entry](https://docs.rs/libafl/0.15.0/libafl/inputs/trait.Input.html)
+
+We’ll start building our fuzzer by creating our corpora (yes, I had to google the plural of corpus, don’t judge me). First up is the input corpus. The input corpus holds all of our current testcases. We’re using an [InMemoryCorpus](https://docs.rs/libafl/0.15.0/libafl/corpus/inmemory/struct.InMemoryCorpus.html) to prevent reads/writes to disk. Keeping our corpus in memory and preventing disk access should improve the speed at which we manipulate testcases.
+
+While creating the input corpus, we need to define the `Input` type. The Input represents data received from some external source. In this case, we’re using the [BytesInput](https://docs.rs/libafl/0.15.0/libafl/inputs/bytes/type.BytesInput.html), which means that our input corpus should contain items that can be represented as arrays of bytes. Those byte arrays will eventually be mutated by the fuzzer before being passed to the program being fuzzed.
+
+```
+let corpus_dirs = vec![PathBuf::from("./corpus")];
+
+let input_corpus = InMemoryCorpus::<BytesInput>::new();
+```
+
+After that, we’ll move on to the output corpus. Testcases from the input corpus that cause a timeout are considered “**solutions**”. Our output corpus, which is of the type [OnDiskCorpus](https://docs.rs/libafl/0.15.0/libafl/corpus/ondisk/struct.OnDiskCorpus.html), is the corpus in which we store those solutions. Said another way: any generated PDF that causes the program to hang will be stored in the output corpus.
+
+```
+let timeouts_corpus = OnDiskCorpus::new(PathBuf::from("./timeouts")).expect("Could not create timeouts corpus");
+```
+
+## Component: Observer
+
+References:
+
+- [Observer Book Entry](https://aflplus.plus/libafl-book/core_concepts/observer.html)
+- [Observer API Entry](https://docs.rs/libafl/0.15.0/libafl/observers/trait.Observer.html)
+
+The next component for our fuzzer is the `Observer`. An Observer can be thought of as something that provides information about the current testcase to the fuzzer. We’ll start with a simple Observer: the [TimeObserver](https://docs.rs/libafl/0.15.0/libafl/observers/struct.TimeObserver.html). The TimeObserver simply keeps track of the current testcase’s runtime. For each testcase, the TimeObserver will send the time it took the testcase to execute to the fuzzer by way of a Feedback component, which we’ll discuss shortly.
+
+```
+let time_observer = TimeObserver::new("time");
+```
+
+While the TimeObserver was simple, the next Observer is less so. In addition to execution time, we also want to keep track of the coverage map (this is a coverage-guided fuzzer after all). In order to build a coverage map, we need some shared memory. This piece of shared memory, AKA the coverage map, will be shared between the [HitcountsMapObserver](https://docs.rs/libafl/0.15.0/libafl/observers/map/hitcount_map/struct.HitcountsMapObserver.html) and the Executor (we’ll discuss the Executor a little later in the post).
+
+First, we create a new instace of a [StdShMemProvider](https://docs.rs/libafl_bolts/latest/libafl_bolts/shmem/type.StdShMemProvider.html), which provides access to shared memory mappings. We then use the StdShMemProvider to create a new shared memory mapping that is 65536 bytes.
+
+```
+const MAP_SIZE: usize = 65536;
+-------------8<-------------
+let mut shmem = StdShMemProvider::new().unwrap().new_map(MAP_SIZE).unwrap();
+```
+
+After that, we need to save the shared memory id to the environment, so that the Executor knows about it.
+
+```
+shmem.write_to_env("__AFL_SHM_ID").expect("couldn't write shared memory ID");
+```
+
+Next, we get a mutable reference to the memory map. The reference we create is of type `&mut [u8]`.
+
+```
+let mut shmem_map = shmem.as_mut_slice();
+```
+
+Finally, we create our Observer, passing in the reference to the shared memory map and giving it the name `shared_mem`.
+
+A HitcountsMapObserver needs a `base` object passed in as part of its constructor. The base we’re using is a [StdMapObserver](https://docs.rs/libafl/0.15.0/libafl/observers/map/struct.StdMapObserver.html). A ConstMapObserver is an optimization layer over a `MapObserver`. It allows for some performance gains by using a map size that’s known at compile time when deciding if a testcase is **“interesting”** (more on this in the Feedback section).
+
+```
+let edges_observer = unsafe { HitcountsMapObserver::new(StdMapObserver::new("shared_mem", shmem_buf)).track_indices() };
+```
+
+Phew! We’re done with Observers for now, let’s see what’s next.
+
+## Component: Feedback
+
+References:
+
+- [Feedback Book Entry](https://aflplus.plus/libafl-book/core_concepts/feedback.html)
+- [Feedback API Entry](https://docs.rs/libafl/0.15.0/libafl/feedbacks/trait.Feedback.html)
+
+After the Observers comes our `Feedback`. The purpose of a Feedback component is to classify whether or not the outcome of a testcase is **interesting**. When a Feedback determines that a testcase is interesting, the input that was used in that testcase is typically added to the Corpus.
+
+For our fuzzer, we need to create a few different Feedback components. We’ll start with the Feedbacks that will keep track of our coverage map and execution time.
+
+The HitcountsMapObserver (discussed earlier) is passed into a [MaxMapFeedback](https://docs.rs/libafl/0.15.0/libafl/feedbacks/map/type.MaxMapFeedback.html). The MaxMapFeedback determines if there is a value in the HitcountsMapObserver’s coverage map that is greater than the current maximum value for the same entry. If a new maximum is found, the Input is deemed interesting.
+
+After creating the MaxMapFeedback, we also create a new [TimeFeedback](https://docs.rs/libafl/0.15.0/libafl/feedbacks/struct.TimeFeedback.html), which is then tied to the TimeObserver we saw earlier. You may be wondering how the TimeFeedback component helps to decide if an Input is interesting… Well, it doesn’t. TimeFeedback never reports an Input as interesting. However, it does keep track of testcase execution time by way of its TimeObserver. Due to the fact that it can never classify a testcase as interesting on its own, we need to use it alongside some other Feedback that has the ability to perform said classification.
+
+With both of the new Feedback components created, we use the [feedback_or](https://docs.rs/libafl/0.15.0/libafl/macro.feedback_or.html) macro to compile both Feedbacks into a single [CombinedFeedback](https://docs.rs/libafl/0.15.0/libafl/feedbacks/struct.CombinedFeedback.html), which is joined together with a **logical OR**.
+
+The `feedback` variable below is essentially saying, **if the current testcase’s input triggered a new code path in the coverage map, we should probably save that input to the corpus**.
+
+> The `true` passed to `new_tracking` says that we want to track indexes. The `false` says we do not want to track novelties.
+
+```
+let mut feedback = feedback_or!(
+    MaxMapFeedback::new(&edges_observer),
+    TimeFeedback::new(&time_observer)
+);
+```
+
+Alright, we’ve got the Feedbacks for coverage and time, now we’re going to add a second set of Feedbacks. These upcoming Feedbacks will also be used to determine if a testcase is interesting, but can be thought of more as a testcase’s **solution** or **objective**. They’ll be passed into our Fuzzer component later on in the code.
+
+Similar to before, we combine two Feedbacks using a boolean operator, but this time it’s a **logical AND**. We’ll combine them using the [feedback_and_fast](https://docs.rs/libafl/0.15.0/libafl/macro.feedback_and_fast.html) macro. The Feedbacks in question are the [TimeoutFeedback](https://docs.rs/libafl/0.15.0/libafl/feedbacks/type.TimeoutFeedback.html) and our old friend MaxMapFeedback from earlier.
+
+Recall that our goal is to find an infinite recursion bug. Since we’re looking for something that causes infinite recursion, we’re mostly interested in looking for testcases that make the target program hang. The `objective` variable below is essentially saying, **if the given input triggered a new code path in the coverage map, AND, if the time to execute the fuzz case with the current input results in a timeout, our testcase meets our objective**.
+
+```
+let mut objective = feedback_and_fast!(
+    TimeoutFeedback::new(),
+    MaxMapFeedback::new(&edges_observer)
+);
+```
+
+That’s it for Feedbacks, moving on to…
+
+## Component: State
+
+References:
+
+- [State Book Entry](https://aflplus.plus/libafl-book/design/architecture.html)
+- [StdState API Entry](https://docs.rs/libafl/0.15.0/libafl/state/struct.StdState.html)
+
+Our next component is the State component, specifically the [StdState](https://docs.rs/libafl/0.15.0/libafl/state/struct.StdState.html). A State component takes ownership of each of our existing FeedbackState components, a random number generator, and our corpora.
+
+```
+let mut state = StdState::new(
+    StdRand::with_seed(current_nanos()),
+    input_corpus,
+    timeouts_corpus,
+    &mut feedback,
+    &mut objective,
+);
+```
+
+## Component: Monitor
+
+References:
+
+- [Monitor Book Entry](https://aflplus.plus/libafl-book/baby_fuzzer.html?highlight=monitor#generating-and-running-some-tests)
+- [Monitor API Entry](https://docs.rs/libafl/0.15.0/libafl/monitors/trait.Monitor.html)
+- [SimpleMonitor API Entry](https://docs.rs/libafl/0.15.0/libafl/monitors/struct.SimpleMonitor.html)
+
+The Monitor component keeps track of all of the clients and offers methods on how their reported information can be displayed. For now, we’ll use the simplest Monitor representation: [SimpleMonitor](https://docs.rs/libafl/0.15.0/libafl/monitors/struct.SimpleMonitor.html). SimpleMonitor will call `println` with `SimpleMonitor::display` as input in order to send a report to the terminal.
+
+```
+let monitor = SimpleMonitor::new(|s| println!("{s}"));
+```
+
+## Component: EventManager
+
+References:
+
+- [EventManager Book Entry](https://aflplus.plus/libafl-book/baby_fuzzer.html?highlight=EventManager#generating-and-running-some-tests)
+- [EventProcessor API Entry](https://docs.rs/libafl/0.15.0/libafl/events/trait.EventProcessor.html)
+- [EventFirer API Entry](https://docs.rs/libafl/0.15.0/libafl/events/trait.EventFirer.html)
+
+The EventManager component handles the various [Events](https://docs.rs/libafl/0.15.0/libafl/events/enum.Event.html) generated during the fuzzing loop. Some examples of an Event are finding an interesting testcase, updating the Monitor component, and logging. Once again, we’ll use the simplest type available for our current Fuzzer.
+
+```
+let mut mgr = SimpleEventManager::new(stats);
+```
+
+## Component: Scheduler
+
+References:
+
+- [Scheduler Book Entry](https://aflplus.plus/libafl-book/baby_fuzzer.html?highlight=scheduler#generating-and-running-some-tests)
+- [CorpusScheduler API Entry](https://docs.rs/libafl/0.15.0/libafl/schedulers/trait.Scheduler.html)
+
+During the fuzz loop, our fuzzer will need to acquire new testcases from the input corpus. The Scheduler component defines the strategy used to supply a Fuzzer’s request to the Corpus for a new testcase. For our fuzzer, we’re using the [IndexesLenTimeMinimizerScheduler](https://docs.rs/libafl/0.15.0/libafl/schedulers/minimizer/type.IndexesLenTimeMinimizerScheduler.html). The name is kinda scary, but it boils down to a minimization policy backed by a queue that is used to get test cases from the corpus. It will prioritize quick/small testcases that exercise all of the entries registered in the coverage map’s metadata.
+
+The [QueueScheduler](https://docs.rs/libafl/0.15.0/libafl/schedulers/queue/struct.QueueScheduler.html) is used as the IndexesLenTimeMinimizerScheduler’s backing queue.
+
+```
+let scheduler = IndexesLenTimeMinimizerScheduler::new(&edges_observer, QueueScheduler::new());
+```
+
+## Component: Fuzzer
+
+References:
+
+- [Fuzzer Book Entry](https://aflplus.plus/libafl-book/baby_fuzzer.html?highlight=Fuzzer#generating-and-running-some-tests)
+- [Fuzzer API Entry](https://docs.rs/libafl/0.15.0/libafl/fuzzer/trait.Fuzzer.html)
+
+The Fuzzer component contains our feedback, objectives, and a corpus scheduler. It’ll be the primary driver of our program, running the target program with the generated Input while triggering Observers and Feedbacks.
+
+```
+let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
+```
+
+## Component: Executor
+
+References:
+
+- [Executor Book Entry](https://aflplus.plus/libafl-book/core_concepts/executor.html)
+- [Executor API Entry](https://docs.rs/libafl/0.15.0/libafl/executors/trait.Executor.html)
+
+The Executor component is one of the few remaining. We’ll use a [ForkserverExecutor](https://docs.rs/libafl/0.15.0/libafl/executors/forkserver/struct.ForkserverExecutor.html). The ForkserverExecutor gives us an executor that that implements an AFL-like mechanism that will spawn child processes to fuzz.
+
+Part of creating our Executor is telling it what we want it to execute. In our case, we want to run the following.
+
+```
+./path/to/pdftotext INPUT_FILE
+```
+
+We’ll pass the path to `pdftotext` to the [ForkserverExecutorBuilder](https://docs.rs/libafl/0.15.0/libafl/executors/forkserver/struct.ForkserverExecutorBuilder.html), along with the args it needs to run, our preferred timeout value, and the size of our coverage map. We’ll use the double-`@` symbol to tell the ForkserverExecutor that we want the BytesInput (covered earlier) generated from each testcase to be written to a file, and that the same file’s path should overwrite the `@@` in the final command (similar to the `afl-fuzz` command line). Finally, we’ll pass our Observers into the ForkserverExecutor’s constructor, rounding out the call.
+
+```
+let mut executor = ForkserverExecutor::builder()
+    .program("./xpdf/install/bin/pdftotext")
+    .timeout(Duration::from_secs(5))
+    .parse_afl_cmdline(["@@"])
+    .coverage_map_size(MAP_SIZE)
+    .build(tuple_list!(time_observer, edges_observer))?;
+```
+
+## Components: Mutator + Stage
+
+References:
+
+- [Mutator Book Entry](https://aflplus.plus/libafl-book/core_concepts/mutator.html)
+- [Mutator API Entry](https://docs.rs/libafl/0.15.0/libafl/mutators/trait.Mutator.html)
+- [Stage Book Entry](https://aflplus.plus/libafl-book/core_concepts/stage.html)
+- [Stage API Entry](https://docs.rs/libafl/0.15.0/libafl/stages/trait.Stage.html)
+
+The final pieces of the puzzle are the Mutator and Stage components. We’ll register our StdScheduledMutator as a Stage using the [StdMutationalStage](https://docs.rs/libafl/0.15.0/libafl/stages/mutational/struct.StdMutationalStage.html) component. A mutational stage is the stage in a fuzzing run that mutates the Input. Mutational stages will usually have a range of mutations that are being applied to the input one by one, between executions. In our case, the range of mutations we’ve chosen are the ever popular [Havoc mutations](https://docs.rs/libafl/0.15.0/libafl/mutators/havoc_mutations/fn.havoc_mutations.html). Each mutation is scheduled by the [StdScheduledMutator](https://docs.rs/libafl/0.15.0/libafl/mutators/scheduled/struct.StdScheduledMutator.html) as part of the mutational stage.
+
+```
+let mutator = StdScheduledMutator::new(havoc_mutations());
+let mut stages = tuple_list!(StdMutationalStage::new(mutator));
+```
+
+# Running the Fuzzer
+
+That’s it for the individual components. All that’s left is for us to run the fuzzer. Recall that the Fuzzer takes ownership of a bunch of different components and essentially makes everything run. Knowing that, we pass in our stages, executor, the state, and the event manager. The code to make that happen is shown below.
+
+```
+fuzzer
+    .fuzz_loop(&mut stages, &mut executor, &mut state, &mut mgr)
+    .expect("Error in the fuzzing loop");
+```
+
+## Build the Fuzzer
+
+Ok, it’s been a long time coming, but the moment has arrived! With `build.rs` setup to take care of building Xpdf, we can build our fuzzer and the fuzz target with a single command.
+
+```
+cd fuzzing-101-solutions
+cargo build --release
+```
+
+## Commence Fuzzing!
+
+After the build completes, we can kick off our artisnal, hand-crafted fuzzer.
+
+```
+cd exercise-1
+../target/release/exercise-one-solution
+```
+
+On my machine, it took roughly 10 minutes to get a timeout. The `objectives: 1` shows that we have 1 testcase that met the fuzzer’s objective (a timeout that also produced new coverage).
+
+```
+[Stats #0] run time: 0h-0m-0s, clients: 1, corpus: 640, objectives: 1, executions: 568810, exec/sec: 1744
+```
+
+## Results
+
+We can confirm that we’ve found a bug by using the PDF inside the `timeouts` folder (our output corpus).
+
+```
+./xpdf/install/bin/pdftotext ./timeouts/7e3a6553de5cce87
+════════════════════════════════════════════════════════
+Error: PDF file is damaged - attempting to reconstruct xref table...
+Error (677): Illegal character <2c> in hex string
+Error (678): Illegal character <2c> in hex string
+Error (679): Illegal character <2c> in hex string
+-------------8<-------------
+Error (3245): Dictionary key must be a name object
+Error (3248): Dictionary key must be a name object
+Error (3255): Dictionary key must be a name object
+Segmentation fault
+```
+
+# Outro
+
+\o/ Huzzah! We’ve created our own fuzzer using LibAFL that was specifically tuned to find a recursion bug in real-world software; pretty neat eh? The companion code for this exercise can be found at my [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions).
+
+In the next post, we’ll tackle the second exercise. See you then!
+
+# Additional Resources
+
+1.  [Fuzzing101](https://github.com/antonio-morales/Fuzzing101)
+2.  [AFL++](https://github.com/AFLplusplus/AFLplusplus)
+3.  [LibAFL](https://github.com/AFLplusplus/LibAFL)
+4.  [LibAFL API Documentation](https://docs.rs/libafl/0.15.0/libafl/index.html)
+5.  [LibAFL Book](https://aflplus.plus/libafl-book/)
+6.  [forkserver_simple example fuzzer](https://github.com/AFLplusplus/LibAFL/tree/main/fuzzers/forkserver/forkserver_simple)
+7.  [fuzzing-101-solutions repository](https://github.com/epi052/fuzzing-101-solutions)
+
+------------------------------------------------------------------------
+
+Share: [Twitter](https://twitter.com/intent/tweet?text=Fuzzing101%20with%20LibAFL%20-%20Part%20I%3A%20Fuzzing%20Xpdf&url=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-01-fuzzing-101-with-libafl%2F) [Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fepi052.gitlab.io%2Fnotes-to-self%2Fblog%2F2021-11-01-fuzzing-101-with-libafl%2F)
