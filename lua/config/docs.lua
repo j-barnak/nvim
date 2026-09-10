@@ -1622,7 +1622,7 @@ local simple = {
 		sparse = "/api",
 		marker = "api",
 		browse = "/api",
-		exts = "-e dox -e md -e c -e cpp -e h -e txt",
+		exts = "-e dox -e md -e txt",
 		prompt = "DynamoRIO> ",
 	},
 	codeql = {
