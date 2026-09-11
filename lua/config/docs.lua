@@ -1298,7 +1298,7 @@ local simple = {
 		sparse = "/docs /examples /tools /README.md /QUICKSTART.md /INSTALL.md /FAQ.txt /LINKS.md",
 		marker = "examples",
 		browse = "",
-		exts = "-e md -e rst -e py -e c -e cc -e h -e lua -e txt",
+		exts = "-e md -e rst -e txt",
 		prompt = "BCC> ",
 	},
 	-- Bochs: the x86/x64 emulator. The manuals are the frozen "Bochs
@@ -1339,7 +1339,7 @@ local simple = {
 		sparse = "/docs /src /README.md",
 		marker = "docs",
 		browse = "",
-		exts = "-e rst -e md -e h",
+		exts = "-e rst -e md",
 		prompt = "libbpf> ",
 	},
 	drgn = {
@@ -1441,7 +1441,7 @@ local simple = {
 		sparse = "/docs /examples /README.rst",
 		marker = "docs",
 		browse = "",
-		exts = "-e rst -e md -e cpp -e c -e py -e txt",
+		exts = "-e rst -e md -e txt",
 		prompt = "QBDI> ",
 	},
 	capstone = {
@@ -1449,7 +1449,7 @@ local simple = {
 		sparse = "/docs /include /bindings /README.md /BUILDING.md",
 		marker = "docs",
 		browse = "",
-		exts = "-e md -e rst -e txt -e h",
+		exts = "-e md -e rst -e txt",
 		prompt = "Capstone> ",
 	},
 	binja = {
@@ -1457,7 +1457,7 @@ local simple = {
 		sparse = "/docs /examples /python /rust",
 		marker = "docs",
 		browse = "",
-		exts = "-e md -e rst -e py -e cpp",
+		exts = "-e md -e rst",
 		prompt = "Binary Ninja> ",
 	},
 	lief = {
@@ -1465,7 +1465,7 @@ local simple = {
 		sparse = "/doc /examples /api/python/examples",
 		marker = "doc",
 		browse = "",
-		exts = "-e rst -e md -e py -e cpp -e txt",
+		exts = "-e rst -e md -e txt",
 		prompt = "LIEF> ",
 	},
 	pyelftools = {
@@ -1473,7 +1473,7 @@ local simple = {
 		sparse = "/doc /examples /scripts /README.md",
 		marker = "doc",
 		browse = "",
-		exts = "-e rst -e md -e py -e txt",
+		exts = "-e rst -e md -e txt",
 		prompt = "pyelftools> ",
 	},
 	qbindiff = {
@@ -1489,7 +1489,7 @@ local simple = {
 		-- runnable documentation is the example scripts, so browse those.
 		url = "https://github.com/qilingframework/qiling",
 		sparse = "/docs /examples /README.md /ARCHITECTURE.md /ARCHITECTURE", marker = "docs", browse = "",
-		exts = "-e py -e md -e rst -e txt",
+		exts = "-e md -e rst -e txt",
 		prompt = "Qiling example> ",
 	},
 	panda = {
@@ -1534,7 +1534,7 @@ local simple = {
 		sparse = "/docs /samples /include /bindings /README.md",
 		marker = "docs",
 		browse = "",
-		exts = "-e md -e rst -e txt -e c -e h",
+		exts = "-e md -e rst -e txt",
 		prompt = "Keystone> ",
 	},
 	android = {
@@ -1556,7 +1556,7 @@ local simple = {
 		sparse = "/docs /examples /README.md",
 		marker = "docs",
 		browse = "",
-		exts = "-e rst -e md -e py -e txt",
+		exts = "-e rst -e md -e txt",
 		prompt = "pwntools> ",
 	},
 	uefi = {
