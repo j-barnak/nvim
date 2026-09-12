@@ -1,0 +1,123 @@
+# A Practical Beginner's Guide to Intel Processor Trace
+
+-  Feb 24, 2023
+-  [Security](https://carteryagemann.com/category/security.html)
+-  [\#pt](https://carteryagemann.com/tag/pt.html), [\#libipt](https://carteryagemann.com/tag/libipt.html)
+
+Greetings, if you're reading this tutorial, chances are you have some interest in Intel Processor Trace (PT) and how it can improve your debugging or program analysis capabilities, but aren't sure how to get started. This is understandable, given that there aren't many practical tutorials on Intel PT and what documentation is publicly available is scattered across Intel specifications, Linux documentation, and nuggets of text in various smaller projects. The existing text targets a vast range of audiences, ranging from low-level driver developers to experienced software engineers. Most, if not all, of that text is not newcomer friendly and it's easy to spend hours sifting through it only to find your basic questions unanswered.
+
+With this in mind, I've written this tutorial to fulfill two goals. The first is to get newcomers up and running with Intel PT in as few steps as possible. This is a hands-on tutorial for people who want to quickly get hacking. In the process, I hope to also reveal to you what makes Intel PT so powerful and why it's my go to technology for any project involving dynamic program analysis. My second goal is to then point you to the various sources of more technical information with prefaces of what you'll find in each destination, so you can focus your exploration based on your ultimate needs and higher goals.
+
+So with all that clarified, let's dive in.
+
+## Background: What is Intel PT?
+
+If you stumbled upon this tutorial by chance and have no clue what Intel PT is, let's start with some background information and a bit of history. Readers who already know about Intel PT or don't care for a history lesson should skip to the next section.
+
+Intel PT is one of a long line of hardware features developed and released by Intel to help developers gain better insights into how their software runs on Intel processors for debugging and performance profiling. If you're using an Intel processor built within the past decade, chances are it includes Intel PT.
+
+Intel PT is a spiritual successor to technologies like hardware performance counters. Performance counters are an excellent solution if you want to know statistical information about the performance behaviors of a particular piece of code, like how often it encounters cache misses, but performance counters can't tell you much at a per-instruction granularity.
+
+Intel PT aims to address this shortcoming by providing *execution traces* as opposed to just a set of counter registers. Each trace is a stream of packets representing different events, such as whether a branch was taken, how many processor cycles have elapsed, and so forth. These packets are flushed directly into physical memory, asynchronously, bypassing all caches, to enable recording of traces with minimal impact to the target program.
+
+The original intended purpose of Intel PT was to enable advanced debugging and profiling of performance sensitive code. Intel PT yields precise information about executed instruction sequences, timing, and even energy consumption, to accurately record software behaviors without the overhead or artifacts that instrumentation code would introduce, such as cache interference. However, while Intel PT was originally intended for debugging and profiling, it is also an extremely powerful tool for guiding program analysis, which is why I use it extensively in my security research projects. Unlike any other technique currently available, Intel PT enables me to transparently observe feasible paths and timing information for real-world executions with only about a 2% performance impact to the target program. It can also successful yield traces in many tricky programs that break instrumentation tools like Intel PIN or DynamoRIO. This makes it my go to technology for collecting data to fuel my security solutions.
+
+## Getting Started: Linux Perf
+
+The fastest way to start using Intel PT is to setup a Linux computer with an Intel CPU and install Perf. **Note that at the time of writing, Intel PT does not play nicely with virtual machines or containers, so you'll need a computer that runs Linux as its native operating system.** I'm going to walk through the steps using a Debian system, but the same steps should work for Ubuntu or (with a bit of tweaking) any other Linux system.
+
+**Step 1: Install Perf.** Most Linux distributions include Perf as a package that can be installed via the default package manager. For Debian, you can install it by opening a terminal and running:
+
+    sudo apt install linux-perf
+
+Be aware that since this package installs an additional kernel driver with some beefy startup behaviors, you may need to reboot your system at this point before proceeding.
+
+**Step 2: Verify Intel PT is available.** Once Perf is installed, we should verify that it can access Intel PT. We can check this with the `perf list` command:
+
+    $ perf list | grep intel_pt
+      intel_pt//                                         [Kernel PMU event]
+
+If the above command prints no lines, then it means either your CPU doesn't have Intel PT or it provides a very old version that lacks all the features required to work with Perf.
+
+**Step 3: Adjust paranoid mode.** By default, Perf only allows `root` to use Intel PT because it reveals a lot of information about traced programs. If you want to allow any user to access Intel PT, you can temporarily disable this restriction by running the command:
+
+    echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+
+If you want to permanently disable it, you can add the following line to `/etc/sysctl.conf`:
+
+    kernel.perf_event_paranoid=-1
+
+If you decide to leave this setting at its default level, be aware that you'll need to run the subsequent commands in this tutorial as `root` (or use `sudo`).
+
+**Step 4: Recording traces.** We can record traces using the `perf record` command. For this tutorial, I'll use `/bin/ls` as my target program. Let's start with the most basic tracing:
+
+    $ perf record -e intel_pt//u -- /bin/ls
+    perf.data
+    [ perf record: Woken up 1 times to write data ]
+    [ perf record: Captured and wrote 0.043 MB perf.data ]
+
+In this example, `perf record` is how I tell Perf I want to record something, `-e intel_pt` specifies that I want to record an Intel PT trace, `//u` specifies that I want to record only the user space portion of the program's execution (Intel PT can also record kernel execution) using the default Intel PT settings (more on this later) and then everything after the `--` is the command that'll be executed and traced.
+
+You'll notice that Perf prints some extra messages after the program finishes executing with useful information like how big the final trace is. **Be aware that it is possible for a program to generate too much data for Intel PT and Perf to flush to storage in time, in which case the trace will contain holes. Perf's messages will warn you if this occurs.**
+
+If everything ran successfully, you should now have a `perf.data` file in your current working directory. This file contains the Intel PT trace along with some *sideband* data recorded by Perf's driver. This sideband records things like where objects were mapped into memory and when context switches between tasks occurred, which is needed in order to recover the executed instruction sequence and untangle threads if your target program runs on multiple CPU cores simultaneously.
+
+**Step 5: Decoding and recovery.** In Intel PT terminology, we first have to *decode* the `perf.data` file to extract the trace of Intel PT events, and then combine that with the recorded sideband to *recover* the instruction execution sequence. Fortunately, Perf comes with scripts that can do this all for us in one step.
+
+The simplest (and in my opinion, most useful) command is the following:
+
+    perf script --insn-trace
+
+Note that by default, `perf script` tries to read `./perf.data`. If your Perf output file is in another location or has a different name, you can specify its path using the `-i` flag.
+
+This script recovers and prints the exact sequence of instructions our target program executed. Specifically, each line has the following format:
+
+        ls         832828     [027]      8105202.171292271:     7fa2165d4c22    do_system+0x372 (/usr/lib/x86_64-linux-gnu/libc-2.31.so)    insn: 31 c0
+    ^Executable^ ^Task ID^ ^CPU Core #^ ^Estimated Timestamp^ ^Virtual Address^ ^Symbol Offset^              ^Object^                    ^Instruction Bytes^
+
+With this information, we now know the exact order instructions were executed, where those instructions resided in memory, how to map those instruction back to the original program and library files, and more. We can then use this information to, for example, build control flow graphs and other representations for program analysis.
+
+If this is too granular for your desired use case, there's also other scripts that can process the trace into more coarse representations. For example, `--call-trace` will print only the function calls (along with their call depth), which you can use to extract a call graph for the execution. You can access the full manual for `perf script` by running `man perf-script`.
+
+## Additional Noteworthy Tricks
+
+**Disassembling instructions.** You may have noticed that our instruction trace prints the raw bytes of the instructions instead of printing them in nice human-readable assembly. This is because in order to disassemble them, Perf needs access to a disassembler. Specifically, Perf integrates with Xed, which is Intel's official disassembler.
+
+Unfortunately, the default APT repositories for Debian don't include a Xed package, so we'll need to compile and install Xed manually. Here's one way I've found to do this:
+
+    git clone https://github.com/intelxed/xed.git xed
+    git clone https://github.com/intelxed/mbuild.git mbuild
+    cd xed
+    ./mfile.py examples
+    sudo cp ./obj/wkit/bin/xed /usr/local/bin/xed
+
+Now that we've installed Xen, we can use the `--xed` flag with `perf script`:
+
+    perf script --insn-trace --xed
+
+And now the instruction bytes are replaced with human-readable assembly.
+
+**Adjusting Timestamp Accuracy.** As I pointed out in Step 5, part of the output from `perf script --insn-trace` includes an estimated timestamp of when each instruction executed. I emphasize the word *estimated* because the accuracy of this timestamp depends on how frequently we configure Intel PT to record timing packets.
+
+To keep this tutorial concise, I won't go into the details of what the different timing packets are and their trade-offs, but I'll show you how to adjust them as an example of how to change Intel PT settings in `perf record`. We can specify any non-default Intel PT settings like so:
+
+    $ perf record -e intel_pt/cyc=1,cyc_thresh=0/u -- /bin/ls
+    perf.data
+    [ perf record: Woken up 1 times to write data ]
+    [ perf record: Captured and wrote 0.074 MB perf.data ]
+
+In this case, what I've added is `cyc=1`, which enables the generation of CYC timing packets by Intel PT and `cyc_thresh=0`, which tells Intel PT to output these packets as frequently as possible. If you look very closely, you'll notice the trace size has almost doubled as a result, so be mindful of this when deciding how accurate you need the timestamps to be.
+
+If we now rerun `perf script --insn-trace`, we'll see that the estimated timestamp updates more frequently, however it still isn't updated after every instruction. This is due to a limitation of Intel PT, but the specifics are outside the scope of this tutorial.
+
+One final useful bit of information I'll point out regarding timing is if we add `-F+ipc` to our `perf script` command, it'll periodically print out fields like `IPC: 4.14 (29/7)`. IPC stands for *instructions per cycle*, and in this example, it's saying that the previous 29 instructions executed in 7 clock cycles. This gives us a bit more insight into how the timestamps are changing.
+
+## Further Reading
+
+This concludes the basics of how to use Intel PT via Perf. From here, there's several documents you can read to gain more technical information:
+
+If you want to know more about the Intel PT specification, including how to program Intel PT with a driver, what all the packets do, and how to perform instruction recovery, check out the [Intel Architectures Software Developer's Manuals](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html) (ASDM). The chapters get shifted around as the manual is updated, but at the time of writing the chapter on Intel PT is located in Volume 3, Chapter 33.
+
+If for some reason you do not want to rely on Perf to decode traces or you want to integrate decoding and recovery directly into your own program, [libipt](https://github.com/intel/libipt) is a good starting point that offers standalone tools and a library for processing Intel PT data.
+
+If you would like to learn more about Perf's Intel PT features, including all the other available command line arguments and other use cases like tracing kernel executions or KVM, see Linux's [documentation](https://github.com/torvalds/linux/blob/master/tools/perf/Documentation/perf-intel-pt.txt).

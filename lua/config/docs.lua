@@ -2204,6 +2204,7 @@ local GS_OVERRIDE = {}
 -- doxygen-from-headers) but whose SOURCE is versioned: :Src from the docs cannot
 -- know which release you want, so it points you at the version picker instead.
 local SRC_WARN = {
+	["styx-docs"] = true, -- external docs; gs points to :V -> Explore source
 	sdl2 = true, sdl3 = true, frida = true, aya = true,
 	bap = true, libdrgn = true, sfml = true,
 }
@@ -3102,6 +3103,41 @@ end
 -- by section (Fuzzing, Static Analysis, Web/Burp, Languages, Cryptography).
 local pick_javascript_info = frozen_nested_provider("javascript-info", "JavaScript.info> ")
 local pick_testing_handbook = frozen_nested_provider("testing-handbook", "Testing Handbook> ")
+
+-- Styx: versioned emulator. Source = github (release tags + the `main` branch);
+-- docs = the external docs.styx-emulator.org site, frozen (same for every version).
+-- Hand-rolled (not register_versioned) so the version list can include `main`.
+local function pick_styx()
+	local repo = "https://github.com/styx-emulator/styx-emulator"
+	local docs = frozen_web_provider("styx-docs", "Styx docs> ")
+	versioned_tags("styx", repo, { tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^v?%d" }, function(tags)
+		local versions = { "main" }
+		for _, t in ipairs(tags) do
+			versions[#versions + 1] = t
+		end
+		fzf().fzf_exec(versions, {
+			prompt = "Styx version> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				local ver = sel[1]
+				fzf().fzf_exec({ "Browse Documentation", "Explore source" }, {
+					prompt = ver .. "> ",
+					fzf_opts = { ["--no-multi"] = true },
+					actions = { ["default"] = function(s2)
+						if not (s2 and s2[1]) then return end
+						if s2[1] == "Browse Documentation" then
+							docs()
+						else
+							require("config.src").open("styx/" .. ver, repo, nil, nil, ver)
+						end
+					end },
+				})
+			end },
+		})
+	end)
+end
+VERSIONED_PICK["styx"] = pick_styx
 
 -- LKL (Linux Kernel Library): the Linux kernel built as a userspace library
 -- (github.com/lkl/linux, arch/lkl). A curated sub-picker - each option targets a
@@ -4144,6 +4180,9 @@ local WEB_BOOKS = {
 	{ title = "LibAFL (Articles)", key = "fuzzing-101-libafl", run = pick_fuzzing_101_libafl },
 	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
 	{ title = "PCIe (Articles)", key = "pcie-articles", run = pick_pcie_articles },
+	{ title = "Perf Wiki", key = "perf-wiki", run = frozen_web_provider("perf-wiki", "Perf Wiki> ") },
+	{ title = "Intel PT (Articles)", key = "intel-pt-articles", run = frozen_web_provider("intel-pt-articles", "Intel PT (Articles)> ") },
+	{ title = "Perf Ninja (Articles)", key = "perf-ninja", run = frozen_web_provider("perf-ninja", "Perf Ninja (Articles)> ") },
 	{ title = "Unicorn Engine (Articles & Tutorial)", key = "unicorn-articles", run = pick_unicorn_articles },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
@@ -4381,6 +4420,14 @@ LOCATION["cgroups-lwn"] = { index = "cgroups-lwn/index.tsv", unit = "chapter" }
 LOCATION["lwn-index"] = { index = "lwn-index/index.tsv", unit = "chapter" }
 LOCATION["unicorn-articles"] = { index = "unicorn-articles/index.tsv", unit = "chapter" }
 LOCATION["pcie-articles"] = { index = "pcie-articles/index.tsv", unit = "chapter" }
+LOCATION["perf-wiki"] = { index = "perf-wiki/index.tsv", unit = "chapter" }
+LOCATION["intel-pt-articles"] = { index = "intel-pt-articles/index.tsv", unit = "chapter" }
+LOCATION["perf-ninja"] = { index = "perf-ninja/index.tsv", unit = "chapter" }
+LOCATION["valgrind-quickstart"] = { index = "valgrind-quickstart/index.tsv", unit = "chapter" }
+LOCATION["valgrind-faq"] = { index = "valgrind-faq/index.tsv", unit = "chapter" }
+LOCATION["valgrind-manual"] = { index = "valgrind-manual/index.tsv", unit = "chapter" }
+LOCATION["styx-docs"] = { index = "styx-docs/index.tsv", unit = "chapter" }
+LOCATION.styx = { versions = "styx", unit = "version" }
 LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "chapter" }
 LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
@@ -4507,6 +4554,23 @@ local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
 	{ name = "BCC", key = "bcc", run = register_versioned("bcc", vspec(simple.bcc, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "BCC" })) },
 	{ name = "Bochs (x86/x64 emulator)", key = "bochs", run = pick_bochs },
+	{ name = "Valgrind", key = "valgrind", run = function()
+		fzf().fzf_exec({ "Quick Start", "FAQ", "User Manual" }, {
+			prompt = "Valgrind> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				if sel[1] == "Quick Start" then
+					frozen_web_provider("valgrind-quickstart", "Valgrind Quick Start> ")()
+				elseif sel[1] == "FAQ" then
+					frozen_web_provider("valgrind-faq", "Valgrind FAQ> ")()
+				else
+					frozen_web_provider("valgrind-manual", "Valgrind User Manual> ")()
+				end
+			end },
+		})
+	end },
+	{ name = "Styx (emulator)", key = "styx", run = pick_styx },
 	{ name = "QEMU", key = "qemu", run = register_versioned("qemu", {
 		url = simple.qemu.url,
 		sparse = simple.qemu.sparse,
