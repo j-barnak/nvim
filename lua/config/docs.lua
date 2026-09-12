@@ -1667,6 +1667,17 @@ local simple = {
 		exts = "-e md -e rst -e txt",
 		prompt = "Capstone> ",
 	},
+	-- Rizin (radare2-successor RE framework). Docs are the online Rizin Handbook
+	-- (book.rizin.re), frozen as a web book; only the SOURCE is versioned, so the
+	-- sparse/marker/exts below are unused (docs_mode = "latest" in the registry).
+	rizin = {
+		url = "https://github.com/rizinorg/rizin",
+		sparse = "/doc /README.md",
+		marker = "doc",
+		browse = "",
+		exts = "-e md -e rst -e txt",
+		prompt = "Rizin> ",
+	},
 	binja = {
 		url = "https://github.com/Vector35/binaryninja-api",
 		sparse = "/docs /examples /python /rust",
@@ -2252,6 +2263,7 @@ local GS_OVERRIDE = {}
 -- know which release you want, so it points you at the version picker instead.
 local SRC_WARN = {
 	["styx-docs"] = true, -- external docs; gs points to :V -> Explore source
+	["rizin-book"] = true, -- The Rizin Handbook (book.rizin.re); source is versioned
 	sdl2 = true, sdl3 = true, frida = true, aya = true,
 	bap = true, libdrgn = true, sfml = true,
 }
@@ -2278,6 +2290,7 @@ local VERSIONED = {
 	xen = { url = simple.xen.url },
 	qbdi = { url = simple.qbdi.url },
 	capstone = { url = simple.capstone.url },
+	rizin = { url = simple.rizin.url },
 	volatility = { url = simple.volatility.url },
 	unicorn = { url = simple.unicorn.url },
 	keystone = { url = simple.keystone.url },
@@ -3087,6 +3100,7 @@ local pick_studyplan_dsa = frozen_web_provider("studyplan-dsa", "DSA> ")
 local pick_lyah = frozen_web_provider("lyah", "LYAH> ")
 local pick_qiling_docs = frozen_web_provider("qiling-docs", "Qiling docs> ")
 local pick_capstone_docs = frozen_web_provider("capstone-docs", "Capstone docs> ")
+local pick_rizin_book = frozen_web_provider("rizin-book", "The Rizin Handbook> ")
 local pick_sf = frozen_web_provider("software-foundations-lf", "Software Foundations> ")
 local pick_wyah = frozen_web_provider("write-you-a-haskell", "Write You a Haskell> ")
 local pick_lkmpg = frozen_web_provider("lkmpg", "LKMPG> ")
@@ -4545,6 +4559,7 @@ LOCATION["studyplan-dsa"] = { index = "studyplan-dsa/index.tsv", unit = "chapter
 LOCATION["lyah"] = { index = "lyah/index.tsv", unit = "chapter" }
 LOCATION["qiling-docs"] = { index = "qiling-docs/index.tsv", unit = "chapter" }
 LOCATION["capstone-docs"] = { index = "capstone-docs/index.tsv", unit = "chapter" }
+LOCATION["rizin-book"] = { index = "rizin-book/index.tsv", unit = "chapter" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
 LOCATION["write-you-a-haskell"] = { index = "write-you-a-haskell/index.tsv", unit = "chapter" }
 LOCATION["lkmpg"] = { index = "lkmpg/index.tsv", unit = "chapter" }
@@ -4843,6 +4858,7 @@ local providers = {
 	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = register_versioned("bap", { src_url = "https://github.com/BinaryAnalysisPlatform/bap", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "BAP", docs_mode = "latest", docs_fn = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") }) },
 	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI" })) },
 	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone", docs_mode = "latest", docs_fn = pick_capstone_docs })) },
+	{ name = "Rizin", key = "rizin", run = register_versioned("rizin", vspec(simple.rizin, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Rizin", docs_mode = "latest", docs_fn = pick_rizin_book })) },
 	-- Stable tags are "vN.N.N-stable"; Binary Ninja 6 is (so far) only tagged on
 	-- the dev channel as bare "6.N.NNNNN" (the "dev/" prefix is stripped by the
 	-- ls-remote reducer), so match those too to surface v6 now, newest first. The
