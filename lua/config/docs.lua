@@ -4814,7 +4814,11 @@ local providers = {
 	-- would have pulled the entire kernel Documentation tree via /Documentation.
 	{ name = "AFL++: libnyx", key = "libnyx", run = make_simple("libnyx", { url = "https://github.com/nyx-fuzz/libnyx", sparse = "/README.md /Readme.md", marker = ".git", browse = "", exts = "-e md", prompt = "libnyx> " }) },
 	{ name = "AFL++: packer", key = "nyx-packer", run = make_simple("nyx-packer", { url = "https://github.com/nyx-fuzz/packer", sparse = "/README.md /Readme.md", marker = ".git", browse = "", exts = "-e md", prompt = "nyx-packer> " }) },
-	{ name = "AFL++: qemu-libafl-bridge", key = "qemu-libafl-bridge", run = make_simple("qemu-libafl-bridge", { url = "https://github.com/AFLplusplus/qemu-libafl-bridge", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "qemu-libafl-bridge> " }) },
+	-- Another QEMU fork, but unlike qemuafl/qemu-nyx it DOES carry fork-specific
+	-- prose: its root README.md is "QEMU LibAFL Bridge" (the upstream readme was
+	-- renamed to README.qemu.rst). Scope to that README; the inherited QEMU /docs
+	-- tree is dropped. Source (patched C) is read via :Src.
+	{ name = "AFL++: qemu-libafl-bridge", key = "qemu-libafl-bridge", run = make_simple("qemu-libafl-bridge", { url = "https://github.com/AFLplusplus/qemu-libafl-bridge", sparse = "/README.md", marker = ".git", browse = "", exts = "-e md", prompt = "qemu-libafl-bridge> " }) },
 	{ name = "AFL++: coresight-trace", key = "coresight-trace", run = make_simple("coresight-trace", { url = "https://github.com/AFLplusplus/coresight-trace", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "coresight-trace> " }) },
 	{ name = "AFL++: grammar-mutator", key = "grammar-mutator", run = make_simple("grammar-mutator", { url = "https://github.com/AFLplusplus/Grammar-Mutator", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "grammar-mutator> " }) },
 	{ name = "Nyx: KVM-Nyx", key = "kvm-nyx", run = make_simple("kvm-nyx", { url = "https://github.com/nyx-fuzz/KVM-Nyx", sparse = "/README.md", marker = ".git", browse = "", exts = "-e md", prompt = "kvm-nyx> " }) },
