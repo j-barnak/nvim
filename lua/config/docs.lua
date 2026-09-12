@@ -2817,6 +2817,7 @@ end
 -- set fills in through normal reading and the rate limiter is never tripped. The
 -- recipe is the one the committed LWN articles were built with: the body is
 -- div.ArticleText and the `lwn` cleaner drops the reader-comment thread.
+local hybrid_fetch -- generic hybrid open (assigned in the do-block after lwn_fetch)
 local function lwn_fetch(url, article_title, cf, on_done)
 	if not (have("curl") and have("pandoc") and have("python3")) then
 		return on_done(nil, "curl, pandoc and python3 are needed to fetch LWN articles")
@@ -2844,6 +2845,92 @@ local function lwn_fetch(url, article_title, cf, on_done)
 			on_done(vim.split(out, "\n"))
 		end)
 	end)
+end
+
+-- Generic hybrid open for the big link-indexes (Linux kernel security, V8
+-- resources). HTML is extracted+rendered in-editor (best-effort, multi-selector)
+-- and cached; PDFs go through pdftotext; Google Docs/Slides/YouTube/trackers/
+-- paywalled hosts and anything that won't render open in the browser instead.
+do
+	local BROWSER_HOSTS = {
+		"docs.google.com", "drive.google.com", "figma.com", "youtube.com", "youtu.be",
+		"slideshare.net", "speakerdeck.com", "issues.chromium.org", "linkedin.com",
+		"mp.weixin.qq.com", "zhuanlan.zhihu.com",
+	}
+	local function open_in_browser(url)
+		if vim.ui and vim.ui.open then
+			local ok = pcall(vim.ui.open, url)
+			if ok then return true end
+		end
+		if have("xdg-open") then
+			vim.system({ "xdg-open", url }, { detach = true })
+			return true
+		end
+		return false
+	end
+	hybrid_fetch = function(url, title, cf, on_done)
+		local host = url:match("^https?://([^/]+)") or ""
+		local is_pdf = url:match("%.pdf$") ~= nil or url:match("%.pdf[?#]") ~= nil
+		local browser_only = url:match("%.pptx?$") ~= nil
+		for _, h in ipairs(BROWSER_HOSTS) do
+			if host:find(h, 1, true) then browser_only = true break end
+		end
+		if browser_only then
+			if open_in_browser(url) then
+				vim.notify("Opened in browser: " .. title)
+				return on_done(nil, nil, true)
+			end
+			return on_done(nil, "no browser opener (install xdg-open)")
+		end
+		if not (have("curl") and have("pandoc") and have("python3")) then
+			return on_done(nil, "curl, pandoc and python3 are needed")
+		end
+		local we = vim.fn.stdpath("config") .. "/Resources/tools/webextract.py"
+		local q = vim.fn.shellescape
+		local ua = "'Mozilla/5.0 (personal-docs-archive)'"
+		local script
+		if is_pdf then
+			if not have("pdftotext") then
+				if open_in_browser(url) then
+					vim.notify("Opened PDF in browser: " .. title)
+					return on_done(nil, nil, true)
+				end
+				return on_done(nil, "pdftotext is needed to render PDFs")
+			end
+			script = "curl -fsSL --compressed --max-time 45 -A " .. ua .. " " .. q(url) .. " | pdftotext -nopgbrk - -"
+		else
+			-- fetch once, then try selectors in order; take the first substantial one
+			script = table.concat({
+				"html=$(curl -fsSL --compressed --max-time 30 -A " .. ua .. " " .. q(url) .. ")",
+				"best=''",
+				"for sel in article main 'div.post-content' 'div.entry-content' 'div.content' 'article.markdown-body' 'div.prose' 'div.post' body; do",
+				"  out=$(printf '%s' \"$html\" | python3 " .. q(we) .. " content \"$sel\" " .. q(url)
+					.. " abs 2>/dev/null | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs 2>/dev/null | python3 "
+					.. q(we) .. " clean '' '' 2>/dev/null)",
+				"  if [ ${#out} -gt 600 ]; then printf '%s' \"$out\"; exit 0; fi",
+				"  if [ ${#out} -gt ${#best} ]; then best=\"$out\"; fi",
+				"done",
+				"printf '%s' \"$best\"",
+			}, "\n")
+		end
+		vim.system({ "sh", "-c", script }, { text = true, timeout = 90000 }, function(res)
+			vim.schedule(function()
+				local body = vim.trim(res.stdout or "")
+				if res.code ~= 0 or #body < 200 then
+					if open_in_browser(url) then
+						vim.notify(title .. ": couldn't render in-editor, opened in browser")
+						return on_done(nil, nil, true)
+					end
+					return on_done(nil, "couldn't fetch/render")
+				end
+				local out = body:match("^#%s") and body or ("# " .. title .. "\n\n" .. body)
+				pcall(vim.fn.mkdir, vim.fn.fnamemodify(cf, ":h"), "p")
+				local fh = io.open(cf, "w")
+				if fh then fh:write(out .. "\n"); fh:close() end
+				on_done(vim.split(out, "\n"))
+			end)
+		end)
+	end
 end
 
 local function frozen_web_provider(name, prompt, live)
@@ -2880,12 +2967,13 @@ local function frozen_web_provider(name, prompt, live)
 							-- (external links notify; unversioned docs say so).
 							render_lines(vim.fn.readfile(cf), "markdown", ddir, title)
 						elseif live then
-							-- Not frozen yet: fetch this one article now (LWN cannot be
-							-- bulk-frozen) and cache it for next time. Strip the "[topic]"
-							-- prefix so the article's own title heads the page.
+							-- Not frozen yet: fetch this one entry now and cache it. Strip
+							-- the "[topic]" prefix so the article's own title heads the page.
 							local atitle = title:gsub("^%[.-%]%s*", "")
-							vim.notify("Fetching " .. atitle .. " from LWN (comments stripped) …")
-							lwn_fetch(url, atitle, cf, function(lines, err)
+							local fetch = live == "hybrid" and hybrid_fetch or lwn_fetch
+							vim.notify("Opening " .. atitle .. " …")
+							fetch(url, atitle, cf, function(lines, err, browsered)
+								if browsered then return end
 								if not lines then
 									return vim.notify(atitle .. ": " .. (err or "fetch failed"), vim.log.levels.WARN)
 								end
@@ -4192,6 +4280,9 @@ local WEB_BOOKS = {
 	{ title = "Write Your Own Allocators", key = "write-your-own-allocators", run = frozen_web_provider("write-your-own-allocators", "Allocators> ") },
 	{ title = "Exploit Development (Connor McGarr)", key = "exploit-dev-mcgarr", run = frozen_web_provider("exploit-dev-mcgarr", "Exploit Dev (McGarr)> ") },
 	{ title = "Gem5", key = "gem5", run = frozen_web_provider("gem5", "Gem5> ") },
+	{ title = "Linux Kernel Security (Index)", key = "linux-kernel-security", run = frozen_web_provider("linux-kernel-security", "Linux kernel security [topic]> ", "hybrid") },
+	{ title = "V8 Resources (Index)", key = "v8-resources", run = frozen_web_provider("v8-resources", "V8 resources [topic]> ", "hybrid") },
+	{ title = "V8 (Docs)", key = "v8-docs", run = frozen_web_provider("v8-docs", "V8 docs> ") },
 	{ title = "Unicorn Engine (Articles & Tutorial)", key = "unicorn-articles", run = pick_unicorn_articles },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
@@ -4441,6 +4532,9 @@ LOCATION["page-cache"] = { index = "page-cache/index.tsv", unit = "chapter" }
 LOCATION["write-your-own-allocators"] = { index = "write-your-own-allocators/index.tsv", unit = "chapter" }
 LOCATION["exploit-dev-mcgarr"] = { index = "exploit-dev-mcgarr/index.tsv", unit = "chapter" }
 LOCATION["gem5"] = { index = "gem5/index.tsv", unit = "chapter" }
+LOCATION["linux-kernel-security"] = { index = "linux-kernel-security/index.tsv", unit = "article" }
+LOCATION["v8-resources"] = { index = "v8-resources/index.tsv", unit = "article" }
+LOCATION["v8-docs"] = { index = "v8-docs/index.tsv", unit = "chapter" }
 LOCATION["valgrind-quickstart"] = { index = "valgrind-quickstart/index.tsv", unit = "chapter" }
 LOCATION["valgrind-faq"] = { index = "valgrind-faq/index.tsv", unit = "chapter" }
 LOCATION["valgrind-manual"] = { index = "valgrind-manual/index.tsv", unit = "chapter" }
