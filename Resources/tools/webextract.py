@@ -124,6 +124,11 @@ and every one is documented at the point it runs:
                one line per div, drop the copy button and TOC aside (picoctf)
     nolnt      Hugo chroma lineNos=table: drop the line-number gutter cell
     nolineno   Rouge td.gutter/pre.lineno variant: drop the gutter cell
+    nolnw      (clean opt) VuePress div.line-numbers-wrapper and similar: the
+               gutter survives as a bare-integer run "1..N" inside a fence
+               (interleaved, or a numbers-only block before the code). Drop it.
+               Needed by unicorn-articles, capstone-docs, kernel-exploitation,
+               perf-ninja. Same algorithm as tools/strip_line_gutters.py.
     cbpro      WordPress Code Block Pro: drop the hidden duplicate copy-source pre
     gitbookmd  a GitBook page fetched as its own .md: strip the llms.txt index
                blockquote and unwrap the Liquid {% code %}/{% hint %}/... shortcodes
@@ -712,6 +717,39 @@ if mode == "clean":
                 continue
             kept.append(line)
         raw = "\n".join(kept)
+
+    if "nolnw" in opts:
+        # VuePress-style line-number gutters (div.line-numbers-wrapper, and
+        # similar) survive a naive extraction as a run of bare-integer lines
+        # "1, 2, 3, ..., N" inside a code fence: either interleaved before the
+        # code in one fence, or as a whole numbers-only fenced block preceding
+        # the real listing. Drop them (same algorithm as, and kept in sync with,
+        # Resources/tools/strip_line_gutters.py). Only a run of >= 3 lines equal
+        # to 1..N is touched, so a listing that legitimately starts with a
+        # non-1 number, or a 1-2 line run, is never altered. pandoc's gfm output
+        # always uses backtick fences, so matching backticks is sufficient.
+        _ln_fence = re.compile(r"^\s*```")
+        _ln_int = re.compile(r"^\s*\d+\s*$")
+        _src, _dst, _i = raw.split("\n"), [], 0
+        while _i < len(_src):
+            _line = _src[_i]
+            if _ln_fence.match(_line):
+                _j, _run = _i + 1, []
+                while _j < len(_src) and _ln_int.match(_src[_j]):
+                    _run.append(int(_src[_j].strip()))
+                    _j += 1
+                if len(_run) >= 3 and _run == list(range(1, len(_run) + 1)):
+                    if _j < len(_src) and _ln_fence.match(_src[_j]):
+                        _i = _j + 1  # Shape B: drop whole numbers-only block
+                        if _i < len(_src) and not _src[_i].strip():
+                            _i += 1  # and one trailing blank line
+                        continue
+                    _dst.append(_line)  # Shape A: keep fence, drop the run
+                    _i = _j
+                    continue
+            _dst.append(_line)
+            _i += 1
+        raw = "\n".join(_dst)
 
     out, fence, width = [], "", 0
     for line in raw.split("\n"):
