@@ -247,6 +247,10 @@ local function version_repick(dir)
 	vim.notify("No versioned document here (:V / :Version)", vim.log.levels.INFO)
 end
 local last_picker -- re-open the current provider's fuzzy finder (D in a doc)
+-- Docs-only live grep (<leader>fg in a docs buffer / :DocsGrep). These three are
+-- the only main-chunk locals it needs visible to render_lines; the rest live in a
+-- do-block below (Lua caps a chunk at 200 locals).
+local docs_grep, jump_to_match, pending_grep_jump
 -- Bumped on every user-initiated open; an async render (pandoc/curl) checks it
 -- before drawing so a slow conversion cannot clobber a doc opened after it.
 local render_seq = 0
@@ -317,6 +321,30 @@ local function md_link(line, init, image)
 			end
 		end
 	end
+end
+
+jump_to_match = function(needle, lnum)
+	local win = viewer_win
+	if not (win and vim.api.nvim_win_is_valid(win)) then
+		return
+	end
+	vim.api.nvim_win_call(win, function()
+		pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
+		local found, snip = 0, needle and vim.trim(needle) or ""
+		if snip ~= "" then
+			found = vim.fn.search("\\V" .. vim.fn.escape(snip, "\\"), "cW")
+			if found == 0 then
+				local run = snip:gsub("[^%w%s]", " "):match("%w+%s*%w*%s*%w+")
+				if run then
+					found = vim.fn.search("\\V" .. vim.fn.escape(run, "\\"), "cW")
+				end
+			end
+		end
+		if found == 0 and lnum then
+			pcall(vim.api.nvim_win_set_cursor, win, { math.min(lnum, vim.api.nvim_buf_line_count(0)), 0 })
+		end
+		vim.cmd("normal! zz")
+	end)
 end
 
 -- ── render lines in a reused right vsplit with the given filetype ─────────
@@ -427,6 +455,8 @@ local function render_lines(lines, ft, dir, title)
 		pcall(vim.api.nvim_win_close, 0, true)
 	end, { buffer = buf, nowait = true, silent = true, desc = "Close docs viewer" })
 	vim.keymap.set("n", "<leader>fs", docs_toc, { buffer = buf, desc = "Docs: table of contents" })
+	vim.keymap.set("n", "<leader>fg", function() docs_grep() end,
+		{ buffer = buf, nowait = true, silent = true, desc = "Docs: grep the docs library" })
 	-- D reopens whichever picker produced this doc. Bound for every viewer:
 	-- web articles and man pages render with no dir and used to get no D.
 	vim.keymap.set("n", "D", function()
@@ -514,6 +544,11 @@ local function render_lines(lines, ft, dir, title)
 			return follow_link()
 		end
 	end, { buffer = buf, nowait = true, silent = true, desc = "Docs: show figure or follow link" })
+	if pending_grep_jump then
+		local j = pending_grep_jump
+		pending_grep_jump = nil
+		vim.schedule(function() jump_to_match(j.needle, j.lnum) end)
+	end
 end
 
 -- Drop a leading YAML front-matter block (MS Learn, Jekyll, Sphinx docs),
@@ -1051,6 +1086,139 @@ local function prewarm_convcache(dir)
 	prewarm_queue[#prewarm_queue + 1] = dir
 	if not prewarm_busy then
 		prewarm_next()
+	end
+end
+
+-- ── grep the docs library only (prose, never source) ────────────────────
+-- Corpus: frozen_root (books, rust mdBooks, flat chapter sets, and the frozen
+-- web articles under .webcache) plus each live provider clone under data_root.
+-- A doc-extension allow-list means source files never match; data_root's
+-- derived/volatile dot-dirs are skipped. .webcache files are content-hashed, so
+-- hits show as "[provider] title" via a sha256(url) -> title map from index.tsv.
+-- Wrapped in a do-block so its helpers do not count toward the chunk's 200-local
+-- cap; only docs_grep/jump_to_match/pending_grep_jump are main-chunk locals.
+do
+	local DOC_GREP_EXTS = {
+		"md", "markdown", "rst", "txt", "text", "adoc", "asciidoc", "dox", "tex",
+		"pod", "cat", "litmus", "xml", "html", "htm", "ql", "qll", "def", "cfg", "bell", "asl",
+	}
+	local sha_title_map -- sha256(url) -> { provider=, title= }; built once, cached
+	local grep_entry_map -- per-grep display line -> hit info
+
+	local function build_sha_title_map()
+		if sha_title_map then
+			return sha_title_map
+		end
+		local map = {}
+		for _, idx in ipairs(vim.fn.globpath(frozen_root, "*/index.tsv", false, true)) do
+			local provider = vim.fs.basename(vim.fs.dirname(idx))
+			local ok, lines = pcall(vim.fn.readfile, idx)
+			if ok then
+				for _, ln in ipairs(lines) do
+					local f = vim.split(ln, "\t", { plain = true })
+					local url, title = f[#f], f[#f - 1] -- flat: title,url ; nested: cat,title,url
+					if url and title and #url > 0 then
+						map[vim.fn.sha256(url)] = { provider = provider, title = title }
+					end
+				end
+			end
+		end
+		sha_title_map = map
+		return map
+	end
+
+	-- frozen_root whole (index.tsv is .tsv, not a doc type, so auto-excluded) plus
+	-- every NON-dot child of data_root (skips .convcache/.webcache/.fixtest/.inctest
+	-- /.tools/.git while keeping the provider clones).
+	local function grep_search_paths()
+		local paths = {}
+		if vim.fn.isdirectory(frozen_root) == 1 then
+			paths[#paths + 1] = frozen_root
+		end
+		if vim.fn.isdirectory(data_root) == 1 then
+			for name, typ in vim.fs.dir(data_root) do
+				if typ == "directory" and name:sub(1, 1) ~= "." then
+					paths[#paths + 1] = data_root .. "/" .. name
+				end
+			end
+		end
+		return paths
+	end
+
+	local function docs_grep_open(selected)
+		local sel = selected and selected[1]
+		if not sel then
+			return
+		end
+		local info = grep_entry_map and grep_entry_map[sel]
+		if not info then -- defensive: parse path:lnum:col:text
+			local pp, l, _, t = sel:match("^(.-):(%d+):(%d+):(.*)$")
+			if pp then
+				info = { path = vim.fs.normalize(pp), webcache = false, lnum = tonumber(l), text = t }
+			end
+		end
+		if not info then
+			return
+		end
+		pending_grep_jump = { needle = info.text, lnum = info.lnum }
+		-- If the open is refused (binary/image) render_lines never runs; don't let a
+		-- stale jump fire on a later unrelated open.
+		vim.defer_fn(function() pending_grep_jump = nil end, 5000)
+		if info.webcache then
+			render_lines(vim.fn.readfile(info.path), "markdown", frozen_root .. "/" .. info.provider, info.title)
+		else
+			open_file(info.path)
+		end
+	end
+
+	docs_grep = function()
+		if not have("rg") then
+			return vim.notify("Docs grep needs ripgrep (rg)", vim.log.levels.WARN)
+		end
+		local paths = grep_search_paths()
+		if #paths == 0 then
+			return vim.notify("Docs: no library to grep (is Resources/docs present?)", vim.log.levels.WARN)
+		end
+		build_sha_title_map()
+		grep_entry_map = {}
+		local cwd = vim.loop.cwd()
+		local globs = { "-g '!**/.git/**'", "-g '!**/.stamps/**'" }
+		for _, e in ipairs(DOC_GREP_EXTS) do
+			globs[#globs + 1] = "-g '*." .. e .. "'"
+		end
+		local rg_opts = "--color=never --line-number --column --no-heading --smart-case --hidden "
+			.. table.concat(globs, " ")
+		fzf().live_grep({
+			prompt = "Docs grep> ",
+			cwd = cwd,
+			rg_opts = rg_opts,
+			search_paths = paths,
+			multiprocess = false,
+			rg_glob = false,
+			file_icons = false,
+			git_icons = false,
+			fzf_opts = { ["--no-multi"] = true },
+			fn_transform = function(line)
+				local relpath, lnum, col, text = line:match("^(.-):(%d+):(%d+):(.*)$")
+				if not relpath then
+					return line
+				end
+				local abspath = vim.fs.normalize(cwd .. "/" .. relpath)
+				local sha = abspath:match("/%.webcache/(%x+)%.txt$")
+				local meta = sha and sha_title_map[sha]
+				if meta then
+					local disp = string.format("[%s] %s:%s:%s:%s", meta.provider, meta.title, lnum, col, text)
+					grep_entry_map[disp] = {
+						path = abspath, webcache = true, provider = meta.provider,
+						title = meta.title, lnum = tonumber(lnum), text = text,
+					}
+					return disp
+				end
+				grep_entry_map[line] = { path = abspath, webcache = false, lnum = tonumber(lnum), text = text }
+				return line
+			end,
+			actions = { ["default"] = docs_grep_open },
+		})
 	end
 end
 
@@ -4598,6 +4766,10 @@ local KEY_ALIAS = {
 	rayanfam = "Hypervisor From Scratch",
 	atomics = "Rust Atomics and Locks",
 }
+
+vim.api.nvim_create_user_command("DocsGrep", function()
+	docs_grep()
+end, { desc = "Live-grep the :Docs library (prose only, never source)" })
 
 vim.api.nvim_create_user_command("Docs", function(o)
 	local key = o.fargs[1]
