@@ -4736,15 +4736,25 @@ local providers = {
 	-- AFL++ vendored submodules, each also reachable on its own. The three that
 	-- publish release tags get a version picker (source-only, docs_mode "none");
 	-- the branch-tracked rest open source at their default branch.
-	{ name = "AFL++: qemuafl", key = "qemuafl", run = register_versioned("qemuafl", { url = "https://github.com/AFLplusplus/qemuafl", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemuafl", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc" }) },
-	{ name = "AFL++: unicornafl", key = "unicornafl", run = register_versioned("unicornafl", { url = "https://github.com/AFLplusplus/unicornafl", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "unicornafl", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc" }) },
-	{ name = "AFL++: QEMU-Nyx", key = "qemu-nyx", run = register_versioned("qemu-nyx", { url = "https://github.com/nyx-fuzz/QEMU-Nyx", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemu-nyx", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc" }) },
-	{ name = "AFL++: libnyx", key = "libnyx", run = make_simple("libnyx", { url = "https://github.com/nyx-fuzz/libnyx", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "libnyx> " }) },
-	{ name = "AFL++: packer", key = "nyx-packer", run = make_simple("nyx-packer", { url = "https://github.com/nyx-fuzz/packer", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "nyx-packer> " }) },
+	-- qemuafl/QEMU-Nyx are QEMU forks whose /docs tree is verbatim upstream QEMU
+	-- (COLO-FT, rdma, arm boards, ...); neither adds any fork-specific prose, so
+	-- scope :Docs to the repo's own front-page README only (the fork changes live
+	-- in patched C, reached via :Src). README is .rst in both.
+	{ name = "AFL++: qemuafl", key = "qemuafl", run = register_versioned("qemuafl", { url = "https://github.com/AFLplusplus/qemuafl", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemuafl", sparse = "/README.rst /README.md /Readme.md", marker = ".git", browse = "", exts = "-e md -e rst" }) },
+	-- unicornafl is a thin AFL++<->Unicorn bridge (Unicorn itself is a submodule,
+	-- not checked out); its own docs are the fork-specific root README and the
+	-- Rust-binding README. No inherited Unicorn /docs tree exists in the repo.
+	{ name = "AFL++: unicornafl", key = "unicornafl", run = register_versioned("unicornafl", { url = "https://github.com/AFLplusplus/unicornafl", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "unicornafl", sparse = "/README.md /Readme.md /bindings/rust/README.md", marker = ".git", browse = "", exts = "-e md" }) },
+	{ name = "AFL++: QEMU-Nyx", key = "qemu-nyx", run = register_versioned("qemu-nyx", { url = "https://github.com/nyx-fuzz/QEMU-Nyx", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemu-nyx", sparse = "/README.rst /README.md /Readme.md", marker = ".git", browse = "", exts = "-e md -e rst" }) },
+	-- libnyx/packer/KVM-Nyx: the only Nyx-specific prose is each repo's root
+	-- README.md. KVM-Nyx is a full Linux-kernel fork, so the old shared sparse
+	-- would have pulled the entire kernel Documentation tree via /Documentation.
+	{ name = "AFL++: libnyx", key = "libnyx", run = make_simple("libnyx", { url = "https://github.com/nyx-fuzz/libnyx", sparse = "/README.md /Readme.md", marker = ".git", browse = "", exts = "-e md", prompt = "libnyx> " }) },
+	{ name = "AFL++: packer", key = "nyx-packer", run = make_simple("nyx-packer", { url = "https://github.com/nyx-fuzz/packer", sparse = "/README.md /Readme.md", marker = ".git", browse = "", exts = "-e md", prompt = "nyx-packer> " }) },
 	{ name = "AFL++: qemu-libafl-bridge", key = "qemu-libafl-bridge", run = make_simple("qemu-libafl-bridge", { url = "https://github.com/AFLplusplus/qemu-libafl-bridge", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "qemu-libafl-bridge> " }) },
 	{ name = "AFL++: coresight-trace", key = "coresight-trace", run = make_simple("coresight-trace", { url = "https://github.com/AFLplusplus/coresight-trace", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "coresight-trace> " }) },
 	{ name = "AFL++: grammar-mutator", key = "grammar-mutator", run = make_simple("grammar-mutator", { url = "https://github.com/AFLplusplus/Grammar-Mutator", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "grammar-mutator> " }) },
-	{ name = "Nyx: KVM-Nyx", key = "kvm-nyx", run = make_simple("kvm-nyx", { url = "https://github.com/nyx-fuzz/KVM-Nyx", sparse = "/docs /doc /Documentation /README.md /Readme.md /README.rst /docs/resources", marker = ".git", browse = "", exts = "-e md -e rst -e txt -e adoc", prompt = "kvm-nyx> " }) },
+	{ name = "Nyx: KVM-Nyx", key = "kvm-nyx", run = make_simple("kvm-nyx", { url = "https://github.com/nyx-fuzz/KVM-Nyx", sparse = "/README.md", marker = ".git", browse = "", exts = "-e md", prompt = "kvm-nyx> " }) },
 	{ name = "Python", key = "python", run = make_simple("python", simple.python) },
 	{ name = "LLVM", key = "llvm", run = register_versioned("llvm", vspec(simple.llvm, "llvmorg-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LLVM", diskpat = "^llvmorg%-%d" })) },
 	{ name = "Xen", key = "xen", run = register_versioned("xen", vspec(simple.xen, "RELEASE-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Xen", diskpat = "^RELEASE%-%d" })) },
