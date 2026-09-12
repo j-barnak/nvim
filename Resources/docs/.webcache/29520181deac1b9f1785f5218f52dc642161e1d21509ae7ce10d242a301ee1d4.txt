@@ -1,0 +1,226 @@
+# cgroup v2 and page cache
+
+# cgroup v2 and Page Cache
+
+*Last updated: Oct 2025*
+
+**Contents**
+
+- [Overview](https://biriukov.dev/docs/page-cache/6-cgroup-v2-and-page-cache/#overview)
+- [Memory cgroup files](https://biriukov.dev/docs/page-cache/6-cgroup-v2-and-page-cache/#memory-cgroup-files)
+- [Pressure Stall Information (PSI)](https://biriukov.dev/docs/page-cache/6-cgroup-v2-and-page-cache/#pressure-stall-information-psi)
+- [Writeback and I/O](https://biriukov.dev/docs/page-cache/6-cgroup-v2-and-page-cache/#writeback-and-io)
+- [Memory and I/O cgroup ownership](https://biriukov.dev/docs/page-cache/6-cgroup-v2-and-page-cache/#memory-and-io-cgroup-ownership)
+- [Safe ad-hoc tasks](https://biriukov.dev/docs/page-cache/6-cgroup-v2-and-page-cache/#safe-ad-hoc-tasks)
+
+------------------------------------------------------------------------
+
+The cgroup subsystem is the way to distribute and limit system resources fairly. It organizes all data in a hierarchy where the leaf nodes depend on their parents and inherit their settings. In addition, the cgroup provides a lot of helpful resource counters and statistics.
+
+The control groups are everywhere. Even though you may not use them explicitly, they are already turned on by default in all modern GNU/Linux distributives and got integrated into `systemd`. It means that each service in a modern linux system runs under its own cgroup.
+
+## Overview
+
+We already touched the cgroup subsystem several times during this series, but let’s take a closer look at the entire picture now. The cgroup plays a critical role in the understanding Page Cache usage. It also helps to debug issues and configure software better by providing detailed stats. As was told earlier, the LRU lists use cgroup memory limits to make eviction decisions and to size the length of the LRU lists.
+
+Another important topic in [cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html), which was unachievable with the previous v1, is a proper way of tracking Page Cache I/O writebacks. The v1 can’t understand which memory cgroup generates disk IOPS and therefore, it incorrectly tracks and limits disk operations. Fortunately, the new v2 version fixes these issues. It already provides a bunch of new features which can help with Page Cache writeback.
+
+The simplest way to find out all cgroups and their limits are to go to the `/sys/fs/cgroup`. But you can use more convenient ways to get such info:
+
+- `systemd-cgls` and `systemd-top` to understand what cgroups `systemd` has;
+- `below` a `top`-like tool for cgroups [https://github.com/facebookincubator/below](https://github.com/facebookincubator/below)
+
+## Memory cgroup files
+
+Now let’s review the most important parts of the cgroup memory controller from the perspective of Page Cache.
+
+1.  `memory.current` – shows the total amount of memory currently used by the cgroup and its descendants. It, of course, includes Page Cache size.
+
+> **NOTE**
+>
+> It may be tempting to use this value in order to set your cgroup/container memory limit, but wait a bit for the following chapter.
+
+2.  `memory.stat` – shows a lot of memory counters, the most important for us can be filtered by `file` keyword:
+
+```
+$ grep file /sys/fs/cgroup/user.slice/user-1000.slice/session-3.scope/memory.stat
+file 19804160                  ❶
+file_mapped 0                  ❷
+file_dirty 0                   ❸
+file_writeback 0               ❹
+inactive_file 6160384          ❺
+active_file 13643776           ❺
+workingset_refault_file 0      ❻
+workingset_activate_file 0     ❻
+workingset_restore_file 0      ❻
+```
+
+where
+
+- ❶ `file` – the size of the Page Cache;
+- ❷ `file_mapped` – mapped file memory size with `mmap()`;
+- ❸ `file_dirty` – dirty pages size;
+- ❹ `file_writeback` – how much data is being flushing at the moment;
+- ❺ `inactive_file` and `active_file` – sizes of the LRU lists;
+- ❻ `workingset_refault_file`, `workingset_activate_file` and `workingset_restore_file` – metrics to better understand memory thrashing and refault logic.
+
+3.  `memory.numa_stat` – shows the above stats but for each [NUMA node](https://en.wikipedia.org/wiki/Non-uniform_memory_access).
+
+4.  `memory.min`, `memory.low`, `memory.high` and `memory.max` – cgroup limits. I don’t want to repeat the [cgroup v2 doc](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#usage-guidelines) and recommend you to go and read it first. But what you need to keep in mind is that using the hard `max` or `min` limits is not the best strategy for your applications and systems. The better approach you can choose is to set only `low` and/or `high` limits closer to what you think is the working set size of your application. We will talk about measuring and predicting in the next section.
+
+5.  `memory.events` – shows how many times the cgroup hit the above limits:
+
+```
+memory.events
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+```
+
+6.  `memory.pressure` – this file contains Pressure Stall Information (PSI). It shows the general cgroup memory health by measuring the CPU time that was lost due to lack of memory. This file is the key to understanding the reclaiming process in the cgroup and, consequently, Page Cache. Let’s talk about PSI in more detail.
+
+## Pressure Stall Information (PSI)
+
+Back before PSI times, it was hard to tell whether a system and/or a cgroup has resource contention or not; whether a cgroup limits are overcommitted or under-provisioned. If the limit for a cgroup can be set lower, then where is its threshold? The PSI feature mitigates these confusions and not only allows us to get this information in real-time but also allows us to set up user-space triggers and get notifications to maximize hardware utilization without service degradation and OOM risks.
+
+The PSI works for memory, CPU and I/O controllers. For example, the output for memory:
+
+```
+some avg10=0.00 avg60=0.00 avg300=0.00 total=0
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+```
+
+where
+
+- `some` – means that at least one task was stalled on memory for some average percentage of wall-time during 10, 60 and 300 seconds. The “total” field shows the absolute value in microseconds in order to reveal any spikes;
+- `full` – means the same but for all tasks in the cgroup. This metric is a good indication of issues and usually means underprovisioning of the resource or wrong software settings.
+
+> **EXAMPLE**
+>
+> [`systemd-oom`](https://man7.org/linux/man-pages/man8/systemd-oomd.service.8.html) daemon, which is a part of modern GNU/Linux systems, uses the PSI to be more proactive than kernel’s OOM in recognition of memory scarcity and finding targets for killing.
+
+I also highly recommend reading the original [PSI doc](https://www.kernel.org/doc/html/latest/accounting/psi.html).
+
+## Writeback and I/O
+
+One of the most significant features of the cgroup v2 implementation is the possibility to track, observe and limit Page Cache async writeback for each cgroup. Nowadays, the kernel writeback process can identify which cgroup I/O limit to use in order to persist dirty pages to disks.
+
+But what is also important is that it works in another direction too. If a cgroup experiences memory pressure and tries to reclaim some pages by flushing its dirty pages, it will use its own I/O limits and won’t harm the other cgroups. Thus the memory pressure translates into the disk I/O and if there is a lot of writes, eventually, into the disk pressure for the cgroup. Both controllers have the PSI files, which should be used for proactive management and tuning your software settings.
+
+In order to control dirty pages flush frequency, the linux kernel has several [`sysctl` knobs](https://www.kernel.org/doc/Documentation/sysctl/vm.txt). If you want, you can make the background writeback process more or less aggressive:
+
+```
+$ sudo sysctl -a | grep dirty
+vm.dirty_background_bytes = 0
+vm.dirty_background_ratio = 10
+vm.dirty_bytes = 0
+vm.dirty_expire_centisecs = 3000
+vm.dirty_ratio = 20
+vm.dirty_writeback_centisecs = 500
+vm.dirtytime_expire_seconds = 43200
+```
+
+Some of the above works for cgroups too. The kernel chooses and applies what reaches first for the entire system or for a cgroup.
+
+The cgroup v2 also brings new I/O controllers: `io.cost` and `io.latency`. They provide 2 different approaches for limiting and guaranteeing disk operations. Please, read the cgroup v2 documentation for more details and distinctions. But I would say that if your setup is not complex, starting with less invasive `io.latency` makes sense.
+
+As with the memory controller, the kernel also provides a bunch of files to control and observe I/O:
+
+- `io.stat` – the stat file with per device data;
+- `io.latency` – the latency target time in microseconds;
+- `io.pressure` – the PSI file;
+- `io.weight` – the target weight if `io.cost` was chosen;
+- `io.cost.qos` and `io.cost.model` – the configuration file of the `io.cost` cgroup controller.
+
+## Memory and I/O cgroup ownership
+
+Several processes from multiple cgroups can obviously work with the same files. For example, `cgroup1` can open and read the first 10 KiB of the file, and sometime later, another `cgroup2` can append 2 KiB to the end of the same file and read the first 4KiB. The question is, whose memory and I/O limits will the kernel use?
+
+The logic of memory ownership (therefore and Page Cache) is built based on each page. The ownership of a page is charged on the first access (page fault) and won’t switch to any other cgroup until this page will be completely reclaimed and evicted. The term ownership means that these pages will be used to calculate the cgroup Page Cache usage and will be included in all stats.
+
+For example, `cgroup1` is the owner of the first 10KiB, and `cgroup2` – is the owner of the last 2KiB. No matter what `cgroup1` will do with the file, it can even close it, `cgroup1` remains the owner of the first 4KiB (not all 10KiB) as long as `cgroup2` works with this first 4KiB of the file. In this situation, kernel keeps the pages in Page Caches and keeps updating LRU lists accordingly.
+
+For the cgroup I/O, ownership works per inode. So for our example `cgroup2` owns all writeback operations for the file. The inode is assigned to the cgroup on the first writeback, but unlike the memory ownership logic, the I/O ownership may migrate to another cgroup if the kernel notices that this other cgroup generates more dirty pages.
+
+In order to troubleshoot memory ownership, we should use the pair of `procfs` files: `/proc/pid/pagemap` and `/proc/kpagecgroup`. The `page-type` tool supports showing per page cgroup information, but it’s hard to use it for a directory of files and get a well-formatted output. That’s why I wrote my own [`cgtouch`](https://github.com/brk0v/cgtouch) tool in order to troubleshoot cgroup memory ownership.
+
+```
+$ sudo go run ./main.go /var/tmp/ -v
+```
+
+```
+/var/tmp/file1.db
+cgroup inode    percent       pages        path
+           -      85.9%       28161        not charged
+        1781      14.1%        4608        /sys/fs/cgroup/user.slice/user-1000.slice/session-3.scope
+
+--
+/var/tmp/ubuntu-21.04-live-server-amd64.iso
+cgroup inode    percent       pages        pat
+           -       0.0%           0        not charged
+        2453     100.0%       38032        /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-u10.service
+
+--
+         Files: 2
+   Directories: 7
+Resident Pages: 42640/70801 166.6M/276.6M 60.2%
+
+cgroup inode    percent       pages        path
+           -      39.8%       28161        not charged
+        1781       6.5%        4608        /sys/fs/cgroup/user.slice/user-1000.slice/session-3.scope
+        2453      53.7%       38032        /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-u10.service
+```
+
+## Safe ad-hoc tasks
+
+Let’s assume we need to run the `wget` command or manually install some packages by calling a configuration management system (e.g. `saltstack`). Both of these tasks can be unpredictably heavy for disk I/O. In order to run them safely and not interact with any production load, we should not run them in the root cgroup or the current terminal cgroup, because they usually don’t have any limits. So we need a new cgroup with some limits. It would be very tedious and cumbersome to manually create a cgroup for your task and manually configure it for every ad-hoc task. But fortunately, we don’t have to, so all modern GNU/Linux distributives come with the `systemd` out of the box with cgroup v2. The `systemd-run` with many other cool features from the `systemd` makes our life easier and saves a lot of time.
+
+So, for example, `wget` task can be run in the following manner:
+
+```
+systemd-run --user -P -t -G --wait -p MemoryMax=12M wget http://ubuntu.ipacct.com/releases/21.04/ubuntu-21.04-live-server-amd64.iso
+Running as unit: run-u2.service                         ⬅  LOOK HERE
+Press ^] three times within 1s to disconnect TTY.
+--2021-09-11 19:53:33--  http://ubuntu.ipacct.com/releases/21.04/ubuntu-21.04-live-server-amd64.iso
+Resolving ubuntu.ipacct.com (ubuntu.ipacct.com)... 195.85.215.252, 2a01:9e40::252
+Connecting to ubuntu.ipacct.com (ubuntu.ipacct.com)|195.85.215.252|:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 1174243328 (1.1G) [application/octet-stream]
+Saving to: ‘ubuntu-21.04-live-server-amd64.iso.5’
+...
+```
+
+The `run-u2.service` is my brand new cgroup with a memory limit. I can get its metrics:
+
+```
+$ find /sys/fs/cgroup/ -name run-u2.service
+/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-u2.service
+```
+
+```
+$ cat  /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-u2.service/memory.pressure
+some avg10=0.00 avg60=0.00 avg300=0.00 total=70234
+full avg10=0.00 avg60=0.00 avg300=0.00 total=69717
+```
+
+```
+$ grep file  /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-u2.service/memory.stat
+file 11100160
+file_mapped 0
+file_dirty 77824
+file_writeback 0
+file_thp 0
+inactive_file 5455872
+active_file 5644288
+workingset_refault_file 982
+workingset_activate_file 0
+workingset_restore_file 0
+```
+
+As you can see from the above we have near 12MiB file memory and some refault.
+
+To get all power of systemd and cgroup please read its [resource control doc](https://www.freedesktop.org/software/systemd/man/systemd.resource-control.html).
+
+[Read next chapter →](https://biriukov.dev/docs/page-cache/7-how-much-memory-my-program-uses-or-the-tale-of-working-set-size/)

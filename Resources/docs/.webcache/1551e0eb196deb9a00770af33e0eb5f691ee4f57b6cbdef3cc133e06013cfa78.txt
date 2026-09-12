@@ -1,0 +1,419 @@
+# Part 6: Exploiting an Uninitialized Stack Variable
+
+Hello everyone, In this blog post, we’ll look into uninitialized stack variables in ARM64. We explore the dangers posed by these seemingly innocent variables and their potential impact on software security.
+
+## Prerequisites
+
+- Familiarity with ARM64 assembly instructions.
+- ARM64 environment with gef.
+- Ability to read and understand C code.
+
+If you are new here, we recommend trying out our complete ARM64 Exploitation series.
+
+- [ARM64 Reversing and Exploitation 0x1](https://www.8ksec.io/arm64-reversing-and-exploitation-part-1-arm-instruction-set-simple-heap-overflow/)
+- [ARM64 Reversing and Exploitation 0x2](https://www.8ksec.io/arm64-reversing-and-exploitation-part-2-use-after-free/)
+- [ARM64 Reversing and Exploitation 0x3](https://www.8ksec.io/arm64-reversing-and-exploitation-part-3-a-simple-rop-chain/)
+- [ARM64 Reversing and Exploitation 0x4](https://www.8ksec.io/arm64-reversing-and-exploitation-part-4-using-mprotect-to-bypass-nx-protection-8ksec-blogs/)
+- [ARM64 Reversing and Exploitation 0x5](https://www.8ksec.io/arm64-reversing-and-exploitation-part-5-writing-shellcode-8ksec-blogs/)
+
+## Lab setup
+
+You can use the environment of your choice. But if you are new and want to follow the exact same steps you can use QEMU images for emulation.
+
+- [Hugsy’s QEMU Images](https://drive.google.com/drive/folders/107uMlL_DS8yD2TS_0yrHXBDnLOj44a8P)
+
+## Uninitialized variables
+
+So what are uninitialized variables ?
+
+Uninitialized variables are variables that are declared but they are not assigned a value. Let’s see an example.
+
+```
+#include <stdio.h>
+
+void main(){
+    int a;
+    int b;
+    printf("%d %d\n", a, b);
+}
+```
+
+Compile this program using **gcc**.
+
+`gcc uni.c -o uni`
+
+If you execute this binary what values would be printed ? Let’s see.
+
+![Terminal output showing uninitialized variable values 0 and 32](https://www.8ksec.io/images/blog/1.webp)
+
+The values are 0 and 32. How did these variables get the value 0 and 32 since we didn’t assign them any values?
+
+If we are not specifying or initializing\*\* any value to the variables, they will contain unpredictable or garbage values, which are the values left in the memory at that particular location. The values of `a` and `b` will depend on the state of memory at the time of execution and can vary each time the program runs.
+
+So, the next question will be, how does this become a vulnerability?
+
+Not all cases of uninitialized stack variables would become vulnerabilities, but there are cases where uninitialized stack variables can become vulnerabilities in computer programs. This is because they may contain arbitrary values leftover in the memory from previous program executions or other parts of the application. Such situations can lead to unintended behavior or security issues if the uninitialized values are used in critical parts of the code or sensitive operations.
+
+Examples of how uninitialized stack variables can become vulnerabilities include :
+
+- **Data Leakage**: If uninitialized variables are used to hold sensitive data like passwords, encryption keys, or personal information, an attacker can potentially access and read this data by exploiting the uninitialized variable vulnerability.
+- **Information Disclosure**: The uninitialized variable’s contents could contain information about the program’s memory layout or internal states, addresses in the stack, which an attacker might use to craft targeted exploits.
+- **Crashes and Instability**: Using uninitialized variables in calculations or control structures can lead to undefined behavior, causing program crashes or unexpected results.
+- **Arbitrary Code Execution**: In some cases, an attacker may be able to manipulate uninitialized variables in such a way that they can control the program’s execution flow, leading to arbitrary code execution and potential remote code execution.
+
+## Stack Frames
+
+We will look into a more realistic case right away. But Before that consider the c program below.
+
+```
+#include <stdio.h>
+#include <stdlib.h>
+
+int *add(int* a, int* b){
+    int c;
+    c = (*a) + (*b);
+    return &c;
+}
+
+void main(){
+    int num1 = 1;
+int num2 = 2;
+int* result = add(&num1,&num2);
+printf("The result of addition : %d",*result);
+}
+```
+
+Let’s compile this using `gcc`.
+
+`gcc uni2.c -o uni2`
+
+Let’s try running this.
+
+```
+debian@debian:~/pwn/uni_stack$ ./uni2Segmentation fault
+```
+
+As we can see now, the program has crashed. What could have been the reason for this?
+
+The program has crashed because the `add` function returns the address of a local variable, `c`, which is allocated on the stack. When the `add` function returns, the memory allocated for `c` is deallocated, and as a result the address of c becomes invalid and the pointer `result` in the `main` function will point to an invalid memory location.
+
+Due to this invalid memory access, when the `printf` statement in the `main` function tries to dereference the pointer `result` to print the value, it leads to a segmentation fault (crash).
+
+Let’s also debug this and see what happens.
+
+Load the binary into `gdb`.
+
+`debian@debian:~/pwn/uni_stack$ gdb ./uni2`
+
+Put a breakpoint at `main`.
+
+`gef➤ b main`
+
+Start the program using `r` command.
+
+`gef➤ r`
+
+Let’s put a breakpoint at the branch instruction to the `add()` function.
+
+Type c to continue the program until it hits this breakpoint.
+
+```
+The program is going to execute the add() function. We can see that x0 and x1 contain the values 1 and 2 which are the arguments to add() function.
+```
+
+Let’s step inside the `add()` function using the `si` command
+
+![GDB stepping inside the add function using si command](https://www.8ksec.io/images/blog/4.png)
+
+Now we are inside the `add()` function.
+
+The first instruction `sub sp, sp, #0x20` will allocate the space for the `add()` function. This space is known as the stack frame\*\*. This typically includes function arguments, local variables, and other information needed during the function’s execution. Let’s see a high level diagram which shows the stack frame.
+
+![Diagram showing stack frame layout with local variables](https://www.8ksec.io/images/blog/6.webp)
+
+After stepping through the `sub sp, sp, #0x20` we can see that top of the stack becomes different.
+
+![Stack pointer changed after sub sp instruction](https://www.8ksec.io/images/blog/7.png)
+
+Now `sp` points to `0x0000fffffffff330`. Previously, it was pointing to `0x0000fffffffff350`.
+
+Let’s step through using the `ni` command. The above instructions will allocate the space in the stack and load the values from x0 and `x1` into `w0` and `w1`, add these values (1 and 2), and stores the result into `w0`.
+
+![GDB stepping through add function showing values loaded into registers](https://www.8ksec.io/images/blog/5.png)
+
+The `str w0, [sp, #28]` instruction will store the value in `w0` (w1 + w0 = 3) into `[sp + 28]`.
+
+```
+mov x0, #0x0
+```
+
+This will copy 0 into `x0`. As we know the return value of a function is generally stored in the `x0` register. In our source code we are returning the address of the local variable `c`. But looking at the disassembly `x0` is filled with the value 0.
+
+```
+add sp, sp,#0x20
+```
+
+This will increment the stack pointer to deallocate the space allocated for the `add()` function and the `sp` will point to `0x0000fffffffff350` which was the top of the stack before branching to the `add()` function. The stack frame for the `add()`function is now destroyed. The stack looks like the below figure now.
+
+![Diagram showing stack after add function frame is deallocated](https://www.8ksec.io/images/blog/8.png)
+
+When the `ret` is hit the program will go back to the `main` function.
+
+![GDB showing return to main function after ret instruction](https://www.8ksec.io/images/blog/9.png)
+
+Now we are back inside the `main` function.
+
+Let’s execute the remaining instructions in the `main` function.
+
+![Remaining instructions in main storing x0 value to stack](https://www.8ksec.io/images/blog/10.png)
+
+`str x0, [sp, #24]` will store the value of `x0` into the `[sp + 24]`. If we look at `x0` , it’s currently holding the value 0.
+
+Let’s step over this instruction using `ni` and inspect this location.
+
+![Memory inspection showing zero value stored at stack location](https://www.8ksec.io/images/blog/11.png)
+
+As expected it contains 0.
+
+The next `ldr x0,[sp, #24]` will load this value back to `x0`. So `x0` becomes zero.
+
+The next `ldr w0, [x0]` instruction will crash the application. The `ldr` instruction will try to load the value pointed to by the address in `x0` into `w0`. However, since `x0` contains `0`, which is not a valid memory address, it will result in a crash\*\*.
+
+![Crash at ldr instruction due to dereferencing null address](https://www.8ksec.io/images/blog/12.png)
+
+Now we have a thorough idea about the stack frames and why the program crashed.
+
+Let’s look into a more realistic example.
+
+## Example Program
+
+Consider the below c program below.
+
+```
+#include <stdio.h>
+
+void one()
+{
+    int x = 200;
+    int y = 300;
+    int z = 400;
+    printf("Inside Function one() .The value of x is %d, y is %d and z is %d \n", x, y, z);
+}
+
+void two()
+{
+    int a;
+    int b;
+    printf("Inside Function two() .The value of a is %d and b is %d \n", a, b);
+}
+
+void three()
+{
+    int n1 = 1;
+    int n2 = 2;
+    int n3;
+    printf("Inside Function three() .The value of n1 is %d , n2 is %d and n3 is %d \n", n1, n2, n3);
+}
+
+void main()
+{
+    one();
+    two();
+    three();
+}
+```
+
+Let’ just do a quick inspection on the code.
+
+In the program there are three user defined functions and they are called in the order,
+
+- one()
+- two()
+- three()
+
+In function `one()`, there are three local variables `x`, `y`, and `z`. They are assigned various values. In function `two()`, there are two local variables, but they are not assigned any values. Finally, in function `three()`, there are three local variables, but only one of them is assigned a value. The values of these local variables in all the functions are printed.
+
+Let’s compile this code using `gcc`.
+
+```
+gcc uni4.c -o uni4
+```
+
+Now try running it and see what happens.
+
+The output shows the values in each function. In function one(), x, y, and z are assigned the values 200, 300, and 400, respectively. These values are printed as the output. However, in function two(), the values of local variables a and b are shown as 200 and 300 in the output, even though they are not assigned any values. Why is this happening ? if you understood about stack frames very well, you may already have the answer by now. if not, don’t worry we can figure it out together.
+
+Let’s start by inspecting the stack frames of each functions.
+
+When we are inside the function `one()` the stack will be look roughly like this,
+
+![Stack frame diagram for function one with x y z variables](https://www.8ksec.io/images/blog/14.webp)
+
+As you can see above from our stack diagram,
+
+- `x` is stored at 1020.
+- `y` is stored at 1024.
+- `z` is stored at 1028.
+
+(Note : These are not real addresses)
+
+When the program finishes executing function `one()`, the `sp` is readjusted to the position before it was calling function `one()` and the stack frame is discarded. So, the stack will look like this,
+
+![Stack after function one returns with residual values still present](https://www.8ksec.io/images/blog/15.png)
+
+As we can see now, `sp` is readjusted. However, if we look at the stack, the values of the local variables that were in the previous stack frame for function `one()` are still there !
+
+Let’s see what happens when the stack frame for function `two()` is created.
+
+![Stack frame for function two reusing same memory as function one](https://www.8ksec.io/images/blog/16.png)
+
+We can see that the same memory space allocated for the creation of function `one()`’s stack frame was reused for the creation of function `two()`’s stack frame. Because of this, the local variables from the previous stack frame still exist in the stack frame for function `two`. Whether these variables are overwritten or not depends on various factors, such as the state of the system, program, operating system, etc.
+
+In this specific case, these variables are not overwritten. Inspecting the source code of function `two()`, we find that two variables are declared but left unassigned. But when we examine the stack diagram, we notice that they are allocated at the same memory addresses used by the local variables created in the previous stack frame (function `one()`). Here, in function `one()`, `x` and `y` were allocated at addresses 1028 and 1024, respectively, and were assigned the values 200 and 300. In the stack frame of function `two()`, `a` and `b` are allocated at the same addresses (1028 and 1024), resulting in `a` and `b` holding the values 200 and 300, instead of containing random or garbage values like we seen in our first example program at the beginning of this article. This is why the output prints 200 and 300 as the values of `a` and `b`.
+
+Now see what will happen inside the stack frame for function `three()`. Let’s see the stack diagram.
+
+![Stack frame for function three with n1 n2 overwriting previous values](https://www.8ksec.io/images/blog/17.png)
+
+Similarly, as before, the stack frame for function `three()` is allocated at the same address as the previous functions `one()` and `two()`. Just like before, the variables are also allocated in the exact same memory locations as before. In function `three()`, there are three local variables; two of them (`n1` and `n2`) are assigned the values 1 and 2, respectively and are allocated at memory location 1028 and 1024 which had the values 200 and 300. So `n1` and `n2` overwrote the previous values that were there in that memory location .But the variable `n3` is not assigned any value so it will point to memory location `1020` which was the same memory location that allocated for the variable `z` in function one. As a result, `z` will contain the value 400.
+
+We can also try debugging the binary to see this. Let’s try that too.
+
+Load the binary into gdb.
+
+```
+debian@debian:~/pwn/uni_stack$ gdb ./uni4
+```
+
+Let’s try disassembling the three functions.
+
+As we can see that each function allocates the same amount of space.
+
+`stp x29, x30, [sp, #-32]!`
+
+Take a look at the disassembly of function `one()`.
+
+```
+0x0000000000000754 :     stp x29, x30, [sp, #-32]!
+   0x0000000000000758 :     mov x29, sp
+   0x000000000000075c :     mov w0, #0xc8                   // #200
+   0x0000000000000760 :    str w0, [sp, #28]
+   0x0000000000000764 :    mov w0, #0x12c                  // #300
+   0x0000000000000768 :    str w0, [sp, #24]
+   0x000000000000076c :    mov w0, #0x190                  // #400
+   0x0000000000000770 :    str w0, [sp, #20]
+```
+
+These instructions store the values of the local variables `x,` `y`, and `z` in the corresponding stack locations.
+
+Let’s see where the value 200 is being stored.
+
+Put a breakpoint at main and run the program.
+
+gef➤ b main Breakpoint 1 at 0x804 gef➤ r
+
+![GDB breakpoint hit at main function entry](https://www.8ksec.io/images/blog/19.png)
+
+It has hit the breakpoint at the branch instruction to function `one()`. Let’s step inside using `si` command until it reaches the first `str` instruction.
+
+![Inside function one at first str instruction with w0 containing 200](https://www.8ksec.io/images/blog/20.png)
+
+If we inspect `w0` register it will contain 200.
+
+```
+gef➤  print  $w0$1 = 0xc8gef➤
+```
+
+`0xc8` is 200 in decimal. Now if we step over this value will be stored at \[sp + 28\]. Let’s inspect and see that location.
+
+```
+gef➤  x/gx $sp+280xfffffffff35c: 0xfffff3700000ffffgef➤
+```
+
+Now step over using `ni` and examine the location again.
+
+```
+gef➤  x/gx $sp+280xfffffffff35c: 0xfffff370000000c8
+```
+
+We can see our value `0xc8` is present at the location `0xfffffffff35c`.
+
+Now let’s step over and see where the other values (300, 400) are located.
+
+```
+gef➤  x/gx $sp+28
+0xfffffffff35c: 0xfffff370000000c8
+gef➤  x/gx $sp+24
+0xfffffffff358: 0x000000c80000012c
+gef➤  x/gx $sp+20
+0xfffffffff354: 0x0000012c00000190
+```
+
+So, In conclusion :
+
+- `0xfffffffff35c` contains `200`.
+- `0xfffffffff358` contains `300`.
+- `0xfffffffff354` contains `400`.
+
+Now let’s put a break at function `two()`.
+
+```
+gef➤  b twoBreakpoint 2 at 0xaaaaaaaa07a0gef➤  ​
+```
+
+Continue the execution using `c` command.
+
+![Breakpoint hit at function two showing ldr instructions](https://www.8ksec.io/images/blog/21.png)
+
+We hit our breakpoint. The `ldr` instructions will be loading two values from `[sp + 24]` and `[sp + 28]` into the `w2` and `w1` register. Let’s examine these locations and their values.
+
+```
+gef➤  x/gx $sp+24
+0xfffffffff358: 0x000000c80000012c
+gef➤  x/gx $sp+28
+0xfffffffff35c: 0xfffff370000000c8
+```
+
+- `0xfffffffff35c` contains `200`.
+- `0xfffffffff358` contains `300`.
+
+We can see that it’s exact same location and that we saw above for storing local variables of the function `one()` and the values are still there. The `ldr` instructions are loading these values to `w2` and `w1` registers for the `printf()` function. The same thing can be seen in function `three()` but the two values will be overwritten.
+
+Let’s also observe that. Put a breakpoint at `three()` and continue using `c` command.
+
+```
+gef➤ b three
+Breakpoint 3 at 0xaaaaaaaa07c8
+gef➤ c
+```
+
+![Breakpoint at function three showing mov and str instructions](https://www.8ksec.io/images/blog/22.png)
+
+The `mov` instruction will copy the value `0`into the `w0` register and `str` instruction will store that value at `[sp + 28]`. Let’s inspect that location before stepping over.
+
+```
+gef➤  x/gx $sp+28
+0xfffffffff35c: 0xfffff370000000c8
+```
+
+As expected its the same address we saw above and it contains the value 200 (0xc8). Now step over the `str` instruction and examine again.
+
+![Memory location overwritten with value 1 replacing previous 200](https://www.8ksec.io/images/blog/23.png)
+
+Now `0xfffffffff35c` is overwritten with `1`. If we step over again the value `300` will also overwritten be with the value `2`.
+
+![Memory location overwritten with value 2 replacing previous 300](https://www.8ksec.io/images/blog/24.png)
+
+As expected, the memory location `0xfffffffff358` was overwritten by the value 2. However, `[sp + 20]` is not being overwritten, so the previous value `400` at that location won’t change. Let’s confirm that too.
+
+![Memory at sp+20 still containing value 400 from function one](https://www.8ksec.io/images/blog/26.png)
+
+As expected, `[sp + 20]` contains `400`. The remaining `ldr` instructions will load the values from the corresponding stack locations into `w3`, `w2`, and `w1` registers as arguments for the `printf()` function.
+
+Let’s just continue the program using `c` command and exit the program.
+
+![Program output confirming variable values from stack reuse](https://www.8ksec.io/images/blog/25.png)
+
+## Conclusion
+
+In this blog, we looked at uninitialized stack variables and their potential impact on software security. We examined an example program to illustrate how values are leaked. While, on their own, these vulnerabilities may not have had a significant impact, when combined with other vulnerabilities, they could cause more larger consequences.

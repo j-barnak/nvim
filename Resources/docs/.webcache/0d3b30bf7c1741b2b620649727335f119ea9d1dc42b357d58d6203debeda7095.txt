@@ -1,0 +1,239 @@
+# How much memory my program uses (working set size)
+
+# How much memory my program uses or the tale of working set size
+
+*Last updated: Oct 2025*
+
+**Contents**
+
+- [It’s all about who counts or the story of unique set size](https://biriukov.dev/docs/page-cache/7-how-much-memory-my-program-uses-or-the-tale-of-working-set-size/#its-all-about-who-counts-or-the-story-of-unique-set-size)
+- [Idle pages and working set size](https://biriukov.dev/docs/page-cache/7-how-much-memory-my-program-uses-or-the-tale-of-working-set-size/#idle-pages-and-working-set-size)
+- [Calculating memory limits with Pressure Stall Information (PSI)](https://biriukov.dev/docs/page-cache/7-how-much-memory-my-program-uses-or-the-tale-of-working-set-size/#calculating-memory-limits-with-pressure-stall-information-psi)
+- [… and what about writeback?](https://biriukov.dev/docs/page-cache/7-how-much-memory-my-program-uses-or-the-tale-of-working-set-size/#-and-what-about-writeback)
+
+------------------------------------------------------------------------
+
+Currently, in the world of containers, auto-scaling, and on-demand clouds, it’s vital to understand the resource needs of services both in norman regular situations and under pressure near the software limits. But every time someone touches on the topic of memory usage, it becomes almost immediately unclear what and how to measure. RAM is a valuable and often expensive type of hardware. In some cases, its latency is even more important than disk latency. Therefore, the Linux kernel tries as hard as it can to optimize memory utilization, for instance by sharing the same pages among processes. In addition, the Linux Kernel has its Page Cache in order to improve storage IO speed by storing a subset of the disk data in memory. Page Cache not only, by its nature, performs implicit memory sharing, which usually confuses users, but also actively asynchronously works with the storage in the background. Thus, Page Cache brings even more complexity to the table of memory usage estimation.
+
+In this chapter, I’m demonstrating some approaches you can use to determine your initial values for the memory (and thus Page Cache) limits and start your journey from a decent starting point.
+
+## It’s all about who counts or the story of unique set size
+
+The 2 most common questions I’ve heard about memory and Linux are:
+
+- Where is all my free memory?
+- How much memory does you/my/their application/service/database use?
+
+The first question’s answer should already be obvious to the reader (whispering “Page Cache”). But the second one is much more trickier. Usually, people think that the `RSS` column from the `top` or `ps` output is a good starting point to evaluate memory utilization. Although this statement may be correct in some cases, it can usually lead to misunderstanding of Page Cache importance and its impact on the service performance and reliability.
+
+Let’s take a well-known `top` (`man 1 top`) [tool](https://github.com/mmalecki/procps/blob/master/top.c) as an example in order to investigate its memory consumption. It’s written in C and it does nothing but prints process’ stats in the loop. `top` doesn’t heavily work with disks and thus Page Cache. It doesn’t touch the network. Its only purpose is to read data from the `procfs` and to show it to the user in a friendly format. So it should be easy to understand its working set, shouldn’t it?
+
+Let’s start the `top` process in a new cgroup:
+
+```
+$ systemd-run --user -P -t -G --wait top
+```
+
+And in another terminal let’s start our learning. Begin with the `ps`:
+
+```
+$ ps axu | grep top
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+...
+vagrant   611963  0.1  0.2  10836  4132 pts/4    Ss+  11:55   0:00 /usr/bin/top
+...                                  ⬆
+                                  LOOK HERE
+```
+
+As you can see from the above, the `top` process uses ~4MiB of memory according to the `ps` output.
+
+Now let’s get more details from the `procfs` and its [`/proc/pid/smaps_rollup` file](https://www.kernel.org/doc/Documentation/filesystems/proc.rst), which is basically a sum of all memory areas from the `/proc/pid/smaps`. For my PID:
+
+```
+$ cat /proc/628011/smaps_rollup
+55df25e91000-7ffdef5f7000 ---p 00000000 00:00 0                          [rollup]
+Rss:                3956 kB  ⓵
+Pss:                1180 kB  ⓶
+Pss_Anon:            668 kB
+Pss_File:            512 kB
+Pss_Shmem:             0 kB
+Shared_Clean:       3048 kB  ⓷
+Shared_Dirty:          0 kB  ⓸
+Private_Clean:       240 kB
+Private_Dirty:       668 kB
+Referenced:         3956 kB  ⓹
+Anonymous:           668 kB  ⓺
+...
+```
+
+Where we mostly care about the following rows:
+
+- ⓵ – A well know `RSS` metric and what we’ve seen in the `ps` output.
+- ⓶ – `PSS` stands for the process’ proportional share memory. It’s an artificial memory metric and it should give you some insights about memory sharing:
+
+> The “proportional set size” (`PSS`) of a process is the count of pages it has in memory, where each page is divided by the number of processes sharing it. So if a process has 1000 pages all to itself and 1000 shared with one other process, its PSS will be 1500.
+
+- ⓷ `Shared_Clean` – is an interesting metric. As we assumed earlier, our process should not use any Page Cache in theory, but it turns out it does use Page Cache. And as you can see, it’s the predominant part of memory usage. If you open a per area file `/proc/pid/smaps`, you can figure out that the reason is shared libs. All of them were opened with `mmap()` and are resident in Page Cache.
+- ⓸ `Shared_Dirty` – If our process writes to files with `mmap()`, this line will show the amount of unsaved dirty Page Cache memory.
+- ⓹ `Referenced` - indicates the amount of memory the process has marked as referenced or accessed so far. We touched on this metric in `mmap()` section. And if there is no memory pressure, it should be close to RSS.
+- ⓺ `Anonymous` – shows the amount of memory that does not belong to any files.
+
+From the above, we can see that, although `top`’s RSS is 4MiB, most of its RSS is hidden in Page Cache. And in theory, if these pages become inactive for a while, the kernel can evict them from memory.
+
+Let’s take a look at the cgroup stats as well:
+
+```
+$ cat /proc/628011/cgroup
+0::/user.slice/user-1000.slice/user@1000.service/app.slice/run-u2.service
+```
+
+```
+$ cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-u2.service/memory.stat
+anon 770048
+file 0
+...
+file_mapped 0
+file_dirty 0
+file_writeback 0
+...
+inactive_anon 765952
+active_anon 4096
+inactive_file 0
+active_file 0
+...
+```
+
+We **can not** see any file memory in the cgroup. That is another great example of the cgroup memory charging feature. Another cgroup has already accounted these libs.
+
+And to finish and recheck ourselves, let’s use the `page-type` tool:
+
+```
+$ sudo ./page-types --pid 628011 --raw
+             flags      page-count       MB  symbolic-flags                     long-symbolic-flags
+0x2000010100000800               1        0  ___________M_______________r_______f_____F__       mmap,reserved,softdirty,file
+0xa000010800000868              39        0  ___U_lA____M__________________P____f_____F_1       uptodate,lru,active,mmap,private,softdirty,file,mmap_exclusive
+0xa00001080000086c              21        0  __RU_lA____M__________________P____f_____F_1       referenced,uptodate,lru,active,mmap,private,softdirty,file,mmap_exclusive
+0x200001080000086c             830        3  __RU_lA____M__________________P____f_____F__       referenced,uptodate,lru,active,mmap,private,softdirty,file
+0x8000010000005828             187        0  ___U_l_____Ma_b____________________f_______1       uptodate,lru,mmap,anonymous,swapbacked,softdirty,mmap_exclusive
+0x800001000000586c               1        0  __RU_lA____Ma_b____________________f_______1       referenced,uptodate,lru,active,mmap,anonymous,swapbacked,softdirty,mmap_exclusive
+             total            1079        4
+```
+
+We can see that the memory of the `top` process has file `mmap()` areas and thus uses Page Cache.
+
+Now let’s get a unique memory set size for our `top` process. The unique memory set size or USS for the process is an amount of memory which only this target process uses. This memory could be sharable but still, be in the USS if no other processes use it.
+
+We can use the `page-types` with `-N` flag and some shell magic to calculate the USS of the process:
+
+```
+$ sudo ../vm/page-types --pid 628011 --raw -M -l -N | awk '{print $2}' | grep -E '^1$' | wc -l
+248
+```
+
+The above means that `248 pages` or `992 KiB` is the unique set size (USS) of the `top` process.
+
+Or we can use our knowledge about `/proc/pid/pagemap`, `/proc/kpagecount` and `/proc/pid/maps` and write our own tool to get the unique set size. The full code of such tool can be found in the [github repo](https://github.com/brk0v/sre-page-cache-article/tree/main/uss).
+
+If we run it, we should get the same output as `page-type` gave us:
+
+```
+$ sudo go run ./main.go 628011
+248
+```
+
+Now that we understand how it can be hard to estimate the memory usage and the importance of Page Cache in such calculations, we are ready to make a giant leap forward and start thinking about software with more active disk activities.
+
+## Idle pages and working set size
+
+Readers who have gotten this far may be curious about one more kernel file: [`/sys/kernel/mm/page_idle`](https://www.kernel.org/doc/Documentation/vm/idle_page_tracking.txt).
+
+You can use it to estimate the working set size of a process. The main idea is to mark some pages with the special idle flag and, after some time, check the difference-making assumptions about the working data set size.
+
+You can find great reference tools in Brendan Gregg’s [repository](https://github.com/brendangregg/wss).
+
+Let’s run it for our `top` process:
+
+```
+$ sudo ./wss-v1 628011 60
+Watching PID 628011 page references during 60.00 seconds...
+Est(s)     Ref(MB)
+60.117        2.00
+```
+
+The above means that from the 4MiB of RSS data, the process uses only 2 MiB during the 60-second interval.
+
+For more information, you can also read this [LWN article](https://lwn.net/Articles/642202/).
+
+The drawbacks of this method are the following:
+
+- it can be slow for a process with a huge memory footprint;
+- all measurements happen in the user space and thus consume additional CPU;
+- it completely detached from the possible writeback pressure your process can generate.
+
+Although it could be a reasonable starting limit for your containers, I will show you a better approach using cgroup stats and pressure stall information (PSI).
+
+## Calculating memory limits with Pressure Stall Information (PSI)
+
+As you can see throughout the series, I emphasize that running all services in their own cgroups with carefully configured limits is very important. It usually leads to better service performance and more uniform and correct use of system resources.
+
+But what is still unclear is where to start. Which value to choose? Is it good to use the `memory.current` value? Or use the unique set size? Or estimate the working set size with the idle page flag? Though all these ways may be useful in some situations, I would suggest using the following PSI approach for a general case.
+
+One more note about the `memory.current` before I continue with the PSI. If a cgroup doesn’t have a memory limit and the system has a lot of free memory for the process, the `memory.current` simply shows all the memory (including Page Cache) that your application has touched up to that point. It can include a lot of garbage your application doesn’t need for its runtime. For example, logs records, unneeded libs, etc. Using the `memory.current` value as a memory limit would be wasteful for the system and will not help you in capacity planning.
+
+The modern approach to address this hard question is to use PSI in order to understand how a cgroup reacts to new memory allocations and Page Cache evictions. [`senapi`](https://github.com/facebookincubator/senpai/blob/main/senpai.py) is a simple automated script that collects and parses the PSI info and adjusts the `memory.high`:
+
+Let’s experiment with my test MongoDB installation. I have 2.6GiB of data:
+
+```
+$ sudo du -hs /var/lib/mongodb/
+2.4G    /var/lib/mongodb/
+```
+
+Now I need to generate some random read queries. In `mongosh` I can run an infinite while loop and read a random record every 500 ms:
+
+```
+while (true) {
+    printjson(db.collection.aggregate([{ $sample: { size: 1 } }]));
+    sleep(500);
+}
+```
+
+In the second terminal window, I start the `senpai` with the mongodb service cgroup:
+
+```
+sudo python senpai.py /sys/fs/cgroup/system.slice/mongodb.service
+2021-09-05 16:39:25 Configuration:
+2021-09-05 16:39:25   cgpath = /sys/fs/cgroup/system.slice/mongodb.service
+2021-09-05 16:39:25   min_size = 104857600
+2021-09-05 16:39:25   max_size = 107374182400
+2021-09-05 16:39:25   interval = 6
+2021-09-05 16:39:25   pressure = 10000
+2021-09-05 16:39:25   max_probe = 0.01
+2021-09-05 16:39:25   max_backoff = 1.0
+2021-09-05 16:39:25   coeff_probe = 10
+2021-09-05 16:39:25   coeff_backoff = 20
+2021-09-05 16:39:26 Resetting limit to memory.current.
+...
+2021-09-05 16:38:15 limit=503.90M pressure=0.030000 time_to_probe= 1 total=1999415 delta=601 integral=3366
+2021-09-05 16:38:16 limit=503.90M pressure=0.030000 time_to_probe= 0 total=1999498 delta=83 integral=3449
+2021-09-05 16:38:16   adjust: -0.000840646891233154
+2021-09-05 16:38:17 limit=503.48M pressure=0.020000 time_to_probe= 5 total=2000010 delta=512 integral=512
+2021-09-05 16:38:18 limit=503.48M pressure=0.020000 time_to_probe= 4 total=2001688 delta=1678 integral=2190
+2021-09-05 16:38:19 limit=503.48M pressure=0.020000 time_to_probe= 3 total=2004119 delta=2431 integral=4621
+2021-09-05 16:38:20 limit=503.48M pressure=0.020000 time_to_probe= 2 total=2006238 delta=2119 integral=6740
+2021-09-05 16:38:21 limit=503.48M pressure=0.010000 time_to_probe= 1 total=2006238 delta=0 integral=6740
+2021-09-05 16:38:22 limit=503.48M pressure=0.010000 time_to_probe= 0 total=2006405 delta=167 integral=6907
+2021-09-05 16:38:22   adjust: -0.00020961438729431614
+```
+
+As you can see, according to the PSI, 503.48M of memory should be enough to support my reading work load without any problems.
+
+This is obviously a preview of the PSI features and for real production services, you probably should think about `io.pressure` as well.
+
+## … and what about writeback?
+
+To be honest, this question is more difficult to answer. As I write this article, I do not know of a good tool for evaluating and predicting writeback and IO usage. However, the rule of thumb is to start with `io.latency` and then try to use `io.cost` if needed.
+
+There is also an interesting new project [resctl-demo](https://github.com/facebookexperimental/resctl-demo) which can help in proper limits identification.
+
+[Read next chapter →](https://biriukov.dev/docs/page-cache/8-direct-io-dio/)

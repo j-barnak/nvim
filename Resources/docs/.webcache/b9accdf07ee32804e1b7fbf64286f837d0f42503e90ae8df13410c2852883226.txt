@@ -1,0 +1,261 @@
+# Part 9: Memory Scanning in Android
+
+### Introduction
+
+Welcome to another blog in the series of Advanced Frida Usage. There is a very interesting API provided by frida called Memory.scan() which can help you to scan bytes from the memory and also helps you to patch them as well. Analyzing a program can be challenging, particularly when attempting to statically identify the locations of specific bytes, especially in scenarios where the program exhibits polymorphic behavior.
+
+To better understand how one can utilize `Memory.scan()` API of frida lets consider our sample application where after launching it you can see that it is asking for a PIN from the user. When a valid pin is entered it says “Verification Status: True” otherwise “False”.
+
+### Application Details
+
+Name: `PaymentApp`
+
+Package Name: `com.eightksec.paymentapp`
+
+SHA-256 Hash: `f32090399de968550f16d1c0e163297281449b42cc2b773107091afc09c4b2ad`
+
+All the binaries used in the Frida series can be found at <https://github.com/8kSec/Blog-resources>
+
+### Analysis
+
+Lets dive into the analysis of this application. To analyze the apk we first need to extract this apk and for that we use apktool.
+
+```
+apktool d app-release.apk
+```
+
+Once the application is extracted you will find a new directory with the name “app-release”. Go inside `app-release/lib/arm64-v8a` directory because thats where the native library is present with the name “libpaymentapp.so”. This is the library responsible for checking the logic for user PIN verification. So, to analyze this library we are going to use radare2 which is a command line disassembler with some powerful features. If radare2 is not installed on your machine you can simply install it via python:
+
+```
+pip3 install radare2
+```
+
+Once radare2 is installed you can simply open this libpaymentapp.so library into this using `r2` command:
+
+```
+r2 libpaymentapp.so
+```
+
+Next, we need to tell radare to start the analysis using `afl` command.
+
+```
+[0x0000080c]> aaaaaa
+
+INFO: Analyze all flags starting with sym. and entry0 (aa)
+INFO: Analyze all functions arguments/locals (afva@@@F)
+INFO: Analyze function calls (aac)
+INFO: Analyze len bytes of instructions for references (aar)
+INFO: Finding and parsing C++ vtables (avrr)
+INFO: Finding function preludes (aap)
+INFO: Finding xrefs in noncode section (e anal.in=io.maps.x)
+INFO: Analyze value pointers (aav)
+INFO: aav: 0x00000000-0x000019f0 in 0x0-0x19f0
+INFO: Emulate functions to find computed references (aaef)
+INFO: Type matching analysis for all functions (aaft)
+INFO: Propagate noreturn information (aanr)
+INFO: Scanning for strings constructed in code (/azs)
+INFO: Enable anal.types.constraint for experimental type propagation
+INFO: Reanalizing graph references to improve function count (aarr)
+[0x0000080c]>
+```
+
+Once the analysis is done, lets try to print out the list of functions.
+
+```
+[0x0000080c]> afl
+0x0000080c    1     16 entry0
+0x000018c0    3    124 sym.Java_com_eightksec_paymentapp_MainActivity_getEncryptedData
+0x0000086c   46   4180 fcn.0000086c
+0x000019d0    1     16 sym.imp.strcmp
+0x000019e0    1     16 sym.imp.__stack_chk_fail
+0x00001960    1     16 sym.imp.__cxa_finalize
+0x00001970    1     16 sym.imp.__cxa_atexit
+0x00001980    1     16 sym.imp.__register_atfork
+0x00001990    1     16 sym.imp.strlen
+0x000019a0    1     16 sym.imp.malloc
+0x000019b0    1     16 sym.imp.fwrite
+0x000019c0    1     16 sym.imp.perror
+0x00001940    1     20 section..plt
+```
+
+From the above list of functions we can observe that there is one JNI function called `getEncryptedData` which looks interesting. Lets see the disassembly of this function to better understand whats going on in this.
+
+```
+[0x0000080c]> s sym.Java_com_eightksec_paymentapp_MainActivity_getEncryptedData
+[0x000018c0]> pdf
+```
+
+![Radare2 disassembly of getEncryptedData JNI function showing OTg3NDU2 string loaded into x0 before function call](https://www.8ksec.io/images/blog/8ksec_paymentapp_jni_disassembly.png)
+
+From the above disassembly we can see that there is one string `OTg3NDU2` which `radare2` has recognized and this string is getting stored into `x0` register right before `bl fcn.0000086c` function call which suggests that this string is being passed as an argument to this function.
+
+![Radare2 disassembly showing strcmp call after processing the OTg3NDU2 string argument](https://www.8ksec.io/images/blog/8ksec_paymentapp_strcmp.png)
+
+After this `fcn.0000086c` function call we can observe `strcmp()` function call. Based on this we can assume that there is some kind of processing being done on this `OTg3NDU2` string and after that it is passed to `strcmp()` function for string comparison. Most likely this string comparison function is used to compare the PIN entered by the user with the one which is hardcoded in the app.
+
+Now obviously the string which we have identified i.e `OTg3NDU2` is not the PIN itself because in the app input we cannot enter alphanumeric characters. So the PIN has to be in digits like “111111” only.
+
+Based on this analysis we can say that the function `fcn.000086c` might be responsible for decrypting or decoding this string.
+
+Lets try to dig into this function a bit to figure out what kind of encryption or encoding is being done here:
+
+```
+[0x000018c0]> s fcn.0000086c
+[0x0000086c]> pdf
+Do you want to print 1109 lines? (y/N) y
+```
+
+Okay so its a pretty huge function having lots of interesting instructions but if you scroll all the way to the end at offset `0x1870` you will find an interesting string as shown below:
+
+![Radare2 output at offset 0x1870 showing invalid base64 string indicating base64 encoding in the function](https://www.8ksec.io/images/blog/8ksec_base64_encode_str.png)
+
+It says ‘invalid base64’. Which suggests that there is some kind of bsae64 encoding happening. Okay so now we know that the application is having hardcoded PIN in the form of base64 i.e `OTg3NDU2`.
+
+Now using frida’s `Memory.scan()` API we are going to find this string in the application at runtime. So `Memory.scan()` API takes basically four arguments: 1. Module base address. 2. Module size. 3. Search Pattern. 4. Callback function.
+
+Lets write our frida script now. As we now know that we need the module details like module base address where the module is loaded in memory and the size of the module which in this case is `libpaymentapp.so`, we need to perform early hooking to trace the libraries which are being loaded by the linker itself when the application is launched.
+
+```
+Process.findModuleByName("linker64").enumerateSymbols().forEach(function(symbol){
+    if(symbol.name.indexOf("do_dlopen") >= 0){
+        do_dlopen = symbol.address;    }
+    if(symbol.name.indexOf("call_constructor") >= 0){
+        call_constructor = symbol.address;    }
+});
+```
+
+Once we have the addresses for `do_dlopen` and `call_constructor` functions which are the internal functions of the linker responsible for loading the libraries into the memory we can attach the hook on them.
+
+```
+var lib_loaded = 0;
+var module = null;
+Interceptor.attach(do_dlopen, function() {
+    var library_path = this.context.x0.readCString();
+    if (library_path.indexOf("libpaymentapp.so") >= 0) {
+        Interceptor.attach(call_constructor, function() {
+            if (lib_loaded == 0) {
+                lib_loaded = 1;
+                module = Process.findModuleByName("libpaymentapp.so");
+                console.log(`[+] libpaymentapp is loaded at ${module.base}`);
+            }
+        })
+    }
+});
+```
+
+There is a possibility that the library can get loaded multiple times by the linker so to make sure not to attach our hook multiple times we are using this `lib_loaded` flag which is initially set to 0.
+
+Lets give this script a try once and see whether `libpaymentapp.so` is getting loaded or not.
+
+```
+frida -U -l memscan.js -f com.eightksec.paymentapp
+```
+
+```
+     ____
+    / _  |   Frida 16.2.1 - A world-class dynamic instrumentation toolkit
+   | (_| |
+    > _  |   Commands:
+   /_/ |_|       help      -> Displays the help system
+   . . . .       object?   -> Display information about 'object'
+   . . . .       exit/quit -> Exit
+   . . . .
+   . . . .   More info at https://frida.re/docs/home/
+   . . . .
+   . . . .   Connected to KB2001 (id=1d6f12b3)
+Spawned com.eightksec.paymentapp. Resuming main thread!
+[KB2001::com.eightksec.paymentapp ]-> [+] libpaymentapp is loaded at 0x7893525000
+[KB2001::com.eightksec.paymentapp ]->
+```
+
+In the output we can see that `libpaymentapp is loaded at 0x7893525000`. Nice!
+
+Lets now create a function called `scan(module)` which takes module as an argument.
+
+```
+function scan(module) {
+    Memory.scan(module.base, module.size, "4F 54 67 33 4E 44 55 32", {
+        onMatch(address, size) {
+            const string = Memory.readUtf8String(address, size);
+            console.log(`Found string at address ${address}: ${string}`);
+        },
+        onError(reason) {
+            console.error(`Error scanning memory: ${reason}`);
+        },
+        onComplete() {
+            console.log('Memory scan complete.');
+        },
+    });
+}
+```
+
+Important thing to note here is that how we have converted the string `OTg3NDU2` to `4F 54 67 33 4E 44 55 32`. Its not so difficult. These are just ascii values of each character in the string in hex. To calculate it automatically instead of manually converting each character we have a website called rapidtables: <https://www.rapidtables.com/convert/number/ascii-to-hex.html>
+
+![RapidTables ASCII to hex converter showing hex values for OTg3NDU2 string](https://www.8ksec.io/images/blog/8ksec_ascii_to_hex.png)
+
+From here we got the ascii hex values for the string which we have used in the script. Then finally we have some useful callbacks like `onMatch`, `onComplete` and `onError`. `onMatch` callback will get triggered when the pattern which we have defined is found in the memory. If there will be any issue with the memory scanning for example if the memory region is not readable then it will throw error which we can capture in `onError` callback. Okay, so now we have defined our Memory scan API lets try to run it once and see whether its able to find the pattern or not.
+
+```
+Spawned com.eightksec.paymentapp. Resuming main thread!
+[KB2001::com.eightksec.paymentapp ]-> [+] libpaymentapp is loaded at 0x7892cd5000
+Found string at address 0x7892cd56af: OTg3NDU2
+Memory scan complete.
+```
+
+Great! So the script is now able to find the string `OTg3NDU2` in memory at address `0x7892cd56af`.
+
+Now, lets try to replace this hardcoded base64 string with our base64 encoded string in order to validate the PIN verification. Once the encryption or encoding scheme is identified its not very difficult to replicate it to generate string with your own input. For instance in this case i want to get base64 encoded string for PIN “123654”. We can use another online tool called base64encode: [https://www.base64encode.org](https://www.base64encode.org/)
+
+![Base64encode.org tool showing MTIzNjU0 as the base64 encoding of PIN 123654](https://www.8ksec.io/images/blog/8ksec_paymentapp_base64_encode.png)
+
+From this we got `MTIzNjU0` as base64 encoded PIN. Next, we want to replace it with the original hardcoded string present in memory. So, for that we can use another API of frida called `writeByteArray()`. This API takes one argument which is bytes in the form of array. It basically replaces the bytes to the memory address from where it is called.
+
+Lets see how to call it in our frida script:
+
+```
+onMatch(address, size) {
+     const string = Memory.readUtf8String(address, size);
+     console.log(`Found string at address ${address}: ${string}`);
+     address.writeByteArray([0x4D, 0x54, 0x49, 0x7A, 0x4E, 0x6A, 0x55, 0x30]);
+ },
+```
+
+Inside `onMatch` callback function of our `Memory.scan()` API, we are calling this and here we have again used rapidtables to convert `MTIzNjU0` to `4D 54 49 7A 4E 6A 55 30`
+
+Lets try to run the script and this time enter “123654” as PIN. If correct bytes were replaced then we should get Verification status as True.
+
+```
+Spawned com.eightksec.paymentapp. Resuming main thread!
+[KB2001::com.eightksec.paymentapp ]-> [+] libpaymentapp is loaded at 0x78971d4000
+Found string at address 0x78971d46af: OTg3NDU2
+Error: access violation accessing 0x78971d46af
+    at (frida/runtime/core.js:151)
+    at onMatch (/home/kali/Documents/Blogs/8KSec/MemoryScanning/memscan.js:27)
+```
+
+In the console we got some error which says “access violation”. This is happening because the memory region where the string is present is only readable and not writable. So in order to fix it we have to use another Memory based API of frida called `Memory.protect()`. This API takes three arguments: 1. Address 2. Size (For 64-bit its 8bytes) 3. Permission (r–, rw-,rwx), where `r` stands for read, `w` stands for write and `x` stands for executable.
+
+Lets call it in our script before `writeByteArray()` API and see what happens:
+
+```
+onMatch(address, size) {
+    const string = Memory.readUtf8String(address, size);
+    console.log(`Found string at address ${address}: ${string}`);
+    Memory.protect(address, Process.pointerSize, 'rwx');
+    address.writeByteArray([0x4D, 0x54, 0x49, 0x7A, 0x4E, 0x6A, 0x55, 0x30]);
+},
+```
+
+```
+Spawned com.eightksec.paymentapp. Resuming main thread!
+[KB2001::com.eightksec.paymentapp ]-> [+] libpaymentapp is loaded at 0x78f2965000
+Found string at address 0x78f29656af: OTg3NDU2
+Bytes replaced. Try 123654 as PIN...
+Memory scan complete.
+```
+
+Okay in the console log we can observer that now we are not getting that error message and its saying that the bytes are replaced. Lets enter this modified PIN in the app and see.
+
+![PaymentApp showing Verification Status True after replacing hardcoded base64 PIN in memory](https://www.8ksec.io/images/blog/8ksec_paymentapp_pin_valid.png)
+
+Bingo! Verifications status is now changed to True. This marks the end of Memory related APIs.

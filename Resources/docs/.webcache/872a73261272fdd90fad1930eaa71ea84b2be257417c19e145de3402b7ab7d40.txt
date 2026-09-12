@@ -1,0 +1,283 @@
+# Part 10: Intro to ARM Memory Tagging Extension (MTE)
+
+Hey all! In this blog, we will give a brief introduction to a relatively new security feature called **MTE** (Memory Tagging Extension). Even though it was announced years ago, there was no implementation of this. But recently, the Google Pixel 8 devices have implemented support for these.
+
+### Memory Tagging Extension
+
+So what is MTE ?
+
+Memory Tagging Extension (MTE) is a feature introduced in ARMv8.5-A architecture, and it helps in detecting and preventing certain types of memory safety issues, such as out-of-bounds memory accesses, buffer overflows, use after free, double free etc. MTE is also known as “ASAN on steroids.” We are aware that ASAN can be used to detect memory corruptions but cannot be deployed in production devices due to performance issues. However, in the case of MTE, it’s a hardware feature, so it won’t affect performance. Even though there are other protection mechanisms like ASLR, Stack canary, PIE etc, the ability of MTE to detect memory corruption exploitation takes it into the next level. Having MTE on a device is a big improvement, and it can help make it a lot tougher to exploit 0-days. As the name suggests, MTE uses tags that marks each memory allocation/deallocation with additional metadata. It assigns a tag to a memory location, which then can be associated with pointers that reference that memory location.
+
+There are two ways to implement the tags.
+
+- A 4-bit tag is stored in the top byte of a pointer.
+
+In ARM64 architecture, it uses 64-bit pointers to access memory. However, only 48 to 52 of these bits are used. In userspace, 48 bits are in use, while the remaining 16 bits doesn’t serve any purpose. The MTE make use of this bits to implement the tags. MTE stores a four-bit “key” in the lower nibble in the top byte of an address. This key is considered as the tag.
+
+- A 4-bit tag is created and separately for every 16 byte aligned memory.
+
+In this implementation, MTE generates a unique 4-bit tag for each 16-byte aligned memory block. MTE assigns a special 4-bit tag to each block of 16 bytes in memory. This way, MTE can keep track of different memory areas in small chunks. It’s like putting a label on every 16-byte piece of memory.
+
+There is a set of instruction associated with this.
+
+| Instruction | Name                | Format                                      |
+|-------------|---------------------|---------------------------------------------|
+| `ADDG`      | Add with Tag        | `ADDG <Xd/SP>, <Xn/SP>, #<uimm6>, #<uimm4>` |
+| `CMPP`      | Compare with Tag    | `CMPP <Xn/SP>, <Xm/SP>`                     |
+| `GMI`       | Tag Mask Insert     | `GMI <Xd>, <Xn/SP>, <Xm>`                   |
+| `IRG`       | Insert Random Tag   | `IRG <Xd/SP>, <Xn/SP>{, <Xm>}`              |
+| `LDG`       | Load Allocation Tag | `LDG <Xt>, [<Xn/SP>{, #<simm>}]`            |
+| `LDGV`      | Load Tag Vector     | `LDGV <Xt>, [<Xn/SP>]!`                     |
+
+If you’re interested in other MTE instructions, check out [wikichip](https://en.wikichip.org/wiki/arm/mte). The `IRG` and `STG` instructions are the most important ones here. `IRG` will generate a random key and store it into an address. `STG` accepts a pointer value and assigns the key from that pointer to the 16-byte memory it points to.
+
+Now let’s see an example for an heap overflow and how MTE prevents it.
+
+![MTE heap overflow prevention - tagged pointer and memory regions](https://www.8ksec.io/images/blog/1-1.webp)
+
+(Image is taken from <https://hackmd.io/@mhyang/rJ5JOnWvv>)
+
+When dealing with heap allocations, memory is aligned by 16 bytes, and a 4-bit tag is chosen. Above, we can see that both the pointer and the memory associated with it are tagged, represented by the color green. The pointer `p` attempts to allocate 20 bytes of memory, resulting in 32 bytes being returned due to the 16-byte alignment. If you examine the pointer, you’ll notice the tag at the top byte, indicated by the green color. When the pointer attempts to access memory outside of the tagged green region, the program traps because the tags don’t match.
+
+Let’s also see an example for use-after-free.
+
+![MTE use-after-free prevention - retagged memory after free](https://www.8ksec.io/images/blog/2-1.png)
+
+(Image is taken from <https://hackmd.io/@mhyang/rJ5JOnWvv>)
+
+Similar to the above example, `p` is allocating 20 bytes of memory, resulting in 32 bytes due to 16-byte alignment. Both the pointer and the memory are tagged, represented using the color green. Now, when this memory is freed using the `delete()` operator, the memory is retagged with a different tag. Note that `p` still is represented by green. However, the memory is indicated by purple. If the pointer tries to access the memory again, the program will trap as the tags are different.
+
+### Modes in MTE
+
+MTE has three operating modes.
+
+- Synchronous Mode (SYNC):
+
+It focuses on catching bugs accurately, even if it means sacrificing a bit of speed.
+
+- Acts like a bug detection tool and stops the program immediately if there’s a tag mismatch.
+
+- Good for testing and in real use, especially for places where attacks might happen.
+
+- Gives you detailed reports to help find and fix bugs easily.
+
+- **Asynchronous Mode (ASYNC):**
+
+Cares more about keeping things fast than catching every bug.
+
+- If there’s a tag mismatch, it keeps going until it hits a certain point, then stops with minimal info.
+
+- Best for well-tested systems where there aren’t many memory bugs expected.
+
+- **Asymmetric Mode (ASYMM):**
+
+A newer feature in Arm v8.7-A, it checks memory reads closely and memory writes not so much.
+
+- Works fast like ASYNC but has more coverage.
+- Can be set up in the operating system to work smoothly.
+
+### Example
+
+Let’s see a small example program to understand MTE better.
+
+Consider the following C program, taken from [here](https://learn.arm.com/learning-paths/smartphones-and-mobile/mte/mte/). We have made slight modifications to the source code.
+
+```
+/*
+ * Memory Tagging Extension (MTE) example for Linux
+ *
+ * Compile with gcc and use -march=armv8.5-a+memtag
+ *    gcc mte-example.c -o mte-example -march=armv8.5-a+memtag
+ *
+ * Compilation should be done on a recent Arm Linux machine for the .h files to include MTE support.
+ *
+ /
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/prctl.h>
+#include <sys/auxv.h>
+
+/
+ * Insert a random logical tag into the given pointer.
+ * IRG instruction.
+ */
+
+#define insert_random_tag(ptr) ({
+        uint64_t __val;
+        asm("irg %0, %1" : "=r" (__val) : "r" (ptr));
+        __val;
+})
+/*
+ * Set the allocation tag on the destination address.
+ * STG instruction.
+ */
+
+#define set_tag(tagged_addr) do {
+        asm volatile("stg %0, [%0]" : : "r" (tagged_addr) : "memory"); 
+} while (0)
+int main(void)
+{
+    unsigned char *ptr;   // pointer to memory for MTE demonstration
+    int index;
+    int data;
+    /*
+     * Use the architecture dependent information about the processor
+     * from getauxval() to check if MTE is available.
+     */
+    if (!((getauxval(AT_HWCAP2)) & HWCAP2_MTE))
+    {
+        printf("MTE is not supportedn");
+        return EXIT_FAILURE;
+    }
+    else
+    {
+        printf("MTE is supportedn");
+    }
+    /*
+     * Enable MTE with synchronous checking
+     */
+    if (prctl(PR_SET_TAGGED_ADDR_CTRL,
+              PR_TAGGED_ADDR_ENABLE | PR_MTE_TCF_SYNC | (0xfffe << PR_MTE_TAG_SHIFT)
+```
+
+The code demonstrates the use of the Memory Tagging extension in ARM64. Let’s examine the code.
+
+```
+#define insert_random_tag(ptr) ({
+        uint64_t __val;
+        asm("irg %0, %1" : "=r" (__val) : "r" (ptr));
+        __val;
+})
+```
+
+This micro inserts a random tag to a pointer using the `irg` instruction we saw above.
+
+```
+#define set_tag(tagged_addr) do {
+        asm volatile("stg %0, [%0]" : : "r" (tagged_addr) : "memory"); 
+} while (0)
+```
+
+This micro sets the tag to the memory address using the `stg` store with tag instruction.
+
+In the main function, the first it checks is if MTE is supported or not.
+
+```
+if (!((getauxval(AT_HWCAP2)) & HWCAP2_MTE))
+    {
+        printf("MTE is not supportedn");
+        return EXIT_FAILURE;
+    }
+    else
+    {
+        printf("MTE is supportedn");
+    }
+```
+
+The next two blocks will configure MTE and allocate a page.
+
+```
+if (prctl(PR_SET_TAGGED_ADDR_CTRL,
+              PR_TAGGED_ADDR_ENABLE | PR_MTE_TCF_SYNC | (0xfffe << PR_MTE_TAG_SHIFT)
+```
+
+After this, the pointer will be given a random tag using the `insert_random_tag` macro, and the tag is also set on the memory using the `set_tag` macro. Next, the program asks us to enter an index and data.
+
+```
+printf("...no SIGSEGV was receivedn");
+```
+
+This line won’t get executed if the program has a segmentation fault.
+
+We can cross compile and try this out. For this, we can install the aarch64 cross compiler using the below command.
+
+```
+sudo apt install gcc-aarch64-linux-gnu
+```
+
+You should also need qemu to emulate this program on aarch64.
+
+```
+sudo apt install qemu-user-static
+```
+
+Now let’s run this cross compile this.
+
+arch64-linux-gnu-gcc mte.c -o mte -march=armv8.5-a+memtag -static
+
+Let’s run this using qemu.
+
+```
+8ksec@pop-os:~/Desktop/mte$ qemu-aarch64-static ./mte
+MTE is supported
+pointer is 0x5500802000
+pointer is now 0x600005500802000
+Enter the index to insert data :
+```
+
+We can see that before inserting the tag, the pointer was `0x5500802000`. After inserting the tag, the pointer is `0x600005500802000`. The tag is inserted at the top byte. Now the program asks for an index to input our data. Also, the tag is random. If we run again we will get a different tag.
+
+```
+8ksec@pop-os:~/Desktop/mte$ qemu-aarch64-static ./mte
+MTE is supported
+pointer is 0x5500802000
+pointer is now 0xa00005500802000
+Enter the index to insert data :
+```
+
+We are aware that MTE is enabled, right ? Therefore, the memory will be 16-byte aligned. So if we try to write outside the 16 byte (Index : 0 to 15 ) boundary, the program will trap. Let’s try this.
+
+8ksec@pop-os:~/Desktop/mte\$ qemu-aarch64-static ./mte MTE is supported pointer is 0x5500802000 pointer is now 0xa00005500802000 Enter the index to insert data : 16 Enter the data to insert : 2 qemu: uncaught target signal 11 (Segmentation fault) - core dumped Segmentation fault (core dumped)
+
+As we can see, a segmentation fault has occurred.
+
+Let’s run the program again and enter an index below 16.
+
+ad2001@pop-os:~/Desktop/mte\$ qemu-aarch64-static ./mte MTE is supported pointer is 0x5500802000 pointer is now 0x300005500802000 Enter the index to insert data : 15 Enter the data to insert : 3 …no SIGSEGV was received
+
+There’s no segfault this time.
+
+### Setting up MTE in Android
+
+Currently, only the Pixel 8 devices in the market have support for MTE, but we will see many more devices with MTE in the future. Let’s see how this is setup in a pixel device.
+
+First turn your USB debugging and connect the device to your pc. Get a shell using adb.
+
+arm64:/\$ setprop arm64.memtag.bootctl memtag arm64:/\$ setprop persist.arm64.memtag.default sync arm64:/\$ setprop persist.arm64.memtag.app_default sync arm64:/\$ reboot
+
+- First, we configure the bootloader to turn on MTE during boot.
+- The second command sets the default MTE mode for regular programs on the device.
+- The third command sets the default MTE mode for apps.
+- App developers can individually enable MTE in their app settings, but the system property makes it the default for apps, meaning it’s active unless developers choose otherwise.
+
+After reboot you can check if MTE is enabled.
+
+arm64\$ getprop \| grep memtag
+
+We can some of them are still disabled. Let’s check if it’s working for native executables.
+
+arm64:/ \$ cat /proc/self/smaps \| grep mt VmFlags: rd wr mr mw me ac mt VmFlags: rd wr mr mw me ac mt VmFlags: rd wr mr mw me ac mt VmFlags: rd wr mr mw me ac mt VmFlags: rd wr mr mw me ac mt VmFlags: rd wr mr mw me ac mt VmFlags: rd wr mr mw me ac mt
+
+We can see that the cat process has mappings with the `mt` bit set, so MTE has been enabled.
+
+You can also test this with the below application.
+
+<https://play.google.com/store/apps/details?id=com.sanitizers.app.production>
+
+## Conclusion
+
+Currently, MTE has support only for Pixel devices, but we can expect that various devices will adopt it in the future. This could bring about a significant change in the 0-day space, making exploitation more challenging for hackers. For further information, please refer to the provided sources below.
+
+## References
+
+- <https://googleprojectzero.blogspot.com/2023/11/first-handset-with-mte-on-market.html>
+- <https://source.android.com/docs/security/test/memory-safety/arm-mte>
+- <https://docs.kernel.org/arch/arm64/memory-tagging-extension.html>
+- <https://hackmd.io/@mhyang/rJ5JOnWvv>
+- <https://llvm.org/docs/MemTagSanitizer.html>
+- <https://lwn.net/Articles/834289/>
+- <https://en.wikichip.org/wiki/arm/mte>
+- <https://learn.arm.com/learning-paths/smartphones-and-mobile/mte/mte/>

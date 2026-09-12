@@ -1,0 +1,409 @@
+# Page cache and basic file operations
+
+# Page Cache and basic file operations
+
+*Last updated: Oct 2025*
+
+**Contents**
+
+- [File reads](https://biriukov.dev/docs/page-cache/3-page-cache-and-basic-file-operations/#file-reads)
+  - [Reading files with `read()` syscall](https://biriukov.dev/docs/page-cache/3-page-cache-and-basic-file-operations/#reading-files-with-read-syscall)
+  - [Reading files with `mmap()` syscall](https://biriukov.dev/docs/page-cache/3-page-cache-and-basic-file-operations/#reading-files-with-mmap-syscall)
+- [File writes](https://biriukov.dev/docs/page-cache/3-page-cache-and-basic-file-operations/#file-writes)
+  - [Writing to files with `write()` syscall](https://biriukov.dev/docs/page-cache/3-page-cache-and-basic-file-operations/#writing-to-files-with-write-syscall)
+  - [File writes with `mmap()` syscall](https://biriukov.dev/docs/page-cache/3-page-cache-and-basic-file-operations/#file-writes-with-mmap--syscall)
+  - [Dirty pages](https://biriukov.dev/docs/page-cache/3-page-cache-and-basic-file-operations/#dirty-pages)
+  - [Synchronize file changes with `fsync()`, `fdatasync()` and `msync()`](https://biriukov.dev/docs/page-cache/3-page-cache-and-basic-file-operations/#synchronize-file-changes-with-fsync-fdatasync-and-msync)
+- [Checking file presence in Page Cache with `mincore()`](https://biriukov.dev/docs/page-cache/3-page-cache-and-basic-file-operations/#checking-file-presence-in-page-cache-with-mincore)
+
+------------------------------------------------------------------------
+
+Now it’s time to roll up our sleeves and get started with some practical examples. By the end of this chapter, you will know how to interact with Page Cache and which tools you can use.
+
+Utils needed for this section:
+
+- `sync` ([`man 1 sync`](https://man7.org/linux/man-pages/man1/sync.1.html)) – a tool to flush all dirty pages to persistent storage;
+- `/proc/sys/vm/drop_caches` ([`man 5 proc`](https://man7.org/linux/man-pages/man5/proc.5.html)) – the kernel `procfs` file to trigger Page Cache clearance;
+- [`vmtouch`](https://github.com/hoytech/vmtouch) – a tool for getting Page Cache info about a particular file by its path.
+
+> **NOTE** For now, we ignore how `vmtouch` works. I’m showing how to write an alternative with almost all its features later.
+
+## File reads
+
+### Reading files with `read()` syscall
+
+I start with a simple program that reads the first 2 bytes from our test file `/var/tmp/file1.db`.
+
+```
+with open("/var/tmp/file1.db", "br") as f:
+    print(f.read(2))
+```
+
+Usually, these kinds of read requests are translated into the `read()` syscall. Let’s run the script with `strace` ([`man 1 strace`](https://man7.org/linux/man-pages/man1/strace.1.html)) to make sure that `f.read()` uses `read()` syscall:
+
+```
+$ strace -s0 python3 ./read_2_bytes.py
+```
+
+The output should look something like this:
+
+```
+...
+openat(AT_FDCWD, "./file1.db", O_RDONLY|O_CLOEXEC) = 3
+...
+read(3, "%B\353\276\0053\356\346Nfy2\354[&\357\300\260%D6$b?'\31\237_fXD\234"..., 4096) = 4096
+...
+```
+
+> **NOTE**
+>
+> The `read()` syscall returned 4096 bytes (one page) even though the script asked only for 2 bytes. It’s an example of python optimizations and internal buffered IO. Although this is beyond the scope of this post, but in some cases it is important to keep this in mind.
+
+Now let’s check how much data the kernel’s cached. In order to get this info, we use `vmtouch`:
+
+```
+$ vmtouch /var/tmp/file1.db
+```
+
+```
+           Files: 1       LOOK HERE
+     Directories: 0          ⬇
+  Resident Pages: 20/32768  80K/128M  0.061%
+         Elapsed: 0.001188 seconds
+```
+
+From the output, we can see that instead of 2B of data that `Python`’s asked for, the kernel has cached 80KiB or 20 pages.
+
+By design, the kernel can’t load anything less than 4KiB or one page into Page Cache, but what about the other 19 pages? It is a excellent example of the kernel’s **read ahead** logic and preference to perform sequential IO operations over random ones. The basic idea is to **predict the subsequent reads and minimize the number of disks seeks**. Syscalls can control this behavior: `posix_fadvise()` ([`man 2 posix_fadvise`](https://man7.org/linux/man-pages/man2/posix_fadvise.2.html)) and `readahead()` ([`man 2 readahead`](https://man7.org/linux/man-pages/man2/readahead.2.html)).
+
+> **NOTE**
+>
+> Usually, it doesn’t make a big difference for database management systems and storages to tune the default read-ahead parameters in a production environment. If DBMS doesn’t need data that were cached by the read-ahead, the kernel memory reclaim policy should eventually evict these pages from Page Cache. And usually, the sequential IO is not expensive for kernel and hardware. Disabling read-ahead at all might even lead to some performance degradations due to increased number of disk IO operations in the kernel queues, more context switches and more time for kernel memory management subsystem to recognize the working set. We will talk about memory reclaiming policy, memory pressure, and cache writeback later in this series.
+
+Let’s now use `posix_fadvise()` to notify the kernel that we are reading the file randomly, and thus we don’t want to have any read ahead features:
+
+```
+import os
+
+with open("/var/tmp/file1.db", "br") as f:
+    fd = f.fileno()
+    os.posix_fadvise(fd, 0, os.fstat(fd).st_size, os.POSIX_FADV_RANDOM)
+    print(f.read(2))
+```
+
+Before running the script, we need to drop all caches:
+
+```
+$ echo 3 | sudo tee /proc/sys/vm/drop_caches && python3 ./read_2_random.py
+```
+
+And now, if you check the `vmtouch` output, you can see that there is only one page as expected:
+
+```
+$ vmtouch /var/tmp/file1.db
+```
+
+```
+           Files: 1     LOOK HERE
+     Directories: 0        ⬇
+  Resident Pages: 1/32768  4K/128M  0.00305%
+         Elapsed: 0.001034 seconds
+```
+
+### Reading files with `mmap()` syscall
+
+For reading data from files we can also use `mmap()` syscall ([`man 2 mmap`](https://man7.org/linux/man-pages/man2/mmap.2.html)). `mmap()` is a “magic” tool and can be used to solve a wide range of tasks. But for our tests, we need only one of its features – an ability to map a file into a process memory in order to access the file as a flat array. I’m talking about `mmap()` in more detail later. But at the moment, if you are not familiar with it, `mmap()` API should be clear from the following example:
+
+```
+import mmap
+
+with open("/var/tmp/file1.db", "r") as f:
+    with mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ) as mm:
+        print(mm[:2])
+```
+
+The above code does the same as we’ve just done with `read()` syscall. It reads the first 2 bytes of the file.
+
+Also, for test purposes, we need to flush all caches before the script should be executed:
+
+```
+$ echo 3 | sudo tee /proc/sys/vm/drop_caches && python3 ./read_2_mmap.py
+```
+
+And checking the Page Cache content:
+
+```
+$ vmtouch /var/tmp/file1.db
+```
+
+```
+           Files: 1.       LOOK HERE
+     Directories: 0           ⬇
+  Resident Pages: 1024/32768  4M/128M  3.12%
+         Elapsed: 0.000627 seconds
+```
+
+As you can see, `mmap()` has performed an even more aggressive readahead.
+
+Let’s change the readahead with `madvise()` syscall like we did with `fadvise()`.
+
+```
+import mmap
+
+with open("/var/tmp/file1.db", "r") as f:
+    with mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ) as mm:
+        mm.madvise(mmap.MADV_RANDOM)
+        print(mm[:2])
+```
+
+Run it:
+
+```
+$ echo 3 | sudo tee /proc/sys/vm/drop_caches && python3 ./read_2_mmap_random.py
+```
+
+and Page Cache content:
+
+```
+$ vmtouch /var/tmp/file1.db
+```
+
+```
+           Files: 1     LOOK HERE
+     Directories: 0        ⬇
+  Resident Pages: 1/32768  4K/128M  0.00305%
+         Elapsed: 0.001077 seconds
+```
+
+As you can see from the above output, with the `MADV_RANDOM` flag, we managed to achieve exactly one page read from disk and thus one page in Page Cache.
+
+## File writes
+
+Now let’s play with writes.
+
+### Writing to files with `write()` syscall
+
+Let’s continue working with our experimental file and try to update the first 2 bytes instead:
+
+```
+with open("/var/tmp/file1.db", "br+") as f:
+    print(f.write(b"ab"))
+```
+
+> **NOTE**
+>
+> Be careful, and don’t open a file with `w` mode. It will rewrite your file with 2 bytes. We need `r+` mode.
+
+Drop all caches and run the above script:
+
+```
+sync; echo 3 | sudo tee /proc/sys/vm/drop_caches && python3 ./write_2_bytes.py
+```
+
+Now let’s check the content of the Page Cache.
+
+```
+$ vmtouch /var/tmp/file1.db
+           Files: 1     LOOK HERE
+     Directories: 0        ⬇
+  Resident Pages: 1/32768  4K/128M  0.00305%
+         Elapsed: 0.000674 seconds
+```
+
+As you can see, we have 1 page cached after only 2B write. It’s an important observation because **if your writes are smaller than a page size, you will have 4KiB reads before your writes** in order to populate Page Cache.
+
+Also, we can check dirty pages by reading the current cgroup memory stat file.
+
+Get a current terminal cgroup:
+
+```
+$ cat /proc/self/cgroup
+0::/user.slice/user-1000.slice/session-4.scope
+```
+
+```
+$ grep dirty /sys/fs/cgroup/user.slice/user-1000.slice/session-3.scope/memory.stat
+file_dirty 4096
+```
+
+If you see 0, run the script one more time, you apparently get lucky, and the dirty pages have already been written to disk.
+
+### File writes with `mmap()` syscall
+
+Let’s now replicate the write with `mmap()`:
+
+```
+import mmap
+
+with open("/var/tmp/file1.db", "r+b") as f:
+    with mmap.mmap(f.fileno(), 0) as mm:
+        mm[:2] = b"ab"
+```
+
+You can repeat the above commands with `vmtouch` and cgroup `grep` to get dirty pages, and you should get the same output. The only exception is the read ahead policy. By default, `mmap()` loads much more data in Page Cache, even for write requests.
+
+### Dirty pages
+
+As we saw earlier, a process generates dirty pages by writing to files through Page Cache.
+
+Linux provides several options to get the number of dirty pages. The first and oldest one is to read `/proc/meminfo`:
+
+```
+$ cat /proc/meminfo | grep Dirty
+Dirty:                 4 kB
+```
+
+The full system information is often hard to interpret and use because we can’t determine which process and file has these dirty pages.
+
+That’s why the best option in order to get dirty page info is to use cgroup:
+
+```
+$ cat /sys/fs/cgroup/user.slice/user-1000.slice/session-3.scope/memory.stat  | grep dirt
+file_dirty 4096
+```
+
+If your program uses `mmap()` to write to files, you have one more option to get dirty pages stats with a per-process granularity. `procfs` has the `/proc/PID/smaps` file. It contains memory counters for the process broken down by virtual memory areas (VMA). We can get dirty pages by finding:
+
+- `Private_Dirty` – the amount of dirty data this process generated;
+- `Shared_Dirty` – and the amount other processes wrote. This metric shows data only for referenced pages. It means the process should access pages and keep them in its [page table](https://en.wikipedia.org/wiki/Page_table) (more details later).
+
+```
+$ cat /proc/578097/smaps | grep file1.db -A 12 | grep Dirty
+Shared_Dirty:          0 kB
+Private_Dirty:       736 kB
+```
+
+But what if we want to get the dirty page stats for a file? To answer this question linux kernel provides [2 files](https://www.kernel.org/doc/Documentation/vm/pagemap.txt) in `procfs`: `/proc/PID/pagemap` and `/proc/kpageflags`. I’m showing how to write our own tool with them later in the series, but for now we can use the debug tool from the linux kernel repo to get per file page info: [`page-types`](https://github.com/torvalds/linux/blob/master/tools/vm/page-types.c).
+
+```
+$ sudo page-types -f /var/tmp/file1.db -b dirty
+```
+
+```
+             flags      page-count       MB  symbolic-flags                     long-symbolic-flags
+0x0000000000000838             267        1  ___UDl_____M________________________________       uptodate,dirty,lru,mmap
+0x000000000000083c              20        0  __RUDl_____M________________________________       referenced,uptodate,dirty,lru,mmap
+             total             287        1
+```
+
+I filtered out all pages of our file `/var/tmp/file1.db` by the `dirty` flag. In the output, you can see that the file has 287 dirty pages or 1 MiB of dirty data, which will be persisted to storage eventually. `page-type` aggregates pages by flags, so that you can see 2 sets in the output. Both have the dirty flag `D`, and the difference between them is the presence of the referenced flag `R` (which I’m briefly touching on in the Page Cache eviction section later).
+
+### Synchronize file changes with `fsync()`, `fdatasync()` and `msync()`
+
+We already used `sync` (`man 1 sync`) to flush all dirty pages to disks before every test to get a fresh system without any interference. But what if we want to write a database management system, and we need to be sure that all writes will get to disks before a power outage or other hardware errors occur? For such cases, Linux provides several methods to force the kernel to run a sync of pages for the file in Page Cache:
+
+- `fsync()` – blocks until all dirty pages of the target file and its metadata are synced;
+- `fdatasync()` – the same as the above but excluding metadata;
+- `msync()` – the same as the `fsync()` but for memory mapped file;
+- open a file with `O_SYNC` or `O_DSYNC` flags to make all file writes synchronous by default and work as a corresponding `fsync()` and `fdatasync()` syscalls accordingly.
+
+> **NOTE**
+>
+> You still need to care about write barriers and understand how the underlying file system works because the kernel scheduler might reorder write operations. Usually, a file append operation is safe and can’t corrupt the previously written data. Other types of mutate operations may mess with your files (for instance, for ext4, even with the default journal). That’s why almost all database management systems like MongoDB, PostgreSQL, Etcd, Dgraph, etc, have write ahead logs (WAL) which are append-only. There are some exceptions though. If you’re curious more about this topic, this [blog post from Dgraph](https://dgraph.io/blog/post/alice/) is a good starting point.
+>
+> There are some exceptions, though. For instance, [`lmdb`](http://www.lmdb.tech/doc/) (and its clones, [`bboltdb`](https://github.com/etcd-io/bbolt) from [`etcd`](https://etcd.io/)) [uses a witty and clever idea of keeping two roots of its B+ tree and doing a copy-on-write](https://www.youtube.com/watch?v=tEa5sAh-kVk).
+
+And here is an example of the file sync:
+
+```
+import os
+
+with open("/var/tmp/file1.db", "br+") as f:
+    fd = f.fileno()
+    os.fsync(fd)
+```
+
+## Checking file presence in Page Cache with `mincore()`
+
+Before we go any further, let’s figure out how `vmtouch` manages to show us how many pages of a target file Page Cache contains.
+
+The secret is a `mincore()` syscall ([`man 2 mincore`](https://man7.org/linux/man-pages/man2/mincore.2.html)). `mincore()` stands for “memory in the core”. Its parameters are a starting virtual memory address, a length of the address space and a resulting vector. `mincore()` works with memory (not files), so it can be used for checking if anonymous memory was swapped out.
+
+> `man 2 mincore`
+>
+> `mincore()` returns a vector that indicates whether pages of the calling process’s virtual memory are resident in core (RAM), and so will not cause a disk access (pagefault) if referenced. The kernel returns residency information about the pages starting at the address addr, and continuing for length bytes.
+
+So to replicate `vmtouch` we need to map a file into the virtual memory of the process, even though we are not going to make neither reads nor writes. We just want to have it in the process memory area (more about this later in `mmap()` section).
+
+Now we have all we need to write our own simple `vmtouch` in order to show cached pages by file path. I’m using `go` here because, unfortunately, Python doesn’t have an easy way to call `mincore()` syscall:
+
+```
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"syscall"
+	"unsafe"
+)
+
+var (
+	pageSize = int64(syscall.Getpagesize())
+	mode     = os.FileMode(0600)
+)
+
+func main() {
+	path := "/var/tmp/file1.db"
+
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NOATIME, mode)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	stat, err := os.Lstat(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	size := stat.Size()
+	pages := size / pageSize
+
+	mm, err := syscall.Mmap(int(file.Fd()), 0, int(size), syscall.PROT_READ, syscall.MAP_SHARED)
+	defer syscall.Munmap(mm)
+
+	mmPtr := uintptr(unsafe.Pointer(&mm[0]))
+	cached := make([]byte, pages)
+
+	sizePtr := uintptr(size)
+	cachedPtr := uintptr(unsafe.Pointer(&cached[0]))
+
+	ret, _, err := syscall.Syscall(syscall.SYS_MINCORE, mmPtr, sizePtr, cachedPtr)
+	if ret != 0 {
+		log.Fatal("syscall SYS_MINCORE failed: %v", err)
+	}
+
+	n := 0
+	for _, p := range cached {
+		// the least significant bit of each byte will be set if the corresponding page
+		// is currently resident in memory, and be clear otherwise.
+		if p%2 == 1 {
+			n++
+		}
+	}
+
+	fmt.Printf("Resident Pages: %d/%d  %d/%d\n", n, pages, n*int(pageSize), size)
+}
+```
+
+And if we run it:
+
+```
+$ go run ./main.go
+```
+
+```
+Resident Pages: 1024/32768  4194304/134217728
+```
+
+And comparing it with `vmtouch` output:
+
+```
+$ vmtouch /var/tmp/file1.db
+           Files: 1         LOOK HERE
+     Directories: 0            ⬇
+  Resident Pages: 1024/32768  4M/128M  3.12%
+         Elapsed: 0.000804 seconds
+```
+
+[Read next chapter →](https://biriukov.dev/docs/page-cache/4-page-cache-eviction-and-page-reclaim/)

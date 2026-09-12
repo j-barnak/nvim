@@ -1,0 +1,204 @@
+# Part 1: iOS Encryption Libraries
+
+## Introduction
+
+Welcome to Part 1 of Advanced Frida Series. In this series, we will look at how we can unleash the power of Frida to do some advanced analysis of apps and daemons. The first part will dive into an analysis of a third party iOS library used for data encryption. iOS applications sometimes want to persist some kind of information on the system. One of the solutions that the Apple provided is the so called *CoreData*. According to the [documentation](https://developer.apple.com/documentation/coredata?language=objc):
+
+“Core Data abstracts the details of mapping your objects to a store, making it easy to save data from Swift and Objective-C without administering a database directly.”
+
+Sensitive information should not be stored inside the CoreData because the data is not encrypted, for those kind of information we should use *Keychain* instead. Another solution that developers sometimes use is *sqlite* database. The problem with the sqlite is that it is not encrypted by default, meaning anyone/anything that can access the database can read. One of the projects that use sqlite database with the encryption is [EncryptedStore](https://github.com/project-imas/encrypted-core-data). Although the project looks abandoned/not maintained anymore, it is still sometimes being used inside the applications. EncryptedStore allows the application to use encrypted sqlite the same way as they would use CoreData.
+
+## Analysing EncryptedStore
+
+By default, sqlite database is stored inside the *Documents* directory of the application in format `APPLICATION_NAME.sqlite`.
+
+![EncryptedStore sqlite database in the Documents directory](https://www.8ksec.io/images/blog/frida-1-1.png)
+
+If we were to load the file inside the *DB Browser for SQLite* we can see that we are immediately asked for the password meaning the database is indeed password protected and the data inside of it is encrypted.
+
+![frida-1-2](https://www.8ksec.io/images/blog/frida-1-2.png)
+
+According to the documentation, we are mostly interested for the `+ [EncryptedStore makeDescriptionWithOptions:configuration:error:]` class method . The first parameter to the method is *NSDictionary* containing passphrase inside *EncryptedStorePassphrase* key. We can confirm that using frida and intercepting on the method and examining the second argument.
+
+```
+8kSec > cat encrypted_store.js
+var conf = ObjC.classes.EncryptedStore["+ makeDescriptionWithOptions:configuration:error:"].implementation;
+Interceptor.attach(conf, {
+    onEnter(args) {
+        console.log(ObjC.Object(args[2]));
+    }
+});
+8kSec > frida -U Gadget -l ./encrypted_store.js
+     ____
+    / _  |   Frida 16.0.19 - A world-class dynamic instrumentation toolkit
+   | (_| |
+    > _  |   Commands:
+   /_/ |_|       help      -> Displays the help system
+   . . . .       object?   -> Display information about 'object'
+   . . . .       exit/quit -> Exit
+   . . . .
+   . . . .   More info at https://frida.re/docs/home/
+   . . . .
+   . . . .   Connected to iPhone (id=00008110-001C78960A50401E)
+[iPhone::Gadget ]-> {
+    EncryptedStoreFileManagerOption = "";
+    EncryptedStorePassphrase = THISISSECRETPASSPHRASE;
+    NSInferMappingModelAutomaticallyOption = 1;
+    NSMigratePersistentStoresAutomaticallyOption = 1;
+}
+[iPhone::Gadget ]->
+```
+
+If we now try to access the database and providing the passphrase, we can see that the passphrase is indeed correct.
+
+Now, let’s go a step further and use *sqlite* native functions to interact with the database.
+
+## Exploring The Database With Frida And Native Functions
+
+The things that we need are:
+
+- database handle
+- `sqlite3_errmsg` - this is optional, but it is nice to read the message instead of an error number
+- `sqlite3_exec` - to actually execute our query
+
+To obtain the database handle, we can use EncryptedStore ivar called *database* which holds database handle which can be seen in the source code excerpt below.
+
+```
+@implementation EncryptedStore {
+// database resources
+sqlite3 *database;
+// cache money
+NSMutableDictionary *objectIDCache;
+NSMutableDictionary *nodeCache;
+NSMutableDictionary *objectCountCache;
+NSMutableDictionary *entityTypeCache;
+```
+
+In order to search or select for the EncryptedStore objects we can use `ObjC.chooseSync` function.
+
+![frida-1-3](https://www.8ksec.io/images/blog/frida-1-3.webp)
+
+Now we have a way to get valid database handle. If we take a look at the function definition for `sqlite3_errmsg` we can see that it accepts single parameter(`sqlite3*`) which is going to be our database handle and it returns `const char *` or string representation if an error occurred (return value from using sqlite3 functions did not succeeded).
+
+![frida-1-4](https://www.8ksec.io/images/blog/frida-1-4.png)
+
+In fridas world, both `sqlite3*` and `const char*` are simply represented as `pointer`. So, in order to actually call this function, we need to “create” it in frida. We do that by creating new `NativeFunction` object. The first parameter is the actual address of the `sqlite3_errmsg` function, the second is its return value and the last argument is an array of argument types. Putting this all together looks like this:
+
+```
+var sqlite3_errmsg = new NativeFunction(Module.findExportByName(null, "sqlite3_errmsg"), "pointer", ["pointer"]);
+```
+
+Now, let’s move to the sqlite3_exec function. This function is more interesting because it expects a callback from us.
+
+![frida-1-5](https://www.8ksec.io/images/blog/frida-1-5.png)
+
+Needed:
+
+- database handle - we know how to get this
+- sql query to execute - we can allocate with `Memory.allocUtf8String`
+- callback - function pointer
+- void \* - first argument to the pointer is not needed for us
+- errmsg - we can ignore this one as well
+
+Our `sqlite3_exec` NativeFunction is going to look like this:
+
+```
+var sqlite3_exec = new NativeFunction(Module.findExportByName(null, "sqlite3_exec"), "int", ["pointer", "pointer", "pointer", "int", "pointer"]);
+```
+
+To pass the third argument, or the callback we will utilize `CModule`. It allows us to use C api to interact with the application.
+
+Looking at the [basic example](https://www.sqlite.org/quickstart.html) of sqlite3 usage we can see that the callback accepts 4 arguments:
+
+- `void*` - the argument that we can pass from `sqlite3_exec` call
+- `argc` - count of return arguments
+- `argv` - array containing values
+- `azColName` - array containing column names
+
+To create new `CModule` we simply pass the code to the `new CModule` and everything inside of it will be available to the us in the resulting object.
+
+Actual `CModule` that we will use is going to look like this:
+
+```
+var cm = new CModule(`
+#include <stdio.h>
+
+int callback(void *not_used, int argc, char **argv, char **col_name){
+    for (int i = 0; i < argc; i++) {
+        printf("data %s => %s\\n", col_name[i], argv[i]);
+    }
+    return 0;
+}`);
+```
+
+To pass this `callback` function to the `sqlite3_exec` as the third argument, we can do that by accessing `cm.callback`.
+
+The whole script now looks like:
+
+```
+var sqlite3_errmsg = new NativeFunction(Module.findExportByName(null, "sqlite3_errmsg"), "pointer", ["pointer"]);
+var sqlite3_exec = new NativeFunction(Module.findExportByName(null, "sqlite3_exec"), "int", ["pointer", "pointer", "pointer", "int", "pointer"]);
+var cm = new CModule(`
+#include <stdio.h>
+int callback(void *not_used, int argc, char **argv, char **col_name){
+    for (int i = 0; i < argc; i++){
+        printf("%s -> %s\\n", col_name[i], argv[i]);
+    }
+    return 0;
+}
+`);
+var query = Memory.allocUtf8String("SELECT * FROM CREDENTIALS");
+var store = ObjC.chooseSync(ObjC.classes.EncryptedStore)[0];
+var db = store.$ivars["database"];
+var ret = sqlite3_exec(db, query, cm.callback, 0, NULL);
+if (ret != 0) {
+    console.log(Memory.readUtf8String(sqlite3_errmsg(db)));
+}
+```
+
+If we load the script, we should see the data being written to the `STDOUT`
+
+![frida-1-6](https://www.8ksec.io/images/blog/frida-1-6.png)
+
+If you are asking me, seeing the data inside the process `STDOUT` is not that very useful, so let’s move this output to the frida.
+
+One great feature of CModules is that they allow sharing data or communicating between JavaScript and C. We do that by passing symbols to the CModule which can be `NativePointer` or `NativeCallback`.
+
+`NativeCallback` is created the same as `NativeFunction` but without the first argument.
+
+When we take a look at our `callback` inside the CModule that we have created previously we can see that we are only interested in two values(column name and actual value).
+
+```
+var jsCallback = new NativeCallback((column, val) => {
+    console.log("data", Memory.readUtf8String(column), "=>", Memory.readUtf8String(val));
+}, 'void', ['pointer', 'pointer']);
+```
+
+If we put all this together, our script now looks like:
+
+```
+var sqlite3_errmsg = new NativeFunction(Module.findExportByName(null, "sqlite3_errmsg"), "pointer", ["pointer"]);
+var sqlite3_exec = new NativeFunction(Module.findExportByName(null, "sqlite3_exec"), "int", ["pointer", "pointer", "pointer", "int", "pointer"]);
+var jsCallback = new NativeCallback((column, val) => {
+    console.log("data", Memory.readUtf8String(column), "=>", Memory.readUtf8String(val));
+}, 'void', ['pointer', 'pointer']);
+var cm = new CModule(`
+#include <stdio.h>
+extern void jsCallback(char *, char*);
+int callback(void *not_used, int argc, char **argv, char **col_name){
+    for (int i = 0; i < argc; i++){
+        jsCallback(col_name[i], argv[i]);
+    }
+    return 0;
+}
+`, {jsCallback});
+var query = Memory.allocUtf8String("SELECT * FROM CREDENTIALS");
+var store = ObjC.chooseSync(ObjC.classes.EncryptedStore)[0];
+var db = store.$ivars["database"];
+var ret = sqlite3_exec(db, query, cm.callback, 0, NULL);
+if (ret != 0) {
+    console.log(Memory.readUtf8String(sqlite3_errmsg(db)));
+}
+```
+
+![frida-1-7: Frida output showing credentials read via jsCallback and CModule](https://www.8ksec.io/images/blog/frida-1-7.png)

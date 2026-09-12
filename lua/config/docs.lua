@@ -4183,6 +4183,15 @@ local WEB_BOOKS = {
 	{ title = "Perf Wiki", key = "perf-wiki", run = frozen_web_provider("perf-wiki", "Perf Wiki> ") },
 	{ title = "Intel PT (Articles)", key = "intel-pt-articles", run = frozen_web_provider("intel-pt-articles", "Intel PT (Articles)> ") },
 	{ title = "Perf Ninja (Articles)", key = "perf-ninja", run = frozen_web_provider("perf-ninja", "Perf Ninja (Articles)> ") },
+	{ title = "Game Networking (Articles)", key = "game-networking", run = frozen_web_provider("game-networking", "Game Networking> ") },
+	{ title = "Android by 8K Sec (Series)", key = "android-8ksec", run = frozen_web_provider("android-8ksec", "Android (8KSec)> ") },
+	{ title = "Memory Integrity Enforcement (Series)", key = "mie-8ksec", run = frozen_web_provider("mie-8ksec", "MIE (8KSec)> ") },
+	{ title = "Advanced Frida (Series by 8ksec)", key = "advanced-frida-8ksec", run = frozen_web_provider("advanced-frida-8ksec", "Advanced Frida> ") },
+	{ title = "ARM64 Reversing and Exploitation (8KSec)", key = "arm64-exploitation-8ksec", run = frozen_web_provider("arm64-exploitation-8ksec", "ARM64 Exploitation> ") },
+	{ title = "Page Cache (Series)", key = "page-cache", run = frozen_web_provider("page-cache", "Page Cache> ") },
+	{ title = "Write Your Own Allocators", key = "write-your-own-allocators", run = frozen_web_provider("write-your-own-allocators", "Allocators> ") },
+	{ title = "Exploit Development (Connor McGarr)", key = "exploit-dev-mcgarr", run = frozen_web_provider("exploit-dev-mcgarr", "Exploit Dev (McGarr)> ") },
+	{ title = "Gem5", key = "gem5", run = frozen_web_provider("gem5", "Gem5> ") },
 	{ title = "Unicorn Engine (Articles & Tutorial)", key = "unicorn-articles", run = pick_unicorn_articles },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
@@ -4423,6 +4432,15 @@ LOCATION["pcie-articles"] = { index = "pcie-articles/index.tsv", unit = "chapter
 LOCATION["perf-wiki"] = { index = "perf-wiki/index.tsv", unit = "chapter" }
 LOCATION["intel-pt-articles"] = { index = "intel-pt-articles/index.tsv", unit = "chapter" }
 LOCATION["perf-ninja"] = { index = "perf-ninja/index.tsv", unit = "chapter" }
+LOCATION["game-networking"] = { index = "game-networking/index.tsv", unit = "chapter" }
+LOCATION["android-8ksec"] = { index = "android-8ksec/index.tsv", unit = "chapter" }
+LOCATION["mie-8ksec"] = { index = "mie-8ksec/index.tsv", unit = "chapter" }
+LOCATION["advanced-frida-8ksec"] = { index = "advanced-frida-8ksec/index.tsv", unit = "chapter" }
+LOCATION["arm64-exploitation-8ksec"] = { index = "arm64-exploitation-8ksec/index.tsv", unit = "chapter" }
+LOCATION["page-cache"] = { index = "page-cache/index.tsv", unit = "chapter" }
+LOCATION["write-your-own-allocators"] = { index = "write-your-own-allocators/index.tsv", unit = "chapter" }
+LOCATION["exploit-dev-mcgarr"] = { index = "exploit-dev-mcgarr/index.tsv", unit = "chapter" }
+LOCATION["gem5"] = { index = "gem5/index.tsv", unit = "chapter" }
 LOCATION["valgrind-quickstart"] = { index = "valgrind-quickstart/index.tsv", unit = "chapter" }
 LOCATION["valgrind-faq"] = { index = "valgrind-faq/index.tsv", unit = "chapter" }
 LOCATION["valgrind-manual"] = { index = "valgrind-manual/index.tsv", unit = "chapter" }
