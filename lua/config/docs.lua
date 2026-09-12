@@ -4019,6 +4019,7 @@ local BOOKS = {
 	{ module = "Linux / Drivers", key = "books-linux", items = {
 		{ title = "BPF Performance Tools (Gregg)", fmt = "pdf", slug = "bpf-performance-tools", file = "[Addison-Wesley Professional Computing Series] Brendan Gregg - BPF Performance Tools (2019, Addison-Wesley) - libgen.li.pdf" },
 		{ title = "Systems Performance (Gregg, 2e)", fmt = "pdf", slug = "systems-performance", file = "Systems performance _ enterprise and the cloud -- Brendan Gregg -- Addison-Wesley Professional Computing series, 2, 2020 -- Addison-Wesley -- isbn13 9780136820154 -- 2ce3f264a69f7a2e59be05e579ac0986 -- Anna’s Archi.pdf" },
+		{ title = "Performance Analysis and Tuning on Modern CPUs (2e)", fmt = "pdf", slug = "performance-analysis-and-tuning-on-modern-cpus", file = "PerformanceAnalysisAndTuningOnModernCPUs_SecondEdition.pdf" },
 		{ title = "Learning eBPF", fmt = "pdf", file = "Learning-eBPF - Full book.pdf" },
 		{ title = "The Linux Programming Interface", fmt = "pdf", slug = "the-linux-programming-interface", file = "The-Linux-Programming-Interface.pdf" },
 		{ title = "eBPF Developer Tutorial (eunomia)", fmt = "md", slug = "ebpf-developer-tutorial", file = "https://github.com/eunomia-bpf/bpf-developer-tutorial" },
@@ -4049,6 +4050,8 @@ local BOOKS = {
 		{ title = "Heap Exploitation (Dhaval Kapil)", fmt = "md", slug = "heap-exploitation-dhaval-kapil", file = "https://github.com/DhavalKapil/heap-exploitation" },
 		{ title = "ir0nstone: Binary Exploitation Notes", fmt = "md", slug = "ir0nstone-binary-exploitation", file = "https://github.com/ir0nstone/cybersec-notes" },
 		{ title = "Serious Cryptography (2e)", fmt = "epub", file = "Serious Cryptography, 2nd Edition_ A Practical Introduction -- Jean-Philippe Aumasson -- 2, 2024 -- No Starch Press, Incorporated -- isbn13 9781718503847 -- 98baee034c0a929a742dfde69353a637 -- Anna’s Archive.epub" },
+		{ title = "An Introduction to Mathematical Cryptography", fmt = "pdf", slug = "an-introduction-to-mathematical-cryptography", file = "An Introduction to Mathematical Cryptography (2014) - Hoffstein, Pipher, Silverman.pdf" },
+		{ title = "The Joy of Cryptography (Rosulek)", fmt = "pdf", slug = "the-joy-of-cryptography", file = "The Joy of Cryptography (2021 Updated) -- Mike Rosulek.pdf" },
 		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
 		{ title = "Secure Coding in C and C++ (2e)", fmt = "pdf", slug = "secure-coding-in-c-and-cpp", file = "Secure Coding in C and C++ (2nd Edition) (SEI Series in -- Seacord, Robert C_ -- 601df46864954c0d50394370bb73c517 -- Anna’s Archive.pdf" },
 		{ title = "Reverse Engineering for Beginners (Yurichev)", fmt = "pdf", slug = "reverse-engineering-for-beginners", file = "reverse-engineering-for-beginners.pdf" },

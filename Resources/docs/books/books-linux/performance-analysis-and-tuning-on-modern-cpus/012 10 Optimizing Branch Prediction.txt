@@ -1,0 +1,395 @@
+
+So far we’ve been talking about optimizing memory accesses and computations.
+However, we haven’t discussed another important category of performance bottlenecks
+yet. It is related to speculative execution, a feature that is present in all modern
+high-performance CPU cores. To refresh your memory, turn to Section 3.3.3 where
+we discussed how speculative execution can be used to improve performance. In this
+chapter, we will explore techniques to reduce the number of branch mispredictions.
+In general, modern processors are very good at predicting branch outcomes. They not
+only follow static prediction rules but also detect dynamic patterns. Usually, branch
+predictors save the history of previous outcomes for the branches and try to guess
+what the next result will be. However, when the pattern becomes hard for the CPU
+branch predictor to follow, it may hurt performance.
+Mispredicting a branch can add a significant penalty when it happens regularly. When
+such an event occurs, a CPU is required to clear all the speculative work that was done
+ahead of time and later was proven to be wrong. It also needs to flush the pipeline
+and start filling it with instructions from the correct path. Typically, modern CPUs
+experience a 10- to 25-cycle penalty as a result of a branch misprediction. The exact
+number of cycles depends on the microarchitecture design, namely, on the depth of
+the pipeline and the mechanism used to recover from a mispredict.
+Perhaps the most frequent reason for a branch misprediction is simply because it
+has a complicated outcome pattern (e.g., exhibits pseudorandom behavior), which is
+unpredictable for a processor. For completeness, let’s cover the other less frequent
+reasons behind branch mispredicts. Branch predictors use caches and history registers
+and therefore are susceptible to the issues related to caches, namely:
+  • Cold misses: mispredictions may happen on the first dynamic occurrence of the
+    branch when no dynamic history is available and static prediction is employed.
+  • Capacity misses: mispredictions arising from the loss of dynamic history due
+    to a very high number of branches in the program or exceedingly long dynamic
+    pattern.
+  • Conflict misses: branches are mapped into cache buckets (associative sets)
+    using a combination of their virtual and/or physical addresses. If too many active
+    branches are mapped to the same set, the loss of history can occur. Another
+    instance of a conflict miss is aliasing when two independent branches are mapped
+    to the same cache entry and interfere with each other potentially degrading the
+    prediction history.
+A program will always experience a non-zero number of branch mispredictions. You
+can find out how much a program suffers from branch mispredictions by looking at
+the TMA Bad Speculation metric. It is normal for a general-purpose application to
+have a Bad Speculation metric in the range of 5–10%. My recommendation is to
+pay close attention once this metric goes higher than 10%.
+In the past, developers had an option of providing a prediction hint to an x86
+processor in the form of a prefix to the branch instruction (0x2E: Branch Not
+
+                                                        10.1    Replace Branches with Lookup
+
+Taken, 0x3E: Branch Taken). This could potentially improve performance on older
+microarchitectures, like Pentium 4. However, modern x86 processors used to ignore
+those hints until Intel’s RedwoodCove started using it again. Its branch predictor is
+still good at finding dynamic patterns, but now it will use the encoded prediction hint
+for branches that have never been seen before (i.e. when there is no stored information
+about a branch). [Intel, 2023, Section 2.1.1.1 Branch Hint]
+There are indirect ways to reduce the branch misprediction rate by reducing the
+dynamic number of branch instructions. This approach helps because it alleviates
+the pressure on branch predictor structures. When a program executes fewer branch
+instructions, it may indirectly improve the prediction of branches that previously
+suffered from capacity and conflict misses. Compiler transformations such as loop
+unrolling and vectorization help reduce the dynamic branch count, though they don’t
+specifically aim to improve the prediction rate of any given conditional statement.
+Profile-Guided Optimizations (PGO) and post-link optimizers (e.g., BOLT) are also
+effective at reducing branch mispredictions thanks to improving the fallthrough rate
+(straightening the code). We will discuss those techniques in the next chapter.197
+The only direct way to get rid of branch mispredictions is to get rid of the branch
+instruction itself. In subsequent sections, we will take a look at both direct and
+indirect ways to improve branch prediction. In particular, we will explore the following
+techniques: replacing branches with lookup tables, arithmetic, selection, and SIMD
+instructions.
+
+10.1      Replace Branches with Lookup
+One way to avoid frequently mispredicted branches is to use lookup tables. An
+example of code when such transformation might be profitable is shown in Listing 10.1.
+As usual, the original version is on the left while the improved version is on the
+right. Function mapToBucket maps values in the [0-50) range into corresponding five
+buckets, and returns -1 for values that are out of this range. For uniformly distributed
+values of v, we will have an equal probability for v to fall into any of the buckets.
+In the generated assembly for the original version, we will likely see many branches,
+which could have high misprediction rates. Hopefully, it’s possible to rewrite the
+function mapToBucket using a single array lookup, as shown on the right.
+For the improved version of mapToBucket on the right, a compiler will likely generate
+a single branch instruction that guards against out-of-bounds access to the buckets
+array. A typical hot path through this function will execute the untaken branch and
+one load instruction. The branch will be well-predicted by the CPU branch predictor
+since we expect most of the input values to fall into the range covered by the buckets
+array. The lookup will also be fast since the buckets array is small and likely to be
+in the L1 D-cache.
+If we need to map a bigger range of values, say [0-1M), allocating a very large array is
+ 197 There is a conventional wisdom that never-taken branches are transparent to the branch prediction
+
+and can’t affect performance, and therefore it doesn’t make much sense to remove them, at least from
+a prediction perspective. However, contrary to the wisdom, an experiment conducted by authors
+of BOLT optimizer demonstrated that replacing never-taken branches with equal-sized no-ops in a
+large code footprint application, such as Clang C++ compiler, leads to approximately 5% speedup
+on modern Intel CPUs. So it still pays to try to eliminate all branches.
+
+Listing 10.1 Replacing branches with lookup tables.
+int8_t mapToBucket(unsigned v) {         int8_t buckets[50] = {
+  if      (v < 10) return 0;               0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  else if (v < 20) return 1;               1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  else if (v < 30) return 2;       =>      2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+  else if (v < 40) return 3;               3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+  else if (v < 50) return 4;               4, 4, 4, 4, 4, 4, 4, 4, 4, 4 };
+  return -1;
+}                                        int8_t mapToBucket(unsigned v) {
+                                           if (v < (sizeof(buckets) / sizeof(int8_t)))
+                                             return buckets[v];
+                                           return -1;
+                                         }
+
+not practical. In this case, we might use interval map data structures that accomplish
+that goal using much less memory but logarithmic lookup complexity. Readers can
+find existing implementations of interval map container in Boost198 and LLVM199 .
+
+10.2     Replace Branches with Arithmetic
+In some scenarios, branches can be replaced with arithmetic. The code in Listing 10.1
+can also be rewritten using a simple arithmetic formula, as shown in Listing 10.2.
+Notice, that for this code, the Clang-17 compiler replaced expensive division with
+much cheaper multiplication and right shift operations.
+
+Listing 10.2 Replacing branches with arithmetic.
+int8_t mapToBucket(unsigned v) {                    mov al, -1
+  constexpr unsigned BucketRangeMax = 50;           cmp edi, 49
+  if (v < BucketRangeMax)                           ja .exit
+    return v / 10;                                  movzx eax, dil
+  return -1;                                        imul eax, eax, 205
+}                                                   shr eax, 11
+                                                  .exit:
+                                                    ret
+
+As of the year 2024, compilers are usually unable to find these shortcuts on their own,
+so it is up to the programmer to do it manually. If you can find a way to replace
+a frequently mispredicted branch with arithmetic, you will likely see a performance
+improvement.
+
+10.3     Replace Branches with Selection
+Some branches could be effectively eliminated by executing both parts of the branch
+and then selecting the right result. An example of code when such transformation
+might be profitable is shown in Listing 10.3. If TMA suggests that the if (cond)
+branch has a very high number of mispredictions, you can try to eliminate the branch
+by doing the transformation shown on the right.
+ 198 C++ Boost interval_map - https://www.boost.org/doc/libs/1_65_0/libs/icl/doc/html/boost/
+
+icl/interval_map.html
+ 199 LLVM’s IntervalMap - https://llvm.org/doxygen/IntervalMap_8h_source.html
+
+                                                       10.3     Replace Branches with Selection
+
+Listing 10.3 Replacing Branches with Selection.
+int a;                                                        int x = computeX();
+if (cond) { /* frequently mispredicted */         =>          int y = computeY();
+  a = computeX();                                             int a = cond ? x : y;
+} else {                                                      foo(a);
+  a = computeY();
+}
+foo(a);
+
+For the code on the right, the compiler can replace the branch that comes from the
+ternary operator, and generate a CMOV x86 instruction instead. A CMOVcc instruction
+checks the state of one or more of the status flags in the EFLAGS register (CF,
+OF, PF, SF and ZF) and performs a move operation if the flags are in a specified
+state or condition. A similar transformation can be done for floating-point numbers
+with FCMOVcc and VMAXSS/VMINSS instructions. In the ARM ISA, there is the CSEL
+(conditional selection) instruction, but also CSINC (select and increment), CSNEG (select
+and negate), and a few other conditional instructions.
+
+Listing 10.4 Replacing Branches with Selection - x86 assembly code.
+# original version                  # branchless version
+400504: test ebx,ebx                400537: mov eax,0x0
+400506: je 400514                   40053c: call <computeX> # compute x; a = x
+400508: mov eax,0x0                 400541: mov ebp,eax     # ebp = x
+40050d: call <computeX>       =>    400543: mov eax,0x0
+400512: jmp 40051e                  400548: call <computeY> # compute y; a = y
+400514: mov eax,0x0                 40054d: test ebx,ebx    # test cond
+400519: call <computeY>             40054f: cmovne eax,ebp # override a with x if needed
+40051e: mov edi,eax                 400552: mov edi,eax
+400521: call <foo>                  400554: call <foo>
+
+Listing 10.4 shows assembly listings for the original and the branchless version. In
+contrast with the original version, the branchless version doesn’t have jump instructions.
+However, the branchless version calculates both x and y independently, and then
+selects one of the values and discards the other. While this transformation eliminates
+the penalty of a branch misprediction, it is doing more work than the original code.
+We already know that the branch in the original version on the left is hard to predict.
+This is what motivated us to try a branchless version in the first place. In this example,
+the performance gain of this change depends on the characteristics of the computeX
+and computeY functions. If the functions are small200 and the compiler can inline
+them, then selection might bring noticeable performance benefits. If the functions are
+big201 , it might be cheaper to take the cost of a branch mispredict than to execute both
+computeX and computeY functions. Ultimately, performance measurements always
+decide which version is better.
+Take a look at Listing 10.4 one more time. On the left, a processor can predict, for
+example, that the je 400514 branch will be taken, speculatively call computeY, and
+start running code from the function foo. Remember, branch prediction happens
+200 Just a handful of instructions that can be completed in a few cycles.
+201 More than twenty instructions that take more than twenty cycles.
+
+many cycles before we know the actual outcome of the branch. By the time we start
+resolving the branch, we could be already halfway through the foo function, despite it
+is still speculative. If we are correct, we’ve saved a lot of cycles. If we are wrong, we
+have to take the penalty and start over from the correct path. In the latter case, we
+don’t gain anything from the fact that we have already completed a portion of foo, it
+all must be thrown away. If the mispredictions occur too often, the recovering penalty
+outweighs the gains from speculative execution.
+With conditional selection, it is different. There are no branches, so the processor
+doesn’t have to speculate. It can execute computeX and computeY functions in parallel.
+However, it cannot start running the code from foo until it computes the result of the
+CMOVNE instruction since foo uses it as an argument (data dependency). When you
+use conditional select instructions, you convert a control flow dependency into a data
+flow dependency.
+To sum it up, for small if-else statements that perform simple operations, conditional
+selects can be more efficient than branches, but only if the branch is hard to predict. So
+don’t force the compiler to generate conditional selects for every conditional statement.
+For conditional statements that are always correctly predicted, having a branch
+instruction is likely an optimal choice, because you allow the processor to speculate
+(correctly) and run ahead of the actual execution. And don’t forget to measure the
+impact of your changes.
+Without profiling data, compilers don’t have visibility into the misprediction rates.
+As a result, they usually prefer to generate branch instructions by default. Compilers
+are conservative at using selection and may resist generating CMOV instructions even
+in simple cases. Again, the tradeoffs are complicated, and it is hard to make the
+right decision without the runtime data.202 Starting from Clang-17, the compiler now
+honors a __builtin_unpredictable hint for the x86 target, which indicates to the
+compiler that a branch condition is unpredictable. It can help influence the compiler’s
+decision but does not guarantee that the CMOV instruction will be generated. Here’s
+an example of how to use __builtin_unpredictable:
+int a;
+if (__builtin_unpredictable(cond)) {
+  a = computeX();
+} else {
+  a = computeY();
+}
+
+10.4     Multiple Tests Single Branch
+The last technique that we discuss in this chapter aims at minimizing the dynamic
+number of branch instructions by combining multiple tests. The main idea here is
+to avoid executing a branch for every element of a large array. Instead, the goal
+is to perform multiple tests simultaneously, which primarily involves using SIMD
+instructions. The result of multiple tests is a vector mask that can be converted into
+a byte mask, which often can be processed with a single branch instruction. This
+enables us to eliminate many branch instructions as you will see shortly. You may
+encounter this technique being used in SIMD implementations of various algorithms
+such as JSON/HTML parsing, media codecs, and others.
+202 Hardware-based PGO (see Section 11.7) will be a huge step forward here.
+
+                                                       10.4    Multiple Tests Single Branch
+
+Listing 10.5 shows a function that finds the longest line in an input string by testing
+one character at a time. We go through the input string and search for end-of-line
+(eol) characters (\n, 0x0A in ASCII). For every found eol character we check if the
+current line is the longest, and reset the length of the current line to zero. This code
+will execute one branch instruction for every character.203
+
+Listing 10.5 Find the longest line (one character at a time).
+uint32_t longestLine(const std::string &str) {
+  uint32_t maxLen = 0;
+  uint32_t curLen = 0;
+  for (auto s : str) {
+    if (s == '\n') {
+      maxLen = std::max(curLen, maxLen);
+      curLen = 0;
+    } else {
+      curLen++;
+    }
+  }
+  // if no end-of-line in the end
+  maxLen = std::max(curLen, maxLen);
+  return maxLen;
+}
+
+Consider the alternative implementation shown in Listing 10.6 that tests eight charac-
+ters at a time. You will typically see this idea implemented using compiler intrinsics
+(see Section 9.5), however, I decided to show a standard C++ code for clarity. This
+exact case is featured in one of Performance Ninja’s lab assignments,204 so you can try
+writing SIMD code yourself. Keep in mind, that the code I’m showing is incomplete
+as it misses a few corner cases; I provide it just to illustrate the idea.
+
+We start by preparing an 8-byte mask filled with eol symbols. The inner loop loads
+eight characters of the input string and performs a byte-wise comparison of these
+characters with the eol mask. Vectors in modern processors contain 16/32/64 bytes, so
+we can process even more characters simultaneously. The result of the eight comparisons
+is an 8-bit mask with either 0 or 1 in the corresponding position (see compareBytes).
+For example, when comparing 0x00FF0A000AFFFF00 and 0x0A0A0A0A0A0A0A0A, we
+will get 0b00101000 as a result. With x86 and ARM ISAs, the function compareBytes
+can be implemented using two vector instructions.205
+
+If the mask is zero, that means there are no eol characters in the current chunk and
+we can skip it (see line 11). This is a critical optimization that provides large speedups
+for input strings with long lines. If a mask is not zero, that means there are eol
+characters and we need to find their positions. To do so, we use the tzcnt function,
+which counts the number of trailing zero bits in an 8-bit mask (the position of the
+rightmost set bit). For example, for the mask 0b00101000, it will return 3. Most
+ISAs support implementing the tzcnt function with a single instruction.206 Line 14
+203 Assuming that the compiler will avoid generating branch instructions for std::max.
+204 Performance Ninja: compiler intrinsics 2 - https://github.com/dendibakh/perf-ninja/tree/main/
+
+labs/core_bound/compiler_intrinsics_2.
+ 205 For example, with AVX2 (256-bit vectors), you can use VPCMPEQB and VPMOVMSKB instructions.
+ 206 Although in x86, there is no version of the TZCNT instruction that supports 8-bit inputs.
+
+Listing 10.6 Find the longest line (8 characters at a time).
+ 1 uint32_t longestLine(const std::string &str) {
+ 2   uint32_t maxLen = 0;
+ 3   const uint64_t eol = 0x0a0a0a0a0a0a0a0a;
+ 4   auto *buf = str.data();
+ 5   uint32_t lineBeginPos = 0;
+ 6   for (uint32_t pos = 0; pos + 7 < str.size(); pos += 8) {
+ 7     // Load 8-byte chunk of the input string.
+ 8     uint64_t vect = *((const uint64_t*)(buf + pos));
+ 9     // Check all characters in this chunk.
+10     uint8_t mask = compareBytes(vect, eol);
+11     while (mask) {
+12       uint16_t eolPos = tzcnt(mask);
+13       // Compute the length of the current string.
+14       uint32_t curLen = (pos - lineBeginPos) + eolPos;
+15       // New line starts with the character after '\n'
+16       lineBeginPos += curLen + 1;
+17       // Is this line the longest?
+18       maxLen = std::max(curLen, maxLen);
+19       // Shift the mask to check if we have more '\n'
+20       mask >>= eolPos + 1;
+21     }
+22   }
+23   // process remainder (not shown)
+24   return maxLen;
+25 }
+26
+27 uint8_t compareBytes(uint64_t a, uint64_t b) {
+28   // Perform a byte-wise comparison of a and b.
+29   // Produce a bit mask with the result of comparisons:
+30   // one if bytes are equal, zero if different.
+31 }
+32
+33 uint8_t tzcnt(uint8_t mask) {
+34   // Count the number of trailing zero bits in the mask.
+35 }
+
+   calculates the length of the current line using the result of the tzcnt function. We
+   shift right the mask and repeat until there are no set bits in the mask.
+
+   For an input string with a single very long line (best case scenario), the SIMD version
+   will execute eight times fewer branch instructions. However, in the worst-case scenario
+   with zero-length lines (i.e., only eol characters in the input string), the original
+   approach is faster. I benchmarked this technique using AVX2 implementation (with
+   chunks of 16 characters) on several different inputs, including textbooks, and source
+   code files. The result was 5–6 times fewer branch instructions and more than 4x better
+   performance when running on Intel Core i7-1260P (12th Gen, Alder Lake).
+
+   Questions and Exercises
+      1. Revisit the code example shown in Listing 10.1 on the right. Suppose we start
+         frequently getting numbers outside of the [0-50) range. This will introduce
+         many new mispredictions for the branch that guards against out-of-bounds access
+         to the buckets array. How you will change the code to eliminate those newly
+
+                                                                              Summary
+
+     introduced mispredictions?
+  2. Solve the following lab assignments using techniques we discussed in this chapter:
+  • perf-ninja::branches_to_cmov_1
+  • perf-ninja::lookup_tables_1
+  • perf-ninja::virtual_call_mispredict
+  • perf-ninja::conditional_store_1
+  3. Run the application that you’re working with daily. Collect the TMA breakdown
+     and check the BadSpeculation metric. Look at the code that is attributed with
+     the most number of branch mispredictions. Is there a way to avoid branches
+     using the techniques we discussed in this chapter?
+Coding exercise: write a microbenchmark that will experience a 50% misprediction
+rate or get as close as possible. Your goal is to write a code in which half of all branch
+instructions are mispredicted. That is not as simple as you may think. Some hints
+and ideas:
+  • Branch misprediction rate is measured as BR_MISP_RETIRED.ALL_BRANCHES /
+    BR_INST_RETIRED.ALL_BRANCHES.
+  • If you’re coding in C++, you can use 1) the Google benchmark library similar
+    to perf-ninja, 2) write a regular console program and collect CPU counters with
+    Linux perf, or 3) integrate the libpfm library into the microbenchmark (see
+    Section 5.3.2).
+  • There is no need to invent some complicated algorithm. A simple approach
+    would be to generate a pseudo-random number in the range [0;100) and check
+    if it is less than 50. Random numbers can be pre-generated ahead of time.
+  • Keep in mind that modern CPUs can remember long (but still limited) sequences
+    of branch outcomes.
+
+Chapter Summary
+  • Modern processors are very good at predicting branch outcomes. So, I recommend
+    paying attention to branch mispredictions only when the TMA points to a high
+    Bad Speculation metric.
+  • When branch outcome patterns become hard for the CPU branch predictor to
+    follow, the performance of the application may suffer. In this case, the branchless
+    version of an algorithm can be more performant. In this chapter, I showed how
+    branches could be replaced with lookup tables, arithmetic, and selection.
+  • Branchless algorithms are not universally beneficial. Always measure to find out
+    what works better in your specific case.
+  • There are indirect ways to reduce the branch misprediction rate by reducing
+    the dynamic number of branch instructions in a program. This approach helps
+    because it alleviates the pressure on branch predictor structures. Examples of
+    such techniques include loop unrolling/vectorization, replacing branches with
+    bitwise operations, and using SIMD instructions.
+
