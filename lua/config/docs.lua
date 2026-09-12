@@ -1130,7 +1130,48 @@ do
 	-- frozen_root whole (index.tsv is .tsv, not a doc type, so auto-excluded) plus
 	-- every NON-dot child of data_root (skips .convcache/.webcache/.fixtest/.inctest
 	-- /.tools/.git while keeping the provider clones).
-	local function grep_search_paths()
+	-- Search paths for the grep. With a `scope` (the current viewer's docs_dir)
+	-- it narrows to just that project; without one it is the whole library.
+	-- Returns (paths, label): label names the project for the prompt, or nil for
+	-- the whole-library case.
+	local function grep_search_paths(scope)
+		if scope then
+			-- Web book: its rendered pages live only in .webcache, keyed by the
+			-- sha256 of each url in <scope>/index.tsv, so grep those files.
+			local idx = scope .. "/index.tsv"
+			if vim.fn.filereadable(idx) == 1 then
+				local files, seen = {}, {}
+				for _, ln in ipairs(vim.fn.readfile(idx)) do
+					local f = vim.split(ln, "\t", { plain = true })
+					local url = f[#f]
+					if url and #url > 0 then
+						local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+						if cf and not seen[cf] then
+							seen[cf] = true
+							files[#files + 1] = cf
+						end
+					end
+				end
+				if #files > 0 then
+					return files, vim.fs.basename(scope)
+				end
+			end
+			-- File-backed doc: grep the project root, not just the file's folder.
+			-- A book is books/<mkey>/<slug>; a versioned/simple clone is
+			-- <provider>/<version> under data_root; otherwise scope as given.
+			local root = scope:match("(.*/books/[^/]+/[^/]+)")
+			if not root and scope:sub(1, #data_root) == data_root then
+				local rest = scope:sub(#data_root + 2)
+				local prov, ver = rest:match("^([^/]+)/([^/]+)")
+				if prov and ver then
+					root = data_root .. "/" .. prov .. "/" .. ver
+				end
+			end
+			root = root or scope
+			if vim.fn.isdirectory(root) == 1 then
+				return { root }, vim.fs.basename(root)
+			end
+		end
 		local paths = {}
 		if vim.fn.isdirectory(frozen_root) == 1 then
 			paths[#paths + 1] = frozen_root
@@ -1142,7 +1183,7 @@ do
 				end
 			end
 		end
-		return paths
+		return paths, nil
 	end
 
 	local function docs_grep_open(selected)
@@ -1175,7 +1216,8 @@ do
 		if not have("rg") then
 			return vim.notify("Docs grep needs ripgrep (rg)", vim.log.levels.WARN)
 		end
-		local paths = grep_search_paths()
+		-- Scope to the project the reader is in (its viewer's docs_dir), if any.
+		local paths, label = grep_search_paths(vim.b.docs_dir)
 		if #paths == 0 then
 			return vim.notify("Docs: no library to grep (is Resources/docs present?)", vim.log.levels.WARN)
 		end
@@ -1186,10 +1228,12 @@ do
 		for _, e in ipairs(DOC_GREP_EXTS) do
 			globs[#globs + 1] = "-g '*." .. e .. "'"
 		end
-		local rg_opts = "--color=never --line-number --column --no-heading --smart-case --hidden "
+		-- -H forces the filename even when a scope resolves to a single file (a
+		-- web book with one cached page), so every line stays "path:lnum:col:text".
+		local rg_opts = "--color=never --line-number --column --no-heading --with-filename --smart-case --hidden "
 			.. table.concat(globs, " ")
 		fzf().live_grep({
-			prompt = "Docs grep> ",
+			prompt = "Docs grep (" .. (label or "all") .. ")> ",
 			cwd = cwd,
 			rg_opts = rg_opts,
 			search_paths = paths,
@@ -1203,7 +1247,10 @@ do
 				if not relpath then
 					return line
 				end
-				local abspath = vim.fs.normalize(cwd .. "/" .. relpath)
+				-- rg prints relative paths for dir search_paths but absolute ones
+				-- when handed explicit files (the scoped web-book case).
+				local abspath = relpath:sub(1, 1) == "/" and vim.fs.normalize(relpath)
+					or vim.fs.normalize(cwd .. "/" .. relpath)
 				local sha = abspath:match("/%.webcache/(%x+)%.txt$")
 				local meta = sha and sha_title_map[sha]
 				if meta then
