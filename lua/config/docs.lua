@@ -4052,6 +4052,7 @@ local BOOKS = {
 		{ title = "Serious Cryptography (2e)", fmt = "epub", file = "Serious Cryptography, 2nd Edition_ A Practical Introduction -- Jean-Philippe Aumasson -- 2, 2024 -- No Starch Press, Incorporated -- isbn13 9781718503847 -- 98baee034c0a929a742dfde69353a637 -- Anna’s Archive.epub" },
 		{ title = "An Introduction to Mathematical Cryptography", fmt = "pdf", slug = "an-introduction-to-mathematical-cryptography", file = "An Introduction to Mathematical Cryptography (2014) - Hoffstein, Pipher, Silverman.pdf" },
 		{ title = "The Joy of Cryptography (Rosulek)", fmt = "pdf", slug = "the-joy-of-cryptography", file = "The Joy of Cryptography (2021 Updated) -- Mike Rosulek.pdf" },
+		{ title = "Cryptography Engineering (Ferguson, Schneier, Kohno)", fmt = "pdf", slug = "cryptography-engineering", file = "Cryptography Engineering _ Design Principles and Practical Applications -- Ferguson, Schneier, Kohno.djvu" },
 		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
 		{ title = "Secure Coding in C and C++ (2e)", fmt = "pdf", slug = "secure-coding-in-c-and-cpp", file = "Secure Coding in C and C++ (2nd Edition) (SEI Series in -- Seacord, Robert C_ -- 601df46864954c0d50394370bb73c517 -- Anna’s Archive.pdf" },
 		{ title = "Reverse Engineering for Beginners (Yurichev)", fmt = "pdf", slug = "reverse-engineering-for-beginners", file = "reverse-engineering-for-beginners.pdf" },
