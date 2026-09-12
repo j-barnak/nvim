@@ -4799,15 +4799,16 @@ local providers = {
 	-- publish release tags get a version picker (source-only, docs_mode "none");
 	-- the branch-tracked rest open source at their default branch.
 	-- qemuafl/QEMU-Nyx are QEMU forks whose /docs tree is verbatim upstream QEMU
-	-- (COLO-FT, rdma, arm boards, ...); neither adds any fork-specific prose, so
-	-- scope :Docs to the repo's own front-page README only (the fork changes live
-	-- in patched C, reached via :Src). README is .rst in both.
-	{ name = "AFL++: qemuafl", key = "qemuafl", run = register_versioned("qemuafl", { url = "https://github.com/AFLplusplus/qemuafl", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemuafl", sparse = "/README.rst /README.md /Readme.md", marker = ".git", browse = "", exts = "-e md -e rst" }) },
+	-- (COLO-FT, rdma, arm boards, ...) and whose only root README is the generic
+	-- upstream "QEMU README" too: no fork-specific prose exists. So they are
+	-- source-only (docs_mode "none"): the version picker offers just Explore
+	-- source; the fork changes live in patched C, read via :Src.
+	{ name = "AFL++: qemuafl", key = "qemuafl", run = register_versioned("qemuafl", { url = "https://github.com/AFLplusplus/qemuafl", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemuafl", docs_mode = "none" }) },
 	-- unicornafl is a thin AFL++<->Unicorn bridge (Unicorn itself is a submodule,
 	-- not checked out); its own docs are the fork-specific root README and the
 	-- Rust-binding README. No inherited Unicorn /docs tree exists in the repo.
 	{ name = "AFL++: unicornafl", key = "unicornafl", run = register_versioned("unicornafl", { url = "https://github.com/AFLplusplus/unicornafl", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "unicornafl", sparse = "/README.md /Readme.md /bindings/rust/README.md", marker = ".git", browse = "", exts = "-e md" }) },
-	{ name = "AFL++: QEMU-Nyx", key = "qemu-nyx", run = register_versioned("qemu-nyx", { url = "https://github.com/nyx-fuzz/QEMU-Nyx", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemu-nyx", sparse = "/README.rst /README.md /Readme.md", marker = ".git", browse = "", exts = "-e md -e rst" }) },
+	{ name = "AFL++: QEMU-Nyx", key = "qemu-nyx", run = register_versioned("qemu-nyx", { url = "https://github.com/nyx-fuzz/QEMU-Nyx", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "qemu-nyx", docs_mode = "none" }) },
 	-- libnyx/packer/KVM-Nyx: the only Nyx-specific prose is each repo's root
 	-- README.md. KVM-Nyx is a full Linux-kernel fork, so the old shared sparse
 	-- would have pulled the entire kernel Documentation tree via /Documentation.
