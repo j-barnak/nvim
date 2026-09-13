@@ -5054,7 +5054,47 @@ local providers = {
 	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
 	{ name = "Haskell (Hoogle)", key = "haskell", run = pick_haskell },
 	{ name = "Rust reference", key = "rust", run = pick_rust },
-	{ name = "Frida", key = "frida", run = register_versioned("frida", { src_url = "https://github.com/frida/frida", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "Frida", docs_mode = "latest", docs_fn = make_simple("frida", simple.frida) }) },
+	-- Frida docs: the frida.re/docs handbook (site sidebar order, "[Section]
+	-- Title") with the API Reference (JS/C/Gum/Core/Swift/Go) behind a separate
+	-- sub-picker. Inlined closure (200-local cap), same shape as angr.
+	{ name = "Frida", key = "frida", run = register_versioned("frida", { src_url = "https://github.com/frida/frida", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "Frida", docs_mode = "latest", docs_fn = (function()
+		local narrative, api_picker
+		local function open_url(root, url, title)
+			local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+			if not cf then
+				return vim.notify((title or url) .. ": not in the frozen cache", vim.log.levels.WARN)
+			end
+			render_lines(vim.fn.readfile(cf), "markdown", root, title or url)
+		end
+		local function open_row(root, sel)
+			local t, u = sel and sel[1] and sel[1]:match("^([^\t]+)\t(.+)$")
+			if u then open_url(root, u, t) end
+		end
+		api_picker = function(root)
+			last_picker = function() api_picker(root) end
+			fzf().fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
+				prompt = "Frida API reference> ",
+				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+				actions = { ["default"] = function(s) open_row(root, s) end },
+			})
+		end
+		narrative = function()
+			local root = resolve_docs("frida-docs") or (frozen_root .. "/frida-docs")
+			local entries = vim.fn.readfile(root .. "/index.tsv")
+			entries[#entries + 1] = "\u{00bb} API Reference (JavaScript / C / Gum / Core / Swift / Go)\tAPI-REF"
+			last_picker = narrative
+			fzf().fzf_exec(entries, {
+				prompt = "Frida docs> ",
+				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+				actions = { ["default"] = function(sel)
+					if not (sel and sel[1]) then return end
+					if sel[1]:match("^\u{00bb} API Reference") then return api_picker(root) end
+					open_row(root, sel)
+				end },
+			})
+		end
+		return narrative
+	end)() }) },
 	{ name = "Triton", key = "triton", run = register_versioned("triton", vspec(simple.triton, "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Triton", docs_mode = "latest", docs_fn = frozen_web_provider("triton-docs", "Triton (Python API)> ") })) },
 	-- angr docs: narrative handbook (docs.angr.io sidebar order, "[Section] Title")
 	-- with the API Reference (angr.* modules) behind a separate sub-picker. Inlined
