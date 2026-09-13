@@ -4268,39 +4268,66 @@ end
 -- listed order, prefix each nested chapter with its part ("A Bad Stack / Push")
 -- so labels are unique and show the hierarchy, and open the chosen file. Falls
 -- back to the file list if there is no usable SUMMARY.md.
-local function pick_mdbook(dir, prompt)
+-- `numbered` (opt-in): show mdBook-style section numbers ("2.2.1. Title",
+-- indented by depth) instead of the "Section / Title" prefix. Used for books
+-- whose SUMMARY is a clean nested list (Aya).
+local function pick_mdbook(dir, prompt, numbered)
 	local summary = dir .. "/SUMMARY.md"
 	if vim.fn.filereadable(summary) ~= 1 then
 		return pick_files(dir, "-e md", prompt)
 	end
-	local entries, map, section = {}, {}, nil
+	-- parse valid SUMMARY rows first (indent width, title, path)
+	local rows, unit = {}, nil
 	for _, ln in ipairs(vim.fn.readfile(summary)) do
 		local indent, title, file = ln:match("^([ \t]*)[%*%-+]%s+%[(.-)%]%(([^)]-%.md)")
 		if title and file then
 			local path = dir .. "/" .. (file:gsub("#.*$", ""))
 			if vim.fn.filereadable(path) == 1 then
-				local nested = #indent > 0
-				local disp = (nested and section) and (section .. " / " .. title) or title
-				if not nested then
-					section = title
+				local ilen = #(indent:gsub("\t", "    "))
+				rows[#rows + 1] = { ilen = ilen, title = title, path = path }
+				if ilen > 0 then
+					unit = math.min(unit or ilen, ilen)
 				end
-				local base, k = disp, 2
-				while map[disp] do
-					disp = base .. " (" .. k .. ")"
-					k = k + 1
-				end
-				entries[#entries + 1] = disp
-				map[disp] = path
 			end
 		end
 	end
-	if #entries == 0 then
+	if #rows == 0 then
 		return pick_files(dir, "-e md", prompt)
+	end
+	unit = unit or 2
+	local entries, map, section, counters = {}, {}, nil, {}
+	for _, r in ipairs(rows) do
+		local disp
+		if numbered then
+			local d = math.floor(r.ilen / unit)
+			counters[d + 1] = (counters[d + 1] or 0) + 1
+			for i = d + 2, #counters do
+				counters[i] = nil
+			end
+			local parts = {}
+			for i = 1, d + 1 do
+				parts[i] = tostring(counters[i] or 1)
+			end
+			disp = string.rep("  ", d) .. table.concat(parts, ".") .. ". " .. r.title
+		else
+			local nested = r.ilen > 0
+			disp = (nested and section) and (section .. " / " .. r.title) or r.title
+			if not nested then
+				section = r.title
+			end
+		end
+		local base, k = disp, 2
+		while map[disp] do
+			disp = base .. " (" .. k .. ")"
+			k = k + 1
+		end
+		entries[#entries + 1] = disp
+		map[disp] = r.path
 	end
 	-- remember this picker so `D` in an opened chapter reopens the SUMMARY-ordered
 	-- chapter list (not the book list one level up), like pick_files does.
 	last_picker = function()
-		pick_mdbook(dir, prompt)
+		pick_mdbook(dir, prompt, numbered)
 	end
 	fzf().fzf_exec(entries, {
 		prompt = prompt,
@@ -4370,7 +4397,19 @@ local function pick_aya()
 					return
 				end
 				if sel[1]:match("^Book") then
-					make_simple("aya", simple.aya)()
+					-- the Aya book is an mdBook; browse it in SUMMARY order with
+					-- mdBook section numbers (1., 2.1., 2.2.1.), not a flat file list.
+					local spec = simple.aya
+					local found = resolve_docs("aya/master", spec.marker)
+					if found then
+						return pick_mdbook(found .. "/src", spec.prompt, true)
+					end
+					if not have("git") then
+						return vim.notify("git not found (needed to fetch Aya docs)", vim.log.levels.WARN)
+					end
+					ensure_repo(data_root .. "/aya/master", spec.url, spec.sparse, spec.marker, function(d)
+						pick_mdbook(d .. "/src", spec.prompt, true)
+					end)
 				else
 					pick_aya_api()
 				end
