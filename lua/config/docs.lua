@@ -1118,6 +1118,11 @@ do
 	}
 	local sha_title_map -- sha256(url) -> { provider=, title= }; built once, cached
 	local grep_entry_map -- per-grep display line -> hit info
+	local grep_scope_shas -- when set, keep only .webcache hits whose sha is in it
+	-- Passing every cached file as an rg argument overflows the argv limit
+	-- (E2BIG) for a big web book (rust-std ~2000 pages, angr ~1200). Above this
+	-- many pages, grep the .webcache directory instead and filter by sha.
+	local GREP_FILE_CAP = 300
 
 	local function build_sha_title_map()
 		if sha_title_map then
@@ -1149,25 +1154,42 @@ do
 	-- Returns (paths, label): label names the project for the prompt, or nil for
 	-- the whole-library case.
 	local function grep_search_paths(scope)
+		grep_scope_shas = nil
 		if scope then
 			-- Web book: its rendered pages live only in .webcache, keyed by the
 			-- sha256 of each url in <scope>/index.tsv, so grep those files.
 			local idx = scope .. "/index.tsv"
 			if vim.fn.filereadable(idx) == 1 then
-				local files, seen = {}, {}
+				local files, seen, shas = {}, {}, {}
 				for _, ln in ipairs(vim.fn.readfile(idx)) do
 					local f = vim.split(ln, "\t", { plain = true })
 					local url = f[#f]
 					if url and #url > 0 then
-						local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+						local sha = vim.fn.sha256(url)
+						shas[sha] = true
+						local cf = resolve_docs(".webcache/" .. sha .. ".txt")
 						if cf and not seen[cf] then
 							seen[cf] = true
 							files[#files + 1] = cf
 						end
 					end
 				end
-				if #files > 0 then
+				if #files > 0 and #files <= GREP_FILE_CAP then
 					return files, vim.fs.basename(scope)
+				end
+				if #files > GREP_FILE_CAP then
+					-- Too many pages to pass as argv: grep the .webcache dir(s)
+					-- and drop hits outside this book by sha in fn_transform.
+					grep_scope_shas = shas
+					local wc = {}
+					for _, root in ipairs({ frozen_root, data_root }) do
+						if vim.fn.isdirectory(root .. "/.webcache") == 1 then
+							wc[#wc + 1] = root .. "/.webcache"
+						end
+					end
+					if #wc > 0 then
+						return wc, vim.fs.basename(scope)
+					end
 				end
 			end
 			-- File-backed doc: grep the project root, not just the file's folder.
@@ -1266,6 +1288,11 @@ do
 				local abspath = relpath:sub(1, 1) == "/" and vim.fs.normalize(relpath)
 					or vim.fs.normalize(cwd .. "/" .. relpath)
 				local sha = abspath:match("/%.webcache/(%x+)%.txt$")
+				-- Scoped grep of a big web book: we grepped the whole .webcache,
+				-- so drop any hit that is not one of this book's pages.
+				if grep_scope_shas and not (sha and grep_scope_shas[sha]) then
+					return nil
+				end
 				local meta = sha and sha_title_map[sha]
 				if meta then
 					local disp = string.format("[%s] %s:%s:%s:%s", meta.provider, meta.title, lnum, col, text)
