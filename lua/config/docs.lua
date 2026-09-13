@@ -2268,6 +2268,7 @@ local SRC_WARN = {
 	-- unrenderable); source stays versioned via :V -> Explore source.
 	["pwntools-docs"] = true, ["lief-docs"] = true, ["qbdi-docs"] = true,
 	["qbindiff-docs"] = true, ["drgn-docs"] = true,
+	["triton-docs"] = true, ["angr-docs"] = true,
 	sdl2 = true, sdl3 = true, frida = true, aya = true,
 	bap = true, libdrgn = true, sfml = true,
 }
@@ -4570,6 +4571,8 @@ LOCATION["lief-docs"] = { index = "lief-docs/index.tsv", unit = "page" }
 LOCATION["qbdi-docs"] = { index = "qbdi-docs/index.tsv", unit = "page" }
 LOCATION["qbindiff-docs"] = { index = "qbindiff-docs/index.tsv", unit = "page" }
 LOCATION["drgn-docs"] = { index = "drgn-docs/index.tsv", unit = "page" }
+LOCATION["triton-docs"] = { index = "triton-docs/index.tsv", unit = "page" }
+LOCATION["angr-docs"] = { index = "angr-docs/index.tsv", unit = "page" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
 LOCATION["write-you-a-haskell"] = { index = "write-you-a-haskell/index.tsv", unit = "chapter" }
 LOCATION["lkmpg"] = { index = "lkmpg/index.tsv", unit = "chapter" }
@@ -4868,8 +4871,8 @@ local providers = {
 	{ name = "Haskell (Hoogle)", key = "haskell", run = pick_haskell },
 	{ name = "Rust reference", key = "rust", run = pick_rust },
 	{ name = "Frida", key = "frida", run = register_versioned("frida", { src_url = "https://github.com/frida/frida", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "Frida", docs_mode = "latest", docs_fn = make_simple("frida", simple.frida) }) },
-	{ name = "Triton", key = "triton", run = register_versioned("triton", vspec(simple.triton, "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Triton" })) },
-	{ name = "angr", key = "angr", run = register_versioned("angr", vspec(simple.angr, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "angr" })) },
+	{ name = "Triton", key = "triton", run = register_versioned("triton", vspec(simple.triton, "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Triton", docs_mode = "latest", docs_fn = frozen_web_provider("triton-docs", "Triton (Python API)> ") })) },
+	{ name = "angr", key = "angr", run = register_versioned("angr", vspec(simple.angr, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "angr", docs_mode = "latest", docs_fn = frozen_web_provider("angr-docs", "angr docs> ") })) },
 	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = register_versioned("bap", { src_url = "https://github.com/BinaryAnalysisPlatform/bap", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "BAP", docs_mode = "latest", docs_fn = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") }) },
 	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI", docs_mode = "latest", docs_fn = frozen_web_provider("qbdi-docs", "QBDI docs> ") })) },
 	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone", docs_mode = "latest", docs_fn = pick_capstone_docs })) },
