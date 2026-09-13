@@ -4253,6 +4253,11 @@ local function pick_mdbook(dir, prompt)
 	if #entries == 0 then
 		return pick_files(dir, "-e md", prompt)
 	end
+	-- remember this picker so `D` in an opened chapter reopens the SUMMARY-ordered
+	-- chapter list (not the book list one level up), like pick_files does.
+	last_picker = function()
+		pick_mdbook(dir, prompt)
+	end
 	fzf().fzf_exec(entries, {
 		prompt = prompt,
 		fzf_opts = { ["--no-multi"] = true },
