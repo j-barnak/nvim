@@ -2,47 +2,17 @@
 
 ## Algorithms Illuminated
 
-Part 2: Graph Algorithms and Data
+Part 2: Graph Algorithms and Data Structures Tim Roughgarden c 2018 by Tim Roughgarden All rights reserved. No portion of this book may be reproduced in any form without permission from the publisher, except as permitted by U. S. copyright law.
 
-Structures
-
-
-
-Tim Roughgarden
-
-c 2018 by Tim Roughgarden
-
-All rights reserved. No portion of this book may be reproduced in any form without permission from the publisher, except as permitted by U. S. copyright law.
-
-First Edition
-
-Cover image: Untitled, by Nick Terry
-
-ISBN: 978-0-9992829-2-2 (Paperback)
+First Edition Cover image: Untitled, by Nick Terry ISBN: 978-0-9992829-2-2 (Paperback)
 
 ISBN: 978-0-9992829-3-9 (ebook)
 
-Library of Congress Control Number: 2017914282
+Library of Congress Control Number: 2017914282 Soundlikeyourself Publishing, LLC San Francisco, CA soundlikeyourselfpublishing@gmail.com [www.algorithmsilluminated.org](http://www.algorithmsilluminated.org)
 
-
-
-Soundlikeyourself Publishing, LLC
-
-San Francisco, CA
-
-soundlikeyourselfpublishing@gmail.com
-
-[www.algorithmsilluminated.org](http://www.algorithmsilluminated.org)
-
-In memory of James Wesley Shean
-
-
-
-(1921–2010)
+In memory of James Wesley Shean (1921–2010)
 
 ## Contents
-
-
 
 Preface vii
 
@@ -98,13 +68,9 @@ Problems 91
 
 v vi Contents
 
-
-
 10.4 Speeding Up Dijkstra’s Algorithm 106
 
-\*10.5 Implementation Details 112
-
-Problems 123
+\*10.5 Implementation Details 112 Problems 123
 
 11 Search Trees 126
 
@@ -112,11 +78,7 @@ Problems 123
 
 11.2 Search Trees: Supported Operations 129
 
-\*11.3 Implementation Details 131
-
-\*11.4 Balanced Search Trees 145
-
-Problems 149
+\*11.3 Implementation Details 131 \*11.4 Balanced Search Trees 145 Problems 149
 
 12 Hash Tables and Bloom Filters 151
 
@@ -124,26 +86,8 @@ Problems 149
 
 12.2 Applications 154
 
-\*12.3 Implementation: High-Level Ideas 159
-
-\*12.4 Further Implementation Details 173
+\*12.3 Implementation: High-Level Ideas 159 \*12.4 Further Implementation Details 173
 
 12.5 Bloom Filters: The Basics 178
 
-\*12.6 Bloom Filters: Heuristic Analysis 184
-
-Problems 190
-
-C Quick Review of Asymptotic Notation 193
-
-C.1 The Gist 193
-
-C.2 Big-O Notation 194
-
-C.3 Examples 195
-
-C.4 Big-Omega and Big-Theta Notation 197
-
-Solutions to Selected Problems 200
-
-Index 203
+\*12.6 Bloom Filters: Heuristic Analysis 184 Problems 190 C Quick Review of Asymptotic Notation 193 C.1 The Gist 193 C.2 Big-O Notation 194 C.3 Examples 195 C.4 Big-Omega and Big-Theta Notation 197 Solutions to Selected Problems 200 Index 203
