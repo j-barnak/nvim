@@ -18,6 +18,7 @@ while IFS=$'\t' read -r title url; do
   pdf=""
   case "$u" in
     *.pdf)                          pdf="$u" ;;
+    *.ps.gz)                        pdf="$u" ;;
     https://arxiv.org/abs/*)        pdf="https://arxiv.org/pdf/${u##*/abs/}" ;;
     https://arxiv.org/pdf/*)        pdf="$u" ;;
     *infoscience.epfl.ch/*/download) pdf="$u" ;;
@@ -33,8 +34,22 @@ while IFS=$'\t' read -r title url; do
   esac
   if [ -z "$pdf" ]; then echo "KEEP-STUB (no pdf): $title" >&2; kept=$((kept+1)); continue; fi
 
-  f="$TMP/p.pdf"
-  curl -fsSL --compressed --max-time 60 -A 'Mozilla/5.0 docsfreeze' "$pdf" -o "$f" 2>/dev/null
+  f="$TMP/p.pdf"; rm -f "$f"
+  # usenix presentation page with no .pdf href: try the sec<NN>-<name>.pdf path
+  case "$pdf" in
+    "") case "$u" in https://www.usenix.org/conference/usenixsecurity*/presentation/*)
+          nn=$(printf '%s' "$u" | sed -E 's#.*usenixsecurity([0-9]+)/.*#\1#')
+          pdf="https://www.usenix.org/system/files/sec${nn}-${u##*/}.pdf" ;; esac ;;
+  esac
+  [ -z "$pdf" ] && { echo "KEEP-STUB (no pdf): $title" >&2; kept=$((kept+1)); continue; }
+  txt=""
+  case "$pdf" in
+    *.ps.gz)  # PostScript: gunzip | ps2pdf | pdftotext gives clean text (ps2ascii does not)
+      curl -fsSL --max-time 60 "$pdf" -o "$TMP/p.ps.gz" 2>/dev/null
+      gunzip -c "$TMP/p.ps.gz" 2>/dev/null > "$TMP/p.ps" && ps2pdf "$TMP/p.ps" "$f" 2>/dev/null ;;
+    *)
+      curl -fsSL --compressed --max-time 60 -A 'Mozilla/5.0 docsfreeze' "$pdf" -o "$f" 2>/dev/null ;;
+  esac
   if [ ! -s "$f" ] || [ "$(head -c4 "$f")" != "%PDF" ]; then
     echo "KEEP-STUB (fetch/notpdf): $title  <$pdf>" >&2; kept=$((kept+1)); sleep 1; continue
   fi
