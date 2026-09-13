@@ -782,6 +782,19 @@ if mode == "clean":
             # and prose lines alike; the shortcode never appears inside code.
             line = re.sub(r'\{%\s*embed\s+url="<?([^"<>]+)>?"\s*%\}',
                           r"<\1>", line)
+        if not fence:
+            # Sphinx/RTD/MkDocs headerlink permalinks survive pandoc as a link
+            # to a #fragment whose text is empty or just a permalink glyph - a
+            # pilcrow, a "#", or (Font Awesome) a Private-Use-Area icon such as
+            # U+F0C1 - hung off every heading: `[<glyph>](#anchor "Link to this
+            # heading")`. drop_permalinks/drop_empty_links miss it at the HTML
+            # stage (the glyph is real link text, or is drawn by CSS). Strip any
+            # fragment link whose TITLE marks it a permalink, then the remaining
+            # empty/glyph-only forms. A real cross-ref like `[name](#x "name")`
+            # keeps a non-glyph title/text and is untouched. Never in a fence.
+            line = re.sub(r'\[[^\]]*\]\(#[^)]*"(?:Link to this heading|'
+                          r'Permalink[^"]*)"\)', "", line)
+            line = re.sub(r'\[[-¶§#⚓\s]*\]\(#[^)]*\)', "", line)
         out.append(line)
     sys.stdout.write("\n".join(out))
     sys.exit(0)

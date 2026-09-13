@@ -2264,6 +2264,10 @@ local GS_OVERRIDE = {}
 local SRC_WARN = {
 	["styx-docs"] = true, -- external docs; gs points to :V -> Explore source
 	["rizin-book"] = true, -- The Rizin Handbook (book.rizin.re); source is versioned
+	-- Sphinx autodoc sites frozen from their built HTML (raw in-tree RST is
+	-- unrenderable); source stays versioned via :V -> Explore source.
+	["pwntools-docs"] = true, ["lief-docs"] = true, ["qbdi-docs"] = true,
+	["qbindiff-docs"] = true, ["drgn-docs"] = true,
 	sdl2 = true, sdl3 = true, frida = true, aya = true,
 	bap = true, libdrgn = true, sfml = true,
 }
@@ -2291,6 +2295,7 @@ local VERSIONED = {
 	qbdi = { url = simple.qbdi.url },
 	capstone = { url = simple.capstone.url },
 	rizin = { url = simple.rizin.url },
+	lief = { url = simple.lief.url },
 	volatility = { url = simple.volatility.url },
 	unicorn = { url = simple.unicorn.url },
 	keystone = { url = simple.keystone.url },
@@ -4560,6 +4565,11 @@ LOCATION["lyah"] = { index = "lyah/index.tsv", unit = "chapter" }
 LOCATION["qiling-docs"] = { index = "qiling-docs/index.tsv", unit = "chapter" }
 LOCATION["capstone-docs"] = { index = "capstone-docs/index.tsv", unit = "chapter" }
 LOCATION["rizin-book"] = { index = "rizin-book/index.tsv", unit = "chapter" }
+LOCATION["pwntools-docs"] = { index = "pwntools-docs/index.tsv", unit = "page" }
+LOCATION["lief-docs"] = { index = "lief-docs/index.tsv", unit = "page" }
+LOCATION["qbdi-docs"] = { index = "qbdi-docs/index.tsv", unit = "page" }
+LOCATION["qbindiff-docs"] = { index = "qbindiff-docs/index.tsv", unit = "page" }
+LOCATION["drgn-docs"] = { index = "drgn-docs/index.tsv", unit = "page" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
 LOCATION["write-you-a-haskell"] = { index = "write-you-a-haskell/index.tsv", unit = "chapter" }
 LOCATION["lkmpg"] = { index = "lkmpg/index.tsv", unit = "chapter" }
@@ -4768,7 +4778,7 @@ local providers = {
 	{ name = "eBPF ABI reference (helpers / kfuncs / maps / program types)", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
 	{ name = "eBPF (Cilium Reference: architecture, XDP, tc, toolchain)", key = "cilium", run = make_simple("cilium", simple.cilium) },
 	{ name = "Aya", key = "aya", run = register_versioned("aya", { src_url = "https://github.com/aya-rs/aya", tagre = "aya-v[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^aya%-v%d", label = "Aya", docs_mode = "latest", docs_fn = pick_aya }) },
-	{ name = "drgn", key = "drgn", run = register_versioned("drgn", vspec(simple.drgn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "drgn" })) },
+	{ name = "drgn", key = "drgn", run = register_versioned("drgn", vspec(simple.drgn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "drgn", docs_mode = "latest", docs_fn = frozen_web_provider("drgn-docs", "drgn docs> ") })) },
 	{
 		name = "libdrgn",
 		key = "libdrgn",
@@ -4861,7 +4871,7 @@ local providers = {
 	{ name = "Triton", key = "triton", run = register_versioned("triton", vspec(simple.triton, "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Triton" })) },
 	{ name = "angr", key = "angr", run = register_versioned("angr", vspec(simple.angr, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "angr" })) },
 	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = register_versioned("bap", { src_url = "https://github.com/BinaryAnalysisPlatform/bap", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "BAP", docs_mode = "latest", docs_fn = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") }) },
-	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI" })) },
+	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI", docs_mode = "latest", docs_fn = frozen_web_provider("qbdi-docs", "QBDI docs> ") })) },
 	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone", docs_mode = "latest", docs_fn = pick_capstone_docs })) },
 	{ name = "Rizin", key = "rizin", run = register_versioned("rizin", vspec(simple.rizin, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Rizin", docs_mode = "latest", docs_fn = pick_rizin_book })) },
 	-- Stable tags are "vN.N.N-stable"; Binary Ninja 6 is (so far) only tagged on
@@ -4871,16 +4881,16 @@ local providers = {
 	-- Only major 6 is admitted as a bare number (v5 has ~800 dev tags that would
 	-- otherwise flood the picker). diskpat accepts both "v5..." and "6..." on disk.
 	{ name = "Binary Ninja API", key = "binja", run = register_versioned("binja", vspec(simple.binja, "v[0-9]+\\.[0-9]+\\.[0-9]+-stable|6\\.[0-9]+\\.[0-9]+", { label = "Binary Ninja API", diskpat = "^v?%d", vsort = true })) },
-	{ name = "LIEF", key = "lief", run = make_simple("lief", simple.lief) },
+	{ name = "LIEF", key = "lief", run = register_versioned("lief", vspec(simple.lief, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LIEF", diskpat = "^%d", docs_mode = "latest", docs_fn = frozen_web_provider("lief-docs", "LIEF docs> ") })) },
 	{ name = "pyelftools", key = "pyelftools", run = register_versioned("pyelftools", vspec(simple.pyelftools, "v[0-9]+\\.[0-9]+", { label = "pyelftools" })) },
-	{ name = "QBinDiff", key = "qbindiff", run = register_versioned("qbindiff", vspec(simple.qbindiff, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBINDiff" })) },
+	{ name = "QBinDiff", key = "qbindiff", run = register_versioned("qbindiff", vspec(simple.qbindiff, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBINDiff", docs_mode = "latest", docs_fn = frozen_web_provider("qbindiff-docs", "QBinDiff docs> ") })) },
 	{ name = "Qiling", key = "qiling", run = register_versioned("qiling", vspec(simple.qiling, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Qiling", docs_mode = "latest", docs_fn = pick_qiling_docs })) },
 	{ name = "PANDA", key = "panda", run = make_simple("panda", simple.panda) },
 	{ name = "Volatility", key = "volatility", run = register_versioned("volatility", vspec(simple.volatility, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Volatility" })) },
 	{ name = "syzkaller", key = "syzkaller", run = make_simple("syzkaller", simple.syzkaller) },
 			{ name = "Unicorn", key = "unicorn", run = register_versioned("unicorn", vspec(simple.unicorn, "[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Unicorn", vsort = true, diskpat = "^v?%d", minmajor = 0 })) },
 	{ name = "Keystone", key = "keystone", run = register_versioned("keystone", vspec(simple.keystone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Keystone" })) },
-	{ name = "pwntools", key = "pwntools", run = register_versioned("pwntools", vspec(simple.pwntools, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "pwntools", diskpat = "^%d" })) },
+	{ name = "pwntools", key = "pwntools", run = register_versioned("pwntools", vspec(simple.pwntools, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "pwntools", diskpat = "^%d", docs_mode = "latest", docs_fn = frozen_web_provider("pwntools-docs", "pwntools docs> ") })) },
 	{ name = "UEFI (edk2)", key = "uefi", run = register_versioned("uefi", vspec(simple.uefi, "edk2-stable[0-9]+", { label = "UEFI (edk2)", diskpat = "^edk2%-stable%d", docs_mode = "latest", docs_fn = make_wiki("uefi-wiki", "https://github.com/tianocore/tianocore.github.io.wiki.git", "EDK II Wiki> ") })) },
 	{ name = "coreboot", key = "coreboot", run = register_versioned("coreboot", vspec(simple.coreboot, "[0-9]+\\.[0-9]+", { label = "coreboot", diskpat = "^%d" })) },
 	{ name = "U-Boot", key = "uboot", run = register_versioned("uboot", vspec(simple.uboot, "v[0-9]{4}\\.[0-9]+", { label = "U-Boot" })) },
