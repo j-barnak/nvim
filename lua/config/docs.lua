@@ -931,6 +931,20 @@ follow_link = function()
 	url = url:gsub("^%s+", ""):gsub("%s+$", "")
 	url = url:gsub("%s+[\"'(][^\"')]*[\"')]%s*$", "") -- trailing link title
 	if url:match("^%a[%w+.-]*://") or url:match("^mailto:") then
+		-- If we froze the page this URL points at (any web book: rustdoc, the
+		-- Sphinx/doxygen sites, ...), open the cached copy so frozen docs
+		-- cross-navigate offline instead of dead-ending at "External link".
+		-- Cache key is sha256 of the URL without its #fragment.
+		local u = url:gsub("#.*$", "")
+		local cf = resolve_docs(".webcache/" .. vim.fn.sha256(u) .. ".txt")
+		if cf then
+			local lines = vim.fn.readfile(cf)
+			local title = (lines[1] or ""):gsub("^#+%s*", "")
+			if title == "" then
+				title = vim.fs.basename((u:gsub("/$", "")))
+			end
+			return render_lines(lines, "markdown", dir, title)
+		end
 		return vim.notify("External link: " .. url, vim.log.levels.INFO)
 	end
 	url = url:gsub("#.*$", ""):gsub("%s+$", "")
@@ -4345,6 +4359,86 @@ end
 -- Resources/docs), so :Docs list can report each web book's own frozen status
 -- and page count instead of guessing from the title. Keep it in sync with the
 -- LOCATION.<key> entries below.
+-- Rust std (doc.rust-lang.org/std): a frozen rustdoc site. The top picker
+-- mirrors the std sidebar (an overview, the item categories, the sibling
+-- crates, and a search-all); category items drill into their frozen pages, and
+-- gd then cross-navigates the ~2000 frozen item pages offline (follow_link
+-- resolves an absolute doc.rust-lang.org link to its cached copy). Rebuilt (to
+-- update) with Resources/tools/rust_std_build.sh.
+local function pick_rust_std()
+	local root = resolve_docs("rust-std") or (frozen_root .. "/rust-std")
+	local function open_url(url, title)
+		local cf = resolve_docs(".webcache/" .. vim.fn.sha256((url:gsub("#.*$", ""))) .. ".txt")
+		if not cf then
+			return vim.notify((title or url) .. ": not in the frozen cache", vim.log.levels.WARN)
+		end
+		render_lines(vim.fn.readfile(cf), "markdown", root, title or url)
+	end
+	local function list_tsv(rel, prompt)
+		local f = root .. "/" .. rel
+		if vim.fn.filereadable(f) ~= 1 then
+			return vim.notify("Rust std: " .. rel .. " missing", vim.log.levels.WARN)
+		end
+		last_picker = function()
+			list_tsv(rel, prompt)
+		end
+		fzf().fzf_exec(vim.fn.readfile(f), {
+			prompt = prompt,
+			fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if not (sel and sel[1]) then
+						return
+					end
+					local t, u = sel[1]:match("^([^\t]+)\t(.+)$")
+					if u then
+						open_url(u, t)
+					end
+				end,
+			},
+		})
+	end
+	last_picker = pick_rust_std
+	local D = "https://doc.rust-lang.org/"
+	local menu = {
+		"The Rust Standard Library (overview)",
+		"Primitive Types", "Modules", "Macros", "Keywords",
+		"Search all std items",
+		"Crate: alloc", "Crate: core", "Crate: proc_macro",
+		"Crate: std_detect", "Crate: test",
+	}
+	fzf().fzf_exec(menu, {
+		prompt = "Rust std> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if not (sel and sel[1]) then
+					return
+				end
+				local c = sel[1]
+				if c == "The Rust Standard Library (overview)" then
+					open_url(D .. "std/index.html", "The Rust Standard Library")
+				elseif c == "Primitive Types" then
+					list_tsv("primitives.tsv", "std primitives> ")
+				elseif c == "Modules" then
+					list_tsv("modules.tsv", "std modules> ")
+				elseif c == "Macros" then
+					list_tsv("macros.tsv", "std macros> ")
+				elseif c == "Keywords" then
+					list_tsv("keywords.tsv", "std keywords> ")
+				elseif c == "Search all std items" then
+					list_tsv("index.tsv", "std (all items)> ")
+				else
+					local crate = c:match("^Crate: (%S+)")
+					if crate then
+						open_url(D .. crate .. "/index.html", crate)
+					end
+				end
+			end,
+		},
+	})
+end
+
 local WEB_BOOKS = {
 	{ title = "Hypervisor From Scratch", key = "rayanfam", run = pick_rayanfam },
 	{ title = "Kernel CTF", key = "kernel-ctf", run = pick_kernel_ctf },
@@ -4632,6 +4726,7 @@ LOCATION["drgn-docs"] = { index = "drgn-docs/index.tsv", unit = "page" }
 LOCATION["triton-docs"] = { index = "triton-docs/index.tsv", unit = "page" }
 LOCATION["angr-docs"] = { index = "angr-docs/index.tsv", unit = "page" }
 LOCATION["dynamorio-docs"] = { index = "dynamorio-docs/index.tsv", unit = "page" }
+LOCATION["rust-std"] = { index = "rust-std/index.tsv", unit = "item" }
 LOCATION["binja-user-docs"] = { index = "binja-user-docs/index.tsv", unit = "page" }
 LOCATION["binja-dev-docs"] = { index = "binja-dev-docs/index.tsv", unit = "page" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
@@ -4868,6 +4963,7 @@ local providers = {
 	{ name = "SDL2", key = "sdl2", run = register_versioned("sdl2", { src_url = "https://github.com/libsdl-org/SDL", tagre = "release-2\\.[0-9]+\\.[0-9]+", diskpat = "^release%-2", label = "SDL2", docs_mode = "latest", docs_fn = make_simple("sdl2", simple.sdl2) }) },
 	{ name = "SDL3", key = "sdl3", run = register_versioned("sdl3", { src_url = "https://github.com/libsdl-org/SDL", tagre = "release-3\\.[0-9]+\\.[0-9]+", diskpat = "^release%-3", label = "SDL3", docs_mode = "latest", docs_fn = make_simple("sdl3", simple.sdl3) }) },
 	{ name = "OpenGL", key = "opengl", run = make_simple("opengl", simple.opengl) },
+	{ name = "Rust std (doc.rust-lang.org)", key = "rust-std", run = pick_rust_std },
 	{ name = "AFL++", key = "aflpp", run = register_versioned("aflpp", vspec(simple.aflpp, "v[0-9]+\\.[0-9]+[a-z]?", { label = "AFL++", submodules = true })) },
 	-- AFL++ vendored submodules, each also reachable on its own. The three that
 	-- publish release tags get a version picker (source-only, docs_mode "none");
