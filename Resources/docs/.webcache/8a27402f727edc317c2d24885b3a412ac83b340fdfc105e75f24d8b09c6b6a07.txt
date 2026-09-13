@@ -1,0 +1,129 @@
+In addition to the analysis tool framework, which targets running multiple tools at once either in parallel across all traced threads or in a serial fashion, we provide a scheduler which will map inputs to a given set of outputs in a specified manner. This allows a tool such as a core simulator, or just a tool wanting its own control over advancing the trace stream (unlike the analysis tool framework where the framework controls the iteration), to request the next trace record for each output on its own. This scheduling is also available to any analysis tool when the input traces are sharded by core (see the `-core_sharded` and `-core_serial` and various `-sched_*` option documentation under [Simulator Parameters](https://dynamorio.org/sec_drcachesim_ops.html) as well as core-sharded notes when [Creating New Analysis Tools](https://dynamorio.org/sec_drcachesim_newtool.html)), and in fact is the default when all tools prefer core-sharded operation via [dynamorio::drmemtrace::analysis_tool_t::preferred_shard_type()](https://dynamorio.org/classdynamorio_1_1drmemtrace_1_1analysis__tool__tmpl__t.html#a0bb572c2ab41e7d8fccaf6bfcb609ec2).
+
+#  As-Traced Schedule Limitations
+
+During tracing, marker records (see [Other Records](https://dynamorio.org/sec_drcachesim_format.html#sec_drcachesim_format_other)) of type [dynamorio::drmemtrace::TRACE_MARKER_TYPE_CPU_ID](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#ab8531c7f66ccc0d7fe59f436844a295ca0f5122cab14b6654b276de4aa7f8183c) record the "as traced" schedule, indicating which threads were on which cores at which times. However, this schedule is not representative and should not be treated as indicating how the application behaves without tracing. In addition to only containing coarse-grain information at the top and bottom of trace buffers and missing any context switches occurring in the between, the indicated switches do not always correlate with where the untraced application would switch. This is due to tracing overhead, where heavyweight instrumentation is interspersed with application code and heavyweight i/o operations to write out the trace data cause delays. This extra overhead causes additional quantum preempts and additional switches due to blocking system calls for i/o. The resulting as-traced schedule can contain from 2x to 10x as many context switches as the untraced application. Consequently, we do not recommend using the as-traced schedule to study the application itself, though our scheduler does support replaying the as-traced schedule through the -cpu_schedule_file option.
+
+#  Dynamic Scheduling
+
+Instead of using the as-traced schedule, we recommend re-scheduling the traced software threads using our trace scheduler in [dynamorio::drmemtrace::scheduler_t::MAP_TO_ANY_OUTPUT](https://dynamorio.org/classdynamorio_1_1drmemtrace_1_1scheduler__tmpl__t.html#afb65a4beaa27ae26649738d2e565c0ccaba192b7d617035b922db1f3960154406) mode. Our scheduler essentially serves as an operating system scheduler for this purpose, though using simpler schemes. It models separate runqueues per core with support for binding inputs to certain cores, priorities, idle time from blocking system calls, migration thresholds, rebalancing runqueues, etc. It exposes a number of knobs in the form of -sched\_\* parameters for the command-line `drmemtrace` launcher or programmatically through the [dynamorio::drmemtrace::scheduler_t](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#acf6f9e344fed8627ff2868cfa7e34879) API.
+
+Dynamic scheduling provides the following benefits:
+
+- Deflation of the as-traced context switch rate (see [As-Traced Schedule Limitations](https://dynamorio.org/sec_drcachesim_sched.html#sec_drcachesim_as_traced)) to provide a representative context switch rate.
+- Support for different numbers of cores than were present during tracing.
+- Multi-tenant support where separately traced applications are combined, with the dynamic scheduler interleaving them. This simulates a multi-tenant machine with a mix of processes running.
+
+The downsides include:
+
+- Risk of incorrect ordering between application software threads. Today, our scheduler does use the in-trace timestamps (when requested via [dynamorio::drmemtrace::scheduler_t::DEPENDENCY_TIMESTAMPS](https://dynamorio.org/classdynamorio_1_1drmemtrace_1_1scheduler__tmpl__t.html#a820df460b5bb4bf9f9972ddb7d21f5d9afa1e39bbc41fe11cc3bbbd36b2a13e6e)) to keep things in relative order. However, enforcing representative context switch rates is considered more important that honoring precise trace-buffer-based timestamp inter-input dependencies: thus, timestamp ordering will be followed at context switch points for picking the next input, but timestamps will not preempt an input.
+
+The [dynamorio::drmemtrace::TRACE_MARKER_TYPE_TIMESTAMP](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#ab8531c7f66ccc0d7fe59f436844a295ca5935654bf36c3cb4e813ff0d8397e2ad) and [dynamorio::drmemtrace::TRACE_MARKER_TYPE_CPU_ID](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#ab8531c7f66ccc0d7fe59f436844a295ca0f5122cab14b6654b276de4aa7f8183c) markers are modified by the dynamic scheduler to reflect the new schedule. The new timestamps maintain relative ordering but should not be relied upon to indicate accurate durations between events.
+
+#  Simulated Time
+
+As the simulator, rather than the scheduler, tracks simulated time, yet the scheduler needs to make some decisions based on time (such as when to preempt, when to migrate across cores, etc.), the simulator should pass in the current time when it queries the scheduler for the next record. The simulator tells the scheduler how many units of this simulated time comprise one microsecond so that the scheduler can scale its other parameters appropriately.
+
+#  Idle Time
+
+The dynamic scheduler inserts markers of type [dynamorio::drmemtrace::TRACE_MARKER_TYPE_CORE_IDLE](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#ab8531c7f66ccc0d7fe59f436844a295cabae8da1c6ba60323b5ef13fa55a799fc) (with the tid field set to [dynamorio::drmemtrace::IDLE_THREAD_ID](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#addb5db6cd9a35b731ae9f0f3f3b174ba) when it is presented as a [dynamorio::drmemtrace::memref_t](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#ae4a471ed806967b2b6f911b6ef770704) record) when there is no work available on a core, simulating actual idle time. This can happen even when there are inputs potentially available as the scheduler simulates i/o by blocking inputs from executing for a period of time when they make blocking system calls. This time is based on the system call latency recorded in the trace, but since this can be indirectly inflated due to tracing overhead the scheduler provides parameters to scale this time, exposed as `-sched_block_scale` and `-sched_block_max_us` to the `drmemtrace` launcher. These can be modified to try to achieve a desired level of idle time during simulation.
+
+#  Record and Replay
+
+The scheduler supports recording a schedule and replaying it later, allowing for repeated execution of the same schedule. Timestamps in the recorded schedule help to align the cores during replay. If one gets too far ahead, markers of type [dynamorio::drmemtrace::TRACE_MARKER_TYPE_CORE_WAIT](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#ab8531c7f66ccc0d7fe59f436844a295ca8d688aeae7d50e45269dbb8b494cbac1) are inserted to indicate an artificial wait in order for the replay to get back on track.
+
+#  Regions of Interest
+
+The scheduler supports running a subset of each input. A list of start and stop endpoints delimiting the regions of interest can be supplied with each input. The end result is as though the inputs had been edited to remove all content not inside the target regions.
+
+#  Multiple Inputs
+
+The scheduler API supports multiple inputs from multiple workloads. This can be achieved in the drmemtrace analyzer framework in core-sharded mode with the -multi_indir option. The threads from every workload will all be interleaved together.
+
+#  Speculation Support
+
+The scheduler contains preliminary speculation support for wrong-path execution. Currently it only feeds nops, but future versions plan to fill in content based on prior trace paths.
+
+#  Scheduler Interface Example
+
+Here is a simple example of using the scheduler interface directly.
+
+void
+
+simulate_core(scheduler_t::stream_t \*stream)
+
+{
+
+[memref_t](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#ae4a471ed806967b2b6f911b6ef770704) record;
+
+for (scheduler_t::stream_status_t status = stream-\>next_record(record);
+
+status != scheduler_t::STATUS_EOF; status = stream-\>next_record(record)) {
+
+if (status == scheduler_t::STATUS_WAIT \|\| status == scheduler_t::STATUS_IDLE) {
+
+std::this_thread::yield();
+
+continue;
+
+}
+
+assert(status == scheduler_t::STATUS_OK);
+
+// Process "record" here.
+
+}
+
+}
+
+void
+
+run_scheduler(const std::string &trace_directory)
+
+{
+
+[scheduler_t](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#acf6f9e344fed8627ff2868cfa7e34879) scheduler;
+
+std::vector\<scheduler_t::input_workload_t\> sched_inputs;
+
+sched_inputs.emplace_back(trace_directory);
+
+scheduler_t::scheduler_options_t sched_ops(scheduler_t::MAP_TO_ANY_OUTPUT,
+
+scheduler_t::DEPENDENCY_TIMESTAMPS,
+
+scheduler_t::SCHEDULER_DEFAULTS);
+
+constexpr int NUM_CORES = 4;
+
+if (scheduler.init(sched_inputs, NUM_CORES, std::move(sched_ops)) !=
+
+scheduler_t::STATUS_SUCCESS)
+
+assert(false);
+
+std::vector\<std::thread\> threads;
+
+threads.reserve(NUM_CORES);
+
+for (int i = 0; i \< NUM_CORES; ++i) {
+
+threads.emplace_back(std::thread(&simulate_core, scheduler.get_stream(i)));
+
+}
+
+for (std::thread &thread : threads)
+
+thread.join();
+
+}
+
+[dynamorio::drmemtrace::scheduler_t](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#acf6f9e344fed8627ff2868cfa7e34879)
+
+scheduler_tmpl_t\< memref_t, reader_t \> scheduler_t
+
+**Definition:** scheduler.h:1445
+
+[dynamorio::drmemtrace::memref_t](https://dynamorio.org/namespacedynamorio_1_1drmemtrace.html#ae4a471ed806967b2b6f911b6ef770704)
+
+union dynamorio::drmemtrace::\_memref_t memref_t

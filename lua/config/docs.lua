@@ -2269,6 +2269,7 @@ local SRC_WARN = {
 	["pwntools-docs"] = true, ["lief-docs"] = true, ["qbdi-docs"] = true,
 	["qbindiff-docs"] = true, ["drgn-docs"] = true,
 	["triton-docs"] = true, ["angr-docs"] = true,
+	["dynamorio-docs"] = true,
 	sdl2 = true, sdl3 = true, frida = true, aya = true,
 	bap = true, libdrgn = true, sfml = true,
 }
@@ -4622,6 +4623,7 @@ LOCATION["qbindiff-docs"] = { index = "qbindiff-docs/index.tsv", unit = "page" }
 LOCATION["drgn-docs"] = { index = "drgn-docs/index.tsv", unit = "page" }
 LOCATION["triton-docs"] = { index = "triton-docs/index.tsv", unit = "page" }
 LOCATION["angr-docs"] = { index = "angr-docs/index.tsv", unit = "page" }
+LOCATION["dynamorio-docs"] = { index = "dynamorio-docs/index.tsv", unit = "page" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
 LOCATION["write-you-a-haskell"] = { index = "write-you-a-haskell/index.tsv", unit = "chapter" }
 LOCATION["lkmpg"] = { index = "lkmpg/index.tsv", unit = "chapter" }
@@ -4948,7 +4950,7 @@ local providers = {
 	{ name = "U-Boot", key = "uboot", run = register_versioned("uboot", vspec(simple.uboot, "v[0-9]{4}\\.[0-9]+", { label = "U-Boot" })) },
 	{ name = "Android (bionic internals)", key = "android", run = make_simple("android", simple.android) },
 	{ name = "Android kernel (ACK, versioned)", key = "android-kernel", run = pick_android_kernel },
-	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = register_versioned("dynamorio", vspec(simple.dynamorio, "release_[0-9]+\\.[0-9]+\\.[0-9]+", { label = "DynamoRIO", diskpat = "^release_%d" })) },
+	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = register_versioned("dynamorio", vspec(simple.dynamorio, "release_[0-9]+\\.[0-9]+\\.[0-9]+", { label = "DynamoRIO", diskpat = "^release_%d", docs_mode = "latest", docs_fn = frozen_web_provider("dynamorio-docs", "DynamoRIO docs> ") })) },
 	{ name = "TinyInst (Project Zero DBI)", key = "tinyinst", run = make_simple("tinyinst", simple.tinyinst) },
 	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
 	{ name = "LibAFL", key = "libafl", run = register_versioned("libafl", vspec(simple.libafl, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LibAFL", diskpat = "^%d", submodules = true, src_sparse = LIBAFL_SRC_SPARSE })) },
