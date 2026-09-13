@@ -4216,6 +4216,55 @@ end
 -- Ensure a book is converted+split, then open its chapter picker.
 -- Books are pre-built and committed under Resources/docs (books/ for epub+pdf,
 -- rust/ for the mdBooks), so this just browses the frozen chapters - no build.
+-- Browse an mdBook in SUMMARY.md reading order. A plain file list (pick_files)
+-- sorts alphabetically, which scrambles a book whose filenames do not sort into
+-- reading order (too-many-lists: first-drop/first-final come before
+-- first-layout/first-new). Parse SUMMARY.md's "[Title](file.md)" links in their
+-- listed order, prefix each nested chapter with its part ("A Bad Stack / Push")
+-- so labels are unique and show the hierarchy, and open the chosen file. Falls
+-- back to the file list if there is no usable SUMMARY.md.
+local function pick_mdbook(dir, prompt)
+	local summary = dir .. "/SUMMARY.md"
+	if vim.fn.filereadable(summary) ~= 1 then
+		return pick_files(dir, "-e md", prompt)
+	end
+	local entries, map, section = {}, {}, nil
+	for _, ln in ipairs(vim.fn.readfile(summary)) do
+		local indent, title, file = ln:match("^([ \t]*)[%*%-+]%s+%[(.-)%]%(([^)]-%.md)")
+		if title and file then
+			local path = dir .. "/" .. (file:gsub("#.*$", ""))
+			if vim.fn.filereadable(path) == 1 then
+				local nested = #indent > 0
+				local disp = (nested and section) and (section .. " / " .. title) or title
+				if not nested then
+					section = title
+				end
+				local base, k = disp, 2
+				while map[disp] do
+					disp = base .. " (" .. k .. ")"
+					k = k + 1
+				end
+				entries[#entries + 1] = disp
+				map[disp] = path
+			end
+		end
+	end
+	if #entries == 0 then
+		return pick_files(dir, "-e md", prompt)
+	end
+	fzf().fzf_exec(entries, {
+		prompt = prompt,
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if sel and sel[1] and map[sel[1]] then
+					open_file(map[sel[1]])
+				end
+			end,
+		},
+	})
+end
+
 local function ensure_book(mkey, entry)
 	if not have("fd") then
 		return vim.notify("fd is needed to browse books", vim.log.levels.WARN)
@@ -4224,7 +4273,7 @@ local function ensure_book(mkey, entry)
 		-- The four rust-lang mdBooks are committed under Resources/docs/rust;
 		-- resolve_docs falls back to a cache copy if one was ever built there.
 		local d = resolve_docs("rust/" .. entry.url:match("([^/]+)$") .. "/src") or (frozen_root .. "/rust/" .. entry.url:match("([^/]+)$") .. "/src")
-		return pick_files(d, "-e md", entry.title .. "> ")
+		return pick_mdbook(d, entry.title .. "> ")
 	end
 	local rel = "books/" .. mkey .. "/" .. (entry.slug or book_slug(entry.title))
 	local out = resolve_docs(rel) or (frozen_root .. "/" .. rel)
