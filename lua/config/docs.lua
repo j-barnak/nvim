@@ -5003,7 +5003,48 @@ local providers = {
 	{ name = "eBPF ABI reference (helpers / kfuncs / maps / program types)", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
 	{ name = "eBPF (Cilium Reference: architecture, XDP, tc, toolchain)", key = "cilium", run = make_simple("cilium", simple.cilium) },
 	{ name = "Aya", key = "aya", run = register_versioned("aya", { src_url = "https://github.com/aya-rs/aya", tagre = "aya-v[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^aya%-v%d", label = "Aya", docs_mode = "latest", docs_fn = pick_aya }) },
-	{ name = "drgn", key = "drgn", run = register_versioned("drgn", vspec(simple.drgn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "drgn", docs_mode = "latest", docs_fn = frozen_web_provider("drgn-docs", "drgn docs> ") })) },
+	-- drgn docs: narrative (site nav order, "[Section] Title") + the API Reference
+	-- behind a sub-picker where each api_reference section and each helpers topic
+	-- is its own chapter (the site crams them onto two giant pages). Inlined
+	-- closure (200-local cap), same shape as angr/frida.
+	{ name = "drgn", key = "drgn", run = register_versioned("drgn", vspec(simple.drgn, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "drgn", docs_mode = "latest", docs_fn = (function()
+		local narrative, api_picker
+		local function open_url(root, url, title)
+			local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+			if not cf then
+				return vim.notify((title or url) .. ": not in the frozen cache", vim.log.levels.WARN)
+			end
+			render_lines(vim.fn.readfile(cf), "markdown", root, title or url)
+		end
+		local function open_row(root, sel)
+			local t, u = sel and sel[1] and sel[1]:match("^([^\t]+)\t(.+)$")
+			if u then open_url(root, u, t) end
+		end
+		api_picker = function(root)
+			last_picker = function() api_picker(root) end
+			fzf().fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
+				prompt = "drgn API reference (chapter)> ",
+				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+				actions = { ["default"] = function(s) open_row(root, s) end },
+			})
+		end
+		narrative = function()
+			local root = resolve_docs("drgn-docs") or (frozen_root .. "/drgn-docs")
+			local entries = vim.fn.readfile(root .. "/index.tsv")
+			entries[#entries + 1] = "\u{00bb} API Reference (browse by chapter)\tAPI-REF"
+			last_picker = narrative
+			fzf().fzf_exec(entries, {
+				prompt = "drgn docs> ",
+				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+				actions = { ["default"] = function(sel)
+					if not (sel and sel[1]) then return end
+					if sel[1]:match("^\u{00bb} API Reference") then return api_picker(root) end
+					open_row(root, sel)
+				end },
+			})
+		end
+		return narrative
+	end)() })) },
 	{
 		name = "libdrgn",
 		key = "libdrgn",
