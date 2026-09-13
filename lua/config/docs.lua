@@ -2257,7 +2257,10 @@ local SRC_URLS = {
 }
 -- Providers whose useful source is a different repo than their doc set: aya's
 -- docs are the book, but "explore the source" means the crate itself.
-local GS_OVERRIDE = {}
+local GS_OVERRIDE = {
+	["binja-user-docs"] = "https://github.com/Vector35/binaryninja-api",
+	["binja-dev-docs"] = "https://github.com/Vector35/binaryninja-api",
+}
 -- Providers whose docs are latest-only (a separate untagged wiki/website/book or
 -- doxygen-from-headers) but whose SOURCE is versioned: :Src from the docs cannot
 -- know which release you want, so it points you at the version picker instead.
@@ -4629,6 +4632,8 @@ LOCATION["drgn-docs"] = { index = "drgn-docs/index.tsv", unit = "page" }
 LOCATION["triton-docs"] = { index = "triton-docs/index.tsv", unit = "page" }
 LOCATION["angr-docs"] = { index = "angr-docs/index.tsv", unit = "page" }
 LOCATION["dynamorio-docs"] = { index = "dynamorio-docs/index.tsv", unit = "page" }
+LOCATION["binja-user-docs"] = { index = "binja-user-docs/index.tsv", unit = "page" }
+LOCATION["binja-dev-docs"] = { index = "binja-dev-docs/index.tsv", unit = "page" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
 LOCATION["write-you-a-haskell"] = { index = "write-you-a-haskell/index.tsv", unit = "chapter" }
 LOCATION["lkmpg"] = { index = "lkmpg/index.tsv", unit = "chapter" }
@@ -4939,7 +4944,24 @@ local providers = {
 	-- "vN.-stable" alternative still picks up "v6.N.N-stable" once it is pushed.
 	-- Only major 6 is admitted as a bare number (v5 has ~800 dev tags that would
 	-- otherwise flood the picker). diskpat accepts both "v5..." and "6..." on disk.
-	{ name = "Binary Ninja API", key = "binja", run = register_versioned("binja", vspec(simple.binja, "v[0-9]+\\.[0-9]+\\.[0-9]+-stable|6\\.[0-9]+\\.[0-9]+", { label = "Binary Ninja API", diskpat = "^v?%d", vsort = true })) },
+	{ name = "Binary Ninja", key = "binja", run = function()
+		fzf().fzf_exec({ "User Documentation", "Developer Documentation", "Explore source (dev branch)", "Explore source (v5.0.7648-stable)" }, {
+			prompt = "Binary Ninja> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				if sel[1] == "User Documentation" then
+					frozen_web_provider("binja-user-docs", "Binary Ninja (User)> ")()
+				elseif sel[1] == "Developer Documentation" then
+					frozen_web_provider("binja-dev-docs", "Binary Ninja (Dev)> ")()
+				elseif sel[1]:match("dev branch") then
+					require("config.src").open("binja/dev", "https://github.com/Vector35/binaryninja-api", nil, nil, "dev")
+				else
+					require("config.src").open("binja/v5.0.7648-stable", "https://github.com/Vector35/binaryninja-api", nil, nil, "v5.0.7648-stable")
+				end
+			end },
+		})
+	end },
 	{ name = "LIEF", key = "lief", run = register_versioned("lief", vspec(simple.lief, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LIEF", diskpat = "^%d", docs_mode = "latest", docs_fn = frozen_web_provider("lief-docs", "LIEF docs> ") })) },
 	{ name = "pyelftools", key = "pyelftools", run = register_versioned("pyelftools", vspec(simple.pyelftools, "v[0-9]+\\.[0-9]+", { label = "pyelftools" })) },
 	{ name = "QBinDiff", key = "qbindiff", run = register_versioned("qbindiff", vspec(simple.qbindiff, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBINDiff", docs_mode = "latest", docs_fn = frozen_web_provider("qbindiff-docs", "QBinDiff docs> ") })) },
