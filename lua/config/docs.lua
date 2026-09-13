@@ -5056,7 +5056,49 @@ local providers = {
 	{ name = "Rust reference", key = "rust", run = pick_rust },
 	{ name = "Frida", key = "frida", run = register_versioned("frida", { src_url = "https://github.com/frida/frida", tagre = "[0-9]+\\.[0-9]+\\.[0-9]+", diskpat = "^%d", label = "Frida", docs_mode = "latest", docs_fn = make_simple("frida", simple.frida) }) },
 	{ name = "Triton", key = "triton", run = register_versioned("triton", vspec(simple.triton, "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Triton", docs_mode = "latest", docs_fn = frozen_web_provider("triton-docs", "Triton (Python API)> ") })) },
-	{ name = "angr", key = "angr", run = register_versioned("angr", vspec(simple.angr, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "angr", docs_mode = "latest", docs_fn = frozen_web_provider("angr-docs", "angr docs> ") })) },
+	-- angr docs: narrative handbook (docs.angr.io sidebar order, "[Section] Title")
+	-- with the API Reference (angr.* modules) behind a separate sub-picker. Inlined
+	-- (not a module local) to stay under the 200-local main-chunk cap.
+	{ name = "angr", key = "angr", run = register_versioned("angr", vspec(simple.angr, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "angr", docs_mode = "latest", docs_fn = (function()
+		-- IIFE so the picker is a self-referential closure (D/last_picker) without
+		-- adding a module-chunk local (200-local cap).
+		local narrative, api_picker
+		local function open_url(root, url, title)
+			local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+			if not cf then
+				return vim.notify((title or url) .. ": not in the frozen cache", vim.log.levels.WARN)
+			end
+			render_lines(vim.fn.readfile(cf), "markdown", root, title or url)
+		end
+		local function open_row(root, sel)
+			local t, u = sel and sel[1] and sel[1]:match("^([^\t]+)\t(.+)$")
+			if u then open_url(root, u, t) end
+		end
+		api_picker = function(root)
+			last_picker = function() api_picker(root) end
+			fzf().fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
+				prompt = "angr API reference (module)> ",
+				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+				actions = { ["default"] = function(s) open_row(root, s) end },
+			})
+		end
+		narrative = function()
+			local root = resolve_docs("angr-docs") or (frozen_root .. "/angr-docs")
+			local entries = vim.fn.readfile(root .. "/index.tsv")
+			entries[#entries + 1] = "\u{00bb} API Reference (browse angr.* modules)\tAPI-REF"
+			last_picker = narrative
+			fzf().fzf_exec(entries, {
+				prompt = "angr docs> ",
+				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+				actions = { ["default"] = function(sel)
+					if not (sel and sel[1]) then return end
+					if sel[1]:match("^\u{00bb} API Reference") then return api_picker(root) end
+					open_row(root, sel)
+				end },
+			})
+		end
+		return narrative
+	end)() })) },
 	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = register_versioned("bap", { src_url = "https://github.com/BinaryAnalysisPlatform/bap", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", label = "BAP", docs_mode = "latest", docs_fn = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") }) },
 	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI", docs_mode = "latest", docs_fn = frozen_web_provider("qbdi-docs", "QBDI docs> ") })) },
 	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone", docs_mode = "latest", docs_fn = pick_capstone_docs })) },
