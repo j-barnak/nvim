@@ -5034,6 +5034,7 @@ LOCATION["typeclassopedia"] = { index = "typeclassopedia/index.tsv", unit = "cha
 LOCATION["hpbn"] = { index = "hpbn/index.tsv", unit = "chapter" }
 LOCATION["cryptopals"] = { index = "cryptopals/index.tsv", unit = "chapter" }
 LOCATION["cryptohack"] = { index = "cryptohack/index.tsv", unit = "chapter" }
+LOCATION["x86-insns"] = { index = "x86-insns/index.tsv", unit = "page" }
 LOCATION["lazyfoo-sdl3"] = { index = "lazyfoo-sdl3/index.tsv", unit = "chapter" }
 LOCATION["qemu-internals"] = { index = "qemu-internals/index.tsv", unit = "chapter" }
 LOCATION["jit-series"] = { index = "jit-series/index.tsv", unit = "chapter" }
@@ -5344,6 +5345,12 @@ local providers = {
 	{ name = "Intel SDM Vol 2", key = "sdm2", run = function() pick_sdm(2) end },
 	{ name = "Intel SDM Vol 3", key = "sdm3", run = function() pick_sdm(3) end },
 	{ name = "Intel SDM Vol 4", key = "sdm4", run = function() pick_sdm(4) end },
+	-- felixcloutier.com/x86: every x86/amd64 instruction is a chapter, prefixed
+	-- by its index category ([Core Instruction] AAA, [SGX/SMX/VMX/Xeon Phi
+	-- Instruction]). Tables span-expanded (fc_tables.py) + width-compacted at
+	-- build time. Inlined (no module local) to stay under the 200-local cap.
+	{ name = "x86 Instruction Reference (felixcloutier)", key = "x86-insns",
+		run = frozen_web_provider("x86-insns", "x86 instruction> ") },
 	{ name = "AMD64 APM Vol 1 (Application Programming)", key = "amd-apm-vol1", run = function() pick_apm(1) end },
 	{ name = "AMD64 APM Vol 2 (System Programming)", key = "amd-apm-vol2", run = function() pick_apm(2) end },
 	{ name = "C standard (C23 draft)", key = "cstd", run = function() pick_pdf("c-draft", "C draft> ") end },
