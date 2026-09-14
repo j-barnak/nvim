@@ -4281,6 +4281,8 @@ end
 local BOOKS = {
 	{ module = "C", key = "books-c", items = {
 		{ title = "Expert C Programming", fmt = "epub", file = "Expert C Programming -- Peter van der Linden -- 2002 -- 6a6a0df494fc411c9842373f70197e46 -- Anna’s Archive.epub" },
+		{ title = "Modern C (Gustedt)", fmt = "pdf", slug = "modern-c", file = "modernC.pdf" },
+		{ title = "Effective C (Seacord)", fmt = "pdf", slug = "effective-c", file = "Robert C. Seacord - Effective C_ An Introduction to Professional C Programming-No Starch Press (2025).pdf" },
 	} },
 	{ module = "C++", key = "books-cpp", items = {
 		{ title = "Modern C++ Design (Alexandrescu)", fmt = "pdf", slug = "modern-cpp-design", file = "[Addison Wesley] Andrei Alexandrescu - Modern C++ Design Generic Programming and Design Patterns Applied.pdf" },
@@ -4291,6 +4293,8 @@ local BOOKS = {
 		{ title = "C++ Templates: The Complete Guide (2e)", fmt = "pdf", file = "CppTemplates-CompleteGuide-2e.pdf" },
 		{ title = "Effective Modern C++", fmt = "epub", file = "Effective-Modern-C-.epub" },
 		{ title = "Elements of Programming", fmt = "pdf", slug = "elements-of-programming", file = "eop.pdf" },
+		{ title = "API Design for C++ (Reddy)", fmt = "pdf", slug = "api-design-for-cpp", file = "API Design for C++ -- Martin Reddy -- 2, 2024 -- Elsevier Science & Technology -- 9780443222191 -- ef84c54d6978c238ea272e874647ea73 -- Anna’s Archive.pdf" },
+		{ title = "Professional CMake (Scott)", fmt = "pdf", slug = "professional-cmake", file = "Professional CMake_ A Practical Guide -- Craig Scott -- 14, 2023 -- Crascit Pty Ltd -- 9781925904222 -- e4a295cfbab20ee49ce57c4b32ece32b -- Anna’s Archive.pdf" },
 	} },
 	{ module = "Rust", key = "books-rust", items = {
 		{ title = "Rust Under the Hood (Ahluwalia)", fmt = "pdf", slug = "rust-under-the-hood", file = "Rust Under the Hood -- Deepa Ahluwalia, Sandeep Ahluwalia -- 2024 -- Independently Published -- 9788320364460 -- 6beb7de3c93e2b512daedd8a1af5de7a -- Anna’s Archive.pdf" },
@@ -4309,6 +4313,7 @@ local BOOKS = {
 		{ title = "The Art of ARM Assembly, Volume 1", fmt = "pdf", file = "[The BOOK of…] The Art of ARM Assembly. Volume 1_ 64-Bit ARM Machine Organization and Programming{Randall Hyde}(2025, No Starch Press){108023809} libgen.li.pdf" },
 		{ title = "DisARMing Code", fmt = "pdf", file = "DisARMing Code  545p (2).pdf" },
 		{ title = "Blue Fox: Arm Assembly Internals and Reverse Engineering", fmt = "pdf", slug = "blue-fox-arm-assembly-internals", file = "blue-fox-arm-assembly.pdf" },
+		{ title = "Professional Assembly Language (Blum)", fmt = "pdf", slug = "professional-assembly-language", file = "Professional_Assembly_Language_2005.pdf" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
 		{ title = "TCP/IP Illustrated, Volume 1 (Fall & Stevens, 2e)", fmt = "pdf", slug = "tcp-ip-illustrated-vol-1", file = "TCP-IP-Illustrated-Vol-1.pdf" },
@@ -4340,6 +4345,7 @@ local BOOKS = {
 		{ title = "Essentials of Compilation (Python)", fmt = "pdf", slug = "essentials-of-compilation", file = "book.pdf" },
 		{ title = "SAT/SMT by Example (Yurichev)", fmt = "pdf", slug = "sat-smt-by-example", file = "SAT_SMT_by_example.pdf" },
 		{ title = "Engineering a Compiler (Cooper & Torczon)", fmt = "pdf", slug = "engineering-a-compiler", file = "EngineeringACompiler.pdf" },
+		{ title = "Parsing Techniques (Grune & Jacobs)", fmt = "pdf", slug = "parsing-techniques", file = "ParsingTechniques copy.pdf" },
 	} },
 	{ module = "Containers", key = "books-container", items = {
 		{ title = "Build Your Own Docker (CodeCrafters)", fmt = "md", slug = "build-your-own-docker", file = "https://github.com/codecrafters-io/build-your-own-docker" },
@@ -4364,6 +4370,7 @@ local BOOKS = {
 		{ title = "Bootlin: Linux Kernel (slides)", fmt = "epub", file = "bootlin-linux-kernel-slides.epub" },
 		{ title = "Bootlin: Embedded Linux (QEMU labs)", fmt = "epub", file = "embedded-linux-qemu-labs.epub" },
 		{ title = "UNIX and Linux System Administration Handbook (Nemeth et al.)", fmt = "pdf", slug = "unix-and-linux-system-administration-handbook", file = "Evi Nemeth, Garth Snyder, Trent R. Hein, Ben Whaley, Dan Mackin - UNIX and Linux System Administration Handbook (2017, Addison-Wesley) - libgen.li.pdf" },
+		{ title = "Linux Kernel Debugging (Billimoria)", fmt = "pdf", slug = "linux-kernel-debugging", file = "Linux Kernel Debugging _ Leverage Proven Tools and Advanced -- Kaiwan N_ Billimoria -- 1, 2022 -- Packt Publishing, Limited -- 9781801075039 -- ac6af3f8aa9c68633b17802fb74da07b -- Anna’s Archive 2.pdf" },
 	} },
 	{ module = "Algorithms", key = "books-algo", items = {
 		{ title = "Algorithms Illuminated, Part 2", fmt = "epub", file = "Algorithms Illuminated (Part 2)_ Graph Algorithms and Data -- Tim Roughgarden -- First edition, San Francisco, CA, 2018 -- Soundlikeyourself -- 9780999282908 -- 60673f61ed5b43af2525a40cf00038f9 -- Anna’s Archive.epub" },
@@ -4393,6 +4400,8 @@ local BOOKS = {
 		{ title = "The Art of Software Security Assessment", fmt = "pdf", slug = "the-art-of-software-security-assessment", file = "ArtOfSoftwareSecurityAssessment.pdf" },
 		{ title = "Surreptitious Software: Obfuscation, Watermarking, and Tamperproofing", fmt = "pdf", slug = "surreptitious-software", file = "surreptitious-software.pdf" },
 		{ title = "Microcontroller Exploits (Goodspeed)", fmt = "pdf", slug = "microcontroller-exploits", file = "Microcontroller Exploits -- Travis Goodspeed -- 1, 2024 -- No Starch Press, Incorporated -- 9781718503885 -- ba572f5ca389f9e5352541d9b14c7bae -- Anna’s Archive.pdf" },
+		{ title = "Reversing: Secrets of Reverse Engineering (Eilam)", fmt = "pdf", slug = "reversing-secrets-of-reverse-engineering", file = "Reversing - Secrets Of Reverse Engineering (2005).pdf" },
+		{ title = "A Practical Guide to TPM 2.0 (Arthur, Challener, Goldman)", fmt = "pdf", slug = "practical-guide-to-tpm-2", file = "Will Arthur, David Challener, Kenneth Goldman (auth.) - A Practical Guide to TPM 2.0_ Using the New Trusted Platform Module in the New Age of Security-Apress (2015).pdf" },
 	} },
 	{ module = "Architecture", key = "books-arch", items = {
 		{ title = "Computer Architecture: A Quantitative Approach (H&P)", fmt = "pdf", slug = "computer-architecture-a-quantitative-approach", file = "Computer-Architecture-A-Quanitative-Approach.pdf" },
@@ -4409,6 +4418,9 @@ local BOOKS = {
 		{ title = "The Microarchitecture of Intel, AMD, and VIA CPUs (Agner Fog)", fmt = "pdf", slug = "microarchitecture-of-cpus-agner-fog", file = "microarchitecture.pdf" },
 		{ title = "Instruction Tables (Agner Fog)", fmt = "pdf", slug = "instruction-tables-agner-fog", file = "instruction_tables.pdf" },
 		{ title = "Calling Conventions (Agner Fog)", fmt = "pdf", slug = "calling-conventions-agner-fog", file = "calling_conventions.pdf" },
+		{ title = "Computer Systems: A Programmer's Perspective (CSAPP, 3e)", fmt = "pdf", slug = "computer-systems-programmers-perspective", file = "Computer Systems_ A Programmer's Perspective, Global Edition -- Randal E_ Bryant, David R_ O’Hallaron_ Manasa S_, Mohit -- 3, Global Edition, 2015 -- 9781292101767 -- dc97c014dbae4e33a63d29bf540366f9 -- Anna’s Arch.pdf" },
+		{ title = "Digital Design and Computer Architecture (Harris, 2e)", fmt = "pdf", slug = "digital-design-and-computer-architecture", file = "Harris D. M., Harris S. L. - Digital Design and Computer Architecture, 2nd Edition - 2012.pdf" },
+		{ title = "x86 Instruction Set Architecture (Shanley)", fmt = "pdf", slug = "x86-isa-shanley", file = "X86 Instruction set architecture _ [comprehensive 32_64-bit -- Tom Shanley -- 1st, 2010 -- MindShare Press -- 9780977087853 -- 5fb3b92cc0035380ebad7bb686b8317e -- Anna’s Archive 3.pdf" },
 	} },
 	{ module = "RISC-V", key = "books-riscv", items = {
 		{ title = "The RISC-V Instruction Set Manual", fmt = "pdf", slug = "the-risc-v-instruction-set-manual", file = "riscv-spec.pdf" },
@@ -4445,6 +4457,8 @@ local BOOKS = {
 		{ title = "Beyond BIOS", fmt = "epub", file = "Beyond BIOS - Vincent Zimmer,Michael Rothman,Suresh Marisetty.epub" },
 		{ title = "Embedded Systems: Introduction to Arm Cortex-M Microcontrollers (Valvano)", fmt = "pdf", slug = "embedded-systems-arm-cortex-m-valvano", file = "Embedded-Intro-to-Arm-Microcontrollers.pdf" },
 		{ title = "Embedded Systems with ARM Cortex-M (Assembly and C, Zhu)", fmt = "pdf", slug = "embedded-systems-arm-cortex-m-zhu", file = "Embedded Systems with ARM Cortex-M Microcontrollers in Assembly Language and C.pdf" },
+		{ title = "The Definitive Guide to ARM Cortex-M0 and Cortex-M0+ (Yiu)", fmt = "pdf", slug = "arm-cortex-m0-definitive-guide", file = "annas-arch-1909660c0a67.pdf" },
+		{ title = "Programming Embedded Systems (Barr, Massa)", fmt = "pdf", slug = "programming-embedded-systems", file = "Barr, Michael_Massa, Anthony - Programming Embedded Systems (2006, O'Reilly Media Incorporated) - libgen.li.pdf" },
 	} },
 	{ module = "Windows", key = "books-windows", items = {
 		{ title = "Windows Internals, Part 1 (7e)", fmt = "pdf", slug = "windows-internals-part-1", file = "Windows-Internals-Part-1.pdf" },
@@ -4454,6 +4468,8 @@ local BOOKS = {
 	{ module = "Haskell", key = "books-haskell", items = {
 		{ title = "Haskell Programming from First Principles", fmt = "pdf", file = "Haskell Programming from First Principles -- Chris Allen, Julie Moronuki -- 1_0RC2, 2017 -- 0073d1100c226de172fca6fa9b2809d9 -- Anna’s Archive.pdf" },
 		{ title = "Programming in Haskell (2e)", fmt = "epub", file = "Programming in Haskell (9781316876152) -- Hutton, Graham -- Second Edition, 5th printing, 2018;2015 -- Cambridge University Press (Virtual Publishing) -- 9781139637534 -- f80c6f606a590ab38c7340907cab3be5 -- Anna’s.epub" },
+		{ title = "Algorithm Design with Haskell (Bird, Gibbons)", fmt = "pdf", slug = "algorithm-design-with-haskell", file = "Algorithm Design with Haskell -- Bird, Richard, Gibbons, Jeremy -- 1, PS, 2020 -- Cambridge University Press (Virtual Publishing) -- isbn13 9781108491617 -- 1bb46a11df379bf43523c739c31204d8 -- Anna’s Archive 2.pdf" },
+		{ title = "Parallel and Concurrent Programming in Haskell (Marlow)", fmt = "epub", slug = "parallel-concurrent-haskell", file = "Parallel and Concurrent Programming in Haskell -- Simon Marlow -- 2013 -- O'Reilly Media -- 89381c40386e8dfe4a04f05078619822 -- Anna’s Archive.epub" },
 	} },
 	{ module = "OCaml", key = "books-ocaml", items = {
 		{ title = "More OCaml: Algorithms, Methods, and Diversions", fmt = "epub", file = "More OCaml_ Algorithms, Methods, and Diversions -- John Whitington -- Reprint with corrections, Cambridge, United Kingdom, 2014 -- Coherent Press -- 9780957671119 -- 654b9e3e8e78e1a0d5c84ac0dcd6604c -- Anna’s Arch.epub" },
@@ -4466,6 +4482,10 @@ local BOOKS = {
 	} },
 	{ module = "Java", key = "books-java", items = {
 		{ title = "Java Concurrency in Practice", fmt = "pdf", file = "JavaConcurrencyInPractice.pdf" },
+	} },
+	{ module = "JavaScript", key = "books-js", items = {
+		{ title = "Eloquent JavaScript (4th Edition)", fmt = "pdf", slug = "eloquent-javascript-4e", file = "Eloquent JavaScript, 4th Edition_ A Modern Introduction to -- Marijn Haverbeke -- 4th Edition, 2024-11-05 -- No Starch Press, Incorporated -- 9781718504103 -- ddf4a7b3254590e9fff2ee3685be151d -- Anna’s Archive.pdf" },
+		{ title = "Learning TypeScript (Goldberg)", fmt = "pdf", slug = "learning-typescript", file = "Josh Goldberg - Learning TypeScript_ Enhance Your Web Development Skills Using Type-Safe JavaScript-O'Reilly Media (2022).pdf" },
 	} },
 	{ module = "Graphics", key = "books-graphics", items = {
 		{ title = "OpenGL SuperBible", fmt = "pdf", file = "OpenGL_Superbible.pdf" },

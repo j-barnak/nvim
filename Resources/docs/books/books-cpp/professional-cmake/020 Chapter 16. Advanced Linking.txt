@@ -1,0 +1,393 @@
+Chapter 16. Advanced Linking
+The preceding chapter presented the usual ways that properties are used to control linking of
+targets. The properties and commands discussed should cover most typical scenarios. Nevertheless,
+situations arise where the project may want to use additional linking techniques and constraints
+not covered by those methods.
+
+16.1. Require Targets For Linking
+CMake 3.23 added support for a LINK_LIBRARIES_ONLY_TARGETS target property. When this is set to true,
+it adds constraints on the link items added to a target according to its LINK_LIBRARIES property, and
+the INTERFACE_LINK_LIBRARIES and INTERFACE_LINK_LIBRARIES_DIRECT properties of its dependencies (see
+Section 16.3, “Propagating Up Direct Link Dependencies” for the latter). Any item in any of those
+properties which could be a valid target name is required to be a target name. For the purposes of
+that check, an item is considered a potential target name if it has no path components and doesn’t
+start with -, $ or ` (after any generator expressions have been evaluated).
+
+  add_library(glob STATIC ...)
+  add_executable(App ...)
+  set_target_properties(App PROPERTIES
+      LINK_LIBRARIES_ONLY_TARGETS TRUE
+  )
+  target_link_libraries(App PRIVATE glib)    # NOTE: typo here
+
+In the above example, the developer made a typo on the target_link_libraries() line. They intended
+to use the name of the glob target, but instead used glib. On some platforms, the system may
+provide a library named glib which can be found on the linker’s library search path. Without the
+LINK_LIBRARIES_ONLY_TARGETS property set, the linker would find glib and link to it, but be unable to
+resolve the symbols that were expected to be provided by glob instead. The linker would then issue
+an error message about the missing symbols rather than the wrong library being linked. The
+developer would be confused, thinking they linked to glob, which should have provided the missing
+symbols. With LINK_LIBRARIES_ONLY_TARGETS set to true, CMake sees that there is no CMake target
+called glib and halts with an error at configure time. CMake’s error message will immediately
+diagnose the real problem (the typo that caused the wrong thing to be linked).
+
+In practice, it will probably be desirable to enable this behavior across the whole project, not just
+for individual targets. The CMAKE_LINK_LIBRARIES_ONLY_TARGETS variable is used to initialize the
+LINK_LIBRARIES_ONLY_TARGETS target property. Setting that variable at the project’s top level before any
+targets are created will ensure that all targets have the feature enabled.
+
+In some cases, certain libraries provided by the toolchain may be linked with a bare name that
+could be a target name. The m library on Unix platforms is a relatively common example. A
+toolchain file or the project might add such a library to the linker command line of all executable
+and shared library targets. If LINK_LIBRARIES_ONLY_TARGETS is set to true, this may lead to CMake
+rejecting that library linking relationship. Such libraries need to be wrapped in an INTERFACE
+IMPORTED target (see Section 18.2.5, “Interface Imported Libraries”). The IMPORTED_LIBNAME target
+property also needs to be set to the name to be used on the linker command line. The following
+
+contrived example (taken from the official CMake documentation, with minor changes)
+demonstrates the technique:
+
+  add_library(Toolchain::m INTERFACE IMPORTED)
+  set_target_properties(Toolchain::m PROPERTIES
+      IMPORTED_LIBNAME "m"
+  )
+  target_link_libraries(App PRIVATE Toolchain::m)
+
+CMake doesn’t check whether the value of IMPORTED_LIBNAME matches a target name. The value is
+used on the linker command line directly as provided. One can take advantage of this to mask a
+bare library name with a CMake target of the same name:
+
+  # No Toolchain:: namespace, masks bare "m" name
+  add_library(m INTERFACE IMPORTED)
+  set_target_properties(m PROPERTIES
+      IMPORTED_LIBNAME "m"   # Never treated as a target name
+  )
+  target_link_libraries(App PRIVATE m)
+
+Third party code that links to a bare m could then be used with LINK_LIBRARIES_ONLY_TARGETS enabled.
+
+16.2. Customize How Libraries Are Linked
+In some projects, there can be requirements around not just what libraries are linked, but also how
+they are linked. For example, some linkers can optimize away linked libraries and frameworks it
+thinks are not needed. The target may use those libraries or frameworks in a way that the linker
+can’t detect, so the project has to somehow prevent the linker from discarding them. Another
+example is where a group of libraries has complex interdependencies that cannot be easily
+captured by CMake’s cyclic dependency handling (see Section 22.2, “Linking Static Libraries”). In
+such cases, the project may want to direct the linker to repeatedly rescan a group of interdependent
+libraries to satisfy unresolved symbols.
+
+Two new generator expressions added in CMake 3.24 provide greater control over how libraries are
+added to the linker command line. They directly support scenarios like those mentioned above.
+These new generator expressions and the various constraints and features surrounding them can
+be fairly complicated. However, for the more common use cases, a fairly simple understanding will
+likely be sufficient. Nevertheless, it is recommended that the reader use the discussion below as a
+starting point, but also check the official documentation of these generator expressions. Most
+features are not supported for every toolchain, so consult the documentation to confirm availability
+for the toolchain(s) being used, and for any other limitations that may apply.
+
+The two new generator expressions are closely related, but they serve different purposes:
+
+  $<LINK_GROUP:groupFeature,libs...>
+  $<LINK_LIBRARY:libFeature,libs...>
+
+Both   expressions   can   only   be     used    in   the     LINK_LIBRARIES,   INTERFACE_LINK_LIBRARIES   or
+INTERFACE_LINK_LIBRARIES_DIRECT      target     properties.     They    can     also   be   used    in     the
+target_link_libraries() and link_libraries() commands.
+
+When adding the specified libs to the linker command line, the groupFeature or libFeature defines
+how that should be done. $<LINK_GROUP:…> is used to express a constraint around a group of
+libraries as a whole, whereas $<LINK_LIBRARY:…> expresses a constraint that applies to each listed
+library individually. The set of features supported by the two expressions are separate and non-
+overlapping.
+
+16.2.1. Link Group Features
+
+CMake defines only one built-in groupFeature for use with $<LINK_GROUP:…>, a feature called RESCAN. It
+ensures that the list of libraries are kept together on the linker command line. It surrounds that list
+of libraries with linker options that make the linker rescan the group members repeatedly to
+resolve symbols. With some linkers, the libraries would normally only be scanned once in a single
+pass. For such linkers, symbols needed by libraries earlier on the command line would have to be
+supplied by things later on the command line. The RESCAN feature makes the linker work harder by
+using multiple passes to resolve symbols within the group as much as possible. Some linkers are
+already multi-pass by default and don’t require any additional options to be added in order to get
+this behavior.
+
+  add_library(MyThings STATIC ...)
+  add_executable(App ...)
+
+  target_link_libraries(App PRIVATE
+      $<LINK_GROUP:RESCAN,MyThings,externalTC>
+  )
+
+In the above example, the project defines a MyThings target, which is closely coupled with an
+externally-provided externalTC library. Both need symbols from each other. CMake will choose the
+appropriate linker flags for the toolchain to represent the group constraint when linking the App
+target. With toolchains that use the GNU ld linker, the above example might result in a linker
+command line that contains the following fragment:
+
+  -Wl,--start-group /path/to/libMyThings.a -lexternalTC -Wl,--end-group
+
+Once a library has been mentioned in a RESCAN group anywhere in the project, CMake will replace
+any standalone use of that library with the whole group when linking any target. A library can be a
+member of multiple RESCAN groups, although such cases are probably an indication that those
+groups may each be underspecified.
+
+16.2.2. Link Library Features
+
+The $<LINK_LIBRARY:…> generator expression has a different and larger set of built-in features. The
+generator expression’s official documentation lists all the supported features, but a few are
+discussed here to demonstrate the usage.
+
+In the following example, Things is the main library that consumers are expected to link to.
+However, the project implements some of the Things public API in the separate SubPart and
+AnotherPart static libraries. These are not just private implementation details, they are functions,
+etc. that consumers of Things might reference directly, but which Things itself might not reference.
+
+  add_library(SubPart STATIC ...)
+  add_library(AnotherPart STATIC ...)
+  add_library(Things SHARED ...)
+
+  target_link_libraries(Things PRIVATE
+      SubPart
+      AnotherPart
+  )
+
+  add_executable(App ...)
+  target_link_libraries(App PRIVATE Things)
+
+In the example as shown, the linker would normally end up discarding all the symbols from SubPart
+and AnotherPart when linking Things as a shared library. The built-in WHOLE_ARCHIVE library feature
+can be used to prevent the linker from discarding those symbols:
+
+  target_link_libraries(Things PRIVATE
+      $<LINK_LIBRARY:WHOLE_ARCHIVE,SubPart,AnotherPart>
+  )
+
+CMake again chooses the appropriate flags for the linker command line to implement the
+constraint. With Visual Studio toolchains, the /WHOLEARCHIVE option would be used. For toolchains
+using the GNU ld linker, the --whole-archive flag might be used in conjunction with other flags that
+push and pop the state of that feature (where supported).
+
+CMake may take advantage of the libraries being expressed in a single expression to reduce the
+number of flags added to the linker command line. Note though that the libraries are not
+guaranteed to be listed together as a group. Use $<LINK_GROUP:…> for cases that require the set of
+libraries to be kept together.
+
+When targeting Apple platforms, a number of other built-in $<LINK_LIBRARY:…> features are
+available. The FRAMEWORK feature can be used to explicitly force a library to be treated as a
+framework. This is more useful when linking an external framework by name rather than as a
+CMake target (see Section 24.9, “Linking Frameworks”). The NEEDED_FRAMEWORK and NEEDED_LIBRARY
+features can be used to force the linker to make a target link to a framework or library, even if the
+target doesn’t use any symbols from it. This may be desirable if no symbols from the framework or
+library are referenced directly by the target, but the framework or library has global objects whose
+constructors have side effects (registering handlers, etc.). Other built-in features provide support
+for weak imports and re-exporting symbols, but those are fairly advanced use cases.
+
+In more complex projects, there is a greater likelihood that conflicting $<LINK_LIBRARY:…>
+expressions    will   occur.     CMake   3.24   and    later   support    LINK_LIBRARY_OVERRIDE   and
+LINK_LIBRARY_OVERRIDE_<LIBRARY> target properties as a potential way of addressing those situations.
+They allow a target to override link features attached to libraries it uses. These override properties
+
+should be considered a last resort workaround for what is already an advanced feature. They are
+appropriate for certain scenarios, but they should be avoided if possible. See the official CMake
+documentation of the properties for examples of their usage.
+
+16.2.3. Custom Features
+
+The $<LINK_LIBRARY:…> and $<LINK_GROUP:…> generator expressions also support custom features
+defined by the project. This is an advanced area, one that won’t be needed by most projects. The
+official CMake documentation explains the steps involved for those projects that do require that
+level of customization and control.
+
+16.2.4. Feature Validity
+
+It is the project’s responsibility to ensure that it only uses a $<LINK_LIBRARY:…> or $<LINK_GROUP:…>
+feature with a set of libraries for which that feature is valid. CMake does not try to detect invalid
+combinations. For example, using $<LINK_LIBRARY:WHOLE_ARCHIVE,…> with anything other than static
+libraries would be inappropriate.
+
+16.3. Propagating Up Direct Link Dependencies
+For most projects, linking relationships between targets can and should be specified purely through
+target_link_libraries() calls. These clearly express the nature of a relationship in terms of
+something the target needs (PRIVATE), something that consumers of the target need (INTERFACE), or
+something needed by both (PUBLIC).
+
+In some scenarios, the nature of the relationship is more complex. Sometimes, a set of objects must
+be linked only by the top level executable or shared library at the head of the link dependency
+chain. The link seaming technique is an example of this. An interface is defined in a lower level
+library, and while that library may make use of the interface, it doesn’t provide the implementation
+for it. Instead, the application is expected to provide the implementation, usually as object files on
+the linker command line (using object files ensures library ordering issues are avoided). Projects
+can take advantage of this technique to use different implementations in different executables.
+Production applications might use real implementations, whereas test executables might provide
+predictable values or use mocked implementations with non-essential features stubbed out.
+
+Relationships like the above cannot be easily and robustly expressed with CMake 3.23 and earlier.
+The library depends on the executable consuming it, but there may be different executables, so the
+library can’t express the dependency. The project has to rely on adding object files directly to each
+executable or shared library target. It cannot attach that logic to an intermediate library that
+executables and shared libraries link to.
+
+With CMake 3.24 or later, the INTERFACE_LINK_LIBRARIES_DIRECT target property can be used to handle
+these scenarios. It allows a target to specify libraries that should be treated as direct link
+dependencies of all targets up to the executable or shared library at the top of the dependency
+chain. Compare this with the INTERFACE_LINK_LIBRARIES property, which adds indirect dependencies
+to that target’s immediate consumers only.
+
+The differences between direct and indirect dependencies are subtle. One of the more important
+differences is in how object libraries are affected (see Section 18.2.2, “Object Libraries”). Object
+libraries linked indirectly do not add their objects to the consumer. Their objects only get added for
+direct link dependencies. This is important, because it means INTERFACE_LINK_LIBRARIES_DIRECT can
+list object libraries and those objects will be added to the linker command line of each target in the
+chain up to the executable or shared library. An object library listed in INTERFACE_LINK_LIBRARIES will
+only add object files to the linker command line of its immediate consumer. If that immediate
+consumer isn’t an executable or shared library, those object files won’t end up being part of the
+eventual executable or shared library, leading to unresolved symbols.
+
+16.3.1. Link Seaming Example
+
+Consider the following partial example with a diagram of the final desired set of direct linking
+relationships:
+
+  add_executable(Exe1 ...)
+  add_executable(Exe2 ...)
+  add_library(Middle STATIC ...)
+  add_library(SeamIface STATIC ...)
+  add_library(SeamImpl OBJECT ...)
+
+  # INCOMPLETE: Exe1 and Exe2 still need SeamImpl to be linked
+  target_link_libraries(Exe1 PRIVATE Middle)
+  target_link_libraries(Exe2 PRIVATE Middle)
+  target_link_libraries(Middle PRIVATE SeamIface)
+
+                                  Exe1                           Exe2
+
+                                                SeamImpl
+
+                                                Middle
+
+                                              SeamIface
+
+In the above example, SeamIface uses symbols that it doesn’t provide and doesn’t pull in from its
+own link dependencies. It expects those symbols to be provided by the final executable or shared
+library it gets linked into. SeamImpl provides those implementations.
+
+With CMake 3.23, one would have to explicitly add SeamImpl to every executable that linked directly
+or indirectly to SeamIface:
+
+  target_link_libraries(Exe1 PRIVATE SeamImpl)
+  target_link_libraries(Exe2 PRIVATE SeamImpl)
+
+With CMake 3.24 or later, the requirement can be attached to the Middle target instead. Anything
+that links to Middle (directly or indirectly) will then have SeamImpl added to its direct dependencies:
+
+  set_target_properties(Middle PROPERTIES
+      INTERFACE_LINK_LIBRARIES_DIRECT SeamImpl
+  )
+
+Attaching the implementation to Middle is more convenient if there are many executables.
+Expanding the example further, it becomes clearer how this pattern allows different link seam
+implementations to be provided to different groups of executables.
+
+        Exe1                             Exe2               Test1                           Test2
+
+                       SeamImpl                                           MockImpl
+
+                       Middle                                               Stubs
+
+                                                SeamIface
+
+As mentioned earlier, items listed in INTERFACE_LINK_LIBRARIES_DIRECT will be linked to every target in
+the dependency chain up to the executable or shared library. This can result in unwanted linking
+for intermediate targets. Generator expressions can be used to only add the direct link dependency
+to the head target at the top of the link dependency chain. This will be an executable, shared library
+or module library. The earlier example can be modified to demonstrate this behavior:
+
+  add_executable(TopExe ...)
+  add_library(Extra STATIC ...)
+  add_library(Middle STATIC ...)
+  add_library(SeamIface STATIC ...)
+  add_library(SeamImpl OBJECT ...)
+
+  target_link_libraries(TopExe PRIVATE Extra)
+  target_link_libraries(Extra PRIVATE Middle)
+  target_link_libraries(Middle PRIVATE SeamIface)
+
+  # OPTION A: No generator expression
+  set_target_properties(Middle PROPERTIES
+      INTERFACE_LINK_LIBRARIES_DIRECT SeamImpl
+  )
+
+  # OPTION B: With generator expression
+
+  # Build up a generator expression that evaluates to 1 only for the head target
+  set(type "$<TARGET_PROPERTY:TYPE>")
+  set(head_targets EXECUTABLE SHARED_LIBRARY MODULE_LIBRARY)
+  set(is_head "$<IN_LIST:${type},${head_targets}>")
+
+  set_target_properties(Middle PROPERTIES
+      INTERFACE_LINK_LIBRARIES_DIRECT "$<${is_head}:SeamImpl>"
+  )
+
+                    OPTION A                                               OPTION B
+
+            No generator expression                              With generator expression
+
+       TopExe                                                     TopExe
+
+           Extra                                                   Extra
+
+                   (unwanted)
+
+       Middle                   SeamImpl                          Middle              SeamImpl
+
+      SeamIface                                                  SeamIface
+
+Extra is a static library, so it does not need the SeamImpl objects. But without using the generator
+expression to limit the direct linking of SeamImpl, Extra will contain its own copy of the SeamImpl
+objects.
+
+16.3.2. Static Plugins
+
+INTERFACE_LINK_LIBRARIES_DIRECT can be used for other scenarios too. Some projects define a library
+with one or more associated plugins. When the project is built as a shared library and plugin, the
+library loads the plugin dynamically at run time. When they are built statically, the plugin has to be
+linked in to any executable that uses the library, and the library has to find the plugin using some
+other mechanism. Something also has to use symbols from the plugin to prevent the linker from
+discarding    them.    The    project   may     choose    to   list   the   plugin   in   the    library’s
+INTERFACE_LINK_LIBRARIES_DIRECT property (this is the example used by CMake’s own documentation
+for that property). More likely, an object library with a registration function that references the
+plugin’s symbols would be listed instead. This arrangement means an executable can link to the
+library, and regardless of whether things were built as shared or static, the plugin will be available
+to the application.
+
+The plugin scenario is likely to be more complicated than the above brief description.
+Implementing the plugin registration functions and the symbol search in the library can be non-
+trivial. They are specific to the project and the capabilities of the target platform. In certain cases, a
+companion INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE property may be needed as well. It allows the
+final list of direct link dependencies to be filtered before they are added to the linker command
+line. Used incorrectly, it can break linker command lines by re-ordering things in a way that doesn’t
+satisfy the dependencies between libraries. As such, it should be avoided unless it is absolutely
+necessary. Consult the official CMake documentation for further details on how to use the
+INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE property and scenarios that may require it.
+
+16.4. Recommended Practices
+Where possible, link to targets rather than to raw library names or paths. Targets are more portable
+across platforms, and they support bringing other usage requirements rather than specifying just a
+basic linking relationship. Consider setting CMAKE_LINK_LIBRARIES_ONLY_TARGETS to true as a cache
+variable on the cmake command line or in presets to enforce this as a requirement.
+
+The $<LINK_GROUP:…> and $<LINK_LIBRARY:…> generator expressions available with CMake 3.24 or
+later should not be used without careful consideration of the alternatives. Some of the features they
+offer can easily be misused as a way to cover over structural problems in the project. Avoid using
+$<LINK_GROUP:RESCAN,…> if the interdependencies between the libraries can be removed through
+refactoring and restructuring. Rather than using $<LINK_LIBRARY:WHOLE_ARCHIVE,…>, consider whether
+using object libraries or combining separate libraries into a single library would be a better
+solution. See Section 22.6, “Mixing Static And Shared Libraries” for further discussion of this area.
+
+Similarly, avoid using the INTERFACE_LINK_LIBRARIES_DIRECT target property if the relationships
+between targets can be fully expressed without it. There are valid scenarios where it may be
+appropriate, such as when using link seaming techniques or certain types of static plugin handling.
+These should be viewed as more advanced methods to solve specific problems rather than
+something to reach for as a first choice solution.
+

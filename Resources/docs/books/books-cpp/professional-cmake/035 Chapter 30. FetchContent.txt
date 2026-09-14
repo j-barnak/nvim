@@ -1,0 +1,741 @@
+Chapter 30. FetchContent
+The FetchContent module was added in CMake 3.11, with significant improvements added in CMake
+3.14 and 3.24. While it is closely related to ExternalProject, it has some fundamental differences.
+These differences strongly impact the way FetchContent is used and the scenarios it addresses.
+
+30.1. Comparison With ExternalProject
+Some strengths of ExternalProject are also its weaknesses. It allows external project builds to be
+completely isolated from the main project. This means it can use a different toolchain, target a
+different platform, use a different build type or even an entirely different build system. The cost of
+these benefits is that the main project knows nothing about what the external project produces.
+That information has to be provided to the main build manually if anything in the main build needs
+to refer to the external project’s outputs. This is the sort of thing that CMake is meant to do on the
+project’s behalf, so it can be a backward step to use ExternalProject in this way.
+
+For external projects that do use CMake as their build system, the flexibility to build them with
+different settings to the main project is often unnecessary. In fact, the more common case is likely
+to be that the external project should be built with the same settings as the main project. This is not
+all that easy to do using ExternalProject. Often a much more convenient arrangement would be to
+add it to the main build directly using add_subdirectory() as though it was part of the main project’s
+own sources. This cannot be done with the traditional use of ExternalProject because the source
+isn’t downloaded until build time. Projects may use alternative strategies such as git submodules to
+overcome this, but they are not without their own drawbacks too.
+
+The FetchContent module was added to solve problems like those mentioned above, and more. It
+uses ExternalProject internally to set up a sub-build which downloads and updates the external
+content, but it does this during the configure stage. All the same download methods are supported
+for FetchContent as for ExternalProject, including custom commands.
+
+Because FetchContent downloads the external content during the configure stage, the external
+project’s sources are available much earlier than with ExternalProject. This is the most fundamental
+difference between the two modules. With the content available during the configure stage, it is
+possible to bring the external project’s sources directly into the main build. FetchContent does this
+automatically by default by calling add_subdirectory() internally if the external project has a
+CMakeLists.txt file (for the basic usage at least, see next section). This means all the external
+project’s targets, functions, etc. are all visible to the main project. There is no need to manually tell
+the main build where to find the built artifacts from the external project, because they are part of
+the same build. This also potentially makes installing things provided by the external project easier
+too. The same compiler flags and toolchain are also used consistently throughout the project
+without any extra handling.
+
+Files downloaded at configure time can be used for a variety of purposes, not just adding sources to
+the build for compilation. For example, Section 30.6, “Other Uses For FetchContent” discusses
+providing CMake modules and toolchain files to the main build.
+
+30.2. Basic Usage
+FetchContent has a number of capabilities. This section introduces the most common use case, and
+later sections expand the discussion to include more recently added features.
+
+Bringing in a dependency with FetchContent is always a two-step process. The canonical pattern is
+demonstrated by the following example:
+
+  include(FetchContent)
+
+  FetchContent_Declare(googletest
+      GIT_REPOSITORY https://github.com/google/googletest.git
+      GIT_TAG        ec44c6c1675c25b9827aacd08c02433cccde7780    # release-1.8.0
+  )
+
+  # This command requires CMake 3.14 or later
+  FetchContent_MakeAvailable(googletest)
+
+First, details about how to obtain the dependency are given using FetchContent_Declare(). The first
+argument is the name of the dependency. The rest of the arguments are mostly anything that
+ExternalProject_Add() supports, except those arguments that relate to configure, build, install or test
+steps. In practice, the only options typically given are those that define a download method, such as
+the git details in the example above. A SYSTEM keyword may also be present when using CMake 3.25
+or later (see further below).
+
+FetchContent follows a "first to declare, wins" philosophy. If FetchContent_Declare() has not been
+called previously anywhere in the build for the same dependency, it saves the provided details for
+later. The details are discarded if there has been a previous call that already saved details for the
+specified dependency. The reasoning behind this behavior is discussed in Section 30.3, “Resolving
+Dependencies”. Importantly, this command does not perform any download or content population.
+
+The second step is to call FetchContent_MakeAvailable(), which ensures the dependency is populated
+by the time it returns. This is effectively the when part of obtaining a dependency.
+FetchContent_MakeAvailable() accepts a list of dependencies, not just a single dependency. In simple
+terms, the following pseudocode is executed for each argument passed to the command:
+
+  if the dependency is not yet populated:
+      populate it using the saved details
+      if the populated content has a CMakeLists.txt file:
+          call add_subdirectory() on the populated content
+
+With CMake 3.25 or later, if the SYSTEM keyword was included in the call to FetchContent_Declare(),
+the   SYSTEM    keyword     will   be    added    to    the   add_subdirectory()     call   made    by
+FetchContent_MakeAvailable(). Unless the dependency is logically directly part of the main project
+rather than something provided by a third party, this will be desirable. Therefore, adding the SYSTEM
+keyword is usually recommended unless the project needs to support CMake 3.24 or earlier. See
+Section 15.7.2, “System Header Search Paths” for further discussion of this topic.
+
+If a dependency is populated but there is no CMakeLists.txt file at the top of its source tree,
+add_subdirectory() will not be called. This is not considered an error. It allows the command to be
+used to populate arbitrary projects which may only contain a collection of files to be used as
+resources, scripts, toolchain files, etc. With CMake 3.18 or later, the SOURCE_SUBDIR option can be
+given with FetchContent_Declare() to specify an alternative location to search for a CMakeLists.txt file
+instead of the top of the dependency’s source tree.
+
+In practice, FetchContent_MakeAvailable() does much more than the pseudocode above. It also
+provides integration with find_package() and dependency providers, both of which can fulfill the
+request to make the dependency available in very different ways. These more complex cases are
+discussed in detail in Section 30.4, “Integration With find_package()” and Chapter 32, Dependency
+Providers.
+
+               FetchContent_MakeAvailable() was only added in CMake 3.14. When using earlier
+               CMake versions, the above pattern had to be implemented manually like so:
+
+                 FetchContent_GetProperties(foo)
+                 if(NOT foo_POPULATED)
+                     FetchContent_Populate(foo)
+                    add_subdirectory(${foo_SOURCE_DIR} ${foo_BINARY_DIR})
+                 endif()
+
+               Projects should no longer manually implement this pattern. They should be
+               updated to call FetchContent_MakeAvailable() instead, which is far more feature-rich
+               and will increasingly be expected by developers.
+
+30.3. Resolving Dependencies
+Separating the declaration of how to obtain a dependency from the command that actually
+populates it is a critical aspect of how FetchContent works. In order to understand why this is
+necessary, and more importantly how to take full advantage of it, one needs to consider how
+dependencies are resolved in less trivial projects.
+
+Consider a project that depends on a set of external packages, and where those packages in turn
+share some common dependencies. It would be undesirable to download and build those common
+dependencies multiple times. It would also typically be undesirable to have different parts of the
+build using different versions of the same dependency. Such inconsistencies invite undefined
+behavior at run time, if the project is even able to build at all.
+
+FetchContent handles this situation by only populating a particular dependency once for the whole
+CMake configure run. Later calls that ask for that dependency to be populated will re-use the same
+one that was populated by the first call. Furthermore, it uses the details from the first call to
+provide them for a dependency, and it ignores all later calls for the same dependency. Together, this
+"first setter wins" and "only populate once" approach means that a parent project can override
+dependency details of external child projects.
+
+The following example highlights the way the FetchContent module allows a top level project to
+override the details set by the lower level dependencies. Consider a top level project TopProj which
+
+depends on external projects Foo and Bar. Both Foo and Bar in turn both depend on another external
+project, Jerry, but they each want slightly different versions of it.
+
+                                                TopProj
+
+                                    Foo                          Bar
+
+                                   Jerry           ???          Jerry
+                                    1.3                          1.5
+
+Only one copy of Jerry should be downloaded and built, which Foo and Bar would then use. When
+these projects are combined into one build, the selected version of Jerry has to override the version
+normally used by Foo or Bar, or possibly even both. The top level project is responsible for ensuring
+that a valid version is selected such that Foo and Bar can build against it. This example assumes that
+while Foo uses version 1.3 when built on its own, it can safely use a later version. The desired
+arrangement and an example that implements it looks like this:
+
+                                                 TopProj
+
+                                     Foo                           Bar
+
+                                                   Jerry
+                                                    1.5
+
+TopProj CMakeLists.txt
+
+  # Declare the direct dependencies
+  include(FetchContent)
+  FetchContent_Declare(foo GIT_REPOSITORY ... GIT_TAG ...)
+  FetchContent_Declare(bar GIT_REPOSITORY ... GIT_TAG ...)
+
+  # Override the Jerry dependency to force our preference
+  FetchContent_Declare(jerry
+      URL      https://example.com/releases/jerry-1.5.tar.gz
+      URL_HASH ...
+  )
+
+  # Populate the direct dependencies but leave Jerry to be populated by foo
+  FetchContent_MakeAvailable(foo bar)
+
+Foo CMakeLists.txt
+
+  include(FetchContent)
+  FetchContent_Declare(jerry
+      URL      https://example.com/releases/jerry-1.3.tar.gz
+      URL_HASH ...
+  )
+  FetchContent_MakeAvailable(jerry)
+
+The CMakeLists.txt file for Bar would be identical to that of Foo, except the URL would specify jerry-
+1.5.tar.gz instead of jerry-1.3.tar.gz. The above skeleton example allows Foo and Bar to be built as
+standalone projects on their own, or they can be incorporated into another project like TopProj and
+still have the required flexibility to resolve the common dependencies.
+
+If TopProj wanted to completely take over the way Jerry is populated and added to the main build, it
+could do so by listing jerry before the other dependencies in the call to FetchContent_MakeAvailable().
+
+  include(FetchContent)
+  FetchContent_Declare(foo   GIT_REPOSITORY ... GIT_TAG ...)
+  FetchContent_Declare(bar   GIT_REPOSITORY ... GIT_TAG ...)
+  FetchContent_Declare(jerry URL ... URL_HASH ...)
+
+  # Because jerry is first in the list, it will be populated
+  # here rather than by either foo or bar.
+  FetchContent_MakeAvailable(jerry foo bar)
+
+This might be useful if foo or bar had used the old population pattern instead of calling
+FetchContent_MakeAvailable(jerry).
+
+30.4. Integration With find_package()
+The behavior described in Section 30.2, “Basic Usage” is powerful, but it isn’t the only way a
+dependency can be provided to the main build. CMake has a long history of providing
+dependencies using find_package(), whereas FetchContent only became available starting with
+
+CMake 3.11. Sometimes, it isn’t clear whether the best way to provide a dependency is to use
+find_package() or FetchContent. The better approach may depend on how the main project will be
+used.
+
+For example, if the project will be packaged up to be part of a Linux distribution, the distribution
+maintainers will almost certainly prefer find_package(). The distribution is expected to provide all
+dependencies, and their packaging workflow is very likely to be built around find_package(). On the
+other hand, a company may prefer FetchContent so that they can fully control where dependencies
+are obtained from, apply patches to the sources, control how the dependencies are built, and so on.
+
+Developers too may have different preferences to project maintainers. A common example would
+be a developer working on a new feature in a dependency project, and at the same time, testing out
+that feature with their main project. That workflow is directly supported by FetchContent (see
+Section 30.5, “Developer Overrides”), but is more difficult if using find_package().
+
+With CMake 3.24 or later, features are available which enable projects to support both methods.
+This section focuses on features for consuming dependencies. The integration is driven
+predominantly from the FetchContent side. Chapter 31, Making Projects Consumable focuses on what
+projects should do so that other projects can more easily consume them as a dependency. That
+chapter details the conditions which must be satisfied for a dependency to support the integration
+features discussed here.
+
+30.4.1. Try find_package() Before FetchContent
+
+The integration features are most directly enabled by the FIND_PACKAGE_ARGS keyword of the
+FetchContent_Declare() command:
+
+  FetchContent_Declare(somedep
+      ...other options...
+      # If present, the following keyword and its arguments must be the last
+      FIND_PACKAGE_ARGS [args...]
+  )
+
+When the FIND_PACKAGE_ARGS keyword is given, it indicates that the dependency can be fulfilled using
+find_package(). Not every dependency will be able to support this. Certain constraints must be
+satisfied in order for it to work robustly, as discussed in Chapter 31, Making Projects Consumable.
+
+When the FIND_PACKAGE_ARGS keyword is present, the FetchContent_MakeAvailable() command will try
+calling find_package() first, unless disabled by conditions discussed further below. The name of the
+dependency is automatically used as the first argument to the find_package() call, followed by any
+arguments that were provided after the FIND_PACKAGE_ARGS keyword. If that find_package() call fails to
+find a package, FetchContent_MakeAvailable() falls back to populating the dependency using the
+saved details from the FetchContent_Declare() call (i.e. the behavior as discussed in Section 30.2,
+“Basic Usage”).
+
+One common use case this enables is to look for and use a pre-built version of a dependency before
+falling back to building it from sources. It is an ideal solution where a project wants to support the
+developer using a package manager to provide dependencies, but without requiring them to do so.
+See Chapter 32, Dependency Providers for a deeper discussion of this topic.
+
+The following example from the official FetchContent documentation shows calls with and without
+extra arguments following the FIND_PACKAGE_ARGS keyword:
+
+     FetchContent_Declare(googletest
+       GIT_REPOSITORY https://github.com/google/googletest.git
+       GIT_TAG        703bd9caab50b139428cea1aaff9974ebee5742e
+       FIND_PACKAGE_ARGS NAMES GTest
+     )
+     FetchContent_Declare(Catch2
+       GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+       GIT_TAG        de6fe184a9ac1a06895cdd1c9b437f0a0bdf14ad
+       FIND_PACKAGE_ARGS
+     )
+
+     # This will try calling find_package() first for both dependencies
+     FetchContent_MakeAvailable(googletest Catch2)
+
+Note how the googletest dependency includes NAMES GTest as additional arguments. This shows how
+to handle the situation where the dependency name used with FetchContent might not match the
+name typically used with find_package() (also see Section 30.4.3, “Redirections Directory” which
+discusses additional steps needed to fully handle this scenario). For Catch2, no additional arguments
+are needed, but the FIND_PACKAGE_ARGS keyword is still required to enable the find_package()
+integration     for   that   dependency.   The      find_package()     calls    constructed    internally    by
+FetchContent_MakeAvailable() would look something like this:
+
+     find_package(googletest QUIET NAMES GTest)
+
+     find_package(Catch2 QUIET)
+
+The QUIET keyword is inserted automatically if not already included as one of the arguments
+following FIND_PACKAGE_ARGS. This is to limit messages from unsuccessful find_package() calls, which
+could be misleading given that the package would subsequently be provided by the build-from-
+source fallback implementation.
+
+If     the   internally   generated   find_package()    call   fails   to      find   the   dependency      and
+FetchContent_MakeAvailable() populates it from the saved details instead, hooks are automatically set
+up to force any future call to find_package() for that dependency to re-use the populated content. As
+a result, the same dependency is re-used for the remainder of the CMake configure run. The
+method used to achieve this is discussed in Section 30.4.3, “Redirections Directory”.
+
+     FetchContent_Declare(Catch2
+       GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+       GIT_TAG        de6fe184a9ac1a06895cdd1c9b437f0a0bdf14ad
+       FIND_PACKAGE_ARGS
+     )
+
+     # This will try calling find_package() first
+     FetchContent_MakeAvailable(Catch2)
+
+  # Later on, possibly in another CMakeLists.txt file...
+  # If the above call populated Catch2 from sources, the following
+  # call will use that instead of finding one from somewhere else.
+  find_package(Catch2)
+
+FetchContent also provides a FETCHCONTENT_TRY_FIND_PACKAGE_MODE variable which controls whether
+FetchContent_MakeAvailable() is allowed to call find_package() (unless overridden as discussed in
+Section   30.5,    “Developer      Overrides”).   The     variable    affects    the   details   saved    by
+FetchContent_Declare(), so what matters is the variable’s value when FetchContent_Declare() is called,
+not when FetchContent_MakeAvailable() is called. If set, the variable may contain one of three values:
+
+OPT_IN
+   This is the behavior as described above. find_package() will only be called if the FIND_PACKAGE_ARGS
+   keyword was given to FetchContent_Declare(). If FETCHCONTENT_TRY_FIND_PACKAGE_MODE is not set, this
+   is also the default behavior.
+
+ALWAYS
+   find_package() will be called by FetchContent_MakeAvailable() regardless of whether the
+   FetchContent_Declare() call included a FIND_PACKAGE_ARGS keyword or not. If no FIND_PACKAGE_ARGS
+   keyword was given, the behavior will be as though FIND_PACKAGE_ARGS had been provided with no
+   additional arguments after it.
+
+NEVER
+   FetchContent_MakeAvailable() will not call find_package(). Any FIND_PACKAGE_ARGS given to
+   FetchContent_Declare() will be ignored. This is essentially the behavior of CMake 3.23 and earlier.
+
+FETCHCONTENT_TRY_FIND_PACKAGE_MODE should not be set by the project, it is intended to be a developer
+control. Projects should use the keywords in FetchContent_Declare() calls instead.
+
+In practice, FETCHCONTENT_TRY_FIND_PACKAGE_MODE should rarely be needed. One use case would be
+where Linux distribution or package manager maintainers might elect to set it to ALWAYS in their
+packaging scripts. This would route all FetchContent_MakeAvailable() requests through find_package(),
+which their existing infrastructure may be better equipped to handle. This won’t always be
+appropriate, but it may work for a reasonable number of packages as a quick and simple technique.
+
+30.4.2. Redirect find_package() To FetchContent
+
+In some situations, a project may want to force find_package() to use a dependency built from
+sources as part of the project. One such use case is where the project requires a specific patch that
+isn’t in any public release, or where the project needs direct access to something from the
+dependency’s      sources   that   would    not   be    available    from   an   installed   package.    The
+OVERRIDE_FIND_PACKAGE keyword provides this capability.
+
+  FetchContent_Declare(somedep
+      OVERRIDE_FIND_PACKAGE
+      ...   # other options as usual
+  )
+
+If this is the first call to FetchContent_Declare() for the given dependency, any future call to
+find_package()      for   that         dependency    will   automatically   be   redirected   to      call
+FetchContent_MakeAvailable() instead. If the find_package() call contains a NAMES keyword, redirection
+will   occur   if   any   of     the    specified   names   match   the   dependency   name   given    to
+FetchContent_Declare().
+
+  FetchContent_Declare(Catch2
+    GIT_REPOSITORY ...
+    GIT_TAG        ...
+    OVERRIDE_FIND_PACKAGE
+  )
+
+  # This will be redirected to FetchContent_MakeAvailable()
+  find_package(Catch2)
+
+Conceptually, the OVERRIDE_FIND_PACKAGE and FIND_PACKAGE_ARGS keywords invoke more or less
+opposite behaviors. The former redirects find_package() to use FetchContent_MakeAvailable(). The
+latter works the other way around and allows FetchContent_MakeAvailable() to try find_package().
+Therefore, at most only one of the two keywords may be given in a call to FetchContent_Declare().
+
+30.4.3. Redirections Directory
+
+Starting with CMake 3.24, every call to find_package() will first look for config package files in a
+special directory before searching anywhere else (unless intercepted by a dependency provider, see
+Chapter 32, Dependency Providers). The location of this special directory is given by the read-only
+CMAKE_FIND_PACKAGE_REDIRECTS_DIR variable. FetchContent_MakeAvailable() may write files to this
+directory, as might a project in some circumstances, as explained further below. The directory is
+automatically cleared at the start of every CMake run. Any contents from a previous run are always
+discarded. This ensures that no stale redirection files are left from earlier CMake invocations and
+only files created by the current run are used.
+
+When a call to FetchContent_MakeAvailable() populates a dependency as described in Section 30.2,
+“Basic Usage”, it checks to see if future calls to find_package() for that dependency should be
+redirected to use the populated content. It will set up that redirection if either of the following
+conditions are met:
+
+ • A FIND_PACKAGE_ARGS or OVERRIDE_FIND_PACKAGE keyword was given in the FetchContent_Declare()
+   call.
+
+ • FETCHCONTENT_TRY_FIND_PACKAGE_MODE was set to ALWAYS at the time FetchContent_Declare() was called.
+
+Once population has occurred, the behavior of FIND_PACKAGE_ARGS and OVERRIDE_FIND_PACKAGE is the
+same. Both will result in future find_package() calls for that dependency using the populated
+content.
+
+FetchContent_MakeAvailable() sets up the redirection by generating a pair of <lowercaseDepName>-
+config.cmake and <lowercaseDepName>-config-version.cmake files in the CMAKE_FIND_PACKAGE_REDIRECTS_DIR
+directory. Because find_package() always looks there first, these files will always be found and used
+ahead of files in any other location.
+
+The generated <lowercaseDepName>-config.cmake file is very minimal. The only thing it does is look for
+a couple of optional extra files in the CMAKE_FIND_PACKAGE_REDIRECTS_DIR directory:
+
+ • <lowercaseDepName>-extra.cmake
+
+ • <depName>Extra.cmake
+
+If either file is present, it will be read using include(). CMake doesn’t generate these "extra" files,
+they are intended as a customization point for dependency projects to create, if they want to. They
+allow dependency projects to define things that would normally be available using find_package(),
+but which would otherwise not be available in the calling scope when the dependency is built from
+source. Targets and commands defined by the build-from-source method already have global
+visibility, so the only thing that would normally be defined in such files would be variables. Where
+possible, projects should prefer to provide information through targets and commands rather than
+through variables, so this mechanism would generally only be used to preserve backward
+compatibility. Section 31.4, “Avoid Package Variables If Possible” discusses this particular topic in
+more detail.
+
+The generated <lowercaseDepName>-config-version.cmake file is also very simple. All it does is set the
+PACKAGE_VERSION_COMPATIBLE and PACKAGE_VERSION_EXACT variables to true (the latter will only be set
+with CMake 3.24.2 or later due to a bug in earlier versions). This has the effect of accepting any
+version requirement which may have been part of a find_package() call. It is assumed that the
+FetchContent-provided (typically built-from-source) dependency always satisfies any version
+requirements of consumers.
+
+The "first to declare, wins" philosophy is also applied when FetchContent_MakeAvailable() looks to
+generate the <lowercaseDepName>-config.cmake and <lowercaseDepName>-config-version.cmake files. If a
+file already exists, FetchContent_MakeAvailable() will not replace it. This gives the dependency a
+chance to provide the file first if it wants to. A dependency therefore always has control over how it
+is presented to consumers, just like it would if using an installed package.
+
+The <lowercaseDepName>-config.cmake file would not typically be overridden. The <lowercaseDepName>-
+extra.cmake file mechanism already provides the necessary functionality to fully customize the
+behavior, so that file should be provided by a dependency project instead if additional things need
+to be set. On the other hand, a dependency may want to provide its own <lowercaseDepName>-config-
+version.cmake file to set the PACKAGE_VERSION variable. When overriding this file, it must obey the
+following requirements:
+
+ • The PACKAGE_VERSION_COMPATIBLE and PACKAGE_VERSION_EXACT variables must be set to true,
+      regardless of what version was requested or is being provided.
+
+ • The PACKAGE_VERSION_UNSUITABLE variable must not be set to true, and ideally shouldn’t be set at
+      all.
+
+These requirements mean a version file generated using write_basic_package_version_file() from
+the CMakePackageConfigHelpers module is not appropriate for overriding the default generated
+<lowercaseDepName>-config-version.cmake file. For projects with a version number, the file contents
+should be no more than something like this:
+
+  set(PACKAGE_VERSION 1.2.3)
+  set(PACKAGE_VERSION_COMPATIBLE TRUE)
+  set(PACKAGE_VERSION_EXACT TRUE)
+
+In     some    situations,       a   project    may     want    to   write   a   *-config.cmake          file    to   the
+CMAKE_FIND_PACKAGE_REDIRECTS_DIR directory for a different but related dependency name. In Section
+30.4, “Integration With find_package()”, an example was given where the FIND_PACKAGE_ARGS keyword
+was used to provide alternate names for googletest:
+
+  FetchContent_Declare(googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        703bd9caab50b139428cea1aaff9974ebee5742e
+    FIND_PACKAGE_ARGS NAMES GTest
+  )
+
+This     ensures         that    a    call     like   find_package(googletest)       will   be         redirected      to
+FetchContent_MakeAvailable(googletest). However, because CMake provides a module called
+FindGTest, projects will typically (and rightfully) call find_package(GTest) instead. Therefore,
+additional steps are needed to redirect find_package(GTest) as well. The official documentation for
+FetchContent contains an example with the necessary logic to achieve this, shown here for
+reference:
+
+  FetchContent_Declare(googletest ...)
+  FetchContent_MakeAvailable(googletest)
+
+  if(NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config.cmake AND
+      NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/GTestConfig.cmake)
+    file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config.cmake
+  [=[
+  include(CMakeFindDependencyMacro)
+  find_dependency(googletest)
+  ]=])
+  endif()
+
+  if(NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config-version.cmake AND
+      NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/GTestConfigVersion.cmake)
+    file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config-version.cmake
+  [=[
+  include(${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/googletest-config-version.cmake OPTIONAL)
+  if(NOT PACKAGE_VERSION_COMPATIBLE)
+    include(${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/googletestConfigVersion.cmake OPTIONAL)
+  endif()
+  ]=])
+  endif()
+
+By      writing      the        gtest-config.cmake      and     gtest-config-version.cmake            files     to    the
+CMAKE_FIND_PACKAGE_REDIRECTS_DIR directory, find_package(GTest) calls will be redirected. All the gtest-
+config.cmake      file   has    to   do   is   call   find_dependency(googletest),    which      is     equivalent     to
+find_package(googletest) but with some additional handling of arguments like QUIET and REQUIRED
+
+(see Section 27.8.1, “Config Files For CMake Projects”). The gtest-config-version.cmake file is also
+very simple. It only needs to include the equivalent googletest-config-version.cmake or
+googletestConfigVersion.cmake file, if present in the CMAKE_FIND_PACKAGE_REDIRECTS_DIR directory. The
+names of variables set by these version files don’t contain the package name, so they can be re-used
+for an alternative name for the same thing.
+
+As shown in the example, these files should only be written if they don’t already exist. This follows
+the "first to declare/define, wins" principle of FetchContent, which ensures a higher level project
+always has full control of its dependencies.
+
+30.5. Developer Overrides
+There may be occasions when a developer wants to work on multiple projects at once, making
+changes in both the main project and its dependencies or across multiple dependencies, etc. When
+changing parts of an external project, the developer will want to work with a local copy rather than
+having to update the remote location it is downloaded from or found in each time. The FetchContent
+module offers direct support for this mode of operation by allowing the source directory of any
+external dependency to be overridden with a CMake cache variable. These variables have names of
+the form FETCHCONTENT_SOURCE_DIR_<DEPNAME>, where <DEPNAME> is the dependency name in uppercase.
+
+For the example scenario used earlier in Section 30.3, “Resolving Dependencies”, consider a
+situation where the developer wants to make a change to Foo and see how it affects the main TopProj
+project. They can create a separate clone of Foo outside the main project and then set
+FETCHCONTENT_SOURCE_DIR_FOO to that location. The TopProj project would use the source of that local
+copy and not modify it in any way, but it would still use the same build directory for it within its
+own TopProj build area. The only difference would be where the source comes from. By setting
+FETCHCONTENT_SOURCE_DIR_FOO, the developer would take over control of the content. They would be
+free to change anything in their local copy, make further commits, switch branches or whatever
+else may be needed, then rebuild the main TopProj project without having to change TopProj at all.
+
+An arrangement that works well for the above usage is to have a common directory under which
+the developer checks out the different projects they want to work with. The main project can then
+be pointed at these local checkouts when needed, but still use the default downloaded or found
+contents otherwise. Such an arrangement may look like this for the above example:
+
+If the developer wanted to make some changes to Foo and test it with a build of TopProj, they could
+set FETCHCONTENT_SOURCE_DIR_FOO to /…/Projects/Foo, but all the build output from the Foo dependency
+would still be under Projects/builds/TopProj-debug. If FETCHCONTENT_SOURCE_DIR_BAR was left unset, then
+Bar would still be downloaded rather than using the local checkout in Projects/Bar. The developer
+could switch to that local checkout just as easily by setting FETCHCONTENT_SOURCE_DIR_BAR at any time.
+
+Because the relevant cache variables all share the same prefix, they are easy to find in the CMake
+GUI or ccmake tool. This in turn makes it trivial to see which projects are currently using a local copy
+instead of the default downloaded or found contents.
+
+A significant advantage of the above scenario is that it integrates well with IDE features like code
+refactoring tools, etc. The IDE sees the whole project, including its dependencies. As a result, when
+local checkouts of those dependencies are used, refactoring can be performed transparently across
+multiple projects just as easily as if they were all part of the same project. Even if local dependency
+checkouts are not used, the IDE has greater opportunity to build up a more complete code model
+for autocompletion, following symbols and so on.
+
+When a dependency has details declared via FetchContent_Declare() and either the FIND_PACKAGE_ARGS
+keyword     was    used    or    FETCHCONTENT_TRY_FIND_PACKAGE_MODE    was     set   to   ALWAYS,   the
+FETCHCONTENT_SOURCE_DIR_<DEPNAME> variable also takes priority over find_package() calls for that
+dependency. If a dependency provider is registered (see Chapter 32, Dependency Providers), the
+provider will not see the request for a dependency that has the FETCHCONTENT_SOURCE_DIR_<DEPNAME>
+variable set. The assumption is that if the developer sets this variable, they expect it to override all
+other methods for fulfilling a dependency request, whatever the form.
+
+30.6. Other Uses For FetchContent
+FetchContent enables more than just downloading an external project’s source code and building it
+as part of the main project. The following example takes advantage of the fact that the FetchContent
+module can be used even before the first project() call. This feature allows the module to provide
+toolchain files which the developer can then use for the main project.
+
+  cmake_minimum_required(VERSION 3.14)
+
+  include(FetchContent)
+  FetchContent_Declare(CompanyXToolchains
+      GIT_REPOSITORY ...
+      GIT_TAG        ...
+      SOURCE_DIR     ${CMAKE_BINARY_DIR}/toolchains
+  )
+  FetchContent_MakeAvailable(CompanyXToolchains)
+
+  project(MyProj)
+
+  cmake -DCMAKE_TOOLCHAIN_FILE=toolchains/beta_cxx.cmake ...
+
+In the above example, the directory into which the toolchains are downloaded is overridden using
+the SOURCE_DIR option. Assuming CompanyXToolchains is just a collection of toolchain files with no
+subdirectories, their location is both predictable and easy for developers to use. Where
+organizations work with very specific toolchains that are expected to always be installed to the
+same place, this can be a very effective way to facilitate a whole team using common build setups.
+When combined with CMake presets (see Chapter 33, Presets), the entire setup can be fully
+automated. The technique could even be extended to download the toolchains themselves.
+
+Another use case is to collect commonly used CMake modules and commands in a central
+repository and re-use them across many projects. Multiple collections can be pulled in via this
+mechanism, which makes it relatively straightforward to incorporate useful CMake scripts from
+other projects without having to embed copies in the main project’s own sources.
+
+The following demonstrates an example where an external git repository is downloaded and its
+cmake subdirectory is added to the CMake module search path of the main project.
+
+  include(FetchContent)
+  FetchContent_Declare(JoeSmithUtils GIT_REPOSITORY ... GIT_TAG ...)
+  FetchContent_MakeAvailable(JoeSmithUtils)
+
+  if(NOT "${joesmithutils_SOURCE_DIR}" STREQUAL "")
+      list(APPEND CMAKE_MODULE_PATH ${joesmithutils_SOURCE_DIR}/cmake)
+  endif()
+
+The above example relies on a specific behavior of the FetchContent_MakeAvailable() command.
+Unless it is redirected to provide the dependency using find_package(), it will normally define a set
+of variables in the calling scope. One of these variables is <lowercaseDepName>_SOURCE_DIR. When
+
+defined, this variable provides the location of the source directory of the populated content, even if
+it was populated by an earlier call rather than this one. The variable might also not be defined if the
+dependency request is fulfilled by a dependency provider (see Chapter 32, Dependency Providers),
+hence the need to test if the variable is set before using it.
+
+A more flexible and arguably more robust alternative to the above arrangement is for the
+dependency      to   provide    its   own   setup    command.    Consumers    then   call   this   after
+FetchContent_MakeAvailable() instead of having to manually set things like CMAKE_MODULE_PATH using
+variables which might not be defined in all use cases. Using a setup command has the advantage
+that it should work for all methods that FetchContent_MakeAvailable() might use to obtain the
+dependency. The dependency needs to ensure the command is defined regardless of whether it is
+consumed via find_package() or if it is brought directly into the consumer’s build as though via
+add_subdirectory(). In practice this means the dependency’s <lowercaseDepName>-config.cmake file
+should define the command, as should the dependency’s own CMakeLists.txt file. A dependency that
+implements this approach might be structured something like this:
+
+cmake/joesmithutils-extra.cmake
+
+  function(JoeSmithUtilsSetup)
+      # Only modify caller's scope once
+      if(JoeSmithUtilsSetupDone)
+          return()
+      endif()
+
+      set(CMAKE_MODULE_PATH
+          ${CMAKE_MODULE_PATH}
+          ${CMAKE_CURRENT_FUNCTION_LIST_DIR}
+          PARENT_SCOPE
+      )
+      set(JoeSmithUtilsSetupDone TRUE PARENT_SCOPE)
+  endfunction()
+
+JoeSmithUtils' CMakeLists.txt file
+
+  cmake_minimum_required(VERSION 3.14)
+  project(SomeDep)
+  include(cmake/joesmithutils-extra.cmake)
+  ...
+
+JoeSmithUtilsConfig.cmake
+
+  include(${CMAKE_CURRENT_LIST_DIR}/joesmithutils-extra.cmake)
+  # Usual contents to define targets, etc...
+
+The project consuming the dependency would then do something like this:
+
+  include(FetchContent)
+  FetchContent_Declare(JoeSmithUtils ...)
+  FetchContent_MakeAvailable(JoeSmithUtils)
+  JoeSmithUtilsSetup()
+
+30.7. Restrictions
+For the most part, the FetchContent module comes with some strong advantages, but there are some
+restrictions to be aware of. The main limitation is that CMake target names must be unique across
+the whole set of projects being combined. If two external projects define a target with the same
+name, they cannot both be added via add_subdirectory(), which FetchContent_MakeAvailable() will
+typically call internally. This can be easily avoided if projects use project-specific target names, but
+this practice is not always followed, especially in older projects.
+
+Another common problem is projects that assume they are the top level project. A frequently
+observed symptom of this is the use of variables like CMAKE_SOURCE_DIR and CMAKE_BINARY_DIR where
+alternatives like CMAKE_CURRENT_SOURCE_DIR and CMAKE_CURRENT_BINARY_DIR would be more appropriate.
+Again, this is usually easy to fix, it is often just an awareness issue for the project maintainers.
+
+Chapter 31, Making Projects Consumable presents a more comprehensive discussion of things
+projects can do to facilitate other projects consuming them as dependencies. It covers the broader
+discussion of how to make projects compatible with different ways of incorporating a project into
+another build, not just via FetchContent.
+
+30.8. Recommended Practices
+The FetchContent module is a good choice where other projects need to be added to the build in a
+way that allows them to be worked on at the same time. It affords developers the freedom to work
+across projects and temporarily switch to local checkouts, change branches, test with different
+release versions and various other use cases in a seamless manner. It is also friendly to IDE tools,
+since the whole build appears as a single project. Code completion often provides greater insight
+and may be more reliable than if the projects had been loaded separately. Refactoring can also be
+performed across repositories much more robustly.
+
+If adding dependencies to an existing mature project, FetchContent can be much less disruptive than
+ExternalProject, since it doesn’t require any restructuring of the main project. It is also well-suited
+to incorporating external projects that are relatively immature and which don’t yet have install
+components and packaging implemented. A further advantage of FetchContent is that it inherently
+results in using the same compiler and settings across the whole project hierarchy. If a minimum
+CMake version of 3.11 or higher is acceptable, consider whether FetchContent is a more convenient
+and natural fit for the project than ExternalProject. It is also strongly recommended to become
+familiar with tools like ccache for speeding up the build, as the benefits are especially pronounced
+when using FetchContent. See Section 35.4, “Compiler Caches” for a detailed discussion of how to set
+this up for various compilers.
+
+Just as for ExternalProject, if download details are being defined for a git repository, prefer to set
+GIT_TAG to the commit hash rather than a branch or tag name. This is more efficient, since it avoids
+making any network connection if the local clone already has that commit.
+
+When adding a dependency using FetchContent, check if the dependency project can be treated the
+same way regardless of whether it is consumed as an installed binary package using find_package(),
+or it is being built from sources as described in Section 30.2, “Basic Usage”. The requirements for
+being able to treat both the same are given in Chapter 31, Making Projects Consumable. If a
+
+dependency can be consumed identically for both scenarios, add the FIND_PACKAGE_ARGS keyword to
+the FetchContent_Declare() call. This gives the developer the flexibility to choose how they want to
+obtain that dependency instead of being locked in to the project’s choice. It also allows the project
+to be mixed with other projects which might have requested the same dependency with
+find_package() rather than FetchContent.
+
+Avoid using the OVERRIDE_FIND_PACKAGE keyword with FetchContent_Declare() unless it is absolutely
+necessary. It reduces developer choice for how to obtain that dependency, or forces them to make
+their own earlier call to FetchContent_Declare() just to prevent the override. If the project making
+the call to FetchContent_Declare() is an open source project, OVERRIDE_FIND_PACKAGE is usually
+inappropriate. Prefer to give developers the freedom to provide the dependency through the
+method that best suits their needs.
+
+Do not set FETCHCONTENT_TRY_FIND_PACKAGE_MODE in project code. It is intended as a developer control
+and should be left for the developer or driving script author to use as appropriate in their own
+situation. This variable is probably not of great use to developers apart from short-term
+experiments. It may be more useful to package manager maintainers with established
+infrastructure built around find_package().
+
+Prefer to call FetchContent_MakeAvailable() to populate content rather than using the older, more
+manual    pattern   of   calling   FetchContent_GetProperties()   and   FetchContent_Populate().   The
+FetchContent_MakeAvailable() command offers far more flexibility and choice for the developer, it is
+easier to use, and developers will increasingly come to expect it over the manual pattern.
+
+Section 31.5, “Use Appropriate Methods To Obtain Dependencies” also provides a condensed
+summary of recommendations covering much of the above which may be a helpful reference.
+
