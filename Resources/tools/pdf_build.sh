@@ -954,6 +954,15 @@ elif [ "$4" = book ] && [ "$SLUG" = file-system-forensic-analysis ]; then
     ty { print $2"\t"t }
   ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = embedded-systems-arm-cortex-m-zhu ]; then
+  # Chapters are titled "ChN: Title" (abbreviated), which the generic book
+  # pattern (Chapter/Part/Appendix at line start) misses, so it folded all 24
+  # into the front matter and split only on the "Appendix X:" nodes. The depth-0
+  # outline nodes are exactly the chapters, appendices, Bibliography and Index in
+  # page order; take them straight. Front matter (before Ch1) folds into the
+  # auto-emitted first block, like every other book.
+  awk -F'\t' '$1==0 {t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); print $2"\t"t}' "$OUT/.all.tsv" \
+    | sort -t"$(printf '\t')" -k1,1n -s > "$OUT/.ch.tsv"
 elif [ "$4" = book ]; then
   # Match on a lowercased copy so No Starch's "APPENDIX: ..." / "GLOSSARY" count;
   # accept letter-numbered appendices ("A. The One-Definition Rule") once a

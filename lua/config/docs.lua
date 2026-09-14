@@ -4363,6 +4363,7 @@ local BOOKS = {
 		{ title = "Bootlin: Embedded Linux (BBB labs)", fmt = "epub", file = "bootlin-embedded-linux-bbb-labs.epub" },
 		{ title = "Bootlin: Linux Kernel (slides)", fmt = "epub", file = "bootlin-linux-kernel-slides.epub" },
 		{ title = "Bootlin: Embedded Linux (QEMU labs)", fmt = "epub", file = "embedded-linux-qemu-labs.epub" },
+		{ title = "UNIX and Linux System Administration Handbook (Nemeth et al.)", fmt = "pdf", slug = "unix-and-linux-system-administration-handbook", file = "Evi Nemeth, Garth Snyder, Trent R. Hein, Ben Whaley, Dan Mackin - UNIX and Linux System Administration Handbook (2017, Addison-Wesley) - libgen.li.pdf" },
 	} },
 	{ module = "Algorithms", key = "books-algo", items = {
 		{ title = "Algorithms Illuminated, Part 2", fmt = "epub", file = "Algorithms Illuminated (Part 2)_ Graph Algorithms and Data -- Tim Roughgarden -- First edition, San Francisco, CA, 2018 -- Soundlikeyourself -- 9780999282908 -- 60673f61ed5b43af2525a40cf00038f9 -- Anna’s Archive.epub" },
@@ -4391,6 +4392,7 @@ local BOOKS = {
 		{ title = "Reverse Engineering for Beginners (Yurichev)", fmt = "pdf", slug = "reverse-engineering-for-beginners", file = "reverse-engineering-for-beginners.pdf" },
 		{ title = "The Art of Software Security Assessment", fmt = "pdf", slug = "the-art-of-software-security-assessment", file = "ArtOfSoftwareSecurityAssessment.pdf" },
 		{ title = "Surreptitious Software: Obfuscation, Watermarking, and Tamperproofing", fmt = "pdf", slug = "surreptitious-software", file = "surreptitious-software.pdf" },
+		{ title = "Microcontroller Exploits (Goodspeed)", fmt = "pdf", slug = "microcontroller-exploits", file = "Microcontroller Exploits -- Travis Goodspeed -- 1, 2024 -- No Starch Press, Incorporated -- 9781718503885 -- ba572f5ca389f9e5352541d9b14c7bae -- Anna’s Archive.pdf" },
 	} },
 	{ module = "Architecture", key = "books-arch", items = {
 		{ title = "Computer Architecture: A Quantitative Approach (H&P)", fmt = "pdf", slug = "computer-architecture-a-quantitative-approach", file = "Computer-Architecture-A-Quanitative-Approach.pdf" },
@@ -4441,6 +4443,8 @@ local BOOKS = {
 	{ module = "Firmware", key = "books-firmware", items = {
 		{ title = "Mastering STM32 (Noviello)", fmt = "pdf", slug = "mastering-stm32", file = "Mastering-STM32.pdf" },
 		{ title = "Beyond BIOS", fmt = "epub", file = "Beyond BIOS - Vincent Zimmer,Michael Rothman,Suresh Marisetty.epub" },
+		{ title = "Embedded Systems: Introduction to Arm Cortex-M Microcontrollers (Valvano)", fmt = "pdf", slug = "embedded-systems-arm-cortex-m-valvano", file = "Embedded-Intro-to-Arm-Microcontrollers.pdf" },
+		{ title = "Embedded Systems with ARM Cortex-M (Assembly and C, Zhu)", fmt = "pdf", slug = "embedded-systems-arm-cortex-m-zhu", file = "Embedded Systems with ARM Cortex-M Microcontrollers in Assembly Language and C.pdf" },
 	} },
 	{ module = "Windows", key = "books-windows", items = {
 		{ title = "Windows Internals, Part 1 (7e)", fmt = "pdf", slug = "windows-internals-part-1", file = "Windows-Internals-Part-1.pdf" },
