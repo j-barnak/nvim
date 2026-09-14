@@ -3226,7 +3226,7 @@ local function pick_systemd()
 	end
 	local function pick_chapter(cat)
 		local items = cats[cat]
-		last_picker = function() pick_chapter(cat) end
+		last_picker = pick_systemd -- D returns to the top-level systemd category menu
 		fzf().fzf_exec(vim.tbl_map(function(it) return it.title end, items), {
 			prompt = "systemd/" .. cat .. "> ",
 			fzf_opts = { ["--no-multi"] = true },
@@ -3277,7 +3277,7 @@ local function frozen_nested_provider(name, top_prompt)
 		end
 		local function pick_chapter(cat)
 			local items = cats[cat]
-			last_picker = function() pick_chapter(cat) end
+			last_picker = run -- D returns to the top-level category menu
 			fzf().fzf_exec(vim.tbl_map(function(it) return it.title end, items), {
 				prompt = cat .. "> ",
 				fzf_opts = { ["--no-multi"] = true },
@@ -4445,9 +4445,9 @@ local function pick_rust_std()
 		if vim.fn.filereadable(f) ~= 1 then
 			return vim.notify("Rust std: " .. rel .. " missing", vim.log.levels.WARN)
 		end
-		last_picker = function()
-			list_tsv(rel, prompt)
-		end
+		-- D from an item page returns to the top-level std menu, not this
+		-- category subpicker (Primitives/Modules/Macros/...).
+		last_picker = pick_rust_std
 		fzf().fzf_exec(vim.fn.readfile(f), {
 			prompt = prompt,
 			fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
@@ -5025,7 +5025,10 @@ local providers = {
 			if u then open_url(root, u, t) end
 		end
 		api_picker = function(root)
-			last_picker = function() api_picker(root) end
+			-- D from an API page returns to the top-level narrative picker (this
+			-- doc's main TOC, which offers "» API Reference" to drill back in),
+			-- not this subpicker.
+			last_picker = narrative
 			fzf().fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
 				prompt = "drgn API reference (chapter)> ",
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
@@ -5159,7 +5162,10 @@ local providers = {
 			if u then open_url(root, u, t) end
 		end
 		api_picker = function(root)
-			last_picker = function() api_picker(root) end
+			-- D from an API page returns to the top-level narrative picker (this
+			-- doc's main TOC, which offers "» API Reference" to drill back in),
+			-- not this subpicker.
+			last_picker = narrative
 			fzf().fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
 				prompt = "Frida API reference> ",
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
@@ -5207,7 +5213,10 @@ local providers = {
 			if u then open_url(root, u, t) end
 		end
 		api_picker = function(root)
-			last_picker = function() api_picker(root) end
+			-- D from an API page returns to the top-level narrative picker (this
+			-- doc's main TOC, which offers "» API Reference" to drill back in),
+			-- not this subpicker.
+			last_picker = narrative
 			fzf().fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
 				prompt = "angr API reference (module)> ",
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
