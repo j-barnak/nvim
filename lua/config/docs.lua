@@ -5376,7 +5376,8 @@ local providers = {
 	{ name = "OCaml by Example", key = "ocaml-byexample",
 		run = frozen_web_provider("ocaml-byexample", "OCaml by Example> ") },
 	-- Beautiful Racket (beautifulracket.com): frozen, "[Section] Title" in the
-	-- site's TOC order - Start, the eleven Tutorials (landing pages), Explainers.
+	-- site's TOC order - Start, the eleven Tutorials in full ("[Tutorials /
+	-- <name>] <step>", every page crawled along the "next" links), Explainers.
 	{ name = "Beautiful Racket", key = "beautiful-racket",
 		run = frozen_web_provider("beautiful-racket", "Beautiful Racket> ") },
 	-- seL4: a launcher for the whitepaper (PDF, one page), the reference manual
