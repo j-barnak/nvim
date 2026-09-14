@@ -5017,7 +5017,11 @@ local providers = {
 			render_lines(vim.fn.readfile(cf), "markdown", root, title or url)
 		end
 		local function open_row(root, sel)
-			local t, u = sel and sel[1] and sel[1]:match("^([^\t]+)\t(.+)$")
+			if not (sel and sel[1]) then return end
+			-- match() returns two captures; keep it OUT of an `and` chain, whose
+			-- binary operator would truncate it to the first value (u -> nil) and
+			-- silently open nothing.
+			local t, u = sel[1]:match("^([^\t]+)\t(.+)$")
 			if u then open_url(root, u, t) end
 		end
 		api_picker = function(root)
@@ -5147,7 +5151,11 @@ local providers = {
 			render_lines(vim.fn.readfile(cf), "markdown", root, title or url)
 		end
 		local function open_row(root, sel)
-			local t, u = sel and sel[1] and sel[1]:match("^([^\t]+)\t(.+)$")
+			if not (sel and sel[1]) then return end
+			-- match() returns two captures; keep it OUT of an `and` chain, whose
+			-- binary operator would truncate it to the first value (u -> nil) and
+			-- silently open nothing.
+			local t, u = sel[1]:match("^([^\t]+)\t(.+)$")
 			if u then open_url(root, u, t) end
 		end
 		api_picker = function(root)
@@ -5191,7 +5199,11 @@ local providers = {
 			render_lines(vim.fn.readfile(cf), "markdown", root, title or url)
 		end
 		local function open_row(root, sel)
-			local t, u = sel and sel[1] and sel[1]:match("^([^\t]+)\t(.+)$")
+			if not (sel and sel[1]) then return end
+			-- match() returns two captures; keep it OUT of an `and` chain, whose
+			-- binary operator would truncate it to the first value (u -> nil) and
+			-- silently open nothing.
+			local t, u = sel[1]:match("^([^\t]+)\t(.+)$")
 			if u then open_url(root, u, t) end
 		end
 		api_picker = function(root)
