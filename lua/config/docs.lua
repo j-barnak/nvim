@@ -4345,7 +4345,6 @@ local BOOKS = {
 		{ title = "Essentials of Compilation (Python)", fmt = "pdf", slug = "essentials-of-compilation", file = "book.pdf" },
 		{ title = "SAT/SMT by Example (Yurichev)", fmt = "pdf", slug = "sat-smt-by-example", file = "SAT_SMT_by_example.pdf" },
 		{ title = "Engineering a Compiler (Cooper & Torczon)", fmt = "pdf", slug = "engineering-a-compiler", file = "EngineeringACompiler.pdf" },
-		{ title = "Parsing Techniques (Grune & Jacobs)", fmt = "pdf", slug = "parsing-techniques", file = "ParsingTechniques copy.pdf" },
 	} },
 	{ module = "Containers", key = "books-container", items = {
 		{ title = "Build Your Own Docker (CodeCrafters)", fmt = "md", slug = "build-your-own-docker", file = "https://github.com/codecrafters-io/build-your-own-docker" },
