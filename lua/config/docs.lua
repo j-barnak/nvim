@@ -2912,6 +2912,236 @@ local function pick_aya_api()
 	end)
 end
 
+-- ── generic live docs.rs crate browser (Serde / Dioxus / chumsky) ─────────
+-- Crate API docs are NOT frozen (offline-clone-goal): each docs.rs page is
+-- fetched live and cached by URL (render_shell), so the set fills in through
+-- reading. Returns a two-entry menu picker { overview, crate items }. opts:
+--   sections    the overview drills into the crate root doc's own headings
+--               (Features, Example, …); otherwise it renders the root as one page.
+--   items_label label for the item-browser entry (default "Crate items").
+-- Items are grouped by kind (Modules, Macros, Structs, Enums, Traits, …), the
+-- docs.rs sidebar layout. D from any page returns to this crate's menu.
+local function pick_crate(crate, opts)
+	opts = opts or {}
+	local base = "https://docs.rs/" .. crate .. "/latest/" .. crate .. "/"
+	local dir = data_root .. "/crate-docs/" .. crate
+	local we = tools_src .. "/webextract.py"
+	local KIND = { macro = "Macros", struct = "Structs", enum = "Enums",
+		trait = "Traits", fn = "Functions", type = "Type Aliases",
+		constant = "Constants", derive = "Derive Macros", attr = "Attribute Macros",
+		union = "Unions", primitive = "Primitives", static = "Statics" }
+	local KIND_ORDER = { "Modules", "Macros", "Structs", "Enums", "Traits",
+		"Functions", "Type Aliases", "Constants", "Derive Macros",
+		"Attribute Macros", "Unions", "Primitives", "Statics" }
+	local menu -- forward ref: the top of this crate's doc (D target)
+
+	local function need_tools()
+		if have("curl") and have("pandoc") and have("python3") then
+			return true
+		end
+		vim.notify("curl, pandoc and python3 are needed for crate docs", vim.log.levels.WARN)
+		return false
+	end
+	local function pipe(url, sel)
+		return table.concat({
+			"curl -fsSL --compressed --max-time 40 " .. shq(url),
+			"python3 " .. shq(we) .. " content " .. shq(sel) .. " " .. shq(url) .. " abs",
+			"pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs",
+			"python3 " .. shq(we) .. " clean '' ''",
+		}, " | ")
+	end
+	local function open_page(url, title)
+		if not need_tools() then
+			return
+		end
+		render_shell(pipe(url, "section#main-content"), title, "markdown", url)
+	end
+
+	-- crate root doc split into its own headings (the "Sections" sidebar) ----
+	local function sections()
+		last_picker = menu
+		if not need_tools() then
+			return
+		end
+		local rooturl = base .. "index.html"
+		local cf = webcache_dir .. "/" .. vim.fn.sha256(rooturl .. "#doc") .. ".txt"
+		local function present(lines)
+			-- split at heading lines into { title -> {from,to} }, in order
+			local heads, map = {}, {}
+			for i, l in ipairs(lines) do
+				local t = l:match("^#+%s+(.+)$")
+				if t then
+					t = t:gsub("%*", "")
+					heads[#heads + 1] = { title = t, from = i }
+				end
+			end
+			if #heads == 0 then
+				return render_lines(lines, "markdown", nil, crate .. " (crate root)")
+			end
+			local titles = {}
+			for j, h in ipairs(heads) do
+				h.to = heads[j + 1] and (heads[j + 1].from - 1) or #lines
+				titles[#titles + 1] = h.title
+				map[h.title] = h
+			end
+			fzf().fzf_exec(titles, {
+				prompt = crate .. " sections> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = { ["default"] = function(sel)
+					if not (sel and sel[1] and map[sel[1]]) then
+						return
+					end
+					local h = map[sel[1]]
+					render_lines(vim.list_slice(lines, h.from, h.to), "markdown", nil, crate .. " :: " .. h.title)
+				end },
+			})
+		end
+		if vim.fn.filereadable(cf) == 1 then
+			return present(vim.fn.readfile(cf))
+		end
+		vim.notify("Fetching the " .. crate .. " crate overview (docs.rs) …")
+		vim.system({ "sh", "-c", pipe(rooturl, "div.docblock") }, { text = true, timeout = 60000 }, function(res)
+			vim.schedule(function()
+				local lines = vim.split(res.stdout or "", "\n")
+				while #lines > 0 and lines[#lines]:match("^%s*$") do
+					lines[#lines] = nil
+				end
+				if res.code ~= 0 or #lines == 0 then
+					return vim.notify(crate .. ": could not fetch the crate overview", vim.log.levels.WARN)
+				end
+				pcall(function()
+					mkdir(webcache_dir, true)
+					vim.fn.writefile(lines, cf)
+				end)
+				present(lines)
+			end)
+		end)
+	end
+
+	-- item browser: pick a kind, then an item of that kind -------------------
+	local function items_of_kind(rows, kindlabel)
+		last_picker = menu
+		if kindlabel == "Modules" then
+			local mods, seen = {}, {}
+			for _, r in ipairs(rows) do
+				local d = r:match("\t[^\t]+\t([a-z0-9_]+)/")
+				if d and not seen[d] then
+					seen[d] = true
+					mods[#mods + 1] = d
+				end
+			end
+			table.sort(mods)
+			return fzf().fzf_exec(mods, {
+				prompt = crate .. " modules> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = { ["default"] = function(sel)
+					if sel and sel[1] then
+						open_page(base .. sel[1] .. "/index.html", crate .. "::" .. sel[1])
+					end
+				end },
+			})
+		end
+		local sub = {}
+		for _, r in ipairs(rows) do
+			local kw = r:match("^[^\t]+\t(%a+) ")
+			if kw and KIND[kw] == kindlabel then
+				sub[#sub + 1] = r
+			end
+		end
+		table.sort(sub)
+		fzf().fzf_exec(sub, {
+			prompt = crate .. " " .. kindlabel:lower() .. "> ",
+			fzf_opts = { ["--with-nth"] = "2", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then
+					return
+				end
+				local nm = sel[1]:match("^[^\t]+\t%a+ ([^\t]+)\t")
+				local rel = sel[1]:match("\t([^\t]+)$")
+				if rel then
+					open_page(base .. rel, crate .. "::" .. (nm or rel))
+				end
+			end },
+		})
+	end
+	local function items_menu(rows)
+		last_picker = menu
+		local present, has_mod = {}, false
+		for _, r in ipairs(rows) do
+			local kw = r:match("^[^\t]+\t(%a+) ")
+			if kw and KIND[kw] then
+				present[KIND[kw]] = true
+			end
+			if r:match("\t[^\t]+\t[a-z0-9_]+/") then
+				has_mod = true
+			end
+		end
+		local groups = {}
+		if has_mod then
+			groups[#groups + 1] = "Modules"
+		end
+		for _, k in ipairs(KIND_ORDER) do
+			if k ~= "Modules" and present[k] then
+				groups[#groups + 1] = k
+			end
+		end
+		fzf().fzf_exec(groups, {
+			prompt = crate .. " items> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if sel and sel[1] then
+					items_of_kind(rows, sel[1])
+				end
+			end },
+		})
+	end
+	local function with_items(cb)
+		local idxfile = dir .. "/items.tsv"
+		if vim.fn.filereadable(idxfile) == 1 then
+			return cb(vim.fn.readfile(idxfile))
+		end
+		if not (need_tools() and mkdir(dir)) then
+			return
+		end
+		vim.notify("Fetching the " .. crate .. " API index (docs.rs) … (first time)")
+		-- sh -c '<script>' name <crate>  sets $1=crate for crate_api_idx.sh
+		vim.system({ "sh", "-c", tool_script("crate_api_idx.sh"), "crate_api_idx.sh", crate },
+			{ text = true, timeout = 30000 }, function(res)
+			vim.schedule(function()
+				local items = vim.split(res.stdout or "", "\n", { trimempty = true })
+				if #items == 0 then
+					return vim.notify(crate .. " API: could not fetch the item index from docs.rs", vim.log.levels.WARN)
+				end
+				vim.fn.writefile(items, idxfile)
+				cb(items)
+			end)
+		end)
+	end
+
+	menu = function()
+		last_picker = menu
+		local ov = opts.sections and "Sections (crate overview)" or "Overview (crate root)"
+		local it = opts.items_label or "Crate items"
+		fzf().fzf_exec({ ov, it }, {
+			prompt = crate .. "> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then
+					return
+				end
+				if sel[1] == ov then
+					if opts.sections then
+						return sections()
+					end
+					return open_page(base .. "index.html", crate .. " (crate root)")
+				end
+				with_items(items_menu)
+			end },
+		})
+	end
+	return menu
+end
+
 -- ── site-scraped tutorials: learncpp.com, rayanfam.com ───────────────────
 -- No git repo, so fetch the index page, list its links, and render a picked
 -- page's main article. A small bs4 helper extracts just the content container
@@ -4010,15 +4240,6 @@ end
 
 -- ── Rust: pick one of the official mdbooks and browse its Markdown ───────
 -- The Rust *reference* (the rust-lang books moved to Books -> Rust).
-local function pick_rust()
-	if not (have("git") and have("fd")) then
-		return vim.notify("git and fd are needed for the Rust reference", vim.log.levels.WARN)
-	end
-	ensure_repo(data_root .. "/rust/reference", "https://github.com/rust-lang/reference", "/src", "src", function(d)
-		pick_files(d .. "/src", "-e md", "Rust reference> ")
-	end)
-end
-
 -- ── binutils: the analysis tools, rendered from their man pages ──────────
 local function pick_binutils()
 	if not have("man") then
@@ -4793,6 +5014,9 @@ LOCATION["triton-docs"] = { index = "triton-docs/index.tsv", unit = "page" }
 LOCATION["angr-docs"] = { index = "angr-docs/index.tsv", unit = "page" }
 LOCATION["dynamorio-docs"] = { index = "dynamorio-docs/index.tsv", unit = "page" }
 LOCATION["rust-std"] = { index = "rust-std/index.tsv", unit = "item" }
+LOCATION["serde-guide"] = { index = "serde-guide/index.tsv", unit = "page" }
+LOCATION["dioxus-guide"] = { index = "dioxus-guide/index.tsv", unit = "page" }
+LOCATION["chumsky"] = { network = true } -- crate-only, live from docs.rs
 LOCATION["binja-user-docs"] = { index = "binja-user-docs/index.tsv", unit = "page" }
 LOCATION["binja-dev-docs"] = { index = "binja-dev-docs/index.tsv", unit = "page" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
@@ -5151,10 +5375,47 @@ local providers = {
 			actions = { ["default"] = function(sel)
 				if not (sel and sel[1]) then return end
 				if sel[1]:match("^The Standard Library") then return pick_rust_std() end
-				return pick_rust()
+				-- The Rust Reference (rust-lang/reference), browsed live from its /src.
+				if not (have("git") and have("fd")) then
+					return vim.notify("git and fd are needed for the Rust reference", vim.log.levels.WARN)
+				end
+				ensure_repo(data_root .. "/rust/reference", "https://github.com/rust-lang/reference", "/src", "src", function(d)
+					pick_files(d .. "/src", "-e md", "Rust reference> ")
+				end)
 			end },
 		})
 	end },
+	-- Serde: the serde.rs guide (frozen, "[Section] Title" in sidebar order)
+	-- plus the crate API reference browsed live from docs.rs. Launcher like
+	-- the Books menu: each choice sets its own D target.
+	{ name = "Serde", key = "serde-guide", run = function()
+		fzf().fzf_exec({ "Guide (serde.rs)", "Crate reference (docs.rs)" }, {
+			prompt = "Serde> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				if sel[1]:match("^Crate") then return pick_crate("serde", {})() end
+				return frozen_web_provider("serde-guide", "Serde guide> ")()
+			end },
+		})
+	end },
+	-- Dioxus: the crate API reference (live docs.rs) plus the dioxuslabs.com
+	-- 0.7 guide (frozen, "[Section] Title" in sidebar order).
+	{ name = "Dioxus", key = "dioxus-guide", run = function()
+		fzf().fzf_exec({ "Crate reference (docs.rs)", "Guide (dioxuslabs.com 0.7)" }, {
+			prompt = "Dioxus> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				if sel[1]:match("^Crate") then return pick_crate("dioxus", {})() end
+				return frozen_web_provider("dioxus-guide", "Dioxus guide> ")()
+			end },
+		})
+	end },
+	-- chumsky: crate-only (docs.rs). The crate root doc's own headings
+	-- ("Sections") plus the item browser ("Crate items"), both live.
+	{ name = "chumsky (parser combinators)", key = "chumsky",
+		run = pick_crate("chumsky", { sections = true }) },
 	-- Frida docs: the frida.re/docs handbook (site sidebar order, "[Section]
 	-- Title") with the API Reference (JS/C/Gum/Core/Swift/Go) behind a separate
 	-- sub-picker. Inlined closure (200-local cap), same shape as angr.
