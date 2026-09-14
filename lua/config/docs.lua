@@ -5019,6 +5019,7 @@ LOCATION["angr-docs"] = { index = "angr-docs/index.tsv", unit = "page" }
 LOCATION["dynamorio-docs"] = { index = "dynamorio-docs/index.tsv", unit = "page" }
 LOCATION["rust-std"] = { index = "rust-std/index.tsv", unit = "item" }
 LOCATION["ocaml-byexample"] = { index = "ocaml-byexample/index.tsv", unit = "page" }
+LOCATION["beautiful-racket"] = { index = "beautiful-racket/index.tsv", unit = "page" }
 LOCATION["sel4-docs"] = { index = "sel4-docs/index.tsv", unit = "page" }
 LOCATION["sel4-manual"] = { index = "sel4-manual/index.tsv", unit = "chapter" }
 LOCATION["serde-guide"] = { index = "serde-guide/index.tsv", unit = "page" }
@@ -5374,6 +5375,10 @@ local providers = {
 	-- Advanced Ocaml). sets/functors/monads are site placeholders -> stubbed.
 	{ name = "OCaml by Example", key = "ocaml-byexample",
 		run = frozen_web_provider("ocaml-byexample", "OCaml by Example> ") },
+	-- Beautiful Racket (beautifulracket.com): frozen, "[Section] Title" in the
+	-- site's TOC order - Start, the eleven Tutorials (landing pages), Explainers.
+	{ name = "Beautiful Racket", key = "beautiful-racket",
+		run = frozen_web_provider("beautiful-racket", "Beautiful Racket> ") },
 	-- seL4: a launcher for the whitepaper (PDF, one page), the reference manual
 	-- (PDF split per chapter -> subpicker), the docs.sel4.systems site (frozen,
 	-- "[Section] Title" -> subpicker) and the publications list (one page). All
