@@ -5015,6 +5015,8 @@ LOCATION["angr-docs"] = { index = "angr-docs/index.tsv", unit = "page" }
 LOCATION["dynamorio-docs"] = { index = "dynamorio-docs/index.tsv", unit = "page" }
 LOCATION["rust-std"] = { index = "rust-std/index.tsv", unit = "item" }
 LOCATION["ocaml-byexample"] = { index = "ocaml-byexample/index.tsv", unit = "page" }
+LOCATION["sel4-docs"] = { index = "sel4-docs/index.tsv", unit = "page" }
+LOCATION["sel4-manual"] = { index = "sel4-manual/index.tsv", unit = "chapter" }
 LOCATION["serde-guide"] = { index = "serde-guide/index.tsv", unit = "page" }
 LOCATION["dioxus-guide"] = { index = "dioxus-guide/index.tsv", unit = "page" }
 LOCATION["chumsky"] = { network = true } -- crate-only, live from docs.rs
@@ -5368,6 +5370,42 @@ local providers = {
 	-- Advanced Ocaml). sets/functors/monads are site placeholders -> stubbed.
 	{ name = "OCaml by Example", key = "ocaml-byexample",
 		run = frozen_web_provider("ocaml-byexample", "OCaml by Example> ") },
+	-- seL4: a launcher for the whitepaper (PDF, one page), the reference manual
+	-- (PDF split per chapter -> subpicker), the docs.sel4.systems site (frozen,
+	-- "[Section] Title" -> subpicker) and the publications list (one page). All
+	-- frozen. Whitepaper/publications set last_picker back to this menu; the two
+	-- subpickers set their own (each doc's top). Inline IIFE (200-local cap).
+	{ name = "seL4 (microkernel)", key = "sel4-docs", run = (function()
+		local menu
+		local WP = "https://sel4.systems/About/seL4-whitepaper.pdf"
+		local PUB = "https://sel4.systems/Research/publications.html"
+		local function open_frozen(url, title)
+			last_picker = menu
+			local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+				or (frozen_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt")
+			local ddir = resolve_docs("sel4-docs") or (frozen_root .. "/sel4-docs")
+			if vim.fn.filereadable(cf) == 1 then
+				render_lines(vim.fn.readfile(cf), "markdown", ddir, title)
+			else
+				vim.notify(title .. ": not in the frozen cache", vim.log.levels.WARN)
+			end
+		end
+		menu = function()
+			last_picker = menu
+			fzf().fzf_exec({ "Whitepaper", "Manual", "Documentation", "Publications" }, {
+				prompt = "seL4> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = { ["default"] = function(sel)
+					if not (sel and sel[1]) then return end
+					if sel[1] == "Whitepaper" then return open_frozen(WP, "seL4 Whitepaper") end
+					if sel[1] == "Manual" then return frozen_web_provider("sel4-manual", "seL4 manual (chapter)> ")() end
+					if sel[1] == "Documentation" then return frozen_web_provider("sel4-docs", "seL4 docs> ")() end
+					if sel[1] == "Publications" then return open_frozen(PUB, "seL4 Publications") end
+				end },
+			})
+		end
+		return menu
+	end)() },
 	{ name = "Haskell (Hoogle)", key = "haskell", run = pick_haskell },
 	-- One top-level "Rust" entry grouping the two language references: the Rust
 	-- Reference (rust-lang/reference, browsed live) and the Standard Library (the
