@@ -5014,6 +5014,7 @@ LOCATION["triton-docs"] = { index = "triton-docs/index.tsv", unit = "page" }
 LOCATION["angr-docs"] = { index = "angr-docs/index.tsv", unit = "page" }
 LOCATION["dynamorio-docs"] = { index = "dynamorio-docs/index.tsv", unit = "page" }
 LOCATION["rust-std"] = { index = "rust-std/index.tsv", unit = "item" }
+LOCATION["ocaml-byexample"] = { index = "ocaml-byexample/index.tsv", unit = "page" }
 LOCATION["serde-guide"] = { index = "serde-guide/index.tsv", unit = "page" }
 LOCATION["dioxus-guide"] = { index = "dioxus-guide/index.tsv", unit = "page" }
 LOCATION["chumsky"] = { network = true } -- crate-only, live from docs.rs
@@ -5362,6 +5363,11 @@ local providers = {
 	{ name = "NetBSD kernel internals (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
 	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
+	-- OCaml By Example (o1-labs.github.io/ocamlbyexample): frozen, "[Section]
+	-- Title" in the site's sidebar order (Language Basics / Project Management /
+	-- Advanced Ocaml). sets/functors/monads are site placeholders -> stubbed.
+	{ name = "OCaml by Example", key = "ocaml-byexample",
+		run = frozen_web_provider("ocaml-byexample", "OCaml by Example> ") },
 	{ name = "Haskell (Hoogle)", key = "haskell", run = pick_haskell },
 	-- One top-level "Rust" entry grouping the two language references: the Rust
 	-- Reference (rust-lang/reference, browsed live) and the Standard Library (the
