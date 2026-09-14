@@ -5077,7 +5077,6 @@ local providers = {
 	{ name = "SDL2", key = "sdl2", run = register_versioned("sdl2", { src_url = "https://github.com/libsdl-org/SDL", tagre = "release-2\\.[0-9]+\\.[0-9]+", diskpat = "^release%-2", label = "SDL2", docs_mode = "latest", docs_fn = make_simple("sdl2", simple.sdl2) }) },
 	{ name = "SDL3", key = "sdl3", run = register_versioned("sdl3", { src_url = "https://github.com/libsdl-org/SDL", tagre = "release-3\\.[0-9]+\\.[0-9]+", diskpat = "^release%-3", label = "SDL3", docs_mode = "latest", docs_fn = make_simple("sdl3", simple.sdl3) }) },
 	{ name = "OpenGL", key = "opengl", run = make_simple("opengl", simple.opengl) },
-	{ name = "Rust std (doc.rust-lang.org)", key = "rust-std", run = pick_rust_std },
 	{ name = "AFL++", key = "aflpp", run = register_versioned("aflpp", vspec(simple.aflpp, "v[0-9]+\\.[0-9]+[a-z]?", { label = "AFL++", submodules = true })) },
 	-- AFL++ vendored submodules, each also reachable on its own. The three that
 	-- publish release tags get a version picker (source-only, docs_mode "none");
@@ -5140,7 +5139,22 @@ local providers = {
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
 	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
 	{ name = "Haskell (Hoogle)", key = "haskell", run = pick_haskell },
-	{ name = "Rust reference", key = "rust", run = pick_rust },
+	-- One top-level "Rust" entry grouping the two language references: the Rust
+	-- Reference (rust-lang/reference, browsed live) and the Standard Library (the
+	-- frozen doc.rust-lang.org/std site). A launcher like the Books menu - each
+	-- choice runs its own picker (which sets its own D target), so it does not
+	-- touch last_picker itself.
+	{ name = "Rust", key = "rust", run = function()
+		fzf().fzf_exec({ "The Rust Reference", "The Standard Library (std)" }, {
+			prompt = "Rust> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				if sel[1]:match("^The Standard Library") then return pick_rust_std() end
+				return pick_rust()
+			end },
+		})
+	end },
 	-- Frida docs: the frida.re/docs handbook (site sidebar order, "[Section]
 	-- Title") with the API Reference (JS/C/Gum/Core/Swift/Go) behind a separate
 	-- sub-picker. Inlined closure (200-local cap), same shape as angr.
