@@ -15,7 +15,7 @@ set -u
 CFG="${CFG:-$(cd "$(dirname "$0")/../.." && pwd)}"
 WE="$CFG/Resources/tools/webextract.py"
 FCT="$CFG/Resources/tools/fc_tables.py"
-CT="$CFG/Resources/tools/compact_tables.py"
+AT="$CFG/Resources/tools/align_tables.py"
 CACHE="$CFG/Resources/docs/.webcache"
 OUT="$CFG/Resources/docs/x86-insns"
 BASE="https://www.felixcloutier.com/x86"
@@ -78,7 +78,8 @@ while IFS= read -r url; do
     | python3 "$FCT" 2>/dev/null \
     | python3 "$WE" content body "$url" abs 2>/dev/null \
     | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs 2>/dev/null \
-    | python3 "$WE" clean "" "" 2>/dev/null)
+    | python3 "$WE" clean "" "" 2>/dev/null \
+    | sed -E 's/!\[[^]]*\]\(data:[^)]*\)//g; s/\]\(data:[^)]*\)/]()/g')
   [ "$(printf '%s' "$body" | wc -c)" -lt 40 ] && { echo "FAIL empty $url" >&2; fail=$((fail+1)); continue; }
   printf '%s' "$body" > "$cf"
   echo "$cf" >> /tmp/fc_built.list
@@ -87,7 +88,7 @@ while IFS= read -r url; do
   sleep 0.25
 done < /tmp/fc_urls.txt
 
-echo "==> compacting tables in $ok cached pages"
-# compact_tables.py rewrites files in place; feed it the built list in batches.
-xargs -a /tmp/fc_built.list -n 200 python3 "$CT" >/dev/null 2>&1 || true
+echo "==> aligning tables in $ok cached pages"
+# align_tables.py pads columns for monospaced viewing (rewrites in place).
+xargs -a /tmp/fc_built.list -n 200 python3 "$AT" >/dev/null 2>&1 || true
 echo "==> x86 insns: $ok/$total pages ok, $fail failed, index rows: $idxrows"
