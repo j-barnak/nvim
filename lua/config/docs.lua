@@ -4783,6 +4783,9 @@ local WEB_BOOKS = {
 	-- Title" in sidebar order (Language Basics / Project Management / Advanced
 	-- Ocaml); sets/functors/monads are site placeholders -> stubbed.
 	{ title = "OCaml by Example", key = "ocaml-byexample", run = frozen_web_provider("ocaml-byexample", "OCaml by Example> ") },
+	-- Beautiful Racket (beautifulracket.com): frozen, "[Section] Title" in TOC
+	-- order (Start, the eleven Tutorials in full, Explainers).
+	{ title = "Beautiful Racket", key = "beautiful-racket", run = frozen_web_provider("beautiful-racket", "Beautiful Racket> ") },
 	{ title = "Cryptopals Crypto Challenges", key = "cryptopals", run = pick_cryptopals },
 	{ title = "CryptoHack Courses", key = "cryptohack", run = pick_cryptohack },
 	{ title = "LazyFoo SDL3 Tutorials", key = "lazyfoo-sdl3", run = pick_lazyfoo_sdl3 },
@@ -5400,11 +5403,6 @@ local providers = {
 	{ name = "NetBSD kernel internals (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
 	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
-	-- Beautiful Racket (beautifulracket.com): frozen, "[Section] Title" in the
-	-- site's TOC order - Start, the eleven Tutorials in full ("[Tutorials /
-	-- <name>] <step>", every page crawled along the "next" links), Explainers.
-	{ name = "Beautiful Racket", key = "beautiful-racket",
-		run = frozen_web_provider("beautiful-racket", "Beautiful Racket> ") },
 	-- seL4: a launcher for the whitepaper (PDF, one page), the reference manual
 	-- (PDF split per chapter -> subpicker), the docs.sel4.systems site (frozen,
 	-- "[Section] Title" -> subpicker) and the publications list (one page). All
