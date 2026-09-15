@@ -20,51 +20,53 @@ OUT="$CFG/Resources/docs/mit-6824"
 B="https://pdos.csail.mit.edu/6.824"
 mkdir -p "$OUT" "$CACHE"
 
-# title <TAB> url-tail (relative to $B), in schedule order (lectures, then labs).
+# title <TAB> url-tail (relative to $B), in schedule order: lectures numbered
+# "LEC N", each paper right after its lecture, each "Lab N" at the point it is
+# assigned in the schedule (Lab 1@LEC1, 2@LEC3, 3@LEC4, 4@LEC9, 5@LEC14).
 PAGES=$(cat <<'ROWS'
-Introduction	notes/l01.txt
+LEC 1: Introduction	notes/l01.txt
 Paper: MapReduce (2004)	papers/mapreduce.pdf
-RPC and Threads	notes/l-rpc.txt
-GFS	notes/l-gfs.txt
+Lab 1: MapReduce	labs/lab-mr.html
+LEC 2: RPC and Threads	notes/l-rpc.txt
+LEC 3: GFS	notes/l-gfs.txt
 Paper: GFS (2003)	papers/gfs.pdf
-Paxos	notes/l-paxos.txt
+Lab 2: Key/Value server	labs/lab-kvsrv1.html
+LEC 4: Paxos	notes/l-paxos.txt
 Paper: Paxos Made Simple	papers/paxos-simple.pdf
-Go patterns	notes/Go-MIT6824-2026.pdf
-Fault Tolerance: Raft (1)	notes/l-raft.txt
+Lab 3: Raft	labs/lab-raft1.html
+LEC 5: Go patterns	notes/Go-MIT6824-2026.pdf
+LEC 6: Fault Tolerance: Raft (1)	notes/l-raft.txt
 Paper: Raft (extended)	papers/raft-extended.pdf
-Fault Tolerance: Raft (2)	notes/l-raft2.txt
-Consistency and Linearizability	notes/l-linearizability.txt
+LEC 7: Fault Tolerance: Raft (2)	notes/l-raft2.txt
+LEC 8: Consistency and Linearizability	notes/l-linearizability.txt
 Paper: Linearizability (Herlihy)	papers/p463-herlihy.pdf
-Zookeeper	notes/l-zookeeper.txt
+LEC 9: Zookeeper	notes/l-zookeeper.txt
 Paper: ZooKeeper	papers/zookeeper.pdf
-Q&A Lab 3A+B	notes/l-raft-QA.txt
-Distributed Transactions	notes/l-2pc.txt
-Spanner	notes/l-spanner.txt
+Lab 4: KV Raft	labs/lab-kvraft1.html
+LEC 10: Q&A Lab 3A+B	notes/l-raft-QA.txt
+LEC 11: Distributed Transactions	notes/l-2pc.txt
+LEC 12: Spanner	notes/l-spanner.txt
 Paper: Spanner	papers/spanner.pdf
-Chain Replication	notes/l-cr.txt
+LEC 13: Chain Replication	notes/l-cr.txt
 Paper: Chain Replication	papers/cr-osdi04.pdf
-Optimistic Concurrency Control	notes/l-farm.txt
+LEC 14: Optimistic Concurrency Control	notes/l-farm.txt
 Paper: FaRM	papers/farm-2015.pdf
-Verification of distributed systems	notes/l-ironfleet.txt
+Lab 5: Sharded KV	labs/lab-shard1.html
+LEC 15: Verification of distributed systems	notes/l-ironfleet.txt
 Paper: IronFleet	papers/ironfleet.pdf
-Cache Consistency: Memcached at Facebook	notes/l-memcached.txt
+LEC 16: Cache Consistency: Memcached at Facebook	notes/l-memcached.txt
 Paper: Memcached at Facebook	papers/memcache-fb.pdf
-AWS Lambda	notes/mbrooker_cs_slides_2026.pdf
+LEC 17: AWS Lambda	notes/mbrooker_cs_slides_2026.pdf
 Paper: On-demand Container Loading	papers/atc23-brooker.pdf
-Ray	notes/l-ray.txt
+LEC 18: Ray	notes/l-ray.txt
 Paper: Ray	papers/ray.pdf
-Fork Consistency, SUNDR	notes/l-sundr.txt
+LEC 19: Fork Consistency, SUNDR	notes/l-sundr.txt
 Paper: SUNDR	papers/li-sundr.pdf
-Bitcoin	notes/l-bitcoin.txt
+LEC 20: Bitcoin	notes/l-bitcoin.txt
 Paper: Bitcoin	papers/bitcoin.pdf
-Byzantine Fault Tolerance	notes/l-bft.txt
-Byzantine Fault Tolerance (slides)	notes/65840-pbft.pdf
+LEC 21: Byzantine Fault Tolerance	notes/l-bft.txt
+LEC 21: Byzantine Fault Tolerance (slides)	notes/65840-pbft.pdf
 Paper: Practical BFT	papers/castro-practicalbft.pdf
-Lab: MapReduce	labs/lab-mr.html
-Lab: Key/Value server	labs/lab-kvsrv1.html
-Lab: Raft	labs/lab-raft1.html
-Lab: KV Raft	labs/lab-kvraft1.html
-Lab: Sharded KV	labs/lab-shard1.html
 ROWS
 )
 
@@ -86,13 +88,18 @@ while IFS=$'\t' read -r title tail; do
       rm -f "$tmp"
       ;;
     *.html)
+      # strip site chrome (the "[6.5840]" nav heading, the Collaboration nav
+      # line, and the page's own "# 6.5840 Lab N: ..." H1) so the chapter opens
+      # with our numbered "# <title>" and nothing else.
       body=$(curl -fsSL --compressed --max-time 40 "$url" 2>/dev/null \
         | python3 "$WE" content body "$url" abs 2>/dev/null \
         | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs 2>/dev/null \
         | python3 "$WE" clean "" "" 2>/dev/null \
-        | sed -E '/^#+ \[6\.5840\]/d; /^\*\*\[Collaboration policy\]/d')
+        | sed -E '/^#+ \[6\.5840\]/d; /^\*\*\[Collaboration policy\]/d; /^# 6\.5840 Lab /d')
       [ -z "$body" ] && { echo "FAIL fetch $url" >&2; fail=$((fail+1)); continue; }
-      printf '%s\n' "$body" > "$cf"
+      # drop leading blank lines, then prepend our numbered title
+      body=$(printf '%s\n' "$body" | sed -E '/./,$!d')
+      { printf '# %s\n\n' "$title"; printf '%s\n' "$body"; } > "$cf"
       ;;
   esac
   [ "$(wc -c < "$cf")" -lt 40 ] && { echo "FAIL empty $url" >&2; fail=$((fail+1)); continue; }
