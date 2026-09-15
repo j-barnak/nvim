@@ -16,47 +16,47 @@ mkdir -p "$OUT" "$CACHE"
 
 # title <TAB> url-tail (relative to $B), in schedule order.
 PAGES=$(cat <<'ROWS'
-Overview	lec/01-overview.pdf
-Register Allocation	lec/02-registerallocation.pdf
-Register Allocation Notes	lec/02-regopt-notes.pdf
-Intro to SSA / CFG / Basic Blocks	lec/03-registerallocation-2.pdf
-Instruction Selection	lec/04-instruction-selection.pdf
-SSA	lec/05-ssa.pdf
-SSA II	lec/06-ssa-into-outof.pdf
+LEC 1: Overview	lec/01-overview.pdf
+LEC 2: Register Allocation	lec/02-registerallocation.pdf
+LEC 2: Register Allocation (notes)	lec/02-regopt-notes.pdf
+LEC 3: Intro to SSA / CFG / Basic Blocks	lec/03-registerallocation-2.pdf
+LEC 4: Instruction Selection	lec/04-instruction-selection.pdf
+LEC 5: SSA	lec/05-ssa.pdf
+LEC 6: SSA II	lec/06-ssa-into-outof.pdf
 Lab 1: Straight Line Code	hw/lab1.pdf
 Lab 1: Straight Line Code Checkpoint	hw/lab1checkpoint.pdf
-Middle End	lec/07-middle-end.pdf
-Data Flow Analysis	lec/08-df-1.pdf
-Data Flow Analysis II	lec/08-df-2b.pdf
-Dataflow Theory	lec/09-df-theory.pdf
-Lexing / Parsing	lec/10-lex-parse.pdf
-Lexing / Parsing Pt 2	lec/10-bottom-up.pdf
-Type Checking	lec/11-typechecking.pdf
-Static Semantics	lec/11-statics-notes.pdf
-Calling Conventions	lec/12-calling.pdf
+LEC 7: Middle End	lec/07-middle-end.pdf
+LEC 8: Data Flow Analysis	lec/08-df-1.pdf
+LEC 9: Data Flow Analysis II	lec/08-df-2b.pdf
+LEC 10: Dataflow Theory	lec/09-df-theory.pdf
+LEC 11: Lexing / Parsing	lec/10-lex-parse.pdf
+LEC 12: Lexing / Parsing Pt 2	lec/10-bottom-up.pdf
+LEC 13: Type Checking	lec/11-typechecking.pdf
+LEC 13: Type Checking (notes)	lec/11-statics-notes.pdf
+LEC 14: Calling Conventions	lec/12-calling.pdf
 Lab 2: Control	hw/lab2.pdf
 Lab 2: Control Checkpoint	hw/lab2checkpoint.pdf
-Dynamic Semantics	lec/13-dynamic-sem.pdf
-Dynamic Semantics Notes	lec/13-dynamic-notes.pdf
-Mutable Store	lec/14-mutable.pdf
-Mutable Store Notes	lec/14-mutable-notes.pdf
-Structs	lec/15-structs.pdf
-Structs Notes	lec/15-structs-notes.pdf
+LEC 15: Dynamic Semantics	lec/13-dynamic-sem.pdf
+LEC 15: Dynamic Semantics (notes)	lec/13-dynamic-notes.pdf
+LEC 16: Mutable Store	lec/14-mutable.pdf
+LEC 16: Mutable Store (notes)	lec/14-mutable-notes.pdf
+LEC 17: Structs	lec/15-structs.pdf
+LEC 17: Structs (notes)	lec/15-structs-notes.pdf
 Lab 3: Functions	hw/lab3.pdf
-Loops	lec/16-loop.pdf
-Loops Notes	lec/16-peepsub.pdf
-Partial Redundancy Elimination	lec/17-pre.pdf
+LEC 18: Loops	lec/16-loop.pdf
+LEC 18: Loops (notes)	lec/16-peepsub.pdf
+LEC 19: Partial Redundancy Elimination	lec/17-pre.pdf
 Lab 4: Memory	hw/lab4.pdf
-Locality 1	lec/18-locality1.pdf
-A Data Locality Optimizing Algorithm	lec/lam03.pdf
-Locality 2	lec/20-locality2.pdf
-Instruction Scheduling	lec/21-scheduling.pdf
-Alias Analysis	lec/22-alias.pdf
-Alias Analysis Notes	lec/22-alias-notes.pdf
+LEC 20: Locality 1	lec/18-locality1.pdf
+Paper: A Data Locality Optimizing Algorithm (Lam 1991)	lec/lam03.pdf
+LEC 21: Locality 2	lec/20-locality2.pdf
+LEC 22: Instruction Scheduling	lec/21-scheduling.pdf
+LEC 23: Alias Analysis	lec/22-alias.pdf
+LEC 23: Alias Analysis (notes)	lec/22-alias-notes.pdf
 Lab 5: Optimization	hw/lab5.pdf
 Lab 5: Optimization Checkpoint	hw/lab5checkpoint.pdf
 Lab 6: Garbage Collection	hw/lab6gc.pdf
-C0 and Beyond	hw/lab6c1.pdf
+LEC 24: C0 and Beyond	hw/lab6c1.pdf
 ROWS
 )
 
@@ -69,7 +69,7 @@ while IFS=$'\t' read -r title tail; do
     echo "FAIL fetch $url" >&2; fail=$((fail+1)); rm -f "$tmp"; continue
   fi
   cf="$CACHE/$(printf '%s' "$url" | sha256sum | awk '{print $1}').txt"
-  { printf '# %s\n\n' "$title"; pdftotext -nopgbrk "$tmp" - 2>/dev/null; } > "$cf"
+  { printf '# %s\n\n' "$title"; pdftotext -layout -nopgbrk "$tmp" - 2>/dev/null; } > "$cf"
   rm -f "$tmp"
   [ "$(wc -c < "$cf")" -lt 40 ] && { echo "FAIL empty $url" >&2; fail=$((fail+1)); continue; }
   printf '%s\t%s\n' "$title" "$url" >> "$OUT/index.tsv"; ok=$((ok+1))

@@ -2,14 +2,17 @@
 # Freeze MIT 6.5950/6.5951 "Secure Hardware Design" (shd.mit.edu, 2026) into the
 # :Docs frozen web-book layout used by the "MIT 6.5950 Secure Hardware Design"
 # book:
-#   Resources/docs/mit-shd/index.tsv           "<title>\t<url>" in book order
+#   Resources/docs/mit-shd/index.tsv           "<title>\t<url>" in CALENDAR order
 #   Resources/docs/.webcache/<sha256(url)>.txt  rendered chapter
 #
-# Chapters: a hand-formatted "Paper Discussion" reading list; every lecture and
-# recitation SLIDE deck from calendar.html (pdftotext); the 4 recitation writeup
-# pages; the labs overview + each lab page; and two included papers (Bigger Fish,
-# Mesh Attack). Videos are not included. HTML body selector is #main-content
-# (Just-the-Docs). Usage: mit_shd_build.sh   (needs curl, pdftotext, pandoc, python3)
+# Chapters follow the course calendar (calendar.html): lectures, recitations and
+# labs interleaved by date, then the Paper Discussion sessions + the two included
+# papers (mid/late April), then the last labs. Slide decks (lectures and
+# recitations) are rendered with `pdftotext -layout` so bullet nesting and the
+# spatial layout of diagram text read correctly; the two academic papers use
+# plain pdftotext (two-column, -layout would interleave the columns). HTML pages
+# (recitation writeups, labs) use #main-content (Just-the-Docs). Videos excluded.
+# Usage: mit_shd_build.sh   (needs curl, pdftotext, pandoc, python3)
 set -u
 CFG="${CFG:-$(cd "$(dirname "$0")/../.." && pwd)}"
 WE="$CFG/Resources/tools/webextract.py"
@@ -18,10 +21,42 @@ OUT="$CFG/Resources/docs/mit-shd"
 B="https://shd.mit.edu/2026"
 mkdir -p "$OUT" "$CACHE"
 sha() { printf '%s' "$1" | sha256sum | awk '{print $1}'; }
-
 : > "$OUT/index.tsv"; ok=0; fail=0
+emit() { printf '%s\t%s\n' "$1" "$2" >> "$OUT/index.tsv"; ok=$((ok+1)); }
 
-emit_index() { printf '%s\t%s\n' "$1" "$2" >> "$OUT/index.tsv"; }
+# slide deck: -layout keeps bullet nesting + diagram text position
+add_slide() {
+  local title="$1" url="$2" tmp cf
+  tmp=$(mktemp --suffix=.pdf)
+  if ! curl -fsSL --max-time 90 "$url" -o "$tmp" 2>/dev/null; then echo "FAIL fetch $url" >&2; fail=$((fail+1)); rm -f "$tmp"; return; fi
+  cf="$CACHE/$(sha "$url").txt"
+  { printf '# %s\n\n' "$title"; pdftotext -layout -nopgbrk "$tmp" - 2>/dev/null; } > "$cf"; rm -f "$tmp"
+  [ "$(wc -c < "$cf")" -lt 40 ] && { echo "FAIL empty $url" >&2; fail=$((fail+1)); return; }
+  emit "$title" "$url"; sleep 0.2
+}
+# academic paper: plain pdftotext (two columns; -layout would interleave them)
+add_paper() {
+  local title="$1" url="$2" tmp cf
+  tmp=$(mktemp --suffix=.pdf)
+  if ! curl -fsSL --max-time 90 "$url" -o "$tmp" 2>/dev/null; then echo "FAIL fetch $url" >&2; fail=$((fail+1)); rm -f "$tmp"; return; fi
+  cf="$CACHE/$(sha "$url").txt"
+  { printf '# %s\n\n' "$title"; pdftotext -nopgbrk "$tmp" - 2>/dev/null; } > "$cf"; rm -f "$tmp"
+  [ "$(wc -c < "$cf")" -lt 40 ] && { echo "FAIL empty $url" >&2; fail=$((fail+1)); return; }
+  emit "$title" "$url"; sleep 0.2
+}
+# Just-the-Docs page
+add_html() {
+  local title="$1" url="$2" cf body
+  cf="$CACHE/$(sha "$url").txt"
+  body=$(curl -fsSL --compressed --max-time 60 "$url" 2>/dev/null \
+    | python3 "$WE" content '#main-content' "$url" abs 2>/dev/null \
+    | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs 2>/dev/null \
+    | python3 "$WE" clean "" "" 2>/dev/null \
+    | sed -E 's/!\[[^]]*\]\(data:[^)]*\)//g; s/\]\(data:[^)]*\)/]()/g')
+  if [ "$(printf '%s' "$body" | wc -c)" -lt 40 ]; then echo "FAIL empty $url" >&2; fail=$((fail+1)); return; fi
+  { printf '# %s\n\n' "$title"; printf '%s\n' "$body"; } > "$cf"
+  emit "$title" "$url"; sleep 0.2
+}
 
 # (A) Paper Discussion - hand-formatted reading list (synthetic url key).
 PD_URL="$B/#paper-discussion"
@@ -84,71 +119,41 @@ questions during the Q&A; good questions earn bonus points.
 - Leaky Cauldron on the Dark Land: Understanding Memory Side-Channel Hazards in SGX
 - CIPHERLEAKS: Breaking Constant-time Cryptography on AMD SEV via the Ciphertext Side Channel
 MD
-emit_index "Paper Discussion" "$PD_URL"; ok=$((ok+1))
 
-# helper: fetch a PDF -> "# title" + pdftotext
-add_pdf() {
-  local title="$1" url="$2" tmp cf
-  tmp=$(mktemp --suffix=.pdf)
-  if ! curl -fsSL --max-time 90 "$url" -o "$tmp" 2>/dev/null; then echo "FAIL fetch $url" >&2; fail=$((fail+1)); rm -f "$tmp"; return; fi
-  cf="$CACHE/$(sha "$url").txt"
-  { printf '# %s\n\n' "$title"; pdftotext -nopgbrk "$tmp" - 2>/dev/null; } > "$cf"; rm -f "$tmp"
-  [ "$(wc -c < "$cf")" -lt 40 ] && { echo "FAIL empty $url" >&2; fail=$((fail+1)); return; }
-  emit_index "$title" "$url"; ok=$((ok+1)); sleep 0.2
-}
-# helper: fetch an HTML page (Just-the-Docs #main-content)
-add_html() {
-  local title="$1" url="$2" cf body
-  cf="$CACHE/$(sha "$url").txt"
-  body=$(curl -fsSL --compressed --max-time 60 "$url" 2>/dev/null \
-    | python3 "$WE" content '#main-content' "$url" abs 2>/dev/null \
-    | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs 2>/dev/null \
-    | python3 "$WE" clean "" "" 2>/dev/null \
-    | sed -E 's/!\[[^]]*\]\(data:[^)]*\)//g; s/\]\(data:[^)]*\)/]()/g')
-  if [ "$(printf '%s' "$body" | wc -c)" -lt 40 ]; then echo "FAIL empty $url" >&2; fail=$((fail+1)); return; fi
-  { printf '# %s\n\n' "$title"; printf '%s\n' "$body"; } > "$cf"
-  emit_index "$title" "$url"; ok=$((ok+1)); sleep 0.2
-}
-
-# (B) all slide decks from calendar.html, in calendar order
-add_pdf "Lecture 1: Introduction"                 "$B/lectures/slides/1-Introduction.pdf"
-add_pdf "Lecture 2: Side-Channels"                "$B/lectures/slides/2-Side-Channels.pdf"
-add_pdf "Recitation 1: CTF of C Programming"      "$B/recitations/slides/1-CTF-Of-C-Programming.pdf"
-add_pdf "Lecture 3: Cache Attacks"                "$B/lectures/slides/3-Cache-Attacks.pdf"
-add_pdf "Recitation 2: Caches"                    "$B/recitations/slides/Recitation-2-Caches.pdf"
-add_pdf "Lecture 4: Transient Attacks"            "$B/lectures/slides/4-Transient-Attacks.pdf"
-add_pdf "Lecture 5: Software-Hardware Contract"   "$B/lectures/slides/5-Software-Hardware-Contract.pdf"
-add_pdf "Lecture 6: Spectre Mitigations"          "$B/lectures/slides/6-Spectre-Mitigations.pdf"
-add_pdf "Lecture 7: Physical Attacks"             "$B/lectures/slides/7-Physical-Attacks.pdf"
-add_pdf "Lecture 9: RowHammer"                    "$B/lectures/slides/9-RowHammer.pdf"
-add_pdf "Lecture 10: Reliability Solutions"       "$B/lectures/slides/10-Reliability-Solutions.pdf"
-add_pdf "Lecture 10: Root of Trust"               "$B/lectures/slides/10-Root-of-Trust.pdf"
-add_pdf "Lecture 11: Memory Safety"               "$B/lectures/slides/11-MemorySafety.pdf"
-add_pdf "Lecture 12: Fuzzing"                     "$B/lectures/slides/12-Fuzzing.pdf"
-add_pdf "Lecture 13: Formal"                      "$B/lectures/slides/13-Formal.pdf"
-add_pdf "Recitation 3: Intro to Verilog"          "$B/recitations/slides/3-Intro-to-Verilog.pdf"
-add_pdf "Lecture 14: TEE"                         "$B/lectures/slides/14-TEE.pdf"
-
-# (C) recitation writeup pages
-add_html "Recitation: CTF of C Programming"               "$B/recitations/cpp.html"
-add_html "Recitation: Cache Attack"                       "$B/recitations/cache.html"
-add_html "Recitation: Binary Exploitation and RISC-V Warmup" "$B/recitations/riscv.html"
-add_html "Recitation: Formal Verification"                "$B/recitations/formal.html"
-
-# (D) labs
-add_html "Labs (overview)"               "$B/labs.html"
-add_html "Lab 0: C Crash Course"         "$B/labs/ccc.html"
-add_html "Lab 1: Website Fingerprinting" "$B/labs/fingerprinting.html"
-add_html "Lab 2: Cache Attacks"          "$B/labs/cache.html"
-add_html "Lab 3: Spectre Attacks"        "$B/labs/spectre.html"
-add_html "Lab 4: Rowhammer"              "$B/labs/rowhammer.html"
-add_html "Lab 5: ASLR Bypasses"          "$B/labs/aslr.html"
-add_html "Lab: Pretty Secure Processor"  "$B/labs/psp.html"
-add_html "Lab 6: CPU Fuzzing"            "$B/labs/fuzz.html"
-add_html "Lab 7: CPU Verification"       "$B/labs/formal.html"
-
-# (E) included papers
-add_pdf "Bigger Fish (2022 ISCA)" "https://people.csail.mit.edu/mengjia/data/2022.ISCA.BiggerFish.pdf"
-add_pdf "Mesh Attack (2022 USENIX)" "https://people.csail.mit.edu/mengjia/data/2022.USENIX.MeshAttack.pdf"
+# ── Calendar order (dates from calendar.html) ───────────────────────────────
+add_slide "Lecture 1: Overview"                                  "$B/lectures/slides/1-Introduction.pdf"                 # Feb 2
+add_slide "Lecture 2: Side Channel Overview"                     "$B/lectures/slides/2-Side-Channels.pdf"                # Feb 4
+add_slide "Recitation 1: CTF of C Programming"                   "$B/recitations/slides/1-CTF-Of-C-Programming.pdf"      # Feb 9
+add_html  "Recitation: CTF of C Programming"                     "$B/recitations/cpp.html"
+add_slide "Lecture 3: Deep Dive of Cache Side Channels"          "$B/lectures/slides/3-Cache-Attacks.pdf"                # Feb 11
+add_html  "Labs (overview)"                                      "$B/labs.html"
+add_html  "Lab 0: C Crash Course"                                "$B/labs/ccc.html"                                     # Feb 12
+add_html  "Lab 1: Website Fingerprinting"                        "$B/labs/fingerprinting.html"                          # Feb 12
+add_slide "Recitation 2: Cache Attacks"                          "$B/recitations/slides/Recitation-2-Caches.pdf"        # Feb 17
+add_html  "Recitation: Cache Attack"                             "$B/recitations/cache.html"
+add_slide "Lecture 4: Transient Execution Side Channels"         "$B/lectures/slides/4-Transient-Attacks.pdf"            # Feb 18
+add_slide "Lecture 5: Software-Hardware Contract"                "$B/lectures/slides/5-Software-Hardware-Contract.pdf"   # Feb 23
+add_slide "Lecture 6: Spectre Mitigations"                       "$B/lectures/slides/6-Spectre-Mitigations.pdf"          # Feb 25
+add_slide "Lecture 7: Physical Attacks"                          "$B/lectures/slides/7-Physical-Attacks.pdf"             # Mar 2
+add_html  "Lab 2: Cache Attacks"                                 "$B/labs/cache.html"                                   # Mar 3
+add_slide "Lecture 8: Rowhammer Attacks"                         "$B/lectures/slides/9-RowHammer.pdf"                    # Mar 9
+add_slide "Lecture 9: Rowhammer Mitigation + Reliability Solutions" "$B/lectures/slides/10-Reliability-Solutions.pdf"    # Mar 11
+add_html  "Lab 3: Spectre Attacks"                               "$B/labs/spectre.html"                                 # Mar 12
+add_slide "Lecture 10: Root of Trust"                            "$B/lectures/slides/10-Root-of-Trust.pdf"               # Mar 16
+add_slide "Lecture 11: Hardware Support for Software Security"    "$B/lectures/slides/11-MemorySafety.pdf"               # Mar 18
+add_slide "Lecture 12: Fuzzing and Bug Finding"                  "$B/lectures/slides/12-Fuzzing.pdf"                     # Mar 30
+add_html  "Lab 4: Rowhammer"                                     "$B/labs/rowhammer.html"                               # Apr 2
+add_slide "Lecture 13: Formal Verification for Hardware Security" "$B/lectures/slides/13-Formal.pdf"                     # Apr 6
+add_slide "Recitation 3: Formal Verification"                    "$B/recitations/slides/3-Intro-to-Verilog.pdf"          # Apr 8
+add_html  "Recitation: Binary Exploitation and RISC-V Warmup"    "$B/recitations/riscv.html"
+add_html  "Recitation: Formal Verification"                      "$B/recitations/formal.html"
+add_html  "Lab 5: ASLR Bypasses"                                 "$B/labs/aslr.html"                                    # Apr 9
+add_slide "Lecture 14: Trusted Execution Environment (TEE)"      "$B/lectures/slides/14-TEE.pdf"                         # Apr 13
+emit "Paper Discussion" "$PD_URL"                                                                                       # Apr 15 - May 4
+add_paper "Bigger Fish (2022 ISCA)"   "https://people.csail.mit.edu/mengjia/data/2022.ISCA.BiggerFish.pdf"
+add_paper "Mesh Attack (2022 USENIX)" "https://people.csail.mit.edu/mengjia/data/2022.USENIX.MeshAttack.pdf"
+add_html  "Lab 6: CPU Fuzzing"                                   "$B/labs/fuzz.html"                                    # Apr 23
+add_html  "Lab: Pretty Secure Processor"                         "$B/labs/psp.html"
+add_html  "Lab 7: CPU Verification"                              "$B/labs/formal.html"                                  # Apr 30
 
 echo "==> MIT SHD: $ok ok, $fail failed, index rows: $(wc -l < "$OUT/index.tsv")"

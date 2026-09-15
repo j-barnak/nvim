@@ -5,9 +5,11 @@
 #   Resources/docs/.webcache/<sha256(url)>.txt   PDF (pdftotext) / project page (html)
 #
 # Source: https://15445.courses.cs.cmu.edu/fall2025/schedule.html
-# Each lecture contributes two chapters (slides PDF + notes PDF); plus the
-# written homeworks (files/hw*-clean.pdf and the SQL homework page) and the
-# programming projects (project0..4 pages). Videos and readings are excluded.
+# Order follows the schedule: each lecture's two chapters ("NN <Topic> (slides)"
+# then "(notes)") in order, with each numbered Homework / Project placed where it
+# is assigned. Slides are rendered with `pdftotext -layout` (Andy's slides need
+# the column/box layout preserved); notes and homework PDFs use plain pdftotext
+# (prose). Videos and readings are excluded.
 # Usage: cmu_15445_build.sh   (needs curl, pdftotext, pandoc, python3)
 set -u
 CFG="${CFG:-$(cd "$(dirname "$0")/../.." && pwd)}"
@@ -19,18 +21,18 @@ mkdir -p "$OUT" "$CACHE"
 PAGES=$(cat <<'ROWS'
 01 Relational Model & Algebra (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/01-relationalmodel.pdf
 01 Relational Model & Algebra (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/01-relationalmodel.pdf
-Project: C++ Primer	https://15445.courses.cs.cmu.edu/fall2025/project0/
+Project 0: C++ Primer	https://15445.courses.cs.cmu.edu/fall2025/project0/
 02 Modern SQL (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/02-modernsql.pdf
 02 Modern SQL (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/02-modernsql.pdf
-Homework: SQL	https://15445.courses.cs.cmu.edu/fall2025/homework1/
+Homework 1: SQL	https://15445.courses.cs.cmu.edu/fall2025/homework1/
 03 Database Storage I (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/03-storage1.pdf
 03 Database Storage I (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/03-storage1.pdf
 04 Memory Management (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/04-bufferpool.pdf
 04 Memory Management (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/04-bufferpool.pdf
-Project: Buffer Pool Manager	https://15445.courses.cs.cmu.edu/fall2025/project1/
+Project 1: Buffer Pool Manager	https://15445.courses.cs.cmu.edu/fall2025/project1/
 05 Database Storage II (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/05-storage2.pdf
 05 Database Storage II (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/05-storage2.pdf
-Homework: Storage	https://15445.courses.cs.cmu.edu/fall2025/files/hw2-clean.pdf
+Homework 2: Storage	https://15445.courses.cs.cmu.edu/fall2025/files/hw2-clean.pdf
 06 Storage Models & Compression (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/06-storage3.pdf
 06 Storage Models & Compression (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/06-storage3.pdf
 07 Hash Tables (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/07-hashtables.pdf
@@ -39,20 +41,20 @@ Homework: Storage	https://15445.courses.cs.cmu.edu/fall2025/files/hw2-clean.pdf
 08 Indexes & Filters I (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/08-indexes1.pdf
 09 Indexes & Filters II (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/09-indexes2.pdf
 09 Indexes & Filters II (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/09-indexes2.pdf
-Homework: Indexes & Filters	https://15445.courses.cs.cmu.edu/fall2025/files/hw3-clean.pdf
+Homework 3: Indexes & Filters	https://15445.courses.cs.cmu.edu/fall2025/files/hw3-clean.pdf
 10 Index Concurrency Control (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/10-indexconcurrency.pdf
 10 Index Concurrency Control (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/10-indexconcurrency.pdf
-Project: Database Index	https://15445.courses.cs.cmu.edu/fall2025/project2/
+Project 2: Database Index	https://15445.courses.cs.cmu.edu/fall2025/project2/
 11 Sorting & Aggregations Algorithms (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/11-sorting.pdf
 11 Sorting & Aggregations Algorithms (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/11-sorting.pdf
 12 Joins Algorithms (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/12-joins.pdf
 12 Joins Algorithms (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/12-joins.pdf
 13 Query Execution I (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/13-queryexecution1.pdf
 13 Query Execution I (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/13-queryexecution1.pdf
-Project: Query Execution	https://15445.courses.cs.cmu.edu/fall2025/project3/
+Project 3: Query Execution	https://15445.courses.cs.cmu.edu/fall2025/project3/
 14 Query Execution II (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/14-queryexecution2.pdf
 14 Query Execution II (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/14-queryexecution2.pdf
-Homework: Execution & Planning	https://15445.courses.cs.cmu.edu/fall2025/files/hw4-clean.pdf
+Homework 4: Execution & Planning	https://15445.courses.cs.cmu.edu/fall2025/files/hw4-clean.pdf
 15 Query Planning & Optimization I (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/15-optimization1.pdf
 15 Query Planning & Optimization I (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/15-optimization1.pdf
 16 Query Planning & Optimization II (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/16-optimization2.pdf
@@ -61,10 +63,10 @@ Homework: Execution & Planning	https://15445.courses.cs.cmu.edu/fall2025/files/h
 17 Concurrency Control Theory (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/17-concurrencycontrol.pdf
 18 Two-Phase Locking Concurrency Control (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/18-twophaselocking.pdf
 18 Two-Phase Locking Concurrency Control (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/18-twophaselocking.pdf
-Homework: Transactions!	https://15445.courses.cs.cmu.edu/fall2025/files/hw5-clean.pdf
+Homework 5: Transactions!	https://15445.courses.cs.cmu.edu/fall2025/files/hw5-clean.pdf
 19 Timestamp Ordering Concurrency Control (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/19-timestampordering.pdf
 19 Timestamp Ordering Concurrency Control (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/19-timestampordering.pdf
-Project: Concurrency Control	https://15445.courses.cs.cmu.edu/fall2025/project4/
+Project 4: Concurrency Control	https://15445.courses.cs.cmu.edu/fall2025/project4/
 20 Multi-Version Concurrency Control (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/20-multiversioning.pdf
 20 Multi-Version Concurrency Control (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/20-multiversioning.pdf
 21 Database Logging (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/21-logging.pdf
@@ -73,7 +75,7 @@ Project: Concurrency Control	https://15445.courses.cs.cmu.edu/fall2025/project4/
 22 Database Recovery (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/22-recovery.pdf
 23 Distributed Database Systems I (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/23-distributed1.pdf
 23 Distributed Database Systems I (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/23-distributed1.pdf
-Homework: Recovery	https://15445.courses.cs.cmu.edu/fall2025/files/hw6-clean.pdf
+Homework 6: Recovery	https://15445.courses.cs.cmu.edu/fall2025/files/hw6-clean.pdf
 24 Distributed Database Systems II (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/24-distributed2.pdf
 24 Distributed Database Systems II (notes)	https://15445.courses.cs.cmu.edu/fall2025/notes/24-distributed2.pdf
 25 Final Review + Systems Potpourri (slides)	https://15445.courses.cs.cmu.edu/fall2025/slides/25-potpourri.pdf
@@ -88,7 +90,12 @@ while IFS=$'\t' read -r title url; do
     *.pdf)
       tmp=$(mktemp --suffix=.pdf)
       if ! curl -fsSL --max-time 60 "$url" -o "$tmp" 2>/dev/null; then echo "FAIL fetch $url" >&2; fail=$((fail+1)); rm -f "$tmp"; continue; fi
-      { printf '# %s\n\n' "$title"; pdftotext -nopgbrk "$tmp" - 2>/dev/null; } > "$cf"; rm -f "$tmp" ;;
+      # slide decks read far better with -layout; notes/homeworks are prose (plain).
+      case "$url" in
+        */slides/*) LAYOUT="-layout" ;;
+        *)          LAYOUT="" ;;
+      esac
+      { printf '# %s\n\n' "$title"; pdftotext $LAYOUT -nopgbrk "$tmp" - 2>/dev/null; } > "$cf"; rm -f "$tmp" ;;
     *)
       body=$(curl -fsSL --compressed --max-time 45 "$url" 2>/dev/null \
         | python3 "$WE" content 'div.main-content' "$url" abs 2>/dev/null \
