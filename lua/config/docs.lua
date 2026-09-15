@@ -4788,6 +4788,13 @@ local WEB_BOOKS = {
 	{ title = "Beautiful Racket", key = "beautiful-racket", run = frozen_web_provider("beautiful-racket", "Beautiful Racket> ") },
 	{ title = "Cryptopals Crypto Challenges", key = "cryptopals", run = pick_cryptopals },
 	{ title = "CryptoHack Courses", key = "cryptohack", run = pick_cryptohack },
+	-- University course books: lecture/lab PDFs and notes frozen as chapters
+	-- (pdftotext / page fetch), no videos. Builders: <course>_build.sh.
+	{ title = "CMU 15-411 Compiler Design", key = "cmu-15411", run = frozen_web_provider("cmu-15411", "CMU 15-411> ") },
+	{ title = "CMU 15-445 Database Systems", key = "cmu-15445", run = frozen_web_provider("cmu-15445", "CMU 15-445> ") },
+	{ title = "MIT 6.5950 Secure Hardware Design", key = "mit-shd", run = frozen_web_provider("mit-shd", "Secure HW Design> ") },
+	{ title = "MIT 6.824 Distributed Systems", key = "mit-6824", run = frozen_web_provider("mit-6824", "MIT 6.824> ") },
+	{ title = "Wisconsin CS/ECE 752 Advanced Computer Architecture", key = "wisc-cs752", run = frozen_web_provider("wisc-cs752", "CS752> ") },
 	{ title = "LazyFoo SDL3 Tutorials", key = "lazyfoo-sdl3", run = pick_lazyfoo_sdl3 },
 	{ title = "QEMU Internals (Airbus Seclab)", key = "qemu-internals", run = pick_qemu_internals },
 	{ title = "JIT (Series)", key = "jit-series", run = pick_jit_series },
@@ -5060,6 +5067,11 @@ LOCATION["typeclassopedia"] = { index = "typeclassopedia/index.tsv", unit = "cha
 LOCATION["hpbn"] = { index = "hpbn/index.tsv", unit = "chapter" }
 LOCATION["cryptopals"] = { index = "cryptopals/index.tsv", unit = "chapter" }
 LOCATION["cryptohack"] = { index = "cryptohack/index.tsv", unit = "chapter" }
+LOCATION["cmu-15411"] = { index = "cmu-15411/index.tsv", unit = "chapter" }
+LOCATION["cmu-15445"] = { index = "cmu-15445/index.tsv", unit = "chapter" }
+LOCATION["mit-shd"] = { index = "mit-shd/index.tsv", unit = "chapter" }
+LOCATION["mit-6824"] = { index = "mit-6824/index.tsv", unit = "chapter" }
+LOCATION["wisc-cs752"] = { index = "wisc-cs752/index.tsv", unit = "chapter" }
 LOCATION["x86-insns"] = { index = "x86-insns/index.tsv", unit = "page" }
 LOCATION["lazyfoo-sdl3"] = { index = "lazyfoo-sdl3/index.tsv", unit = "chapter" }
 LOCATION["qemu-internals"] = { index = "qemu-internals/index.tsv", unit = "chapter" }
