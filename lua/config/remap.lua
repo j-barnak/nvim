@@ -16,10 +16,9 @@ vim.keymap.set("n", "U", "<C-r>")
 vim.keymap.set("n", "<leader>q", "<cmd>q<cr>")
 vim.keymap.set("n", "<leader>Q", "<cmd>qall!<cr>")
 vim.keymap.set("n", "<leader>-", "<cmd>split<cr>")
-vim.keymap.set("n", "<C-k>", "<C-w>k")
-vim.keymap.set("n", "<C-j>", "<C-w>j")
-vim.keymap.set("n", "<C-h>", "<C-w>h")
-vim.keymap.set("n", "<C-l>", "<C-w>l")
+-- <C-h/j/k/l> split navigation is owned by smart-splits.nvim (lua/plugins/
+-- smart-splits.lua): move_cursor_* is the same window hop but also crosses into
+-- tmux/wezterm panes seamlessly. See that file for the resize/swap maps too.
 vim.keymap.set("n", "<leader><BS>", "<C-o>")
 
 vim.keymap.set({ "n", "o", "x" }, "J", "G", { silent = true, desc = "Jump to end-of-file" })
