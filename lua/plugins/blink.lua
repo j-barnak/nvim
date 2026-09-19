@@ -1,5 +1,17 @@
 -- blink.cmp (main / latest) completion.
 -- Docs: https://main.cmp.saghen.dev  Reference: /configuration/reference.html
+
+-- True when the cursor sits inside a string literal (treesitter). Used to gate
+-- the noisy sources OFF in strings while leaving `path` on, so completion in a
+-- string only appears when the text is path-like (e.g. include "dir/file.h").
+local function in_string()
+	local ok, node = pcall(vim.treesitter.get_node)
+	return ok and node ~= nil and node:type():lower():find("string") ~= nil
+end
+local function not_in_string()
+	return not in_string()
+end
+
 return {
 	"saghen/blink.cmp",
 	dependencies = {
@@ -17,24 +29,15 @@ return {
 	---@module 'blink.cmp'
 	---@type blink.cmp.Config
 	opts = {
-		-- Turn completion off inside string literals (keeps normal buffer/path/
-		-- ripgrep noise out of strings), on top of blink's default gating.
-		enabled = function()
-			if vim.bo.buftype == "prompt" or vim.b.completion == false then
-				return false
-			end
-			local ok, node = pcall(vim.treesitter.get_node)
-			if ok and node and node:type():lower():find("string") then
-				return false
-			end
-			return true
-		end,
-		-- C-n / C-p move through the menu, <CR> accepts the highlighted item (and
-		-- is a normal newline when nothing is selected). C-space opens the menu,
-		-- C-e hides it; <Tab> still jumps between snippet fields.
+		-- Tab / Shift-Tab (and C-n / C-p) move through the menu; <CR> accepts the
+		-- highlighted item and is a normal newline when nothing is selected. When
+		-- the menu is closed, Tab/S-Tab jump between snippet fields, else fall back
+		-- to a plain Tab. C-space opens the menu, C-e hides it.
 		keymap = {
 			preset = "default",
 			["<CR>"] = { "accept", "fallback" },
+			["<Tab>"] = { "select_next", "snippet_forward", "fallback" },
+			["<S-Tab>"] = { "select_prev", "snippet_backward", "fallback" },
 		},
 		completion = {
 			-- Open the menu automatically, but preselect nothing: you land on no
@@ -43,22 +46,32 @@ return {
 			list = { selection = { preselect = false, auto_insert = false } },
 			documentation = { auto_show = true, auto_show_delay_ms = 200 },
 		},
-		-- No LSP source. path/snippets/buffer plus the two chosen extras:
-		-- ripgrep (whole-project words) everywhere, git only in commit buffers.
+		-- No LSP source. path/snippets/buffer plus ripgrep (whole-project words)
+		-- and git (commit buffers). Every source EXCEPT `path` is gated off inside
+		-- strings, so a string only completes when it is path-like (include-style
+		-- "dir/file.h" paths get filesystem completion; prose strings stay quiet).
 		sources = {
 			default = { "path", "snippets", "buffer", "ripgrep", "git" },
 			providers = {
+				-- path: no string gate -> stays on inside strings. It self-triggers
+				-- only on path-like input, and drops the buffer fallback so a
+				-- non-path string never pulls buffer words in.
+				path = { fallbacks = {} },
+				snippets = { enabled = not_in_string },
+				buffer = { enabled = not_in_string },
 				ripgrep = {
 					module = "blink-ripgrep",
 					name = "Ripgrep",
 					score_offset = -3, -- rank below path/snippets/buffer
+					enabled = not_in_string,
 				},
 				git = {
 					module = "blink-cmp-git",
 					name = "Git",
-					-- Only run in commit-message-ish buffers.
+					-- Only run in commit-message-ish buffers, and never in strings.
 					enabled = function()
-						return vim.tbl_contains({ "octo", "gitcommit", "markdown" }, vim.bo.filetype)
+						return not_in_string()
+							and vim.tbl_contains({ "octo", "gitcommit", "markdown" }, vim.bo.filetype)
 					end,
 				},
 			},
