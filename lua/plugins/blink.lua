@@ -12,6 +12,33 @@ local function not_in_string()
 	return not in_string()
 end
 
+-- Keywords that turn a quoted string into a module/file path.
+local INCLUDE_KW = {
+	include = true,
+	require = true,
+	require_relative = true,
+	import = true,
+	from = true,
+	use = true,
+	source = true,
+	load = true,
+	dofile = true,
+	loadfile = true,
+}
+-- Inline check: cursor is inside a string that directly follows one of the
+-- keywords above (an optional `(` and whitespace between is fine, and `<...>`
+-- system includes count), e.g.  #include "std|   require("foo|   from "./y|
+-- This is what limits path completion in strings to include/require/import.
+local function in_include_string()
+	if not in_string() then
+		return false
+	end
+	local col = vim.api.nvim_win_get_cursor(0)[2]
+	local before = vim.api.nvim_get_current_line():sub(1, col)
+	local kw = before:match("([%a_][%w_]*)%s*%(?%s*['\"`<][^'\"`<]*$")
+	return kw ~= nil and INCLUDE_KW[kw:lower()] == true
+end
+
 return {
 	"saghen/blink.cmp",
 	dependencies = {
@@ -47,16 +74,21 @@ return {
 			documentation = { auto_show = true, auto_show_delay_ms = 200 },
 		},
 		-- No LSP source. path/snippets/buffer plus ripgrep (whole-project words)
-		-- and git (commit buffers). Every source EXCEPT `path` is gated off inside
-		-- strings, so a string only completes when it is path-like (include-style
-		-- "dir/file.h" paths get filesystem completion; prose strings stay quiet).
+		-- and git (commit buffers). In strings, only `path` may fire, and only
+		-- when the string follows include/require/import (so prose strings and
+		-- ordinary quoted text stay quiet).
 		sources = {
 			default = { "path", "snippets", "buffer", "ripgrep", "git" },
 			providers = {
-				-- path: no string gate -> stays on inside strings. It self-triggers
-				-- only on path-like input, and drops the buffer fallback so a
+				-- path: on everywhere in code; inside a string only in an
+				-- include/require/import context. Buffer fallback dropped so a
 				-- non-path string never pulls buffer words in.
-				path = { fallbacks = {} },
+				path = {
+					fallbacks = {},
+					enabled = function()
+						return not_in_string() or in_include_string()
+					end,
+				},
 				snippets = { enabled = not_in_string },
 				buffer = { enabled = not_in_string },
 				ripgrep = {
