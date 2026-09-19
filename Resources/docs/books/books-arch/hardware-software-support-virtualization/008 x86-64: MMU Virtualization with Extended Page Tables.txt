@@ -1,0 +1,267 @@
+
+                                 CHAPTER                      5
+
+      x86-64: MMU Virtualization
+       with Extended Page Tables
+Hypervisors must virtualize physical memory, so that each virtual machine has the illusion of
+managing its own contiguous region of physical memory. Recall the definitions of §1.6: each vir-
+tual machine is provided the abstraction of guest-physical memory, while the hypervisor manages
+host-physical memory, the actual underlying physical resource.
+       is creates a two-dimensional problem: the guest operating system defines mapping be-
+tween virtual memory and guest-physical memory. e hypervisor then independently defines
+mappings between guest-physical memory and host-physical memory.
+       In the absence of any architecture support in the memory management unit, hypervisors
+rely on shadow paging to virtualize memory. In shadow paging, the hypervisor manages a com-
+posite set of page tables that map virtual memory to host-physical memory (see §3.2.5 for a
+description of VMware’s implementation). Shadow paging, as implemented in software, is ar-
+guably the most complex subsystem of a hypervisor. It relies on memory tracing to keep track of
+the changes to page table structures in memory. Shadow paging also relies heavily on heuristics
+to determine which pages should be traced, as page tables can be anywhere in physical memory
+and can be allocated and reallocated at the discretion of the guest operating system. Further, the
+introduction of VT-x had a negative impact on the performance of shadow paging (see §4.2.3).
+       Extended page tables provide architectural support for MMU virtualization. §5.1 describes
+the design of extended paging in x86-64 processors. §5.2 describes how KVM manages and vir-
+tualizes memory, and takes advantage of extended page tables. §5.3 measures the cost of MMU
+virtualization. Finally, like all chapters, we close with pointers for further reading.
+
+5.1     EXTENDED PAGING
+Extended page tables, also known as nested page tables, eliminates the need for software-based
+shadow paging. e design was published by Bhargava et al. [35] in 2008 and available in silicon
+by both AMD and Intel around that same time.
+      Extended page tables combine in hardware the classic hardware-defined page table struc-
+ture of the x86, maintained by the guest operating system, with a second page table structure,
+maintained by the hypervisor, which specifies guest-physical to host-physical mappings. Both
+structures are similarly organized as a tree.
+72   5. X86-64: MMU VIRTUALIZATION WITH EXTENDED PAGE TABLES
+        With extended paging, the TLB lookup logic, which is deeply integrated with the pro-
+ cessor, does not change: the TLB remains organized as a set associative cache that map virtual
+ pages to host-physical pages. On architectures that support superpages (e.g., 2 MB and 1 GB on
+ x86-64), there is typically a distinct cache for each page size.
+        What changes fundamentally is the TLB miss handling logic. Whenever a mapping is not
+ present in the TLB, the x86-64 architecture specifies that the processor will walk the page table
+ tree, rooted by %cr3 and insert the missing mapping in the TLB. On x86-64, in the absence of
+ extended paging, the tree is a n D 4 level tree for regular pages, n D 3 for 2 MB pages, and n D 2
+ for 1 GB pages. e page walk logic therefore must access n locations in memory to find the
+ missing mapping. Only then can the CPU perform the actual memory read or write.
+        Let’s consider the case where the virtual to guest-physical tree is n-level and the guest-
+ physical to host-physical tree is m-level. is is shown in Figure 5.1. On TLB misses, the hardware
+ walks the guest page table structure which consists entirely of guest-physical pages, with each
+ guest-physical reference required to be individually mapped to its own host-physical address. To
+ resolve each reference in the first tree, the processor must first perform m references in the second
+ tree, and then lookup the mapping in the first tree. ere are n such steps, each requiring m C
+ 1 references. ese n ? .m C 1/ references lead to the desired guest-physical address. Another
+ m lookups are required to convert this guest-physical address into a host-physical address. e
+ number of architecturally defined memory references required for an extended page lookup is
+ therefore n ? m C n C m.
+        In summary, extended paging composes the two independent mappings via a quadratic
+ lookup algorithm. Although architecturally quadratic, current-generation processors rely exten-
+ sively on secondary data structures to reduce the number of actual references to the memory
+ hierarchy.
+
+ 5.2      VIRTUALIZING MEMORY IN KVM
+ KVM was originally released prior to the introduction of extended paging. As a result, the KVM
+ kernel module may be configured to enable or disable the feature [42]. In practice, however, any
+ considerations to the use of KVM today (in 2017) without extended paging are limited to cases
+ of nested virtualization, e.g., the Turtles research prototype [33].
+        Figure 5.2 shows the key aspects of memory management in KVM. e figure shows that
+ there are three distinct page table structures, each managed by a distinct entity (visualized by the
+ red dot).
+      • QEMU, as a userspace process, allocates the guest-physical memory in a contiguous portion
+        of its own virtual address space. is is convenient for a number of reasons: (i) it lets the
+        details of memory management and allocation to the host operating system, in line with
+        a type-2 architecture; and (ii) it provides convenient access from userspace to the guest-
+        physical address space; this is used in particular by emulated devices that perform DMA to
+        and from the guest-physical memory. Like any process on the machine, Linux manages a
+                                                      5.2. VIRTUALIZING MEMORY IN KVM              73
+
+             EPT
+
+                                1            6          11           16            21
+
+                                2            7          12           17            22
+
+                                3            8          13           18            23
+
+                                4            9          14           19            24
+
+                                                                                 TLB
+            gCR3                5         10            15           20
+                                                                                 entry
+
+                        idx 4        idx 3         idx 2         idx 1        offset
+
+                     = guest PTE                             = host PTE
+
+Figure 5.1: Sequence of architecturally-defined memory references to load a TLB entry with extended
+page tables (m D 4 and n D 4).
+
+     page table tree for this process. When the QEMU process is scheduled—which includes all
+     situations where the virtual machine’s VCPU is running—, the root mode %cr3 register
+     defines an address space that includes QEMU and the contiguous guest-physical memory.
+
+   • e virtual machine manages its own page tables. With nested paging enabled, the
+     non-root cr3 register points to the guest page tables, which defines the current address
+     space in terms of guest-physical memory. is is under the exclusive control of the guest
+     operating system. Furthermore, KVM does not need to keep track of changes to the guest
+     page tables nor to context switches. In fact, assignments to cr3 in non-root mode do not
+     need to cause a #vmexit when the feature is enabled.
+
+   • In the x86 architecture, the format of the regular page tables (as pointed by the cr3 register)
+     are different from those of the nested pages. e KVM kernel module is therefore respon-
+     sible for managing nested page tables, rooted at the eptp register on Intel architectures.
+74          5. X86-64: MMU VIRTUALIZATION WITH EXTENDED PAGE TABLES
+
+                                                                 App                cr3
+
+     non-root mode
+                                                                                 non-root
+                                       Guest-physical            GOS
+                                         memory
+
+     usermode
+                                               gemu
+
+                      cr3                                                          ept
+     kernel mode
+
+                     root                   Linux
+
+                                                        kvm.ko
+
+                     Host-physical memory
+
+Figure 5.2: Access to guest-physical memory in KVM by the userspace QEMU/KVM component,
+ the kvm.ko kernel module, and the guest operating system. Each red dot represents the entity that
+ manages the corresponding hardware page table.
+
+ We make one more additional observation, which has performance implications: it is easier for the
+ hypervisor to access guest-physical address space than it is to access guest-virtual address space.
+ Specifically, the VT-x architecture lacks architectural support for root mode software to access
+ efficiently the virtual address space of non-root mode environments.
+        Figure 5.2 shows that it is simple for the hypervisor to access the guest-physical address
+ space: the userspace process can simply add a constant offset to reference a memory location. e
+ KVM module itself can actually use the same approach, since the userspace process is already
+ mapping the address space. It is, however, much harder and complex for the hypervisor to access
+ the current virtual address spaces of the virtual machine as those mappings are only present in
+ the MMU of the processor while the virtual machine is executing, but not when the hypervisor
+ is executing.
+        Unfortunately, the guest instruction pointer is a virtual address and the KVM decoder must
+ read the content of the faulting instruction from memory. Similarly, all the memory operands of
+ the instruction refer to virtual addresses of the virtual machine. As a consequence, the KVM
+ decoder and emulate makes repeated references in software to the guest page tables to determine
+ the location in guest-physical memory of the instructions and operands.
+                                                    5.3. PERFORMANCE CONSIDERATIONS                 75
+        e type-2 hypervisor design of KVM introduces a complication when managing guest-
+physical memory. Although the format differs, the semantic mapping of the guest-physical ad-
+dress space in the nested page tables must be consistent with the mappings of guest-physical ad-
+dress space of the host operating system. For example, should the guest-physical mapping change,
+e.g., a new page is allocated when handling an #vmexit from the virtual machine, the same map-
+ping must also be reflected in address space of the QEMU process on the host. Conversely, should
+the host operating system decide to swap out a page from the QEMU process, the corresponding
+guest-physical extended mapping must also be removed.
+        e current version of KVM contains some key optimizations in the area of memory man-
+agement. In particular, Linux’s KSM mechanism [19] allows for the transparent sharing of mem-
+ory, similar to the solution introduced in VMware ESX Server [177]. KSM allows memory pages
+with identical content to be transparently shared between Linux processes, and therefore between
+KVM virtual machines. A match is detected when two distinct pages belonging to potentially
+different processes, are found to have the same content and that content is declared stable, i.e.,
+unlikely to change in the near future. KSM then (i) selects one page from the set; (ii) establishes
+read-only mappings in all address spaces to that page; and (iii) notifies the KVM module to do
+the same for the nested page tables; and (iv) deallocates all other replicas of the same page.
+
+5.3     PERFORMANCE CONSIDERATIONS
+Extended page tables provide significant performance benefits over shadow paging. It eliminates
+the need for memory tracing, which accounts for as much as 90% of all #vmexits in typical
+virtualized workloads [5]. It also eliminates the memory footprint of the shadow page tables.
+       However, extended paging is not free. A two-dimensional page-walk, as defined architec-
+turally, is prohibitive in 64-bit address spaces: with 4 KB pages, the guest and the host page tables
+are each 4-level trees with n D m D 4 for a total of 24 architecturally defined memory references
+for a single TLB miss (vs. only 4 for a non-virtualized configuration). Fortunately, the existence
+of page walk caches inside the processors can limit the impact of the design [35].
+       Despite the ongoing focus on micro-architectural improvements, the overheads of virtual-
+izing can be readily measured. Drepper measured it in 2008 [67], shortly after the introduction of
+the technology, using a simple pointer-chasing benchmark. Drepper’s measurements show that
+the virtualized workload executes up to 17% slower on Intel CPU and up to 39% slower on AMD
+CPU when compared to the non-virtualized execution on the same processor. With such a bench-
+mark, the difference in execution time is attributed nearly entirely to the difference in the TLB
+miss handling logic of the processors, and the number of memory references that are required to
+be fetched.
+       We perform a similar pointer-chasing experiment on a more recent, 2011-era Intel “Sandy
+Bridge” processor running at 2.4 Ghz. To measure the cost of TLB misses, we create a list that
+randomly links objects from a 32 GB heap, and then measure the average cost of a pointer refer-
+ence. is micro-benchmark is designed to have no locality and to ensure that the great majority
+76   5. X86-64: MMU VIRTUALIZATION WITH EXTENDED PAGE TABLES
+ of pointer references will incur a TLB miss, irrespective of page size. Indeed, this benchmark has
+ a TLB miss rate between 93% and 99.9%, depending on the configuration. e test only uses
+ local memory for both data and page tables, as to avoid NUMA effects. Finally, the linked list is
+ constructed to use different caches lines of the various pages, as to ensure that the last-level cache
+ is efficiently used.
+       Figure 5.3 shows the performance of the different combination of (guest) page sizes and
+ extended page sizes. Since the regular page table and the extended page table are orthogonal
+ to each other, one can be larger or smaller than the other without any particular complication.
+ e first block of results shows the performance for the standard 4 KB page size, with different
+ extended page sizes, as well as for the non-virtualized case. e second and third blocks show the
+ benefit of using super pages in the (guest) operating system. We report the performance in cycles
+ per memory reference, which includes the cost of the memory reference (and the potential cache
+ miss) as well as the cost of the TLB miss.
+                                  900
+
+                                  800
+        Cycles/Memory Reference
+
+                                  700
+
+                                  600
+
+                                  500
+
+                                  400
+
+                                  300
+
+                                  200
+
+                                  100
+
+                                    0
+                                        4KB 2MB 1GB   4KB 2MB 1GB       4KB 2MB 1GB   4KB 2MB 1GB
+                                          EPT 4KB       EPT 2MB            EPT 1GB    No Virtualization
+                                                              (Guest) Page Size
+
+Figure 5.3: Measured cost of TLB misses on Intel “Sandy Bridge” processors for various combination
+ of page sizes and extended page sizes.
+
+        In Figure 5.3, we first observe that the results of this micro-benchmark are all very high,
+ with a reference costing at least 200 cycles on average. Fortunately, realistic workloads have much
+ better TLB behavior because of the nearly universal locality principle [64]. We also note a sub-
+ stantial difference in the cost of these TLB misses: TLB misses of the most expensive configura-
+ tion (4 KB pages, 4 KB extended pages) is 3.25? more expensive than the cheapest configuration
+ (1 GB pages, non-virtualized). Finally, we observe that 4 KB page sizes are noticeably more ex-
+                                                                   5.4. FURTHER READING         77
+pensive than 2 MB and 1 GB page sizes, but that 2 MB and 1 GB page lead to comparable TLB
+load times. Larger page sizes reduce the number of architecturally defined memory references re-
+quired to load the TLB. For example, the number of required references goes from 24 down to 17
+by simply increasing the extended page table size to 2 MB (since m W 4 ! 3). More importantly,
+the reduced number of page table entries dramatically reduces the probability that the memory
+references will not be served by the processor L3 cache.
+       Developers have recognized the need to carefully trade-off flexibility and performance in
+the management of memory of virtual machines. Today, 2 MB super pages available are a standard
+feature of commodity operating systems such as Linux, and most carefully tuned applications will
+take advantage of the feature. Many hypervisors today use 2 MB pages for extended page tables
+whenever possible. For example, VMware ESX preferably uses 2 MB extended pages. It uses 4 KB
+pages only when the system is under global memory pressure and the ballooning or transparent
+memory sharing mechanisms [177] kick in to reduce memory pressure [176].
+
+5.4     FURTHER READING
+Bhargava et al. [35] described the benefit of the page walk cache implemented in AMD Opteron.
+Ahn et al. [8] propose to use a flattened host page table array to reduce the memory refer-
+ences from n ? m C n C m to 2n C 1 references , with n ? 4 based on the guest page size used.
+Gandhi et al. [72] recently measured the cost of nested paging on Intel “Sandy Bridge” CPU
+for large-memory workloads, and proposed to use segmentation instead of the conventional page
+table tree layout. Yaniv et al. propose to hash extended page table rather than the conventional
+2D radix walk [189].
+       Agesen et al. [4] describe how introduction of extended paging and the dramatic reduction
+in the number of #vmexit, improves efficiency and allowed VMware to rely on direct execution
+to run most of the guest kernel code. More recently, Agesen et al. [5] describe how the judicious
+use of DBT for very short code sequences can be used to eliminate #vmexit and further increase
+performance.

@@ -1,0 +1,669 @@
+
+                                         CHAPTER                              4
+
+          x86-64: CPU Virtualization
+                  with VT-x
+We now describe in a sequence of three chapters the architectural support for virtualization in
+x86-64 processors. is architectural support is the combination of innovation in the CPU (Chap-
+ter 4), MMU (Chapter 5), and I/O subsystem (Chapter 6).
+       is chapter describes VT-x, the Intel technology that virtualizes the CPU itself.¹ §4.1
+first describes the key requirements set forth by Intel engineers in designing VT-x. §4.2 describes
+the approach to CPU virtualization, the concept of root and non-root modes, and how the ar-
+chitecture relates to the Popek and Goldberg theorem. §4.3 uses KVM—the Linux kernel virtual
+machine—as its case study on how to build a hypervisor that is explicitly designed to assume
+hardware support for virtualization. §4.4 discusses the performance implications of CPU virtual-
+ization, and in particular the implementation cost of atomic transitions between modes. Finally,
+like all chapters, we close with pointers for further reading.
+
+4.1       DESIGN REQUIREMENTS
+Intel Virtualization Technology, generally known as VT-x [171], was introduced in 2005 with
+the primary objective to provide architectural support for virtualization.
+
+           A central design goal for Intel Virtualization Technology is to eliminate
+           the need for CPU paravirtualization and binary translation techniques, and
+           thereby enable the implementation of VMMs that can support a broad range
+           of unmodified guest operating systems while maintaining high levels of per-
+           formance.
+                                                      R. Uhlig et al., IEEE Computer, 2005 [171]
+      .
+
+In stating this goal, Intel engineers observed that existing techniques such as paravirtualization
+and dynamic binary translation faced some hard technical challenges in virtualizing the existing
+x86 architecture. Uhlig et al. [171] lists the following specific challenges to approaches using
+software techniques.
+¹AMD’s approach to virtualization, called AMD-v, is architecturally similar to VT-x.
+54   4. X86-64: CPU VIRTUALIZATION WITH VT-X
+      • Ring aliasing and compression: guest kernel code designed to run at %cpl=0 must use the
+        remaining three rings to guarantee isolation. is creates an alias as at least two distinct
+        guest levels must use the same actual ring. Yet, software running in these two rings must be
+        protected from each other according to the specification of the architecture.
+      • Address space compression: the hypervisor must be somewhere in the linear address space
+        in a portion that the guest software cannot access or use.
+      • Non-faulting access to privileged state: some of the infamous Pentium 17 [151] instruc-
+        tions provide read-only access to privileged state and are behavior-sensitive, e.g., the location
+        in linear memory of the interrupt descriptor table (sidt), global descriptor table (sgdt), etc.
+        ese structures are controlled by the hypervisor and will be in a different location than the
+        guest operating system specifies.
+      • Unnecessary impact of guest transitions: to address the efficiency criteria, it is essential that
+        sensitive instructions (which must trigger a transition) be rare in practice. Unfortunately,
+        modern operating systems rely extensively on instructions that are privilege-level sensitive,
+        e.g., to suspend interrupts within critical regions, or to transition between kernel and user
+        mode. Ideally, such instructions would not be sensitive to virtualization.
+      • Interrupt virtualization: the status of the interrupt flag (%eflags.if) is visible to unpriv-
+        ileged instructions (pushf). Since the flag can never be cleared when the guest is running
+        as this would violate safety, any direct use of that instruction by the guest will lead to incor-
+        rect behavior. Furthermore, the popf instruction is control-sensitive as its semantic differs
+        based on whether the CPU can control interrupts (i.e., whether %cpl? %eflags.iopl).
+      • Access to hidden state: the x86-32 architecture includes some “hidden” state, originally
+        loaded from memory, but inaccessible to software if the contents in memory changed. For
+        example, the 32-bit segment registers are hidden: they are loaded from memory into the
+        processor, but cannot be retrieved from the processor back into a general-purpose register
+        or memory. As long as the contents in memory does not change, a segment register can be
+        reloaded back into the processor, e.g., after a trap resulting from virtualization and hidden
+        from the guest operating system. However, should the memory content ever change, that
+        segment register can never be reloaded. Unfortunately, some legacy operating systems, and
+        in particular Windows 95, modify the content of the segment descriptor table in some
+        critical regions and yet explicitly rely on these very specific x86-32 semantics.
+ Of course, the evidence from the systems described in Chapter 3 suggests that these challenges
+ can be mitigated in practice, but not entirely eliminated. For example, the address space com-
+ pression challenge impacts performance whenever the top of the linear memory is used by the
+ virtual machine: some guest operating systems may perform very poorly as a consequence. More
+ concerning, a subset of the infamous “Pentium 17” instructions always return incorrect results to
+ applications running at user-level, a limitation to equivalence [45].
+      In designing VT-x, Intel’s central design goal is to fully meet the requirements of the Popek
+and Goldberg theorem, with the explicit goal that virtual machines running on top of a VT-x-
+based hypervisor meet the following three core attributes of equivalence, safety, and performance.
+
+Equivalence: Intel’s architects designed VT-x to provide absolute architectural compatibility
+between the virtualized hardware and the underlying hardware, which was furthermore to be
+backward-compatible with the legacy x86-32 and x86-64 ISA. is is much more ambitious than
+VMware Workstation, which was pragmatically focused on a set of well-defined guest operating
+systems, and of paravirtualization approaches such as Xen, which required kernel modifications
+and in practice only applied to open-source operating systems.
+
+Safety: Prior hypervisors based on dynamic binary translation or paravirtualization provided
+security and isolation, but through a reasoning that involved complex invariants that had to be
+maintained in software, such as the correct use of segmentation for protection. rough archi-
+tectural support specifically designed for virtualization, a much-simplified hypervisor can provide
+the same characteristics with a much smaller code base. is reduces the potential attack surface
+on the hypervisor and the risk of software vulnerabilities.
+
+Performance: Ironically, an increase in performance over existing, state-of-the-art virtualization
+techniques was not a release goal with the first-generation hardware support for virtualization.
+Instead, the goal at the beginning was merely to setup the appropriate architecture and a roadmap
+for ongoing improvements at the architectural and micro-architectural level. Indeed, the first-
+generation processors with hardware support for virtualization were not competitive with state-
+of-the-art solutions using DBT [3].
+
+4.2     THE VT-X ARCHITECTURE
+e architecture of VT-x is based on a central design decision: do not change the semantics of
+individual instructions of the ISA. is includes of course the instructions that most obviously
+violate the virtualization principle. As a corollary, the architecture does not attempt to separately
+address the individual aspects of the architecture that limited virtualization, as described in §4.1.
+Instead, VT-x duplicates the entire architecturally visible state of the processor and introduces
+a new mode of execution: the root mode. Hypervisors and host operating systems run in root
+mode whereas virtual machines execute in non-root mode. is architectural extension has the
+following properties.
+
+   • e processor is at any point in time either in root mode or in non-root mode. e transi-
+     tions are atomic, meaning that a single instruction or trap can transition from one mode to
+     the other. is differs notably from the conventional implementation of a context switch
+     by an operating system, which requires a convoluted instruction sequence.
+      • e root mode can only be detected by executing specific new instructions, which are only
+        available in root mode. In particular, it cannot be inferred through any other mechanisms or
+        memory access. is is necessary to ensure that root-mode execution itself can be virtualized
+        and to support recursive virtualization.
+
+      • is new mode (root vs. non-root) is only used for virtualization. It is orthogonal to all other
+        modes of execution of the CPU (e.g., real mode, v8086 mode, protected mode), which are
+        available in both modes. It is also orthogonal to the protection levels of protected mode
+        (e.g%cpl=0--%cpl=3) with all four levels separately available to each mode.
+
+      • Each mode defines its own distinct, complete 64-bit linear address space. Each address
+        space is defined by a distinct page table tree with a distinct page table register. Only the
+        address space corresponding to the current mode is active in the TLB, and the TLB changes
+        atomically as part of the transitions.
+
+      • Each mode has its own interrupt flag. In particular, software in non-root mode can freely
+        manipulate the interrupt flags (%eflags.if). External interrupts are generally delivered in
+        root mode and trigger a transition from non-root mode if necessary. e transition occurs
+        even when non-root interrupts are disabled.
+
+ Figure 4.1 illustrates how the central design of VT-x is intended to be used by system software:
+ in root mode, software has access to the full (non-virtualized) architecture of x86-64, including
+ all privilege rings of protected mode (shown in the figure) as well as the legacy modes of exe-
+ cution (not shown). is provides backward compatibility in the architecture, and consequently
+ for software, e.g., a host operating system will typically run in root-%cpl=0 and its application
+ programs will run in root-%cpl=3. e hypervisor also runs in root-%cpl=0 where it can is-
+ sue new privileged instructions to enter into non-root mode. Figure 4.1 also shows that virtual
+ machines execute with the full duplicate of privilege rings: each guest operating system runs in
+ non-root-%cpl=0 and applications run in non-root-%cpl=3.
+
+ 4.2.1 VT-X AND THE POPEK/GOLDBERG THEOREM
+ Recall Popek and Goldberg’s central virtualization theorem, discussed in §2.2.
+
+            eorem 1 [143]: For any conventional third-generation computer, a virtual
+            machine monitor may be constructed if the set of sensitive instructions for
+            that computer is a subset of the set of privileged instructions.
+       .
+
+ e VT-x architecture meets the criteria of the theorem, but through a significant departure from
+ the original model proposed to demonstrate the theorem. Popek and Goldberg identified the key
+ criteria for virtualization. rough their proof-by-construction of the theorem, they furthermore
+                     Host                              VM 1                                    VM 2
+
+                                               cpl 3            user                   cpl 3            user
+
+                                    non-root
+
+                                                                            non-root
+                                               cpl 2                                   cpl 2
+                                               cpl 1                                   cpl 1
+                                               cpl 0          Guest OS                 cpl 0          Guest OS
+
+             cpl 3          user
+             cpl 2
+  root
+
+             cpl 1
+             cpl 0                             Hypervisor and/or Host Operating System
+
+Figure 4.1: Standard use by hypervisors of VT-x root and non-root modes.
+
+demonstrated that virtualization was achievable without requiring any additional hardware con-
+straints than those necessary to support protected operating systems, and specifically by using
+address space compression and ring aliasing (running both the guest operating system and appli-
+cations at user level) to build the hypervisor.
+       Intel pragmatically took a different path by duplicating the entire state of the processor
+and introducing the dedicated root-mode. In particular, the full duplication of the architecture
+was motivated by the need to ensure backward compatibility for the ISA and full equivalence
+for virtualized workloads [171]. Terms must therefore be redefined to convincingly express that
+VT-x follows the Popek/Goldberg criteria. e corresponding core VT-x design principle can be
+informally framed as follows.
+
+               In an architecture with root and non-root modes of execution and a full dupli-
+               cate of processor state, a hypervisor may be constructed if all sensitive instruc-
+               tions (according to the non-virtualizable legacy architecture) are root-mode
+               privileged.
+
+               When executing in non-root mode, all root-mode-privileged instructions are
+               either (i) implemented by the processor, with the requirement that they oper-
+               ate exclusively on the non-root duplicate of the processor or (ii) cause a trap.
+         .
+
+We make three observations.
+
+  1. Unlike the original Popek and Goldberg theorem, this rephrasing does not take into ac-
+     count whether instructions are privileged or not (as defined by their availability to software
+        running at %cpl>0), but instead only takes into consideration the orthogonal question of
+        whether they are root-mode privileged.
+
+     2. ese traps are sufficient to meet the equivalence and safety criteria. is is similar to the
+        original theorem.
+
+     3. However, reducing transitions by implementing certain sensitive instructions in hardware
+        is necessary to meet the performance criteria for virtualization.
+
+        A few examples help illustrate how the notion of sensitivity is orthogonal to that of (reg-
+ ular) privilege. First, a guest operating system running in non-root-%cpl=0 will issue certain
+ privileged instructions such as reading or even writing control registers: these instructions must
+ operate on the non-root duplicate of the processor state. Following the principle, two imple-
+ mentations are possible in this situation: (i) either execute the instruction in hardware onto the
+ non-root context since the entire processor state is duplicated. e hypervisor must not be in-
+ formed since the hardware fully handles the instructions; and (ii) or take a trap from non-root
+ mode, which allows a hypervisor to emulate the instruction.
+        e former is preferred from a performance perspective as it reduces the number of transi-
+ tions. Obviously, it requires specific architectural support by the processor. e implementation
+ decision is therefore a tradeoff between hardware complexity and overall performance.
+        As a second example, the instructions that manipulate the interrupt flag (cli, sti, popf)
+ are sensitive, in particular since other instructions can actually leak information about the inter-
+ rupt flag itself onto memory (pushf). However, recall that these four instructions are not privi-
+ leged instructions in the architecture, i.e., they are available to user-level applications, at least in
+ some cases. Given their high execution rate in modern kernels, their non-root implementation is
+ handled directly by the processor.
+        As a third example, some instructions available at user-level such as sgdt and sidt, are
+ known to be behavior-sensitive. ese rare instructions are not privileged, yet virtualization-
+ sensitive. erefore, they must be (and are) root-mode-privileged.
+
+ 4.2.2 TRANSITIONS BETWEEN ROOT AND NON-ROOT MODES
+ Figure 4.2 shows the key interactions and transitions between root mode and non-root mode
+ in the implementation of VT-x. e state of the virtual machine is stored in a dedicated structure
+ in physical memory called the Virtual Machine Control Structure (VMCS). Once initialized,
+ a virtual machine resumes execution through a vmresume instruction. is privileged instruction
+ loads the state from the VMCS in memory into the register file and performs an atomic transition
+ between the host environment and the guest environment. e virtual machine then executes in
+ non-root mode until the first trap that must be handled by the hypervisor or the next external
+ interrupt. is transition from non-root mode to root mode is called a #vmexit.
+
+                                 cpl 3     user       VM
+
+                      non-root
+                                 cpl 2
+                                 cpl 1
+                                 cpl 0   Guest OS
+                                                  #vmlaunch
+                             #vmexit              #vmresume
+
+                                                        vmread
+
+             ring 0
+                                                                          Hypervisor
+              root
+                                         VMCS
+                                                        vmwrite
+
+Figure 4.2: VT-x transitions and control structures.
+
+      Table 4.1 lists the various possible reasons for a #vmexit. e reason itself is stored in a
+dedicated register (vmcs.exit_reason) to accelerate emulation. e reasons for an exit can be
+grouped into categories including the following.
+
+   • Any attempt by the guest to execute a root-mode-privileged instruction, as this is the fun-
+     damental requirement of the Popek and Goldberg theorem. is includes most of the priv-
+     ileged instructions of the classic (i.e., non-virtualizable) x86 architecture, as well as the
+     sensitive-yet-unprivileged instructions causing violations of the theorem.
+
+   • e new vmcall instructions, designed to allow explicit transitions between non-root mode
+     and root-mode, and in particular hypercalls made by the guest operating system and des-
+     tined to the hypervisor. is is analogous to the sysenter instruction that transitions be-
+     tween user mode and kernel mode.
+
+   • Exceptions result from the execution of any innocuous instruction in non-root mode, that
+     happens to take a trap. is includes, in particular, page faults (#PF) caused by shadow
+     paging, the access to memory-mapped I/O devices, or general-purpose faults (#GP) due to
+     segment violations.
+
+   • EPT violations are the subset of page faults caused when the extended page mapping (under
+     the control of the hypervisor) is invalid. is exit was introduced with extended paging (see
+     Chapter 5).
+
+   • External interrupts that occurred while the CPU was executing in non-root mode, e.g., as
+     the result of network or disk I/O on the host. Such events must be handled by the hypervisor
+     (in the case of type-1 designs) or the host operating system (for type-2 designs) and may or
+     may not have any side-effects to the virtual machine itself.
+       • e interrupt window opens up whenever the virtual machine has enabled interrupt and
+         the virtual machine has a pending interrupt. Following the #vmexit, the hypervisor can
+         emulate the pending interrupt onto the virtual machine.
+
+       • Finally, the ISA extensions introduced with VT-x to support virtualization are also control-
+         sensitive and therefore cause a #vmexit, each with a distinct exit reason. Such exits
+         never occur during “normal virtualization,” but play a fundamental role in nested virtual-
+         ization [33, 191].
+
+Table 4.1: Categories VT-x exit codes
+
+     Category        Exit Reason     Description
+     Exception       0               Any guest instruction that causes an exception
+     Interrupt       1               The exit is due to an external I/O interrupt
+     Triple fault    2               Reset condition (bad)
+     Interrupt       7               The guest can now handle a pending guest interrupt
+     window
+     Legacy          9               Instruction is not implemented in non-root mode; software
+     emulation                       expected to provide backward compatibility, e.g., task
+                                     switch
+     Root-mode       11-17, 28-29, x86 privileged or sensitive instructions: getsec,
+     Sensitive       31-32, 46-47: hlt, invd, invlpg, rdpmc, rdtsc, rsm,
+                                   mov-cr, mov-dr, rdmsr, wrmsr, monitor,
+                                   pause, lgdt, lidt, sgdt, sidt, lldt,
+                                   ltr, sldt
+     Hypercall       18            vmcall : Explicit transition from non-root to root mode
+     VT-x new        19-27, 50, 53   ISA extensions to control non-root execution: invept,
+                                     invvpid, vmclear, vmlaunch, vmptrld,
+                                     vmptrst, vmreas, vmresume, vmwrite,
+                                     vmxoff, vmxon
+     I/O             30              Legacy I/O instructions
+     EPT             48-49           EPT violations and misconfigurations
+
+ e transitions between root and non-root mode are architecturally atomic: a single instruction,—
+ vmresume—transitions back to non-root mode and loads the VMCS state into the current pro-
+ cessor state. In the other direction, the trap #vmexit stores the state of the virtual CPU into the
+ VMCS state. Although the VMCS state is backed by a specific memory region, the architec-
+ture does not specify whether the processor must spill the entire state into the cached memory,
+or whether it can hold off to a subset into the processor itself. As a result, the in-memory state
+of the current VMCS is undetermined. In addition, the layout of the VMCS is undefined. e
+hypervisor software must access selected portions of the guest state via the vmread and vmwrite
+instruction pair.²
+
+4.2.3     A CAUTIONARY TALE—VIRTUALIZING THE CPU AND IGNORING
+          THE MMU
+Today, all processor architectures with virtualization support also virtualize the MMU. is, how-
+ever, has not always been the case. Indeed, the first-generation Intel CPU with VT-x provided
+only elementary support for memory virtualization. In such a design, root-mode and non-root
+mode each have a distinct %cr3 register specifying the base of the page table tree. e cr3 register
+is atomically updated as part of the vmentry and #vmexit transition between root and non-root
+mode. As a result, a hypervisor can configure 100% disjoint address spaces. is solves the ad-
+dress compression challenge of previous hypervisor and removes the need to rely on segmentation
+for protection of the hypervisor. But in such a minimal design, every other aspect of memory
+virtualization is left to software. As in prior architectures without any architectural support, two
+approaches remain possible: (1) to shadow the page tables of the virtual machine (with guest-
+physical values) with a duplicate set of page tables which contains the host-physical values as was
+done by VMware (see §3.2.5); or (2) to rely on paravirtualization of the virtual memory subsystem
+and inform the hypervisor to validate all new mappings (see §3.3).
+       is choice had a severe and unanticipated consequence when shadowing page tables. Us-
+ing shadow paging, the first two generations of Intel processors failed to address the performance
+criteria: over 90% of #vmexit transitions were due to shadow paging and the resulting virtual
+machine performance was slower than when simply disabling VT-x and using software tech-
+niques [3].
+       e explanation for this anomaly is actually subtle: shadowing operates by keeping the
+mappings of the hardware page tables in sync with the changes made by the guest operating
+system in its own page tables. e mechanism to identify changes is the MMU itself: all guest
+page table pages are downgraded to read-only mappings to ensure a transition from the virtual
+machine to the hypervisor, i.e., a trap in classic architectures and a #vmexit in VT-x. A hypervisor
+that relies entirely on direct execution will therefore necessarily suffer a trap for every change in the
+virtual memory of the guest operating system. In contrast, VMware’s memory tracing mechanism
+relied on adaptive binary translation to eliminate the overwhelming majority of page faults.
+Adaptive dynamic binary translation is an effective technique as it relies on the great locality
+of the instructions that manipulate page table entries, a handful per operating system. Once these
+instruction locations have been dynamically identified, the adaptive retranslation process simply
+²In designing its own virtualization extension, AMD took a slightly different approach that architecturally defines the in-
+ memory data structure which it calls the virtual machine control block (VMCB). Even though ISAs differ, Intel’s VMCS and
+ AMD’s VMCB each offer an equivalent, yet incompatible, abstraction of the virtual CPU state.
+ emulates the instructions and updates the shadow entries without ever dereferencing the memory
+ location directly and therefore without taking an expensive trap.
+        Fortunately, this anomaly was addressed in subsequent processors.
+
+ 4.3          KVM—A HYPERVISOR FOR VT-X
+ So far, we have described the hardware extensions introduced by VT-x, and discussed a few ar-
+ chitectural considerations. We now use KVM [113], the Linux-based Kernel Virtual Machine,
+ as a case study to put the innovation in practice. KVM makes for an interesting study because of
+ its maturity and simplicity.
+
+        • KVM is the most relevant open-source type-2 hypervisor. It is used in numerous projects,
+          cloud hosting solutions, and deployed in enterprises and private clouds. KVM is the offi-
+          cially supported hypervisor of major commercial Linux distributions and the foundation of
+          most Openstack deployments.
+
+        • KVM relies on QEMU [32], a distinct open-source project, to emulate I/O. Absent KVM,
+          QEMU is a complete machine simulator with support for cross-architectural binary trans-
+          lation of the CPU, and a complete set of I/O device models. Together with KVM, the
+          combination is a type-2 hypervisor, with QEMU responsible for the userspace implemen-
+          tation of all I/O front-end device emulation, the Linux host responsible for the I/O backend
+          (via normal system calls) and the KVM kernel module responsible to multiplex the CPU
+          and MMU of the processor.
+
+        • e kernel component of KVM, which implements the functionality of CPU and memory
+          virtualization equivalent to the VMware VMM, has been a built-in component of the Linux
+          kernel and is designed to avoid unnecessary redundancies with Linux. KVM was designed
+          from the beginning to be part of Linux, with the explicit goal to merge all kernel-resident
+          components with the mainline Linux source tree. is was achieved with the merge of the
+          KVM kernel module into the Linux mainline as of version 2.6.20 in 2007.
+
+        • Unlike Xen or VMware Workstation, KVM was designed from the ground up assuming the
+          existence of hardware support for virtualization.³ is makes for a particularly good study
+          of the intrinsic complexity of a hypervisor designed for VT-x.
+
+ 4.3.1 CHALLENGES IN LEVERAGING VT-X
+ e developers of KVM adapted Popek and Goldberg’s three core attributes of a virtual machine
+ as follows.
+     ³Originally, KVM was designed for x86-64 processors with either VT-x or AMD-v; since then, it has evolved to virtualize
+      other architectures notably ARM/ARM64. See §7.6.
+                                                        4.3. KVM—A HYPERVISOR FOR VT-X              63
+Equivalence: A KVM virtual machine should be able to run any x86 operating system (32-bit
+or 64-bit) and all of its applications without any modifications. KVM must provide sufficient
+compatibility at the hardware level such that users can choose their guest operating system kernel
+and distribution.
+
+Safety: KVM virtualizes all resources visible to the virtual machine, including CPU, physical
+memory, I/O busses and devices, and BIOS firmware. e KVM hypervisor remains in complete
+control of the virtual machines at all times, even in the presence of a malicious or faulty guest
+operating system.
+
+Performance: KVM should be sufficiently fast to run production workloads. However, KVM’s
+explicit design of a type-2 architecture implies that resource management and scheduling deci-
+sions were left as part of the host Linux kernel (of which the KVM kernel module is a component).
+To achieve these goals, KVM’s design makes a careful tradeoff to ensure that all performance-
+critical components are handled within the KVM kernel module while limiting the complexity of
+that kernel module. Specifically, the KVM kernel module handles only the core platform functions
+associated with the emulation of the x86 processor, the MMU, the interrupt subsystem (inclusive
+of the APIC, IOAPIC, etc.); all functions responsible for I/O emulation are handled in userspace.
+       To further simplify the implementation, the original version of KVM leveraged highly two
+existing open-source project: (i) QEMU [32] for all I/O emulation in user-space and (ii) the x86-
+specific portions of Xen, which served as the starting point for the Linux kernel module. Since
+then, KVM and Xen have followed largely disjoint paths, but the evolution of QEMU is mostly
+driven by the requirements for KVM.
+
+4.3.2 THE KVM KERNEL MODULE
+e kernel module only handles the basic CPU and platform emulation issues. is includes the
+CPU emulation, memory management and MMU virtualization, interrupt virtualization, and
+some chipset emulation (APIC, IOAPIC, etc.). But it excludes all I/O device emulation.
+       Given that KVM was designed only for processors that follow the Popek/Goldberg prin-
+ciples, the design is in theory straightforward: (i) configure the hardware appropriately; (ii) let
+the virtual machine execute directly on the hardware; and (iii) upon the first trap or interrupt,
+the hypervisor then regains control, and “just ” emulates the trapping instruction according to the
+semantic.
+       e reality is much more complex. Our analysis is based on the linux-4.8 release of Oc-
+tober 2016. e KVM kernel module alone has over 25,000 source lines of code (LOC). e
+complexity is due in part to: (i) the need to support multiple distinct versions of VT-x going back
+to the first processor with VT-x (Intel’s Prescott ); (ii) the inherent complexity of the x86 instruc-
+tion set architecture; and (iii) the remaining lack of architectural support in hardware for some
+basic operations, which must be handled in software.
+       Figure 4.3 illustrates the key steps involved in the trap handling logic of KVM, from
+ the original #vmexit until the vmresume instruction returns to non-root mode. Immediately
+
+                                exit condition
+
+       #vmexit                                              handle_*
+                                                              handle_*
+                                                                handle_*
+
+                                                                  handle_*
+
+                                                                 hardware trap
+
+                                            1
+             #GP,
+                                  fetch
+             #PF,…
+                                                                      5          #DIV0
+                                                         em_*
+                                            2
+              #UD                decode                           6
+                                                     wr mem                  #GP,#PF
+
+                                            3
+            #GP,#UD             privcheck                         7
+                                                     wr regs
+                                            4        wr %rip
+            #GP,#PF             read mem
+
+                                                                          #vmentry
+
+Figure 4.3: General-purpose trap-and-emulate flowchart of KVM.
+
+ upon the #vmexit, KVM first saves all the vcpu state in memory. e Intel architectural
+ manual [103](Appendix I) defines 54 possible exit reasons (see Table 4.1). KVM then per-
+ forms a first-level dispatch based on vmcs.exit_reason, with a distinct handler (handler_*
+ in arch/x86/kvm/vmx.c) for each exit reason. Most of these handlers are straightforward. In
+                                                        4.3. KVM—A HYPERVISOR FOR VT-X              65
+particular, some common code paths rely exclusively on VMCS fields to determine the necessary
+emulation steps to perform. Depending on the situation, KVM may:
+   • emulate the semantics of that instruction and increment the instruction pointer to the start
+     of the next instruction;
+   • determine that a fault or interrupt must be forwarded to the guest environment. Following
+     the semantic of x86, KVM changes the stack pointer and stores on the stack the previous
+     instruction and stack pointers. Execution will then resume at the instruction specified by
+     the guest’s interrupt descriptor table;
+   • change the underlying environment and re-try the execution. is occurs for example in the
+     case of an EPT violation; and
+   • do nothing (at least to the virtual machine state). is is the case for example when an
+     external interrupt occurs, which is handled by the underlying host operating system. Non-
+     root execution will eventually resume where it left off.
+Unfortunately, the information available in the VMCS is at times inadequate to handle the #vmexit
+without actually decoding the instruction that caused it. KVM—as well as any hypervisor for VT-
+x which attempts to provide equivalence—must therefore also include a general-purpose decoder,
+capable of decoding all instructions, and a general-purpose emulator, which can emulate them.
+Figure 4.3 illustrates the key steps involved in the general-purpose emulator implementation of
+KVM. e core logic that performs this basic step is implemented in arch/x86/kvm/emulate.c,
+a file with 5000+ lines of code filled with macros, complexity, and subtleties. e key steps of the
+emulator are:
+  1. fetch the instruction from guest virtual memory (%cs:%eip). First, the virtual address must
+     be converted into a linear address, then into a guest-physical address, and finally fetched
+     from memory;
+  2. decode the instruction, extracting its operator and operands. e CISC nature and variable
+     length of the x86-64 instructions makes this process non-trivial;
+  3. verify whether the instruction can execute given the current state of the virtual CPU, e.g.,
+     privileged instructions can only execute if the virtual CPU is at cpl0;
+  4. read any memory read-operands from memory, as is the common case in the x86 CISC
+     architecture using the same virtual to linear to guest-physical relocation steps as for instruc-
+     tion fetches;
+  5. emulate the decoded instruction, which could be any of the instructions defined in the x86
+     architecture. Each instruction opcode is emulated via its own dedicated emulation routine
+     (em_* in the source);
+66   4. X86-64: CPU VIRTUALIZATION WITH VT-X
+     6. write any memory write-operands back to the guest virtual machine; and
+     7. update guest registers and the instruction pointer as needed.
+ Clearly, these steps are complex, expensive, and full of corner cases and possible exception condi-
+ tions. Figure 4.3 further shows the intricacy as every stage contains a possible exception case, in
+ which the trap-and-emulate logic concludes that the guest instruction cannot successfully execute,
+ and instead should generate a fault in the guest virtual CPU, e.g., a virtual #GP, #PF, or #UD.
+ Furthermore, the instruction emulation step can, in some rare cases, lead to a fault in the actual
+ hardware such as when dividing by zero. is is shown in red in the figure, leading to additional
+ complexity.
+        e emulator is also notoriously brittle, and its implementation has evolved over the years
+ to address defect reports as well as ongoing ISA extensions. It remains error-prone. A recent study
+ by Amit et al. [15] identified 117 emulation bugs in the KVM kernel module, of which 72 were
+ in the emulator alone.
+
+ 4.3.3 THE ROLE OF THE HOST OPERATING SYSTEM
+ KVM was specifically designed to be part of Linux. Unlike other type-2 hypervisors such as
+ VMware Workstation [45] or VirtualBox [180] which are host-independent, KVM is deeply
+ integrated into the Linux environment. For example, the perf toolkit has a specific mode to
+ profile KVM virtual machines; this is made possible by the deep integration of the KVM and
+ Linux projects.
+       Figure 4.4 shows the core KVM virtual machine execution loop [113], shown for one virtual
+ CPU. e outer loop is in usermode and repeatedly:
+      • enters the KVM kernel module via an ioctl to the character device /dev/kvm;
+      • the KVM kernel module then executes the guest code until either (i) the guest initiates I/O
+        using an I/O instruction or memory-mapped I/O or (ii) the host receives an external I/O
+        or timer interrupt;
+      • the QEMU device emulator then emulates the initiated I/O (if required); and
+      • in the case of external I/O or timer interrupt, the outer loop may simply return back to
+        the KVM kernel module by using another ioctl(/dev/kvm) without further side-effects.
+        is step in userspace is however essential as it provides the host operating system with the
+        opportunity to make global scheduling decisions.
+ e inner loop (within the KVM kernel module) repeatedly:
+      • restores the current state of the virtual CPU;
+      • enters non-root mode using the vmresume instruction. At that point, the virtual machine
+        executes in that mode until the next #vmexit;
+                                                     4.4. PERFORMANCE CONSIDERATIONS               67
+
+              User mode                        Kernel mode               Non-root
+
+                  Issue Guest
+               Execution ioctl                   Enter
+                                                 non-root
+
+                                                                        Execute Guest
+                                                 Handle
+                                                 #vmexit
+
+                                         yes        IO
+                                                         no
+
+                     Handle                       Signal
+                      IO                 yes     pending?
+
+                                                         no
+
+Figure 4.4: KVM Virtual Machine Execution Loop, adapted from [113].
+
+   • handles the #vmexit according to the exit reason, as described in §4.3.2;
+
+   • if the guest issued a programmed IO operation (exit_reason = IO) or a memory-mapped
+     IO instruction (exit_reason = exception, but only when accessing a memory-mapped
+     IO page), break the loop and return to userspace; and
+
+   • if the #vmexit was caused by an external event (e.g., exit_reason = interrupt), break
+     the loop and return to userspace.
+
+4.4     PERFORMANCE CONSIDERATIONS
+e design of VT-x is centered around the duplication of architectural state between root and non-
+root modes, and the ability to atomically transition between them: a single instruction, vmresume,
+transitions back to non-root mode and loads then VMCS state into the current processor state.
+In the other direction, the trap #vmexit stores the entire state of the virtual CPU into the VMCS
+state.
+       Atomic transitions between modes do not imply a high execution speed, and certainly not
+a single-cycle execution time. Intuitively, such transitions are expected to stall the entire execu-
+68   4. X86-64: CPU VIRTUALIZATION WITH VT-X
+ tion pipeline, given that the whole register file, privileged state, and instruction pointer change.
+ In reality, the measured cost of these transitions is high, and suggests a complex implementation
+ within the processor’s microcode firmware. Table 4.2 shows the cost of a hardware round-trip, de-
+ fined by a #vmexit followed by a NULL handler in the hypervisor that increments the instruction
+ pointer and resumes execution of the virtual machine. In early generations, such as Prescott, the
+ cost of a single hardware round-trip was measured in microseconds, largely exceeding the cost of
+ a regular trap. Since then, transitions have improved by 5? but remain high.
+Table 4.2: Hardware round-trip latency, from [5]
+
+                        Microarchitecture       Launch Date     Cycles
+                        Prescott                3Q05            3963
+                        Merom                   2Q06            1579
+                        Penryn                  1Q08            1266
+                        Nehalem                 3Q09            1009
+                        Westmere                1Q10            761
+                        Sandy Bridge            1Q11            784
+
+        Table 4.3 further shows the cost of individual VT-x instructions and transitions for a
+ broader set of processors, including more recent releases [6]. Despite the lack of description by
+ Intel or an independent study of the cause of the changes, one can reasonably infer that certain
+ instructions, (e.g., vmread) went from being implemented in microcode to being integrated di-
+ rectly into the pipeline. Nevertheless, all the atomic transitions (vmresume or #vmexit) remain
+ very expensive despite having been highly optimized, and have not improved noticeably in the
+ past five generations of processors.
+
+ 4.5     FURTHER READING
+ Amit et al. [15] identified minor hardware limitations to the claim that VT-x is virtualizable
+ according to the Popek/Goldberg theorem: the physical address width is available directly through
+ the CPUID instruction and not virtualizable. is can cause a problem when live-migrating a
+ virtual machine [51, 135] across systems with different physical address widths. Also, some of the
+ FPU state is not fully virtualizable, and workarounds are required.
+        In the same work, Amit et al. primarily identified software bugs in the implementation
+ of KVM that violate the safety equivalence property expected of hypervisors. By comparing sys-
+ tematically the behavior of a KVM virtual machine with Intel’s reference simulator [15], they
+ identified 117 distinct bugs in KVM. e common cause for these bugs is that the entire com-
+ plexity of the x86 ISA is exposed to software. Although the majority of these bugs are corner-case
+ equivalence limitations with little practical impact, at least 6 bugs have led to security vulnerabil-
+ ities and can cause host DoS, guest DoS, or privilege escalation. ese concerns have called for
+                                                                    4.5. FURTHER READING           69
+Table 4.3: Hardware costs of individual VT-x instructions and #vmexit for different Intel processors
+
+                                                           Sandy     Ivy
+     Processor     Prescott   Merom   Penryn   Westmere                      Haswell   Broadwell
+                                                           Bridge   Bridge
+     VMXON           243       162      146       302       108       98        108       116
+    VMXOFF           175       99       89         54        84       76        73         81
+   VMCLEAR           277       70       63         93        56       50        101       107
+   VMPTRLD           255       66       62         91        62       57        99        109
+    VMPTRST          61        22        9         17        5         4        43         44
+    VMREAD           178       53       26         6         5         4         5         5
+   VMWRITE           171       43       26         5         4         3         4         4
+  VMLAUNCH          2478       948      688       678       619       573       486       528
+  VMRESUME          2333       944      643       402       460       452       318       348
+   vmexit/vmcall    1630       727      638       344       365       334       253       265
+   vmexit/cpuid     1599       764      611       389       434       398       327       332
+    vmexit/#PF      1926      1156      858       569       507       466       512       531
+    vmexit/IOb      1942       858      708       427       472       436       383       397
+   vmexit/EPT       N/A       N/A      N/A        546       588                 604       656
+
+a refactoring of the KVM kernel module, and in particular to consider moving the instruction
+emulator to userspace where bugs can be more easily contained [37].
+       Readers interested in getting a deeper understanding of KVM will quickly realize that the
+source code is the best form of documentation, even though the KVM website [118] does contain
+some useful pointers.
+       All hypervisors for the x86 architecture have embraced VT-x since its introduction in sil-
+icon. Current versions of VMware Workstation leverages the VT-x MMU capabilities similarly
+to KVM: the world switch no longer exists in its original form, and the core execution loop of
+VMware Workstation resembles that of KVM. Adams and Agesen [3] study in great detail this
+tradeoff between DBT and direct execution in the presence of hardware support. e tradeoff is
+substantial whenever the hypervisor must shadow in-memory data structures that are frequently
+accessed in practice. e tradeoff was fundamental prior to the introduction of extended paging
+in processors, and the authors conclude that VT-x (without extended paging) hurts performance.
+       Xen also embraced VT-x early under the term hardware virtualization (HVM) [50, 146].
+With HVM, guest operating systems no longer need to be paravirtualized to run on Xen. In-
+stead, paravirtualization is merely an optional set of extensions that improve performance and
+functionality by directly communicating with the hypervisor.
+       To the best of our knowledge, the micro-architectural cost of transitions from root to non-
+root mode has never been academically studied in depth, and the salient aspects of their imple-
+70   4. X86-64: CPU VIRTUALIZATION WITH VT-X
+ mentation in Intel or AMD processors have not been disclosed. e cause of the 5? improvement
+ from Prescott to Sandy Bridge remains the cause for speculation. Instead, the focus has been to
+ relentlessly reduce the software cost of handling a #vmexit.

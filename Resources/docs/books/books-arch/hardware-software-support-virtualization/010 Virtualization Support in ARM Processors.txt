@@ -1,0 +1,934 @@
+
+                                  CHAPTER                        7
+
+Virtualization Support in ARM
+           Processors
+is chapter describes the current, state-of-the-art support for virtualization in modern ARM
+processors. Much of this work is based on the original paper on KVM/ARM, the Linux ker-
+nel virtual machine for ARM [60]. §7.1 first describes the key design principles behind ARM’s
+virtualization technology. §7.2 describes the approach to CPU virtualization, the concept of the
+EL2 hypervisor mode, and how the architecture relates to the Popek and Goldberg theorem.
+§7.3 discusses the closely related question of MMU virtualization through nested page tables.
+§7.4 discusses support for interrupt virtualization. §7.5 discusses support for timer virtualiza-
+tion. §7.6 uses KVM/ARM as its case study on how to build a hypervisor explicitly designed to
+assume ARM hardware support for virtualization, and contrast it with KVM x86, as discussed
+in Chapter 4. §7.7 discusses some micro-architectural implications of the design, including the
+performance overhead of the new architectural features. §7.8 discusses the implementation com-
+plexity of KVM/ARM. §7.9 discusses improvements to the ARM virtualization support for type-
+2 hypervisors such as KVM/ARM. Finally, like all chapters, we close with pointers for further
+reading.
+
+7.1     DESIGN PRINCIPLES OF VIRTUALIZATION SUPPORT
+        ON ARM
+ARM Architecture Virtualization Extensions [39] were introduced in 2010 as part of the ARMv7
+architecture to provide architectural support for virtualization. Until then, virtualization solutions
+on ARM systems were based on paravirtualization and not widely used [28, 59, 91]. However,
+as ARM CPUs continued to increase in performance, interest in ARM virtualization also grew.
+ARM CPUs are pushing upward from mobile devices such as smartphones and tablets into tra-
+ditional servers where virtualization is an important technology. Given ARM’s widespread use in
+embedded systems and its business model of licensing to silicon partners who then build ARM
+chips, it was important for ARM to support virtualization but in a manner that enabled its part-
+ners to implement it in a cost effective manner. e central design goal of ARM Virtualization
+Extensions was to make it possible to build ARM hypervisors that can run unmodified guest op-
+erating systems without adding significant hardware complexity, while maintaining high levels of
+performance. With the success of Intel Virtualization Technology, ARM recognized the bene-
+124   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+ fit of hardware virtualization support to overcome the limitation of previous ARM architectures
+ not being classically virtualizable without the need for CPU paravirtualization or dynamic binary
+ translation.
+        ARM’s central design goal is to fully meet the requirements of the Popek and Goldberg the-
+ orem, with the explicit goal that virtual machines running on top of a Virtualization Extensions-
+ based hypervisor meet the following three core attributes of equivalence, safety, and performance:
+
+ Equivalence: ARM’s architects designed the Virtualization Extensions to provide architectural
+ compatibility between the virtualized hardware and the underlying hardware, including being
+ backward-compatible with older generations of ARM’s ISA. However, ARM also introduced in
+ ARMv7 a hardware technology for providing hardware-based security known as TrustZone. By
+ design, TrustZone is not virtualized by the Virtualization Extensions. is view of equivalence is
+ the same as that for Intel’s VT-x from the pragmatic point of view of applications and operating
+ systems.
+
+ Safety: ARM Virtualization Extensions also meet the safety requirement in a manner similar
+ to Intel’s VT-x. rough architectural support specifically designed for virtualization, a simpler
+ hypervisor can provide the same characteristics with a smaller code base. is reduces the potential
+ attack surface on the hypervisor and the risk of software vulnerabilities.
+
+ Performance: ARM benefited from the hindsight of Intel’s VT-x in its design, so that deliver-
+ ing good performance was a goal from the beginning for first-generation hardware support for
+ virtualization. For example, nested page tables, not part of the original x86 virtualization hard-
+ ware, are standard in ARM. Furthermore, ARM went beyond Intel’s VT-x in various aspects
+ of its design to provide additional hardware mechanisms to improve virtualization performance,
+ especially in the presence of multicore systems which have become more commonplace.
+
+ 7.2     CPU VIRTUALIZATION
+ Like Intel’s VT-x design, the architecture of the Virtualization Extensions focuses on supporting
+ the existing ISA in the context of virtualization. ARM does not change the semantics of individ-
+ ual instructions of the ISA, or separately address the individual aspects of the architecture limiting
+ virtualization, such as the non-virtualizable instructions. Instead, the Virtualization Extensions
+ introduces a new more privileged mode of execution of the processor, referred to as HYP (hyper-
+ visor) mode in the ARMv7 architecture when it was first introduced, but now referred to as EL2
+ since the introduction of the ARMv8 architecture.
+        We first provide an overview of the ARM architecture then discuss its virtualization sup-
+ port. Figure 7.1 shows the overall CPU modes on the ARM architecture, including TrustZone
+ (Security Extensions). TrustZone splits the modes into two worlds, secure and non-secure, which
+ are orthogonal to the CPU modes. A special mode, monitor mode, is provided to switch between
+ the secure and non-secure worlds. Although ARM CPUs power up starting in the secure world,
+                                                                  7.2. CPU VIRTUALIZATION        125
+assuming TrustZone is implemented, ARM bootloaders typically transition to the non-secure
+world at an early stage. e secure world is used for trusted computing use cases such as digital
+rights management. TrustZone may appear useful for virtualization by using the secure world for
+hypervisor execution, but this does not work because trap-and-emulate is not supported. ere is
+no means to trap operations executed in the non-secure world to the secure world. Non-secure
+software can therefore freely configure, for example, virtual memory. Any software running at the
+highest non-secure privilege level therefore has access to all non-secure physical memory, making
+it problematic to isolate multiple VMs running in the non-secure world. While it may be possible
+to retrofit TrustZone to support virtualization, that was not the intent of TrustZone, and it would
+be undesirable to exclude current uses of TrustZone in a system running hypervisors because it is
+being used for virtualization support.
+       Figure 7.1 shows a new CPU privilege level called EL2 introduced to support virtualization.
+ARM Virtualization Extensions are centered around this new CPU privilege level (also known
+as exception level), EL2, added to the existing user and kernel levels, EL0 and EL1, respectively.
+Since ARM software stacks generally run in the non-secure world, EL2 was introduced as a trap-
+and-emulate mechanism to support virtualization in the non-secure world. EL2 is a CPU mode
+that is strictly more privileged than the other CPU modes, EL0 and EL1. Note that ARMv8 only
+has one kernel mode, EL1, unlike previous ARM architecture versions that supported multiple
+kernel modes as discussed in §2.5.3.
+       To support VMs, software running in EL2 can configure the hardware to trap to EL2 from
+EL0 or EL1 on various sensitive instructions and hardware interrupts. is configurability allows
+for more flexible uses of the system. Consider three examples. First, a partitioning hypervisor that
+does not support resource overcommittment may not trap on some instructions that a normal
+hypervisor would trap on. Second, it may be desirable to allow a VM to use ARM debug registers
+directly and therefore not trap accesses to them, but if debugging on the host was being done at
+the same time, the VM should not be allowed to access them but should instead trap and their
+behavior should be emulated. ird, if one wanted to just emulate a different CPU from the one
+being used, it would be necessary to trap on accesses to the CPU identifier registers, but it would
+not be necessary to trap on other accesses required for running a full hypervisor.
+
+                             Non-Secure state      Secure state
+                              EL0 User               EL0 User
+                              EL1 Kernel             EL1 Kernel
+                              EL2 Hypervisor
+
+                                   Monitor Mode (Secure EL3)
+
+Figure 7.1: ARM processor modes.
+126   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+        To allow VMs to interact with an interface identical to that of the physical machine while
+ isolating them from the rest of the system and preventing them from gaining full access to the
+ hardware, a hypervisor enables the virtualization features in EL2 before switching to a VM. e
+ VM will then execute normally in EL0 and EL1 until some condition is reached that requires
+ intervention of the hypervisor. At this point, the hardware traps into EL2 giving control to the
+ hypervisor, which can then manage the hardware and provide the required isolation across VMs.
+ Once the condition is processed by the hypervisor, the CPU can be switched back into EL0 or EL1
+ and the VM can resume execution. When all virtualization features are disabled in EL2, software
+ running in EL1 and EL0 works just like on a system without the Virtualization Extensions where
+ software running in EL1 has full access to the hardware.
+        e ARM architecture allows each trap to be configured to trap directly into a VM’s EL1
+ instead of going through EL2. For example, traps caused by system calls or page faults from
+ EL0 can be configured to trap to a VM’s EL1 directly so that they are handled by the guest OS
+ without intervention of the hypervisor. is avoids going to EL2 on each system call or page
+ fault, reducing virtualization overhead. Additionally, all traps into EL2 can be disabled and a
+ single non-virtualized kernel can run in EL1 and have complete control of the system.
+        ARM designed the virtualization support around a separate CPU mode distinct from exist-
+ ing privileged modes, because they envisioned a standalone hypervisor underneath a more com-
+ plex rich OS kernel [62]. ey wanted to make it easier for silicon partners to implement the
+ Virtualization Extensions, and therefore reduced the number of control registers available in EL2
+ compared to EL1. For example, EL2 only has one page table base register while EL1 can make
+ use of two. Arguably, by reducing the number of control registers available in EL2, the hypervisor
+ implementation could be made simpler by reducing the amount of state that needed to be ma-
+ nipulated. Similarly, they mandated certain bits to be set in the page table entries, because they
+ did not envision a hypervisor sharing page tables with software running in user space, which is
+ for example what the Linux kernel does with kernel mode.
+        Compared to Intel’s VT-x, ARM Virtualization Extensions reflect a different approach
+ with respect to CPU virtualization. ARM supports virtualization through a separate CPU mode,
+ EL2, which is a separate and strictly more privileged CPU mode than previous user and kernel
+ modes. In contrast, Intel has root and non-root mode, which are orthogonal to the CPU protec-
+ tion modes. While sensitive operations on ARM trap to EL2, sensitive operations can trap from
+ non-root mode to root mode while staying in the same protection level on Intel. A crucial dif-
+ ference between the two hardware designs is that Intel’s root mode supports the same full range
+ of user and kernel mode functionality as its non-root mode, whereas ARM’s EL2 is a strictly
+ different CPU mode with its own set of features. A hypervisor using ARM’s EL2 has an arguably
+ simpler set of features to use than the more complex options available with Intel’s root mode.
+ More importantly, the simpler set of features of ARM’s EL2 are most likely easier for hardware
+ vendors to implement than the requirement of duplicating the entire architecturally visible state
+ of the processor as done with Intel’s root mode.
+                                                                  7.2. CPU VIRTUALIZATION          127
+       Both ARM and Intel trap into their respective EL2 and root modes, but Intel provides
+specific hardware support for a VM control block which is automatically saved and restored when
+switching to and from root mode using only a single instruction. is is used to automatically
+save and restore guest state when switching between guest and hypervisor execution. In contrast,
+ARM provides no such hardware support and any state that needs to be saved and restored must
+be done explicitly in software. e absence of this hardware support in ARM reduces the hardware
+complexity of implementing virtualization support, but it also provides some flexibility in what
+is saved and restored in switching to and from EL2. For example, trapping to ARM’s EL2 is
+potentially faster than trapping to Intel’s root mode if there is no additional state to save. On the
+other hand, if much of the state in the software equivalent of a VM control block needs to be
+saved and restored on each switch to the hypervisor, the hardware-supported VM control block
+feature is most likely faster. Exactly what state needs to be saved and restored when switching to
+and from EL2 depends on the hypervisor design and what state the hypervisor needs to use.
+       Compared to the properties of Intel’s root mode, ARM’s Virtualization Extensions provide
+the following properties:
+   • the processor is at any point in time in exactly one CPU mode, EL2, EL1, or EL0. e actual
+     transition from one mode to another is atomic, but the process of saving and restoring state
+     as needed when transition from one mode to another is not atomic;
+   • the CPU mode can be determined by executing the MRS instruction, which is available in
+     any mode as discussed in §2.5.3. e expectation is that applications and operating systems
+     will continue to run using the same CPU modes, whether within a VM or not. However,
+     under this assumption, EL2 execution itself cannot be virtualized and recursive virtual ma-
+     chines are not supported since a nested hypervisor can determine that it is not running in
+     EL2. is is under revision though and architecture support for nested virtualization on
+     ARM will become available starting with ARMv8.3 [38];
+   • EL2 is designed to be used for virtualization, but it is simply a more privileged CPU mode
+     and could be used for other purposes;
+   • each mode has its own distinct complete linear address space defined by a distinct page table.
+     EL2 has its own translation regime, which defines the registers and page table formats
+     used in a given mode. However, EL1/EL0 share a translation regime so that both of their
+     address spaces and page tables can be accessible in either EL1 or EL0. Only entries in the
+     TLB for the currently active address space are matched as TLB entries are each tagged
+     with a translation regime. Since the entries are tagged, there is no need to flush the TLB in
+     transitioning between EL2 and other CPU modes; and
+   • ARM has two types of interrupts—normal (IRQ) and fast (FIQ)—and two corresponding
+     interrupt flags for the current mode of the processor. Software in EL1 can freely manipulate
+     the interrupt flag for each type of interrupt without trapping. EL2 can configure each type
+128   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+           of interrupt to either be delivered directly to EL1 or to trap to EL2. When the interrupt is
+           delivered directly to EL1, the interrupt flag configured directly by EL1 controls real physical
+           interrupts. When the interrupt traps to EL2, the interrupt flag configured directly by EL1
+           controls virtual interrupts.
+
+ 7.2.1   VIRTUALIZATION EXTENSIONS AND THE POPEK/GOLDBERG
+         THEOREM
+ Recall Popek and Goldberg’s central virtualization theorem, discussed in §2.2.
+
+              eorem 1 [143]: For any conventional third-generation computer, a virtual
+              machine monitor may be constructed if the set of sensitive instructions for
+              that computer is a subset of the set of privileged instructions.
+       .
+
+ e Virtualization Extensions architecture meets the criteria of the theorem, but through a sig-
+ nificant departure from the original model proposed to demonstrate it. ARM pragmatically took
+ a different path by introducing a new more privileged EL2 that operates below and maintains
+ the existing CPU modes. is ensures backward compatibility for the ISA. Terms must therefore
+ be redefined to convince oneselves that the Virtualization Extensions follow the Popek/Gold-
+ berg criteria. e corresponding core Virtualization Extensions design principle can be informally
+ framed as follows.
+
+              In an architecture with an additional, separate more privileged hypervisor
+              mode of execution, a VMM may be constructed if all sensitive instructions
+              (according to the non-virtualizable legacy architecture) are hypervisor-mode
+              privileged. When executing in non-hypervisor mode, all hypervisor-mode-
+              privileged instructions are either (i) implemented by the processor, with the
+              requirement that they operate exclusively on the non-hypervisor state of the
+              processor, or (ii) cause a trap to the hypervisor mode.
+       .
+
+        We make two observations: (i) the theorem does not take into account whether instruc-
+ tions are privileged or not, but instead only takes into consideration the orthogonal question of
+ whether and how they execute in non-hypervisor mode; and (ii) only traps are required to meet the
+ equivalence and safety criteria. However, reducing transitions by implementing certain sensitive
+ instructions in hardware is necessary to meet the performance criteria.
+
+ 7.3         MEMORY VIRTUALIZATION
+ ARM and Intel are quite similar in their support for virtualizing physical memory. Both introduce
+ an additional set of page tables to translate guest to host physical addresses, although ARM ben-
+                                                            7.3. MEMORY VIRTUALIZATION              129
+efited from hindsight by including this feature as part of its initial virtualization support whereas
+Intel did not include its equivalent Extended Page Table (EPT) support, discussed in §5.1, un-
+til its second-generation virtualization hardware. Using ARM’s hardware support to virtualize
+physical memory, when running a VM, the physical addresses managed by the VM are actually
+Intermediate Physical Addresses (IPAs), also known as guest physical addresses (gPAs), and
+need to be translated into host physical addresses (hPAs). Similarly to nested page tables on x86,
+ARM provides a second set of page tables, Stage-2 page tables, which translate from gPAs to
+hPAs corresponding to guest and host physical addresses, respectively. Stage-2 translation can be
+completely disabled and enabled from EL2. Stage-2 page tables use ARM’s new LPAE (Large
+Physical Address Extension) page table format, with subtle differences from the page tables used
+by kernel mode.
+        Figure 7.2 shows the complete address translation scheme. ree levels of page tables are
+used for Stage-1 translation from virtual to guest physical addresses, and four levels of page tables
+are used for Stage-2 translation from guest to host physical addresses. Stage-2 translation can be
+entirely enabled or disabled using a bit in the Hyp Configuration Register (HCR). e base register
+for the Stage-2 first-level (L1) page table is specified by the Virtualization Translation Table Base
+Register (VTTBR). Both registers are only configurable from EL2.
+
+        TTBR VA
+
+         Stage 1        L1
+                       Table               L2
+                                          Table               L3
+                                                             Page   GPA
+       VTTBR
+
+         Stage 2         L1
+                       Table                L2
+                                          Table               L3
+                                                             Page                L4
+                                                                                Page       PA
+
+Figure 7.2: Stage-1 and Stage-2 page table walk on ARM using the LPAE memory long format
+descriptors. e virtual address (VA) is first translated into a guest physical address (gPA) and finally
+into a host physical address (hPA).
+130   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+ 7.4     INTERRUPT VIRTUALIZATION
+
+ ARM defines the Generic Interrupt Controller (GIC) architecture [21]. e GIC routes inter-
+ rupts from devices to CPUs and CPUs query the GIC to discover the source of an interrupt.
+ e GIC is especially important in multicore configurations, because it is used to generate Inter-
+ Processor Interrupts (IPIs) from one CPU core to another. e GIC is split in two parts, the
+ distributor and the CPU interfaces. ere is only one distributor in a system, but each CPU
+ core has a GIC CPU interface. Both the CPU interfaces and the distributor are accessed over a
+ Memory-Mapped interface (MMIO). e distributor is used to configure the GIC, for example,
+ to set the CPU core affinity of an interrupt, to completely enable or disable interrupts on a system,
+ or to send an IPI to another CPU core. e CPU interface is used to acknowledge (ACK) and to
+ signal End-Of-Interrupt (EOI). For example, when a CPU core receives an interrupt, it will read
+ a special register on the GIC CPU interface, which ACKs the interrupt and returns the number
+ of the interrupt. e interrupt will not be raised to the CPU again before the CPU writes to the
+ EOI register of the CPU interface with the value retrieved from the ACK register.
+         Interrupts can be configured to trap to either EL2 or EL1. Trapping all interrupts to EL1
+ and letting OS software running in EL1 handle them directly is efficient, but does not work in the
+ context of VMs, because the hypervisor loses control over the hardware. Trapping all interrupts
+ to EL2 ensures that the hypervisor retains control, but requires emulating virtual interrupts in
+ software to signal events to VMs. is is cumbersome to manage and expensive because each step
+ of interrupt and virtual interrupt processing, such as ACKing and EOIing, must go through the
+ hypervisor.
+         e GIC includes hardware virtualization support in the form of a virtual GIC (VGIC) so
+ that receiving virtual interrupts does not need to be emulated in software by the hypervisor. e
+ VGIC introduces a VGIC CPU interface as well as a corresponding hypervisor control interface
+ for each CPU. VMs are configured to see the VGIC CPU interface instead of the GIC CPU
+ interface. Virtual interrupts are generated by writing to special registers, the list registers, in the
+ VGIC hypervisor control interface, and the VGIC CPU interface raises the virtual interrupts di-
+ rectly to a VM’s kernel mode. Because the VGIC CPU interface includes support for ACK and
+ EOI, these operations no longer need to trap to the hypervisor to be emulated in software, reduc-
+ ing overhead for receiving interrupts on a CPU. For example, emulated virtual devices typically
+ raise virtual interrupts through a software API to the hypervisor, which can leverage the VGIC
+ by writing the virtual interrupt number for the emulated device into the list registers. is causes
+ the VGIC to interrupt the VM directly to kernel mode and lets the guest OS ACK and EOI
+ the virtual interrupt without trapping to the hypervisor. Note that the distributor must still be
+ emulated in software and all accesses to the distributor by a VM must still trap to the hypervisor.
+ For example, when a virtual CPU sends a virtual IPI to another virtual CPU, this will cause a
+ trap to the hypervisor, which emulates the distributor access in software and programs the list
+ registers on the receiving CPU’s GIC hypervisor control interface.
+                                                             7.5. TIMER VIRTUALIZATION          131
+       ARM’s support for virtual interrupts had no x86 counterpart until the more recent intro-
+duction of Intel’s virtual APIC support [104], as discussed in Chapter 6. Similar to ARM’s sup-
+port for virtual interrupts, Intel’s APIC virtualization support also allows VMs to EOI interrupts
+without trapping to the hypervisor. Furthermore, the Intel virtual APIC support allows VMs to
+access a number of APIC registers without trapping to the hypervisor by providing a backing
+page in memory for the VM’s virtualized APIC state. While Intel has recently introduced posted
+interrupts, x86 support for direct interrupt delivery, ARM has introduced a similar mechanism in
+version 4.0 of the GIC architecture (GICv4) [22]. However, GICv4 is not yet available in current
+ARM hardware.
+
+7.5     TIMER VIRTUALIZATION
+ARM defines the Generic Timer Architecture which includes support for timer virtualization.
+Generic timers provide a counter that measures passing of time in real-time, and a timer for each
+CPU, which is programmed to raise an interrupt to the CPU after a certain amount of time
+has passed. Timers are likely to be used by both hypervisors and guest OSes, but to provide
+isolation and retain control, the timers used by the hypervisor cannot be directly configured and
+manipulated by guest OSes. Such timer accesses from a guest OS would need to trap to EL2,
+incurring additional overhead for a relatively frequent operation for some workloads. Hypervisors
+may also wish to virtualize VM time, which is problematic if VMs have direct access to counter
+hardware.
+       ARM provides virtualization support for the timers by introducing a new counter, the vir-
+tual counter and a new timer, the virtual timer. A hypervisor can be configured to use physical
+timers while VMs are configured to use virtual timers. VMs can then access, program, and cancel
+virtual timers without causing traps to EL2. Access to the physical timer and counter from ker-
+nel mode is controlled from EL2, but software running in kernel mode always has access to the
+virtual timers and counters. Additionally, EL2 configures an offset register, which is subtracted
+from the physical counter and returned as the value when reading the virtual counter. Note that
+prior to the use of generic timers, the frequent operation of simply reading a counter is a memory
+mapped operation, which would typically trap to EL2 and generate additional overhead.
+       ARM’s support for virtual timers has no real x86 counterpart. e x86 world of timekeeping
+consists of a myriad of timing devices available partially due to the history and legacy of the
+PC platform. Modern x86 platforms typically support an 8250-series Programmable Interval
+Timer (PIT) for legacy support and a Local APIC (LAPIC) timer. e Intel hardware support
+for virtualization adds the VMX-Preemption timer which allows hypervisors to program an exit
+from a VM independently from how other timers are programmed. e VMX-Preemption timer
+was added to reduce the latency between a timer firing and the hypervisor injecting a virtual
+timer interrupt. is is achieved because a hypervisor doesn’t have to handle an interrupt from
+the LAPIC timer, but can directly tell from a VM exit that the preemption timer has expired.
+Contrary to ARM, x86 does not support giving full control of individual timer hardware to VMs.
+132   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+ x86 does allow VMs to directly read the Time Stamp Counter (TSC), wheres ARM allows access
+ to the virtual counter. e x86 TSC is typically higher resolution than the ARM counter, because
+ the TSC is driven by the processor’s clock where the ARM counter is driven by a dedicated clock
+ signal.
+
+ 7.6     KVM/ARM—A VMM BASED ON ARM VIRTUALIZATION
+         EXTENSIONS
+ So far, we have described the hardware extensions introduced by ARM’s Virtualization Exten-
+ sions, and discussed a few architectural considerations. We now use KVM [113], the Linux-based
+ Kernel Virtual Machine, as a case study of how to adapt its design for ARM from its original
+ design for VT-x to create KVM/ARM, the Linux ARM hypervisor [60].
+        Instead of reinventing and reimplementing complex core functionality in the hypervisor,
+ and potentially introducing tricky and fatal bugs along the way, KVM/ARM builds on KVM
+ and leverages existing infrastructure in the Linux kernel. While a standalone bare metal hypervi-
+ sor design approach has the potential for better performance and a smaller Trusted Computing
+ Base (TCB), this approach is less practical on ARM. ARM hardware is in many ways much
+ more diverse than x86. Hardware components are often tightly integrated in ARM devices in
+ non-standard ways by different device manufacturers. ARM hardware lacks features for hard-
+ ware discovery such as a standard BIOS or a PCI bus, and there is no established mechanism for
+ installing low-level software on a wide variety of ARM platforms. Linux, however, is supported
+ across almost all ARM platforms and by integrating KVM/ARM with Linux, KVM/ARM is
+ automatically available on any device running a recent version of the Linux kernel. is is in con-
+ trast to bare metal approaches such as Xen [188], which must actively support every platform on
+ which they wish to install the Xen hypervisor. For example, for every new SoC that Xen needs
+ to support, the developers must implement a new serial device driver in the core Xen hypervisor.
+        While KVM/ARM benefits from its integration with Linux in terms of portability and
+ hardware support, a key problem that needed to be addressed is that the ARM hardware virtual-
+ ization extensions were designed to support a standalone hypervisor design where the hypervisor
+ is completely separate from any standard kernel functionality. In the following, we describe how
+ KVM/ARM’s design makes it possible to benefit from integration with an existing kernel and at
+ the same time take advantage of the hardware virtualization features.
+
+ 7.6.1 SPLIT-MODE VIRTUALIZATION
+ Simply running a hypervisor entirely in ARM’s EL2 is attractive since it is the most privileged
+ level. However, since KVM/ARM leverages existing kernel infrastructure such as the scheduler,
+ running KVM/ARM in EL2 implies running the Linux kernel in EL2. is is problematic for
+ at least two reasons. First, low-level architecture dependent code in Linux is written to work in
+ kernel mode, and would not run unmodified in EL2, because EL2 is a completely different CPU
+              7.6. KVM/ARM—A VMM BASED ON ARM VIRTUALIZATION EXTENSIONS                          133
+mode from normal kernel mode. e significant changes required to run the kernel in EL2 would
+be very unlikely to be accepted by the Linux kernel community. More importantly, to preserve
+compatibility with hardware without EL2 and to run Linux as a guest OS, low-level code would
+have to be written to work in both modes, potentially resulting in slow and convoluted code paths.
+As a simple example, a page fault handler needs to obtain the virtual address causing the page
+fault. In EL2, this address is stored in a different register than in kernel mode.
+       Second, running the entire kernel in EL2 would adversely affect native performance. For
+example, EL2 has its own separate address space. Whereas kernel mode uses two page table base
+registers to provide the familiar 3 GB/1 GB split between user address space and kernel address
+space, EL2 uses a single page table register and therefore cannot have direct access to the user
+space portion of the address space. Frequently used functions to access user memory would require
+the kernel to explicitly map user space data into kernel address space and subsequently perform
+necessary teardown and TLB maintenance operations, resulting in poor native performance on
+ARM.
+       ese problems with running a Linux hypervisor using ARM EL2 do not occur for x86
+hardware virtualization. x86 root mode is orthogonal to its CPU privilege modes. e entire
+Linux kernel can run in root mode as a hypervisor because the same set of CPU modes available
+in non-root mode are available in root mode. Nevertheless, given the widespread use of ARM and
+the advantages of Linux on ARM, finding an efficient virtualization solution for ARM that can
+leverage Linux and take advantage of the hardware virtualization support is of crucial importance.
+       KVM/ARM introduces split-mode virtualization, a new approach to hypervisor design
+that splits the core hypervisor so that it runs across different privileged CPU modes to take ad-
+vantage of the specific benefits and functionality offered by each CPU mode. KVM/ARM uses
+split-mode virtualization to leverage the ARM hardware virtualization support enabled by EL2,
+while at the same time leveraging existing Linux kernel services running in kernel mode. Split-
+mode virtualization allows KVM/ARM to be integrated with the Linux kernel without intrusive
+modifications to the existing code base.
+       is is done by splitting the hypervisor into two components, the lowvisor and the high-
+visor, as shown in Figure 7.3. e lowvisor is designed to take advantage of the hardware virtu-
+alization support available in EL2 to provide three key functions. First, the lowvisor sets up the
+correct execution context by appropriate configuration of the hardware, and enforces protection
+and isolation between different execution contexts. e lowvisor directly interacts with hardware
+protection features and is therefore highly critical and the code base is kept to an absolute mini-
+mum. Second, the lowvisor switches from a VM execution context to the host execution context
+and vice-versa. e host execution context is used to run the hypervisor and the host Linux kernel.
+We refer to an execution context as a world, and switching from one world to another as a world
+switch, because the entire state of the system is changed. Since the lowvisor is the only compo-
+nent that runs in EL2, only it can be responsible for the hardware reconfiguration necessary to
+perform a world switch. ird, the lowvisor provides a virtualization trap handler, which handles
+134   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+
+                               Host                                   VM
+                                                     QEMU
+                               User                                   User
+           EL0 (User)
+
+           EL1 (Kernel)        Host               KVM                 VM
+                               Kernel           Highvisor             Kernel
+
+                                              Trap                           Trap
+
+           EL2 (Hypervisor)                     Lowvisor
+
+Figure 7.3: KVM/ARM system architecture.
+
+ interrupts and exceptions that must trap to the hypervisor. All traps to the hypervisor must first
+ go to the lowvisor. e lowvisor performs only the minimal amount of processing required and
+ defers the bulk of the work to be done to the highvisor after a world switch to the highvisor is
+ complete.
+        e highvisor runs in kernel mode as part of the host Linux kernel. It can therefore di-
+ rectly leverage existing Linux functionality such as the scheduler, and can make use of standard
+ kernel software data structures and mechanisms to implement its functionality, such as locking
+ mechanisms and memory allocation functions. is makes higher-level functionality easier to im-
+ plement in the highvisor. For example, while the lowvisor provides a low-level trap-handler and
+ the low-level mechanism to switch from one world to another, the highvisor handles Stage-2
+ page faults from the VM and performs instruction emulation. Note that parts of the VM run in
+ kernel mode, just like the highvisor, but with Stage-2 translation and trapping to EL2 enabled.
+        Because the hypervisor is split across kernel mode and EL2, switching between a VM and
+ the highvisor involves multiple mode transitions. A trap to the highvisor while running the VM
+ will first trap to the lowvisor running in EL2. e lowvisor will then cause another trap to run
+ the highvisor. Similarly, going from the highvisor to a VM requires trapping from kernel mode
+ to EL2, and then switching to the VM. As a result, split-mode virtualization incurs a double
+ trap cost in switching to and from the highvisor. On ARM, the only way to perform these mode
+ transitions to and from EL2 is by trapping. However, it turns out that this extra trap is not a
+ significant performance cost on ARM, as discussed in §7.7.
+        KVM/ARM uses a memory mapped interface to share data between the highvisor and
+ lowvisor as necessary. Because memory management can be complex, it leverages the highvi-
+ sor’s ability to use the existing memory management subsystem in Linux to manage memory
+              7.6. KVM/ARM—A VMM BASED ON ARM VIRTUALIZATION EXTENSIONS                           135
+for both the highvisor and lowvisor. Managing the lowvisor’s memory involves additional chal-
+lenges though, because it requires managing EL2’s separate address space. One simplistic ap-
+proach would be to reuse the host kernel’s page tables and also use them in EL2 to make the
+address spaces identical. is unfortunately does not work, because EL2 uses a different page
+table format from kernel mode. erefore, the highvisor explicitly manages the EL2 page tables
+to map any code executed in EL2 and any data structures shared between the highvisor and the
+lowvisor to the same virtual addresses in EL2 and in kernel mode.
+
+7.6.2 CPU VIRTUALIZATION
+To virtualize the CPU, KVM/ARM must present an interface to the VM which is essentially
+identical to the underlying real hardware CPU, while ensuring that the hypervisor remains in
+control of the hardware. is involves ensuring that software running in the VM must have per-
+sistent access to the same register state as software running on the physical CPU, as well as en-
+suring that physical hardware state associated with the hypervisor and its host kernel is persistent
+across running VMs. Register state not affecting VM isolation can simply be context switched
+by saving the VM state and restoring the host state from memory when switching from a VM to
+the host and vice versa. KVM/ARM configures access to all other sensitive state to trap to EL2,
+so it can be emulated by the hypervisor.
+       Table 7.1 shows the CPU register state visible to software running in kernel and user mode,
+and KVM/ARM’s virtualization method for each register group. e lowvisor has its own ded-
+icated configuration registers only for use in EL2, and is not shown in Table 7.1. KVM/ARM
+context switches registers during world-switches whenever the hardware supports it, because it al-
+lows the VM direct access to the hardware. For example, the VM can directly program the Stage-1
+page table base register without trapping to the hypervisor, a fairly common operation in most
+guest OSes. KVM/ARM performs trap and emulate on sensitive instructions and when accessing
+hardware state that could affect the hypervisor or would leak information about the hardware to
+the VM that violates its virtualized abstraction. For example, KVM/ARM traps if a VM executes
+the WFI instruction, which causes the CPU to power down, because such an operation should
+only be performed by the hypervisor to maintain control of the hardware. KVM/ARM defers
+switching certain register state until absolutely necessary, which slightly improves performance
+under certain workloads.
+       e difference between running inside a VM in kernel or user mode and running the hy-
+pervisor in kernel or user mode is determined by how the virtualization extensions have been
+configured by EL2 during the world switch. A world switch from the host to a VM performs the
+following actions:
+  1. store all host GP registers on the EL2 stack;
+  2. configure the VGIC for the VM;
+  3. configure the timers for the VM;
+136    7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+Table 7.1: VM and Host State on a Cortex-A15
+
+                     Action           Nr.         State
+                     Context Switch   38          General Purpose (GP) Registers
+                                      26          Control Registers
+                                      16          VGIC Control Registers
+                                      4           VGIC List Registers
+                                      2           Arch. Timer Control Registers
+                                      32          64-bit VFP Registers
+                                      4           32-bit VFP Control Registers
+                     Trap-and-Emulate -           CP14 Trace Registers
+                                      -           WFI Instructions
+                                      -           SMC Instructions
+                                      -           ACTLR Access
+                                      -           Cache Ops. by Set/Way
+                                      -           L2CTLR / L2ECTLR Registers
+
+       4. save all host-specific configuration registers onto the EL2 stack;
+
+       5. load the VM’s configuration registers onto the hardware, which can be done without affect-
+          ing current execution, because EL2 uses its own configuration registers, separate from the
+          host state;
+
+       6. configure EL2 to trap floating-point operations for lazy context switching of floating-point
+          (VFP) registers, trap interrupts, trap CPU halt instructions (WFI/WFE), trap SMC in-
+          structions, trap specific configuration register accesses, and trap debug register accesses;
+
+       7. write VM-specific IDs into shadow ID registers, defined by the ARM Virtualization Ex-
+          tensions and accessed by the VM in lieu of the hardware values in the ID registers;
+
+       8. set the Stage-2 page table base register (VTTBR) and enable Stage-2 address translation;
+
+       9. restore all guest GP registers; and
+
+      10. trap into either user or kernel mode.
+       e CPU will stay in the VM world until an event occurs, which triggers a trap into EL2.
+ Such an event can be caused by any of the traps mentioned above, a Stage-2 page fault, or a
+ hardware interrupt. Since the event requires services from the highvisor, either to emulate the
+ expected hardware behavior for the VM or to service a device interrupt, KVM/ARM must per-
+ form another world switch back into the highvisor and its host. is entails trapping first to the
+              7.6. KVM/ARM—A VMM BASED ON ARM VIRTUALIZATION EXTENSIONS                          137
+lowvisor before going to the highvisor. e world switch back to the host from a VM performs
+the following actions:
+
+  1. store all VM GP registers;
+
+  2. disable Stage-2 translation;
+
+  3. configure EL2 to not trap any register access or instructions;
+
+  4. save all VM-specific configuration registers;
+
+  5. load the host’s configuration registers onto the hardware;
+
+  6. configure the timers for the host;
+
+  7. save VM-specific VGIC state;
+
+  8. restore all host GP registers; and
+
+  9. trap into kernel mode.
+
+7.6.3 MEMORY VIRTUALIZATION
+As discussed in §7.3, ARM provides Stage-2 page tables to translate guest to host physical ad-
+dresses. KVM/ARM provides memory virtualization by enabling Stage-2 translation for all mem-
+ory accesses when running in a VM. Stage-2 translation can only be configured in EL2, and its use
+is completely transparent to the VM. e highvisor manages the Stage-2 translation page tables
+to only allow access to memory specifically allocated for a VM; other accesses will cause Stage-2
+page faults which trap to the hypervisor. is mechanism ensures that a VM cannot access mem-
+ory belonging to the hypervisor or other VMs, including any sensitive data. Stage-2 translation is
+disabled when running in the highvisor and lowvisor because the highvisor has full control of the
+complete system and directly manages the host physical addresses. When the hypervisor performs
+a world switch to a VM, it enables Stage-2 translation and configures the Stage-2 page table base
+register accordingly. Although both the highvisor and VMs share the same CPU modes, Stage-2
+translations ensure that the highvisor is protected from any access by the VMs.
+       KVM/ARM uses split-mode virtualization to leverage existing kernel memory allocation,
+page reference counting, and page table manipulation code. KVM/ARM handles Stage-2 page
+faults by considering the gPA of the fault, and if that address belongs to normal memory in the
+VM memory map, KVM/ARM allocates a page for the VM by simply calling an existing kernel
+function, such as get_user_pages, and maps the allocated page to the VM in the Stage-2 page
+tables. In comparison, a bare metal hypervisor would be forced to either statically allocate memory
+to VMs or write an entire new memory allocation subsystem.
+138   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+ 7.6.4 I/O VIRTUALIZATION
+ KVM/ARM leverages existing QEMU and Virtio [154] user space device emulation to provide
+ I/O virtualization. At a hardware level, all I/O mechanisms on the ARM architecture are based on
+ load/store operations to MMIO device regions. With the exception of devices directly assigned to
+ VMs, all hardware MMIO regions are inaccessible from VMs. KVM/ARM uses Stage-2 trans-
+ lations to ensure that physical devices cannot be accessed directly from VMs. Any access outside
+ of RAM regions allocated for the VM will trap to the hypervisor, which can route the access
+ to a specific emulated device in QEMU based on the fault address. is is somewhat different
+ from x86, which uses x86-specific hardware instructions such as inl and outl for port I/O op-
+ erations in addition to MMIO. Chapter 6 provides a more in-depth discussion regarding I/O
+ virtualization in general.
+
+ 7.6.5 INTERRUPT VIRTUALIZATION
+ KVM/ARM leverages its tight integration with Linux to reuse existing device drivers and related
+ functionality, including handling interrupts. When running in a VM, KVM/ARM configures the
+ CPU to trap all hardware interrupts to EL2. On each interrupt, it performs a world switch to the
+ highvisor and the host handles the interrupt, so that the hypervisor remains in complete control
+ of hardware resources. When running in the host and the highvisor, interrupts trap directly to
+ kernel mode, avoiding the overhead of going through EL2. In both cases, all hardware interrupt
+ processing is done in the host by reusing Linux’s existing interrupt handling functionality.
+        However, VMs must receive notifications in the form of virtual interrupts from emulated
+ devices and multicore guest OSes must be able to send virtual IPIs from one virtual core to
+ another. KVM/ARM uses the VGIC to inject virtual interrupts into VMs to reduce the number of
+ traps to EL2. As described in §7.4, virtual interrupts are raised to virtual CPUs by programming
+ the list registers in the VGIC hypervisor CPU control interface. KVM/ARM configures the
+ Stage-2 page tables to prevent VMs from accessing the control interface and to allow access only
+ to the VGIC virtual CPU interface, ensuring that only the hypervisor can program the control
+ interface and that the VM can access the VGIC virtual CPU interface directly. However, guest
+ OSes will still attempt to access a GIC distributor to configure the GIC and to send IPIs from
+ one virtual core to another. Such accesses will trap to the hypervisor and the hypervisor must
+ emulate the distributor.
+        KVM/ARM introduces the virtual distributor, a software model of the GIC distributor as
+ part of the highvisor. e virtual distributor exposes an interface to user space, so emulated devices
+ in user space can raise virtual interrupts to the virtual distributor, and exposes an MMIO interface
+ to the VM identical to that of the physical GIC distributor. e virtual distributor keeps internal
+ software state about the state of each interrupt and uses this state whenever a VM is scheduled,
+ to program the list registers to inject virtual interrupts. For example, if virtual CPU0 sends an IPI
+ to virtual CPU1, the distributor will program the list registers for virtual CPU1 to raise a virtual
+ IPI interrupt the next time virtual CPU1 runs.
+              7.6. KVM/ARM—A VMM BASED ON ARM VIRTUALIZATION EXTENSIONS                              139
+       Ideally, the virtual distributor only accesses the hardware list registers when necessary, since
+device MMIO operations are typically significantly slower than cached memory accesses. A com-
+plete context switch of the list registers is required when scheduling a different VM to run on a
+physical core, but not necessarily required when simply switching between a VM and the hyper-
+visor. For example, if there are no pending virtual interrupts, it is not necessary to access any of
+the list registers. Note that once the hypervisor writes a virtual interrupt to a list register when
+switching to a VM, it must also read the list register back when switching back to the hypervisor,
+because the list register describes the state of the virtual interrupt and indicates, for example, if
+the VM has ACKed the virtual interrupt. e initial unoptimized version of KVM/ARM uses a
+simplified approach which completely context switches all VGIC state including the list registers
+on each world switch.
+
+7.6.6 TIMER VIRTUALIZATION
+Reading counters and programming timers are frequent operations in many OSes for process
+scheduling and to regularly poll device state. For example, Linux reads a counter to determine if a
+process has expired its time slice, and programs timers to ensure that processes don’t exceed their
+allowed time slices. Application workloads also often leverage timers for various reasons. Trapping
+to the hypervisor for each such operation is likely to incur noticeable performance overheads, and
+allowing a VM direct access to the time-keeping hardware typically implies giving up timing
+control of the hardware resources as VMs can disable timers and control the CPU for extended
+periods of time.
+       KVM/ARM leverages ARM’s hardware virtualization features of the generic timers to al-
+low VMs direct access to reading counters and programming timers without trapping to EL2
+while at the same time ensuring the hypervisor remains in control of the hardware. Since access
+to the physical timers is controlled using EL2, any software controlling EL2 mode has access to
+the physical timers. KVM/ARM maintains hardware control by using the physical timers in the
+hypervisor and disallowing access to physical timers from the VM. e Linux kernel running as a
+guest OS only accesses the virtual timer and can therefore directly access timer hardware without
+trapping to the hypervisor.
+       Unfortunately, due to architectural limitations, the virtual timers cannot directly raise vir-
+tual interrupts, but always raise hardware interrupts, which trap to the hypervisor. KVM/ARM
+detects when a VM virtual timer expires, and injects a corresponding virtual interrupt to the VM,
+performing all hardware ACK and EOI operations in the highvisor. e hardware only provides
+a single virtual timer per physical CPU, and multiple virtual CPUs may be multiplexed across
+this single hardware instance. To support virtual timers in this scenario, KVM/ARM detects
+unexpired timers when a VM traps to the hypervisor and leverages existing OS functionality to
+program a software timer at the time when the virtual timer would have otherwise fired, had the
+VM been left running. When such a software timer fires, a callback function is executed, which
+raises a virtual timer interrupt to the VM using the virtual distributor described above.
+140   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+ 7.7     PERFORMANCE MEASUREMENTS
+ We present some experimental results that quantify the performance of ARM virtualization by
+ comparing the performance of both x86 and ARM implementations of KVM on multicore hard-
+ ware. ARM measurements were obtained using an Insignal Arndale board [97] with a dual core
+ 1.7 GHz Cortex A-15 CPU on a Samsung Exynos 5250 SoC. is is the first and most widely
+ used commercially available development board based on the Cortex A-15, the first ARM CPU
+ with hardware virtualization support. Onboard 100 Mb Ethernet is provided via the USB bus
+ and an external 120 GB Samsung 840 series SSD drive was connected to the Arndale board via
+ eSATA. x86 measurements were obtained using both a low-power mobile laptop platform and
+ an industry standard server platform. e laptop platform was a 2011 MacBook Air with a dual
+ core 1.8 GHz Core i7-2677M CPU, an internal Samsung SM256C 256 GB SSD drive, and an
+ Apple 100 Mb USB Ethernet adapter. e server platform was a dedicated OVH SP 3 server
+ with a dual core 3.4 GHz Intel Xeon E3 1245v2 CPU, two physical SSD drives of which only
+ one was used, and 1 Gb Ethernet dropped down to connect to a 100 Mb network infrastructure.
+        To provide comparable measurements, the software environments across all hardware plat-
+ forms were kept the same as much as possible. Both the host and guest VMs on all platforms were
+ Ubuntu version 12.10. e mainline Linux 3.10 kernel was used for the experiments, with patches
+ for huge page support applied on top of the source tree. Since the experiments were performed
+ on a number of different platforms, the kernel configurations had to be slightly different, but
+ all common features were configured similarly across all platforms. In particular, Virtio drivers
+ were used in the guest VMs on both ARM and x86. QEMU version v1.5.0 was used for the
+ measurements. All systems were configured with a maximum of 1.5 GB of RAM available to the
+ respective guest VM or host being tested. Furthermore, all multicore measurements were done
+ using two physical cores and guest VMs with two virtual CPUs, and single-core measurements
+ were configured with SMP disabled in the kernel configuration of both the guest and host system;
+ hyperthreading was disabled on the x86 platforms. CPU frequency scaling was disabled to ensure
+ that native and virtualized performance was measured at the same clock rate on each platform.
+        Table 7.2 presents various micro-architectural costs of virtualization using KVM/ARM
+ on ARM and KVM x86 on x86. e measurements were obtained using custom small guest
+ OSes [57, 112] with some bugfix patches applied. Code for both KVM/ARM and KVM x86
+ was instrumented to read the cycle counter at specific points along critical paths to more accu-
+ rately determine where overhead time was spent. Measurements are shown in cycles instead of
+ time to provide a useful comparison across platforms with different CPU frequencies. We show
+ two numbers for the ARM platform where possible, with and without VGIC and virtual timers
+ support.
+        Hypercall is the cost of two world switches, going from the VM to the host and immediately
+ back again without doing any work in the host. KVM/ARM takes three to four times as many
+ cycles for this operation vs. KVM x86 due to two main factors. First, saving and restoring VGIC
+ state to use virtual interrupts is quite expensive on ARM. e ARM without VGIC/vtimers
+                                                     7.7. PERFORMANCE MEASUREMENTS                 141
+Table 7.2: Micro-architectural cycle counts
+
+         Micro Test     ARM     ARM no VGIC/vtimers x86 Laptop x86 Server
+         Hypercall        5.326                2,270      1,336      1,638
+         Trap                27                   27        632        821
+         IPI             14,366              32,951      17,138     21,177
+         EOI+ACK            427              13,726       2,043      2,305
+
+measurement does not include the cost of saving and restoring VGIC state, showing that this
+accounts for over half of the cost of a world switch on ARM. Second, x86 provides hardware
+support to save and restore state on the world switch, which is much faster. ARM requires software
+to explicitly save and restore state, which provides greater flexibility, but higher costs.
+       Trap is the cost of switching the hardware mode from the VM into the respective CPU
+mode for running the hypervisor, EL2 on ARM and root mode on x86. ARM is much faster than
+x86 because it only needs to manipulate two registers to perform this trap, whereas the cost of a
+trap on x86 is roughly the same as the cost of a world switch because the same amount of state
+is saved by the hardware in both cases. e trap cost on ARM is a very small part of the world
+switch costs, indicating that the double trap incurred by split-mode virtualization on ARM does
+not add much overhead.
+       at is not to say that the cost of split-mode virtualization is necessarily small, as the dou-
+ble trap is a small part of the overall hypercall cost. ere are three other more substantial costs
+involved. First, because the host OS and the VM both run in EL1 and ARM hardware does not
+provide any features to distinguish between the host OS running in EL1 and the VM running in
+EL1, software running in EL2 must context switch all the EL1 system register state between the
+VM guest OS and the type-2 hypervisor host OS, incurring added cost of saving and restoring
+EL1 register state. Second, because the host OS runs in EL1 and needs full access to the hard-
+ware, the hypervisor must disable traps to EL2 and Stage-2 translation from EL2 while switching
+from the VM to the hypervisor, and enable them when switching back to the VM again. ird,
+because the type-2 hypervisor runs in EL1 but needs to access VM control register state such
+as the VGIC state, which can only be accessed from EL2, there is additional overhead to read
+and write the VM control register state in EL2. e type-2 hypervisor can either jump back and
+forth between EL1 and EL2 to access the control register state when needed, or it can copy the
+full register state to memory while it is still in EL2, return to the host OS in EL1 and read and
+write the memory copy of the VM control state, and then finally copy the state from memory
+back to the EL2 control registers when the hypervisor is running in EL2 again. Both methods
+incur much overhead, but jumping back and forward between EL1 and EL2 makes the software
+implementation complicated and difficult to maintain. erefore, the KVM/ARM implementa-
+142   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+ tion currently takes the second approach of reading and writing all VM control registers in EL2
+ during each transition between the VM and the hypervisor.
+        IPI is the cost of issuing an IPI to another virtual CPU core when both virtual cores are
+ running on separate physical cores and both are actively running inside the VM. IPI measures
+ time starting from sending an IPI until the other virtual core responds and completes the IPI.
+ It involves multiple world switches and sending and receiving a hardware IPI. Despite its higher
+ world switch cost, ARM is faster than x86 because the underlying hardware IPI on x86 is expen-
+ sive, x86 APIC MMIO operations require KVM x86 to perform instruction decoding not needed
+ on ARM, and completing an interrupt on x86 is more expensive. ARM without VGIC/vtimers is
+ significantly slower than with VGIC/vtimers even though it has lower world switch costs because
+ sending, EOIing and ACKing interrupts trap to the hypervisor and are handled by QEMU in
+ user space.
+        EOI+ACK is the cost of completing a virtual interrupt on both platforms. It includes both
+ interrupt acknowledgment and completion on ARM, but only completion on the x86 platform.
+ ARM requires an additional operation, the acknowledgment, to the interrupt controller to deter-
+ mine the source of the interrupt. x86 does not have the same requirement because the source is
+ directly indicated by the interrupt descriptor table entry at the time when the interrupt is raised.
+ However, the operation is roughly 5 times faster on ARM than x86 because there is no need
+ to trap to the hypervisor on ARM because of VGIC support for both operations. On x86, the
+ EOI operation must be emulated and therefore causes a trap to the hypervisor. is operation is
+ required for every virtual interrupt including both virtual IPIs and interrupts from virtual devices.
+
+ 7.8       IMPLEMENTATION COMPLEXITY
+ We compare the code complexity of KVM/ARM to its KVM x86 counterpart in Linux 3.10
+ using cloc [61] to count lines of code (LOC). KVM/ARM is 5,812 LOC, counting just the
+ architecture-specific code added to Linux to implement it, of which the lowvisor is a mere 718
+ LOC. As a conservative comparison, KVM x86 is 25,367 LOC, excluding guest performance
+ monitoring support, not yet supported by KVM/ARM, and 3,311 LOC required for AMD
+ support. ese numbers do not include KVM’s architecture-generic code, 7,071 LOC, which
+ is shared by all systems. Table 7.3 shows a breakdown of the total hypervisor architecture-specific
+ code into its major components.
+        By inspecting the code we notice the striking additional complexity in the x86 implemen-
+ tation is mainly due to the five following reasons.
+
+      1. Since EPT was not supported in earlier hardware versions, KVM x86 must support shadow
+         page tables.
+
+      2. e hardware virtualization support has evolved over time, requiring software to condition-
+         ally check for support for a large number of features such as EPT.
+                                                  7.9. ARCHITECTURE IMPROVEMENTS              143
+Table 7.3: Code Complexity in Lines of Code (LOC)
+
+                   Component               KVM ARM KVM x86 (Intel)
+                   Core CPU                     2,493       16,177
+                   Page Fault Handling            738        3,410
+                   Interrupts                   1,057        1,978
+                   Timers                         180          573
+                   Other                        1,344        1,288
+                   Architecture-specific        5,812       25,367
+
+  3. A number of operations require software decoding of instructions on the x86 platform.
+     KVM/ARM’s out-of-tree MMIO instruction decode implementation was much simpler,
+     only 462 LOC.
+
+  4. e various paging modes on x86 requires more software logic to handle page faults.
+
+  5. x86 requires more software logic to support interrupts and timers than ARM, which pro-
+     vides VGIC/vtimers hardware support that reduces software complexity.
+
+      KVM/ARM’s LOC is less than partially complete bare-metal microvisors written for
+EL2 [173], with the lowvisor LOC almost an order of magnitude smaller. Unlike standalone
+hypervisors, KVM/ARM’s code complexity is so small because lots of functionality simply does
+not have to be implemented as it is already provided by Linux. Table 7.3 does not include other
+non-hypervisor architecture-specific Linux code, such as basic bootstrapping, which is signifi-
+cantly more code. Porting a standalone hypervisor such as Xen from x86 to ARM is much more
+complicated because all of the ARM code for basic system functionality needs to be written from
+scratch. In contrast, since Linux is dominant on ARM, KVM/ARM just leverages existing Linux
+ARM support to run on every platform supported by Linux.
+
+7.9     ARCHITECTURE IMPROVEMENTS
+Building on the experiences of the developers of KVM/ARM, a set of improvements have been
+made to the ARM architecture to avoid the need for split-mode virtualization for type-2 hypervi-
+sors such as KVM/ARM. ese improvements are the Virtualization Host Extensions (VHE),
+which are now part of a new revision of the ARM 64-bit architecture, ARMv8.1 [40]. VHE
+allows running an OS designed to run in EL1 to run in EL2 without substantial modification
+to the OS source code. We show how this allows KVM/ARM and its Linux host kernel to run
+entirely in EL2 without substantial modifications to Linux.
+       VHE is provided through the addition of a new control bit, the E2H bit, which is set at
+system boot when installing a type-2 hypervisor that uses VHE. If the bit is not set, ARMv8.1
+144   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+ behaves the same as ARMv8 in terms of hardware virtualization support, preserving backward
+ compatibility with existing hypervisors. When the bit is set, VHE enables three main features.
+        First, VHE expands EL2, adding additional physical register state to the CPU, such that
+ any register and functionality available in EL1 is also available in EL2. For example, EL1 has
+ two registers, TTBR0_EL1 and TTBR1_EL1, the first used to lookup the page tables for virtual
+ addresses (VAs) in the lower VA range, and the second in the upper VA range. is provides
+ a convenient and efficient method for splitting the VA space between userspace and the kernel.
+ However, without VHE, EL2 only has one page table base register, TTBR0_EL2, making it
+ problematic to support the split VA space of EL1 when running in EL2. With VHE, EL2 gets
+ a second page table base register, TTBR1_EL2, making it possible to support split VA space in
+ EL2 in the same way as provided in EL1. is enables a type-2 hypervisor integrated with a host
+ OS to support a split VA space in EL2, which is necessary to run the host OS in EL2 so it can
+ manage the VA space between userspace and the kernel.
+        Second, VHE provides a mechanism to access the extra EL2 register state transparently.
+ Simply providing extra EL2 registers is not sufficient to run unmodified OSes in EL2, be-
+ cause existing OSes are written to access EL1 registers. For example, Linux is written to use
+ TTBR1_EL1, which does not affect the translation system running in EL2. Providing the addi-
+ tional register TTBR1_EL2 would still require modifying Linux to use the TTBR1_EL2 instead
+ of the TTBR1_EL1 when running in EL2 vs. EL1, respectively. To avoid forcing OS vendors
+ to add this extra level of complexity to the software, VHE allows unmodified software to execute
+ in EL2 and transparently access EL2 registers using the EL1 register access function instruction
+ encodings. For example, current OS software reads the TTBR1_EL1 register with the instruc-
+ tion mrs x1, ttbr1_el1. With VHE, the software still executes the same instruction, but the
+ hardware actually accesses the TTBR1_EL2 register. As long as the E2H bit is set, accesses to
+ EL1 registers performed in EL2, actually access EL2 registers, thereby transparently rewriting
+ register accesses to EL2, as described above. A new set of special instructions are added to access
+ the EL1 registers in EL2, which the hypervisor can use to switch between VMs, which will run
+ in EL1. For example, if the hypervisor wishes to access the guest’s TTBR1_EL1, it will use the
+ instruction mrs x1, ttb1_el21.
+        ird, VHE expands the memory translation capabilities of EL2. In ARMv8, EL2 and
+ EL1 use different page table formats so that software written to run in EL1 must be modified to
+ run in EL2. In ARMv8.1, the EL2 page table format is now compatible with the EL1 format
+ when the E2H bit is set. As a result, an OS that was previously run in EL1 can now run in EL2
+ without being modified because it can use the same EL1 page table format.
+        Figure 7.4 shows how type-1 and type-2 hypervisors map to the architecture with VHE.
+ Type-1 hypervisors such as Xen, which can be designed explicitly to run in EL2 already without
+ any additional support, do not set the E2H bit introduced with VHE, and EL2 behaves exactly
+ as in ARMv8. Type-2 hypervisors such as KVM/ARM set the E2H bit when the system boots,
+ and the host OS kernel runs exclusively in EL2, and never in EL1. e type-2 hypervisor kernel
+                                                    7.9. ARCHITECTURE IMPROVEMENTS             145
+
+                               Type 1: E2H Bit Clear   Type 2: E2H Bit Set
+
+                EL0 (User)                             Apps
+                                       VM                               VM
+                                                       syscalls
+                EL1 (Kernel)                           and traps
+
+                EL2 (Hypervisor)   Xen Hypervisor       Host Kernel and KVM
+
+Figure 7.4: Virtualization Host Extensions (VHE).
+
+can run unmodified in EL2, because VHE provides an equivalent EL2 register for every EL1
+register and transparently rewrites EL1 register accesses from EL2 to EL2 register accesses, and
+because the page table formats between EL1 and EL2 are now compatible. Transitions from host
+userspace to host kernel happen directly from EL0 to EL2, for example to handle a system call,
+as indicated by the arrows in Figure 7.4. Transitions from the VM to the hypervisor now happen
+without having to context switch EL1 state, because EL1 is not used by the hypervisor.
+        ARMv8.1 differs from the x86 approach in two key ways. First, ARMv8.1 introduces more
+additional hardware state so that a VM running in EL1 does not need to save a substantial amount
+of state before switching to running the hypervisor in EL2 because the EL2 state is separate and
+backed by additional hardware registers. is minimizes the cost of VM to hypervisor transitions
+because trapping from EL1 to EL2 does not require saving and restoring state beyond general
+purpose registers to and from memory. In contrast, recall that the x86 approach adds CPU vir-
+tualization support by adding root and non-root mode as orthogonal concepts from the CPU
+privilege modes, but does not introduce additional hardware register state like ARM. As a result,
+switching between root and non-root modes requires transferring state between hardware regis-
+ters and memory. e cost of this is ameliorated by implementing the state transfer in hardware,
+but while this avoids the need for additional instruction fetch and decode, accessing memory is
+still expected to be more expensive than having extra hardware register state. Second, ARMv8.1
+preserves the RISC-style approach of allowing software more fine-grained control over which
+state needs to be switched for which purposes instead of fixing this in hardware, potentially mak-
+ing it possible to build hypervisors with lower overhead, compared to x86.
+        A type-2 hypervisor originally designed for ARMv8 must be modified to benefit from
+VHE. A patch set has been developed to add VHE support to KVM/ARM. is involves rewrit-
+ing parts of the code to allow run-time adaptations of the hypervisor, such that the same kernel
+binary can run on both legacy ARMv8 hardware and benefit from VHE-enabled ARMv8.1 hard-
+ware. It is unfortunate that the ARM hardware support for type-2 hypervisors was not included
+in the original version of the virtualization extensions, because the KVM/ARM implementation
+now has to support both legacy ARMv8 virtualization support using split-mode virtualization
+and VHE in ARMv8.1 To make matters worse, this has to be a runtime decision, because the
+146   7. VIRTUALIZATION SUPPORT IN ARM PROCESSORS
+ same kernel binary must be able to run across both ARMv8 and ARMv8.1 server hardware, both
+ of which are in active production and development, and the code path is in the hot path of the hy-
+ pervisor. e code to support VHE has been developed using ARM software models as ARMv8.1
+ hardware is not yet available, so it remains to be seen what performance gains will be achieved in
+ practice with VHE.
+
+ 7.10 FURTHER READING
+ Full-system virtualization of the ARM architecture is relatively new compared to x86. e earliest
+ study of ARM hardware virtualization support was based on a software simulator and a simple
+ hypervisor without SMP support, but due to the lack of hardware or a cycle-accurate simulator,
+ no real performance evaluation was possible [173]. KVM/ARM was the first full-system virtu-
+ alization ARM solution to use ARM hardware virtualization support and is described in further
+ detail in [60]. In addition to KVM/ARM, a newer version of Xen targeting servers [188] has been
+ developed using ARM hardware virtualization support. Because Xen is a bare metal hypervisor
+ that does not leverage kernel functionality, it can be architected to run entirely in EL2 rather
+ than using split-mode virtualization. At the same time, this requires a substantial commercial
+ engineering effort. Porting Xen from x86 to ARM is difficult in part because all ARM-related
+ code must be written from scratch. Even after getting Xen to work on one ARM platform, it
+ must be manually ported to each different ARM device that Xen wants to support.
+        Various other approaches have considered different hypervisor structures. Microkernel ap-
+ proaches for hypervisors [75, 161] have been used to reduce the hypervisor TCB and run other
+ hypervisor services in user mode. ese approaches differ both in design and rationale from split-
+ mode virtualization, which splits hypervisor functionality across privileged modes to leverage vir-
+ tualization hardware support.

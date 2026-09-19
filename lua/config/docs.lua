@@ -4332,6 +4332,7 @@ local BOOKS = {
 		{ title = "Is Parallel Programming Hard, And, If So, What Can You Do About It?", fmt = "pdf", slug = "is-parallel-programming-hard", file = "perfbook.pdf" },
 	} },
 	{ module = "Compilers", key = "books-compilers", items = {
+		{ title = "Lisp in Small Pieces (Ch. 1 excerpt)", fmt = "pdf", slug = "lisp-in-small-pieces", file = "Lisp in Small Pieces __ {Queinnec, Christian_ Callaway, Kathleen}(1996 June 28, Cambridge University Press)[10.1017_CBO9781139172974]{28000117} libgen.li.pdf" },
 		{ title = "Linkers and Loaders", fmt = "pdf", file = "Linkers-and-Loaders.pdf" },
 		{ title = "Program Analysis (CMU 17-355)", fmt = "pdf", slug = "program-analysis-cmu", file = "cmu-program-analysis.pdf" },
 		{ title = "Static Program Analysis (Moller & Schwartzbach)", fmt = "pdf", slug = "static-program-analysis", file = "spa.pdf" },
@@ -4376,6 +4377,7 @@ local BOOKS = {
 		{ title = "The Algorithm Design Manual", fmt = "pdf", file = "The-Algorithm-Design-Manual.pdf" },
 	} },
 	{ module = "Security", key = "books-security", items = {
+		{ title = "Gray Hat Hacking (6th ed)", fmt = "pdf", slug = "gray-hat-hacking-6e", file = "Gray Hat Hacking_ The Ethical Hacker's Handbook, Sixth -- Allen Harper, Ryan Linn, Stephen Sims, Michael Baucom, -- 6th ed, New York, 2022 -- isbn13 9781264268948 -- 422f2de1f3c65dc5351a861be7c9ef14 -- Anna’s Archi.pdf" },
 		{ title = "The Art of Mac Malware, Vol. 1 (Wardle)", fmt = "pdf", slug = "the-art-of-mac-malware", file = "Patrick Wardle - The Art of Mac Malware - libgen.li.pdf" },
 		{ title = "The Art of Mac Malware, Vol. 2 (Wardle)", fmt = "pdf", slug = "the-art-of-mac-malware-vol2", file = "[{Cyber-Security-COVER}] The Art of Mac Malware, Volume 2_ Detecting Malicious Software{Patrick Wardle}(2025, No Starch Press){108023820} libgen.li.pdf" },
 		{ title = "Rootkits and Bootkits (Matrosov et al.)", fmt = "pdf", slug = "rootkits", file = "Rootkits.pdf" },
@@ -4403,6 +4405,7 @@ local BOOKS = {
 		{ title = "A Practical Guide to TPM 2.0 (Arthur, Challener, Goldman)", fmt = "pdf", slug = "practical-guide-to-tpm-2", file = "Will Arthur, David Challener, Kenneth Goldman (auth.) - A Practical Guide to TPM 2.0_ Using the New Trusted Platform Module in the New Age of Security-Apress (2015).pdf" },
 	} },
 	{ module = "Architecture", key = "books-arch", items = {
+		{ title = "Hardware and Software Support for Virtualization", fmt = "pdf", slug = "hardware-software-support-virtualization", file = "HSSV.pdf" },
 		{ title = "Computer Architecture: A Quantitative Approach (H&P)", fmt = "pdf", slug = "computer-architecture-a-quantitative-approach", file = "Computer-Architecture-A-Quanitative-Approach.pdf" },
 		{ title = "Computer Organization and Design (P&H)", fmt = "pdf", slug = "computer-organization-and-design", file = "Computer-Organization-and-Design-The-HW-SW-Interface.pdf" },
 		{ title = "Modern Processor Design (Shen & Lipasti)", fmt = "pdf", slug = "modern-processor-design", file = "Modern-Processor-Design.pdf" },
@@ -4449,6 +4452,7 @@ local BOOKS = {
 		{ title = "RISC-V Glossary", fmt = "pdf", slug = "riscv-glossary", file = "riscv-glossary.pdf" },
 	} },
 	{ module = "Hardware", key = "books-hardware", items = {
+		{ title = "Getting Started with FPGAs (Merrick)", fmt = "pdf", slug = "getting-started-with-fpgas", file = "Getting Started with FPGAs -- Russell Merrick -- 1, 2023 -- No Starch Press, Incorporated -- isbn13 9781718502956 -- 3b7d7f09b0634be1a8c1d17e8b5192d7 -- Anna’s Archive.pdf" },
 		{ title = "Retrocomputing with Clash", fmt = "pdf", slug = "retrocomputing-with-clash", file = "retroclash.pdf" },
 	} },
 	{ module = "Firmware", key = "books-firmware", items = {
