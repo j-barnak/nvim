@@ -4068,6 +4068,8 @@ local STD_URLS = {
 	["riscv-platform"] = "https://raw.githubusercontent.com/riscvarchive/riscv-platform-specs/main/riscv-platform-spec.pdf",
 	-- ACPI Specification (UEFI Forum, release 6.5), split by chapter bookmarks.
 	["acpi"] = "https://uefi.org/sites/default/files/resources/ACPI_Spec_6_5_Aug29.pdf",
+	-- SMBIOS Specification (DMTF DSP0134, release 3.8.0), split by bookmarks.
+	["smbios"] = "https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.8.0.pdf",
 }
 
 -- pick_pdf(name, prompt[, url]): browse a built spec cache, else fetch+split it.
@@ -5504,6 +5506,8 @@ local providers = {
 	{ name = "EBBR (Embedded Base Boot Requirements)", key = "ebbr", run = frozen_web_provider("ebbr", "EBBR> ") },
 	-- ACPI Specification (UEFI Forum, release 6.5), split by chapter bookmarks.
 	{ name = "ACPI Specification (6.5)", key = "acpi", run = function() pick_pdf("acpi", "ACPI> ") end },
+	-- SMBIOS Specification (DMTF DSP0134, release 3.8.0), split by bookmarks.
+	{ name = "SMBIOS Specification (3.8.0)", key = "smbios", run = function() pick_pdf("smbios", "SMBIOS> ") end },
 	{ name = "Commands (man 1)", key = "man1", run = function() pick_man(1) end },
 	{ name = "System calls (man 2)", key = "man2", run = function() pick_man(2) end },
 	{ name = "Library functions (man 3)", key = "man3", run = function() pick_man(3) end },

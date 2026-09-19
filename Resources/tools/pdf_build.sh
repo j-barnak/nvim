@@ -985,6 +985,22 @@ elif [ "$4" = book ]; then
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
   [ "$(wc -l < "$OUT/.ch.tsv")" -ge 5 ] || : > "$OUT/.ch.tsv"
 fi
+# SMBIOS (DMTF DSP0134): a spec whose PDF bookmark tree is FLAT - depth 0 mixes
+# the seven real clauses ("1 Scope" .. "7 Structure definitions") with the whole
+# page-1 metadata block, every abbreviation from clause 4 (AC, ACPI, AGP, ...)
+# and every "Table N - ..." from clause 7, all as siblings. The generic depth
+# heuristic below would take all ~300 of them and produce a wall of one-line
+# abbreviation/table "chapters" plus duplicate page-1 front matter. Keep only the
+# real boundaries: the numbered clauses, the informative ANNEXes and the
+# Bibliography. Front matter (pages before clause 1) is auto-emitted as usual.
+# Guarded on the slug and on spec mode, so no other document is affected.
+if [ "$4" != book ] && [ "$SLUG" = smbios ]; then
+  awk -F'\t' '$1==0 {
+      t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t)
+      if (t ~ /^[0-9]+ / || t ~ /^ANNEX [A-Z]/ || t=="Bibliography") print $2"\t"t
+    }' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
+    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+fi
 # Fallback / spec mode: split at the shallowest outline depth with >= 5 entries.
 # Trim the title the way the book branch above already does: some outlines pad
 # every entry with a trailing space, which would end up in the file name as
