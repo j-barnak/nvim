@@ -4085,6 +4085,11 @@ local STD_URLS = {
 	["tpm2-part2"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part2_Structures_pub.pdf",
 	["tpm2-part3"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part3_Commands_pub.pdf",
 	["tpm2-part4"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part4_SuppRoutines_pub.pdf",
+	-- TPM companions (also in the "TPM 2.0 (TCG specifications)" picker): the TSS
+	-- Enhanced System API (the C stack above the raw commands) and the PC Client
+	-- Platform Firmware Profile (measured boot / PCR usage).
+	["tpm2-esapi"] = "https://trustedcomputinggroup.org/wp-content/uploads/TSS_ESAPI_v1p0_r14_pub10012021.pdf",
+	["tpm2-pfp"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_PCClient_PFP_r1p05_v23_pub.pdf",
 }
 
 -- pick_pdf(name, prompt[, url]): browse a built spec cache, else fetch+split it.
@@ -5532,14 +5537,17 @@ local providers = {
 	{ name = "Device Tree Specification (0.4)", key = "devicetree", run = function() pick_pdf("devicetree", "Device Tree> ") end },
 	-- VirtIO Specification 1.2 (OASIS).
 	{ name = "VirtIO Specification (1.2)", key = "virtio", run = function() pick_pdf("virtio", "VirtIO> ") end },
-	-- TPM 2.0 Library Specification (TCG r1.59): a four-part menu, each part its
-	-- own spec PDF split by bookmarks.
-	{ name = "TPM 2.0 Library Specification", key = "tpm2", run = function()
+	-- TPM 2.0 (TCG specifications): the four-part Library Specification (r1.59)
+	-- plus the TSS Enhanced System API and the PC Client Platform Firmware
+	-- Profile companions. Each is its own spec PDF split by bookmarks.
+	{ name = "TPM 2.0 (TCG specifications)", key = "tpm2", run = function()
 		local PARTS = {
-			{ "Part 1: Architecture", "tpm2-part1", "TPM2 Part 1> " },
-			{ "Part 2: Structures", "tpm2-part2", "TPM2 Part 2> " },
-			{ "Part 3: Commands", "tpm2-part3", "TPM2 Part 3> " },
-			{ "Part 4: Supporting Routines", "tpm2-part4", "TPM2 Part 4> " },
+			{ "Library Part 1: Architecture", "tpm2-part1", "TPM2 Part 1> " },
+			{ "Library Part 2: Structures", "tpm2-part2", "TPM2 Part 2> " },
+			{ "Library Part 3: Commands", "tpm2-part3", "TPM2 Part 3> " },
+			{ "Library Part 4: Supporting Routines", "tpm2-part4", "TPM2 Part 4> " },
+			{ "TSS: Enhanced System API (ESAPI)", "tpm2-esapi", "TPM2 ESAPI> " },
+			{ "PC Client Platform Firmware Profile", "tpm2-pfp", "TPM2 PFP> " },
 		}
 		local labels = {}
 		for _, p in ipairs(PARTS) do
