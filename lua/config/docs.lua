@@ -4334,6 +4334,7 @@ local BOOKS = {
 	{ module = "Operating Systems", key = "books-os", items = {
 		{ title = "TCP/IP Illustrated, Volume 1 (Fall & Stevens, 2e)", fmt = "pdf", slug = "tcp-ip-illustrated-vol-1", file = "TCP-IP-Illustrated-Vol-1.pdf" },
 		{ title = "Distributed Systems (Tanenbaum & van Steen, 4e)", fmt = "pdf", slug = "distributed-systems", file = "Distributed_Systems_4.pdf" },
+		{ title = "Operating Systems: Design and Implementation (Tanenbaum, 3e)", fmt = "pdf", slug = "operating-systems-design-and-implementation", file = "Operating Systems Design and Implementation, 3rd Edition.pdf" },
 		{ title = "The Design and Implementation of the FreeBSD OS", fmt = "pdf", slug = "the-design-and-implementation-of-the-freebsd-operating-system", file = "The-Design-and-Implementation-of-the-FreeBSD-OS.pdf" },
 		{ title = "An Introduction to Computer Networks (Dordal)", fmt = "pdf", slug = "an-introduction-to-computer-networks", file = "an-introduction-to-computer-networks.pdf" },
 		-- https://www.cs.cmu.edu/~410-s07/p4/p4-boot.pdf (CMU 15-410, 2007)
@@ -4478,6 +4479,7 @@ local BOOKS = {
 		{ title = "Embedded Systems with ARM Cortex-M (Assembly and C, Zhu)", fmt = "pdf", slug = "embedded-systems-arm-cortex-m-zhu", file = "Embedded Systems with ARM Cortex-M Microcontrollers in Assembly Language and C.pdf" },
 		{ title = "The Definitive Guide to ARM Cortex-M0 and Cortex-M0+ (Yiu)", fmt = "pdf", slug = "arm-cortex-m0-definitive-guide", file = "annas-arch-1909660c0a67.pdf" },
 		{ title = "Programming Embedded Systems (Barr, Massa)", fmt = "pdf", slug = "programming-embedded-systems", file = "Barr, Michael_Massa, Anthony - Programming Embedded Systems (2006, O'Reilly Media Incorporated) - libgen.li.pdf" },
+		{ title = "Making Embedded Systems (Elecia White, 2e)", fmt = "pdf", slug = "making-embedded-systems", file = "Elecia White - Making Embedded Systems_ Design Patterns for Great Software (2024, O’Reilly Media) - libgen.li.pdf" },
 	} },
 	{ module = "Windows", key = "books-windows", items = {
 		{ title = "Windows Internals, Part 1 (7e)", fmt = "pdf", slug = "windows-internals-part-1", file = "Windows-Internals-Part-1.pdf" },
