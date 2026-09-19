@@ -5157,6 +5157,7 @@ LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit 
 LOCATION["aflpp-articles"] = { index = "aflpp-articles/index.tsv", unit = "article" }
 LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" }
 LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
+LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
 LOCATION["docker"] = { index = "docker/index.tsv", unit = "chapter" }
 LOCATION["ptrace-injection"] = { index = "ptrace-injection/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
@@ -5721,6 +5722,11 @@ local providers = {
 	-- linux_mode setup guides at the chosen tag; :Src = full source. Vendored
 	-- libs under /src are not in the docs sparse.
 	{ name = "What The Fuzz (wtf)", key = "wtf", run = register_versioned("wtf", { url = "https://github.com/0vercl0k/wtf", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", sparse = "/README.md /linux_mode", marker = "README.md", browse = "", exts = "-e md", prompt = "wtf docs> ", label = "wtf" }) },
+	-- kAFL (IntelLabs snapshot fuzzer for full VM kernel/driver targets): the
+	-- frozen intellabs.github.io/kAFL docs (Browse Documentation) plus the
+	-- versioned IntelLabs/kAFL source (Explore source). docs_mode "latest" opens
+	-- the frozen docs at their tip regardless of the chosen source tag.
+	{ name = "kAFL (Intel snapshot fuzzer)", key = "kafl", run = register_versioned("kafl", { src_url = "https://github.com/IntelLabs/kAFL", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kAFL", docs_mode = "latest", docs_fn = frozen_web_provider("kafl-docs", "kAFL docs> ") }) },
 	-- angr docs: narrative handbook (docs.angr.io sidebar order, "[Section] Title")
 	-- with the API Reference (angr.* modules) behind a separate sub-picker. Inlined
 	-- (not a module local) to stay under the 200-local main-chunk cap.
