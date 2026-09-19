@@ -27,10 +27,25 @@ Tutorials
   Concepts	tutorials/concepts.html
   Linux Target	tutorials/linux/index.html
     DVKM	tutorials/linux/dvkm/index.html
+      1 - Target analysis	tutorials/linux/dvkm/target.html
+      2 - kAFL workflow	tutorials/linux/dvkm/workflow.html
+      3 - Building the agent	tutorials/linux/dvkm/agent.html
+      4 - Fuzzing campaign	tutorials/linux/dvkm/fuzzing.html
+      5 - Exploring campaign results	tutorials/linux/dvkm/results.html
+      6 - Improvements: KASAN	tutorials/linux/dvkm/improvements.html
     Linux Kernel target	tutorials/linux/fuzzing_linux_kernel.html
   Windows Target	tutorials/windows/index.html
     Driver	tutorials/windows/driver/index.html
+      Target analysis	tutorials/windows/driver/target.html
+      Windows VM Template	tutorials/windows/windows_template.html
+      Provision the guest VM	tutorials/windows/driver/target_setup.html
+      Fuzzing Campaign	tutorials/windows/driver/campaign.html
+      Crash Analysis	tutorials/windows/driver/crash.html
     Userspace	tutorials/windows/userspace/index.html
+      Target analysis	tutorials/windows/userspace/target.html
+      Provision the guest VM	tutorials/windows/userspace/target_setup.html
+      Fuzzing Campaign	tutorials/windows/userspace/campaign.html
+      Improvements	tutorials/windows/userspace/improvements.html
 How-to guides
   Github Actions CI/CD	how_to/github_actions.html
 Reference
