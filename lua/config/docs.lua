@@ -5166,6 +5166,7 @@ LOCATION["aflpp-articles"] = { index = "aflpp-articles/index.tsv", unit = "artic
 LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" }
 LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
+LOCATION["rbil"] = { index = "rbil/index.tsv", unit = "interrupt" }
 LOCATION["docker"] = { index = "docker/index.tsv", unit = "chapter" }
 LOCATION["ptrace-injection"] = { index = "ptrace-injection/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
@@ -5440,6 +5441,12 @@ local providers = {
 	-- build time. Inlined (no module local) to stay under the 200-local cap.
 	{ name = "x86 Instruction Reference (felixcloutier)", key = "x86-insns",
 		run = frozen_web_provider("x86-insns", "x86 instruction> ") },
+	-- Ralf Brown's Interrupt List (ctyme.com HTML build): one chapter per
+	-- interrupt (INT 00h .. INT FFh), each page carrying all of that interrupt's
+	-- BIOS/DOS/vendor function entries. The low-level firmware/DOS companion to
+	-- the x86 instruction reference.
+	{ name = "Ralf Brown's Interrupt List (RBIL)", key = "rbil",
+		run = frozen_web_provider("rbil", "RBIL interrupt> ") },
 	{ name = "AMD64 APM Vol 1 (Application Programming)", key = "amd-apm-vol1", run = function() pick_apm(1) end },
 	{ name = "AMD64 APM Vol 2 (System Programming)", key = "amd-apm-vol2", run = function() pick_apm(2) end },
 	{ name = "C standard (C23 draft)", key = "cstd", run = function() pick_pdf("c-draft", "C draft> ") end },
