@@ -4070,6 +4070,9 @@ local STD_URLS = {
 	["acpi"] = "https://uefi.org/sites/default/files/resources/ACPI_Spec_6_5_Aug29.pdf",
 	-- SMBIOS Specification (DMTF DSP0134, release 3.8.0), split by bookmarks.
 	["smbios"] = "https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.8.0.pdf",
+	-- SPDM (Security Protocol and Data Model) Specification (DMTF DSP0274,
+	-- release 1.4.0): device attestation / measurement / secure sessions.
+	["spdm"] = "https://www.dmtf.org/sites/default/files/standards/documents/DSP0274_1.4.0.pdf",
 	-- UEFI PI (Platform Initialization) Specification 1.8: the PEI/DXE/MM
 	-- firmware volumes that sit under the UEFI spec (companion to edk2).
 	["uefi-pi"] = "https://uefi.org/sites/default/files/resources/UEFI_PI_Spec_1_8_March3.pdf",
@@ -5531,6 +5534,8 @@ local providers = {
 	{ name = "ACPI Specification (6.5)", key = "acpi", run = function() pick_pdf("acpi", "ACPI> ") end },
 	-- SMBIOS Specification (DMTF DSP0134, release 3.8.0), split by bookmarks.
 	{ name = "SMBIOS Specification (3.8.0)", key = "smbios", run = function() pick_pdf("smbios", "SMBIOS> ") end },
+	-- SPDM Specification (DMTF DSP0274, release 1.4.0): device attestation.
+	{ name = "SPDM Specification (DSP0274, 1.4.0)", key = "spdm", run = function() pick_pdf("spdm", "SPDM> ") end },
 	-- UEFI PI (Platform Initialization) Specification 1.8.
 	{ name = "UEFI PI (Platform Initialization) Specification (1.8)", key = "uefi-pi", run = function() pick_pdf("uefi-pi", "UEFI PI> ") end },
 	-- Device Tree Specification 0.4.
