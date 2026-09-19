@@ -4818,6 +4818,7 @@ local WEB_BOOKS = {
 	{ title = "Testing Handbook (Trail of Bits, appsec.guide)", key = "testing-handbook", run = pick_testing_handbook },
 	{ title = "LibAFL (Articles)", key = "fuzzing-101-libafl", run = pick_fuzzing_101_libafl },
 	{ title = "AFL++ Articles", key = "aflpp-articles", run = frozen_web_provider("aflpp-articles", "AFL++ Articles> ") },
+	{ title = "What The Fuzz (wtf) Articles", key = "wtf-articles", run = frozen_web_provider("wtf-articles", "wtf Articles> ") },
 	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
 	{ title = "PCIe (Articles)", key = "pcie-articles", run = pick_pcie_articles },
 	{ title = "Perf Wiki", key = "perf-wiki", run = frozen_web_provider("perf-wiki", "Perf Wiki> ") },
@@ -5121,6 +5122,7 @@ LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "cha
 LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
 LOCATION["aflpp-articles"] = { index = "aflpp-articles/index.tsv", unit = "article" }
+LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" }
 LOCATION["docker"] = { index = "docker/index.tsv", unit = "chapter" }
 LOCATION["ptrace-injection"] = { index = "ptrace-injection/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
@@ -5560,6 +5562,10 @@ local providers = {
 		return narrative
 	end)() }) },
 	{ name = "Triton", key = "triton", run = register_versioned("triton", vspec(simple.triton, "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Triton", docs_mode = "latest", docs_fn = frozen_web_provider("triton-docs", "Triton (Python API)> ") })) },
+	-- What The Fuzz (wtf): 0vercl0k's snapshot fuzzer. :Docs = README +
+	-- linux_mode setup guides at the chosen tag; :Src = full source. Vendored
+	-- libs under /src are not in the docs sparse.
+	{ name = "What The Fuzz (wtf)", key = "wtf", run = register_versioned("wtf", { url = "https://github.com/0vercl0k/wtf", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", sparse = "/README.md /linux_mode", marker = "README.md", browse = "", exts = "-e md", prompt = "wtf docs> ", label = "wtf" }) },
 	-- angr docs: narrative handbook (docs.angr.io sidebar order, "[Section] Title")
 	-- with the API Reference (angr.* modules) behind a separate sub-picker. Inlined
 	-- (not a module local) to stay under the 200-local main-chunk cap.
