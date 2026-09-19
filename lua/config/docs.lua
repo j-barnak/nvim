@@ -4070,6 +4070,21 @@ local STD_URLS = {
 	["acpi"] = "https://uefi.org/sites/default/files/resources/ACPI_Spec_6_5_Aug29.pdf",
 	-- SMBIOS Specification (DMTF DSP0134, release 3.8.0), split by bookmarks.
 	["smbios"] = "https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.8.0.pdf",
+	-- UEFI PI (Platform Initialization) Specification 1.8: the PEI/DXE/MM
+	-- firmware volumes that sit under the UEFI spec (companion to edk2).
+	["uefi-pi"] = "https://uefi.org/sites/default/files/resources/UEFI_PI_Spec_1_8_March3.pdf",
+	-- Device Tree Specification 0.4 (devicetree.org): hardware description used
+	-- across embedded, Arm and RISC-V boot (the non-ACPI hardware description).
+	["devicetree"] = "https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf",
+	-- VirtIO Specification 1.2 (OASIS): the paravirtualized device standard used
+	-- by QEMU/KVM and friends.
+	["virtio"] = "https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.pdf",
+	-- TPM 2.0 Library Specification (TCG, r1.59), four parts. The "TPM 2.0
+	-- Library Specification" picker below offers each part.
+	["tpm2-part1"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part1_Architecture_pub.pdf",
+	["tpm2-part2"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part2_Structures_pub.pdf",
+	["tpm2-part3"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part3_Commands_pub.pdf",
+	["tpm2-part4"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part4_SuppRoutines_pub.pdf",
 }
 
 -- pick_pdf(name, prompt[, url]): browse a built spec cache, else fetch+split it.
@@ -5510,6 +5525,42 @@ local providers = {
 	{ name = "ACPI Specification (6.5)", key = "acpi", run = function() pick_pdf("acpi", "ACPI> ") end },
 	-- SMBIOS Specification (DMTF DSP0134, release 3.8.0), split by bookmarks.
 	{ name = "SMBIOS Specification (3.8.0)", key = "smbios", run = function() pick_pdf("smbios", "SMBIOS> ") end },
+	-- UEFI PI (Platform Initialization) Specification 1.8.
+	{ name = "UEFI PI (Platform Initialization) Specification (1.8)", key = "uefi-pi", run = function() pick_pdf("uefi-pi", "UEFI PI> ") end },
+	-- Device Tree Specification 0.4.
+	{ name = "Device Tree Specification (0.4)", key = "devicetree", run = function() pick_pdf("devicetree", "Device Tree> ") end },
+	-- VirtIO Specification 1.2 (OASIS).
+	{ name = "VirtIO Specification (1.2)", key = "virtio", run = function() pick_pdf("virtio", "VirtIO> ") end },
+	-- TPM 2.0 Library Specification (TCG r1.59): a four-part menu, each part its
+	-- own spec PDF split by bookmarks.
+	{ name = "TPM 2.0 Library Specification", key = "tpm2", run = function()
+		local PARTS = {
+			{ "Part 1: Architecture", "tpm2-part1", "TPM2 Part 1> " },
+			{ "Part 2: Structures", "tpm2-part2", "TPM2 Part 2> " },
+			{ "Part 3: Commands", "tpm2-part3", "TPM2 Part 3> " },
+			{ "Part 4: Supporting Routines", "tpm2-part4", "TPM2 Part 4> " },
+		}
+		local labels = {}
+		for _, p in ipairs(PARTS) do
+			labels[#labels + 1] = p[1]
+		end
+		fzf().fzf_exec(labels, {
+			prompt = "TPM 2.0> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if not (sel and sel[1]) then
+						return
+					end
+					for _, p in ipairs(PARTS) do
+						if p[1] == sel[1] then
+							return pick_pdf(p[2], p[3])
+						end
+					end
+				end,
+			},
+		})
+	end },
 	{ name = "Commands (man 1)", key = "man1", run = function() pick_man(1) end },
 	{ name = "System calls (man 2)", key = "man2", run = function() pick_man(2) end },
 	{ name = "Library functions (man 3)", key = "man3", run = function() pick_man(3) end },
