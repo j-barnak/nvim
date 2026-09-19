@@ -4404,6 +4404,7 @@ local BOOKS = {
 		{ title = "A Practical Guide to TPM 2.0 (Arthur, Challener, Goldman)", fmt = "pdf", slug = "practical-guide-to-tpm-2", file = "Will Arthur, David Challener, Kenneth Goldman (auth.) - A Practical Guide to TPM 2.0_ Using the New Trusted Platform Module in the New Age of Security-Apress (2015).pdf" },
 	} },
 	{ module = "Architecture", key = "books-arch", items = {
+		{ title = "Parallel and High Performance Computing (Robey, Zamora)", fmt = "md", slug = "parallel-high-performance-computing", file = "Parallel and High Performance Computing -- Robert Robey, Yuliana Zamora -- 1, 2021 -- Manning Publications ... -- Anna.mobi (converted via python-mobi + ncx split)" },
 		{ title = "Hardware and Software Support for Virtualization", fmt = "pdf", slug = "hardware-software-support-virtualization", file = "HSSV.pdf" },
 		{ title = "Computer Architecture: A Quantitative Approach (H&P)", fmt = "pdf", slug = "computer-architecture-a-quantitative-approach", file = "Computer-Architecture-A-Quanitative-Approach.pdf" },
 		{ title = "Computer Organization and Design (P&H)", fmt = "pdf", slug = "computer-organization-and-design", file = "Computer-Organization-and-Design-The-HW-SW-Interface.pdf" },
