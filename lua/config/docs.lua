@@ -4066,6 +4066,8 @@ local STD_URLS = {
 	-- its successors, the Server Platform / Server SoC / BRS specs, are the
 	-- committed RISC-V books). Kept as a concise 31-page historical overview.
 	["riscv-platform"] = "https://raw.githubusercontent.com/riscvarchive/riscv-platform-specs/main/riscv-platform-spec.pdf",
+	-- ACPI Specification (UEFI Forum, release 6.5), split by chapter bookmarks.
+	["acpi"] = "https://uefi.org/sites/default/files/resources/ACPI_Spec_6_5_Aug29.pdf",
 }
 
 -- pick_pdf(name, prompt[, url]): browse a built spec cache, else fetch+split it.
@@ -5500,6 +5502,8 @@ local providers = {
 	-- EBBR (Embedded Base Boot Requirements): the UEFI-based boot spec for embedded
 	-- Arm and RISC-V. Frozen from the arm-software.github.io/ebbr Sphinx site.
 	{ name = "EBBR (Embedded Base Boot Requirements)", key = "ebbr", run = frozen_web_provider("ebbr", "EBBR> ") },
+	-- ACPI Specification (UEFI Forum, release 6.5), split by chapter bookmarks.
+	{ name = "ACPI Specification (6.5)", key = "acpi", run = function() pick_pdf("acpi", "ACPI> ") end },
 	{ name = "Commands (man 1)", key = "man1", run = function() pick_man(1) end },
 	{ name = "System calls (man 2)", key = "man2", run = function() pick_man(2) end },
 	{ name = "Library functions (man 3)", key = "man3", run = function() pick_man(3) end },
