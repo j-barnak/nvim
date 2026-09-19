@@ -17,17 +17,30 @@ return {
 	---@module 'blink.cmp'
 	---@type blink.cmp.Config
 	opts = {
-		-- Tab / Shift-Tab SELECT the next/previous item in the menu. If the menu
-		-- is closed but a snippet is active they jump between snippet fields, and
-		-- otherwise fall back to a normal <Tab>. Accept the selected item with
-		-- C-y (the `default` preset); C-e hides the menu, C-space opens it.
+		-- Turn completion off inside string literals (keeps normal buffer/path/
+		-- ripgrep noise out of strings), on top of blink's default gating.
+		enabled = function()
+			if vim.bo.buftype == "prompt" or vim.b.completion == false then
+				return false
+			end
+			local ok, node = pcall(vim.treesitter.get_node)
+			if ok and node and node:type():lower():find("string") then
+				return false
+			end
+			return true
+		end,
+		-- C-n / C-p move through the menu, <CR> accepts the highlighted item (and
+		-- is a normal newline when nothing is selected). C-space opens the menu,
+		-- C-e hides it; <Tab> still jumps between snippet fields.
 		keymap = {
 			preset = "default",
-			["<Tab>"] = { "select_next", "snippet_forward", "fallback" },
-			["<S-Tab>"] = { "select_prev", "snippet_backward", "fallback" },
+			["<CR>"] = { "accept", "fallback" },
 		},
 		completion = {
+			-- Open the menu automatically, but preselect nothing: you land on no
+			-- item until you press C-n/C-p, and nothing is inserted until <CR>.
 			menu = { auto_show = true },
+			list = { selection = { preselect = false, auto_insert = false } },
 			documentation = { auto_show = true, auto_show_delay_ms = 200 },
 		},
 		-- No LSP source. path/snippets/buffer plus the two chosen extras:
@@ -50,15 +63,14 @@ return {
 				},
 			},
 		},
-		-- Command-line completion for `:` commands and `/` `?` search. Tab/S-Tab
-		-- select here too; C-y accepts, Enter runs the line.
+		-- Command-line completion for `:` commands and `/` `?` search: menu opens
+		-- automatically, nothing preselected, C-n/C-p choose, Enter runs the line.
 		cmdline = {
-			keymap = {
-				preset = "cmdline",
-				["<Tab>"] = { "select_next", "fallback" },
-				["<S-Tab>"] = { "select_prev", "fallback" },
+			keymap = { preset = "cmdline" },
+			completion = {
+				menu = { auto_show = true },
+				list = { selection = { preselect = false } },
 			},
-			completion = { menu = { auto_show = true } },
 		},
 		-- Default fuzzy = prefer the Rust matcher built above, warn + fall back to
 		-- the Lua matcher if the build is missing.
