@@ -4332,7 +4332,6 @@ local BOOKS = {
 		{ title = "Is Parallel Programming Hard, And, If So, What Can You Do About It?", fmt = "pdf", slug = "is-parallel-programming-hard", file = "perfbook.pdf" },
 	} },
 	{ module = "Compilers", key = "books-compilers", items = {
-		{ title = "Lisp in Small Pieces (Ch. 1 excerpt)", fmt = "pdf", slug = "lisp-in-small-pieces", file = "Lisp in Small Pieces __ {Queinnec, Christian_ Callaway, Kathleen}(1996 June 28, Cambridge University Press)[10.1017_CBO9781139172974]{28000117} libgen.li.pdf" },
 		{ title = "Linkers and Loaders", fmt = "pdf", file = "Linkers-and-Loaders.pdf" },
 		{ title = "Program Analysis (CMU 17-355)", fmt = "pdf", slug = "program-analysis-cmu", file = "cmu-program-analysis.pdf" },
 		{ title = "Static Program Analysis (Moller & Schwartzbach)", fmt = "pdf", slug = "static-program-analysis", file = "spa.pdf" },
