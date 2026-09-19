@@ -4503,11 +4503,6 @@ local BOOKS = {
 		{ title = "The Definitive Guide to ARM Cortex-M0 and Cortex-M0+ (Yiu)", fmt = "pdf", slug = "arm-cortex-m0-definitive-guide", file = "annas-arch-1909660c0a67.pdf" },
 		{ title = "Programming Embedded Systems (Barr, Massa)", fmt = "pdf", slug = "programming-embedded-systems", file = "Barr, Michael_Massa, Anthony - Programming Embedded Systems (2006, O'Reilly Media Incorporated) - libgen.li.pdf" },
 		{ title = "Making Embedded Systems (Elecia White, 2e)", fmt = "pdf", slug = "making-embedded-systems", file = "Elecia White - Making Embedded Systems_ Design Patterns for Great Software (2024, O’Reilly Media) - libgen.li.pdf" },
-		-- Open access (Apress via SpringerLink):
-		-- https://link.springer.com/content/pdf/10.1007/978-1-4842-0070-4.pdf
-		{ title = "Embedded Firmware Solutions (Sun, Jones, Reinauer, Zimmer)", fmt = "pdf", slug = "embedded-firmware-solutions", file = "978-1-4842-0070-4.pdf" },
-		-- https://link.springer.com/content/pdf/10.1007/978-1-4842-2896-8.pdf
-		{ title = "Demystifying Internet of Things Security (Cheruvu et al.)", fmt = "pdf", slug = "demystifying-iot-security", file = "978-1-4842-2896-8.pdf" },
 	} },
 	{ module = "Windows", key = "books-windows", items = {
 		{ title = "Windows Internals, Part 1 (7e)", fmt = "pdf", slug = "windows-internals-part-1", file = "Windows-Internals-Part-1.pdf" },
