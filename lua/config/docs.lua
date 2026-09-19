@@ -4058,9 +4058,21 @@ local STD_URLS = {
 	["arm-a"] = "https://www.cs.princeton.edu/courses/archive/fall19/cos217/reading/ArmArchitectureReferenceManual.pdf",
 	["arm-m"] = "https://community.arm.com/cfs-file/__key/communityserver-discussions-components-files/471/DDI0553B_5F00_y_5F00_armv8m_5F00_arm.pdf",
 	["gdb-manual"] = "https://sourceware.org/gdb/download/onlinedocs/gdb.pdf",
+	-- UEFI Specification, split per version (the "UEFI Specification" picker below
+	-- offers 2.10 and 2.9; each is its own ~2000-page spec PDF, cached separately).
+	["uefi-2.10"] = "https://uefi.org/sites/default/files/resources/UEFI_Spec_2_10_Aug29.pdf",
+	["uefi-2.9"] = "https://uefi.org/sites/default/files/resources/UEFI_Spec_2_9_2021_03_18.pdf",
+	-- RISC-V Platform Specification (the archived unified OS-A/M platform spec;
+	-- its successors, the Server Platform / Server SoC / BRS specs, are the
+	-- committed RISC-V books). Kept as a concise 31-page historical overview.
+	["riscv-platform"] = "https://raw.githubusercontent.com/riscvarchive/riscv-platform-specs/main/riscv-platform-spec.pdf",
 }
 
-local function pick_pdf(name, prompt)
+-- pick_pdf(name, prompt[, url]): browse a built spec cache, else fetch+split it.
+-- `url` overrides STD_URLS[name] for specs whose download link is resolved at
+-- build time (the Arm SystemReady docs, whose PDF URL comes from Arm's doc
+-- service JSON). Browsing a already-built cache never needs the URL.
+local function pick_pdf(name, prompt, url)
 	local out = data_root .. "/std/" .. name
 	local pdf = tools_dir .. "/" .. name .. ".pdf"
 	local function browse()
@@ -4077,7 +4089,7 @@ local function pick_pdf(name, prompt)
 	end
 	mkdir(out)
 	vim.notify("Fetching + splitting " .. name .. " … (first time)")
-	vim.system({ "sh", "-c", tool_script("pdf_build.sh"), "pdf", pdf, out, STD_URLS[name] }, { text = true, timeout = 900000 }, function(res)
+	vim.system({ "sh", "-c", tool_script("pdf_build.sh"), "pdf", pdf, out, url or STD_URLS[name] }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()
 			if vim.fn.filereadable(out .. "/.complete") == 1 then
 				browse()
@@ -5123,6 +5135,7 @@ LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "c
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
 LOCATION["aflpp-articles"] = { index = "aflpp-articles/index.tsv", unit = "article" }
 LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" }
+LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["docker"] = { index = "docker/index.tsv", unit = "chapter" }
 LOCATION["ptrace-injection"] = { index = "ptrace-injection/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
@@ -5406,6 +5419,87 @@ local providers = {
 	{ name = "RISC-V ISA (unpriv + priv, H ext)", key = "riscv", run = function() pick_pdf("riscv", "RISC-V ISA> ") end },
 	{ name = "Arm ARM (A-profile, application)", key = "arm-a", run = function() pick_pdf("arm-a", "Arm A-profile> ") end },
 	{ name = "Arm ARM (M-profile, microcontroller)", key = "arm-m", run = function() pick_pdf("arm-m", "Arm M-profile> ") end },
+	-- UEFI Specification, versioned: a two-item menu (2.10 / 2.9) dispatching to the
+	-- per-version spec PDF (split by its chapter bookmarks like the other specs).
+	{ name = "UEFI Specification (2.10 / 2.9)", key = "uefi-spec", run = function()
+		fzf().fzf_exec({ "2.10 (August 2022)", "2.9 (March 2021)" }, {
+			prompt = "UEFI version> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if not (sel and sel[1]) then
+						return
+					end
+					if sel[1]:match("^2%.10") then
+						return pick_pdf("uefi-2.10", "UEFI 2.10> ")
+					end
+					return pick_pdf("uefi-2.9", "UEFI 2.9> ")
+				end,
+			},
+		})
+	end },
+	-- Arm SystemReady: the Base System Architecture (BSA), Server BSA (SBSA) and
+	-- Base Boot Requirements (BBR). Arm serves these PDF-only through its doc
+	-- service; the download URL is resolved from that service's JSON at build time
+	-- (so it always fetches the current revision), then split like the other specs.
+	{ name = "Arm SystemReady (BSA / SBSA / BBR)", key = "arm-sysready", run = function()
+		local DOCS = {
+			{ label = "BSA (Base System Architecture, DEN0094)", id = "den0094", name = "arm-bsa", prompt = "Arm BSA> " },
+			{ label = "SBSA (Server Base System Architecture, DEN0029)", id = "den0029", name = "arm-sbsa", prompt = "Arm SBSA> " },
+			{ label = "BBR (Base Boot Requirements, DEN0044)", id = "den0044", name = "arm-bbr", prompt = "Arm BBR> " },
+		}
+		local function open_doc(d)
+			-- Already built: browse the cache without touching the network.
+			if vim.fn.filereadable(data_root .. "/std/" .. d.name .. "/.complete") == 1 then
+				return pick_pdf(d.name, d.prompt)
+			end
+			vim.notify("Resolving " .. d.label .. " from Arm's doc service …")
+			vim.system(
+				{ "curl", "-fsSL", "--max-time", "40", "https://documentation-service.arm.com/documentation/" .. d.id .. "/latest" },
+				{ text = true, timeout = 60000 },
+				function(res)
+					vim.schedule(function()
+						local ok, j = pcall(vim.json.decode, res.stdout or "")
+						local href = ok
+							and j
+							and j._links
+							and j._links.resources
+							and j._links.resources[1]
+							and j._links.resources[1].href
+						if not href then
+							return vim.notify("Arm " .. d.label .. ": could not resolve the PDF URL", vim.log.levels.ERROR)
+						end
+						pick_pdf(d.name, d.prompt, href)
+					end)
+				end
+			)
+		end
+		local labels = {}
+		for _, d in ipairs(DOCS) do
+			labels[#labels + 1] = d.label
+		end
+		fzf().fzf_exec(labels, {
+			prompt = "Arm SystemReady> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if not (sel and sel[1]) then
+						return
+					end
+					for _, d in ipairs(DOCS) do
+						if d.label == sel[1] then
+							return open_doc(d)
+						end
+					end
+				end,
+			},
+		})
+	end },
+	-- RISC-V Platform Specification (archived unified OS-A/M spec, 31 pages).
+	{ name = "RISC-V Platform Specification (archived unified spec)", key = "riscv-platform", run = function() pick_pdf("riscv-platform", "RISC-V Platform> ") end },
+	-- EBBR (Embedded Base Boot Requirements): the UEFI-based boot spec for embedded
+	-- Arm and RISC-V. Frozen from the arm-software.github.io/ebbr Sphinx site.
+	{ name = "EBBR (Embedded Base Boot Requirements)", key = "ebbr", run = frozen_web_provider("ebbr", "EBBR> ") },
 	{ name = "Commands (man 1)", key = "man1", run = function() pick_man(1) end },
 	{ name = "System calls (man 2)", key = "man2", run = function() pick_man(2) end },
 	{ name = "Library functions (man 3)", key = "man3", run = function() pick_man(3) end },
