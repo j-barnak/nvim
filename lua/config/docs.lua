@@ -5661,7 +5661,33 @@ local providers = {
 	{ name = "Android kernel (ACK, versioned)", key = "android-kernel", run = pick_android_kernel },
 	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = register_versioned("dynamorio", vspec(simple.dynamorio, "release_[0-9]+\\.[0-9]+\\.[0-9]+", { label = "DynamoRIO", diskpat = "^release_%d", docs_mode = "latest", docs_fn = frozen_web_provider("dynamorio-docs", "DynamoRIO docs> ") })) },
 	{ name = "TinyInst (Project Zero DBI)", key = "tinyinst", run = make_simple("tinyinst", simple.tinyinst) },
-	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
+	-- Nyx: a launcher for the repo documentation (nyx-fuzz/Nyx README, live) and
+	-- the frozen USENIX Security 2021 paper. Inline menu (no module local).
+	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = (function()
+		local PAPER = "https://www.usenix.org/system/files/sec21-schumilo.pdf"
+		local menu
+		menu = function()
+			last_picker = menu
+			fzf().fzf_exec({ "Documentation (nyx-fuzz/Nyx)", "Paper: Nyx - Greybox Hypervisor Fuzzing (USENIX Security 2021)" }, {
+				prompt = "Nyx> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = { ["default"] = function(sel)
+					if not (sel and sel[1]) then return end
+					if sel[1]:match("^Paper") then
+						last_picker = menu
+						local cf = resolve_docs(".webcache/" .. vim.fn.sha256(PAPER) .. ".txt")
+							or (frozen_root .. "/.webcache/" .. vim.fn.sha256(PAPER) .. ".txt")
+						if vim.fn.filereadable(cf) == 1 then
+							return render_lines(vim.fn.readfile(cf), "markdown", nil, "Nyx (USENIX Security 2021)")
+						end
+						return vim.notify("Nyx paper: not in the frozen cache", vim.log.levels.WARN)
+					end
+					return make_simple("nyx", simple.nyx)()
+				end },
+			})
+		end
+		return menu
+	end)() },
 	{ name = "LibAFL", key = "libafl", run = register_versioned("libafl", vspec(simple.libafl, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LibAFL", diskpat = "^%d", submodules = true, src_sparse = LIBAFL_SRC_SPARSE })) },
 	{ name = "CodeQL", key = "codeql", run = register_versioned("codeql", vspec(simple.codeql, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "CodeQL" })) },
 	{ name = "lld (LLVM linker)", key = "lld", run = make_simple("lld", simple.lld) },
