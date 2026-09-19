@@ -38,6 +38,18 @@ local function in_include_string()
 	local kw = before:match("([%a_][%w_]*)%s*%(?%s*['\"`<][^'\"`<]*$")
 	return kw ~= nil and INCLUDE_KW[kw:lower()] == true
 end
+-- Also allow path completion when the string CONTENT itself looks like a
+-- filesystem path (contains a `/`, or starts with `~`), regardless of any
+-- keyword, e.g.  Path::new("/tmp/nyx|   open("./data|   "~/.config/|
+local function in_path_string()
+	if not in_string() then
+		return false
+	end
+	local col = vim.api.nvim_win_get_cursor(0)[2]
+	local before = vim.api.nvim_get_current_line():sub(1, col)
+	local content = before:match("['\"`]([^'\"`]*)$")
+	return content ~= nil and (content:find("/", 1, true) ~= nil or content:sub(1, 1) == "~")
+end
 
 return {
 	"saghen/blink.cmp",
@@ -86,7 +98,7 @@ return {
 				path = {
 					fallbacks = {},
 					enabled = function()
-						return not_in_string() or in_include_string()
+						return not_in_string() or in_include_string() or in_path_string()
 					end,
 				},
 				snippets = { enabled = not_in_string },
