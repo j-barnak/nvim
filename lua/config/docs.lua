@@ -5740,6 +5740,14 @@ local providers = {
 	-- versioned IntelLabs/kAFL source (Explore source). docs_mode "latest" opens
 	-- the frozen docs at their tip regardless of the chosen source tag.
 	{ name = "kAFL (Intel snapshot fuzzer)", key = "kafl", run = register_versioned("kafl", { src_url = "https://github.com/IntelLabs/kAFL", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kAFL", docs_mode = "latest", docs_fn = frozen_web_provider("kafl-docs", "kAFL docs> ") }) },
+	-- kAFL ecosystem components (source-only, versioned): the umbrella "kAFL"
+	-- entry above is IntelLabs/kAFL (deployment); these are the actual pieces.
+	{ name = "kAFL: fuzzer (source)", key = "kafl-fuzzer", run = register_versioned("kafl-fuzzer", { url = "https://github.com/IntelLabs/kafl.fuzzer", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.fuzzer", docs_mode = "none" }) },
+	{ name = "kAFL: targets (source)", key = "kafl-targets", run = register_versioned("kafl-targets", { url = "https://github.com/IntelLabs/kafl.targets", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.targets", docs_mode = "none" }) },
+	{ name = "kAFL: QEMU-Nyx (source)", key = "kafl-qemu", run = register_versioned("kafl-qemu", { url = "https://github.com/IntelLabs/kafl.qemu", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.qemu", docs_mode = "none" }) },
+	{ name = "kAFL: libxdc (Intel-PT decoder, source)", key = "kafl-libxdc", run = register_versioned("kafl-libxdc", { url = "https://github.com/IntelLabs/kafl.libxdc", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.libxdc", docs_mode = "none" }) },
+	-- kafl.linux is a full kernel fork; browse its KVM-Nyx host-patch tags.
+	{ name = "kAFL: Linux (KVM-Nyx host, source)", key = "kafl-linux", run = register_versioned("kafl-linux", { url = "https://github.com/IntelLabs/kafl.linux", tagre = "kvm-nyx.*", diskpat = "^kvm%-nyx", label = "kafl.linux", docs_mode = "none" }) },
 	-- angr docs: narrative handbook (docs.angr.io sidebar order, "[Section] Title")
 	-- with the API Reference (angr.* modules) behind a separate sub-picker. Inlined
 	-- (not a module local) to stay under the 200-local main-chunk cap.
