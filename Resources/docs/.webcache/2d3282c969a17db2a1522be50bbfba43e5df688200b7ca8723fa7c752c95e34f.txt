@@ -1,0 +1,397 @@
+Recently I’ve started a little fuzzing project. After doing some [research](https://mgba.io/2016/09/13/fuzzing-emulators/), I’ve decided to fuzz a gaming emulator. The target of choice is a GameBoy and GameBoy Advance emulator called [VisualBoyAdvance-M](https://github.com/visualboyadvance-m/visualboyadvance-m), which is also called VBA-M. At the time of writing the emulator was still being maintained. VBA-M seems to be a fork of [VisualBoyAdvance](https://github.com/x3ro/VisualBoyAdvance), for which development seems to have stopped in 2006.
+
+*Disclaimer: I’m publishing this blog post to share some fuzzing methodology and tooling and not to blame the developers. I’ve previously reported all my fuzzing discoveries to the developer team of VBA-M on GitHub.*
+
+The attack surface of emulators is quite large because of their complex functionality and various ways to pass user input to the application. There’s parsing functionality for the game ROMs and the save states, built-in cheating support and then there’s all that video and audio I/O related stuff.
+
+I’ve decided to fuzz the GameBoy ROM files. The general approach is as follows:
+
+1.  Let the emulator load a ROM
+2.  Let it parse the file and do initialization
+3.  Run the game for a few frames. This catches bugs that only occur after some time, like corrupting internal memory of the emulator while playing a game.
+
+# Building A Fuzzing Harness
+
+Of course the emulator spins up a GUI every time it’s launched. Since this is quite slow and is not required for the fuzzer at all, this has to be skipped. The same applies for any other functionality that’s not required for the fuzzing harness to work.
+
+There are two front ends that use the emulation library provided by VBA-M: One is based on SDL and one on [WxWidgets](https://www.wxwidgets.org/). My fuzzing harness is a modified version of the SDL front end, since it’s more minimal compared to the other one. The `SDL` sub directory can be found [here](https://github.com/visualboyadvance-m/visualboyadvance-m/tree/master/src/sdl) and contains all files related for this front end.
+
+Here’s an overview of the changes I’ve applied to transform the SDL front end to a fuzzing harness:
+
+1.  I’ve added a counter that’s being decremented after the emulator has performed one full cycle in `gbEmulate()`. The emulator shuts down with `exit(0)` as soon as this value hits the zero value. This is required for the fuzzer since I want it to stop in case no memory corruption happens within a certain amount of frames.
+2.  Initialization routines for key maps, user preferences and GameBoy Advance ROMs were removed.
+3.  The routines for sound and video were kept intact because bugs may be present in those too. This makes the fuzzer slower but increases coverage. However, the actual output was patched out. This means that for example the internal video states are still being calculated up to a certain point but nothing is actually being shown on the GUI. For example, functions that perform screen output were simply replaced with `return` statements.
+
+And that’s basically it.
+
+# LLVM Mode And Persistent Mode
+
+One additional change was made to the `main()` function of the emulator. I’ve added the `__AFL_LOOP(10000)` directive. This tells AFL to perform in-process fuzzing for a given amount of times before spinning up a new target process. This means that one VBA-M invocation happens for every 10000 inputs, which ultimately speeds up fuzzing. Of course, you have to make sure to not introduce any side effects when using this feature. This mode is also called AFL persistent mode and you can read more about it [here](https://lcamtuf.blogspot.com/2015/06/new-in-afl-persistent-mode.html).
+
+Compiling the fuzzing harness in [LLVM Mode](https://github.com/vanhauser-thc/AFLplusplus/blob/master/llvm_mode/README.md) and with [AFL++](https://github.com/vanhauser-thc/AFLplusplus) provides much better performance than using something like plain GCC and provides more features, including the persistent mode mentioned above. After compiling AFL++ with LLVM9 or newer, the magic `afl-clang-fast++` and `afl-clang-fast` compilers are available. If your distribution doesn’t provide these packages yet, AFL++ [has you covered once again with a Dockerfile](https://github.com/vanhauser-thc/AFLplusplus/blob/master/Dockerfile).
+
+I’ve then used these compilers to build VBA-M with full ASAN enabled:
+
+```
+$ cmake .. -DCMAKE_CXX_COMPILER=afl-clang-fast++ -DCMAKE_CC_COMPILER=afl-clang-fast
+$ AFL_USE_ASAN=1 make -j32
+```
+
+Now it’s time to create some input files for the fuzzer.
+
+# Building Input Files
+
+I’ve created multiple minimal GameBoy ROMs using [GBStudio](https://www.gbstudio.dev/) and minimized them afterwards. This worked by deleting some parts using a hex editor and checking if the ROM still works afterwards. Minimizing input files can make the fuzzing process more efficient.
+
+# System Configuration
+
+I’ve used a 32 core machine from [Hetzner Cloud](https://www.hetzner.com/cloud) as fuzzing server.
+
+Before starting to fuzz, you have to make sure that the system is configured properly or you won’t have the best performance possible. The [afl-system-config](https://github.com/vanhauser-thc/AFLplusplus/blob/master/afl-system-config) script does this automatically for you. Just be sure to reset the affected values after fuzzing has finished, since this also disables ASLR. Or just throw the fuzzing server away.
+
+By putting the AFL working directory on a RAM disk, you can potentially gain some additional speed and avoid wearing out the disks at the same time. I’ve created my RAM disk as follows:
+
+```
+$ mkdir /mnt/ramdisk
+$ mount -t tmpfs -o size=100G tmpfs /mnt/ramdisk
+```
+
+# Running The Fuzzer
+
+I want to start one AFL instance per core. To make this as convenient as possible, I’ve used an AFL start script from [here](https://gamozolabs.github.io/fuzzing/2018/09/16/scaling_afl.html) and modified it to make it fit my needs:
+
+```
+#!/usr/bin/env python3
+
+# Original from: https://gamozolabs.github.io/fuzzing/2018/09/16/scaling_afl.html
+
+import subprocess, threading, time, shutil, os
+import random, string
+import multiprocessing
+
+NUM_CPUS = multiprocessing.cpu_count()
+
+RAMDISK = "/mnt/ramdisk"
+INPUT_DIR = RAMDISK + "/afl_in"
+OUTPUT_DIR = RAMDISK + "/afl_out"
+BACKUP_DIR = "/opt/afl_backup"
+BIN_PATH = "/opt/vbam/visualboyadvance-m/build/vbam"
+
+SCHEDULES = ["coe", "fast", "explore"]
+
+print("Using %s CPU Cores" % (NUM_CPUS))
+
+
+def do_work(cpu):
+    if cpu == 0:
+        fuzzer_arg = "-M"
+        schedule = "exploit"
+    else:
+        fuzzer_arg = "-S"
+        schedule = random.choice(SCHEDULES)
+
+    os.mkdir("%s/tmp%d" % (OUTPUT_DIR, cpu))
+
+    # Restart if it dies, which happens on startup a bit
+    while True:
+        try:
+            args = [
+                "taskset", "-c",
+                "%d" % cpu, "afl-fuzz", "-f",
+                "%s/tmp%d/a.gb.gz" % (OUTPUT_DIR, cpu), "-p", schedule, "-m",
+                "none", "-i", INPUT_DIR, "-o", OUTPUT_DIR, fuzzer_arg,
+                "fuzzer%d" % cpu, "--", BIN_PATH,
+                "%s/tmp%d/a.gb.gz" % (OUTPUT_DIR, cpu)
+            ]
+            sp = subprocess.Popen(args,
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE)
+            sp.wait()
+        except Exception as e:
+            print(str(e))
+            pass
+
+        print("CPU %d afl-fuzz instance died" % cpu)
+
+        # Some backoff if we fail to run
+        time.sleep(1.0)
+
+
+assert os.path.exists(INPUT_DIR), "Invalid input directory"
+
+if not os.path.exists(BACKUP_DIR):
+    os.mkdir(BACKUP_DIR)
+
+if os.path.exists(OUTPUT_DIR):
+    print("Backing up old output directory")
+    shutil.move(
+        OUTPUT_DIR, BACKUP_DIR + os.sep +
+        ''.join(random.choice(string.ascii_uppercase) for _ in range(16)))
+
+print("Creating output directory")
+os.mkdir(OUTPUT_DIR)
+
+# Disable AFL affinity as we do it better
+os.environ["AFL_NO_AFFINITY"] = "1"
+
+for cpu in range(0, NUM_CPUS):
+    threading.Timer(0.0, do_work, args=[cpu]).start()
+
+    # Let fuzzer stabilize first
+    if cpu == 0:
+        time.sleep(5.0)
+
+while threading.active_count() > 1:
+    time.sleep(5.0)
+
+    try:
+        subprocess.check_call(["afl-whatsup", "-s", OUTPUT_DIR])
+    except:
+        pass
+```
+
+This spawns one master AFL instance and several slaves with each one assigned to an own CPU core. Also, every slave gets its own randomized [power schedule](https://github.com/vanhauser-thc/AFLplusplus/#5-power-schedules).
+
+The only thing that’s left is to start this script on the server in a `tmux` session to detach it from the current SSH session. Here’s what the results look like after running it for a while:
+
+```
+Summary stats
+=============
+
+       Fuzzers alive : 32
+      Total run time : 33 days, 4 hours
+         Total execs : 59 million
+    Cumulative speed : 1200 execs/sec
+       Pending paths : 392 faves, 159374 total
+  Pending per fuzzer : 12 faves, 4980 total (on average)
+       Crashes found : 3662 locally unique
+```
+
+The total fuzzing speed could be higher but I went for maximum coverage, so I could catch more potential bugs. Time consuming operations like audio and video I/O certainly slow things down.
+
+# Fuzzing Results
+
+Some of my results can only be reproduced using an ASAN build of VBA-M since heap memory corruption doesn’t necessarily crash the target.
+
+Fuzzing was performed on commit `951e8e0ebeeab4fc130e05bfb2c143a394a97657`. I’ve found 11 unique crashes in total. Here are the interesting ones:
+
+## Overflow of Global Variable in `mapperTAMA5RAM()`
+
+```
+==22758==ERROR: AddressSanitizer: global-buffer-overflow on address 0x55780a09da1c at pc 0x557809b0a468 bp 0x7ffd30d551e0 sp 0x7ffd30d551d8
+WRITE of size 4 at 0x55780a09da1c thread T0
+    #0 0x557809b0a467 in mapperTAMA5RAM(unsigned short, unsigned char) /path/to/vbam/visualboyadvance-m/src/gb/gbMemory.cpp:1247:73
+    #1 0x557809abd7be in gbWriteMemory(unsigned short, unsigned char) /path/to/vbam/visualboyadvance-m/src/gb/GB.cpp:991:13
+    #2 0x557809aeaac0 in gbEmulate(int) /path/to/vbam/visualboyadvance-m/src/gb/gbCodes.h
+    #3 0x557809695d4d in main /path/to/vbam/visualboyadvance-m/src/sdl/SDL.cpp:1858:17
+    #4 0x7f2498e41152 in __libc_start_main (/usr/lib/libc.so.6+0x27152)
+    #5 0x5578095ad6ad in _start (/path/to/vbam/ge/build/vbam+0xb66ad)
+
+Address 0x55780a09da1c is a wild pointer.
+SUMMARY: AddressSanitizer: global-buffer-overflow /path/to/vbam/visualboyadvance-m/src/gb/gbMemory.cpp:1247:73 in mapperTAMA5RAM(unsigned short, unsigned char)
+```
+
+This is a case where the indexing of a global variable goes wrong. Check out this code snippet that seems to cover special cases for Tamagotchi on the GameBoy platform:
+
+```
+void mapperTAMA5RAM(uint16_t address, uint8_t value)
+{
+    if ((address & 0xffff) <= 0xa001)
+    {
+        switch (address & 1)
+        {
+        case 0: // 'Values' Register
+        {
+            value &= 0xf;
+            gbDataTAMA5.mapperCommands[gbDataTAMA5.mapperCommandNumber] = value;
+            [...]
+        }
+        [...]
+        }
+        [...]
+    }
+    [...]
+}
+```
+
+The fuzzer found various input files that cause the value of `gbDataTAMA5.mapperCommandNumber` to become larger than the `gbDataTAMA5.mapperCommands` array, which is static and always holds 16 entries. This results in a write operation of 4 bytes that goes beyond the `gbDataTAMA5` structure. In fact, it was possible to write to other structures nearby. There’s a limitation that restricts the overflow from going beyond the offset `0xFF` since VBA-M reads only a single byte into the index. This happens even though the data type of the index itself is an integer.
+
+Since I had over 850 unique cases that trigger this bug, I’ve checked how much each one overflows the array using a GDB batch script called `dump.gdb`:
+
+```
+break *mapperTAMA5RAM+153
+r
+i r rax
+```
+
+The value of `RAX` at the breakpoint is the offset of the write operation. I’ve launched GDB like this:
+
+```
+for f in *; do cp "$f" /tmp/yolo.gb.gz && gdb --batch --command=dump.gdb --args /path/to/vbam/visualboyadvance-m/build/vbam /tmp/yolo.gb.gz | tail -1; done
+```
+
+This executes the emulator until the buggy write operation happens, prints the offset and exits. During a debugging session it can also be observed which data structure is getting manipulated by the write operation:
+
+```
+p &gbDataTAMA5.mapperCommands[gbDataTAMA5.mapperCommandNumber]
+$2 = (int *) 0x5555557ed6dc <gbSgbSaveStructV3+124> <-- of out bounds
+```
+
+This clearly isn’t pointing to anything inside `gbDataTAMA5` and therefore demonstrates that memory can be corrupted using this bug. However, I haven’t found a way to gain code execution using this :( Writing to a function pointer using a partial overwrite or something similar would be a way to exploit this. The only things that I was able to manipulate were sound settings and a structure that defines how many days there are in a given month :D
+
+Too bad.
+
+## Overflow of Global Variable in `mapperHuC3RAM()`
+
+```
+==21687==ERROR: AddressSanitizer: global-buffer-overflow on address 0x561152cdf760 at pc 0x56115274a793 bp 0x7ffedd4cab10 sp 0x7ffedd4cab08
+WRITE of size 4 at 0x561152cdf760 thread T0
+    #0 0x56115274a792 in mapperHuC3RAM(unsigned short, unsigned char) /path/to/vbam/visualboyadvance-m/src/gb/gbMemory.cpp:1090:57
+    #1 0x5611526ff7be in gbWriteMemory(unsigned short, unsigned char) /path/to/vbam/visualboyadvance-m/src/gb/GB.cpp:991:13
+    #2 0x56115272a547 in gbEmulate(int) /path/to/vbam/visualboyadvance-m/src/gb/gbCodes.h:1246:1
+    #3 0x5611522d7d4d in main /path/to/vbam/visualboyadvance-m/src/sdl/SDL.cpp:1858:17
+    #4 0x7f39eb078152 in __libc_start_main (/usr/lib/libc.so.6+0x27152)
+    #5 0x5611521ef6ad in _start (/path/to/vbam/triage/build/vbam+0xb66ad)
+
+0x561152cdf760 is located 32 bytes to the left of global variable 'gbDataTAMA5' defined in '/path/to/vbam/visualboyadvance-m/src/gb/gbMemory.cpp:1138:13' (0x561152cdf780) of size 168
+0x561152cdf760 is located 4 bytes to the right of global variable 'gbDataHuC3' defined in '/path/to/vbam/visualboyadvance-m/src/gb/gbMemory.cpp:991:12' (0x561152cdf720) of size 60
+SUMMARY: AddressSanitizer: global-buffer-overflow /path/to/vbam/visualboyadvance-m/src/gb/gbMemory.cpp:1090:57 in mapperHuC3RAM(unsigned short, unsigned char)
+```
+
+The function `mapperHuC3RAM()` gets called by `gbWriteMemory()`. The corruption happens after these lines:
+
+```
+p = &gbDataHuC3.mapperRegister2;
+*(p + gbDataHuC3.mapperRegister1++) = value & 0x0f;
+```
+
+The value of `p` points to invalid memory next to the `gbDataHuC3` variable in the fuzzing case. Therefore the write operation happens outside of it and can potentially be used to overwrite other content on the stack. However, it wasn’t possible to properly control the write operation and therefore no critical locations could be overwritten.
+
+## User-After-Free in `gbCopyMemory()`
+
+```
+==13939==ERROR: AddressSanitizer: heap-use-after-free on address 0x615000003680 at pc 0x55b3dc38388b bp 0x7ffcecd0e1e0 sp 0x7ffcecd0e1d8
+READ of size 1 at 0x615000003680 thread T0
+    #0 0x55b3dc38388a in gbCopyMemory(unsigned short, unsigned short, int) /path/to/vbam/visualboyadvance-m/src/gb/GB.cpp:882:44
+    #1 0x55b3dc38388a in gbWriteMemory(unsigned short, unsigned char) /path/to/vbam/visualboyadvance-m/src/gb/GB.cpp:1428:9
+    #2 0x55b3dc3a931c in gbEmulate(int) /path/to/vbam/visualboyadvance-m/src/gb/gbCodes.h
+    #3 0x55b3dbf55d4d in main /path/to/vbam/visualboyadvance-m/src/sdl/SDL.cpp:1858:17
+    #4 0x7f5f9d50e152 in __libc_start_main (/usr/lib/libc.so.6+0x27152)
+    #5 0x55b3dbe6d6ad in _start (/path/to/vbam/triage/build/vbam+0xb66ad)
+
+0x615000003680 is located 384 bytes inside of 488-byte region [0x615000003500,0x6150000036e8)
+freed by thread T0 here:
+    #0 0x55b3dbf0e8a9 in free (/path/to/vbam/triage/build/vbam+0x1578a9)
+    #1 0x7f5f9d55bd03 in fclose@@GLIBC_2.2.5 (/usr/lib/libc.so.6+0x74d03)
+
+previously allocated by thread T0 here:
+    #0 0x55b3dbf0ebd9 in malloc (/path/to/vbam/triage/build/vbam+0x157bd9)
+    #1 0x7f5f9d55c5ee in __fopen_internal (/usr/lib/libc.so.6+0x755ee)
+    #2 0x672f303030312f71  (<unknown module>)
+```
+
+This bugs seems to be triggered upon doing HDMA (*Horizontal Blanking Direct Memory Access*) using this helper function:
+
+```
+void gbCopyMemory(uint16_t d, uint16_t s, int count)
+{
+    while (count) {
+        gbMemoryMap[d >> 12][d & 0x0fff] = gbMemoryMap[s >> 12][s & 0x0fff];
+        s++;
+        d++;
+        count--;
+    }
+}
+```
+
+The fuzzer found a case where the source of the DMA write operation points to memory which has been freed previously. In case the allocation of this address can be controlled, the write operation could therefore also be controlled partially. Maybe. Maybe not :)
+
+## Null Dereference in `gbReadMemory()`
+
+```
+==16217==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000 (pc 0x5629cb1be6ae bp 0x000000000000 sp 0x7ffe9ccb8c40 T0)
+==16217==The signal is caused by a READ memory access.
+==16217==Hint: address points to the zero page.
+    #0 0x5629cb1be6ad in gbReadMemory(unsigned short) /path/to/vbam/visualboyadvance-m/src/gb/GB.cpp:1801:20
+    #1 0x5629cb1d59dd in gbEmulate(int) /path/to/vbam/visualboyadvance-m/src/gb/GB.cpp:4637:42
+    #2 0x5629cad8fd4d in main /path/to/vbam/visualboyadvance-m/src/sdl/SDL.cpp:1858:17
+    #3 0x7fa13d83d152 in __libc_start_main (/usr/lib/libc.so.6+0x27152)
+    #4 0x5629caca76ad in _start (/path/to/vbam/ge/build/vbam+0xb66ad)
+
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /path/to/vbam/visualboyadvance-m/src/gb/GB.cpp:1801:20 in gbReadMemory(unsigned short)
+==16217==ABORTING
+```
+
+The bug happens in these lines:
+
+```
+if (mapperReadRAM)
+    return mapperReadRAM(address);
+return gbMemoryMap[address >> 12][address & 0x0fff]; <-- null deref happens here
+```
+
+The `gbMemoryMap` entry at index `10` is being accessed, which is `NULL`. This is only a DoS though and I’ve also found two more `NULL` dereference bugs like this in other locations.
+
+## DoS Caused By Invalid Calculated Size
+
+AFL also found another case where it was possible to cause a DoS on the emulator. This is caused by an invalid and very large size parameter that’s being passed to a `malloc()` call. Here’s why that happens:
+
+1.  The size of the ROM is being read from the ROM header, which can be controlled by an attacker
+2.  This value is the size parameter for a `malloc()` call. If the attacker places a negative value in the respective header field, the emulator will just use this value without any prior checks and pass it to `malloc()`.
+3.  Since `malloc()` only accepts signed values of type `size_t`, the negative value will be converted to an unsigned value and will therefore by very huge.
+4.  `malloc()` tries to allocate several gigabytes of memory, which causes the process to hang.
+
+The fix would be to use an unsigned value for the size value. Also, an additional sanitation should be added after reading the value, since GameBoy games rarely use more than a few gigabytes of memory :)
+
+## Static Analysis: Overflow of Global `filename` Variable
+
+Before fuzzing I’ve also performed some static analysis of the SDL front end. I’ve found that by simply calling `vbam` with a very long GameBoy ROM file path, a global variable called `filename` can be corrupted. It’s defined in `SDL.cpp` as `char filename[2048]`. On startup, the following code is being executed:
+
+```
+utilStripDoubleExtension(szFile, filename);
+```
+
+The `szFile` variable contains the input string which was passed to the emulator and `filename` is the global variable mentioned before. This is the implementation of `utilStripDoubleExtension()`:
+
+```
+// strip .gz or .z off end
+void utilStripDoubleExtension(const char *file, char *buffer)
+{
+        if (buffer != file) // allows conversion in place
+                strcpy(buffer, file);
+        [...]
+}
+```
+
+This is a quite standard buffer overflow vulnerability that overwrites the global variable `filename`. Overwriting it doesn’t trigger any canary checks since it’s not a local variable. Because of the overflow it’s possible to overwrite the global variables that were defined *before* `filename`. A way to exploit this would be to overwrite a function pointer or something similar. In fact, there are function pointers available to be overwritten just before `filename`:
+
+```
+struct EmulatedSystem emulator = {
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL, <- These are all function pointers
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    false,
+    0
+};
+[...]
+uint32_t systemColorMap32[0x10000];
+uint16_t systemColorMap16[0x10000];
+uint16_t systemGbPalette[24];
+
+char filename[2048];
+[...]
+```
+
+Notice the size of `systemColorMap32` and `systemColorMap16`: These are huge arrays which prevent `filename` from overflowing into the `emulator` struct since there’s a limit which restricts the size of the arguments passed to applications via the command line. Exploiting this would have been a funny CTF challenge but oh well :(
+
+**OK BYE!**

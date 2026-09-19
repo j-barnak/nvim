@@ -1,0 +1,274 @@
+This is a two-part series on socket-based fuzzing. The second part is available [here](https://securitylab.github.com/resources/fuzzing-sockets-FreeRDP/), where I delve into [FreeRDP](http://www.freerdp.com/), the widely used open source implementation of the Remote Desktop Protocol (RDP).
+
+In this post, I’ll share the results of the first part of my socket-based fuzzing research. I’ll cover my fuzzing analysis of three widely-used FTP servers as a practical example, and I’ll detail the vulnerabilities that resulted from this effort.
+
+The choice of FTP protocol is based on the following reasons:
+
+- FTP is one of the most widely-used network protocols and has a long history
+- It makes use of parallel communication channels (both command and data channels)
+- It’s an interactive file server, allowing for file changes on the server-side
+- It’s a plain text protocol which isn’t optimal for fuzzing in principle (and I like challenges!)
+
+I ‘ll also include some tips on how to deal with any source code changes to be able to fuzz software that makes uses of sockets using [AFL++](https://github.com/AFLplusplus/AFLplusplus).
+
+## Selected servers and results
+
+To start, I made use of the [SHODAN](https://www.shodan.io/) API to select the most relevant FTP servers from the options of available open source FTP servers. I selected the FTP servers that had the highest number of publicly-exposed instances:
+
+- **[Pure-FTPd](https://www.pureftpd.org/project/pure-ftpd/)**: the most popular Linux ftpd
+- **[BFtpd](http://bftpd.sourceforge.net/)**: very popular ftpd for embedded systems
+- **[ProFtpd](http://www.proftpd.org/)**: Oldest of the three, but still a popular Linux ftpd
+
+As a result of this effort, I reported the following bugs:
+
+|           |                |                                                                        |
+|-----------|----------------|------------------------------------------------------------------------|
+| Software  | CVE            | Type                                                                   |
+| Pure-FTPd | CVE-2019-20176 | Stack exhaustion in listdir (remote DoS)                               |
+| Pure-FTPd | CVE-2020-9274  | Uninitialized pointer in diraliases linked-list                        |
+| Pure-FTPd | Not assigned   | Broken SQL sanitizer in pw_pgsql_connect                               |
+| Pure-FTPd | CVE-2020-9365  | OOB read in pure_strcmp                                                |
+| Bftpd     | CVE-2020-6162  | OOB read in in hidegroups_init()                                       |
+| Bftpd     | CVE-2020-6835  | Multiple int-to-bool casting vulnerabilities, leading to heap overflow |
+| ProFTPd   | CVE-2020-9272  | OOB read in mod_cap                                                    |
+| ProFTPd   | CVE-2020-9273  | Use-after-free vulnerability in memory pools during data transfer      |
+
+## Fuzzing tips
+
+When you want to fuzz software that uses sockets to obtain input, the first step to solving the problem generally involves making some source code changes to facilitate fuzzing. The fuzzing process is usually straightforward when the input is file based, as might be the case with image libraries such as libpng, libjpg, etc. In these cases, few or no changes to the targeted source code are required.
+
+However, when dealing with networked, interactive servers (such as FTP servers), where the requests we send may cause all sorts of system state changes (uploads, downloads, parallel tasks, etc.), the process is not that simple.
+
+A possible approach for such cases would be to make use of something like Preeny. [Preeny](https://github.com/zardus/preeny) is a set of preloaded libraries which help to simplify fuzzing and “pwning” tasks. Among other capabilities, Preeny allows you to **de-socket** software, i.e. redirecting socket data flow from/to `stdin` and `stdout`.
+
+While it’s true that Preeny is a handy tool, its approach to de-socketing can remove the kind of granularity required to address the peculiarities of your fuzzing target. Every piece of software is unique, and we often want a high level of control over how and where to influence input and process state when fuzzing software to ensure we get the required amount of surface coverage. Because of this, I usually choose the manual source modification approach, which gives me greater flexibility in dealing with corner cases.
+
+What follows are some practical tips to help you address common challenges when you start with socket based fuzzing, in the context of our FTP case study.
+
+### Sockets
+
+Our FTP fuzzing will mainly focus on the **command channel**, which is the channel we use for transmitting FTP commands and receiving command responses.
+
+In the Linux case it’s usually very simple to swap a network endpoint backed file descriptor for a file backed file descriptor without having to rewrite too much of the code.
+
+![Changes in ProFTPD code: turning a network file descriptor into a regular file descriptor](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-1.png)
+
+In this case, `inputFile` is the current AFL file (\[input_path\]/.cur_input) which we pass as a custom argument.
+
+![Extracting inputFile from command line](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-2.png)
+
+The AFL command line is as follows:
+
+`_afl-fuzz -t 1000 -m none -i './AFL/afl_in' -o './AFL/afl_out' -x ./AFL/dictionaries/basic.dict -- ./src/pure-ftpd -S 5000 -dd @@_`
+
+These changes mean that we cannot call certain network API functions such as `getsockname` and `getnameinfo` (we’d get an `ENOTSOCK` error). So I comment out these function calls and hard-code their associated result variables instead:
+
+![Changes in PureFTPd: Comment out getsockname and getnameinfo](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-3.png)
+
+We also can’t use network fd specific operations such as `send(3)` so we have to move to a lower level non-network specific API such as `write(2)`:
+
+![Changes in BFTPd: send call by write call](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-4.png)
+
+Up to this point we’ve only dealt with the command channel, but we also need to ensure that the data channel receives data so that uploads and downloads can function when we fuzz.
+
+For the **file upload case** I use a call to `getrandom(2)` to return random file data:
+
+![Changes in PureFTPd: call to linux getrandom(2) for retrieving random data](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-5.png)
+
+For the **file download case,** we can directly write the file content to `stderr`:
+
+![Changes in PureFTPd: redirection of data channel output to stderr](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-6.png)
+
+Because we want to keep using `stdin` and `stderr`, we must avoid closing `STDOUT_FILENO(1)` and `STDERR_FILENO(2)` in the data channel code:
+
+![Changes in PureFTPd: Avoid to close STDOUT and STDERR file descriptors](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-7.png)
+
+We also need to modify the reading/write functions that depend on external libraries, as is the case with **OpenSSL**:
+
+![Changes in PureFTPd: writing ssl connection output to STDOUT](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-8.png)
+
+### Modifying file system calls
+
+Because we want to maximize the chances of finding a vulnerability, it’s helpful to delete certain system calls such as `unlink(2)`. This will prevent the fuzzer from deleting files by accident.
+
+![Changes in ProFTPD: Comment out unlink calls](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-9.png)
+
+Likewise, we delete any calls to `rmdir(2)` (directory deletion function in Linux):
+
+![Changes in BFTPd: Comment out rmdir calls](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-10.png)
+
+Since the fuzzer may end up modifying folder permissions, it’s important to periodically restore the original permissions. This way we avoid the fuzzer getting stuck:
+
+![Changes in ProFTPd: Restoring privileges in FTP default dir](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-11.png)
+
+### Event handling
+
+Analyzing multiple event combinations will require the modification of event handling functions. For example, below I’ve replaced the call to `poll` by a call to `FUZZ_poll`:
+
+![Changes in PureFTPd: Call to poll function replaced by FUZZ_poll call](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-12.png)
+
+This function is very simple, and just increments `fds[0].revents` and `fds[1].revents` values depending on `RAND_MAX/10` and `RAND_MAX/5` probability:
+
+![Custom poll function](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-13.png)
+
+You often want to delete or replace moot event polling code altogether since it doesn’t contribute to our surface coverage and just introduces unneeded complexity. In the following example, we patch out a moot `select(2)` call to that end.
+
+![Changes in ProFTPD: Comment out select call](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-14.png)
+
+We must also take into account any situation where concurrent events between the data channel and the command channel get interleaved. CVE-2020-9273 is a good example of this occurring. This bug is triggered by sending a specific command sequence to the command channel while a data transfer is also running. To deal with that situation, I’ve built a small fuzzer function `fuzzer_5tc2` that feeds strings from the provided dictionary to the fuzzer:
+
+![Changes in PureFTPd: custom fuzzing function that feeds strings from a dictionary](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-15.png)
+
+### Bye bye forks
+
+Most Linux network server software uses a multi-process architecture. The parent server process listens for client connections and it forks a child process for each one of these connections. This mechanism also offers an opportunity for privilege separation between a privileged parent process and its child processes, as child processes can drop privileges without affecting the parent process.
+
+However, AFL is unable to handle multi-process applications since it only detects signals generated by the parent process. For this reason, we need to transform our multi-process application into a single-process application. That implies we have to disable any `fork(2)` calls.
+
+In some cases this functionality is already offered by the software itself. For example, here’s a look at the `nofork` option in ProFTPd:
+
+> The `nofork` option prevents `proftpd` from using the `fork(2)` system call turning `proftpd` into a single-process server
+
+``` plaintext
+    $ ./configure --enable-devel=coredump:nodaemon:nofork:profile:stacktrace ...
+```
+
+In the absence of any such options, to avoid `fork(2)`, we just delete the actual `fork(2)` invocation and hardcode a return value of `0` which will continue down the intended child process execution path:
+
+![Changes in PureFTPd: fork commented](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-16.png)
+
+### `chroot` and permissions
+
+The majority of FTP server attack surface is only available post authentication. For this reason, we must make sure that the fuzzer is authenticating successfully to the target FTP server. For this purpose, I added a `fuzzing` user to the system which is used to authenticate to the target FTP server process and I add this user authentication into my input corpus and my fuzzing dictionary.
+
+Once the user is logged in, the FTP server usually calls `chroot(2)` to change the effective root directory for the process. This presents us with some obstacles as it may prevent our target process from accessing data we want it to be able to access.
+
+For example, the child process path may drop privileges and we may no longer be able to access the AFL `.cur_input` file. To address this, the following is a simple example in which we just set the file world readable/writable/executable:
+
+![Changes in ProFTPd: Changing .cur_input permissions](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-17.png)
+
+### Reducing randomness
+
+In order to improve the AFL stability score, we need to minimize randomness in our program. That way, the fuzzer will always cover the same execution code paths for the same inputs.
+
+In the following example, we neuter the random number generation and return a repeatable RNG state:
+
+![Changes in PureFTPd: Setting a fixed rng](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-18.png)
+
+![Changes in ProFTPd: Initializing srandom with a fixed value](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-19.png)
+
+### Signals
+
+Many applications include their own signal handlers to replace the default Linux signal handlers. This can cause errors in AFL by preventing it from catching specific signals. We generally don’t want to delete all signal handlers as this can cause unexpected behavior in the application, so we must identify any signals which could lead to errors in AFL execution.
+
+![Code snippet from ProFTPd: Signal handling](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-20.png)
+
+Comment out calls to `alarm(2)` function can also be helpful:
+
+![Changes in BFTPd: Comment out calls to alarm](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-21.png)
+
+### Avoiding delays and optimizing
+
+Timing is critical, even more so when we talk about fuzzing. Any unneeded delays must be minimized in the application to increase fuzzing speed. In the following example, we make timing intervals smaller where possible and remove unneeded calls to `sleep(3)` or `usleep(3)`:
+
+![Changes in ProFTPD: Reducing delay time](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-22.png)
+
+![Changes in PureFTPd: comment out usleep](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-23.png)
+
+Likewise, often when fuzzing, you’ll notice that small changes in logic flow can speed up the fuzzing process tremendously. For example, as the number of generated files increases, the execution time of the `listdir` command grew, so I chose to only execute `listdir` once every N times:
+
+![Changes in PureFTPd: reduced executions of listdir to speed up fuzzing](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-24.png)
+
+### One last point
+
+As a final point, I want to highlight an aspect that’s often overlooked: **FUZZING IS NOT A FULLY AUTOMATED PROCESS**.
+
+Effective fuzzing requires **detailed knowledge of the internals of the software** we want to analyze, as well as an effective **strategy** for achieving good code coverage in all possible execution scenarios.
+
+For example, to effectively fuzz the FTP servers we tackled in this case study, we had to modify nearly **1,500 lines of code**:
+
+![alt_text](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-25.png)
+
+The process of integrating the targeted code and the fuzzer, is a task that requires significant effort and is critical for obtaining successful results. It’s a highly sought-after goal in the fuzzing community as evidenced by the fact that rewards are quite high, such as [Google offering up to \$20.000](https://www.google.com/about/appsecurity/patch-rewards/) for integrating security-critical projects with OSS-Fuzz.
+
+This should inspire developers to facilitate fuzzing, as well as inspire the creation of fuzzing harnesses that ease the integration with AFL and LibFuzzer. As my colleague [Kevin](https://github.com/kevinbackhouse) recently wrote, [”the concept of anti-fuzzing is just ridiculous”](https://securitylab.github.com/research/how-to-escape-from-the-fuzz/). Please, **avoid security by obscurity**.
+
+## Input corpus
+
+As far as fuzzing input corpus is concerned for this project, my main goal was to achieve full edge coverage for all FTP commands, as well as a diverse combination of execution scenarios to obtain a reasonably complete path coverage.
+
+![Ideal initial scenario](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-26.png)
+
+Check out the **[input corpus](https://github.com/antonio-morales/Fuzzing/tree/master/Input%20Corpus/FTP/PureFTPd)** I’ve used for PureFTPd. And you can also find here [an example of a simple FTP fuzzing dictionary](https://github.com/antonio-morales/Fuzzing/blob/master/Dictionaries/FTP/Example.dict.txt).
+
+## Vulnerability details
+
+In this section, I’ll detail some of the more interesting vulnerabilities I found as a result of this fuzzing effort.
+
+### CVE-2020-9273
+
+This bug allows you to corrupt the ProFTPd memory pool by sending specific data to the command channel while a transfer is active in the data channel. The simplest example would be to send the interrupt character `Ctrl+c`. This results in a **Use-After-Free bug** in ProFTPd memory pools.
+
+The ProFTPd memory pools implementation is based on Apache HTTP Server and is structured in a **hierarchical way** (longer to shorter lifetime).
+
+![Hierarchical structure of pools](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-27.png)
+
+Internally, each pool is structured as a linked-list of resources and these resources are freed automatically when the pool is destroyed.
+
+![Graphical representation of a memory pool (simplified)](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-28.png)
+
+Each time `pcalloc` (ProFTPd’s dynamic allocator) is called, it tries to meet the demand using the available memory from the last element of the linked-list. If more memory than the available amount is required, `pcalloc` adds a new block at the end of the linked-list by calling the `new_block` function.
+
+![Call to new_block when available free space is not big enough](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-29.png)
+
+The problem is that the `new_block` function is not secure when used in concurrent scenarios, and under certain circumstances, the `new_block` function can grab a block that’s already present in the pool as a free block, causing pool list corruption.
+
+![Example of corrupted memory pool](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-30.png)
+
+In the following example, we can see the pool is damaged since the outlined memory values are not valid memory addresses:
+
+![Corrupted addresses](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-31.png)
+
+The severity of this bug is considerable given that:
+
+- It’s likely fully **exploitable**, since a write primitive can be obtained from the Use-After-Free
+- The memory pool corruption can lead to additional vulnerabilities such as **OOB-Write** or **OOB-Read**
+
+### CVE-2020-9365
+
+This bug is an **OOB-Read** vulnerability that affects the `pure_strcmp` function in **Pure-FTPd**. As shown in the next code snippet, the bug is due to the fact that **`s1` and `s2` strings can be different sizes**.
+
+![Vulnerable code](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-32.jpg)
+
+Therefore, if the length of `s1` is greater than `s2` then the `for` loop will do `len-1` iterations, where `len-1 > strlen(s2)`. As a result, the program accesses memory that’s outside of the boundaries of the `s2` array.
+
+This issue may allow attackers to leak sensitive information from PureFTPd process memory or crash the PureFTPD process itself.
+
+### CVE-2020-9274
+
+In this case, we found an uninitialized pointer vulnerability that could also result in an Out-of-Bounds read.
+
+The source of the problem comes from the `init_aliases` function in `diraliases.c`. In this function, the next member of the last item in the linked list is not set to `NULL`.
+
+![The next member of the last item is not set to NULL](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-33.png)
+
+As a result, when the `lookup_alias(const char *alias`) or `print_aliases(void)` functions are called, they fail to correctly detect the end of the linked-list and try to access a non-existent list member.
+
+![The strcmp instruction can read memory from outside the linked-list](https://securitylab.github.com/assets/img/post-images/fuzzingsockets/fs-34.png)
+
+The severity of this vulnerability depends on the underlying operating system and whether or not it zeroes out the backing memory by default, since that affects the default values of the `curr` variable.
+
+## Next stop: FreeRDP
+
+In the [next episode of this research](https://securitylab.github.com/resources/fuzzing-sockets-FreeRDP/), I’ll delve into [FreeRDP](http://www.freerdp.com/), the widely used open source implementation of the Remote Desktop Protocol (RDP).
+
+## Acknowledgments
+
+I want to thank the developers of PureFTPd, BFTPd, and ProFTPD for their close collaboration on addressing these bugs. They fixed these issues in record time and it was a pleasure working with them!
+
+Take a look at the tools and references I used throughout this post for further reading:
+
+- [PureFTPd](https://www.pureftpd.org/project/pure-ftpd/)
+- [Bftpd](http://bftpd.sourceforge.net/)
+- [ProFTPD](http://www.proftpd.org/)
+- [AFL++](https://github.com/AFLplusplus/AFLplusplus)

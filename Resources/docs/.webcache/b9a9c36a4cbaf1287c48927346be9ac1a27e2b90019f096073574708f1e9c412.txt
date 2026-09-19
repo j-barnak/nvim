@@ -1,0 +1,345 @@
+In this two-part blog series, we’ll review some of the challenges we commonly face in our fuzzing workflows and provide ways to address these challenges. We’ll also discuss a variety of fuzzing methodologies and strategies that can improve our results.
+
+The [second part](https://securitylab.github.com/resources/fuzzing-software-2) of this series will go deeper and cover some additional advanced fuzzing concepts.
+
+As a practical example we’ll use vulnerabilities we found in VLC Media Player through our fuzzing efforts with the AFL and AFL++ toolchains.
+
+[Learn more about the VLC vulnerabilities](https://securitylab.github.com/research/vlc-vulnerability-heap-overflow/)
+
+## Fuzzing command-line arguments
+
+Often, the project that we’re analyzing supports a variety of configuration options that can be set by command line parameters. While these arguments can be set as just another static parameter in our fuzzer configuration, we’re generally interested in testing all possible inputs and configurations to broaden our attack surface.
+
+Including dynamic command-line arguments in our fuzzing allows us to find bugs that only arise under certain configurations. For example, in the case of VLC, the [CVE-2019-14535](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-14535) vulnerability can only be triggered if the video is forwarded. One way to accomplish this is to set the command-line option “–start-time” with a value of type float (https://wiki.videolan.org/VLC_command-line_help).
+
+This can be implemented into our fuzzing workflow by representing command-line arguments with the type of data they contain (bool, float, string, etc). The following examples illustrate this idea:
+
+- Boolean arguments can be represented using 1 bit:
+
+``` plaintext
+Playlist
+ These options define the behavior of the playlist. Some of them can be overridden in the playlist dialog box.
+
+  -Z, --random, --no-random      Play files randomly forever
+                                 (default disabled)
+          VLC will randomly play files in the playlist until interrupted.
+
+  -L, --loop, --no-loop          Repeat all
+                                 (default disabled)
+          VLC will keep playing the playlist indefinitely.
+
+  -R, --repeat, --no-repeat      Repeat current item
+                                 (default disabled)
+          VLC will keep playing the current playlist item.
+
+      --play-and-exit, --no-play-and-exit 
+                                 Play and exit
+                                 (default disabled)
+          Exit if there are no more items in the playlist.
+
+      --play-and-stop, --no-play-and-stop 
+                                 Play and stop
+                                 (default disabled)
+          Stop the playlist after each played playlist item.
+
+      --play-and-pause, --no-play-and-pause 
+                                 Play and pause
+                                 (default disabled)
+          Pause each item in the playlist on the last frame.
+
+      --start-paused, --no-start-paused 
+                                 Start paused
+                                 (default disabled)
+          Pause each item in the playlist on the first frame.
+
+      --playlist-autostart, --no-playlist-autostart 
+                                 Auto start
+                                 (default enabled)
+                                 
+```
+
+- Float and integer arguments can be represented using 4/8 bytes:
+
+``` plaintext
+Grain video filter (grain)
+ Adds filtered gaussian noise
+
+      --grain-variance=<float [0.000000 .. 10.000000]> 
+                                 Variance
+          Variance of the gaussian noise
+
+      --grain-period-min=<integer [1 .. 64]> 
+                                 Minimal period
+          Minimal period of the noise grain in pixel
+
+      --grain-period-max=<integer [1 .. 64]> 
+                                 Maximal period
+          Maximal period of the noise grain in pixel
+```
+
+- Variable-length strings can be represented using a fixed-size array:
+
+  ``` plaintext
+  Scene video filter (scene)
+   Send your video to picture files
+
+      --scene-format=<string>    Image format
+          Format of the output images (png, jpeg, ...).
+  ```
+
+A straightforward way to configure fuzzing input for the command-line arguments is as follows:
+
+1.  First, calculate the total number of bytes required for the new block. For this, take the sum of the length in bytes of each argument data type. In our example, the total is 50 bytes (8x1 bit + 3x4 bytes + 37 bytes).
+
+2.  Prepend a zeroed block of 50 bytes to the input file.  
+    The content of this block will be progressively mutated by the fuzzer.
+
+3.  Finally, add a code snippet to the code in order to assign each block position an input variable.
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/1.png)\</img\>
+
+Figure 1 - Prepending a zeroed block to the beginning of the input file
+
+``` c
+    unsigned char arguments[50] = {0};
+    fread(arguments, 1, 50, inputFile);
+    
+    randomArg = (arguments[0] >> 7) & 1;
+    loopArg = (arguments[0] >> 6) & 1;
+    repeatArg = (arguments[0] >> 5) & 1;
+    playAndExit = (arguments[0] >> 4) & 1;
+    playAndStop = (arguments[0] >> 3) & 1;
+	playAndPause = (arguments[0] >> 2) & 1;
+	startPaused = (arguments[0] >> 1) & 1;
+	playlistAutostart = (arguments[0] >> 0) & 1;
+    
+    memcpy(&grain-variance, arguments[1], 4);
+    memcpy(&grain-period-min, arguments[5], 4);
+    memcpy(&grain-period-max, arguments[9], 4);
+    
+    memcpy(scene-format, arguments[13], 50-13);
+    
+    //File content starts at inputFile[50]
+```
+
+Example of code snippet for command-line arguments assignment
+
+This process allows us to test input file data and command-line arguments at the same time. In other words, we can now dynamically fuzz the various configurations of the target program.
+
+For an input corpus containing several files, we can automate this process by creating a script that prepends the required length to the original input files. And you can speed up the fuzzing process considerably by using multiple valid configuration combinations as your seed data instead of filling the files with zeroes.
+
+Specific dictionary entries can also be added to the current fuzzing session, which we’ll cover in the section about providing a custom dictionary. Note that this approach is equally valid for cases where settings are read from configuration files.
+
+## Splitting up comparisons
+
+In many cases, subsequent iterations of coverage-guided fuzzers are capable of discovering amazing code patterns. However, there are often cases where the fuzzer will remain constrained in its coverage.
+
+An example of this can be seen in the following code snippet:
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/2.png)\</img\>
+
+Figure 2 - Code snippet in VLC file demux/ogg.c
+
+When using a fuzzer such as AFL, which introduces random mutations in the OGG file, a pass through this conditional statement requires a concrete `0x05589f80` value at a particular position in the current in-memory file. Since it’s a 32-bit value, it would be relatively unlikely for the fuzzer to chance upon this exact value.
+
+However, if we’re able to split this comparison statement across multiple single-byte comparisons and each of them was instrumented, once the fuzzer guesses the first byte correctly it will execute the first nested-if condition and therefore discover a new path. This will signal AFL that the current input should be used again in further fuzzing attempts and, recursively, it will allow the fuzzer to discover these new paths and pass through this conditional statement.
+
+This is exactly what the [Laf-intel](https://lafintel.wordpress.com/) AFL plugin does. This plugin “deoptimizes” code generated by LLVM to increase AFL code coverage. The following example shows it more clearly:
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/3.png)\</img\>
+
+Figure 3 - Split-compare-pass example
+
+Laf-intel implements three different LLVM passes:
+
+- **Split-compare-pass**: explained in the last paragraph.
+- **Compare-transform-pass**: rewrites the code in order to discover string variables. Note: This works with `strcmp` and `memcmp` calls.
+- **Split-switches-pass**: rewrites the `switch`-`case` statement to an `if`-`else`-`if` construct.
+
+Note that this patch is not included by default in AFL, and you must manually apply the patch to the AFL source code. However, an AFL fork called **AFL++ (AFLplusplus)** was recently released. AFL++ includes a variety of popular community patches, as well as many other improvements. It’s maintained by [Marc “van Hauser” Heuse](http://mh@mh-sec.de), [Heiko “hexcoder-“ Eißfeldt](mailto:heiko.eissfeldt@hexco.de) and [Andrea Fioraldi](mailto:andreafioraldi@gmail.com). You can find more information from [their repository](https://github.com/vanhauser-thc/AFLplusplus).
+
+AFL++ laf-intel module can also split floating-point comparisons using `AFL_LLVM_LAF_SPLIT_FLOATS` (thanks to Andrea Fioraldi for the insight).
+
+We’ve made use of AFL++ during our fuzzing research due to its useful add-ons such as Laf-intel. To enable it, we need to compile the target program using afl-clang-fast (LLVM), to enable the split passes you just set the following environment variables before compiling the target project:
+
+``` plaintext
+export AFL_LLVM_LAF_SPLIT_SWITCHES=1
+export AFL_LLVM_LAF_TRANSFORM_COMPARES=1
+export AFL_LLVM_LAF_SPLIT_COMPARES=1
+export AFL_LLVM_LAF_SPLIT_FLOATS=1
+```
+
+## Providing a custom dictionary
+
+Even with everything we’ve covered so far, there may still be situations where this approach would be impractical, and leaving the fuzzer to guess the required constant values would be very inefficient.
+
+Coming back to VLC, one example is the GUID (Global Unique Identifier) set of ASF demux module you see in the image below:
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/4.png)\</img\>
+
+Figure 4 - ASF GUIDs
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/5.png)\</img\>
+
+Figure 5 - ASF GUIDs declarations in libasf_guid.h file
+
+Even when using constraint splitting techniques, solving these constraints will be very complicated or at the very least very resource intensive. In these cases, it’s useful to provide the fuzzer with a dictionary containing these constant values. In the case of AFL, such a dictionary is simply a set of words or values which is used by AFL to apply changes to the current in-memory file. Specifically, AFL performs the following changes with the values provided in the dictionary:
+
+- **Override**: Replaces a specific position with n number of bytes, where n is the length of a dictionary entry.
+- **Insert**: Inserts the dictionary entry at the current file position, forcing all characters to move n positions down and increasing file size.
+
+What should we look for in source code to find good dictionary candidates that will improve our code coverage when included? Some examples:
+
+- String literals
+- `strcmp` / `memcmp`
+- `static const`
+- …
+
+For this task, we can either create a script that extracts this information from source code, or we can perform a manual source code review to identify suitable dictionary entries in the code.
+
+Another simple and effective way of achieving this is through [CodeQL](https://codeql.com). CodeQL is a semantic code analyzer that allows you to explore your code and identify even the most complex semantic patterns, and it’s also free for open source code.
+
+For example, imagine that we can create a dictionary for fuzzing VLC OGG demux. As we’ve seen, an easy way to do this is by searching for all string literals within a file or multiple files. Another way would be finding function calls such as `strcmp`/`memcmp` and checking their arguments. By using CodeQL, we can write a query that does both at once, and it’s really straightforward:
+
+``` plaintext
+import cpp
+
+from StringLiteral l, Call fc
+where 	l.getFile().getBaseName() = "ogg.c"
+		and (fc.getTarget().getQualifiedName() = "memcmp" or fc.getTarget().getQualifiedName() = "strcmp")
+		and fc.getAnArgument() = l
+select l.getValueText()
+```
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/7.png)\</img\>
+
+Figure 6 - Example of LGTM results
+
+This query’s results show all string literals passed as arguments to `memcmp`/`strcmp` in `ogg.c`. Using the code snippet above as a starting point, we could look into additional source files and include other new function calls that interest us.
+
+Let’s review a different example. Imagine we want to find all global variables related to the ASF GUIDs we saw earlier. In CodeQL, this is also very simple:
+
+``` plaintext
+import cpp
+
+from GlobalVariable gb
+where gb.getFile().getBaseName() = "libasf_guid.h"
+select gb
+```
+
+When we’re actually creating our dictionaries based on our analysis, it’s important to note that **endianness** should be taken into account. In some cases, we need to flip a dictionary entry’s byte order in order to fit program logic requirements.
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/10.png)\</img\>
+
+Figure 7 - ASF GUIDs constant values in reverse order
+
+To enable our fuzzer to discover additional code paths, we can attempt to **reconstruct the grammar** of target-relevant languages like XML, SQL, etc. This can be done by adding language specific tokens to the dictionary.
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/11.png)\</img\>
+
+Figure 8 - AFL dictionary for XML (Created by Michal Zalewski)
+
+Unfortunately, this approach seems quite poor in practice and we’ll explain a better method in the second part of this series, where we cover the concept of **“structure-aware fuzzing”** using custom mutators.
+
+Command-line arguments can also be added to the dictionary as tokens. A good example of a use case for this is the VLC effects list:
+
+``` plaintext
+      --effect-list=<string>     Effects list
+          A list of visual effect, separated by commas. Current effects
+          include: dummy, scope, spectrum, spectrometer and vuMeter.
+```
+
+Adding such a list of command-line arguments as dictionary tokens can introduce a real advantage to our fuzzing workflow.
+
+## Dealing with checksums
+
+Sometimes, changes to the input files by the fuzzer will cause an issue due to the resulting input file not satisfying program logic constraints at conditional branches and thus blocking code coverage.
+
+A good example of this are checksummed file formats. Often times, protocols or file formats incorporate strict checksumming logic that needs to pass for our fuzzing code coverage to be optimal.
+
+For example, the OGG media container file format specifies an OGG page header as follows:
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/12.png)\</img\>
+
+Figure 9 - OGG page header
+
+The checksum field is calculated as a CRC32 of the entire page data. Since VLC uses the **Libogg** library for OGG processing, this is where file checksum calculations and checks take place.
+
+There are two main strategies to counter checksum based constraints:
+
+- **Re-calculate** the checksum based on the fuzzed inputs
+
+- **Patch** the software to disable checksum tests and repair the checksum fields in malformed inputs
+
+We chose to go with the patching route due to its simplicity.
+
+In some cases, there are projects that include “build flags” for this purpose. Libogg for example, provides us with the `disable-crc` option:
+
+``` plaintext
+AC_ARG_ENABLE([crc],
+    [AS_HELP_STRING([--disable-crc],
+                    [Disable CRC in the demuxer)])],,
+    [enable_crc=yes])
+```
+
+In the Libogg case, the build flag alone was not enough, and we also had to make some changes in the `framing.c` file code:
+
+``` c
+/* Compare */
+if(memcmp(chksum,page+22,4)){
+/* D’oh. Mismatch! Corrupt page (or miscapture and not a page at all) */
+/* replace the computed checksum with the one actually read in */
+memcpy(page+22,chksum,4)
+```
+
+It will suffice to comment out the above memcmp statement to avoid the CRC check completely. If and when we do find a bug, we’ll simply calculate the CRC values for the trigger in order to have a fully working PoC file that doesn’t require a patched version of Libogg.
+
+## Custom Coverage
+
+One of the advantages of using an evolutionary coverage-guided fuzzer is that it’s capable of finding new and interesting CFG paths all by itself. However, this can often also be a disadvantage. This is particularly true when we face software with a highly modular architecture (as in the case of VLC media player), where each module performs a specific task.
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/13.png)\</img\>
+
+Figure 10 - VLC modular architecture
+
+In this case, mutations of the input file may result in a lot of wasted fuzzing iterations.
+
+As an example, we’ve fed the fuzzer with a **valid MKV file**. But after several mutations of the input file, the file “magic bytes” have changed and now the input file is **viewed as an AVI file** by our program. Therefore, this “mutated MKV file” is now processed by AVI Demux. After some time, the file magic bytes change once again and now the file is **viewed as an MPEG file**. In both cases, the potential of this newly mutated file to increase our code coverage is very poor because this new file won’t have any valid syntax structure.
+
+In short, if we don’t put constraints on code coverage, the fuzzer can easily choose a wrong path which in turn makes the fuzzing process less effective.
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/14.png)\</img\>
+
+Figure 11 - Control Flow Graph (Example to avoid)
+
+To address this problem, AFL++ includes a **“whitelist”** feature that allows you to specify (at a source file level) which files should be compiled with or without instrumentation. This helps the fuzzer focus on the important parts of the program, avoiding undesired noise and disturbance by exercising uninteresting code paths. This feature is, again, only available when we use LLVM. To use it, we set the environment `AFL_LLVM_WHITELIST` variable when compiling. This environment variable must point to a file containing all the filenames that SHOULD be instrumented.
+
+For example, the following is a whitelist for the MKV demux case:
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/15.png)\</img\>
+
+Figure 12 - Whitelist for VLC MKV demux
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/16.png)\</img\>
+
+Figure 13 - Control Flow Graph using an MKV whitelist for custom instrumentation
+
+This becomes particularly important in cases where we use dictionaries, given that if we’re able to create specific dictionaries for each whitelist, it’ll dramatically increase code coverage for each specific module. And it’ll also increase the levels of depth that the fuzzer will be able to reach within the CFG.
+
+![](https://securitylab.github.com/assets/img/post-images/FuzzingSoftware1/17.png)\</img\>
+
+Figure 14 - Dictionary listing example for each module
+
+# To be continued…
+
+The [second part](https://securitylab.github.com/resources/fuzzing-software-2) of this series will go deeper and cover some additional advanced fuzzing concepts.
+
+### Need more information?
+
+I’ve used the following resources in this blog post:
+
+- [AFL repository](https://github.com/google/AFL)
+- [AFL++ repository](https://github.com/vanhauser-thc/AFLplusplus)
+- [CodeQL](https://codeql.com)
+- [Lafintel blog](http://lafintel.wordpress.com)
+- [VideoLAN wiki](https://wiki.videolan.org/)

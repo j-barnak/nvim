@@ -4817,6 +4817,7 @@ local WEB_BOOKS = {
 	{ title = "The Modern JavaScript Tutorial (javascript.info)", key = "javascript-info", run = pick_javascript_info },
 	{ title = "Testing Handbook (Trail of Bits, appsec.guide)", key = "testing-handbook", run = pick_testing_handbook },
 	{ title = "LibAFL (Articles)", key = "fuzzing-101-libafl", run = pick_fuzzing_101_libafl },
+	{ title = "AFL++ Articles", key = "aflpp-articles", run = frozen_web_provider("aflpp-articles", "AFL++ Articles> ") },
 	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
 	{ title = "PCIe (Articles)", key = "pcie-articles", run = pick_pcie_articles },
 	{ title = "Perf Wiki", key = "perf-wiki", run = frozen_web_provider("perf-wiki", "Perf Wiki> ") },
@@ -5119,6 +5120,7 @@ LOCATION.styx = { versions = "styx", unit = "version" }
 LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "chapter" }
 LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
+LOCATION["aflpp-articles"] = { index = "aflpp-articles/index.tsv", unit = "article" }
 LOCATION["docker"] = { index = "docker/index.tsv", unit = "chapter" }
 LOCATION["ptrace-injection"] = { index = "ptrace-injection/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }

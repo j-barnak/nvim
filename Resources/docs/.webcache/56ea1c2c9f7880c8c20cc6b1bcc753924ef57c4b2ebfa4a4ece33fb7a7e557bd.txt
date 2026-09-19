@@ -1,0 +1,257 @@
+In [earlier blog entries](https://securitylab.github.com/research/fuzzing-sockets-FTP/) about fuzzing sockets, I explained how to fuzz FTP servers and detailed [how I fuzzed FreeRDP](https://securitylab.github.com/research/fuzzing-sockets-FreeRDP/). In this third and last part of our Fuzzing Sockets series, I will focus on the HTTP protocol and, more specifically, I will target the [**Apache HTTP Server**](https://httpd.apache.org/).
+
+As one of the most popular web servers out there, the Apache HTTP server doesn’t need any introduction. Apache HTTP was one of the first HTTP servers, with development dating back to 1995. With a market share of 26% as of Jan. 2021, it is the second most used web server on the internet —currently running on more than [300.000.000 servers](https://news.netcraft.com/archives/category/web-server-survey/)—only slightly trailing behind Nginx (31%).
+
+I’m going to detail my Apache fuzzing research in three parts. In this first episode, I’ll do a brief introduction on how Apache HTTP works, and I’ll give you some insights into custom mutators and how they can be applied to the HTTP protocol effectively.
+
+Let’s get going!
+
+## [Custom mutators](#custom-mutators)
+
+In contrast with pure random input generation, mutational fuzzing introduces small changes to existing inputs that may still keep the input valid, yet exercise new behavior. That is what we call **“mutators”**.
+
+By default, AFL fuzzer implements basic mutators like bit flipping, byte increments/decrements, simple arithmetics, or block splicing. These mutators provide overall good results, especially in binary formats, but they have limited success when applied to text-based formats such as HTTP. That is why I decided to create some additional mutators specifically for the task of fuzzing the HTTP protocol. You can find the code on the [following link](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/tree/main/Custom%20mutators)
+
+Some of the mutation strategies I’ve focused on for this exercise include:
+
+- Piece swapping: swap parts of two different requests
+  - Line swapping: Swap lines of two different HTTP requests
+  - Word swapping: Swap words of two different HTTP requests
+- Charsets bruteforce: bruteforce on certain character sets
+  - 1-byte bruteforce: `0x00 – 0xFF`
+  - 2 bytes bruteforce: `0x0000 – 0xFFFF`
+  - 3 letters bruteforce: `[a-z]{3}`
+  - 4 digits bruteforce: `[0-9]{4}`
+  - 3 letters & numbers bruteforce: `([a-z][0-9){3}`
+  - 3bytes / 4 bytes strings bruteforce: it does bruteforce using all 3/4 bytes strings in the input file.
+
+![Example of Line swapping custom mutator](https://github.blog/wp-content/uploads/2024/11/image1.png?w=1024&resize=1024%2C384)
+
+![Example of word swapping custom mutator](https://github.blog/wp-content/uploads/2024/11/image2.png?w=1024&resize=1024%2C290)
+
+You can find the additional functions that you will need to include to be able to use these custom mutators [here](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/blob/main/Custom%20mutators/Mutators_aux.c).
+
+### [Coverage comparative](#coverage-comparative)
+
+We want to be able to decide whether a custom mutator is effective or not before we commit to using it on a full long-term fuzzing effort.
+
+With that in mind, I performed a series of fuzzing tests by using different combinations of the custom mutators. My objective was to find the combination of mutators that provides a higher code coverage rate within **24 hours**.
+
+The starting coverage rate was as follows (only using the original input corpus):
+
+- Lines: **30.5%**
+- Functions: **40.7%**
+
+And these were the results for each mutator combination after 24 hours (all the tests were performed with `AFL_DISABLE_TRIM=1` and `-s 123`):
+
+![Table comparing different mutation strategies](https://github.blog/wp-content/uploads/2024/11/Table1.png?w=923&resize=923%2C352)
+
+Mutators not listed here showed worse results and did not make the bar for consideration. As you can see, **Line mixing + AFL HAVOC** was the winning combination.
+
+![Winner: Line mixing + HAVOC](https://github.blog/wp-content/uploads/2024/11/image3.png?w=777&resize=777%2C102)
+
+After that I conducted a second test by increasing the number of enabled Apache Mods. And once again the Line mixing + HAVOC test was the winning combination.
+
+![Test 2 winner: Line mixing + HAVOC](https://github.blog/wp-content/uploads/2024/11/image4.png?w=789&resize=789%2C117)
+
+Although this was the winning combination, that does not imply that I only used this custom mutator. Throughout the Apache HTTP fuzzing process, I used all available custom mutators as my goal was to obtain the highest code coverage rate. And in this scenario mutator efficiency becomes less important.
+
+### [Custom grammar](#custom-grammar)
+
+Another approach is to use a grammar-based mutator. In addition to using custom mutators I used a custom grammar for fuzzing HTTP using a tool that was recently added to AFL++: [Grammar-Mutator](https://github.com/AFLplusplus/Grammar-Mutator).
+
+Using Grammar-Mutator is as easy as:
+
+    make GRAMMAR_FILE=grammars/http.json
+    ./grammar_generator-http 100 100 ./seeds ./trees
+
+And then
+
+    export AFL_CUSTOM_MUTATOR_LIBRARY=./libgrammarmutator-http.so
+    export AFL_CUSTOM_MUTATOR_ONLY=1
+    afl-fuzz …
+
+In my case, I created [a simplified HTTP grammar specification](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/blob/main/Custom%20Grammars/http.json):
+
+![a simplified HTTP grammar specification](https://github.blog/wp-content/uploads/2024/11/image5.png?w=787&resize=787%2C435)
+
+I’ve included the most common HTTP verbs (`GET`, `HEAD`, `PUT`, …). In this grammar, I also make use of single 1-byte strings and then, in later stages, I use **Radamsa** to increase the length of these strings. [Radamsa](https://gitlab.com/akihe/radamsa) is another general-purpose fuzzer that was recently added to AFL++ as a [custom mutator library](https://github.com/AFLplusplus/AFLplusplus/issues/72). Likewise, I’ve omitted most of the additional strings here and I opted for including them in the dictionaries instead.
+
+## [Apache configuration](#apache-configuration)
+
+By default, the Apache HTTP server is configured by editing the text files contained in the `[install_path]/conf` folder. The main configuration file is usually called `httpd.conf` and it contains one directive per line. In addition, other configuration files may be added using the `Include` directive and wildcards can be used to include many configuration files. The backslash “\\ may be used as the last character on a line to indicate that the directive continues onto the next line, and there must be no other characters or white space between the backslash and the end of the line.
+
+### [Modules, modules and more modules](#modules-modules-and-more-modules)
+
+Apache has a modular architecture. You can enable or disable modules to add and remove web server functionality. In addition to modules that come bundled with the Apache HTTP server by default, there is a great number of third-party modules, providing extended functionality.
+
+To enable a specific module in an Apache build, you use the `--enable-[mod]` flag in the configuration step of the build:
+
+    ./configure --enable-[mod]
+
+where `mod` is the name of the module that we want to include in the build.
+
+I followed an **incremental approach**: I started with a small set of modules enabled (`--enable-mods-static=few`), and after reaching a stable fuzzing workflow, I enabled a new module and tested the fuzzing stability again. In addition, I statically linked the Apache mods using the `--enable-[mod]=static` and `--enable-static-support` flags, which leads to a significant improvement in fuzzing speed.
+
+Following the build step, we may define in which context these modules should come into play. To do so, I modified the `httpd.conf` file and linked each module with a different unique `Location` (directory or file). In this way, we have different server paths pointing to different Apache modules.
+
+![Httpd.conf configuration example](https://github.blog/wp-content/uploads/2024/11/image6.png?w=417&resize=417%2C433)
+
+![Our 1-byte htdocs directory](https://github.blog/wp-content/uploads/2024/11/image7.png?w=756&resize=756%2C543)
+
+To make life easier for the fuzzer, most of the files included in my `htdocs` folder have a filename length of 1 / 2 bytes. This allows AFL++ to easily guess a valid URL request.
+
+For example:
+
+- `GET /a HTTP 1.0`
+- `POST /b HTTP 1.1`
+- `HEAD /c HTTP 1.1`
+
+While fuzzing I try to enable the maximum number of Apache mods with the goal of detecting inter-module concurrency bugs.
+
+### [Bigger dictionaries, please](#bigger-dictionaries-please)
+
+One of the limitations that I found when I tried to fuzz Apache, was the maximum number of dictionary entries that AFL can manage in a deterministic way is limited to 200.
+
+The challenge is that for every new module and their corresponding locations I include into `httpd.conf`, I also need to add their respective dictionary entries. For instance, if I added a new “scripts” folder to the “mod_crypto” location, I also need to add a new `scripts` string to the dictionary. Moreover, some modules (for example, `webdav`), also require a lot of new HTTP verbs (`PROPFIND`, `PROPPATCH`, etc.).
+
+For that reason, and given that bigger dictionaries can also be useful in other scenarios, I submitted a [pull request](https://github.com/AFLplusplus/AFLplusplus/pull/519) to the AFL++ project to add this functionality.
+
+This results in a new **AFL_MAX_DET_EXTRAS** environment variable, which allows us to set the maximum number of dictionary entries that will be used in a deterministic way. You can find one of the dictionaries I used [here](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/blob/main/Dictionaries/http_request_fuzzer.dict.txt).
+
+In the second part of this series, we will demonstrate a more efficient method to handle filesystem syscalls and go into the concept of “file monitors.”
+
+## [Code changes](#code-changes)
+
+### [MPM fuzzing](#mpm-fuzzing)
+
+Apache HTTP Server 2.0 extends its modular design to the most basic functions of the web server. The server ships with a selection of Multi-Processing Modules (MPMs) which are responsible for binding to network ports on the machine, accepting requests, and dispatching children to handle the requests. You can find further information on Apache MPM at <https://httpd.apache.org/docs/2.4/mpm.html>.
+
+In Unix based operating systems, Apache HTTP server configures **MPM event** by default, although we can select the MPM version to use through the `--with-mpm=[choice]` configuration flag. Each MPM module has different features in terms of multithreading and multiprocessing. Therefore, our fuzzing approach will vary in relation to the MPM configuration in use.
+
+I fuzzed these two configurations:
+
+- Event MPM (multithread and multiprocess)
+- Prefork MPM (a single control process)
+
+In terms of code changes required to enable our fuzzing, rather than swapping out sockets with local file descriptors to deliver our fuzzing inputs, for this exercise I took a new approach. I created a new local network connection and sent the fuzzing input through that (thanks to [@n30m1nd](https://twitter.com/n30m1nd) for the inspiration!).
+
+![a new local network connection](https://github.blog/wp-content/uploads/2024/11/image8.png?w=597&resize=597%2C105)
+
+![sending the fuzzing input through the new local network connection](https://github.blog/wp-content/uploads/2024/11/image9.png?w=795&resize=795%2C413)
+
+### [Our traditional code changes](#our-traditional-code-changes)
+
+For the general code changes needed to effectively fuzz a network server, check out [this previous post series](https://securitylab.github.com/research/fuzzing-sockets-FreeRDP/). However, read on for a brief summary of some of the most important changes.
+
+In general, these changes can be grouped into:
+
+- Changes aimed at reducing entropy:
+  - Replacing “random” and “rand” by constant seeds: [Example](https://github.com/antonio-morales/Apache_2.5.1/commit/e0be82bce715dda77841de3360f6328d26aa35cb#diff-1d0396bf58a901188f8858c71c9ba6ea2cae5c8fc480565079fb2911c45c9bbcR5659)
+  - Replacing “time()”, “localtime()” and “gettimeoftheday()” calls by constant seeds
+  - Replacing “getpid()“ calls by a fixed value: [Example](https://github.com/antonio-morales/Apache_2.5.1/commit/e0be82bce715dda77841de3360f6328d26aa35cb#diff-1d0396bf58a901188f8858c71c9ba6ea2cae5c8fc480565079fb2911c45c9bbcR5626)
+- Changes aimed at reducing delays:
+  - Removing some of the “sleep()” and “select()” calls:
+
+![Disabling apr_sleep](https://github.blog/wp-content/uploads/2024/11/image10.png?w=566&resize=566%2C348)
+
+- Changes in crypto routines:
+  - Disabling checksums: [Example](https://github.com/antonio-morales/Apache_2.5.1/commit/72a7bed52975f3258ab56a53f67b56632ddf30a2#diff-485c57a981998a7b2fb43f90f2084667358ab10beea82a0d15269564fb7eeaa3R1468)
+  - Setting static nonces: [Example](https://github.com/antonio-morales/Apache_2.5.1/commit/72a7bed52975f3258ab56a53f67b56632ddf30a2#diff-54ad55cab9d74b14dd358a112365481763d8e6f28296b56b920c198352cee37bR385)
+
+You can see all the of the details about these changes by checking the following patches:
+
+- [Patch1](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/blob/main/Patches/Patch1.patch)
+- [Patch2](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/blob/main/Patches/Patch2.patch)
+
+## [The “fake” bug: When your tools deceive you](#the-fake-bug-when-your-tools-deceive-you)
+
+What at first appeared to be a simple bug in Apache HTTP turned out to be something much more complex. I will detail my journey down the heisenbug rabbithole because it is a good example of how frustrating performing root cause analysis can be sometimes. In addition, I think this information can be really useful for other security researchers that may be in the same situation where you are not sure if the bug is actually in the target software or in your tooling.
+
+This story begins when I detected a bug that could only be reproduced when AFL++ was running. When I tried to reproduce it directly on Apache’s httpd binary, the server did not crash. At this point, the first thought that crossed my mind was that I was dealing with a non-deterministic bug. In other words, a bug that only happens in one out of N cases. So, the first thing I did was to create a script that launched the application 10,000 times and redirect its stdout output to a file. But still the bug didn’t appear. I increased the number of executions to 100,000, but again our bug reproduction remained elusive.
+
+![cript that launched the application 10,000 times and redirect its stdout output to a file](https://github.blog/wp-content/uploads/2024/11/image11.png?w=911&resize=911%2C152)
+
+The curious thing was that the bug was triggered consistently every time that I ran it under AFL++. So I considered environmental and ASAN influences that may have been to blame for our mystery bug. But after hours of digging into this hypothesis, the conditions required to reproduce the bug reliably still escaped me.
+
+I started to suspect that my tools may be deceiving me, and that’s when I decided to investigate this bug candidate deeper using GDB.
+
+![investigating the bug candidate using GDB](https://github.blog/wp-content/uploads/2024/11/image12.png?w=1024&resize=1024%2C564)
+
+It appeared that the bug happened when the `find` function is called in `sanitizer_stackdepotbase.h`. This file is a part of the ASAN library and it is invoked each time a new item is pushed into the program stack. But, for some reason, the `s` linked list was corrupted. As a result, a segmentation fault occurred because the “s-\>link” expression was trying to dereference an invalid memory address.
+
+Could I be facing a new bug in the ASAN library? This seemed unlikely to me, but the more time I spent looking at the bug, the more it was turning into a reasonable explanation. On the bright side, I was able to learn a lot about ASAN internals.
+
+However, I was experiencing serious difficulties trying to find the source of the linked list corruption. Was it Apache’s fault or AFL++? It was at this point that I turned to the [rr debugger](https://rr-project.org/). rr is a debugging tool for Linux designed to record and replay program execution, a so-called reverse execution debugger. rr allowed me to “go backward” and find the root cause of the bug.
+
+![rr debugger](https://github.blog/wp-content/uploads/2024/11/image13.png?w=1024&resize=1024%2C250)
+
+Finally, I could explain the origin of our mystery memory corruption bug. AFL++ makes use of a shared memory bitmap to capture coverage progress. The code it injects at branch points is essentially equivalent to:
+
+``` c
+cur_location = <COMPILE_TIME_RANDOM>;
+shared_mem[cur_location ^ prev_location]++;
+prev_location = cur_location >> 1;
+```
+
+The size of this bitmap is 64kb by default, but as you can see in the picture we have a value of 65576 in the `guard` variable. So in that case the AFL++ fuzzer was overflowing the **\_\_afl_area_ptr array**, and overwriting program memory. AFL++ will normally alert if we try to use a Map Size smaller than the minimum required. But in this particular case, it was not doing so. The reason is unknown to me, and the rest is history.
+
+Solving this error ultimately was as simple as setting the environment variable **MAP_SIZE=256000**. I hope this anecdote will help someone else out there and remind them that sometimes your tooling may be tricking you!
+
+## [Apache Fuzzing TL;DR](#apache-fuzzing-tldr)
+
+For those who prefer to get straight to the point (not that I recommend it! ), here is what you need to know to start fuzzing Apache HTTP yourself:
+
+- Apply the patches to the source code:
+
+&nbsp;
+
+    patch -p2 < /Patches/Patch1.patch
+    patch -p2 < /Patches/Patch2.patch
+
+- Configuring and building Apache HTTP:
+
+&nbsp;
+
+    CC=afl-clang-fast CXX=afl-clang-fast++ CFLAGS="-g -fsanitize=address,undefined -fno-sanitize-recover=all" CXXFLAGS="-g -fsanitize=address,undefined -fno-sanitize-recover=all" LDFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -lm" ./configure --prefix='/home/user/httpd-trunk/install' --with-included-apr --enable-static-support --enable-mods-static=few --disable-pie --enable-debugger-mode --with-mpm=prefork --enable-negotiation=static --enable-auth-form=static --enable-session=static --enable-request=static --enable-rewrite=static --enable-auth_digest=static --enable-deflate=static --enable-brotli=static --enable-crypto=static --with-crypto --with-openssl --enable-proxy_html=static --enable-xml2enc=static --enable-cache=static --enable-cache-disk=static --enable-data=static --enable-substitute=static --enable-ratelimit=static --enable-dav=static
+    make -j8
+    make install
+
+- Running the fuzzer:
+
+&nbsp;
+
+    AFL_MAP_SIZE=256000 SHOW_HOOKS=1 ASAN_OPTIONS=detect_leaks=0,abort_on_error=1,symbolize=0,debug=true,check_initialization_order=true,detect_stack_use_after_return=true,strict_string_checks=true,detect_invalid_pointer_pairs=2 AFL_DISABLE_TRIM=1 ./afl-fuzz -t 2000 -m none -i '/home/antonio/Downloads/httpd-trunk/AFL/afl_in/' -o '/home/antonio/Downloads/httpd-trunk/AFL/afl_out_40' -- '/home/antonio/Downloads/httpd-trunk/install/bin/httpd' -X @@
+
+- [Patch1](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/blob/main/Patches/Patch1.patch)
+- [Patch2](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/blob/main/Patches/Patch2.patch)
+- [Apache example conf](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/tree/main/Conf%20Example)
+- [Some input case examples](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/tree/main/Input%20Case)
+- [Dictionary example](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/blob/main/Dictionaries/http_request_fuzzer.dict.txt)
+- [Custom mutator examples](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/tree/main/Custom%20mutators)
+- [Custom grammar example](https://github.com/antonio-morales/Apache-HTTP-Fuzzing/blob/main/Custom%20Grammars/http.json)
+
+## [To be continued…](#to-be-continued)
+
+Look out for the second part of this series, where I’ll go deeper into other interesting fuzzing aspects such as **custom interceptors** and **file monitors**. I will also explain how I managed to fuzz some peculiar mods such as `mod_dav` or `mod_cache`.
+
+See you at the next one!
+
+## [References](#references)
+
+- <https://httpd.apache.org/docs/current/>
+- <https://animal0day.blogspot.com/2017/07/from-fuzzing-apache-httpd-server-to-cve.html>
+- <https://www.fuzzingbook.org/html/MutationFuzzer.htm>
+- <https://github.com/AFLplusplus/AFLplusplus>
+
+------------------------------------------------------------------------
+
+## Tags:
+
+## Written by
+
+![Antonio Morales](https://avatars.githubusercontent.com/u/55253029?v=4&s=200)
+
+### [Antonio Morales](https://github.blog/author/antoniomorales/)
+
+[@antonio-morales](https://github.com/antonio-morales)
