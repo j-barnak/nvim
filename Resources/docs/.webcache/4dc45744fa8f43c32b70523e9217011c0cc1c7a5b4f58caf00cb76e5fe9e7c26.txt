@@ -1,0 +1,1074 @@
+# HYPER-CUBE: High-Dimensional Hypervisor Fuzzing (2020)
+
+          H YPER -C UBE: High-Dimensional Hypervisor
+                            Fuzzing
+
+                Sergej Schumilo, Cornelius Aschermann, Ali Abbasi, Simon Wörner and Thorsten Holz
+                                                        Ruhr-Universität Bochum
+
+
+    Abstract—Virtual machine monitors (VMMs, also called hy-               In the past, fuzz testing (“fuzzing”) has proven to be a
+pervisors) represent a very critical part of a modern software         very successful technique for uncovering novel vulnerabilities
+stack: compromising them could allow an attacker to take full          in complex applications [11], [17], [38], [40], [45], [53], [54].
+control of the whole cloud infrastructure of any cloud provider.       Unfortunately, only a limited number of resources on fuzzing
+Hence their security is critical for many applications, especially     hypervisors is available at the moment. The reason behind this
+in the context of Infrastructure-as-a-Service. In this paper, we
+present the design and implementation of H YPER -C UBE, a novel
+                                                                       lack of support for fuzzing this type of software applications
+fuzzer that aims explicitly at testing hypervisors in an efficient,    is the fact that there are several additional challenges for
+effective, and precise way. Our approach is based on a custom          fuzzing this lower-level component: In contrast to current
+operating system that implements a custom bytecode interpreter.        fuzzers that mostly support interaction with a single interface
+This high-throughput design for long-running, interactive targets      (e.g., stdin [54] or syscalls [5]), fuzzing hypervisors requires
+allows us to fuzz a large number of both open source and               to interact with several different devices using a variety of
+proprietary hypervisors. In contrast to one-dimensional fuzzers        interfaces and protocols. For example, the guest system can
+such as AFL, H YPER -C UBE can interact with any number of             trigger arbitrary hypercalls, perform arbitrary I/O operations,
+interfaces in any order. Our evaluation results show that we can       and access and modify emulated memory-mapped I/O (MMIO)
+find more bugs (over 2×) and coverage (as much as 2×) than             regions. Hypervisor fuzzing also introduces additional perfor-
+state-of-the-art hypervisor fuzzers. In most cases, we were even
+able to do so using multiple orders of magnitude less time than
+                                                                       mance issues: Modern feedback-driven fuzzing usually restarts
+comparable fuzzers. H YPER -C UBE was also able to rediscover a        the target application for each fuzzing iteration. However,
+set of well-known hypervisor vulnerabilities, such as VENOM, in        restarting a hypervisor is prohibitively expensive in terms of
+less than five minutes. In total, we found 54 novel bugs, and so far   run-time. Furthermore, performance-increasing tricks such as
+obtained 43 CVEs. Our evaluation results demonstrate that next-        a fork server [54] cannot be applied to hypervisors easily. To
+generation coverage-guided fuzzers should incorporate a higher-        add to this complexity, there are multiple implementations of
+throughput design for long-running targets such as hypervisors.        different hypervisor, some of which are proprietary and no
+                                                                       source code is available. Therefore, existing methods are not
+                                                                       trivial to adapt for hypervisor fuzzing.
+                       I.   I NTRODUCTION
+    Since several years, cloud-based Infrastructure-as-a-Service           As a consequence, there are few research projects on
+(IaaS) is rapidly expanding in the IT business landscape.              fuzzing hypervisors [6], [7], [25], [26], [30], [35], [46]. The
+This paradigm is powered by cloud providers using multi-               state-of-the-art hypervisor fuzzer is VDF [30]. Based on a
+tenancy and economy of scale to provide computational                  classic fuzzing design, VDF is a fork of the famous AFL
+resources significantly cheaper than an individual customer            fuzzer [54] that interacts with QEMU device emulators. As
+could. While this approach greatly increases cost efficiency,          a result of this design, VDF is limited to low-dimensional
+there are confidentiality, integrity, and availability risks for       fuzzing (i.e., only able to interact with memory and port
+customers: lacking proper isolation might allow a malicious            mapped I/O). Another example of a hypervisor fuzzer, is
+                                                                       IOFUZZ [35]. IOFUZZ is even more limited and only writes
+actor to compromise the infrastructure of a given customer,
+typically by exploiting a vulnerability in the software stack. To      random values to random I/O ports, without any support for
+provide strong isolation between individual virtual machines           other common interfaces such as MMIO, DMA, or hypercalls.
+(VMs), high-performance, hardware-supported virtual machine            A similar tool was developed as part of Intel CHIPSEC
+monitors (VMMs, also called hypervisors) are used by all               suite [25]. Compared to the state-of-the-art approaches for
+major cloud providers. These hypervisors are hence part of             fuzzing userspace programs (ring 3) or OS kernels (ring 0),
+an essential, trusted code base which the entire cloud infras-         fuzzing at the VMM level (ring -1) is still lacking.
+tructure relies on. As a result, we need efficient and scaleable
+                                                                           In this paper, we tackle this challenge and present the de-
+techniques to identify potential software vulnerabilities in
+                                                                       sign and implementation of a hypervisor-independent fuzzing
+hypervisor given their crucial role in modern software stacks.
+                                                                       approach based on a custom operating system. Our goal is
+                                                                       to evaluate the security and stability of various open source
+                                                                       and proprietary hypervisors. To this end, we suggest three
+Network and Distributed Systems Security (NDSS) Symposium 2020         goals to improve upon current designs. First, an efficient
+23-26 February 2020, San Diego, CA, USA
+ISBN 1-891562-61-4                                                     hypervisor fuzzer needs to provide a high test case throughput.
+https://dx.doi.org/10.14722/ndss.2020.23096                            Second, an effective hypervisor fuzzer should be able to
+www.ndss-symposium.org                                                 simultaneously interact with all available interfaces to enable
+a multi-dimensional fuzzing. Third, a precise fuzzer should                                                            ɠvCPU
+be able to produce a stable and deterministic test cases for                Host                                                  Guest
+                                                                                                                       VM-Exit
+a diverse set of hypervisors. Considering these three goals,                                                            (I/O)
+we designed H YPER -C UBE, a novel hypervisor fuzzer based                      Linux
+                                                                                                     KVM                           Code
+                                                                                Kernel
+on a fully custom and minimalist Operating System (OS) that                                                            ɤvCPU
+                                                                                   Emulation                                              ...
+implements a custom bytecode interpreter. Having a custom                                         VM-Reentry           VM-Entry    mov   ax, 0xFFFF
+                                                                                    Request       (kvm_vcpu_run)
+                                                                                                                                   mov   dx, 0x03F1
+minimal OS allows us to take full control of our environment,
+                                                                               QEMU
+                                                                                                                                   out   dx,     al
+                                                                                                                                   xor   ebx,   ebx
+yielding stable and deterministic test cases. Additionally, we                 User Space
+can boot our OS on nearly any hypervisor, which effectively
+allows us to evaluate a diverse set of targets. Our custom                             Event Loop
+bytecode interpreter enables a high test case throughput while                  Call Device         Request                        Data
+accessing any number of interfaces simultaneously.                             ɡ Emulator          Processed       ɣ
+
+                                                                                   Device Emulators
+    As our evaluation results show, this design and our pro-
+totype implementation of H YPER -C UBE allows us to achieve                       ɢ DMA                                              …
+all three goals. Most importantly, we were able to uncover                          Guest’s Memory
+and report 54 bugs in six different hypervisors such as QE-
+MU/KVM, VirtualBox, VMware Fusion, and Intel ACRN. So
+far, we obtained 43 CVEs, the remaining bugs are currently
+                                                                         Fig. 1: Device emulation and its trap and emulate handling of privileged
+being investigated by the maintainers and CVEs are not yet               instructions in KVM and QEMU.
+assigned. We directly compare our performance on QEMU
+device emulators against VDF. H YPER -C UBE is able to find
+bugs in eight out of 14 emulators, while VDF only finds
+bugs in three. Additionally, H YPER -C UBE produces more test                               II.     T ECHNICAL BACKGROUND
+coverage—in many cases significantly—than VDF. Interest-
+ingly, we are orders of magnitudes faster: we were able to                   Before presenting our approach to test hypervisors, we
+find both the bugs and the coverage in less than ten minutes,            briefly recap various aspects of x86 virtualization and the way
+while VDF took nearly 60 days of fuzzing to achieve these                hypervisors are implemented. As our fuzzer is implemented
+results.                                                                 using a custom OS, we also describe essential aspects of the
+                                                                         boot process of an OS on the x86 architecture. Finally, we
+    This result is somewhat surprising, since in contrast to             describe the interfaces that the hypervisor uses to interact
+VDF, H YPER -C UBE is not coverage guided. However, using                with the OS running as a guest inside of the Virtual Machine
+a higher test case throughput, and a smart bytecode interpreter,         (VM) because they are relevant targets for our fuzz testing.
+we are able to drastically increase the efficiency of our fuzzer,        In principle, most design choices for a hypervisor fuzzer
+while at the same time increasing its flexibility. Finally, in           are independent of the CPU architecture and it is merely an
+contrast to existing hypervisor fuzzing approaches that we               engineering effort to implement similar approaches for other
+are aware of, H YPER -C UBE is not limited to one specific or            architectures. However, given that we implement a custom
+open source hypervisors. Because of our generic design, we               OS, we also need to consider several aspects related to the
+can easily target even proprietary hypervisors as long as the            underlying processor architecture and its quirks. In this paper,
+hypervisor is able to boot commercial off-the-shelf (COTS)               we target hypervisors on Intel x86 CPUs and their back-
+OSs. Based on these evaluation results, we conclude that our             ends for devices emulation. Thus, in the following, we focus
+design is superior to existing state-of-the-art hypervisor fuzzers       on the Intel x86 architecture, which is—to the best of our
+and significantly outperforms them in almost every aspect.               knowledge—the most commonly used virtualization platform
+                                                                         in practice.
+
+In summary, we make the following three contributions:
+
+   •    We design a multi-dimensional, platform-independent              A. x86 Boot Process
+        fuzzing method that can test different interfaces and
+                                                                             One of the first programs which run on an x86 machine
+        their interactions in an efficient and effective way.
+                                                                         is the Basic Input/Output System (BIOS) or the more mod-
+   •    We describe a highly efficient method to perform fuzz            ern version of it, the Unified Extensible Firmware Interface
+        testing against hypervisors. Our approach is indepen-            (UEFI). In this paper, we call this program firmware. It is the
+        dent of the hypervisor that should be tested.                    firmware’s job to test and initialize the hardware such as CPU
+                                                                         and the main memory after turning on the machine. The next
+   •    We implement our techniques in a custom operat-                  step of the x86 boot process is executing the OS bootloader.
+        ing system called H YPER -C UBE. Our experiments                 The bootloader is a small piece of code that launches and
+        demonstrate that H YPER -C UBE is able to find security          prepares everything needed to start the OS. One example
+        vulnerabilities in many real-world hypervisors.                  of a well-known OS bootloader is GRUB (GRand Unified
+                                                                         Bootloader). Finally, the bootloader calls the OS kernel code.
+    To foster research on this topic, we release H YPER -C UBE           The kernel then configures the remaining hardware, such as
+at https://github.com/RUB-SysSec/hypercube.                              interrupt controllers, paging, or PCI devices.
+
+                                                                     2
+           TABLE I: Overview of hypervisor attack surfaces.                 1) CPU and Memory Virtualization: In the past, hypervi-
+                                                                        sors relied on a technique called binary translation to imple-
+          Interface                              Component              ment full CPU and memory virtualization [9]. That means all
+          Port I/O                   Device Emulator / Core
+                                                                        critical instructions (e.g., memory access or branch instruc-
+          MMIO                       Device Emulator / Core             tions) are translated into another piece of code that enforces
+          PCI DMA                           Device Emulator             certain policies, while emulating the virtual behavior. For
+          Hypercall Interfaces   Guest Tools Interface / Core           example, a memory access is replaced by code that emulates
+          Instructions                  Instruction Emulator            a virtual page table and adheres to the access policies defined
+                                                                        by the hypervisor. By using binary translation, the hypervisor
+                                                                        has complete control over all vCPUs and can emulate high-
+B. Input/Output on x86                                                  privileged instructions such as MOV CR3. Therefore, the hy-
+                                                                        pervisor can ensure that the software is not able to escape
+    An Intel x86 processor implements multiple mechanism                from the virtualized context. The same applies to memory
+and instructions to communicate with attached devices. To un-           virtualization and all memory-accessing instruction.
+derstand how the OS interacts with these devices, we provide
+in the following a brief overview of the different primitives               However, implementing virtualization without hardware
+of Input/Output (I/O) on x86. An overview of the available              support introduces a significant performance overhead and
+interfaces is presented in Table I.                                     several other challenges such as interrupt handling need to
+                                                                        be addressed [8]. Therefore, all major CPU manufacturers
+                                                                        such as Intel or AMD introduced hardware extensions that
+       a) Port I/O: The first mechanism to interface with               allow to increase the performance by using so-called hardware
+external devices is the legacy port I/O address bus: besides            accelerated virtualization. Intel calls its technology “Intel VT-
+the main memory, on x86, there is a second address space that           x”, while AMD’s technology is called “AMD-V”. In the
+can only be accessed using the in and out instructions.                 context of this paper, we only focus on Intel VT-x. However,
+                                                                        it is worth mentioning that while the implementation details
+        b) Memory-Mapped I/O: The second mechanism to in-               of these extensions vary, the overall idea is the same: a
+terface with external devices are memory-mapped I/O (MMIO)              new execution mode is introduced in the CPU that has even
+regions. Writing or reading these memory regions corresponds            higher privileges than the OS kernel. A hypervisor running
+to a direct access to device registers or device memory. In             in this higher privilege level has various methods to intercept
+modern hardware, this mode of communication is preferred                different kinds of events, to restrict the guest’s kernel from
+over port I/O as it is more flexible and allows much higher             accessing actual hardware, and to provide direct access to
+bandwidths. Additionally, there are well-known ways to enu-             physical memory dedicated to a VM without emulating certain
+merate most available MMIO regions.                                     instructions.
+       c) Direct Memory Access: The last mechanism to im-                   2) Device Emulation: To be able to boot a COTS OS, a
+plement communication between the host and its devices is               hypervisor has to emulate standard hardware such as an inter-
+Direct Memory Access (DMA). PCI/PCI-Express based-DMA                   rupt controller, a timer, and various other peripheral devices.
+is implemented via bus mastering, which allows the PCI device           The two main mechanisms for interaction with hardware are
+to read from and write to the host’s main memory directly.              MMIO and port I/O. To emulate the interaction with hardware,
+Note that this effectively swaps the roles that the CPU and the         the hypervisor must first intercept the interaction with the
+device play: in contrast to MMIO, the devices decide when               hardware. It should be noted that in the case of DMA, the
+and which memory to read and write. In the context of this              hypervisor does not need to intercept memory accesses, as it
+paper, we ignore legacy ISA DMA since it is hardly used these           is only used by the emulated hardware rather than the guest
+days in practice.                                                       OS. An example of the implementation of device emulation
+                                                                        and its trap and emulate approach is given in Figure 1. In the
+C. Hypervisor                                                           following, we will outline the process of emulating a port I/O
+                                                                        instruction based on KVM and QEMU. To capture MMIO or
+    A hypervisor, also known as Virtual Machine Monitor                 port I/O interactions, hypervisors typically use two different
+(VMM), is a privileged software which provides physical hard-           techniques. In both techniques, interacting with the emulated
+ware resources, such as memory and virtual CPUs (vCPU), in              hardware causes a trap and a VM-exit 1 , which the hypervisor
+a controlled environment to their VMs. Generally speaking, the          handles by emulating the side effects. No matter what kind of
+VMs have no control or access to physical hardware devices              trap the hypervisor receives, to obtain information on the actual
+except for assigned ones. Instead, the hypervisor provides              interaction (such as which value was written), the hypervisor
+vCPUs and virtualized physical memory, and it also emulates             will typically have to disassemble and emulate the instruction
+all necessary devices such as interrupt controllers. Whenever           itself.
+the VM needs to perform a privileged operation, such as
+accessing the real hardware, it triggers a trap that causes a VM-           In the first case, the hypervisor has to emulate MMIO.
+exit. A VM-exit transfers the control back to the hypervisor            To trap access on MMIO pages, the hypervisor typically
+which emulates the privileged operation on behalf of the VM,            marks the corresponding pages as non-accessible. Accessing
+after ensuring that the operation is legitimate. This mechanism         the MMIO page from within the virtual machine triggers a
+is called trap and emulate. By providing a fully virtualized            page fault. The hypervisor installs a handler for these page
+environment, the hypervisor allows to simultaneously execute            faults. Whenever a page fault occurs, the handler then checks
+multiple COTS OSs on the same physical host.                            whether the requested page is registered for MMIO by one
+
+                                                                    3
+of the emulated devices. Finally, the hypervisor passes the             current fuzzers target individual interfaces in isolation and
+corresponding memory access to the device emulator. After               try to avoid restarting the VMM. At the same time, the
+the device emulator simulated all relevant side effects of the          attacker model is very strong: typically the security model
+MMIO access, the hypervisor passes control back to the VM.              of hypervisors assumes that the whole guest OS is malicious
+                                                                        and any interface available is also part of the attack surface.
+    In the second case, the hypervisor has to emulate the port          Consequently, any kind of memory corruption issues—and
+I/O. To trap on port I/O interactions, the hypervisor limits            even some denial-of-service bugs—are highly security-relevant
+the execution of certain instructions such as in and out                in the context of hypervisors. Especially memory corruptions
+using the hardware virtualization extension. Executing such             might lead to virtual machine escapes, which is the worst-case
+a restricted instruction will also cause a VM-exit. Similar to          scenario for the whole cloud hosting industry that relies on
+the previous case, the hypervisor passes the interactions to the        secure isolation.
+corresponding device emulator 2 and returns control back
+to the VM 5 after the device emulator finished 4 . If the                   So far, most research on the security of hypervisors was
+corresponding device emulator implements DMA capabilities,              performed in industry [6], [7], [25], [26], [46]. For instance,
+the emulator may read or write data from the guest’s main               Tang et al. [46] implemented an AFL extension with hy-
+memory 3 .                                                              pervisor fuzzing capabilities. It is implemented as a custom
+                                                                        extension to QEMU’s SeaBIOS. They extended the BIOS with
+    Current hypervisors typically only support a limited set of         an ability to consume inputs from the outside of the VM and to
+standard hardware to be emulated. However, the code base                use them to interact with devices provided by the hypervisor.
+used in device emulation is rather large, posing a significant          They also instrumented the code used for device emulation to
+attack surface. For example, QEMU in version 4.0 contains               provide coverage feedback to AFL. In the academic domain, to
+more than 400k lines of C code used to emulate devices.                 the best of our knowledge, there is only a single project (VDF)
+    3) Para-Virtualization: To reduce the amount of code                for fuzzing hypervisor related software [30]. The authors of
+needed and to improve the performance significantly, modern             VDF manually extracted individual devices from the QEMU
+hypervisors implement so-called para-virtualization interfaces.         codebase and fuzz them in AFL [54]. This approach has a
+In a para-virtualized environment, the OS is aware that it is           significant drawback: manual work is needed for each device
+running inside a VM and it does not try to use actual hardware.         emulator and hypervisor to enable fuzzing.
+Instead, a specialized driver (typically referred to as VirtIO
+driver) uses a custom protocol specific to the hypervisor. Using                                 III.   D ESIGN
+a custom protocol increases the performance of the virtual
+machine and can reduce the attack surface in the hypervisor, as             Since hypervisors perform a multitude of complex tasks,
+legacy corner cases no longer have to be simulated faithfully.          there are many ways one can approach testing the implemen-
+                                                                        tation of a given hypervisor. As a consequence, we begin by
+    To facilitate the communication between the guest OS and            analyzing the challenges one faces when designing a fuzzing
+the hypervisor (e.g., to implement para-virtualization protocol),       framework for hypervisors. We then formulate the goals that
+modern hardware-accelerated virtualization introduces a new             we want to achieve with our fuzzer. Lastly, we describe our
+instruction that performs a so-called hypercall. From a con-            design choices, which are all tailored towards addressing the
+ceptual perspective, hypercalls are closely related to system           identified challenges and achieving the goals discussed earlier.
+calls (syscalls), but instead of jumping from userland to ring
+0, they jump directly to the hypervisor by triggering a VM-             A. Threat Model
+exit. To implement hypercalls, Intel VT-x has introduced a
+dedicated instruction called vmcall. However, to implement                  Throughout the rest of this paper, we assume the following
+hypercall interfaces, some hypervisors use other privileged x86         threat model that is also reflected in the design of our approach.
+instructions, which always or conditionally result in a VM-exit.        First, an attacker has full control over the kernel running inside
+For instance, the VMware hypervisor series uses the in and              the virtual machine. Her goal is to either obtain control over
+out instruction for implementing para-virtualized interfaces,           other virtual machines hosted on the same physical machine
+which are used by their VMware guest tools. The Parallels               or the host itself (i.e., the underlying system). This assumption
+hypervisor uses the rdpmc instruction for this purpose. It is           is commonly valid in various cloud hosting scenarios, where
+common that upon encountering a hypercall, the hypervisor               many virtual machines with unknown tenants are co-located
+directly accesses the memory of the guest and reads data                on the same server [43]. If an attack can escape her rented
+or provides results by directly writing them into the guest’s           VM at any time, all data that is stored on the same physical
+memory. Similar to classic device emulation, this property              server is at risk. Additionally, with the rise of private clouds,
+makes hypercalls an interesting target for fuzzing.                     similar scenarios occur after an attacker compromised one
+                                                                        service and now plans to escalate horizontally. Additionally,
+D. Fuzzing Hypervisor                                                   we are interested in Denial-of-Service (DoS) attacks, in which
+                                                                        an attacker might prevent the operator from taking control of its
+   Fuzzing hypervisors has its own set of challenges. The               VM or the attacker can circumvent load limiting mechanisms.
+higher number of interfaces that can be used interactively
+mandates a different setup than for ring 3 file format fuzzing.         B. Challenges in Fuzzing Hypervisors
+The guest system can trigger hypercalls, I/O operations as
+well as reading or writing to memory mapped I/O regions.                   Current hypervisors have a large and diverse attack surface.
+Likewise, restarting the hypervisor is much more expensive              As described in Section II, there are many ways in which the
+than restarting an user-space process. Consequently, many               guest interacts with the hypervisor. To make matters worse,
+
+                                                                    4
+      Hypervisor                                                                Therefore, we require a very deterministic setup to obtain good
+                                                                                stability during fuzzing, especially given that we interact with
+        PCI Device
+                          VM                                        Misc        a low-level component of the software stack. In the following,
+                                                      Instruction
+               DMA             HyperCube OS            Emulator                 we demonstrate how we can achieve these goals by describing
+            MMIO Area 1              ɠ
+                                                       MSR                      the design of our fuzzer named H YPER -C UBE.
+            MMIO Area 2           Scratch            Hypercalls
+                                  Memory
+             IO Area 1                                  …                          1) High-Level Overview: Our fuzzer consists of three main
+                …                                                               components as illustrated in Figure 2.
+                                                                    Core
+                                 Tesseract
+                                 Interpreter            PIC
+        ISA Device
+                                     ɡ                 HPET                        1)    The first component is a specialized OS called
+              IO Area 1                                APIC                              H YPER -C UBE OS which boots inside the target hy-
+              IO Area 2                               Chipset                            pervisor and enumerates existing hardware interfaces.
+                 …                                      …                                A custom OS enables us full control over the com-
+                                                                                         plete process.
+      Host                               ɢ
+                                                                                   2)    Afterwards, H YPER -C UBE OS spawns a second com-
+                                                                                         ponent and passes the information about available
+            Minimizer             Logger             Decompiler
+                                                                                         interfaces to the spawned task. The task runs our byte-
+                                                                                         code interpreter named T ESSERACT. It can consume
+  Fig. 2: High-level overview of the system architecture of H YPER -C UBE
+                                                                                         arbitrary byte strings and uses them to actually fuzz
+                                                                                         the hypervisor.
+                                                                                   3)    Additionally, there is a set of external, independent
+testing the various interfaces in isolation is not sufficient to                         tools that are able to provide bytecode strings to
+evaluate the security of modern hypervisors: as our experience                           the T ESSERACT interpreter, decompile executed byte-
+and evaluation results show, a comprehensive evaluation has to                           code programs, and observe the machine’s behavior
+consider all interactions between different interfaces, typically                        using channels such as a serial interface.
+a sequence of such interactions is needed to uncover a vulnera-                     As we explain in the following, this architecture allows us
+bility. Additionally, it is often non-trivial to find documentation             to achieve our three aforementioned goals.
+for different interfaces a given hypervisor exposes. Therefore,
+the fuzzer needs to be able to provide meaningful interactions                          a) High Performance Fuzzing: Rebooting a COTS OS
+with undocumented interfaces. As another challenge, we found                    such as Linux requires a significant amount of time. If there
+that even for well-known interfaces or devices, the normal                      are easy-to-find bugs within the hypervisor, the fuzzer spends
+start-up routine of COTS OSs such as Linux or Windows                           a significant portion of its time on rebooting the COTS OS.
+might influence the bug finding process. For example, large                     Using a small custom OS such as H YPER -C UBE OS can
+parts of the emulator might be initialized during boot time.                    drastically decrease the boot time of the OS. H YPER -C UBE
+However, given that an attacker can reboot the machine, the                     OS does not interact with other interrupts, nor does it have any
+initialization code also needs to be considered when studying                   hardware initialization routine. Additionally, H YPER -C UBE
+the attack surface. Yet, testing the device from a COTS OS                      OS is very small, and uses only an absolute minimum amount
+never exercises this code in an uninitialized state. The same                   of memory. During fuzzing, this design choice allows us to
+boot process can also slow down hypervisors during fuzzing—                     rapidly reload the OS after each crash and thus significantly
+restarting a hypervisor from scratch (e.g., after finding a crash)              improve the fuzzing performance.
+takes a significant amount of time that would slow down the
+fuzzing progress substantially. Lastly, depending on the OS                         Additionally, and more importantly, we took measures to
+running inside of the hypervisor, the behavior of hardware-                     improve the performance of the fuzzing process itself, since
+accelerated hypervisors can be rather non-deterministic.                        the process of compiling and loading a new program for
+                                                                                each test case can be very time consuming. The ability to
+                                                                                execute as many test cases as possible in any given time
+C. Architecture                                                                 period still remains one of the most important performance
+                                                                                criteria for fuzzers [27]. To increase the test throughput, we
+    In the following, we first provide an overview of our design                avoid compiling code. Instead, we use our specialized bytecode
+goals and then present the architecture of our approach. Pri-                   interpreter, named T ESSERACT, that runs in ring 0 of the
+marily, our design aims at providing high-performance fuzzing                   H YPER -C UBE OS.
+for a given hypervisor. Besides being as fast as possible, our
+approach should be generic and applicable to a wide range                           The embedded interpreter T ESSERACT takes any stream of
+of both open source and proprietary hypervisors. Furthermore,                   input bytes and interprets it as a sequence of interactions with
+our approach should have the ability to find bugs resulting                     the hypervisor. The custom nature of this interpreter allows us
+from (complex) interactions between different communication                     to design the bytecode in such a way that it is very “fuzzer-
+channels. To this end, we improve upon the idea of two-                         friendly”. All instruction encodings are designed to maximize
+dimensional fuzzing, as introduced by Xu et al. [52]. In two-                   the likelihood of producing useful instructions. The encoding is
+dimensional fuzzing, two different interfaces are attacked in a                 chosen such that there are no invalid instructions. Additionally,
+fixed sequence. In our approach, we want to be able to attack                   memory addresses are not encoded as pointers, but as pair
+an arbitrary number of interfaces in any order, we therefore aim                of memory region and an offset. Since T ESSERACT is aware
+at designing a “high-dimensional” fuzzer. Lastly, any fuzzer                    of all interesting memory regions, it can avoid interacting
+is only as good as its ability to reproduce the bugs found.                     with addresses that contain no relevant content, even though
+
+                                                                            5
+the fuzzer generates random data. To further increase the                with available interfaces require access to physical memory.
+probability of producing reasonable opcodes, all arguments               Our memory manager contains a simple heap that can be used
+such as region IDs and offsets are interpreted modulo the                to allocate memory when required. Overall, running H YPER -
+available range.                                                         C UBE OS and T ESSERACT only requires a very small amount
+                                                                         of memory. Therefore, it is possible to use a simplistic imple-
+        b) Generic High-Dimensional Fuzzing: To the best of              mentation of a heap manager. To provide access to the physical
+our knowledge, all previous hypervisor fuzzers target either             memory, H YPER -C UBE OS creates multiple linear one-to-one
+one or two specific interfaces. For example, VDF is unable               mappings that make relevant physical address ranges available
+to fuzz interfaces such as DMA, MSRs, or hypercalls, and                 within the virtual address space.
+only focusses on MMIO. Since we have full control over
+the T ESSERACT interpreter, we can integrate interactions with               The largest part of H YPER -C UBE OS is concerned with
+different interfaces. As a result, even a completely random              the enumerating the different interfaces that are available for
+stream of data produces a large number of valid interactions             fuzzing (see Figure 2). This requires to enumerate address
+with all available interfaces. In particular, complex multi-             ranges used for MMIO or port I/O. In addition, it also requires
+channel interactions happen frequently and organically. For              to interact with basic hardware such as the PIC or APIC.
+example, we observed that T ESSERACT initially wrote data                Enumerating these devices is performed using a variety of
+to a scratch buffer, passed a pointer to this data into an MMIO          techniques. Some information (such as the set of reserved
+region, and finally an emulated device used this pointer in com-         memory regions that are used for MMIO) is passed on from the
+bination with PCI DMA and crashed after reading malformed                BIOS/UEFI by the bootloader, while other information, such as
+data. Such complex sequences enable us to uncover bugs and               the set of I/O ports or PCI devices, are manually enumerated.
+we found that especially complex interaction sequences often
+trigger relevant behavior.                                                   3) T ESSERACT: After H YPER -C UBE OS was successfully
+                                                                         booted, it calls into its only functionality: performing random
+        c) Stable and Deterministic Fuzzing: Previous work on            interactions with the hypervisor. We use a custom bytecode in-
+hypervisor fuzzing usually used some kind of agent running               terpreter (T ESSERACT) to describe those interactions. T ESSER -
+in a COTS OS [6], [7], [26]. This reduces the determinism,               ACT is a relatively straightforward, yet complex instruction set
+as the kernel interferes with interrupt handling and introduces          interpreter. The bytecode is either given from the outside of
+a variety of other tasks. Additionally, COTS kernels are                 the VM or produced by a pseudo random number generator
+fragile: re-configuring essential hardware such as the inter-            inside of the interpreter. This design allows us to interleave
+rupt controller or PCI devices that overwrite memory most                a variety of different types of operations to perform multi-
+certainly break COTS kernels. Similar issues show up if the              dimensional fuzzing. The bytecode is designed in such a way
+fuzzer interacts with disk interfaces such as IDE/SATA and               that any arbitrary byte string is also a valid program.
+corrupts the hard drive. By implementing our own OS H YPER -
+C UBE, we can significantly increase both the robustness and                 First, we decode the instruction at the current instruction
+determinism during the testing phase. Most importantly, using            pointer. All values are interpreted modulo the sensible range
+a small OS around a custom interpreter allows us to have                 of values. For example, we use the extensive scanning, which
+full control over the environment. In contrast to other OSs,             H YPER -C UBE OS performs during boot, to identify the set of
+there are no additional tasks that would interfere with our              MMIO regions. Writing to MMIO is then performed by writing
+fuzzer. Also, as the page tables are fully under our control,            to a (region-id, offset) pair. Both the region-id and
+we can perform mischievous but very useful operations, such              the offset are computed modulo the available length.
+as mapping fuzzer-controlled memory at address 0. All of
+this helps to produce both reliable and reproducible crashes.                After decoding the instruction, we call the corresponding
+In fact, if we fix the payload, the entire interaction with the          opcode handler function. Since we use handler functions for
+hypervisor is deterministic (except for minor variations in the          each opcode, we can perform rather complicated operations in
+interrupt timings). As a result, we are able to reproduce all bugs       a single step. For example, this can be used to implement
+reliably. The only exception are some issues that only appear            opcodes that overwrite a given range with an increasing
+due randomization taking place in the hypervisor itself, which           sequence of bytes or repeatedly write increasing values to the
+we cannot fully control.                                                 same address. Both the complex instruction set and the liberal
+                                                                         instruction decoding allow the interpreter to be very effective,
+    In the following, we describe the design of each of the              even if a random program is provided.
+three components in detail.                                                  The interpreter also maintains a set of scratch region. Each
+   2) H YPER -C UBE OS: The core of our fuzzer is our                    scratch region is a single 4KB page and is regularly overwritten
+custom operating system H YPER -C UBE OS. It implements                  with random data. The interpreter can write pointers to offsets
+the multiboot 2 specification and therefore can be booted                within the scratch region to I/O ports or MMIO regions. This
+by common bootloaders such as GRUB. H YPER -C UBE OS,                    allows T ESSERACT to create custom data structures and pass
+besides providing a general platform for our fuzzer, has two             pointers to them to the hypervisor.
+primary tasks: memory management and device enumeration.
+                                                                            4) External Tools: The last component of our fuzzer is
+    H YPER -C UBE OS requires memory management for de-                  a set of three independent helper tools running on the host.
+vice enumeration and spawning T ESSERACT. There are two                  These tools are mainly used after the fuzzing process. The
+different kinds of memory which need to be managed. First,               same interfaces could also be used to implement more ad-
+operations such as device enumeration and spawning T ESSER -             vanced fuzzers with coverage feedback or symbolic execution
+ACT require to allocate memory. Second, certain interactions             capabilities. The following three components are available:
+
+                                                                     6
+                                                                                     1-1 Mapping
+   1)    During fuzzing, the logger intercepts serial commu-
+         nication performed by the virtual machine and stores                  Scratch
+                                                                                                   Code           Heap
+                                                                                                                            MMIO
+                                                                                                                                          Stack
+                                                                                Areas                                      Mappings
+         it for later analysis.
+   2)    To perform initial fuzzing, we generate a random byte         0x00000000                    0x00100000                               0xFFFFFFFF
+         stream from a given seed using the internal pseudo
+                                                                                         Fig. 3: Virtual memory layout of H YPER -C UBE
+         random number generator. However, we often execute
+         millions of T ESSERACT instructions before we find
+         a bug. Therefore, after finding the bug, we need to
+         trim the stream of inputs to a more manageable size.          specification, the developers can build the kernel as an ELF
+         To minimize the crashing programs found, we regen-            file using existing tool support. The initial boot interface of
+         erate the instruction stream from the same seed. Then         H YPER -C UBE OS is based on the multiboot 2 specification
+         the minimization tool iteratively removes a random            and we use the GRUB 2 bootloader. GRUB can be used
+         segment from the stream and observes whether the              to boot H YPER -C UBE OS via both legacy BIOS or a UEFI
+         resulting program still crashes. After a convergence of       firmware. An additional benefit of this design is that the
+         this algorithm, we typically obtain programs contain-         GRUB bootloader enters the entry point of our kernel in 32-
+         ing in the order of tens of instructions. For debugging       bit protected mode, which is the primary operating mode of
+         purposes, it is also possible to run T ESSERACT as a          H YPER -C UBE OS. This way, we do not have to implement a
+         standalone ring 3 application.                                routine to mode switch from real to protected mode.
+   3)    To understand the resulting bytecode and to analyze
+         the bugs found, we designed a decompiler that turns                   a) Initializing Interrupts: To synchronize interaction
+         the given (minimized) bytecode into an equivalent C           with external hardware, the Programmable Interrupt Controller
+         program. This C program could be compiled into a              (PIC) and its successors, the Advanced Programmable Inter-
+         module for H YPER -C UBE OS, inserted into a kernel           rupt Controller (APIC), are used. The PIC is configured via
+         driver for any COTS OS for debugging purposes, or             port IO and relies on the Interrupt Descriptor Table (IDT). The
+         inspected manually to understand the behavior of the          interrupt table contains a list of function pointers to functions
+         input.                                                        that are called when an interrupt or exception occurs. Inter-
+                                                                       rupts are triggered by external hardware, whereas exceptions
+              IV.   I MPLEMENTATION D ETAILS                           are generated by the CPU itself. During the startup routine,
+                                                                       H YPER -C UBE OS configures either the PIC or the APIC and
+    We implemented H YPER -C UBE OS in C and x86 assem-                installs all essential interrupt and exception handlers. To ensure
+bly. The bytecode interpreter T ESSERACT was implemented in            that the fuzzing process will not be interrupted by external
+such a way that it is easy to embed in H YPER -C UBE and to            interrupts initiated by the hypervisor at any point during the
+test as a standalone application. In this section, we describe         fuzzing processes, H YPER -C UBE OS prevents the delivery of
+the implementation details related to H YPER -C UBE OS and             all external interrupts by masking all interrupt registers within
+T ESSERACT as well as the external tools used in our fuzzer.           the OS. Note that the interrupts are still produced by the
+                                                                       emulators.
+A. H YPER -C UBE OS                                                        2) Memory Management: Our custom OS requires a cus-
+    To understand how and which information H YPER -C UBE              tom memory management. In particular, various tasks need to
+OS gathers and provides to T ESSERACT, we have to describe             allocate memory and access physical memory (such as MMIO
+the boot process and memory management of our OS.                      regions), even when paging is enabled. We implemented a
+                                                                       custom heap allocator, which allows tasks to allocate a whole
+    1) Boot Process: During early boot time, the firmware              page at a time. This simple design drastically reduces the
+loads programs from different peripherals (which are called            implementation effort and the amount of fragile metadata
+Option ROMs) for basic I/O initialization. The firmware then           stored on the heap. Additionally, it increases the robustness
+runs Option ROMs belonging to detected hardware and gen-               of the OS against failures introduced by memory corruptions
+erates x86 specific data structures such as an e820 memory             resulting from abusing devices that directly write to memory
+map. These data structures provide a way for the OS kernel,            using DMA. On the other hand, if many small allocations
+or any other code running afterwards, to interact with the             are required, it drastically increases the memory overhead.
+detected peripherals or the firmware itself. The layout of these       H YPER -C UBE OS uses only a very small number of al-
+data structures depends on whether the computer is using a             locations during device enumeration and for its interpreter
+BIOS or a UEFI firmware. After preparing the relevant data             T ESSERACT. Therefore, this additional memory overhead is
+structures and initializing basic devices, the firmware launches       negligible for our use case. We typically observed fewer than
+the bootloader.                                                        150 allocations during a typical fuzzing campaign. However,
+    Different OS bootloaders use different routines to load an         the precise number depends on the number of emulated devices
+OS kernel. To standardize this process, Ford et al. introduced         provided by the hypervisor.
+the multiboot specification [19]. To add support for UEFI, the
+multiboot specification was later extended to version 2 [20].
+Using a multiboot 2 compliant bootloader allows developers to              Usually, an OS enables paging to manage its memory
+ignore almost all differences between BIOS and UEFI. Note              in a virtual address space. If paging is enabled, the CPU
+that different bootloaders require different binary formats for        performs a lookup to map virtual pages to physical page
+loading the OS kernel. However, by adhering to the multiboot 2         frames using the current page table. This allows a much more
+
+                                                                   7
+flexible handling of memory including access permissions                pointer of the ECAM area is located in an ACPI table named
+and remapping fragmented memory ranges into continuous                  MCFG. Either way, H YPER -C UBE OS scans all PCI buses
+regions. However, some tasks still need access to physical              for devices. Once a PCI or PCI-Express device is found,
+addresses. For example, the page table itself needs to be               all Base Address Registers (BARs) are parsed, and the port
+described in terms of physical memory. To enable access to              I/O or MMIO regions are registered as fuzzing target areas
+various MMIO regions and the page tables, which reside in               in the T ESSERACT interpreter. To enable DMA for all PCI
+physical memory, our OS maintains some regions in which                 devices, H YPER -C UBE OS sets the PCI bus mastering bit
+the virtual addresses map directly to physical addresses. In            in the command register of each PCI device. This way, PCI
+the lowest megabyte of memory (addresses 0x0 to 0x100000),              devices are allowed to read and write the guest’s physical
+we create such a 1-to-1 mapping of the physical memory                  memory. H YPER -C UBE OS enumerates all MMIO regions
+to the virtual memory. This region contains the code, the               provided by the hypervisor. Theoretically, a hypervisor could
+kernel stack, and additional scratch memory that H YPER -               create regions that are not registered in the ACPI table, but
+C UBE OS provides to T ESSERACT for internal use. During                they would be invisible to a COTS OS without hypervisor-
+boot time, the BIOS/UEFI provides GRUB a memory map that                specific drivers. We did not encounter this in practice during
+contains available and reserved ranges in physical memory.              our evaluation.
+This memory map is later passed to H YPER -C UBE OS. It
+uses the available memory to create a kernel heap that is                       c) ISA-Enumeration / I/O Port Probing: Various other
+maintained by the allocator mentioned previously. The kernel            devices use the legacy port I/O address bus to expose internal
+heap makes full use of the virtual address lookup and can               registers to the host. This includes old ISA devices such
+contain any number of physical pages in any order. Above                as VGA graphic cards, sound devices, or core components
+the remapped area, H YPER -C UBE OS creates a region in                 like the PIC. While there is a list of well-known I/O ports
+which all of the available memory is used to create a heap.             used for common devices, unfortunately, there is no proper,
+Lastly, in the uppermost regions, we create another remap that          systematic way of enumerating and detecting certain emulated
+contains various kinds of MMIO regions, as detected by the              ISA devices. To enumerate available emulated devices, we
+enumeration procedure. For example, memory ranges marked                perform an active scan of all 216 possible I/O ports. To find
+as reserved by the BIOS or UEFI firmware mostly contain                 devices, we try to read from and write to all ports. If, after
+MMIO regions of emulated devices and are remapped to this               writing, the value in the I/O port changes, we consider the
+area during device enumeration. A visualization of the memory           port as a possible interface to an emulated device. Unfortu-
+layout is given in Figure 3.                                            nately, this technique does not work for all emulated devices
+                                                                        because not all I/O ports are writable. Using this method,
+    3) Device Enumeration: Hardware devices, such as PCI de-            we create a dictionary of interesting I/O ports that is later
+vices or core components like the APIC or the High Precision            used more often during the fuzzing run. Our evaluation shows
+Event Timer (HPET), can map internal registers to physical              that this method—in combination with a small list of well
+memory. Accessing these MMIO regions allows to directly                 known ports—is typically able to find more than 90% of
+influence the state of the device. After booting, a major task of       all provided device I/O ports. The list of well-known ports
+H YPER -C UBE OS is to enumerate the different interfaces that          contains 11 ranges, containing ports of emulated devices such
+are available for fuzzing. As mentioned earlier, this requires          as the legacy interrupt-controller, serial, and VGA. Another
+to enumerate all MMIO and port I/O address ranges used by               uncommon method to enumerate ISA devices is described in
+emulated devices and peripherals.                                       different legacy ISA Plug & Play specifications. Unfortunately,
+                                                                        to the best of our knowledge, no x86 hypervisor provides
+       a) Core Components: The MMIO regions provided by                 support for this enumeration method.
+core components such as the APIC or the HPET are described
+by so called Advanced Configuration and Power Interface
+(ACPI) tables. The base addresses of HPET and APIC MMIO                 B. T ESSERACT
+regions are stored in their corresponding ACPI tables. To
+enumerate those components, H YPER -C UBE OS parses all                     T ESSERACT is a complex instruction set interpreter. We
+relevant ACPI tables. A pointer to the array of ACPI tables is          implemented specific opcodes targeting common interactions
+provided by the multiboot bootloader. Pointers to both APIC             with hypervisors. Most opcodes are available in multiple
+and I/O APIC MMIO regions are located in the APIC ACPI                  variants: opcodes such as read and write are implemented
+table. Lastly, if an HPET is present, the base address of               for each interface. Additionally, there are variants using user-
+the HPET can be found in the HPET ACPI table. All base                  provided dictionaries of data values and offsets. We also im-
+pointers stored in the ACPI tables are registered in T ESSERACT         plemented opcodes, which use “repeat string operation”-prefix
+as potential fuzz target areas for later use. In addition, the          based instruction such as REP/REPE/REPZ/REPNE/REPNZ
+base pointers of the APIC and I/O APIC are required for the             to improve performance by limiting the number of emulated
+configuration of all interrupts. The HPET pointer is not used           instructions and the coverage by using additional x86 opcodes.
+further except for fuzzing.                                             This also includes instructions accessing MMIO as well as port
+                                                                        I/O regions. Overall, T ESSERACT implements the following
+       b) PCI-/PCIe-Enumeration: To find all emulated PCI               opcode handler:
+and PCI-Express devices, H YPER -C UBE OS either relies on
+the legacy PCI configuration I/O ports or more modern PCI                  •    write mmio(region id, offset, data) writes a
+configuration spaces based on the MMIO region located at                        single word data to the address given by
+the Enhanced Configuration Mechanism (ECAM) base pointer.                       region_id+offset. Available for 8, 16 and
+Similar to the base pointers of HPET and ACPI, the base                         32-bit words.
+
+                                                                    8
+                                                                                                                                   MMIO        MMIO
+                                                                                                                                  Area #1     Area #2
+                                                                                                                                   0x0         0x0
+                                                                                                                                    …          0x4
+                                                                                                                                 0x2000        0x8
+                          0x48    0x59    0x45     0x52      0x43    …        …       …
+                                                                                                 Scratch                ɡ mmio_write_16         ..
+                                                                                                   Areas                                     0x8000
+          PRNG /
+          Embedded                                                                                                                Port I/O    Port I/O
+           Payload                                                                                                                Area #1     Area #2
+                     1    0x48    0x59    0x45     0x52      0x43    …        …       …         Tesseract
+                                                                                                                                   0x0          0x0
+                                                                                                 Interpreter
+                                                                                                                                    …           0x4
+                         io_xor_8 = offset: 0x3C          mmio_write_16 = offset: 0x2000
+                                                                                                                                  0x10           ..
+                           ɠ                                    ɡ
+                                    area: 2                               area: 2
+                                     data: 0xCC                           data: 0xFFEE
+                                                                                                                                               0x3C
+                                                                                                                           ɠ io_xor_8          0x40
+
+    Fig. 4: T ESSERACT consuming a byte string provided either by a PRNG or an embedded payload. Upon receiving the byte string, T ESSERACT
+    decodes it into opcodes such as 1 and 2 . It then calls the handler that actually performs I/O operations.
+
+
+
+
+•    read mmio(region id, offset) reads a single word                                              The T ESSERACT interpreter uses a textbook-style bytecode
+     from the address given by region_id+offset.                                               interpreter design that we briefly describe in the following. The
+     Available for 8, 16 and 32-bit words.                                                     bytecode stream is interpreted in a loop. In each iteration, the
+                                                                                               current bytecode instruction is decoded. The first byte encodes
+•    xor mmio(region id, offset, mask) reads a single                                          the opcode. Once the interpreter knows the opcode type, the
+     word from the given address, and writes it back after                                     corresponding handler is called. The opcode handler parses
+     applying the given XOR mask. Available for 8, 16 and                                      the arguments for this opcode as described above. Then, the
+     32-bit words.                                                                             handler performs the basic operation (such as accessing a given
+•    bruteforce mmio(region id, offset, data, num)                                             address). Lastly, the instruction pointer is increased by the size
+     writes num consecutive data words to the given                                            of the current opcode and the next iteration of the interpreter
+     address. Available for 8, 16 and 32-bit words.                                            loop is executed.
+•    memset mmio(region id, offset, data, num) writes
+     the word data to num consecutive addresses, begin-                                            There are two ways to provide bytecode instructions to
+     ning at the given address. Available for 8, 16 and 32-                                    our fuzzer. If no bytecode string is supplied from the outside,
+     bit words.                                                                                T ESSERACT uses a Pseudorandom Number Generator (PRNG)
+•    writes mmio(region id, offset, data, num) same                                            to generate random instructions. We use a fast and small
+     as memset mmio, however it uses a rep prefixed                                            non-cryptographic PRNG with a large average cycle length
+     instruction to perform the task, testing instruction                                      (> 2126 ) called jsf32 [1]. Since our fuzzer uses the PRNG
+     emulation.                                                                                as the source of an infinite stream of instructions, changing
+                                                                                               the initial state of the PRNG allows us to run different
+•    reads mmio(region id, offset, num) same as                                                deterministic fuzzing campaigns. An illustration of this process
+     writes mmio, but instead of writing data, it reads it.                                    is given in Figure 4. The alternative way is to embed a fixed
+                                                                                               bytecode string into the OS image. This mechanism is used
+•    mmio write scratch ptr(region id, offset, scratch-                                        by the minimization script and can be used to generate proof-
+     id, scratch-offset) writes a pointer to the given offset                                  of-concept images of H YPER -C UBE to reproduce findings.
+     in the scratch area to the address in the given MMIO
+     region.
+•    * io() all opcodes accessing MMIO regions are im-                                             Using the ability to inject a static bytestring into the fuzzing
+     plemented for I/O ports as well.                                                          image, we build a test case minimization script. After the
+                                                                                               fuzzer found an initial PRNG state that leads to a crash,
+•    write msr(msr num, mask) writes to a Machine                                              we regenerate the same bytestring using the same state. This
+     Specific Registers (MSR). This operation is limited to                                    bytestring is often very large (millions to tens of millions
+     a list of ≈ 240 well-known MSRs. The mask is xored                                        of instructions). The minimization script removes a random
+     into the selected MSR.                                                                    subslice of instructions with a length up to 50% of the
+•    hypercall(eax, ebx, ecx, edx, esi) executes arbitrary                                     input. The resulting bytestring is embedded into an H YPER -
+     hypercalls using the given registers as arguments. This                                   C UBE OS image, and the image is booted in the VM. If
+     instruction is specific to KVM.                                                           the resulting image still produces a crash, the script repeats
+                                                                                               this process, otherwise the modification is reverted, and the
+•    vmport(ecx, ebx) executes arbitrary vmport hyper-                                         process is repeated. After obtaining a minimal bytestring, the
+     calls with the registers set to the arguments to the                                      decompiler can be used to translate it into a human readable
+     hypervisor. This instruction is specific to VMware                                        form. The decompiler is implemented as a modified version
+     and other hypervisors which implement this hypercall                                      of the interpreter, that emits C code for each opcode handler
+     interface.                                                                                call.
+
+                                                                                           9
+                      V.   E VALUATION                                   generates the stream of bytecode instructions using a PRNG.
+                                                                         Since our design is independent of the hypervisor under
+   We use our prototype implementation of H YPER -C UBE to               test, we can test a wide variety of different hypervisor im-
+evaluate the results of our design choices. In particular, we            plementations. In particular, we evaluated against the fol-
+aim to answer the following four research questions:                     lowing six hypervisors: QEMU/KVM (4.0.1-rc4), Bhyve
+   •    RQ 1. Are we able to uncover new bugs and vulnera-               (12.0-RELEASE), ACRN (29360 Build), VirtualBox
+        bilities in different hypervisors using H YPER -C UBE?           (5.1.37_Ubuntu r122592), VMware Fusion (11.0.3)
+                                                                         and Parallels Desktop (14.1.3).
+   •    RQ 2. Are we able to rediscover previously known
+        vulnerabilities, such as the QEMU vulnerability                      While the design of H YPER -C UBE is quite flexible, it still
+        VENOM (CVE-2015-3456) or vulnerabilities found                   has some limitations in the implementation. We require 32-
+        by other hypervisor fuzzers?                                     bit UEFI or GRUB assisted booting. Since Hyper-V and its
+                                                                         type 2 virtual machines require a 64-bit UEFI bootloader, we
+   •    RQ 3. How does H YPER -C UBE perform in terms of                 do not support this hypervisor in our current implementation.
+        test coverage compared to other hypervisor fuzzing               This could be changed by extending the bootloader or the OS
+        approaches?                                                      boot routine. Additionally, we have limited support for para-
+   •    RQ 4. What is the performance impact of our design               virtualized virtual devices and therefore we excluded para-
+        choice compared to other hypervisor fuzzing setups?              virtualization hypervisors such as Xen, VMware ESXi and
+                                                                         Hyper-V from our evaluation set. Note that this does not pose
+    To test whether H YPER -C UBE is able to uncover new bugs            a limitation to the techniques presented: support for para-
+and to answer RQ 1., we used H YPER -C UBE to evaluate six               virtualization could be added by extending the boot procedure
+different open and closed source hypervisor implementations.             and the instruction set in T ESSERACT.
+We found bugs in all of them. In total, H YPER -C UBE found
+over 50 bugs that we all manually analyzed. At the time of               B. Finding New Vulnerabilities
+submission, we reported and got confirmation for 49 bugs,
+report and confirmation are still in process for the remaining               To demonstrate that H YPER -C UBE is versatile and effec-
+5 bugs. Until now, 43 CVEs were assigned.                                tively able to uncover bugs in different hypervisors, we tested
+                                                                         current versions of different hypervisor implementations. As
+    Similarly, to answer RQ 2., we picked a set of previously            noted earlier, we were able to find bugs in all tested hypervisors
+known, critical security vulnerabilities in QEMU and tested              and obtained 43 CVEs so far. An overview of all bugs found
+if H YPER -C UBE is able to rediscover them in a reasonable              is given in Table II. Overall, we reported 54 bugs, a more
+time frame. Specifically, we picked four well-known CVEs,                specific breakdown is as follows: in total, we found eight
+and we also reproduced the experiments performed by the                  memory corruption bugs. Additionally, in one case, we were
+authors of VDF. Overall, we show that H YPER -C UBE is able              able to crash the entire host kernel (Bhyve - the standard
+to rediscover all bugs and even finds bugs that VDF missed.              hypervisor used in FreeBSD). Three of the bugs caused a
+    We also measure the code coverage achieved by H YPER -               deadlock of the hypervisor itself, effectively making it useless.
+C UBE when fuzzing various QEMU modules (RQ 3.). We                      The remaining bugs cause different kinds of crashes in the
+compare our measurements with the results reported by the                hypervisor. Notably, 26 bugs were triggering assertion failures.
+authors of VDF. We are able to produce more code coverage                While these bugs crashed the VMM and CVEs were assigned
+on nearly all devices. Additionally, we achieve this code                by MITRE, Red Hat Product Security does not consider these
+coverage in significantly less time. More specifically, our              as security issues. In total, 12 of the 43 CVEs assigned are
+experiment only took ten minutes to outperform VDF in terms              due to such assertion failures.
+of bug finding capability as well as code coverage. In contrast,            The high number of bugs found in all tested hypervisors
+VDF used 60 days of computation for their experiments.                   demonstrates that H YPER -C UBE is able to uncover large
+    To measure the performance impact of our individual                  quantities of novel bugs (RQ 1.). To better understand the
+design choices and to answer RQ 4., we perform three different           kind of bugs H YPER -C UBE is able to uncover, we provide
+experiments. First, we analyze the throughput of T ESSERACT              more detailed descriptions for three of them.
+when compared to compiler-based approaches. Second, we                       1) Case Study: Bhyve rep movs emulation failure:
+compared the time it takes to re-initiate the fuzzing process            H YPER -C UBE found a bug in the instruction emulator of
+after a crash of the targeted hypervisor. This time is especially        Bhyve and the way some instructions are handled if the devices
+relevant in case of successful bug discovery or when side                emulation is performed by the hypervisor. During fuzzing,
+effects might corrupt essential data structures resulting in full        T ESSERACT executed a rep movs instruction, which was
+system reboots. Last, we measure the memory usage of our                 targeting the APIC MMIO region. Unlike all other MMIO
+implementation.                                                          regions, Bhyve failed to emulate the rep movs instruction,
+                                                                         which targets the APIC controller. These instructions were
+A. Evaluation Setup                                                      emulated in the host kernel instead of the ring 3 emulator.
+                                                                         This bug can be exploited to crash the host kernel.
+   All experiments were performed on desktop machines
+with an Intel i7-6700 processor (4 cores) and 24 GB of                      2) Case Study: QEMU qxl arbitrary read access:
+RAM. Unless stated otherwise, all experiments were per-                  H YPER -C UBE uncovered a vulnerability in the qxl VGA
+formed on host systems running Ubuntu 16-04 LTS. No                      emulation, which leads to control of a pointer to the VGA
+seed inputs were used in any experiment, as our fuzzer                   mode array and to an arbitrary out-of-bounds read access. To
+
+                                                                    10
+                                                       TABLE II: Reported bugs found by H YPER -C UBE.
+
+       Hypervisor             Asserts   Null-Pointer     FP Exception    Memory Corruptions    Deadlocks    Kernel DoS   Othera   Total / CVEs
+       QEMU / KVM               12           4                 -                   5               2            -          -        23 / 23
+       Bhyve                     6           4                 1                   -               1            1          -        13 / 13
+       VirtualBox               3            1                 4                   3               -            -          -         11 / 5
+       VMware Fusion            3            -                 -                   -               -            -          1          4/-
+       Parallels Desktop         1           1                 -                   -               -            -          -          2/1
+       ACRN                      1           -                 -                   -               -            -          -          1/1
+       Total                    26          10                 5                   8               3            1          1        54 / 43
+      a Not yet classified.
+
+
+
+
+trigger this bug, it is necessary to use two different interfaces.                with the hardware. In KVM, each interaction requires multiple
+qxl provides a PIO write region to select a VGA mode within                       expensive context switches, while no such context switch takes
+the VGA modes array. The VGA modes array is stored in                             place in QEMU TCG mode.
+a presumably read-only PCI-MMIO area named QXL_ROM
+                                                                                      Unfortunately, most fuzzers developed by practitioners in
+region. However, due to an implementation mistake, this area
+                                                                                  the industry are neither released nor properly evaluated by the
+is mapped writable to the guest. This allows us to control the
+                                                                                  scientific community. However, Tang et al. explicitly mention
+metadata. Finally, when the window is resized, the size is read
+                                                                                  that they needed one and a half hours to rediscover the
+from a pointer in the modes array. By changing it, we can
+                                                                                  VENOM vulnerability [46]. H YPER -C UBE typically requires
+control the size of the buffer. This vulnerability allows an out-
+                                                                                  less than ten seconds to discover it (as illustrated in Table III).
+of-bounds read access in a 4GB + 8KB range relative to the
+allocation.                                                                           2) H YPER -C UBE vs VDF: In addition to reproducing well-
+                                                                                  known CVEs, we compare H YPER -C UBE against VDF by
+    3) Case Study: VirtualBox intel-hda heap corruption:                          reproducing the results reported in their paper. Unfortunately,
+In the intel-hda sound card emulator implementation of                            the authors of VDF did not provide detailed descriptions of the
+Virtualbox, H YPER -C UBE uncovered a heap corruption issue.                      crashes found and we were not able to obtain a copy of VDF.
+The command output ring buffer (CORB) size can                                    However, we used the same version of QEMU and performed
+be set to either two entries (8 bytes), 16 entries (64 bytes)                     similar experiments (displayed in Table IV). It should be noted
+or 256 entries (1KiB, default) with an MMIO write to the                          that we excluded their experiment against the Trusted Platform
+CORBSIZE register. The CORBSIZE MMIO write handler                                Module (TPM), as it was manually added and is not part of
+sets the selected size and allocates a buffer with the given                      the default configuration of QEMU. Furthermore, VDF uses
+size. The intel-hda device can then be reset by an MMIO                           extensive traces obtained from real OS boot processes, while
+write to the global control (GCTL) register. This handler                         we did not provide any seed inputs or dictionaries to H YPER -
+resets the buffer size to the default of 256 entries (1KiB) and                   C UBE. Similar to the authors of VDF, in this experiment
+clears the buffer with a memset of size 1KiB. Clearing the                        we limited fuzzing to the target device by ignoring all other
+buffer can lead to a heap out-of-bound write of up to 1016                        devices during device enumeration. We compare our results
+bytes when the CORB size was previously set to 2 entries,                         with the values reported by the authors of VDF. We were
+and the buffer only has a size of 8 bytes. The vulnerability                      able to find crashes in all three devices VDF crashed. Beyond
+was present in the Ubuntu version of VirtualBox and has now                       merely reproducing all of the bugs found by VDF, we even
+been fixed.                                                                       managed to find crashes in five additional devices that VDF
+                                                                                  missed.
+C. Rediscovering Known Vulnerabilities
+                                                                                      The fact that we managed to find bugs in all the devices that
+    It is a well-known fact that fuzzers are typically able to                    VDF broke is surprising, since VDF uses coverage feedback
+find bugs in poorly tested software. We therefore ensure that                     and is able to improve the performance drastically by targeting
+our fuzzer is also able to find bugs previously found by other                    individual components in isolation. On the other hand, our
+methods.                                                                          approach has to deal with the whole system and is unable to
+                                                                                  make use of coverage feedback.
+    1) Old CVEs: Since there is very limited related work on
+hypervisor fuzzing, we picked some well-known CVEs for this                           Note that we achieved these results after testing the same
+experiment. In a first set, we chose some high-impact bugs                        targets for only 10 minutes, while VDF fuzzed the same
+with a CVSS > 7.0. Additionally, we tried to rediscover all                       targets for 60 days. Like the authors of VDF, we limited
+bugs found by VDF. In total we analyzed four known bugs,                          the fuzzer to test only the port I/O and MMIO areas related
+displayed in Table III. We were able to find all bugs in a matter                 to the targeted emulator in this experiment. We have three
+of seconds. Since all the bugs are inside of QEMU device                          observations on why we are able to outperform VDF with
+emulators, we evaluated our fuzzer both with QEMU running                         such a margin. First of all, VDF only interacts with MMIO
+TCG mode as well as KVM based virtualization. Even though                         and port I/O to test the target hypervisor. Our approach is able
+TCG is typically considered slower at emulation than hardware                     to trigger more code by other means such as DMA. Second,
+supported virtualization techniques such as KVM, fuzzing                          VDF has to reset the device state after each test case to obtain
+QEMU TCG was drastically faster. This is due to the fact                          coverage measurements that are undisturbed by previous tests.
+that we produce a workload that mostly consists of interactions                   This has two downsides: (i) resetting the state of the target
+
+                                                                             11
+TABLE III: Previously known vulnerabilities in QEMU / KVM found by             TABLE IV: Branch coverage and bugs found by H YPER -C UBE and VDF
+H YPER -C UBE (average time in seconds over 20 runs each ± standard
+deviation).                                                                                             VDF                     H YPER -C UBE
+                                                                                     Device     Cov     Bug    Time       Cov       Bug       Time
+CVE (Bug)                CVSS        TCG (sec)          KVM (sec)
+                                                                                       AC97     53.0%         59 days   80.75%              10 min
+2015-3456 (VENOM)        7.7         5.8 ± 6.8        49.7 ± 50, 6                  CS4231a     56.0%         65 days   76,95%              10 min
+2017-2615 (Cirrus VGA)   9.1         5.1 ± 3.0        86.7 ± 70.4                    ES1370     72.7%         69 days   94,77%              10 min
+2017-2620 (Cirrus VGA)   9.9       19.6 ± 14.9    331.32 ± 303.06                Intel-HDA a    58.6%         59 days   66.37%              10 min
+2015-8743 (NE2000)       7.1       47.7 ± 42.0      203.5 ± 341.7               SoundBlaster    81.0%         58 days   85.89%              10 min
+                                                                                      Floppy    70.5%         57 days   83.38%              10 min
+                                                                                     Parallel   42.9%         25 days   38.61%              10 min
+is a slow process itself, and (ii) most inputs produced by                             Serial   44.6%         62 days   79.90%              10 min
+                                                                                   IDE Core     27.5%         65 days   68.81%              10 min
+VDF are small. For example, the crashes found are only 2500
+                                                                                  EEPro100      75.4%         62 days   83.94%              10 min
+bytes large on average. As a consequence, VDF incurs an
+                                                                                     E1000 b    81.6%         61 days   81,69%              10 min
+expensive reset after every few hundred operations. H YPER -
+                                                                               NE2000 (PCI)     71.7%         58 days   72.78%              10 min
+C UBE, on the other hand, is able to perform many billions of                  PCNET (PCI)      36.1%         58 days   83,08%              10 min
+operations without such overhead. We assume that H YPER -                          RTL8139      63.0%         58 days   73.73%              10 min
+C UBE is able to execute orders of magnitude more operations                        SDHCI c     90.5%         62 days   77.04%              10 min
+per second compared to VDF. However, a precise comparison                  a
+                                                                             We fixed a bug in this device emulator to perform this experiment
+is not possible, since the authors of VDF did not report                   properly. Otherwise, H YPER -C UBE will find this crash within seconds.
+                                                                           b
+any numbers. More importantly, VDF also replays slightly                     Due to a deadlock, which was found by H YPER -C UBE within sec-
+                                                                           onds, this experiment was performed on the latest version of QEMU
+mutated versions of the same test cases over and over again,               (4.0.1-rc1) instead. Even in this version, H YPER -C UBE was able to
+reducing the variance in test scenarios. Normally, feedback-               uncover a new deadlock bug within minutes.
+                                                                           c
+driven fuzzers are expected to use this as an advantage to                   Due to the high amount of memory corruption bugs and deadlocks,
+                                                                           which were found by H YPER -C UBE within seconds, we launched QEMU
+learn what test cases provide novel behavior and which ones                multiple times to perform a proper coverage measurement.
+do not. However, due to the fact that T ESSERACT already
+encodes a significant amount of prior information and is able
+to guess interesting inputs with high probability, it seems that           caution by ignoring this fact and thus underestimating the
+in this case the performance losses do not make up for the                 performance of H YPER -C UBE. Additionally, the authors of
+incremental learning. Last, VDF fuzzes emulated devices in                 VDF created seed traces for all MMIO interactions from real
+isolation, depriving them from a set of real-world interactions            OS interactions or test cases that already provide some good
+such as interrupts. Our approach attacks the target device in a            initial coverage. In contrast to VDF, we have no tracing utility
+full environment featuring all interactions.                               and therefore started with a blank state without any seed files.
+                                                                           Even though we start from this disadvantaged situation, we
+    As a consequence of both experiments, we conclude that
+                                                                           drastically outperform VDF in all but one case. Unfortunately,
+H YPER -C UBE is able to significantly outperform state-of-the
+                                                                           we are unaware of the exact reasons why we are able to
+art fuzzers (RQ 2.). This also demonstrates the advantage that a
+                                                                           outperform VDF with such a margin.
+custom interpreter provides by focusing on useful interactions.
+This finding is inline with recent research on grammar-based                   However, we investigated the coverage that we found, and
+fuzzing [10], [12], [29], [36], [39].                                      noticed that many interactions require that we provide the
+                                                                           device with a pointer to our memory that contains certain
+D. Performance                                                             data, or perform interactions with interrupts neither of which is
+                                                                           done by VDF. Using our multi-dimensional fuzzing approach,
+    After demonstrating H YPER -C UBE’s ability to find novel              we can interleave these operations easily. Together with the
+and well-known bugs, we also evaluate other aspects of its                 observations on performance made in Section V-C2, this might
+performance. Besides the crashes found, the authors of VDF                 explain the significant difference in coverage.
+also reported branch coverage achieved on various devices.
+Similarly, we measure the coverage that was achieved and                       2) Interpreter Throughput: To further substantiate the per-
+compare it against the values reported by VDF. To give a                   formance impact of our design, we compare our interpreter-
+general feeling for the performance criteria, we also evaluate             based approach against a compiler based approach using
+metrics such as throughput, boot time, and memory usage.                   GCC. Similar compiler-based approaches are used by multiple
+                                                                           system-level fuzzers such as CFAFT [18].
+    1) Coverage: To estimate the quality of our test results
+and to compare it against VDF, we measured the coverage                        For this comparison we measure the time that GCC uses to
+produced by our approach. As mentioned earlier, we were not                compile C code equivalent to 16MB of opcodes. We generate
+able to obtain a copy of VDF and thus can only compare our                 this C code via our own opcode decompiler. Since fuzzers like
+results with the numbers published by the authors of VDF.                  CFAFT usually use smaller test cases, and to prevent GCC
+It should be noted that the authors of VDF chose to perform                from using all memory available (since the 16MB opcode yield
+their experiments on 6 cores for a total of roughly 60 days                to a significantly large chunk of C code, around 1.8 million
+each. We choose to run our experiments on a single core                    lines of code), we generate separate C code files from every
+while the gcov profiler was actively measuring the coverage                ten thousands of opcodes and measure the overall time for
+produced in the device emulator. Overall, we tested each device            compiling these files. We omitted to include the time it takes
+for ten minutes. Measuring the coverage introduces a rather                to actually load the resulting kernel module and to execute
+heavy performance penalty, however we err on the side of                   it, as the minimal Linux image does not contain a compiler
+
+                                                                      12
+       TABLE V: Throughput of T ESSERACT vs. GCC (with -O0)                  TABLE VII: Automatic emulator detection rate of H YPER -C UBE. #scanning
+                                                                             indicates the number of interfaces identified by our scanning. #well-known
+Approach                                                  Runtime            denotes the number of ports that the scanning did not find, but were contained
+                                                                             in our list of well-known ports. #baseline is the number of interfaces, as
+T ESSERACT                                                0.028 sec          reported by the hypervisor.
+GCC each slice (10k)                                      0.356 sec
+GCC Total (1.8 million)                                  64.522 sec          Hypervisor                    #scanning   #well-known    #baseline   %found
+                                                                             VirtualBox MMIO Scan            12              0            12      100.00%
+                                                                             QEMU / KVM MMIO Scan             5              0             5      100.00%
+TABLE VI: Boot time comparison using QEMU 4.0.1-rc4 ASAN (average            VirtualBox Port I/O Scan        185            29           203       91.13%
+over 20 runs each ± standard deviation).                                     QEMU / KVM Port I/O Scan        352             7           357       98.60%
+                                                                             Total                                                                97.43%
+Mode    Linux-4.15          H YPER -C UBE Probing     H YPER -C UBE
+TCG     5.856 ± 0.027 sec    0.487 ± 0.038 sec      0.401 ± 0.007 sec
+KVM     2.337 ± 0.053 sec    0.785 ± 0.079 sec      0.219 ± 0.011 sec        G. Emulator Detection
+                                                                                 During the device enumeration process, H YPER -C UBE can
+environment. We therefore overestimate the throughput of                     enumerate all present PCI and PCI-Express devices as well
+compiler-based approaches - a conservative choice. We then                   as their I/O ports and MMIO regions. Unfortunately, there is
+measure the time it takes for our H YPER -C UBE to generate,                 no such mechanism to systematically enumerate ISA devices.
+load and execute the same 16MB of opcode. The results are                    H YPER -C UBE contains an approximate solution to find inter-
+displayed in Table V. Note that the overall time for compiling               esting I/O ports. We were able to obtain the ground truth by
+1.8 million lines of code for GCC is measured by the sum                     using internal tools for both QEMU and VirtualBox. Using this
+of the time it takes for every ten thousands opcodes C file to               ground truth, we were able to measure the effective detection
+be compiled. Overall, our approach has a throughput that is                  rate of our approach. As it is illustrated in Table VII, our
+roughly 2,300 times higher than compiler-based approaches. It                method is highly effective at uncovering relevant I/O addresses.
+should be noted that this number is calculated conservatively,               As expected, all MMIO regions were correctly identified. It
+as it does not yet contain the cost for generating large amounts             should be noted that H YPER -C UBE also offers the ability to
+of C code, nor for actually loading or executing the compiled                add additional ranges to the target list if a manual check or
+executable.                                                                  documentation indicates the need.
+                                                                                 Based on the performance evaluation, we can say that
+E. Restart After Crash                                                       H YPER -C UBE drastically outperforms existing, state-of-the-
+                                                                             art fuzzers such as VDF and the fuzzer designed by Tang
+    Another important performance metric for fuzzer is how                   et al. [46] (RQ 3.). Our design based on a custom operating
+fast they can recover from crashes. Since we use a very                      system and a custom bytecode interpreter providing multi-
+lightweight custom OS, we can boot a lot faster than COTS                    dimensional fuzzing and a high throughput interpreter are the
+OSs. This offers a significant advantage over other designs                  main reason for this. The boot time and memory overhead
+where the fuzzer runs in a kernel module or driver as part                   are far less impactful on our performance gains. This answers
+of a COTS OS. We compared the boot time of H YPER -                          research question RQ 4..
+C UBE against a minimal Linux BusyBox image. We booted 20
+times, and measured the average time until the fuzzer started.                                       VI.    R ELATED W ORK
+H YPER -C UBE OS can be used in two modes: in an initial boot
+process, H YPER -C UBE OS uses its I/O enumeration abilities                     In the last five years, fuzzing has been a very active field of
+to generate a map of available ranges. After this first boot                 research. Triggered by the publication and widespread success
+process, future reboots can reuse this mapping to save time.                 of AFL, a myriad of research projects aimed to strengthen
+The results are displayed in Table VI. Overall it took Linux an              the bug finding ability of fuzzers in various scenarios. In most
+average of 2.3 seconds to boot, while H YPER -C UBE OS is able               cases, the algorithms used for scheduling [13]–[15], [41], [49],
+to boot in only 0.22 seconds, resulting in a 10 times speedup.               feedback [2], [21], [31], [33], and mutations [10], [11], [29],
+Depending on the fuzzing workload, the actual performance                    [36], [39] were improved. In other projects, techniques based
+gains might be much lower, particularly in cases where the                   on concolic execution [22]–[24], [28], [34], [45], [48], [53],
+fuzzer does not find many crashes and therefore reboots are                  [55] or taint tracking [17], [40] were combined with fuzzing
+very uncommon events.                                                        to solve ”fuzzing roadblocks” such as magic bytes. Lastly, the
+                                                                             primitives used to run the fuzzer such as the mechanism of
+                                                                             spawning processes [51] or obtaining coverage [4], [44] were
+F. Memory Usage                                                              redesigned to provide more performance. Additionally, fuzzing
+                                                                             was adopted to a wide range of targets: while AFL only targets
+    Given that typically fuzzing is performed in parallel, the
+                                                                             ring 3 applications, researchers quickly adapted the design to
+memory footprint of the target is rather important. However, a
+                                                                             kernel fuzzing [3], [5], [44], hypervisor fuzzing [30] and even
+barebone Linux only uses some 30-50 MB of memory, much
+                                                                             used fuzzing to test neural networks [37], [50].
+less than a typical hypervisor. H YPER -C UBE OS requires even
+less memory (around 10MB). However, since neither 10MB                           A custom OS was used to test hypervisors by previous
+nor 50MB contributes significantly to the overall memory                     projects. For example CrashOS [32] is a suite of handwritten
+usage, the effect of saving memory on the fuzzing performance                test cases used to find regressions and well-known bugs,
+is negligible.                                                               running as an operating system. As it does not provide any
+
+                                                                        13
+way to uncover new bugs, it is orthogonal to our work.                    only implement generic operations that will be unlikely to
+Intel CHIPSEC suite provides different components to fuzz                 trigger interesting coverage on their own. Both feedback-driven
+emulated devices [25]. Similarly, Ormandy created a fuzzer to             fuzzing or specific opcodes would greatly increase the ability
+create random I/O accesses within different hypervisors [35].             to deal with that kind of situation.
+Henderson et al. [30] introduced an approach to fuzz specific
+device emulators by modifying an open source hypervisor and                                      VIII.    C ONCLUSION
+providing AFL support. Tang et al. [46] introduced a similar
+approach to provide interoperability between AFL and QEMU                     In this paper, we presented a generic and comprehensive
+by implementing an interfaces on top of QEMU’s SeaBIOS.                   technique to find bugs in hypervisors and device emulators.
+Finally, Amardeep Chana from MWR Labs and Microsoft                       H YPER -C UBE discovered 54 different bugs in proprietary and
+Security Research and Defense, introduced fuzzers for fuzzing             open source hypervisors. However, the most notable result
+the Hyper-V hypercall interface (VMBus) [16], [42].                       from this paper is not that fuzzers are able to discover bugs
+                                                                          in hypervisors. Instead, we found it more interesting that our
+                      VII.   D ISCUSSION                                  black-box design is able to outperform at least two coverage-
+                                                                          guided hypervisor fuzzers. We believe that our results indicate
+    In this paper, we introduced an architecture for a non-               that in situations where the target consumes a continuous
+coverage-guided hypervisor fuzzer. Surprisingly, we found                 stream of inputs, the high-throughput design outweighs the
+that even though our approach makes far fewer assumptions                 precision offered by a coverage-guidance. Future fuzzer de-
+than state-of-the-art coverage-guided fuzzers, it is still able           signs should incorporate this insight to create more efficient
+to outperform them in all relevant metrics (coverage found,               coverage-guided fuzzers.
+bugs found, coverage found per time, and bugs found per
+time). This goes to show that for smaller codebases such as
+individual device emulators, a very high fuzzing throughput
+and a reasonable choice of input format, are still the most                                     ACKNOWLEDGMENTS
+important properties of a fuzzer. Yet, on the other hand, our
+evaluation (Table IV) also shows that for one of the most                     This work was supported by the German Research Foun-
+complex devices (QEMU’s sdhci emulator) with deeply                       dation (DFG) within the framework of the Excellence Strategy
+nested conditions, coverage guidance was actually improving               of the Federal Government and the States – EXC 2092 C A S A
+the coverage.                                                             – 39078197. In addition, this work was supported by the
+                                                                          European Union’s Horizon 2020 Research and Innovation
+A. Coverage-Guided Hypervisor Fuzzing                                     Programme (ERC Starting Grant No. 640110 (BASTION) and
+                                                                          786669 (REACT)) and the German Federal Ministry of Edu-
+    It would be very interesting to see how a combination of              cation and Research (BMBF, project HWSec – 16KIS0592K).
+H YPER -C UBE and coverage-guided fuzzing would perform.                  The content of this document reflects the views only of
+In particular, it might be relevant to try to combine the                 their authors. The European Commission/Research Executive
+high-throughput fuzzing of our current approach with the                  Agency are not responsible for any use that may be made of
+incremental learning provided by coverage-guided fuzzing. We              the information it contains.
+believe that the basic problem with VDF is that it introduces a
+very high overhead to try a single new operation. To uncover
+new coverage or new interesting behavior, the state in the                                           R EFERENCES
+hypervisor needs to be constructed one operation at a time.               [1]   A      small     noncryptographic     PRNG.               http://
+Since the space of possible operations is very large, it seems                  www.burtleburtle.net/bob/rand/smallprng.html.
+that letting the state grow until something interesting (in this                Accessed: January 20, 2020.
+case, a crash) happens drastically increases the throughput. We           [2]   Circumventing fuzzing roadblocks with compiler transformations.
+                                                                                https://lafintel.wordpress.com/. Accessed: January 20,
+can execute thousands of opcodes on the current state in the                    2020.
+time it takes to reset the device state once. As a consequence,
+                                                                          [3]   Project Triforce: Run AFL on Everything!                   https:
+the probability of finding an operation that triggers new                       //www.nccgroup.trust/us/about-us/newsroom-and-
+behavior in any given time frame increases drastically.                         events/blog/2016/june/project-triforce-run-afl-
+                                                                                on-everything/. Accessed: January 20, 2020.
+B. Hyper-V                                                                [4]   Security oriented fuzzer with powerful analysis options. https://
+                                                                                github.com/google/honggfuzz. Accessed: January 20, 2020.
+     Recently, much focus was put on fuzzing Hyper-V and                  [5]   syzkaller: Linux syscall fuzzer. https://github.com/google/
+its VMBus as well as all synthetic devices [47]. Currently,                     syzkaller. Accessed: 2017-06-29.
+H YPER -C UBE cannot boot in a Hyper-V generation 2 virtual               [6]   Viridian     Fuzzer.            https://github.com/mwrlabs/
+machine because it does not support 64-bit UEFI mode.                           ViridianFuzzer. Accessed: January 20, 2020.
+Unfortunately, to get access to fuzz the implementation of                [7]   XenFuzz. https://www.openfoo.org/blog/xen-fuzz.html.
+synthetic devices, Hyper-V requires the OS to boot in this                      Accessed: January 20, 2020.
+mode. This is by no means a limitation of the design, but                 [8]   Keith Adams and Ole Agesen. A Comparison of Software and Hardware
+merely of the implementation. Currently, H YPER -C UBE has                      Techniques for x86 Virtualization. SIGOPS Oper. Syst. Rev., 40(5),
+                                                                                October 2006.
+only limited support for para-virtualization: while H YPER -
+                                                                          [9]   Keith Adams and Ole Agesen. A comparison of software and hard-
+C UBE is able to access all interface used in para-virtualization,              ware techniques for x86 virtualization. In Proceedings of the 12th
+it is not very efficient at doing so. As each hypervisor imple-                 International Conference on Architectural Support for Programming
+ments its own specific communication channel, we currently                      Languages and Operating Systems, 2006.
+
+
+                                                                     14
+[10]   Cornelius Aschermann, Tommaso Frassetto, Thorsten Holz, Patrick                     Symposium on Network and Distributed System Security (NDSS), Work-
+       Jauernig, Ahmad-Reza Sadeghi, and Daniel Teuchert. Nautilus: Fishing                shop on Binary Analysis Research, 2018.
+       for deep bugs with grammars. In Symposium on Network and Dis-                [32]   Airbus Security Lab. Crashos: A tool dedicated to the research of
+       tributed System Security (NDSS), 2019.                                              vulnerabilities in hypervisors by creating unusual system configurations.
+[11]   Cornelius Aschermann, Sergej Schumilo, Tim Blazytko, Robert Gawlik,                 https://github.com/airbus-seclab/crashos. Accessed:
+       and Thorsten Holz. Redqueen: Fuzzing with input-to-state correspon-                 January 20, 2020.
+       dence. In Symposium on Network and Distributed System Security               [33]   Yuekang Li, Bihuan Chen, Mahinthan Chandramohan, Shang-Wei Lin,
+       (NDSS), 2019.                                                                       Yang Liu, and Alwen Tiu. Steelix: Program-state Based Binary Fuzzing.
+[12]   Tim Blazytko, Cornelius Aschermann, Moritz Schlögel, Ali Abbasi,                   In Joint Meeting on Foundations of Software Engineering, 2017.
+       Sergej Schumilo, Simon Wörner, and Thorsten Holz. Grimoire: Synthe-         [34]   David Molnar, Xue Cong Li, and David Wagner. Dynamic Test
+       sizing structure while fuzzing. In USENIX Security Symposium, 2019.                 Generation to Find Integer Bugs in x86 Binary Linux Programs. In
+[13]   Marcel Böhme, Van-Thuan Pham, Manh-Dung Nguyen, and Abhik                          USENIX Security Symposium, 2009.
+       Roychoudhury. Directed greybox fuzzing. In ACM Conference on                 [35]   Tavis Ormandy. An empirical study into the security exposure to hosts
+       Computer and Communications Security (CCS), 2017.                                   of hostile virtualized environments. In CanSecWest 2007, 2007.
+[14]   Marcel Böhme, Van-Thuan Pham, and Abhik Roychoudhury. Coverage-             [36]   Rohan Padhye, Caroline Lemieux, Koushik Sen, Mike Papadakis, and
+       based greybox fuzzing as markov chain. In ACM Conference on                         Yves Le Traon. Zest: Validity fuzzing and parametric generators for
+       Computer and Communications Security (CCS), 2016.                                   effective random testing. arXiv preprint arXiv:1812.00078, 2018.
+[15]   Sang Kil Cha, Maverick Woo, and David Brumley. Program-adaptive              [37]   Kexin Pei, Yinzhi Cao, Junfeng Yang, and Suman Jana. deepxplore:
+       mutational fuzzing. In IEEE Symposium on Security and Privacy, 2015.                Automated whitebox testing of deep learning systems.
+[16]   Amardeep Chana. Mwr-labs: Ventures into hyper-v - fuzzing hypercalls.        [38]   Hui Peng, Yan Shoshitaishvili, and Mathias Payer. T-Fuzz: Fuzzing by
+       https://labs.mwrinfosecurity.com/blog/ventures-                                     Program Transformation. In IEEE Symposium on Security and Privacy,
+       into-hyper-v-part-1-fuzzing-hypercalls/. Accessed:                                  2018.
+       January 20, 2020.                                                            [39]   Van-Thuan Pham, Marcel Böhme, Andrew E Santosa, Alexan-
+[17]   Peng Chen and Hao Chen. Angora: Efficient fuzzing by principled                     dru Răzvan Căciulescu, and Abhik Roychoudhury. Smart greybox
+       search. In IEEE Symposium on Security and Privacy, 2018.                            fuzzing. arXiv preprint arXiv:1811.09447, 2018.
+[18]   YoungHan Choi, HyoungChun Kim, HyungGeun Oh, and Dohoon Lee.                 [40]   Sanjay Rawat, Vivek Jain, Ashish Kumar, Lucian Cojocar, Cristiano
+       Call-flow aware api fuzz testing for security of windows systems.                   Giuffrida, and Herbert Bos. VUzzer: Application-aware Evolutionary
+       In 2008 International Conference on Computational Sciences and Its                  Fuzzing. In Symposium on Network and Distributed System Security
+       Applications, 2008.                                                                 (NDSS), 2017.
+                                                                                    [41]   Alexandre Rebert, Sang Kil Cha, Thanassis Avgerinos, Jonathan M
+[19]   Bryan Ford and Erich Stefan Boleyn.  Multiboot specifi-
+                                                                                           Foote, David Warren, Gustavo Grieco, and David Brumley. Optimizing
+       cation.  https://www.gnu.org/software/grub/manual/
+                                                                                           seed selection for fuzzing. In USENIX Security Symposium, 2014.
+       multiboot/multiboot.html, 1995.
+                                                                                    [42]   Microsoft Security Research and Defense. Fuzzing para-virtualized
+[20]   Bryan Ford and Erich Stefan Boleyn. Multiboot specification ver-
+                                                                                           devices in hyper-v. https://blogs.technet.microsoft.com/
+       sion 2.0. https://www.gnu.org/software/grub/manual/
+                                                                                           srd/2019/01/28/fuzzing-para-virtualized-
+       multiboot2/multiboot.html, 2016.
+                                                                                           devices-in-hyper-v/. Accessed: January 20, 2020.
+[21]   Shuitao Gan, Chao Zhang, Xiaojun Qin, Xuwen Tu, Kang Li, Zhongyu             [43]   Thomas Ristenpart, Eran Tromer, Hovav Shacham, and Stefan Savage.
+       Pei, and Zuoning Chen. Collafl: Path sensitive fuzzing. In IEEE                     Hey, you, get off of my cloud: Exploring information leakage in
+       Symposium on Security and Privacy, 2018.                                            third-party compute clouds. In ACM Conference on Computer and
+[22]   Patrice Godefroid, Adam Kiezun, and Michael Y Levin. Grammar-                       Communications Security (CCS), 2009.
+       based whitebox fuzzing. In ACM SIGPLAN Conference on Program-                [44]   Sergej Schumilo, Cornelius Aschermann, Robert Gawlik, Sebastian
+       ming Language Design and Implementation (PLDI), 2008.                               Schinzel, and Thorsten Holz. kafl: Hardware-assisted feedback fuzzing
+[23]   Patrice Godefroid, Nils Klarlund, and Koushik Sen. DART: Directed                   for os kernels. In USENIX Security Symposium, 2017.
+       Automated Random Testing. In ACM SIGPLAN Conference on Pro-                  [45]   Nick Stephens, John Grosen, Christopher Salls, Andrew Dutcher, Ruoyu
+       gramming Language Design and Implementation (PLDI), 2005.                           Wang, Jacopo Corbetta, Yan Shoshitaishvili, Christopher Kruegel, and
+[24]   Patrice Godefroid, Michael Y Levin, David A Molnar, et al. Automated                Giovanni Vigna. Driller: Augmenting fuzzing through selective sym-
+       whitebox fuzz testing. In Symposium on Network and Distributed                      bolic execution. In Symposium on Network and Distributed System
+       System Security (NDSS), 2008.                                                       Security (NDSS), 2016.
+[25]   Mikhail Gorobets, Oleksandr Bazhaniuk, Alex Matrosov, Andrew Fur-            [46]   Jack Tang and Moony Li. When Virtualization Encounters AFL.
+       tak, and Yuriy Bulygin. Attacking hypervisors via firmware and                      https://www.blackhat.com/docs/eu-16/materials/
+       hardware. Black Hat USA, 2015.                                                      eu-16-Li-When-Virtualization-Encounters-AFL-A-
+                                                                                           Portable-Virtual-Device-Fuzzing-Framework-With-
+[26]   Mikhail Gorobets, Oleksandr Bazhaniuk, Alex Matrosov, Andrew Fur-                   AFL-wp.pdf. Accessed: January 20, 2020.
+       tak, and Yuriy Bulygin. Attacking hypervisors via firmware and
+       hardware. Black Hat USA, 2015.                                               [47]   Microsoft Virtualization Security Team. Fuzzing para-virtualized
+                                                                                           devices in hyper-v. https://blogs.technet.microsoft.com/
+[27]   Emre Güler, Cornelius Aschermann, Ali Abbasi, and Thorsten Holz.                   srd/2019/01/28/fuzzing-para-virtualized-
+       Antifuzz: Impeding fuzzing audits of binary executables. In USENIX                  devices-in-hyper-v/. Accessed: January 20, 2020.
+       Security Symposium, 2019.
+                                                                                    [48]   Tielei Wang, Tao Wei, Guofei Gu, and Wei Zou. TaintScope: A
+[28]   Istvan Haller, Asia Slowinska, Matthias Neugschwandtner, and Herbert                checksum-aware directed fuzzing tool for automatic software vulner-
+       Bos. Dowsing for overflows: A guided fuzzer to find buffer boundary                 ability detection. In IEEE Symposium on Security and Privacy, 2010.
+       violations. In USENIX Security Symposium, 2013.
+                                                                                    [49]   Maverick Woo, Sang Kil Cha, Samantha Gottlieb, and David Brumley.
+[29]   HyungSeok Han, DongHyeon Oh, and Sang Kil Cha. Codealchemist:                       Scheduling black-box mutational fuzzing. In ACM Conference on
+       Semantics-aware code generation to find vulnerabilities in javascript               Computer and Communications Security (CCS), 2013.
+       engines. In Symposium on Network and Distributed System Security             [50]   Xiaofei Xie, Lei Ma, Felix Juefei-Xu, Hongxu Chen, Minhui Xue,
+       (NDSS), 2019.                                                                       Bo Li, Yang Liu, Jianjun Zhao, Jianxiong Yin, and Simon See.
+[30]   Andrew Henderson, Heng Yin, Guang Jin, Hao Han, and Hongmei                         Coverage-guided fuzzing for deep neural networks. arXiv preprint
+       Deng. Vdf: Targeted evolutionary fuzz testing of virtual devices. In                arXiv:1809.01266, 2018.
+       Symposium on Recent Advances in Intrusion Detection (RAID), 2017.            [51]   Wen Xu, Sanidhya Kashyap, Changwoo Min, and Taesoo Kim. Design-
+[31]   Chin-Chia Hsu, Che-Yu Wu, Hsu-Chun Hsiao, and Shih-Kun Huang.                       ing new operating primitives to improve fuzzing performance. In ACM
+       Instrim: Lightweight instrumentation for coverage-guided fuzzing. In                Conference on Computer and Communications Security (CCS), 2017.
+
+
+                                                                               15
+[52] Wen Xu, Hyungon Moon, Sanidhya Kashyap, Po-Ning Tseng, and
+     Taesoo Kim. Fuzzing file systems via two-dimensional input space
+     exploration. In IEEE Symposium on Security and Privacy, 2019.
+[53] Insu Yun, Sangho Lee, Meng Xu, Yeongjin Jang, and Taesoo Kim.
+     QSYM: A Practical Concolic Execution Engine Tailored for Hybrid
+     Fuzzing. In USENIX Security Symposium, 2018.
+[54] Michał Zalewski.          american fuzzy lop.               http://
+     lcamtuf.coredump.cx/afl/. Accessed: January 20, 2020.
+[55] Lei Zhao, Yue Duan, Heng Yin, and Jifeng Xuan. Send hardest
+     problems my way: Probabilistic path prioritization for hybrid fuzzing.
+     In Symposium on Network and Distributed System Security (NDSS),
+     2019.
+
+
+
+
+                                                                              16

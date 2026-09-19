@@ -79,4 +79,38 @@ while IFS=$'\t' read -r title tail; do
   printf '%s\t%s\n' "$title" "$url" >> "$OUT/index.tsv"; ok=$((ok+1))
   sleep 0.2
 done <<< "$ROWS"
-echo "==> kAFL: $ok pages, $hdr section labels, $fail failed, index rows: $(wc -l < "$OUT/index.tsv")"
+
+# Research papers referenced by the docs (Context > Research Papers). Each is a
+# PDF frozen to text (pdftotext), listed indented under the Research Papers node.
+# The Nyx paper shares its cache with the Nyx provider (same URL). Needs pdftotext.
+PAPERS=$(cat <<'PAP'
+    kAFL: Hardware-Assisted Feedback Fuzzing for OS Kernels (2017)	https://nyx-fuzz.com/papers/kafl.pdf
+    REDQUEEN: Fuzzing with Input-to-State Correspondence (2019)	https://nyx-fuzz.com/papers/redqueen.pdf
+    NAUTILUS: Fishing for Deep Bugs with Grammars (2019)	https://nyx-fuzz.com/papers/nautilus.pdf
+    GRIMOIRE: Synthesizing Structure while Fuzzing (2019)	https://nyx-fuzz.com/papers/grimoire.pdf
+    IJON: Exploring Deep State Spaces via Fuzzing (2020)	https://nyx-fuzz.com/papers/ijon.pdf
+    HYPER-CUBE: High-Dimensional Hypervisor Fuzzing (2020)	https://nyx-fuzz.com/papers/hypercube.pdf
+    Nyx: Greybox Hypervisor Fuzzing (USENIX Security 2021)	https://www.usenix.org/system/files/sec21-schumilo.pdf
+PAP
+)
+pap=0
+while IFS=$'\t' read -r title url; do
+  [ -z "$url" ] && continue
+  cf="$CACHE/$(printf '%s' "$url" | sha256sum | awk '{print $1}').txt"
+  if [ ! -s "$cf" ]; then
+    tmp=$(mktemp --suffix=.pdf)
+    if curl -fsSL --max-time 60 "$url" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+      t=$(printf '%s' "$title" | sed 's/^ *//')
+      { printf '# %s\n\n' "$t"; pdftotext -layout -nopgbrk "$tmp" - 2>/dev/null; } > "$cf"
+    fi
+    rm -f "$tmp"
+  fi
+  if [ -s "$cf" ]; then
+    printf '%s\t%s\n' "$title" "$url" >> "$OUT/index.tsv"; pap=$((pap+1))
+  else
+    echo "FAIL paper $url" >&2
+  fi
+  sleep 0.2
+done <<< "$PAPERS"
+
+echo "==> kAFL: $ok pages, $hdr section labels, $pap papers, $fail failed, index rows: $(wc -l < "$OUT/index.tsv")"
