@@ -1,0 +1,1206 @@
+# Morsel-Driven Parallelism
+
+              Morsel-Driven Parallelism: A NUMA-Aware Query
+               Evaluation Framework for the Many-Core Age
+
+                       Viktor Leis∗                Peter Boncz†                   Alfons Kemper∗                            Thomas Neumann∗
+                                                      ∗                                                                 †
+                                                          Technische Universität München                                    CWI
+                                     ∗                                                                           †
+                                         {leis,kemper,neumann}@in.tum.de                                               p.boncz@cwi.nl
+
+ABSTRACT                                                                                                                            HT(T)                HT(S)
+                                                                                                                                    B    C             A B
+With modern computer architecture evolving, two problems con-                                        Result                                   probe(8)
+                                                                                                                                                       16 8
+                                                                                                                                    8    v                                      R
+spire against the state-of-the-art approaches in parallel query exe-                           Z     A     B     C                                                probe(16)
+                                                                                                                            store
+                                                                                                                                    33   x   probe(10)                    A         Z
+                                                                                               a     16    8     v                                       18 33
+cution: (i) to take advantage of many-cores, all query work must                                                                    10   y                                16        a
+                                                                                               ...   ...   ...   ...                                     27 10
+be distributed evenly among (soon) hundreds of threads in order to                             ...   ...   ...   ...                                                      7         c
+                                                                                                                         store                                  probe(27)
+achieve good speedup, yet (ii) dividing the work evenly is difficult                                                                                     5   5            10        i
+                                                                                               Z     A     B     C                  5    z                                27        b
+even with accurate data statistics due to the complexity of modern
+                                                                                               b     27    10    y                                       7   23           18        e
+out-of-order cores. As a result, the existing approaches for “plan-                            ...   ...   ...   ...                23 u                                  5         j
+driven” parallelism run into load balancing and context-switching                              ...   ...   ...   ...                                                      7         d
+bottlenecks, and therefore no longer scale. A third problem faced                                                                                            morsel       5         f
+by many-core architectures is the decentralization of memory con-                                                                                                         ...       ...
+trollers, which leads to Non-Uniform Memory Access (NUMA).                                                                                                                ...       ...
+                                                                                                                              Dispatcher                     morsel       ...       ...
+   In response, we present the “morsel-driven” query execution                                                                                                            ...       ...
+framework, where scheduling becomes a fine-grained run-time task                                                                                                          ...       ...
+that is NUMA-aware. Morsel-driven query processing takes small
+fragments of input data (“morsels”) and schedules these to worker                              Figure 1: Idea of morsel-driven parallelism: R 1A S 1B T
+threads that run entire operator pipelines until the next pipeline
+breaker. The degree of parallelism is not baked into the plan but can
+                                                                                              Intel’s forthcoming mainstream server Ivy Bridge EX, which can
+elastically change during query execution, so the dispatcher can re-
+                                                                                              run 120 concurrent threads, will be available. We use the term
+act to execution speed of different morsels but also adjust resources
+                                                                                              many-core for such architectures with tens or hundreds of cores.
+dynamically in response to newly arriving queries in the workload.
+                                                                                                 At the same time, increasing main memory capacities of up to
+Further, the dispatcher is aware of data locality of the NUMA-local
+                                                                                              several TB per server have led to the development of main-memory
+morsels and operator state, such that the great majority of execu-
+                                                                                              database systems. In these systems query processing is no longer
+tions takes place on NUMA-local memory. Our evaluation on the
+                                                                                              I/O bound, and the huge parallel compute resources of many-cores
+TPC-H and SSB benchmarks shows extremely high absolute per-
+                                                                                              can be truly exploited. Unfortunately, the trend to move memory
+formance and an average speedup of over 30 with 32 cores.
+                                                                                              controllers into the chip and hence the decentralization of mem-
+                                                                                              ory access, which was needed to scale throughput to huge mem-
+Categories and Subject Descriptors                                                            ories, leads to non-uniform memory access (NUMA). In essence,
+H.2.4 [Systems]: Query processing                                                             the computer has become a network in itself as the access costs of
+                                                                                              data items varies depending on which chip the data and the access-
+                                                                                              ing thread are located. Therefore, many-core parallelization needs
+Keywords                                                                                      to take RAM and cache hierarchies into account. In particular, the
+Morsel-driven parallelism; NUMA-awareness                                                     NUMA division of the RAM has to be considered carefully to en-
+                                                                                              sure that threads work (mostly) on NUMA-local data.
+1.     INTRODUCTION                                                                              Abundant research in the 1990s into parallel processing led the
+  The main impetus of hardware performance improvement nowa-                                  majority of database systems to adopt a form of parallelism in-
+days comes from increasing multi-core parallelism rather than from                            spired by the Volcano [12] model, where operators are kept largely
+speeding up single-threaded performance [2]. By SIGMOD 2014                                   unaware of parallelism. Parallelism is encapsulated by so-called
+                                                                                              “exchange” operators that route tuple streams between multiple
+                                                                                              threads each executing identical pipelined segments of the query
+Permission to make digital or hard copies of part or all of this work for personal or
+                                                                                              plan. Such implementations of the Volcano model can be called
+classroom use is granted without fee provided that copies are not made or distributed         plan-driven: the optimizer statically determines at query compile-
+for profit or commercial advantage, and that copies bear this notice and the full ci-         time how many threads should run, instantiates one query operator
+tation on the first page. Copyrights for third-party components of this work must be          plan for each thread, and connects these with exchange operators.
+honored. For all other uses, contact the owner/author(s). Copyright is held by the               In this paper we present the adaptive morsel-driven query execu-
+author/owner(s).
+                                                                                              tion framework, which we designed for our main-memory database
+SIGMOD’14, June 22–27, 2014, Snowbird, UT, USA.
+ACM 978-1-4503-2376-5/14/06.
+                                                                                              system HyPer [16]. Our approach is sketched in Figure 1 for the
+http://dx.doi.org/10.1145/2588555.2610507 .                                                   three-way-join query R 1A S 1B T . Parallelism is achieved
+
+
+
+                                                                                        743
+by processing each pipeline on different cores in parallel, as indi-                • Morsel-driven query execution is a new parallel query eval-
+cated by the two (upper/red and lower/blue) pipelines in the fig-                     uation framework that fundamentally differs from the tra-
+ure. The core idea is a scheduling mechanism (the “dispatcher”)                       ditional Volcano model in that it distributes work between
+that allows flexible parallel execution of an operator pipeline, that                 threads dynamically using work-stealing. This prevents un-
+can change the parallelism degree even during query execution. A                      used CPU resources due to load imbalances, and allows for
+query is divided into segments, and each executing segment takes                      elasticity, i.e., CPU resources can be reassigned between dif-
+a morsel (e.g, 100,000) of input tuples and executes these, mate-                     ferent queries at any time.
+rializing results in the next pipeline breaker. The morsel frame-                   • A set of fast parallel algorithms for the most important re-
+work enables NUMA local processing as indicated by the color                          lational operators.
+coding in the figure: A thread operates on NUMA-local input and
+                                                                                    • A systematic approach to integrating NUMA-awareness into
+writes its result into a NUMA-local storage area. Our dispatcher
+                                                                                      database systems.
+runs a fixed, machine-dependent number of threads, such that even
+if new queries arrive there is no resource over-subscription, and                 The remainder of this paper is organized as follows. Section 2 is
+these threads are pinned to the cores, such that no unexpected loss            devoted to a detailed discussion of pipeline parallelization and the
+of NUMA locality can occur due to the OS moving a thread to a                  fragmentation of the data into morsels. In Section 3 we discuss the
+different core.                                                                dispatcher, which assigns tasks (pipeline jobs) and morsels (data
+   The crucial feature of morsel-driven scheduling is that task dis-           fragments) to the worker threads. The dispatcher enables the full
+tribution is done at run-time and is thus fully elastic. This allows           elasticity which allows to vary the number of parallel threads work-
+to achieve perfect load balancing, even in the face of uncertain size          ing on a particular query at any time. Section 4 discusses algorith-
+distributions of intermediate results, as well as the hard-to-predict          mic and synchronization details of the parallel join, aggregation,
+performance of modern CPU cores that varies even if the amount                 and sort operators. The virtues of the query engine are evaluated in
+of work they get is the same. It is elastic in the sense that it can           Section 5 by way of the entire TPC-H query suite. After discussing
+handle workloads that change at run-time (by reducing or increas-              related work in order to point out the novelty of our parallel query
+ing the parallelism of already executing queries in-flight) and can            engine architecture in Section 6, we conclude the paper.
+easily integrate a mechanism to run queries at different priorities.
+   The morsel-driven idea extends from just scheduling into a com-             2.     MORSEL-DRIVEN EXECUTION
+plete query execution framework in that all physical query opera-
+                                                                                 Adapted from the motivating query of the introduction, we will
+tors must be able to execute morsel-wise in parallel in all their ex-
+                                                                               demonstrate our parallel pipeline query execution on the following
+ecution stages (e.g., both hash-build and probe), a crucial need for
+                                                                               example query plan:
+achieving many-core scalability in the light of Amdahl’s law. An
+important part of the morsel-wise framework is awareness of data                                  σ... (R) 1A σ... (S) 1B σ... (T )
+locality. This starts from the locality of the input morsels and ma-
+                                                                                 Assuming that R is the largest table (after filtering) the optimizer
+terialized output buffers, but extends to the state (data structures,
+                                                                               would choose R as probe input and build (team) hash tables of the
+such as hash tables) possibly created and accessed by the opera-
+                                                                               other two, S and T . The resulting algebraic query plan (as obtained
+tors. This state is shared data that can potentially be accessed by
+                                                                               by a cost-based optimizer) consists of the three pipelines illustrated
+any core, but does have a high degree of NUMA locality. Thus
+                                                                               on the left-hand side of Figure 2:
+morsel-wise scheduling is flexible, but strongly favors scheduling
+choices that maximize NUMA-local execution. This means that re-                     1. Scanning, filtering and building the hash table HT (T ) of
+mote NUMA access only happens when processing a few morsels                            base relation T ,
+per query, in order to achieve load balance. By accessing local
+                                                                                    2. Scanning, filtering and building the hash table HT (S) of ar-
+RAM mainly, memory latency is optimized and cross-socket mem-
+                                                                                       gument S,
+ory traffic, which can slow other threads down, is minimized.
+   In a pure Volcano-based parallel framework, parallelism is hid-                  3. Scanning, filtering R and probing the hash table HT (S) of
+den from operators and shared state is avoided, which leads to plans                   S and probing the hash table HT (T ) of T and storing the
+doing on-the-fly data partitioning in the exchange operators. We                       result tuples.
+argue that this does not always lead to the optimal plan (as parti-
+                                                                                  HyPer uses Just-In-Time (JIT) compilation to generate highly
+tioning effort does not always pay off), while the locality achieved
+                                                                               efficient machine code. Each pipeline segment, including all oper-
+by on-the-fly partitioning can be achieved by our locality-aware
+                                                                               ators, is compiled into one code fragment. This achieves very high
+dispatcher. Other systems have advocated per-operator paralleliza-
+                                                                               raw performance, since interpretation overhead as experienced by
+tion [21] to achieve flexibility in execution, but this leads to need-
+                                                                               traditional query evaluators, is eliminated. Further, the operators
+less synchronization between operators in one pipeline segment.
+                                                                               in the pipelines do not even materialize their intermediate results,
+Nevertheless, we are convinced that the morsel-wise framework
+                                                                               which is still done by the already much more efficient vector-at-a-
+can be integrated in many existing systems, e.g., by changing the
+                                                                               time evaluation engine of Vectorwise [34].
+implementation of exchange operators to encapsulate morsel-wise
+                                                                                  The morsel-driven execution of the algebraic plan is controlled
+scheduling, and introduce e.g., hash-table sharing. Our framework
+                                                                               by a so called QEPobject which transfers executable pipelines to a
+also fits systems using Just-In-Time (JIT) code compilation [19, 25]
+                                                                               dispatcher – cf. Section 3. It is the QEPobject’s responsibility to
+as the generated code for each pipeline occurring in the plan, can
+                                                                               observe data dependencies. In our example query, the third (probe)
+subsequently be scheduled morsel-wise. In fact, our HyPer system
+                                                                               pipeline can only be executed after the two hash tables have been
+uses this JIT approach [25].
+                                                                               built, i.e., after the first two pipelines have been fully executed.
+   In this paper we present a number of related ideas that enable
+                                                                               For each pipeline the QEPobject allocates the temporary storage
+efficient, scalable, and elastic parallel processing. The main contri-
+                                                                               areas into which the parallel threads executing the pipeline write
+bution is an architectural blueprint for a query engine incorporating
+                                                                               their results. After completion of the entire pipeline the tempo-
+the following:
+                                                                               rary storage areas are logically re-fragmented into equally sized
+
+
+
+                                                                         744
+                                                                                                                                                                                                    Probe HT(T)
+
+                                                                                                                                                                                                   Probe HT(T)                                      Probe HT(S)
+                                                                                                      BB                                                                                          Probe HT(T)                                 Probe HT(S)
+
+                                                                                                                                                                                                 Probe HT(T)                              Probe HT(S)
+                                                                                                                                                                                                                        Build HT(S)
+                                                                                                                                                                                                                                                                         s...
+                                                                                                                                                                                                                                      Probe HT(S)
+                                                                                                                                                                                  Build HT(T)
+                                                                                                                              BA
+                                                          v                                                                                                                                                                                                          s...
+                                                                                                                                                                                                                                                             s...
+                                                                                                                                                                                                                                                                                   Pipe 3
+
+                                                                                                                                                                                                       s... s
+                                                                                                                                                                   s...s...                                  ...          s...                        s...
+                                                                                                                                                                                                                                                                          Pipe 3
+                                                                                                                                                                                                                                                                                    Scan R
+
+                                                                                                                                                                           s...                                                                                  Pipe 3
+                                                          T                                              v                                      v                  Pipe 1
+                                                                                                                                                                                                     Pipe 2
+                                                                                                                                                                                                               Pipe 2
+                                                                                                                                                                                                                         Pipe 2
+                                                                                                                                                                                                                                                        Pipe 3
+                                                                                                                                                                                                                                                                  Scan R
+                                                                                                                                                                                                                                                                           Scan R
+
+
+                                                                                                                                                                            Pipe 1                   Scan S
+                                                                                                                                                                                     Pipe 1                                                             Scan R
+                                                                                                                                                                    Scan T                                     Scan S
+                                                                                                                                                                                                                           Scan S
+                                                                                                                                                                                Scan T
+                                                                                                             S                                   R                                    Scan T
+Figure 2: Parallellizing the three pipelines of the sample query plan: (left) algebraic evaluation plan; (right) three- respectively
+four-way parallel processing of each pipeline
+                                                                                                                                     HT(T)
+                                                                                                                                                                                               In our figure three parallel threads are shown, each of which op-
+                                                                                                                                     global                                                    erates on one morsel at a time. As our base relation T is stored
+                                                              Phase 2: scan NUMA-local storage area
+
+
+
+
+                                                                                                                                   Hash Table
+                                                                                                                                                                                               “morsel-wise” across a NUMA-organized memory, the scheduler
+                                                                                                                                                                                               assigns, whenever possible, a morsel located on the same socket
+                                                                   and insert pointers into HT
+
+
+
+
+                                                                                                                                                           In
+
+
+
+
+                                                                                                                                                                                               where the thread is executed. This is indicated by the coloring in
+                                                                                                                                                              s
+                                                                                                                                                             er int
+                                                                                                                                                               tt o
+
+
+
+
+                                                                                                                                                                                               the figure: The red thread that runs on a core of the red socket is
+                                                                                                                                                                 he HT
+                                                                                                                                                                   po
+
+
+
+
+                                                                                                                                                                                               assigned the task to process a red-colored morsel, i.e., a small frag-
+                                                                                                                                                                      in
+                                                                                                                                                                         te
+                                                                                                                                                                            r
+
+
+
+
+                                                                                                                                                                                               ment of the base relation T that is located on the red socket. Once,
+                                                                                                                                                                                               the thread has finished processing the assigned morsel it can either
+                                                                                                                                                                                               be delegated (dispatched) to a different task or it obtains another
+                                                                                                                                       Storage
+  Phase 1: process T morsel-wise and store NUMA-locally
+
+
+
+
+                                                                                                                 Storage                                Storage                                morsel (of the same color) as its next task. As the threads pro-
+                                                                                                                                                                         scan
+                                                                                                      scan
+
+
+
+
+                                                                                                                  area of               area of         area of
+                                                                                                                                      green core       blue core
+                                                                                                                                                                                               cess one morsel at a time the system is fully elastic. The degree of
+                                                                                                                 red core
+                                                                                                                                                                                               parallelism (MPL) can be reduced or increased at any point (more
+                                                                                                                                                                                               precisely, at morsel boundaries) while processing a query.
+                                                                                                                                                                                                  The logical algebraic pipeline of (1) scanning/filtering the input
+                                                                                                                         v...(T)     v...(T) v...(T)                                           T and (2) building the hash table is actually broken up into two
+                                                                                                                                                                                               physical processing pipelines marked as phases on the left-hand
+                                                                                                                                                                                               side of the figure. In the first phase the filtered tuples are inserted
+                                                                                                                 orsel
+
+
+
+
+                                                                                                                                                                                               into NUMA-local storage areas, i.e., for each core there is a sep-
+                                                                                                                  m
+
+
+
+
+                                                                                                                                                                                               arate storage area in order to avoid synchronization. To preserve
+                                                                                                             next
+
+
+
+
+                                                                                                                                                                                               NUMA-locality in further processing stages, the storage area of a
+                                                                                                                                    morsel                                                     particular core is locally allocated on the same socket.
+                                                                                                                                                                                                  After all base table morsels have been scanned and filtered, in the
+                                                                                                                                                                                               second phase these storage areas are scanned – again by threads lo-
+                                                                                                                                        T                                                      cated on the corresponding cores – and pointers are inserted into
+                                                                                                                                                                                               the hash table. Segmenting the logical hash table building pipeline
+                                                                                                                                                                                               into two phases enables perfect sizing of the global hash table be-
+                                                          Figure 3: NUMA-aware processing of the build-phase                                                                                   cause after the first phase is complete, the exact number of “surviv-
+                                                                                                                                                                                               ing” objects is known. This (perfectly sized) global hash table will
+                                                                                                                                                                                               be probed by threads located on various sockets of a NUMA sys-
+morsels; this way the succeeding pipelines start with new homoge-
+                                                                                                                                                                                               tem; thus, to avoid contention, it should not reside in a particular
+neously sized morsels instead of retaining morsel boundaries across
+                                                                                                                                                                                               NUMA-area and is therefore is interleaved (spread) across all sock-
+pipelines which could easily result in skewed morsel sizes. The
+                                                                                                                                                                                               ets. As many parallel threads compete to insert data into this hash
+number of parallel threads working on any pipeline at any time is
+                                                                                                                                                                                               table, a lock-free implementation is essential. The implementation
+bounded by the number of hardware threads of the processor. In
+                                                                                                                                                                                               details of the hash table are described in Section 4.2.
+order to write NUMA-locally and to avoid synchronization while
+                                                                                                                                                                                                  After both hash tables have been constructed, the probing pipeline
+writing intermediate results the QEPobject allocates a storage area
+                                                                                                                                                                                               can be scheduled. The detailed processing of the probe pipeline is
+for each such thread/core for each executable pipeline.
+                                                                                                                                                                                               shown in Figure 4. Again, a thread requests work from the dis-
+   The parallel processing of the pipeline for filtering T and build-
+                                                                                                                                                                                               patcher which assigns a morsel in the corresponding NUMA parti-
+ing the hash table HT (T ) is shown in Figure 3. Let us concentrate
+                                                                                                                                                                                               tion. That is, a thread located on a core in the red NUMA partition
+on the processing of the first phase of the pipeline that filters in-
+                                                                                                                                                                                               is assigned a morsel of the base relation R that is located on the cor-
+put T and stores the “surviving” tuples in temporary storage areas.
+
+
+
+                                                                                                                                                                                       745
+   Storage            HT(T)           HT(S)
+   area of
+                                                                                                                                                  Lock-free Data Structures of Dispatcher
+  blue core                                                                                                                                             List of pending pipeline-jobs
+                                                                                                                                                  (possibly belonging to different queries)
+  Storage
+   area of
+                                                                                                             Dispatcher                                   Pipeline-
+                                                                                                                                                             Job
+                                                                                                                                                                                          Pipeline-
+                                                                                                                                                                                             Job
+ green core                                                                                                     Code                                          J1                              J2
+
+
+  Storage                                                                                                                                      M    r1      M   g1     M   b1
+   area of
+
+
+
+
+                                                                                                                                    r1
+  red core
+
+
+
+
+                                                                                                                   on (red J1 on morsel M
+                                                                                                                                                M           M          M
+
+
+
+
+                                                                                                                                           0
+                                                      v...(R)   v...(R)   v...(R)                                                                   r2          g2         b2
+
+
+
+
+                                                                                                                                    of Core
+                                                                                          dispatch(0)
+                                                                                                                                               M    r3      M  g3      M   b3
+
+
+
+
+                                                 el
+
+
+
+
+                                                                                                                             (J1, M )
+                                               mors
+
+
+
+
+                                                                                                                     r1
+
+
+
+
+                                                                                                                          ) socket
+                                                            morsel
+                                              next
+
+
+
+
+                                                                                                                         -Job
+                                                                                                                                               (virtual) lists of morsels to be processed
+                                                                                                                                                (colors indicates on what socket/core
+
+
+
+
+                                                                                                                 Pipeline
+                                                                                                                                                          the morsel is located)
+                                                                R
+
+                                                                                                                       Socket                                           Socket
+
+
+
+
+                                                                                              DRAM DRAM
+
+
+
+
+                                                                                                                                                                                                      DRAM DRAM
+                                                                                                              Core0 Core        Core       Core                 Core   Core     Core   Core
+       Figure 4: Morsel-wise processing of the probe phase                                                    Core Core         Core       Core                 Core   Core     Core   Core
+
+                                                                                                                                                  inter    connect
+                                                                                                              Core8 Core        Core       Core                 Core   Core     Core   Core
+responding “red” NUMA socket. The result of the probe pipeline                                                Core Core         Core       Core                 Core   Core     Core   Core
+is again stored in NUMA local storage areas in order to preserve                                                       Socket                                           Socket
+NUMA locality for further processing (not present in our sample
+query plan).                                                                                    Example NUMA Multi-Core Server with 4 Sockets and 32 Cores
+   In all, morsel-driven parallelism executes multiple pipelines in
+parallel, which is similar to typical implementations of the Vol-                         Figure 5: Dispatcher assigns pipeline-jobs on morsels to
+cano model. Different from Volcano, however, is the fact that                             threads depending on the core
+the pipelines are not independent. That is, they share data struc-
+tures and the operators are aware of parallel execution and must                                        3. Load balancing requires that all cores participating in a query
+perform synchronization (through efficient lock-free mechanisms                                            pipeline finish their work at the same time in order to prevent
+– see later). A further difference is that the number of threads exe-                                      (fast) cores from waiting for other (slow) cores1 .
+cuting the plan is fully elastic. That is, the number may differ not
+only between different pipeline segments, as shown in Figure 2, but                          In Figure 5 the architecture of the dispatcher is sketched. It
+also inside the same pipeline segment during query execution – as                         maintains a list of pending pipeline jobs. This list only contains
+described in the following.                                                               pipeline jobs whose prerequisites have already been processed. E.g.,
+                                                                                          for our running example query the build input pipelines are first
+                                                                                          inserted into the list of pending jobs. The probe pipeline is only
+3.     DISPATCHER: SCHEDULING PARALLEL                                                    inserted after these two build pipelines have been finished. As de-
+       PIPELINE TASKS                                                                     scribed before, each of the active queries is controlled by a QEPob-
+                                                                                          ject which is responsible for transferring executable pipelines to
+   The dispatcher is controlling and assigning the compute re-
+                                                                                          the dispatcher. Thus, the dispatcher maintains only lists of pipeline
+sources to the parallel pipelines. This is done by assigning tasks to
+                                                                                          jobs for which all dependent pipelines were already processed. In
+worker threads. We (pre-)create one worker thread for each hard-
+                                                                                          general, the dispatcher queue will contain pending pipeline jobs
+ware thread that the machine provides and permanently bind each
+                                                                                          of different queries that are executed in parallel to accommodate
+worker to it. Thus, the level of parallelism of a particular query is
+                                                                                          inter-query parallelism.
+not controlled by creating or terminating threads, but rather by as-
+signing them particular tasks of possibly different queries. A task                       3.1               Elasticity
+that is assigned to such a worker thread consists of a pipeline job                          The fully elastic parallelism, which is achieved by dispatching
+and a particular morsel on which the pipeline has to be executed.                         jobs “a morsel at a time”, allows for intelligent scheduling of these
+Preemption of a task occurs at morsel boundaries – thereby elimi-                         inter-query parallel pipeline jobs depending on a quality of service
+nating potentially costly interrupt mechanisms. We experimentally                         model. It enables to gracefully decrease the degree of parallelism
+determined that a morsel size of about 100,000 tuples yields good                         of, say a long-running query Ql at any stage of processing in order
+tradeoff between instant elasticity adjustment, load balancing and                        to prioritize a possibly more important interactive query Q+ . Once
+low maintenance overhead.                                                                 the higher prioritized query Q+ is finished, the pendulum swings
+   There are three main goals for assigning tasks to threads that run                     back to the long running query by dispatching all or most cores to
+on particular cores:                                                                      tasks of the long running query Ql . In Section 5.4 we demonstrate
+                                                                                          this dynamic elasticity experimentally. In our current implemen-
+     1. Preserving (NUMA-)locality by assigning data morsels to                           tation all queries have the same priority, so threads are distributed
+        cores on which the morsels are allocated                                          1
+                                                                                           This assumes that the goal is to minimize the response time of a
+     2. Full elasticity concerning the level of parallelism of a partic-                  particular query. Of course, an idle thread could start working on
+        ular query                                                                        another query otherwise.
+
+
+
+                                                                                    746
+equally over all active queries. A priority-based scheduling com-
+ponent is under development but beyond the scope of this paper.                              0.8
+
+   For each pipeline job the dispatcher maintains lists of pending
+                                                                                             0.6
+morsels on which the pipeline job has still to be executed. For each
+
+
+
+
+                                                                                  time [s]
+core a separate list exists to ensure that a work request of, say, Core                      0.4
+0 returns a morsel that is allocated on the same socket as Core 0.
+This is indicated by different colors in our architectural sketch. As                        0.2
+soon as Core 0 finishes processing the assigned morsel, it requests
+a new task, which may or may not stem from the same pipeline job.                            0.0
+This depends on the prioritization of the different pipeline jobs that                             100   1K      10K      100K    1M     10M
+originate from different queries being executed. If a high-priority                                               morsel size
+query enters the system it may lead to a decreased parallelism de-
+gree for the current query. Morsel-wise processing allows to re-                              Figure 6: Effect of morsel size on query execution
+assign cores to different pipeline jobs without any drastic interrupt
+mechanism.                                                                      and could therefore be executed in parallel. However, the useful-
+                                                                                ness of this form of parallelism is limited. The number of indepen-
+3.2    Implementation Overview                                                  dent pipelines is usually much smaller than the number of cores,
+   For illustration purposes we showed a (long) linked list of morsels          and the amount of work in each pipeline generally differs. Fur-
+for each core in Figure 5. In reality (i.e., in our implementation) we          thermore, bushy parallelism can decrease performance by reducing
+maintain storage area boundaries for each core/socket and segment               cache locality. Therefore, we currently avoid to execute multiple
+these large storage areas into morsels on demand; that is, when                 pipelines from one query in parallel; in our example, we first exe-
+a core requests a task from the dispatcher the next morsel of the               cute pipeline T , and only after T is finished, the job for pipeline S
+pipeline argument’s storage area on the particular socket is “cut               is added to the list of pipeline jobs.
+out”. Furthermore, in Figure 5 the Dispatcher appears like a sep-                  Besides elasticity, morsel-driven processing also allows for a
+arate thread. This, however, would incur two disadvantages: (1)                 simple and elegant implementation of query canceling. A user may
+the dispatcher itself would need a core to run on or might pre-                 have aborted her query request, an exception happened in a query
+empt query evaluation threads and (2) it could become a source                  (e.g., a numeric overflow), or the system is running out of RAM.
+of contention, in particular if the morsel size was configured quite            If any of these events happen, the involved query is marked in the
+small. Therefore, the dispatcher is implemented as a lock-free data             dispatcher. The marker is checked whenever a morsel of that query
+structure only. The dispatcher’s code is then executed by the work-             is finished, therefore, very soon all worker threads will stop work-
+requesting query evaluation thread itself. Thus, the dispatcher is au-          ing on this query. In contrast to forcing the operating system to
+tomatically executed on the (otherwise unused) core of this worker              kill threads, this approach allows each thread to clean up (e.g., free
+thread. Relying on lock-free data structures (i.e., the pipeline job            allocated memory).
+queue as well as the associated morsel queues) reduces contention
+even if multiple query evaluation threads request new tasks at the              3.3            Morsel Size
+same time. Analogously, the QEPobject that triggers the progress                   In contrast to systems like Vectorwise [9] and IBM’s BLU [31],
+of a particular query by observing data dependencies (e.g., build-              which use vectors/strides to pass data between operators, there is no
+ing hash tables before executing the probe pipeline) is implemented             performance penalty if a morsel does not fit into cache. Morsels are
+as a passive state machine. The code is invoked by the dispatcher               used to break a large task into small, constant-sized work units to
+whenever a pipeline job is fully executed as observed by not being              facilitate work-stealing and preemption. Consequently, the morsel
+able to find a new morsel upon a work request. Again, this state                size is not very critical for performance, it only needs to be large
+machine is executed on the otherwise unused core of the worker                  enough to amortize scheduling overhead while providing good re-
+thread that originally requested a new task from the dispatcher.                sponse times. To show the effect of morsel size on query per-
+   Besides the ability to assign a core to a different query at any             formance we measured the performance for the query select
+time – called elasticity – the morsel-wise processing also guaran-              min(a) from R using 64 threads on a Nehalem EX system,
+tees load balancing and skew resistance. All threads working on the             which is described in Section 5. This query is very simple, so it
+same pipeline job run to completion in a “photo finish”: they are               stresses the work-stealing data structure as much as possible. Fig-
+guaranteed to reach the finish line within the time period it takes             ure 6 shows that the morsel size should be set to the smallest pos-
+to process a single morsel. If, for some reason, a core finishes                sible value where the overhead is negligible, in this case to a value
+processing all morsels on its particular socket, the dispatcher will            above 10,000. The optimal setting depends on the hardware, but
+“steal work” from another core, i.e., it will assign morsels on a dif-          can easily be determined experimentally.
+ferent socket. On some NUMA systems, not all sockets are directly                  On many-core systems, any shared data structure, even if lock-
+connected with each other; here it pays off to steal from closer sock-          free, can eventually become a bottleneck. In the case of our work-
+ets first. Under normal circumstances, work-stealing from remote                stealing data structure, however, there are a number of aspects that
+sockets happens very infrequently; nevertheless it is necessary to              prevent it from becoming a scalability problem. First, in our imple-
+avoid idle threads. And the writing into temporary storage will be              mentation the total work is initially split between all threads, such
+done into NUMA local storage areas anyway (that is, a red morsel                that each thread temporarily owns a local range. Because we cache
+turns blue if it was processed by a blue core in the process of steal-          line align each range, conflicts at the cache line level are unlikely.
+ing work from the core(s) on the red socket).                                   Only when this local range is exhausted, a thread tries to steal work
+   So far, we have discussed intra-pipeline parallelism. Our par-               from another range. Second, if more than one query is executed
+allelization scheme can also support bushy parallelism, e.g., the               concurrently, the pressure on the data structure is further reduced.
+pipelines “filtering and building the hash table of T ” and “filtering          Finally, it is always possible to increase the morsel size. This re-
+and building the hash table of S” of our example are independent                sults in fewer accesses to the work-stealing data structure. In the
+
+
+
+                                                                          747
+worst case a too large morsel size results in underutilized threads                                             16 bit tag for early filtering
+                                                                                             hashTable
+but does not affect throughput of the system if enough concurrent                                   00000100                    d
+queries are being executed.
+                                                                                                                    48 bit pointer
+4.     PARALLEL OPERATOR DETAILS                                                                    10000010
+                                                                                                                                e
+  In order to be able to completely parallelize each pipeline, each
+operator must be capable to accept tuples in parallel (e.g., by syn-
+chronizing shared data structures) and, for operators that start a new                                              f
+pipeline, to produce tuples in parallel. In this section we discuss the
+                                                                                    1   insert(entry) {
+implementation of the most important parallel operators.                            2     // determine slot in hash table
+                                                                                    3     slot = entry->hash >> hashTableShift
+4.1      Hash Join                                                                  4     do {
+   As discussed in Section 2 and shown in Figure 3, the hash table                  5       old = hashTable[slot]
+                                                                                    6       // set next to old entry without tag
+construction of our hash join consists of two phases. In the first                  7       entry->next = removeTag(old)
+phase, the build input tuples are materialized into a thread-local                  8       // add old and new tag
+storage area2 ; this requires no synchronization. Once all input tu-                9       new = entry | (old&tagMask) | tag(entry->hash)
+                                                                                   10       // try to set new value, repeat on failure
+ples have been consumed that way, an empty hash table is created                   11     } while (!CAS(hashTable[slot], old, new))
+with the perfect size, because the input size is now known pre-                    12   }
+cisely. This is much more efficient than dynamically growing hash
+tables, which incur a high overhead in a parallel setting. In the sec-                   Figure 7: Lock-free insertion into tagged hash table
+ond phase of the parallel build phase each thread scans its storage
+area and inserts pointers to its tuples using the atomic compare-
+and-swap instruction. The details are explained in Section 4.2.                    4.2    Lock-Free Tagged Hash Table
+   Outer join is a minor variation of the described algorithm. In                     The hash table that we use for the hash join operator has an
+each tuple a marker is additionally allocated that indicates if this               early-filtering optimization, which improves performance of selec-
+tuple had a match. In the probe phase the marker is set indicating                 tive joins, which are quite common. The key idea is to tag a hash
+that a match occurred. Before setting the marker it is advantageous                bucket list with a small filter into which all elements of that partic-
+to first check that the marker is not yet set, to avoid unnecessary                ular list are “hashed” to set their 1-bit. For selective probes, i.e.,
+contention. Semi and anti joins are implemented similarly.                         probes that would not find a match by traversing the list, the filter
+   Using a number of single-operation benchmarks, Balkesen et al.                  usually reduces the number of cache misses to 1 by skipping the
+showed that a highly-optimized radix join can achieve higher per-                  list traversal after checking the tag. As shown in Figure 7 (top), we
+formance than a single-table join [5]. However, in comparison with                 encode a tag directly into 16 bits of each pointer in the hash table.
+radix join our single-table hash join                                              This saves space and, more importantly, allows to update both the
+     • is fully pipelined for the larger input relation, thus uses less            pointer and the tag using a single atomic compare-and-swap oper-
+       space as the probe input can be processed in place,                         ation.
+                                                                                      For low-cost synchronization we exploit the fact that in a join the
+     • is a “good team player” meaning that multiple small (dimen-                 hash table is insert-only and lookups occur only after all inserts are
+       sion) tables can be joined as a team by a probe pipeline of                 completed. Figure 7 (bottom) shows the pseudo code for inserting a
+       the large (fact) table through all these dimension hash tables,             new entry into the hash table. In line 11, the pointer to the new ele-
+     • is very efficient if the two input cardinalities differ strongly,           ment (e.g, “f” in the picture) is set using compare-and-swap (CAS).
+       as is very often the case in practice,                                      This pointer is augmented by the new tag, which is computed from
+     • can benefit from skewed key distributions3 [7],                             the old and the new tag (line 9). If the CAS failed (because another
+     • is insensitive to tuple size, and                                           insert occurred simultaneously), the process is repeated.
+                                                                                      Our tagging technique has a number of advantages in compari-
+     • has no hardware-specific parameters.
+                                                                                   son to Bloom filters, which can be used similarly and are, for ex-
+Because of these practical advantages, a single-table hash join is                 ample, used in Vectorwise [8], SQL Server [21], and BLU [31].
+often preferable to radix join in complex query processing. For ex-                First, a Bloom filter is an additional data structure that incurs mul-
+ample, in the TPC-H benchmark, 97.4% of all joined tuples arrive                   tiple reads. And for large tables, the Bloom filter may not fit into
+at the probe side, and therefore the hash table often fits into cache.             cache (or only relatively slow last-level cache), as the Bloom fil-
+This effect is even more pronounced with the Star Schema Bench-                    ter size must be proportional to the hash table size to be effective.
+mark where 99.5% of the joined tuples arrive at the probe side.                    Therefore, the overhead can be quite high, although Bloom filters
+Therefore, we concentrated on a single-table hash join which has                   can certainly be a very good optimization due to their small size.
+the advantage of having no hardware-specific parameters and not                    In our approach no unnecessary memory accesses are performed,
+relying on query optimizer estimates while providing very good (if                 only a small number of cheap bitwise operations. Therefore, hash
+the table fits into cache) or at least decent (if the table is larger than         tagging has very low overhead and can always be used, without re-
+cache) performance. We left the radix join implementation, which                   lying on the query optimizer to estimate selectivities. Besides join,
+is beneficial in some scenarios due to higher locality, for future en-             tagging is also very beneficial during aggregation when most keys
+hancement of our query engine.                                                     are unique.
+2
+  We also reserve space for a next pointer within each tuple for han-                 The hash table array only stores pointers, and not the tuples
+dling hash collisions.                                                             themselves, i.e., we do not use open addressing. There are a num-
+3
+  One example that occurs in TPC-H is positional skew, i.e., in a                  ber of reasons for this: Since the tuples are usually much larger than
+1:n join all join partners occur in close proximity which improves                 pointers, the hash table can be sized quite generously to at least
+cache locality.                                                                    twice the size of the input. This reduces the number of collisions
+
+
+
+                                                                             748
+                                                                                                                                   spill when ht becomes full            HT
+without wasting too much space. Furthermore, chaining allows for                        K      V                                                                     K V
+tuples of variable size, which is not possible with open address-                       8      9                      ht                   Partition 0
+                                                                                                                                                                     12 ...
+
+
+
+
+                                                                               morsel
+ing. Finally, due to our filter, probe misses are in fact faster with                   3      2                  K V                  (12,7) (8,3)       group
+                                                                                        13     7                  8 9                 (41,4) (13,7)                  8    ...
+chaining than with open addressing.                                                                                                                                                   Result ptn 0
+                                                                                        3      8                  13 7
+                                                                                                        gro
+   We use large virtual memory pages (2MB) both for the hash ta-                        3      4           up                                                        4    ...
+
+
+
+
+                                                                               morsel
+                                                                                        10     7                  3    10            ...Partition 3 ...
+ble and the tuple storage areas. This has several positive effects:                                                                                             up
+
+
+
+
+                                                                                                                                                          gro
+                                                                                        33     22                     ht                   Partition 0    gro            HT
+
+
+
+
+                                                                                                                                                            up
+The number of TLB misses is reduced, the page table is guaranteed                       4      17       group     K    V               (8,9) (4,30)
+                                                                                        33     4                                                                     K    V
+to fit into L1 cache, and scalability problems from too many kernel
+
+
+
+
+                                                                          next red
+                                                                                                                  4    17
+
+
+
+
+                                                                           morsel
+                                                                                        8      7                                     (13,14) (33,5)
+page faults during the build phase are avoided. We allocate the hash                                              33   22                                 gro        13 ...
+                                                                                        ...    ...                10   7                                     up
+table using the Unix mmap system call, if available. Modern oper-                                                                                                                     Result ptn 1
+                                                                                                                  3    4             ...Partition 3 ...
+                                                                                                                                                                     33 ...
+ating systems do not eagerly allocate the memory immediately, but
+only when a particular page is first written to. This has two posi-                                  Phase 1: local pre-aggregation
+tive effects. First, there is no need to manually initialize the hash
+table to zero in an additional phase. Second, the table is adaptively                                                                       Phase 2: aggregate partition-wise
+distributed over the NUMA nodes, because the pages will be lo-
+cated on the same NUMA node as the thread that has first written                                                Figure 8: Parallel aggregation
+to that page. If many threads build the hash table, it will be pseudo-
+randomly interleaved over all nodes. In case only threads from
+
+
+
+
+                                                                                  ce
+a single NUMA node construct the hash table, it will be located
+
+
+
+
+                                                                             sort
+                                                                           in-pla
+
+
+
+
+                                                                                                                           sort
+
+
+
+
+                                                                                                                                                           sort
+on that node – which is exactly as desired. Thus, relying on the                              global 1/3                                                                        global 2/3
+operating system automatically takes into consideration that often
+multiple independent queries are being executed concurrently.
+                                                                                                                                                                                  3
+4.3    NUMA-Aware Table Partitioning                                                           local 1/3                                                                 a    l 2/
+                                                                                                                            Compute global separators                loc
+    In order to implement NUMA-local table scans, relations have
+to be distributed over the memory nodes. The most obvious way                                                               from the local separators
+to do this is round-robin assignment. A better alternative is to par-
+tition relations using the hash value of some “important” attribute.
+The benefit is that in a join between two tables that are both par-                                  merge                        merge                    merge
+titioned on the join key (e.g., by the primary key of one and by
+the foreign key of the other relation), matching tuples usually re-
+side on the same socket. A typical example (from TPC-H) would
+be to partition orders and lineitem on the orderkey attribute. Note                                             Figure 9: Parallel merge sort
+that this is more a performance hint than a hard partitioning: Work
+stealing or data imbalance can still lead to joins between tuples               partitions. After all input data has been partitioned, the partitions
+from different sockets, but most join pairs will come from the same             are exchanged between the threads.
+socket. The result is that there is less cross-socket communication,                The second phase consists of each thread scanning a partition
+because the relations are co-located for this frequent join. This also          and aggregating it into a thread-local hash table. As there are more
+affects the hash table array, because the same hash function used               partitions than worker threads, this process is repeated until all par-
+for determining the hash partition is also used for the highest bits            titions are finished. Whenever a partition has been fully aggregated,
+of the hash buckets in a hash join. Except for the choice of the                its tuples are immediately pushed into the following operator before
+partitioning key, this scheme is completely transparent, and each               processing any other partitions. As a result, the aggregated tuples
+partition contains approximately the same number of tuples due                  are likely still in cache and can be processed more efficiently.
+to the use of hash-based fragmentation. It should be stressed that                  Note that the aggregation operator is fundamentally different
+this co-location scheme is beneficial but not decisive for the high             from join in that the results are only produced after all the input
+performance of morsel-driven execution, as NUMA-locality is, in                 has been read. Since pipelining is not possible anyway, we use
+either case, guaranteed for table scans, and after the first pipeline           partitioning – not a single hash table as in our join operator.
+that materializes results NUMA locally.
+                                                                                4.5              Sorting
+4.4    Grouping/Aggregation                                                        In main memory, hash-based algorithms are usually faster than
+   The performance characteristics of the aggregation operator dif-             sorting [4]. Therefore, we currently do not use sort-based join
+fers very much depending on the number of groups (distinct keys).               or aggregation, and only sort to implement the order by or top-k
+If there are few groups, aggregation is very fast because all groups            clause. In our parallel sort operator each thread first materializes
+fit into cache. If, however, there are many groups, many cache                  and sorts its input locally and in place. In the case of top-k queries,
+misses happen. Contention from parallel accesses can be a prob-                 each thread directly maintains a heap of k tuples.
+lem in both cases (if the key distribution is skewed). To achieve                  After local sort, the parallel merge phase begins, as shown in Fig-
+good performance and scalability in all these cases, without rely-              ure 9. The difficulty lies in computing separators, so that merges are
+ing on query optimizer estimates, we use an approach similar to                 independent and can be executed in parallel without synchroniza-
+IBM BLU’s aggregation [31].                                                     tion. To do this, each thread first computes local separators by pick-
+   As indicated by Figure 8, our algorithm has two phases. In                   ing equidistant keys from its sorted run. Then, to handle skewed
+the first phase, thread-local pre-aggregation efficiently aggregates            distribution and similar to the median-of-medians algorithm, the lo-
+heavy hitters using a thread-local, fixed-sized hash table. When this           cal separators of all threads are combined, sorted, and the eventual,
+small pre-aggregation table becomes full, it is flushed to overflow             global separator keys are computed. After determining the global
+
+
+
+                                                                         749
+         Nehalem EX                          Sandy Bridge EP                          In this evaluation we used a classical ad-hoc TPC-H situation.
+     DRAM             DRAM                  DRAM                  DRAM             This means that no hand-tuning of physical storage was used, as
+        25.6GB/s                               51.2GB/s                            this way the plans used are similar (hash joins everywhere). The
+                                                                                   Vectorwise results from the TPC web site include this additional
+                                                                                   tuning, mainly clustered indexes, which allows to execute some
+     socket 0        socket 1               socket 0              socket 1         of the larger joins with merge-join algorithms. Additionally, these
+      8 cores          8 cores               8 cores               8 cores         indexes allow the query optimizer to propagate range restrictions
+     24MB L3          24MB L3               20MB L3               20MB L3
+                                                                                   from one join side to the other [8], which greatly improves perfor-
+                           12.8GB/s              16.0GB/s                          mance for a small number of queries, but does not affect the query
+                           (bidirec�onal)        (bidirec�onal)
+                                                                                   processing itself very much. This tuning also does not improve
+                                                                                   the scalability of query execution; on average the speedup is below
+     socket 3        socket 2               socket 3              socket 2         10× both with and without tuning. For completeness, we also pro-
+      8 cores          8 cores               8 cores               8 cores         vide results for Vectorwise on Nehalem EX with the settings from
+     24MB L3          24MB L3               20MB L3               20MB L3          the TPC-H full disclosure report:
+                                                                                     system                                geo. mean sum         scal.
+      DRAM            DRAM                   DRAM                  DRAM
+                                                                                     HyPer                                    0.45s     15.3s 28.1×
+                                                                                     Vectorwise                               2.84s     93.4s 9.3×
+       Figure 10: NUMA topologies, theoretical bandwidth                             Vectorwise, full-disclosure settings     1.19s     41.2s 8.4×
+
+separator keys, binary (or interpolation) search finds the indexes of                 In HyPer the data can be updated cheaply in-place. The two
+them in the data arrays. Using these indexes, the exact layout of the              TPC-H refresh streams on scale factor 100 execute in less than 1
+output array can be computed. Finally, the runs can be merged into                 second. This is in contrast to heavily read-optimized systems (e.g.,
+the output array without any synchronization.                                      [10]), where updates are expensive due to heavy indexing and re-
+                                                                                   ordering. Our system transparently distributes the input relations
+                                                                                   over all available NUMA sockets by partitioning each relation us-
+5.     EVALUATION                                                                  ing the first attribute of the primary key into 64 partitions. The
+   We integrated our parallel query evaluation framework into HyPer,               execution times include memory allocation and deallocation (from
+a main-memory column database system that supports SQL-92 and                      the operating system) for intermediate results, hash tables, etc.
+has very good single-threaded performance, but, so far, did not use
+intra-query parallelism. In this evaluation we focus on ad hoc de-
+cision support queries, and, except for declaring primary keys, do                 5.2    TPC-H
+not enable any additional index structures. Therefore, our results                    Figure 11 compares the scalability of HyPer with Vectorwise on
+mainly measure the performance and scalability of the table scan,                  the Nehalem system; both DBMSs are normalized by the single-
+aggregation, and join (including outer, semi, anti join) operators.                threaded execution time of HyPer. Note that up to 32 threads,
+HyPer supports both row and column-wise storage; we used the                       “real” cores are used, the rest are “HyperThreads” (simultaneous
+column format in all experiments.                                                  multithreading). For most queries, HyPer reaches a speedup close
+                                                                                   to 30. In some cases a speedup close to or above 40 is reached due
+5.1      Experimental Setup                                                        to simultaneous multithreading. Although Vectorwise has similar
+   We used two different hardware platforms – both running Linux.                  single-threaded performance as HyPer, its overall performance is
+Unless indicated otherwise we use a 4-socket Nehalem EX (Intel                     severely limited by its low speedup, which is often less than 10.
+Xeon X7560 at 2.3GHz). Additionally, some experiments are per-                     One problem is load balancing: in the – trivially parallelizable –
+formed on a 4-socket Sandy Bridge EP (Intel Xeon E5-4650L at                       scan-only query 6 the slowest thread often finishes work 50% be-
+2.6GHz-3.1GHz). Such systems are particularly suitable for main-                   fore the last. While in real-world scenarios it is usually data skew
+memory database systems, as they support terabytes of RAM at                       that challenges load balancing, this is not the case in the fully uni-
+reasonable cost. Although both systems have 32 cores, 64 hard-                     form TPC-H. These issues are related to the use of the Volcano
+ware threads, and almost the same amount of cache, their NUMA                      model for parallelizing queries in Vectorwise [3]. This approach,
+topology is quite different. As Figure 10 shows, each of the Sandy                 which is commonly followed (e.g., in Oracle and SQL Server), as
+Bridge CPUs has twice the theoretical per-node memory bandwidth                    it allows to implement parallelism without affecting existing query
+but is only connected to two other sockets. Consequently, some                     operators, bakes the parallelism into the plan at planning time by
+memory accesses (e.g., from socket 0 to socket 2) require two hops                 instantiating a set of query plans on separate plans and connecting
+instead of one; this increases latency and reduces memory band-                    then using “exchange” operators [12]. We point out that fixed work
+width because of cross traffic [23]. Note that the upcoming 4-                     division combined with lack of NUMA-awareness can lead to sig-
+socket Ivy Bridge platform will come in two versions, Ivy Bridge                   nificant performance differences between threads (Vectorwise up to
+EX which is fully connected like Nehalem EX, and Ivy Bridge EP                     version 3 is not NUMA-aware, as confirmed by our experiments in
+with only a single interconnect per node like Sandy Bridge EP.                     Section 5.3).
+   As our main competitor we chose the official single-server                         Figure 11 also shows scalability results where we disabled some
+TPC-H leader Vectorwise. We also measured the performance of                       important features of our query engine. Performance is signifi-
+the open source row store PostgreSQL and a column store that is                    cantly lower when we disable explicit NUMA-awareness and rely
+integrated into one of the major commercial database systems. On                   on the operating system instead (cf. “HyPer (not NUMA aware)”).
+TPC-H, in comparison with HyPer, PostgreSQL was slower by a                        A further performance penalty can be observed, if we additionally
+factor of 30 on average, the commercial column store by a factor of                disable adaptive morsel-wise processing and the performance en-
+10. We therefore concentrate on Vectorwise (version 2.5) in further                hancements introduced in this paper like hash tagging. This gives
+experiments, as it was much faster than the other systems.                         an impression of the effects of the individual techniques. But note
+
+
+
+                                                                             750
+                                  1               2                3                 4                  5                 6                 7                      8
+                     40
+
+                     30
+
+                     20
+
+                     10
+
+                      0
+                                  9               10              11                12                  13                14                15                    16
+speedup over HyPer
+
+
+
+
+                     40
+
+                     30
+
+                     20
+
+                     10
+
+                      0
+                                  17              18              19                20                  21                22              System
+                     40
+                                                                                                                                                 HyPer (full-fledged)
+                     30
+                                                                                                                                                 HyPer (not NUMA aware)
+                     20
+                                                                                                                                                 HyPer (non-adaptive)
+                     10
+
+                      0                                                                                                                          Vectorwise
+                           1   16 32 48 64 1   16 32 48 64 1   16 32 48 64 1    16 32 48 64 1        16 32 48 64 1    16 32 48 64
+                                                                                           threads
+
+                                          Figure 11: TPC-H scalability on Nehalem EX (cores 1-32 are “real”, cores 33-64 are “virtual”)
+
+                                      HyPer          [%]       Vectorwise     [%]                5.3    NUMA Awareness
+                 TPC-H         time scal. rd. wr. remote time scal. rd. wr. remote
+                     #           [s] [×] [GB/s]       QPI   [s] [×] [GB/s]     QPI                  Table 1 shows memory bandwidth and QPI statistics4 for each
+                     1         0.28 32.4 82.6 0.2 1 40 1.13 30.2 12.5 0.5 74 7                   of the 22 TPC-H queries. Query 1, which aggregates the largest
+                     2         0.08 22.3 25.1 0.5 15 17 0.63 4.6 8.7 3.6 55 6                    relation, for example, reads 82.6GB/s getting close to the theoreti-
+                     3         0.66 24.7 48.1 4.4 25 34 3.83 7.3 13.5 4.6 76 9                   cal bandwidth maximum of 100GB/s. The “remote” column in the
+                     4         0.38 21.6 45.8 2.5 15 32 2.73 9.1 17.5 6.5 68 11
+                                                                                                 table shows the percentage of data being accessed though the in-
+                     5         0.97 21.3 36.8 5.0 29 30 4.52 7.0 27.8 13.1 80 24
+                     6         0.17 27.5 80.0 0.1 4 43 0.48 17.8 21.5 0.5 75 10                  terconnects (remotely), and therefore measures the locality of each
+                     7         0.53 32.4 43.2 4.2 39 38 3.75 8.1 19.5 7.9 70 14                  query. Because of NUMA-aware processing, most data is accessed
+                     8         0.35 31.2 34.9 2.4 15 24 4.46 7.7 10.9 6.7 39 7                   locally, which results in lower latency and higher bandwidth. From
+                     9         2.14 32.0 34.3 5.5 48 32 11.42 7.9 18.4 7.7 63 10                 the “QPI” column5 , which shows the saturation of the most heavily
+                    10         0.60 20.0 26.7 5.2 37 24 6.46 5.7 12.1 5.7 55 10                  used QPI link, one can conclude that the bandwidth of the QPI links
+                    11         0.09 37.1 21.8 2.5 25 16 0.67 3.9 6.0 2.1 57 3
+                                                                                                 is sufficient on this system. The table also shows that Vectorwise is
+                    12         0.22 42.0 64.5 1.7 5 34 6.65 6.9 12.3 4.7 61 9
+                    13         1.95 40.0 21.8 10.3 54 25 6.23 11.4 46.6 13.3 74 37               not NUMA optimized: most queries have high percentages of re-
+                    14         0.19 24.8 43.0 6.6 29 34 2.42 7.3 13.7 4.7 60 8                   motely accessed memory. For instance, the 75% remote accesses in
+                    15         0.44 19.8 23.5 3.5 34 21 1.63 7.2 16.8 6.0 62 10                  query 1 shows that its buffer manager is not NUMA-aware. How-
+                    16         0.78 17.3 14.3 2.7 62 16 1.64 8.8 24.9 8.4 53 12                  ever, the QPI links are utilized fairly evenly, as the database rela-
+                    17         0.44 30.5 19.1 0.5 13 13 0.84 15.0 16.2 2.9 69 7                  tions seem to be spread over all 4 NUMA nodes. This prevents a
+                    18         2.78 24.0 24.5 12.5 40 25 14.94 6.5 26.3 8.7 66 13
+                                                                                                 single memory controller and the QPI links to it from becoming the
+                    19         0.88 29.5 42.5 3.9 17 27 2.87 8.8 7.4 1.4 79 5
+                    20         0.18 33.4 45.1 0.9 5 23 1.94 9.2 12.6 1.2 74 6                    bottleneck.
+                    21         0.91 28.0 40.7 4.1 16 29 12.00 9.1 18.2 6.1 67 9                     Most experiments so far used our NUMA-aware storage lay-
+                    22         0.30 25.7 35.5 1.3 75 38 3.14 4.3 7.0 2.4 66 4                    out, NUMA-local scans, the NUMA-aware partitioning, which re-
+                                                                                                 duces remote accesses in joins, and the fact that all operators try
+                          Table 1: TPC-H (scale factor 100) statistics on Nehalem EX             to keep data NUMA-local whenever possible. To show the overall
+                                                                                                 4
+                                                                                                   These statistics were obtained using the Open Source tool
+                                                                                                 “Intel Performance Counter Monitor” (www.intel.com/
+                     that we still use highly tuned operator implementations that try to         software/pcm). The “rd.” (read), “wr.” (write), and “remote”
+                     maximize locality.                                                          values are aggregated over all sockets. The “QPI” column shows
+                        Table 1 and Table 2 allow to compare the TPC-H performance of            the utilization of the most-utilized QPI link (though with NUMA-
+                     the Nehalem and Sandy Bridge systems. The overall performance               awareness the utilization of the links is very similar). Unfortu-
+                                                                                                 nately, these statistics are not exposed on Sandy Bridge EP.
+                     is similar on both systems, because the missing interconnect links          5
+                                                                                                   The QPI links are used both for sending the actual data, as well
+                     on Sandy Bridge EP, which result in slightly lower scalability, are         as for broadcasting cache coherency requests, which is unavoid-
+                     compensated by its higher clock rate. Notice that all queries com-          able and happens even for local accesses. Query 1, for example,
+                     plete within 3 seconds – on a 100GB data set using ad hoc hash              reads 82.6GB/s, 99% of it locally, but still uses 40% of the QPI
+                     joins and without using any index structures.                               link bandwidth.
+
+
+
+                                                                                           751
+             1    2    3    4    5    6    7    8    9 10 11 12 13 14 15 16 17 18 19 20 21 22
+time [s] 0.21 0.10 0.63 0.30 0.84 0.14 0.56 0.29 2.44 0.61 0.10 0.33 2.32 0.33 0.33 0.81 0.40 1.66 0.68 0.18 0.74 0.47
+scal. [×] 39.4 17.8 18.6 26.9 28.0 42.8 25.3 33.3 21.5 21.0 27.4 41.8 16.5 15.6 20.5 11.0 34.0 29.1 29.6 33.7 26.4 8.4
+
+                                                          Table 2: TPC-H (scale factor 100) performance on Sandy Bridge EP
+                                                 threads per query stream
+                                       64   32      16      8       4       2    1
+                                                                                              worker 0
+                                                                                              worker 1
+        throughput [queries/s]
+
+
+
+
+                                 1.5
+                                                                                              worker 2
+                                 1.0                                                          worker 3
+                                                                                                    q13 start             q14 start   q14 ﬁnish                   �me
+                                 0.5
+                                                                                              Figure 13: Illustration of morsel-wise processing and elasticity
+                                 0.0
+                                                                                                         SSB    time    scal.     read       write remote   QPI
+                                       1    2        4      8      16       32   64                       #       [s]    [×]    [GB/s]      [GB/s]    [%]   [%]
+                                                 number of query streams                                 1.1    0.10    33.0      35.8         0.4     18    29
+    Figure 12: Intra- vs. inter-query parallelism with 64 threads                                        1.2    0.04    41.7      85.6         0.1      1    44
+                                                                                                         1.3    0.04    42.6      85.6         0.1      1    44
+                                                                                                         2.1    0.11    44.2      25.6         0.7     13    17
+performance benefit of NUMA-awareness we also experimented                                               2.2    0.15    45.1      37.2         0.1      2    19
+with plausible alternatives: “OS default”, where the placement is                                        2.3    0.06    36.3      43.8         0.1      3    25
+performed by the operating system6 , and “interleaved”, where all                                        3.1    0.29    30.7      24.8         1.0     37    21
+memory is allocated round robin over all nodes. We report the geo-                                       3.2    0.09    38.3      37.3         0.4      7    22
+                                                                                                         3.3    0.06    40.7      51.0         0.1      2    27
+metric mean and maximum speedup of our NUMA-aware approach                                               3.4    0.06    40.5      51.9         0.1      2    28
+on TPC-H:                                                                                                4.1    0.26    36.5      43.4         0.3     34    34
+                      Nehalem EX          Sandy Bridge EP
+                                                                                                         4.2    0.23    35.1      43.3         0.3     28    33
+                  geo. mean     max      geo. mean     max                                               4.3    0.12    44.2      39.1         0.3      5    22
+    OS default      1.57×      4.95×       2.40×     5.81×
+    interleaved     1.07×      1.24×       1.58×     5.01×                                     Table 3: Star Schema Benchmark (scale 50) on Nehalem EX
+  Clearly, the default placement of the operating system is sub-
+optimal, as the memory controller of one NUMA node and the                                    even if few streams (but many cores per stream) are used. This al-
+QPI links to it become the bottleneck. These results also show that                           lows to minimize response time for high priority queries without
+on Nehalem EX, simply interleaving the memory is a reasonable,                                sacrificing too much throughput.
+though not optimal strategy, whereas on Sandy Bridge EP NUMA-                                    Figure 13 illustrates morsel-wise processing by showing an an-
+awareness is much more important for good performance. The rea-                               notated execution trace from our parallel profiler. Each color repre-
+son is that these two systems are quite different in their NUMA                               sents one pipeline stage and each block is one morsel. For graphical
+behavior, as can be seen from a micro benchmark that compares                                 reasons we used only 4 threads in this experiment. We started by
+NUMA-local accesses with a random mix of 25% local and 75%                                    executing TPC-H query 13, which received 4 threads; after some
+remote (including 25% two-hop accesses on Sandy Bridge EP) ac-                                time, TPC-H query 14 was started. As the trace shows, once the
+cesses:                                                                                       current morsels of worker thread 2 and 3 are finished, these threads
+                        bandwidth [GB/s] latency [ns]                                         switch to query 14 until it is finished, and finally continue working
+                        local      mix       local mix                                        on query 13. This experiment shows that it is possible to dynam-
+    Nehalem EX           93         60        161 186                                         ically reassign worker threads to other queries, i.e., that our paral-
+    Sandy Bridge EP 121             41        101 257                                         lelization scheme is fully elastic.
+   On Sandy Bridge EP only a small fraction of the theoretical                                   As mentioned in the introduction, the Volcano approach typically
+memory bandwidth can be reached unless most accesses are local,                               assigns work to threads statically. To compare with this approach,
+and the latency it 2.5× higher than for local accesses. On Nehalem                            we emulated it in our morsel-driven scheme by splitting the work
+EX, in contrast, these effects are much smaller, which explains why                           into as many chunks as there are threads, i.e., we set the morsel size
+the positive effect of NUMA-awareness is smaller on this system.                              to n/t, where n is the input size and t is the number of threads. As
+The importance of NUMA-awareness clearly depends on the speed                                 long as we only execute a single TPC-H query at a time, this change
+and number of the cross-socket interconnects.                                                 alone does not significantly decrease performance, because the in-
+                                                                                              put data is uniformly distributed on this workload. However, if we
+5.4                   Elasticity                                                              add some interference from other processes, this picture changes.
+                                                                                              For example, when we ran the TPC-H queries while another, un-
+   To demonstrate the elasticity of our approach, we performed an
+                                                                                              related single-threaded process occupied one core, query perfor-
+experiment where we varied the number parallel query streams.
+                                                                                              mance dropped by 36.8% with static approach, but only 4.7% with
+The 64 available hardware threads are distributed uniformly over
+                                                                                              dynamic morsel assignment.
+the streams, and each stream executes random permutations of the
+TPC-H queries. Figure 12 shows that the throughput stays high                                 5.5      Star Schema Benchmark
+6
+  In practice, the database itself is located on a single NUMA node,                             Besides TPC-H, we also measured the performance and scalabil-
+because the data is read from disk by a single thread. Other alloca-                          ity of our system on the Star Schema Benchmark (SSB) [26], which
+tions are local to the thread that first wrote to that memory. Thus,                          mimics data warehousing scenarios. Table 3 shows that our paral-
+hash tables are distributed randomly over the nodes.                                          lelization framework works very well on this workload, achieving
+
+
+
+                                                                                        752
+a speedup of over 40 for most queries. The scalability is higher                are maintained NUMA-locally across processing steps/pipelines.
+than on TPC-H, because TPC-H is a much more complex and chal-                   In addition, the full elasticity w.r.t. the degree of parallelism that
+lenging workload. TPC-H contains a very diverse set of queries:                 we propose was not covered. Very similar to Volcano-style paral-
+queries that only scan a single table, queries with complex joins,              lelization, in Oracle the individual operators are largely unaware of
+queries with simple and with complex aggregations, etc. It is quite             parallelism. [6] addresses some problems of this model, in partic-
+challenging to obtain good performance and scalability on such a                ular reliance on query optimizer estimates, by adaptively changing
+workload, as all operators must be scalable and capable of effi-                data distribution decisions during query execution. In an experi-
+ciently handling very diverse input distributions. All SSB queries,             mental study Kiefer et al. [17] showed that NUMA-awareness can
+in contrast, join a large fact table with multiple smaller dimension            improve database performance considerably. Porobic et al. inves-
+tables where the pipelining capabilities of our hash join algorithm             tigated [29] and improved NUMA-placement in OLTP systems by
+are very beneficial. Most of the data comes from the large fact                 partitioning the data and internal data structures in a NUMA-aware
+table, which can be read NUMA-locally (cf. column “remote” in                   way [28]. Heimel et al. presented a hardware-oblivious approach
+Figure 3), the hash tables of the dimensions are much smaller than              to parallelization that allows operators to be compiled to different
+the fact table, and the aggregation is quite cheap in comparison with           hardware platforms like CPUs or GPUs [15]. In this paper we fo-
+the rest of the query.                                                          cus on classical, query-centric parallelization, i.e., parallelizing in-
+                                                                                dividual queries in isolation. Another fruitful approach is to ex-
+6.    RELATED WORK                                                              ploit common work from multiple queries. This operator-centric
+                                                                                approach is used by QPipe [14] and SharedDB [11].
+   This paper is related to three distinct lines of work: papers that
+                                                                                   The seminal Volcano model [12] forms the basis of most cur-
+focus on multi-core join or aggregation processing in isolation, full
+                                                                                rent query evaluation engines enabling multi-core as well as dis-
+systems descriptions, and parallel execution frameworks, most no-
+                                                                                tributed [13] parallelism. Note that Volcano in a non-parallel
+tably Volcano.
+                                                                                context is also associated with an interpreted iterator execution
+   The radix hash join was originally designed to increase local-
+                                                                                paradigm where results are pulled upwards through an operator
+ity [24]. Kim et al. postulated it for parallel processing based on re-
+                                                                                tree, by calling the next() method on each operator, which deliv-
+peatedly partitioning the input relations [18]. Blanas et al. [7] were
+                                                                                ers the next tuple. Such a tuple-at-a-time execution model, while
+the first to compare the radix join with a simple, single global hash
+                                                                                elegant in its implementation, has been shown to introduce sig-
+table join. Balkesen et al. [5, 4] comprehensively investigated hash-
+                                                                                nificant interpretation overhead [25]. With the advent of high-
+and sort-based join algorithms. Ye et al. evaluated parallel aggrega-
+                                                                                performance analytical query engines, systems have been moving
+tion algorithms on multi-core CPUs [33]. Polychroniou and Ross
+                                                                                from this model towards vector or batch-oriented execution, where
+designed an aggregation algorithm to efficiently aggregate heavy
+                                                                                each next() method works on hundreds or thousands of tuples. This
+hitters (frequent items) [27].
+                                                                                vector-wise execution model appears in Vectorwise [3], but also in
+   A number of papers specifically focus on NUMA. In one of the
+                                                                                the batch-mode execution offered by ColumnStore Index tables in
+first paper that pinpoints the relevance of NUMA-locality, Teubner
+                                                                                SQL Server [22] (the Apollo project), as well as in stride-at-a-time
+and Müller [32] presented a NUMA-aware window-based stream
+                                                                                execution in IBM’s BLU engine for DB2 [31]. In HyPer we rely on
+join. In another early NUMA paper, Albutiu et al. designed a
+                                                                                a compiled query evaluation approach as first postulated by Krikel-
+NUMA-aware parallel sort merge join [1]. Li et al. refined this al-
+                                                                                las et al. [19] and later refined by Neumann [25] to obtain the same,
+gorithm by explicitly scheduling the shuffling of the sorted runs in
+                                                                                or even higher raw execution performance.
+order to avoid cross traffic in the NUMA interconnection network
+                                                                                   As far as parallelism is concerned, Volcano differentiates be-
+[23]. However, despite its locality-preserving nature this algorithm
+                                                                                tween vertical parallelism, where essentially the pipeline between
+turned out to be less efficient than hash joins due to the high cost of
+                                                                                two operators is transformed into an asynchronous producer/con-
+sorting [4, 20]. Lang et al. [20] devised a low synchronization over-
+                                                                                sumer model, and horizontal parallelism, where one operator is
+head NUMA-aware hash join, which is similar to our algorithm. It
+                                                                                parallelized by partitioning the input data and have each parallel
+relies on a single latch-free hash table interleaved across all NUMA
+                                                                                thread work on one of the partitions. Most systems have imple-
+nodes into which all threads insert the build input.
+                                                                                mented horizontal parallelism, since vertical and bushy parallelism
+   Unfortunately, the conclusiveness of these single-operator stud-
+                                                                                are less useful due to their unbalanced nature, as we observed ear-
+ies for full-fledged query engines is limited because the micro-
+                                                                                lier. Examples of such horizontal Volcano parallelism are found in
+benchmarks used for testing usually have single simple keys (some-
+                                                                                e.g., Microsoft SQL Server and Vectorwise [3].
+times even containing hash values), and typically use very small
+                                                                                   While there may be (undisclosed) implementation differences
+payloads (one column only). Furthermore, each operator was ana-
+                                                                                between these systems, morsel-driven execution differentiates it-
+lyzed in isolation, which ignores how data is passed between opera-
+                                                                                self by making parallel query scheduling fine-grained, adaptive at
+tors and therefore, for example, ignores the different pipelining ca-
+                                                                                run-time and NUMA-aware. The parallel query engine described
+pabilities of the algorithms. In our morsel-driven database system,
+                                                                                here relies on chunking of the input data into fine-grained morsels.
+we have concentrated on (non-materializing) pipelined hash joins,
+                                                                                A morsel resides completely in a single NUMA partition. The dis-
+since in practice, often one of the join sides is much larger than the
+                                                                                patcher assigns the processing of a morsel to a thread running on a
+others. Therefore, teams of pipelined joins are often possible and
+                                                                                core of the same socket in order to preserve NUMA locality. The
+effective. Further, for certain often-traversed large joins (such as
+                                                                                morsel-wise processing also facilitates the full elasticity, meaning
+orders-lineitem in TPC-H), pre-partitioned data storage can achieve
+                                                                                that the degree of parallelism can be adjusted at any time, e.g., at
+NUMA locality on large joins without need for materialization.
+                                                                                mid-query processing. As soon as a morsel is finished, the thread
+   The new IBM BLU query engine [31] and Microsoft’s Apollo
+                                                                                can be assigned a morsel belonging to the same query pipeline or
+project [22] are two prominent commercial projects to exploit mod-
+                                                                                be assigned a different task of, e.g., another more important query.
+ern multi-core servers for parallel query processing. IBM BLU pro-
+                                                                                This way the dispatcher controls parallelism explicitly as opposed
+cesses data in “Vectorwise” fashion, a so-called stride at a time. In
+                                                                                to the recently proposed approach by Psaroudakis et al. [30] where
+this respect there is some resemblance to our morsel-wise process-
+                                                                                the number of threads is changed based on the core utilization.
+ing technique. However, there was no indication that the strides
+
+
+
+                                                                          753
+7.    CONCLUSIONS AND FUTURE WORK                                                   [8] P. Boncz, T. Neumann, and O. Erling. TPC-H analyzed: Hidden
+                                                                                        messages and lessons learned from an influential benchmark. In
+   We presented the morsel-driven query evaluation framework for
+                                                                                        TPCTC, 2013.
+parallel query processing. It is targeted at solving the major bot-                 [9] P. A. Boncz, M. Zukowski, and N. Nes. MonetDB/X100:
+tlenecks for analytical query performance in the many-core age,                         Hyper-pipelining query execution. In CIDR, 2005.
+which are load-balancing, thread synchronization, memory access                    [10] J. Dees and P. Sanders. Efficient many-core query execution in main
+locality, and resource elasticity. We demonstrated the good scala-                      memory column-stores. In ICDE, 2013.
+bility of this framework in HyPer on the full TPC-H and SSB query                  [11] G. Giannikis, G. Alonso, and D. Kossmann. SharedDB: Killing one
+workloads. It is important to highlight, that at the time of this writ-                 thousand queries with one stone. PVLDB, 5(6), 2012.
+ing, the presented results are by far the fastest achieved (barring                [12] G. Graefe. Encapsulation of parallelism in the Volcano query
+the hand-written queries on a fully indexed and customized stor-                        processing system. In SIGMOD, 1990.
+age scheme [10]7 ) on a single-server architecture. This is not be-                [13] G. Graefe. Query evaluation techniques for large databases. ACM
+                                                                                        Comput. Surv., 25(2), 1993.
+ing noted to claim a performance record – these are academic and
+                                                                                   [14] S. Harizopoulos, V. Shkapenyuk, and A. Ailamaki. QPipe: A
+non-audited results – but rather to underline the effectiveness of the                  simultaneously pipelined relational query engine. In SIGMOD, 2005.
+morsel-driven framework in achieving scalability. In particular, one               [15] M. Heimel, M. Saecker, H. Pirk, S. Manegold, and V. Markl.
+needs to keep in mind that it is much easier to provide linear scal-                    Hardware-oblivious parallelism for in-memory column-stores.
+ability on computationally slow systems than it is on fast systems                      PVLDB, 6(9), 2013.
+such as HyPer. The comparison with the state-of-the-art Vectorwise                 [16] A. Kemper and T. Neumann. HyPer: A hybrid OLTP&OLAP main
+system, which uses a classical implementation of Volcano-style                          memory database system based on virtual memory snapshots. In
+parallelism [3], shows that beyond 8 cores, in many-core territory,                     ICDE, 2011.
+                                                                                   [17] T. Kiefer, B. Schlegel, and W. Lehner. Experimental evaluation of
+the morsel-driven framework speeds ahead; and we believe that its
+                                                                                        NUMA effects on database management systems. In BTW, 2013.
+principles in fine-grained scheduling, full operator parallelization,              [18] C. Kim, E. Sedlar, J. Chhugani, T. Kaldewey, A. D. Nguyen, A. D.
+low-overhead synchronization and NUMA-aware scheduling can                              Blas, V. W. Lee, N. Satish, and P. Dubey. Sort vs. hash revisited: Fast
+be used to improve the many-core scaling in other systems as well.                      join implementation on modern multi-core CPUs. PVLDB, 2(2),
+   Besides scalability, the fully elastic morsel-driven parallelism                     2009.
+allows for intelligent priority-based scheduling of dynamic query                  [19] K. Krikellas, S. Viglas, and M. Cintra. Generating code for holistic
+workloads. The design and evaluation of such a scheduler, which                         query evaluation. In ICDE, 2010.
+takes quality-of-service constraints into account, was beyond the                  [20] H. Lang, V. Leis, M.-C. Albutiu, T. Neumann, and A. Kemper.
+                                                                                        Massively parallel NUMA-aware hash joins. In IMDM Workshop,
+scope of this paper and will be addressed in forthcoming work.
+                                                                                        2013.
+   Our system performs well on a number of very different hard-                    [21] P.-Å. Larson, C. Clinciu, C. Fraser, E. N. Hanson, M. Mokhtar,
+ware platforms despite having no hardware-specific parameters (we                       M. Nowakiewicz, V. Papadimos, S. L. Price, S. Rangarajan,
+tested with single-socket systems and NUMA systems with differ-                         R. Rusanu, and M. Saubhasik. Enhancements to SQL Server column
+ent topologies). Nevertheless, it would be interesting to investigate                   stores. In SIGMOD, 2013.
+algorithms that take knowledge of the underlying hardware into ac-                 [22] P.-Å. Larson, E. N. Hanson, and S. L. Price. Columnar storage in
+count. There is certainly room for further optimizations, specifi-                      SQL Server 2012. IEEE Data Eng. Bull., 35(1), 2012.
+cally those that further reduce remote NUMA access, as shown by                    [23] Y. Li, I. Pandis, R. Müller, V. Raman, and G. M. Lohman.
+                                                                                        NUMA-aware algorithms: the case of data shuffling. In CIDR, 2013.
+the slower results on the Sandy Bridge EP platform with its par-
+                                                                                   [24] S. Manegold, P. A. Boncz, and M. L. Kersten. Optimizing
+tially connected NUMA topology when compared with the fully-                            main-memory join on modern hardware. IEEE Trans. Knowl. Data
+connected Nehalem EX.                                                                   Eng., 14(4), 2002.
+                                                                                   [25] T. Neumann. Efficiently compiling efficient query plans for modern
+                                                                                        hardware. PVLDB, 4, 2011.
+8.    REFERENCES                                                                   [26] P. O’Neil, B. O’Neil, and X. Chen. The star schema benchmark
+ [1] M.-C. Albutiu, A. Kemper, and T. Neumann. Massively parallel                       (SSB), 2007.
+     sort-merge joins in main memory multi-core database systems.                       http://www.cs.umb.edu/~poneil/StarSchemaB.PDF.
+     PVLDB, 5(10), 2012.                                                           [27] O. Polychroniou and K. A. Ross. High throughput heavy hitter
+ [2] G. Alonso. Hardware killed the software star. In ICDE, 2013.                       aggregation for modern SIMD processors. In DaMoN, 2013.
+ [3] K. Anikiej. Multi-core parallelization of vectorized query execution.         [28] D. Porobic, E. Liarou, P. Tözün, and A. Ailamaki. ATraPos:
+     Master’s thesis, University of Warsaw and VU University                            Adaptive transaction processing on hardware islands. In ICDE, 2014.
+     Amsterdam, 2010. http://homepages.cwi.nl/~boncz/                              [29] D. Porobic, I. Pandis, M. Branco, P. Tözün, and A. Ailamaki. OLTP
+     msc/2010-KamilAnikijej.pdf.                                                        on hardware islands. PVLDB, 5(11), 2012.
+ [4] C. Balkesen, G. Alonso, J. Teubner, and M. T. Özsu. Multi-core,               [30] I. Psaroudakis, T. Scheuer, N. May, and A. Ailamaki. Task
+     main-memory joins: Sort vs. hash revisited. PVLDB, 7(1), 2013.                     scheduling for highly concurrent analytical and transactional
+ [5] C. Balkesen, J. Teubner, G. Alonso, and M. T. Özsu. Main-memory                    main-memory workloads. In ADMS Workshop, 2013.
+     hash joins on multi-core CPUs: Tuning to the underlying hardware.             [31] V. Raman, G. Attaluri, R. Barber, N. Chainani, D. Kalmuk,
+     In ICDE, 2013.                                                                     V. KulandaiSamy, J. Leenstra, S. Lightstone, S. Liu, G. M. Lohman,
+ [6] S. Bellamkonda, H.-G. Li, U. Jagtap, Y. Zhu, V. Liang, and                         T. Malkemus, R. Mueller, I. Pandis, B. Schiefer, D. Sharpe, R. Sidle,
+     T. Cruanes. Adaptive and big data scale parallel execution in oracle.              A. Storm, and L. Zhang. DB2 with BLU acceleration: So much more
+     PVLDB, 6(11), 2013.                                                                than just a column store. In VLDB, 2013.
+ [7] S. Blanas, Y. Li, and J. M. Patel. Design and evaluation of main              [32] J. Teubner and R. Müller. How soccer players would do stream joins.
+     memory hash join algorithms for multi-core CPUs. In SIGMOD,                        In SIGMOD, 2011.
+     2011.                                                                         [33] Y. Ye, K. A. Ross, and N. Vesdapunt. Scalable aggregation on
+                                                                                        multicore processors. In DaMoN, 2011.
+7
+  The paper by Dees and Sanders [10], while interesting as an ex-                  [34] M. Zukowski and P. A. Boncz. Vectorwise: Beyond column stores.
+treme take on TPC-H, visibly violates many of its implementation                        IEEE Data Eng. Bull., 35(1), 2012.
+rules, including the use of precomputed joins, precomputed aggre-
+gates, and full-text indexing. It generally presents a storage struc-
+ture that is very expensive to update.
+
+
+
+                                                                             754

@@ -1,0 +1,819 @@
+# LeanStore: In-Memory Data Management Beyond Main Memory
+
+             LeanStore: In-Memory Data Management
+                      Beyond Main Memory
+                       Viktor Leis, Michael Haubenschild∗, Alfons Kemper, Thomas Neumann
+                           Technische Universität München                                    Tableau Software∗
+                       {leis,kemper,neumann}@in.tum.de                           mhaubenschild@tableau.com∗
+
+
+
+
+                                                                        TPC-C [txns/s]
+   Abstract—Disk-based database systems use buffer managers                              60K
+in order to transparently manage data sets larger than main                              40K
+memory. This traditional approach is effective at minimizing
+the number of I/O operations, but is also the major source of                            20K
+overhead in comparison with in-memory systems. To avoid this                               0
+overhead, in-memory database systems therefore abandon buffer                                  BerkeleyDB   WiredTiger   LeanStore   in-memory
+management altogether, which makes handling data sets larger        Fig. 1.              Single-threaded in-memory TPC-C performance (100 warehouses).
+than main memory very difficult.
+   In this work, we revisit this fundamental dichotomy and design     Two representative proposals for efficiently managing larger-
+a novel storage manager that is optimized for modern hardware.
+Our evaluation, which is based on TPC-C and micro benchmarks,      than-RAM data sets in main-memory systems are Anti-
+shows that our approach has little overhead in comparison          Caching [7] and Siberia [8], [9], [10]. In comparison with a
+with a pure in-memory system when all data resides in main         traditional buffer manager, these approaches exhibit one major
+memory. At the same time, like a traditional buffer manager,       weakness: They are not capable of maintaining a replacement
+it is fully transparent and can manage very large data sets        strategy over relational and index data. Either the indexes,
+effectively. Furthermore, due to low-overhead synchronization,
+our implementation is also highly scalable on multi-core CPUs.     which can constitute a significant fraction of the overall data
+                                                                   size [11], must always reside in RAM, or they require a separate
+                       I. I NTRODUCTION                            mechanism, which makes these techniques less general and
+   Managing large data sets has always been the raison d’être less transparent than traditional buffer managers.
+for database systems. Traditional systems cache pages using           Another reason for reconsidering buffer managers are the
+a buffer manager, which has complete knowledge of all page increasingly common PCIe/M2-attached Solid State Drives
+accesses and transparently loads/evicts pages from/to disk. By (SSDs), which are block devices that require page-wise accesses.
+storing all data on fixed-size pages, arbitrary data structures, These devices can access multiple GB per second, as they
+including database tables and indexes, can be handled uniformly are not limited by the relatively slow SATA interface. While
+and transparently.                                                 modern SSDs are still at least 10 times slower than DRAM in
+   While this design succeeds in minimizing the number of I/O terms of bandwidth, they are also cheaper than DRAM by a
+operations, it incurs a large overhead for in-memory workloads, similar factor. Thus, for economic reasons [12] alone, buffer
+which are increasingly common. In the canonical buffer pool managers are becoming attractive again. Given the benefits of
+implementation [1], each page access requires a hash table buffer managers, there remains only one question: Is it possible
+lookup in order to translate a logical page identifier into an to design an efficient buffer manager for modern hardware?
+in-memory pointer. Even worse, in typical implementations             In this work, we answer this question affirmatively by
+the data structures involved are synchronized using multiple designing, implementing, and evaluating a highly efficient
+latches, which does not scale on modern multi-core CPUs. As storage engine called LeanStore. Our design provides an
+Fig. 1 shows, traditional buffer manager implementations like abstraction of similar functionality as a traditional buffer
+BerkeleyDB or WiredTiger therefore only achieve a fraction manager, but without incurring its overhead. As Fig. 1 shows,
+of the TPC-C performance of an in-memory B-tree.                   LeanStore’s performance is very close to that of an in-memory
+   This is why main-memory database systems like H-Store [2], B-tree when executing TPC-C. The reason for this low overhead
+Hekaton [3], HANA [4], HyPer [5], or Silo [6] eschew buffer is that accessing an in-memory page merely involves a simple,
+management altogether. Relations as well as indexes are directly well-predicted if statement rather than a costly hash table
+stored in main memory and virtual memory pointers are used lookup. We also achieve excellent scalability on modern multi-
+instead of page identifiers. This approach is certainly efficient. core CPUs by avoiding fine-grained latching on the hot path.
+However, as data sizes grow, asking users to buy more RAM Overall, if the working set fits into RAM, our design achieves
+or throw away data is not a viable solution. Scaling-out an in- the same performance as state-of-the-art main-memory database
+memory database can be an option, but has downsides including systems. At the same time, our buffer manager can transparently
+hardware and administration cost. For these reasons, at some manage very large data sets on background storage and, using
+point of any main-memory system’s evolution, its designers modern SSDs, throughput degrades smoothly as the working
+have to implement support for very large data sets.                set starts to exceed main memory.
+                      II. R ELATED W ORK                                  A very different and seemingly promising alternative is to
+                                                                       rely on the operating system’s swapping (paging) functionality.
+   Buffer management is the foundational component in the              Stoica and Ailamaki [17], for example, investigated this
+traditional database architecture [13]. In the classical design, all   approach for H-Store. Swapping has the major advantage that
+data structures are stored on fixed-size pages in a translation-       hot accesses incur no overhead due to hardware support (the
+free manner (no marshalling/unmarshalling). The rest of the            TLB and in-CPU page table walks). The disadvantage is that
+system uses a simple interface that hides the complexities of          the database system loses control over page eviction, which
+the I/O buffering mechanism and provides a global replacement          virtually precludes in-place updates and full-blown ARIES-style
+strategy across all data structures. Runtime function calls to         recovery. The problems of letting the operating system decide
+pinPage/unpinPage provide the information for deciding                 when to evict pages have been discussed by Graefe et al. [18].
+which pages need to be kept in RAM and which can be evicted            Another disadvantage is that the operating system does not
+to external memory (based on a replacement strategy like               have database-specific knowledge about access patterns (e.g.,
+Least-Recently-Used or Second Chance). This elegant design             scans of large tables). In addition, experimental results (cf. [18]
+is one of the pillars of classical database systems. It was also       and Fig. 9) show that swapping on Linux, which is the most
+shown, however, that for transactional, fully memory-resident          common server operating system, does not perform well for
+workloads a typical buffer manager is the biggest source of            database workloads. We therefore believe that relying on the
+inefficiency [14].                                                     operating system’s swapping/mmap mechanism is not a viable
+   One of the defining characteristics of main-memory databases        alternative to software-managed approaches. Indeed, main-
+is that they do not have a buffer manager. Memory is                   memory database vendors recommend to carefully monitor
+instead allocated in variable-sized chunks as needed and data          main memory consumption to avoid swapping [19], [20]. An
+structures use virtual memory pointers directly instead of page        exception are OLAP-optimized systems like MonetDB, for
+identifiers. To support data sets larger than RAM, some main-          which relying on the operating system works quite well.
+memory database systems implement a separate mechanism                    Funke et al. [21] proposed a hardware-assisted access
+that classifies tuples as either “hot” or “cold”. Hot tuples are       tracking mechanism for separating hot and cold tuples in
+kept in the efficient in-memory database, and cold tuples are          HyPer. By modifying the Linux kernel and utilizing the proces-
+stored on disk or SSD (usually in a completely different storage       sor’s Memory-Management Unit (MMU), page accesses can be
+format). Ma et al. [15] and Zhang et al. [16] survey and evaluate      tracked with very little overhead. Their implementation utilizes
+some of the important design decisions. In the following we            the same mechanism as the kernel to implement swapping
+(briefly) describe the major approaches.                               without loosing control over page eviction decisions. It does
+   Anti-Caching [7] was proposed by DeBrabant et al. for               not, however, handle index structures. Our approach, in contrast,
+H-Store. Accesses are tracked on a per-tuple instead of a per-         is portable as it does not require modifying the operating system
+page granularity. To implement this, each relation has an LRU          and handles indexes transparently. Combining our approach
+list, which is embedded into each tuple resulting in 8 byte            with hardware-assisted page access tracking would—at the
+space overhead per tuple. Under memory pressure, some least-           price of giving up portability—improve performance further.
+recently-used tuples are moved to cold storage (disk or SSD).             SAP HANA has always been marketed as an in-memory
+Indexes cover both hot as well as cold tuples. Given that it is        system and, for a long time, a column could only be moved to
+not uncommon for indexes to consume half of the total memory           or from SSD in its entirety [22]. In a recent paper, Sherkat et
+in OLTP databases [11], not being able to move indexes to              al. [22] describe a new feature that enables block-wise access
+cold storage is a major limitation. Thus, Anti-Caching merely          to columnar data. Indexes and the delta store, however, still
+eases memory pressure for applications that almost fit into            reside in main memory, which is a major limitation for large
+main memory and is not a general solution.                             transactional databases.
+   Microsoft’s Siberia [10] project is maybe the most compre-             The fact that practically all in-memory systems have added
+hensive approach for managing large data sets in main-memory           some form of support for larger-than-RAM data sets clearly
+database systems. Tuples are classified as either hot or cold          shows the importance of this feature. Yet we argue that the
+in an offline fashion using a tuple access log [8]. Another            techniques discussed above—despite their originality—fall
+offline process migrates infrequently accessed tuples between          short of being robust and efficient solutions for the cold storage
+a high-performance in-memory database and a separate cold              problem in transactional or Hybrid Transactional/Analytical
+storage in a transactional fashion [10]. Siberia’s in-memory           Processing (HTAP) systems. Adding such a foundational feature
+indexes only cover hot tuples [10] in order to keep these              to an existing in-memory system as an afterthought will not
+indexes small. In addition, Bloom filters, which require around        lead to the best possible design. We therefore now discuss
+10 bits per key, and adaptive range filters [9] are kept in main       a number of recent system proposals that were designed as
+memory to avoid having to access the cold storage on each              storage managers from their very inception.
+tuple lookup. The Siberia approach, however, suffers from high            Bw-tree/LLAMA [23], [24] is a storage engine optimized
+complexity (multiple offline processes with many parameters,           for multi-core CPUs and SSDs. In contrast to our design,
+two independent storage managers), which may have prevented            updates are performed out-of-place by creating new versions of
+its widespread adoption.                                               modified entries (“deltas”). This design decision has benefits.
+  hash table                                page                                                root     frame     page
+                             root: P1
+                frame                                                                                      P1
+               P1 ...
+                                         P2 P4 P3                                                          ...            P3
+               P4    ...
+
+                                                                                              P2                          P4
+               P2    ...
+                                                                                               ...                        ...
+
+                     (a) traditional buffer manager                                             (b) swizzling-based buffer manager
+
+               Fig. 2.     Tree structure consisting of a root page (P1) and three leaf pages (P2, P4, P3), two of which are in RAM (P2 and P4).
+
+
+It enables latch-freedom and, for certain write-intensive work-                      In our design, pages that reside in main memory are directly
+loads, it can reduce SSD write amplification. The downside is                     referenced using virtual memory addresses (i.e., pointers)—
+that creating and traversing deltas is a non-negligible overhead.                 accessing such pages does not require a hash table lookup.
+Performance is therefore lower than that of in-memory systems                     Pages that are currently on background storage, on the other
+that perform updates in place.                                                    hand, are still referenced by their page identifier. This is
+   FOEDUS [25] is another recent storage manager proposal.                        illustrated in Fig. 2b, which shows page references as circles
+It has very good scalability on multi-core CPUs as it avoids                      that either contain a pointer or a page identifier. We use pointer
+unnecessary latch acquisitions, and, like our design, it uses a                   tagging (one bit of the 8-byte reference) to distinguish between
+buffer manager that caches fixed-size pages in main memory.                       these two states. Consequently, the buffer management overhead
+However, FOEDUS is optimized for byte-addressable Storage                         of accessing a hot page merely consists of one conditional
+Class Memories like Phase Change Memory, which have                               statement that checks this bit.
+different properties than SSDs (i.e., byte-addressability).                          This technique is called pointer swizzling [28] and has been
+   Pointer swizzling, which is crucial in our design, is an old                   common in object databases [29], [26]. A reference containing
+technique that has been extensively used in object-oriented                       an in-memory pointer is called swizzled, one that stores an on-
+database systems [26]. Swizzling for buffer managers has                          disk page identifier is called unswizzled. Note that even swizzled
+only recently been proposed by Graefe et al. [18], who                            pages have logical page identifiers, which are, however, only
+implemented this idea in the page-based Shore-MT system.                          stored in their buffer frames instead of their references.
+Their design shares important characteristics with our proposal.
+However, while their approach succeeds in reducing the                            B. Efficient Page Replacement
+page translation overhead, it does not address the multi-            Pointer swizzling is a simple and highly efficient approach
+core scalability issues of page-level latches and mandatory       for accessing hot pages. However, it does not solve the problem
+page pinning. While latch implementations that reduce the         of deciding which pages should be evicted to persistent storage
+cost of contention (e.g., MCS locks [27]) exist, these still      once all buffer pool pages are occupied. Traditional buffer
+reduce scalability because of cache invalidations during latch    managers use policies like Least Recently Used or Second
+acquisition. Optimistic locks, in contrast, do not physically     Chance, which incur additional work for every page access.
+acquire the lock and therefore scale even better.                 Moreover, for frequently accessed pages (e.g., B-tree roots),
+                                                                  updating access tracking information (e.g., LRU lists, Second
+                    III. B UILDING B LOCKS                        Chance bits) sometimes becomes a scalability bottleneck. Since
+                                                                  our goal is to be competitive with in-memory systems, it is
+   This section introduces the high-level ideas behind LeanStore, crucial to have a replacement strategy with very low overhead.
+a storage manager for modern hardware (i.e., large DRAM This is particularly important with pointer swizzling as it does
+capacities, fast SSDs, and many cores).                           not suffer from expensive page translation.
+                                                                     We therefore deemed updating tracking information for each
+A. Pointer Swizzling
+                                                                  page access too expensive and avoid it in our design. Our
+   In disk-based database systems, the most important data replacement strategy reflects a change of perspective: Instead
+structures (e.g., heap files, B-tree indexes) are organized as of tracking frequently accessed pages in order to avoid evicting
+fixed-size pages. To refer to other pages, data structures store them, our replacement strategy identifies infrequently-accessed
+logical page identifiers that need to be translated to memory pages. We argue that with the large buffer pool sizes that are
+addresses before each page access. As shown in Fig. 2a, this common today, this is much more efficient as it avoids any
+translation is typically done using a hash table that contains additional work when accessing a hot page (except for the if
+all pages currently cached in main memory. Today, database statement mentioned above).
+servers are equipped with main memory capacities large enough        The main mechanism of our replacement strategy is to spec-
+to store the working set of most workloads. As a result, I/O ulatively unswizzle a page reference, but without immediately
+operations are becoming increasingly uncommon and traditional evicting the corresponding page. If the system accidentally
+buffer managers often become the performance bottleneck [14]. unswizzled a frequently-accessed page, this page will be quickly
+swizzled again—without incurring any disk I/O. Thus, similar For example, both the latch of a B-tree root and the global
+to the Second Chance replacement strategy, a speculatively latch for the hash table that translates page identifiers are often
+unswizzled page will have a grace period before it is evicted. critical points of contention. Due to the way cache coherency
+Because of this grace period, a very simple (and therefore low- is implemented on typical multi-core CPUs, such “hot” latches
+overhead) strategy for picking candidate pages can be used: will prevent good scalability (“cacheline ping-pong“).
+We simply pick a random page in the pool.                                As a general rule, programs that frequently write to memory
+   We call the state of pages that are unswizzled but are still in locations accessed by multiple threads do not scale. LeanStore
+main memory cooling. At any point in time we keep a certain is therefore carefully engineered to avoid such writes as much
+percentage of pages (e.g., 10%) in this state. The pages in the as possible by using three techniques: First, pointer swizzling
+cooling state are organized in a FIFO queue. Over time, pages avoids the overhead and scalability problems of latching the
+move further down the queue and are evicted if they reach translation hash table. Second, instead of preventing page
+the end of the queue. Accessing a page in the cooling state eviction by incrementing per-page pinning counters, we use
+will, however, prevent eviction as it will cause the page to be an epoch-based technique that avoids writing to each accessed
+removed from the FIFO queue and the page to be swizzled.              page. Third, LeanStore provides a set of optimistic, timestamp-
+                                          The “life cycle” of a page based primitives [31], [32], [33] that can be used by buffer-
+                                       and its possible states are managed data structures to radically reduce the number of latch
+                cold                   illustrated in Fig. 3. Once acquisitions. Together, these techniques (described in more
+  load,       (SSD)                    a page is loaded from SSD, detail in Section IV-F and Section IV-G) form a general frame-
+ swizzle                      evict
+                                       it is swizzled and becomes work for efficiently synchronizing arbitrary buffer-managed
+                                       hot. A hot page may be spec- data structures. In LeanStore, lookups on swizzled pages do not
+    hot        swizzle     cooling     ulatively unswizzled and, as acquire any latches at all, while insert/update/delete operations
+  (RAM)                    (RAM)       a result, transitions to the usually only acquire a single latch on the leaf node (unless
+              unswizzle                cooling state. A cooling page a split/merge occurs). As a result, performance-critical, in-
+Fig. 3. The possible states of a page.
+                                       can become either hot (on memory operations are highly scalable.
+                                       access) or cold (on eviction).
+   To summarize, by speculatively unswizzling random pages,                                   IV. L EAN S TORE
+we identify infrequently-accessed pages without having to track          In this section, we describe how LeanStore is implemented
+each access. In addition, a FIFO queue serves as a probational using the building blocks presented in Section III.
+cooling stage during which pages have a chance to be swizzled.
+Together, these techniques implement an effective replacement A. Data Structure Overview
+strategy at low cost.                                                    In a traditional buffer manager, the state of the buffer pool
+                                                                      is represented by a hash table that maps page identifiers to
+C. Scalable Synchronization
+                                                                      buffer frames. Frames contain a variety of “housekeeping”
+   The design described so far implements the basic functional- information, including (1) the memory pointer to the content of
+ity of a storage engine but does not support concurrency. Thread the page, (2) the state required by the replacement strategy (e.g.,
+synchronization is tightly coupled with buffer management and the LRU list or the Second Chance bit), and (3) information
+therefore cannot be ignored. For example, before evicting a regarding the state of the page on disk (e.g., dirty flag, whether
+particular page, the buffer manager has to ensure that this page the page is being loaded from disk). These points correspond to
+is not currently being accessed by some other thread.                 3 different functions that have to be implemented by any buffer
+   In most buffer manager implementations, synchronization manager, namely (1) determining whether a page is in the
+is implemented using latches. Every page currently in main buffer pool (and, if necessary, page translation), (2) deciding
+memory is associated with a latch. Additional latches protect which pages should be in main memory, and (3) management of
+the hash table that maps page identifiers to buffer frames. A call in-flight I/O operations. LeanStore requires similar information,
+to pinPage will first acquire (and, shortly thereafter, release) but for performance reasons, it uses 3 separate, customized data
+one or more latches before latching the page itself. The page structures. The upper half of Fig. 4 shows that a traditional page
+remains latched—and, as a consequence, cannot be evicted— translation table is not needed because its state is embedded in
+until unpinPage is called. Note that the page latches serve the buffer-managed data structures itself. The information for
+two distinct purposes: They prevent eviction and they are used implementing the replacement strategy is moved into a separate
+to implement data structure specific synchronization protocols structure, which is called cooling stage and is illustrated in
+(e.g., lock coupling in B-trees).                                     the lower-left corner of Fig. 4. Finally, in-flight I/O operations
+   Latch-based synchronization is one of the main sources of are managed in yet another structure shown in the lower-right
+overhead in traditional buffer managers. One problem is the corner of Fig. 4.
+sheer number of latch acquisitions. In Shore-MT, for example, a
+single-row update transaction results in 15 latch acquisitions for B. Swizzling Details
+the buffer pool and the page latches [30]. An even larger issue          Pointer swizzling plays a crucial role in our design. We call
+is that some latches are acquired frequently by different threads. the reference, i.e., the 8-byte memory location referring to a
+              root
+                                                                            B-tree inner node, for example, can only be unswizzled (and
+                                                                            eventually evicted) if all of its child nodes have been unswizzled.
+                                                                            Otherwise pages containing memory pointers might be written
+   P1          hot           P4     hot                    buﬀer pool
+                                                             ...
+                                                                            out to disk, which would be a major problem because a pointer
+         P7          P8                                                     is only valid during the current program execution. To avoid this
+   ... P2      P3            ...                        (more hot pages)    situation, buffer-managed data structures implement a special
+                                                                            swip iteration mechanism that is described in Section IV-E.
+  P2      cooling            P8    cooling        P3           cold         It ensures that, if an inner page happens to be selected for
+                                                                            speculative unswizzling and at least one of its children is
+                                                           (being loaded)
+   ...                       ...                  ...                       swizzled, one of these children is selected instead. While
+                                                                            this situation is infrequent in normal operation (as there are
+                                                                            typically many more leaf pages than inner pages), it needs to
+  hash table                         hash table                             be handled for correctness. Also note that for tree-like data
+                                                                            structures, preventing the eviction of a parent before its children
+                                                                            is beneficial anyhow, as it reduces page faults.
+                                             OS
+                     FIFO                                                       C. Cooling Stage
+                     queue
+                                                                                    The cooling stage is only used when the free pages in the
+         cooling stage                   in-ﬂight I/O operations                buffer pool are running out. From that moment on, the buffer
+                                                                                manager starts to keep a random subset of pages (e.g., 10% of
+Fig. 4. Overview of LeanStore’s data structures. Page P1 represents a root      the total pool size) in the cooling state. Most of the in-memory
+page (e.g., of a B-tree) with 5 child pages (P7, P8, P2, P3, P4). Pages P1 and
+P4 are hot (swizzled), while pages P2 and P8 are cooling (unswizzled). (In
+                                                                                pages will remain in the hot state. Accessing them has very
+reality, the vast majority of in-memory pages will be classified as hot.) Pages little overhead compared to a pure in-memory system, namely
+P7 and P3 are on persistent storage with P3 currently being loaded.             checking one bit of the swip.
+                                                                                    As the lower left corner of Fig. 4 illustrates, cooling pages
+page, a swip. A swip may either be swizzled (i.e., it stores                    are   organized in a FIFO queue. The queue maintains pointers
+an in-memory pointer) or unswizzled (i.e., it stores an on-disk                 to  cooling    pages in the order in which they were unswizzled,
+page identifier). In Fig. 4, swips are shown as circles storing                 i.e.,  the most    recently unswizzled pages are at the beginning
+either a pointer (arrow) or a page identifier (P. . . ). While most             of  the   queue   and  older pages at the end. When memory for
+swips will typically reside on buffer-managed pages, some                       a  new    page   is needed,   the least recently unswizzled page is
+swips, for example the swips pointing to B-tree root pages,                     used    (after flushing  it if it is dirty).
+                                                                                    When an unswizzled swip is about to be accessed (e.g., swip
+are stored in memory areas not managed by the buffer pool.
+                                                                                P8 on page P1), it is necessary to check if the referenced page
+In the figure, this is the case for the swip labeled as “root”,
+                                                                                is in the cooling stage. In addition to the queue, the cooling
+which is stored outside of the buffer manager.
+                                                                                stage therefore maintains a hash table that maps page identifiers
+   In a traditional buffer manager, the translation table that
+                                                                                to the corresponding queue entries. If the page is found in the
+maps page identifiers to pointers is the single source of truth
+                                                                                hash table, it is removed from the hash table and from the
+representing the state of the buffer pool. Pages are always
+                                                                                FIFO queue before it is swizzled to make it accessible again.
+accessed through this indirection and latches are used for
+                                                                                    Moving pages into the cooling stage could either be done (1)
+synchronization. As a result, implementing operations like
+                                                                                asynchronously by background threads or (2) synchronously by
+page eviction is fairly straightforward. In a pointer swizzling
+                                                                                worker threads that access the buffer pool. We use the second
+scheme, in contrast, the information of the translation table
+                                                                                option in order to avoid the risk of background threads being
+is decentralized and embedded in the buffer-managed data
+                                                                                too slow. Whenever a thread requests a new, empty page or
+structure itself, which makes things more complicated. Consider,
+                                                                                swizzles a page, it will check if the percentage of cooling pages
+for example, a page Px that is referenced by the two pages Py
+                                                                                is below a threshold and will unswizzle a page if necessary.
+and Pz. In this situation, Px can be referenced by one swizzled
+                                                                                    Our implementation uses a single latch to protect the data
+and one unswizzled swip at the same time. Maintaining
+                                                                                structures of the cooling stage. While global latches often
+consistency, in particular without using global latches, is very
+                                                                                become scalability bottlenecks, in this particular case, there is
+hard and inefficient. Therefore, in LeanStore, each page has
+                                                                                no performance problem. The latch is only required on the cold
+a single owning swip, which avoids consistency issues when
+                                                                                path, when I/O operations are necessary. Those are orders of
+it is (un)swizzled. Consequently, each buffer-managed data
+                                                                                magnitude more expensive than a latch acquisition and acquire
+structure becomes tree-like and the buffer pool in its entirety a
+                                                                                coarse-grained OS-internal locks anyway. Thus the global latch
+forest of pages. Since each page in the buffer pool is referenced
+                                                                                is fine for both in-memory and I/O-dominated workloads.
+by exactly one swip, we also say a page can be (un)swizzled,
+depending on the state of the swip referencing it.                              D. Input/Output
+   Another design decision is that we never unswizzle (and                          Before a cold page can be accessed, it must be loaded
+therefore never evict) a page that has swizzled children. A from persistent storage. One potential issue is that multiple
+                                                                        1. P4 is randomly selected
+threads can simultaneously try to load the same page. For
+                                                                           for speculative unswizzling        P4 ?       hot
+correctness reasons, one must prevent the same page from
+                                                                        2. the buﬀer manager iterates                     P5
+appearing multiple times in the buffer pool. Also, it is obviously         over all swips on the page           ...
+                                                                                                                      iterate
+more efficient to schedule the I/O operation just once.
+                                                                        3. it ﬁnds the swizzled child
+   Like traditional buffer managers, we therefore manage and               page P6 and unswizzles
+serialize in-flight I/O operations explicitly. As Fig. 4 (lower-           it instead
+                                                                                               P6         hot           P9         hot
+right corner) illustrates, we maintain a hash table for all pages
+currently being loaded from disk (P3 in the figure). The hash                                   ...                      ...
+table maps page identifiers to I/O frames, which contain an
+operating system mutex and a pointer to a newly allocated
+page. A thread that triggers a load first acquires a global latch,     Fig. 5.   Inner pages can only be unswizzled after all their child pages.
+creates an I/O frame, and acquires its mutex. It then releases
+the global latch and loads the page using a blocking system
+call (e.g., pread on Unix). Other threads will find the existing
+                                                                     swizzled child pages (randomly picking one of these). Note
+I/O frame and block on its mutex until the first thread finishes
+                                                                     that this mechanism, which is illustrated in Fig. 5, implicitly
+the read operation.
+                                                                     prioritizes inner pages over leaf pages during replacement.
+   We currently use the same latch to protect both the cooling
+stage and the I/O component. This simplifies the implemen-              In order to unswizzle a page, besides the callback mechanism,
+tation considerably. It is important to note, however, that this     it is also necessary to find the parent page of the eviction
+latch is released before doing any I/O system calls. This            candidate. Our implementation uses parent pointers, which are
+enables concurrent I/O operations, which are crucial for good        stored in the buffer frame. The parent pointers allow one to
+performance with SSDs. Also let us re-emphasize that this            easily access the parent page when unswizzling and must be
+global latch is not a scalability bottleneck, because—even with      maintained by each data structure. Maintaining these parent
+fast SSDs—an I/O operation is still much more expensive than         pointers is not expensive in our design, because child nodes
+the latch acquisition.                                               are always unswizzled before their parents and because parent
+                                                                     pointers are not persisted.
+E. Buffer-Managed Data Structures
+                                                                        As mentioned earlier, in our current implementation every
+   The main feature of a buffer manager is its support for
+                                                                     page has one swip, i.e., one incoming reference. This design
+arbitrary data structures while maintaining a single replacement
+                                                                     decision simplifies bookkeeping for unswizzling and was also
+strategy across the entire buffer pool. Another advantage is that
+                                                                     made by Graefe et al.’s swizzling-based buffer manager [18].
+this is achieved without the need to understand the physical
+                                                                     However, this is not a fundamental limitation of our approach.
+organization of pages (e.g., the layout of B-tree leaves), which
+                                                                     An alternative implementation, in which a page can have
+allows implementing buffer-managed data structures without
+                                                                     multiple incoming pointers, would also be possible. One way
+modifying the buffer manager code itself. In the following we
+                                                                     to achieve this is to store multiple parent pointers in each
+describe how LeanStore similarly supports (almost) arbitrary
+                                                                     frame, which would already be enough to implement inter-leaf
+data structures in a non-invasive way.
+                                                                     pointers in B+ -trees. A more general approach would be to
+   As mentioned in Section IV-B, our swizzling scheme requires
+                                                                     keep storing only one parent per page, but have two classes
+that child pages are unswizzled before their parents. To
+                                                                     of swips. There would be normal swips that, as in our current
+implement this, the buffer manager must be able to iterate
+                                                                     design, are linked through parent pointers. In addition, one
+over all swips on a page. In order to avoid having to know
+                                                                     would have “fat” swips that contain both the page identifier
+the page layout, every buffer-managed data structure therefore
+                                                                     and a pointer.
+implements an “iteration callback”. When called for a leaf page,
+this callback simply does nothing, whereas for an inner page, it        While our design does impose some constraints on data
+iterates over all swips stored on that page. Any buffer-managed      structures (fixed-size pages and parent pointers), the internal
+data structure must implement this callback and register it with     page layout as well as the structural organization are flexible.
+the buffer manager. In addition, pages must be self-describing,      For example, in prior work [34], we developed a hash index that
+i.e., it needs to be possible to determine which callback function   can directly be used on top of LeanStore: In this data structure,
+the page is associated with. For this reason, every page stores      the fixed-size root page uses a number of hash bits to partition
+a marker that indicates the page structure (e.g., B-tree leaf or     the key space (similar to Extendible Hashing). Each partition
+B-tree inner node).                                                  is then represented as a space-efficient hash table (again using
+   Using the callback mechanism, the buffer manager can              fixed-size pages). Heaps can be implemented similar to B-trees
+determine whether a page can be unswizzled. If a page has            using the tuple identifier as a key. Given that tuple identifiers
+no children or all child pages are unswizzled, that page can         are often (nearly) dense, one can use special node layouts
+be unswizzled. If a swizzled child swip is encountered, on           to avoid the binary search used in B-trees and support very
+the other hand, the buffer manager will abort unswizzling that       fast scans. The custom node layout also allows implementing
+node. Instead, it will try to unswizzle one of the encountered       columnar storage and compression.
+                                                  thread-local epochs
+                   FIFO      P2     cooling                                data at the moment (thread 2 in the example).
+ hash table        queue                                 e9 thread 1          When a page is unswizzled, it cannot be reused immediately
+              e7 P2          ...                         ∞ thread 2        (as other threads might still be reading from it). For this reason,
+                                                         e5 thread 3       we associate pages in the cooling stage with the global epoch at
+              e4 P8          P8     cooling
+                                                                           the time of unswizzling. (Note that only cooling pages need to
+                                                            global epoch
+                             ...                   epoch                   be associated with an epoch, not hot pages.) In the example in
+      cooling stage                               manager       e9         Fig. 6, page P8 was put into the cooling stage during epoch e4,
+                                                                           and page P2 in epoch e7. Right before a page is actually evicted
+                  Fig. 6.   Epoch-based reclamation.                       (which happens when the page reaches the end of the FIFO
+                                                                           queue), its associated epoch is compared with the minimum
+F. Optimistic Latches                                                      of all local epochs. Only if the minimum is larger than the
+                                                                           associated epoch, the page can be safely reused since then it is
+   As Fig. 4 illustrates, each page in the buffer pool is                  ensured that no thread can read that page anymore. Since the
+associated with a latch. In principle, it would be possible                minimum observed epoch of all threads in the example is e5,
+to implement synchronization similar to that of a traditional              P8 can be safely evicted, while P2 is kept in the cooling stage
+buffer manager. By acquiring per-page latches on every page                until after thread 3 is finished with its current operation. It is
+access, pages are “pinned” in the buffer pool, which prevents              unlikely that this check leads to further delay, since it takes
+their eviction. Unfortunately, as discussed in Section III-C,              quite some time for a page to reach the end of the FIFO queue.
+requiring frequent latch acquisitions would prevent any buffer-            Checking this condition is, however, necessary for correctness.
+managed data structure from being scalable on multi-core                      Note that incrementing the global epoch very frequently may
+CPUs. To be competitive with pure in-memory systems (in                    result in unnecessary cache invalidations in all cores, whereas
+terms of performance and scalability), for a buffer manager it             very infrequent increments may prevent unswizzled pages from
+is therefore crucial to offer means for efficient synchronization.         being reclaimed in a timely fashion. Therefore, the frequency of
+   The first important technique is to replace the conventional            global epoch increments should be proportional to the number
+per-page latches with optimistic latches [31], [32], [33]. Inter-          of pages deleted/evicted but should be lower by a constant
+nally, these latches have an update counter that is incremented            factor (e.g., 100).
+after every modification. Readers can proceed without acquiring               To make epochs robust, threads should exit their epoch
+any latches, but validate their reads using the version counters           frequently, because any thread that holds onto its epoch for too
+instead (similar to optimistic concurrency control). The actual            long can completely stop page eviction and reclamation. For
+synchronization protocol is data-structure specific and different          example, it might be disastrous to perform a large full table
+variants can be implemented based on optimistic latches.                   scan while staying in the same local epoch. Therefore, we
+One possible technique is Optimistic Lock Coupling [33],                   break large operations like table scans into smaller operations,
+which ensures consistent reads in tree data structures without             for each of which we acquire and release the epoch. We also
+physically acquiring any latches during traversal. Optimistic              ensure that I/O operations, which may take a fairly long time,
+Lock Coupling has been shown to be good at synchronizing                   are never performed while holding on to an epoch. This is
+the adaptive radix tree [35], [33] and B-tree [36]. In this                implemented as follows: If a page fault occurs, the faulting
+scheme, writers usually only acquire one latch for the page                thread (1) unlocks all page locks, (2) exits the epoch, and
+that is modified, and only structure modification operations               (3) executes an I/O operation. Once the I/O request finishes,
+(e.g., splits) latch multiple pages.                                       we trigger a restart of the current data structure operation
+G. Epoch-Based Reclamation                                                 by throwing a C++ exception. Each data structure operation
+                                                                           installs an exception handler that restarts the operation from
+   With optimistic latches, pages that are being read are neither          scratch (i.e., it enters the current global epoch and re-traverses
+latched nor pinned. This may cause problems if some thread                 the tree). This simple and robust approach works well for
+wants to evict or delete a page while another thread is still              two reasons: First, in-memory operations are very cheap in
+reading the page. To solve this problem, we adopt an epoch-                comparison with I/O. Second, large logical operations (e.g., a
+based mechanism, which is often used to implement memory                   large scan) are broken down into many small operations; after
+reclamation in latch-free data structures [6], [32], [23].                 a restart only a small amount of work has to be repeated.
+   The basic idea is to have one global epoch counter which
+grows periodically, and per-thread local epoch counters. These
+                                                                           H. Memory Allocation and NUMA-Awareness
+are shown at the right of Fig. 6. Before a thread accesses any
+buffer-managed data structure, it sets its local epoch to the                 Besides enabling support for larger-than-RAM data sets,
+current global epoch, which conceptually means that the thread             a buffer manager also implicitly provides functionality for
+has entered that epoch. In Fig. 6, thread 1 has entered epoch e9,          memory management—similar to a memory allocator for an
+while thread 3 is still in epoch e5. When a thread is finished             in-memory system. Memory management in a buffer pool is
+accessing the data structure, it sets its local epoch to a special         simplified, however, due to fixed-size pages (and therefore only
+value (∞) that indicates that the thread does not access any               a single allocation size). Buffer-managed systems also prevent
+memory fragmentation, which often plagues long-running in-         are explicitly deleted (e.g., during a merge operation in a B-
+memory systems.                                                    tree). One solution is to use the same mechanism described
+   LeanStore performs one memory allocation for the desired        in Section IV-G, i.e., to put the deleted page into the cooling
+buffer pool size. This allocation can either be provided           stage. In our implementation, each thread has a small thread-
+physically by the operating system on demand (i.e., first          local cache for deleted pages. Just like in the cooling stage,
+access) or be pre-faulted on startup. LeanStore also supports      the entries are associated with the epoch (of the moment of
+Non-Uniform Memory Access (NUMA)-aware allocation in               their deletion). When a thread requests a new, empty page, it
+order to improve performance on multi-socket systems. In           consults its local cache and, if the global epoch has advanced
+this mode, newly allocated pages are allocated on the same         sufficiently, chooses a page from the local cache instead of
+NUMA node as the requesting thread. NUMA-awareness is              the cooling stage. As a result, deleted pages are reused fairly
+implemented by logically partitioning the buffer pool and the      quickly, which improves cache locality and avoids negative
+free lists into as many partitions as there are NUMA nodes.        effects on the replacement strategy.
+Besides the buffer pool memory itself, all other data structures      Previously, we argued against asynchronous background
+(including the cooling stage) are centralized in order to maintain processes, because they can cause unpredictable behavior and
+a global replacement strategy. NUMA-awareness is a best effort     often have complex, hard-to-tune parameters. We make one
+optimization: if no more local pages are available, a remote       exception for writing out dirty pages in the background. Like
+NUMA page will be assigned.                                        in traditional buffer managers, we use a separate background
+                                                                   writer thread to hide the write latency that would otherwise be
+I. Implementation Details and Optimizations                        incurred by worker threads. Our background writer cyclically
+                                                                   traverses the FIFO queue of the cooling stage, flushes dirty
+   Let us close this section by mentioning some implementation pages, and clears the dirty flag.
+details and optimizations that are important for performance.         To enable fast scans, LeanStore implements I/O prefetching.
+   On top of LeanStore, we implemented a fairly straightfor- Using the in-flight I/O component, scans can schedule multiple
+ward B+ -tree (values are only stored in leaf nodes). The most page requests without blocking. These I/Os are then executed
+interesting aspect of the implementation is the synchronization in the background. Once a prefetching request is finished,
+mechanism. Reads are validated using the version counters the corresponding page becomes available to other threads
+embedded into every latch and may need to restart if a conflict through the cooling stage. Another optimization for large scans
+is detected. Range scans that span multiple leaf nodes are is hinting. Leaf pages accessed by scans can be classified as
+broken up into multiple individual lookups by using fence cooling instead of hot after being loaded from SSD. These
+keys [37]. Together with the efficient synchronization protocol, pages are therefore likely to be evicted quickly. Also, since the
+breaking up range lookups obviates the need for the leaf links, cooling stage size is limited, no hot pages need to be unswizzled.
+which are common in traditional disk-based B+ -trees. An insert, As a consequence, only a small fraction of the buffer pool will
+delete, or update operation will first traverse the tree like a be invalidated during the scan—avoiding thrashing.
+lookup, i.e., without acquiring any latches. Once the leaf page
+that needs to be modified is found, it is latched, which excludes                   V. I N -M EMORY E VALUATION
+any potential writers (and invalidates potential readers). If no      In this section, we investigate the performance and scalability
+structure-modifying operation (e.g., a node split) is needed of LeanStore using data sets that fit into main memory. Out-
+(e.g., there is space to insert one more entry), the operation can of-memory workloads are evaluated in Section VI.
+directly be performed and the latch can be released. Structure-
+modifying operations release the leaf latch and restart from A. Experimental Setup
+the root node—but this time latching all affected inner nodes.        The implementation of LeanStore and the B-tree (actually
+   In LeanStore, buffer frames are physically interleaved a B+ -tree) amounts to around 4 K lines of heavily-templated
+with the page content (Fig. 2b). This is in contrast with most C++11 code (excluding the benchmarking code). Both the in-
+traditional buffer managers that store a pointer to the page memory B-tree and the buffer-managed B-tree have the same
+content in the buffer frame (Fig. 2a). Interleaving the buffer page layout and synchronization protocol. This allows us to
+frames improves locality and therefore reduces the number of cleanly quantify the overhead of buffer management.
+cache misses because the header of each page is very frequently       We use BerkeleyDB 6.0 and WiredTiger 2.9 to compare our
+accessed. A second, more subtle, advantage of interleaving design with traditional buffer managers. While BerkeleyDB
+is that it avoids performance problems caused by the limited was initially released in 1994, it is still widely used, for
+CPU cache associativity: At typical power-of-two page sizes example, as the storage manager of the Oracle NoSQL Database.
+(and without interleaving), the headers of all pages fall into WiredTiger is a more recent development that has become
+the same associativity set and only a small number of headers the default storage engine of MongoDB. Both are standalone
+can reside in cache (e.g., 8 for the L1 caches of Intel CPUs). storage managers that implement a buffer manager and use
+   Because we avoid pinning pages, a page cannot be reused fine-grained latches to support concurrency. We configured
+immediately after unswizzling it. This applies not only to BerkeleyDB and WiredTiger to use B-trees (BerkeleyDB also
+pages that are speculatively unswizzled but also to pages that supports hashing and WiredTiger supports LSM-trees). For
+TPC-C throughput [txns/sec]
+
+
+
+
+                                                                                                                TPC-C throughput [txns/sec]
+                              60K                                                                                                                                           in-memory B-tree
+                                                                                                                                              800K
+
+
+
+
+                                                                                                1 thread
+                              40K
+                                                                                                                                                                                             LeanStore
+                              20K                                                                                                             600K
+                                         30K             48K          62K           67K
+                                 0
+                              600K                                                                                                            400K
+
+
+
+
+                                                                                                10 threads
+                              400K                                                                                                            200K                                           WiredTiger
+                              200K                                                                                                                                                        BerkeleyDB
+                                                                                                                                                 0
+                                         18K             23K          109K          597K
+                                 0                                                                                                                    1        5           10           15               20
+                                        baseline      +swizzling   +lean evict    +opt. latch
+                                      (traditional)                              (LeanStore)                                                                             threads
+                                     Fig. 7.    Impact of the 3 main LeanStore features.                                             Fig. 8.         Multi-threaded, in-memory TPC-C on 10-core system.
+
+
+both storage managers, we disabled transactions, logging,                                                    a global hash table for page translation or a single LRU list
+compaction, and compression.                                                                                 or traditional latches immediately prohibits scaling with 10
+   The storage managers are directly linked/compiled into our                                                threads. These results highlight the huge overhead of traditional
+test driver, which implements TPC-C (without “think” times)                                                  buffer managers, in particular in a multi-threaded setting, but
+as well as a number of micro benchmarks. Note that even                                                      also show that it is indeed possible to implement a buffer
+without transactional semantics, TPC-C, which consists of                                                    manager with very little overhead.
+inserts, updates, deletes and range scans, is a fairly complex                                                  The performance difference between traditional storage
+workload for any storage manager. In terms of access patterns,                                               engines and LeanStore becomes even larger when multiple
+there are tables with high locality as well as randomly accessed                                             threads are used. As Fig. 8 shows, BerkeleyDB barely scales
+tables and the benchmark is very insert-heavy. We use 16 KB                                                  at all. Its peak performance is 20 K transactions per second
+pages and each relation is represented as a single B-tree (no                                                with 5 threads (speedup 2.4×). WiredTiger scales better than
+horizontal partitioning into separate trees).                                                                BerkeleyDB and achieves a speedup of 8.8× with 20 threads.
+   The experiments were performed on a Linux 4.8 system                                                      The in-memory B-tree and LeanStore both use the same
+with an Intel Xeon E5-2687W v3 CPU (3.1 GHz, Haswell EP,                                                     optimistic synchronization protocol, which enables excellent
+10 cores, 20 hardware threads) and 64 GB of main memory.                                                     scalability. Also, there is no contention on the cooling stage
+                                                                                                             latch as it is unused for in-memory workloads. LeanStore
+B. TPC-C                                                                                                     achieves a speedup of 8.8× with 10 threads, and 12.6× with
+   Let us begin with a number of in-memory experiments using                                                 HyperThreading.
+TPC-C. We use 100 warehouses, which amounts to (initially)
+10 GB, and a buffer pool large enough to encompass all of it. C. System Comparison
+As Fig. 1 (on page 1) shows, with a single thread, LeanStore         Let us now look at other systems besides BerkeleyDB
+achieves 67 K transactions per second. The in-memory B-tree is and WiredTiger. One relevant comparison is to the swizzling-
+slightly faster at 69 K tps. BerkeleyDB and WiredTiger achieve based Shore-MT variant [18]. In a very similar setup as our
+only 10 K and 16 K tps, respectively.                             experiments (in-memory TPC-C with 100 warehouses, 12
+   To better understand which of LeanStore’s design decisions clients, no locking, and no logging), it achieves around 70K
+are most important, we disabled some of its crucial features. transactions per second (cf. Figure 14 in [18]), which is 10x
+Specifically, we replaced pointer swizzling with traditional hash less than LeanStore. We believe that this is due to Shore-MT
+table lookups, implemented LRU instead of our lean eviction having been designed for a disk-based setting (and therefore
+strategy, and used traditional latches instead of optimistic having higher CPU overhead) and the scalability issues of
+latches. The performance of the resulting system, which fine-grained latches.
+resembles a traditional buffer manager, is shown in Fig. 7           Silo [6] and FOEDUS [25] are more recent systems. While
+(labeled as “baseline”). The figure also shows the performance they cannot be configured to disable transactions and use
+when swizzling, our replacement strategy, and optimistic latches different TPC-C implementations, a comparison with these
+are enabled step by step. In the single-threaded case, pointer systems is still interesting. Silo achieves 805K and FOEDUS
+swizzling and our replacement strategy (labeled as “lean evict”) 1,109K TPC-C transactions per second on our machine.
+are the largest factors, which together result in around 2× LeanStore’s performance lies in between with 845K txns/sec.
+performance gain. The optimistic latches are only slightly FOEDUS performs better than LeanStore and Silo because of
+faster than traditional latches, as single-threaded execution workload-specific access path optimizations (e.g., non-growing
+does not suffer from any latch contention. The multi-threaded tables are stored as fixed-size arrays instead of trees, tables
+results show a very different picture. First, the performance are vertically partitioned into static and dynamic attributes,
+differences are much larger. Second, all three features are one table is implemented as an append-only structure). While
+crucial for obtaining good performance as any scalability we used general-purpose B-tree, custom structures can be
+bottleneck will result in dramatically lower performance. Using integrated into LeanStore too (cf. Section IV-E).
+                             TABLE I
+
+
+
+
+                                                                       TPC-C throughput [txns/sec]
+L EAN S TORE SCALABILITY RUNNING TPC-C ON 60- CORE NUMA SYSTEM .
+                                                                                                     600K
+                                                   remote                                                                                    LeanStore
+                             txns/sec   speedup   accesses
+                                                                                                     400K
+      1 thread                  45K       1.0×        7%
+                                                                                                                   in-memory B-tree
+      60 threads: baseline   1,500K      33.3×       77%
+                                                                                                                                                 WiredTiger
+      + warehouse affinity   2,270K      50.4×       77%                                             200K
+      + pre-fault memory     2,370K      52.7×       75%
+      + NUMA awareness       2,560K      56.9×       14%
+                                                                                                        0                      BerkeleyDB
+                                                                                                            0             20                40                60
+                                                                                                                               time [sec]
+D. Scalability on Many-Core Systems
+                                                                   Fig. 9.                           TPC-C with 20 GB buffer pool (100 warehouses, 20 threads). The
+   Besides the 10-core system, we also investigated LeanStore’s data grows from 10 GB to 50 GB—exceeding the buffer pool.
+scalability on a 60-core NUMA system, which consists of four
+15-core Intel Xeon E7-4870 v2 CPUs (Ivy Bridge, 2.3GHz).
+Achieving good scalability on such systems is challenging
+and requires additional optimizations because of the (1) large TPC-C, quickly grows to more than twice the size of the buffer
+number of cores, (2) high synchronization cost due to the lack pool. For LeanStore, BerkeleyDB, and WiredTiger, the buffer
+of shared L3 cache, and (3) NUMA. Table I shows the TPC-C pool size is set to 20 GB. We also measured the performance of
+performance and speedup with 60 threads and 60 warehouses. the in-memory B-tree when its memory is restricted to 20 GB
+The baseline speedup of 33.3× can be increased to 50.4× by and the SSD as a swapping device.
+assigning each worker thread a local warehouse. This well-
+known, TPC-C specific optimization [6] reduces contention             The results in Fig. 9 show that the performance of LeanStore
+in the workload. Another optimization, which increases the         stays  close to the in-memory performance although around
+speedup to 52.7×, is to pre-fault the buffer pool memory           500  MB/sec    are written out to the SSD in the background.
+to avoid scalability issues in the operating system. The final     Performance   stays  very high because the replacement strategy
+change, explicit NUMA-awareness, reduces the percentage            is successful in identifying the working set, which stays in the
+of NUMA-remote DRAM accesses from 75% to 14% and                   buffer  pool. With  swapping  the situation looks very different;
+improves performance by 8%. With all optimizations enabled         performance   drops severely and is highly unstable, which shows
+and 60 threads, LeanStore achieves a speedup of 56.9×.             that current  implementations    of  swapping are not a viable
+                                                                   alternative. The performance of BerkeleyDB is generally very
+              VI. O UT-O F -M EMORY E VALUATION                    low and it takes over 10 minutes (not fully shown in the graph)
+                                                                   before the buffer pool is exhausted. WiredTiger performs much
+   Let us now focus on experiments with data sets that are
+                                                                   better than BerkeleyDB, but is still slower by more than 2x
+larger than main memory, which are, after all, the reason for
+                                                                   compared to LeanStore.
+buffer managers. For storage, the system has a PCIe-attached
+400 GB Intel DC P3700 SSD, which provides 2,700/1,080                 As another I/O-based experiment, we measured the “ramp-
+MB sequential read/write throughput per second—and, like up time” from cold cache (e.g., starting the database after a
+most SSDs, can achieve similar performance with random clean shutdown) for a 10 GB database. Besides the PCIe SSD
+I/O. Such high-performance SSDs have been commercially (Intel DC P3700 SSD), we used a low-end consumer SATA
+available for some time now and are quite affordable. The SSD (Crucial m4), and a magnetic disk (Western Digital Red)
+recently-launched Samsung 960 PRO SSD, for example, offers to measure the influence of different storage devices. With the
+performance similar to our device for less than $0.7 per GB. PCIe SSD, peak performance is reached after around 8 seconds
+   With our high-end SSD, which uses the recently-introduced whereas the SATA SSD takes longer with 35 seconds. The disk,
+NVMe interface, we ran into a number of Linux scalability on the other hand, only achieves around 10 (!) transactions per
+issues, in particular when performing many random reads and second for around 15 minutes, because the working set of TPC-
+writes simultaneously. I/O operations are therefore performed C is loaded using a random access pattern. The disk can only
+using direct I/O (O_DIRECT), which prevents operating system read in pages into the buffer pool at around 5 MB/sec, whereas
+caching and makes performance more stable. We also found the random access pattern does not impede the performance
+the file system (ext4) to be a scalability bottleneck, even though of SSDs. The large performance gap between magnetic disks
+our database is organized as a single large file. In addition to and main memory is likely one of the reasons for why disk-
+using direct I/O, we therefore access the SSD directly as a based systems have fallen out of fashion. Once I/O becomes
+block device avoiding file system overhead altogether.             necessary, performance often “drops off a cliff”. With modern
+                                                                   SSDs, on the other hand, performance degrades much more
+A. TPC-C                                                           gracefully. High-performance storage engines like LeanStore
+   In the first out-of-memory experiment, the data initially fits therefore should only be used with fast storage devices such
+into main memory, but then, because of the high write rates of as SSDs—not disks.
+                           150M                                                           143M (0 IOs)    different levels of skew. The performance is very stable under
+throughput [lookups/sec]
+                                                                          129M (0 IOs)                    different cooling stage sizes—in particular for “reasonable”
+                                                                                                          settings between 5% and 20% percent. Under low skew (below
+                           100M                                                                           1.55), performance decreases with larger cooling stage sizes,
+                                                                                         74M (6K IOs)     since there is basically no working set to be identified and
+                                                                                                          wasting any memory for the cooling stage is unnecessary. Under
+                            50M
+                                                                                       33M (30K IOs)      very high skew (above 1.7), on the other hand, the working
+                                                                                      15M (64K IOs)       set is tiny, and can quickly be identified—with a small as well
+                                     92K (76K IOs)   193K (75K IOs)                                       as a large cooling stage.
+                                 0
+                                      uniform                1                  1.5                   2      Only for very specific skew settings (around 1.6), one can
+                                       skew                                                               observe performance that is more than 10% off from the
+Fig. 10. Lookup performance and number of I/O operations per second (20                                   optimum. For these skew settings, the working set is close to
+threads, 5 GB data set, 1 GB buffer pool).                                                                the buffer pool size. If the cooling stage size is too large,
+                                 uniform   z=1.25    z=1.5       z=1.55     z=1.6      z=1.7     z=2      performance is affected by frequently (and unnecessarily)
+                                                                                                          swizzling and unswizzling hot pages. In other settings (e.g.,
+normalized throughput
+
+
+
+
+                           1.1                                                                            1.7), the working set cannot effectively be identified if the
+                                                                                                          cooling stage size parameter is too small. We can generally
+                           1.0
+                                                                                                          recommend a value of 10% for the cooling stage size as a
+                           0.9                                                                            default setting, because this offers a good tradeoff between the
+                                                                                                          factors described above.
+                           0.8
+                                                                                                             Besides executing the workload in LeanStore directly, we
+                           0.7                                                                            also traced all page accesses and simulated different replace-
+                                 2 10 50 2 10 50 2 10 50 2 10 50 2 10 50 2 10 50 2 10 50
+                                                                                                          ment strategies. The page hit rates for a 5 GB data set, 1 GB
+                                           % of pages in cooling stage [log scale]                        buffer pool, and a Zipf factor of 1.0 are as follows:
+Fig. 11. Effect of cooling stage size on throughput. The throughput is                                                              LeanEvict
+normalized by the 10% cooling pages setting.                                                               Random    FIFO    5%    10%    20%    50%    LRU     2Q    OPT
+                                                                                                             92.5% 92.5% 92.7% 92.8% 92.9% 93.0% 93.1% 93.8% 96.3%
+B. Point Lookups
+                                                                                                             These results show that the page hit rate of our replacement
+   All experiments so far were based on TPC-C, which—while                                                strategy (“LeanEvict”) lies between that of very simple strate-
+certainly being challenging—may not be representative of                                                  gies (random and FIFO) and that of more elaborate techniques
+many real-world workloads. In particular, TPC-C is very insert-                                           (LRU, 2Q). However, with the exception of the optimal
+heavy (it has a low select to insert ratio), has a number of                                              replacement strategy (“OPT”), which is only of theoretical
+large relations (stock, customer) that are accessed in a                                                  interest, all approaches are fairly close. Also note that the page
+completely random fashion, the largest relation (orderline)                                               hit rates do not directly translate into performance, as more
+has a very peculiar access pattern. As a result, the working set                                          complex strategies like LRU and 2Q would also result in a
+is a significant fraction of the total data size.                                                         higher runtime overhead that is not captured in page hit rates.
+   To model common workloads, we therefore implemented                                                    We thus argue that in the modern hardware landscape, simple
+a read-only micro benchmark similar to YCSB workload C.                                                   strategies are often preferable due to lower runtime overhead.
+Our data set has 5 GB and consists of one B-tree storing
+41 M key/value pairs (the keys are 8 bytes, the values are 120                                            C. Scans
+bytes) and the buffer pool size is 1 GB. We perform lookups                                                  So far, the evaluation focused on index-heavy workloads,
+with 20 threads by drawing keys from a uniform or Zipf                                                    which are quite challenging for storage engines. Since we
+distribution and use a cooling stage size of 10%. Fig. 10                                                 designed LeanStore as a general-purpose storage engine, we
+shows the lookup performance and the number of read I/O                                                   also experimented with full table scans. To do this, we execute
+operations per second under varying degrees of skew. In low                                               two full table scans using two threads. One thread continuously
+skew settings, the majority of all lookups lead to page faults                                            scans a 10 GB orderline table, and another thread continuously
+and the throughput is therefore close to the number of I/O                                                scans a 0.7 GB order table (we use TPC-C data with 400
+operations. As the skew increases and the number of page                                                  warehouses). We vary the buffer pool size from 2 GB to 12 GB
+faults decreases, much higher performance is achieved. These                                              and enable I/O prefetching. Fig. 12 (top) shows the scan speed
+results show that our replacement strategy effectively identifies                                         of both threads. The smaller scan, which is shown as the
+the working set.                                                                                          dotted black line, is unaffected by the different buffer pool
+   Our replacement strategy’s only parameter is the percentage                                            sizes because the replacement strategy always successfully
+of pages in the cooling stage. To find a good setting, we varied                                          keeps its pages in the buffer pool. The performance of the
+the size of the cooling stage from 1% to 50%. Fig. 11 shows                                               larger scan, on the other hand, depends on the size of the
+the results, which are normalized using the 10% setting, for                                              buffer pool, as is shown by the four green lines of Fig. 12.
+                      8.0
+                            order                                                  [10] A. Eldawy, J. J. Levandoski, and P. Larson, “Trekking through Siberia:
+                            scan
+                                                                                        Managing cold data in a memory-optimized database,” PVLDB, vol. 7,
+                                                          12GB
+  scan speed [GB/s]
+
+                      6.0                                                               no. 11, 2014.
+                                                                                   [11] H. Zhang, D. G. Andersen, A. Pavlo, M. Kaminsky, L. Ma, and R. Shen,
+                                                                                        “Reducing the storage overhead of main-memory OLTP databases with
+                      4.0                                 10GB                          hybrid indexes,” in SIGMOD, 2016.
+                                                                                   [12] J. Gray and G. Graefe, “The five-minute rule ten years later, and other
+                                                          8GB                           computer storage rules of thumb,” SIGMOD Record, vol. 26, no. 4, 1997.
+                      2.0
+                                                                                   [13] J. M. Hellerstein, M. Stonebraker, and J. R. Hamilton, “Architecture of
+                                                          2GB                           a database system,” Foundations and Trends in Databases, vol. 1, no. 2,
+                      0.0                                                               2007.
+                                                                                   [14] S. Harizopoulos, D. J. Abadi, S. Madden, and M. Stonebraker, “OLTP
+                      1.5                                 2GB
+  SSD IO [GB/s]
+
+
+
+
+                                                                                        through the looking glass, and what we found there,” in SIGMOD, 2008.
+                      1.0                                 8GB                      [15] L. Ma, J. Arulraj, Z. Zhao, A. Pavlo, S. Dulloor, M. Giardino,
+                                                                                        J. Parkhurst, J. Gardner, K. Doshi, and S. Zdonik, “Larger-than-memory
+                      0.5                10GB                                           data management on modern storage hardware for in-memory OLTP
+                                                          12GB                          database systems,” in DaMoN, 2016.
+                      0.0                                                          [16] H. Zhang, G. Chen, B. C. Ooi, W. Wong, S. Wu, and Y. Xia, “”Anti-
+                                    20                    40          60
+                                                                                        Caching”-based elastic memory management for Big Data,” in ICDE,
+                                             time [sec]                                 2015.
+Fig. 12. Concurrent scan of the 0.7 GB order table and the 10 GB orderline         [17] R. Stoica and A. Ailamaki, “Enabling efficient OS paging for main-
+table using buffer pool sizes between 2 GB and 12 GB.                                   memory OLTP databases,” in DaMoN, 2013.
+                                                                                   [18] G. Graefe, H. Volos, H. Kimura, H. A. Kuno, J. Tucek, M. Lillibridge,
+                                                                                        and A. C. Veitch, “In-memory performance for Big Data,” PVLDB, vol. 8,
+                                                                                        no. 1, 2014.
+For pool sizes below 12 GB, the larger table cannot fully be                       [19] “SAP HANA memory usage explained,” https://hcp.sap.com/content/dam/
+cached. Therefore, parts of it must be continually read from                            website/saphana/en us/Technology%20Documents/HANA Memory
+SSD, as can be observed in Fig. 12 (bottom), which shows                                Usage SPS8.pdf.
+                                                                                   [20] “MemSQL memory management,” https://docs.memsql.com/docs/
+how much data is read from SSD. One interesting case is the                             memory-management.
+10 GB setting, where the buffer pool is slightly smaller than                      [21] F. Funke, A. Kemper, and T. Neumann, “Compacting transactional data
+the size of both tables combined. Since some data has to be                             in hybrid OLTP&OLAP databases,” PVLDB, vol. 5, no. 11, 2012.
+                                                                                   [22] R. Sherkat, C. Florendo, M. Andrei, A. K. Goel, A. Nica, P. Bumbulis,
+read from SSD in each iteration of the scan, we see a cyclical                          I. Schreter, G. Radestock, C. Bensberg, D. Booss, and H. Gerwens, “Page
+I/O pattern (at 25 and 50 seconds). Despite the occasional I/O,                         as you go: Piecewise columnar access in SAP HANA,” in SIGMOD,
+the scan performance remains high because most of the data                              2016.
+                                                                                   [23] J. J. Levandoski, D. B. Lomet, and S. Sengupta, “The Bw-Tree: A B-tree
+is cached.                                                                              for new hardware platforms,” in ICDE, 2013.
+                                    VII. S UMMARY                                  [24] J. Levandoski, D. Lomet, and S. Sengupta, “LLAMA: a cache/storage
+                                                                                        subsystem for modern hardware,” PVLDB, vol. 6, no. 10, 2013.
+   We have presented LeanStore, a novel storage manager that                       [25] H. Kimura, “FOEDUS: OLTP engine for a thousand cores and NVRAM,”
+is based on pointer swizzling, a low-overhead replacement                               in SIGMOD, 2015.
+                                                                                   [26] A. Kemper and D. Kossmann, “Adaptable pointer swizzling strategies
+strategy, and a scalable synchronization framework. Our                                 in object bases: Design, realization, and quantitative analysis,” VLDB
+experiments show that this design has negligible overhead in                            Journal, vol. 4, no. 3, 1995.
+comparison with in-memory data structures, while supporting                        [27] J. M. Mellor-Crummey and M. L. Scott, “Algorithms for scalable syn-
+                                                                                        chronization on shared-memory multiprocessors,” ACM Trans. Comput.
+the same functionality as a conventional buffer manager.                                Syst., vol. 9, no. 1, pp. 21–65, 1991.
+                                                                                   [28] H. Garcia-Molina, J. D. Ullman, and J. Widom, Database systems - the
+                                         R EFERENCES                                    complete book (2. ed.). Pearson Education, 2009.
+                                                                                   [29] S. J. White and D. J. DeWitt, “QuickStore: A high performance mapped
+ [1] W. Effelsberg and T. Härder, “Principles of database buffer management,”          object store,” in SIGMOD, 1994.
+     ACM Trans. Database Syst., vol. 9, no. 4, 1984.                               [30] R. Johnson, I. Pandis, and A. Ailamaki, “Eliminating unscalable
+ [2] A. Pavlo, “On scalable transaction execution in partitioned main memory            communication in transaction processing,” VLDB Journal, vol. 23, no. 1,
+     database management systems,” Ph.D. dissertation, Brown University,                2014.
+     2013.                                                                         [31] S. K. Cha, S. Hwang, K. Kim, and K. Kwon, “Cache-conscious concur-
+ [3] C. Diaconu, C. Freedman, E. Ismert, P. Larson, P. Mittal, R. Stonecipher,          rency control of main-memory indexes on shared-memory multiprocessor
+     N. Verma, and M. Zwilling, “Hekaton: SQL server’s memory-optimized                 systems,” in PVLDB, 2001.
+     OLTP engine,” in SIGMOD, 2013.                                                [32] Y. Mao, E. Kohler, and R. T. Morris, “Cache craftiness for fast multicore
+ [4] F. Färber, N. May, W. Lehner, P. Große, I. Müller, H. Rauhe, and J. Dees,        key-value storage,” in EuroSys, 2012.
+     “The SAP HANA database – an architecture overview,” IEEE Data Eng.            [33] V. Leis, F. Scheibner, A. Kemper, and T. Neumann, “The ART of practical
+     Bull., vol. 35, no. 1, 2012.                                                       synchronization,” in DaMoN, 2016.
+ [5] A. Kemper and T. Neumann, “HyPer: A hybrid OLTP&OLAP main                     [34] R. J. Barber, V. Leis, G. M. Lohman, V. Raman, and R. S. Si-
+     memory database system based on virtual memory snapshots,” in ICDE,                dle, “Fast multi-tier indexing supporting dynamic update,” US Patent
+     2011.                                                                              20 160 283 538, 2015.
+ [6] S. Tu, W. Zheng, E. Kohler, B. Liskov, and S. Madden, “Speedy                 [35] V. Leis, A. Kemper, and T. Neumann, “The adaptive radix tree: ARTful
+     transactions in multicore in-memory databases,” in SOSP, 2013.                     indexing for main-memory databases,” in ICDE, 2013.
+ [7] J. DeBrabant, A. Pavlo, S. Tu, M. Stonebraker, and S. B. Zdonik, “Anti-       [36] Z. Wang, A. Pavlo, H. Lim, V. Leis, H. Zhang, M. Kaminsky, and
+     Caching: A new approach to database management system architecture,”               D. Andersen, “Building a bw-tree takes more than just buzz words,” in
+     PVLDB, vol. 6, no. 14, 2013.                                                       SIGMOD, 2018.
+ [8] J. J. Levandoski, P. Larson, and R. Stoica, “Identifying hot and cold data    [37] G. Graefe, “A survey of B-tree locking techniques,” ACM Trans. Database
+     in main-memory databases,” in ICDE, 2013.                                          Syst., vol. 35, no. 3, 2010.
+ [9] K. Alexiou, D. Kossmann, and P. Larson, “Adaptive range filters for cold
+     data: Avoiding trips to Siberia,” PVLDB, vol. 6, no. 14, 2013.

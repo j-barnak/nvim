@@ -4860,6 +4860,8 @@ local WEB_BOOKS = {
 	{ title = "LibAFL (Articles)", key = "fuzzing-101-libafl", run = pick_fuzzing_101_libafl },
 	{ title = "AFL++ Articles", key = "aflpp-articles", run = frozen_web_provider("aflpp-articles", "AFL++ Articles> ") },
 	{ title = "What The Fuzz (wtf) Articles", key = "wtf-articles", run = frozen_web_provider("wtf-articles", "wtf Articles> ") },
+	{ title = "Awesome Databases (papers + storage)", key = "awesome-databases", run = frozen_web_provider("awesome-databases", "Awesome Databases> ") },
+	{ title = "Coding for SSDs (codecapsule)", key = "coding-for-ssds", run = frozen_web_provider("coding-for-ssds", "Coding for SSDs> ") },
 	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
 	{ title = "PCIe (Articles)", key = "pcie-articles", run = pick_pcie_articles },
 	{ title = "Perf Wiki", key = "perf-wiki", run = frozen_web_provider("perf-wiki", "Perf Wiki> ") },
@@ -5164,6 +5166,8 @@ LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "c
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
 LOCATION["aflpp-articles"] = { index = "aflpp-articles/index.tsv", unit = "article" }
 LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" }
+LOCATION["awesome-databases"] = { index = "awesome-databases/index.tsv", unit = "article" }
+LOCATION["coding-for-ssds"] = { index = "coding-for-ssds/index.tsv", unit = "part" }
 LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
 LOCATION["rbil"] = { index = "rbil/index.tsv", unit = "interrupt" }

@@ -1,0 +1,1159 @@
+# FASTER: A Concurrent Key-Value Store with In-Place Updates
+
+      Faster: A Concurrent Key-Value Store with In-Place Updates
+
+                    Badrish Chandramouli† , Guna Prasaad‡∗ , Donald Kossmann† , Justin Levandoski† ,
+                                            James Hunter† , Mike Barnett†
+                                                       † Microsoft Research                   ‡ University of Washington
+
+      badrishc@microsoft.com, guna@cs.washington.edu, {donaldk, justin.levandoski, jahunter, mbarnett}@microsoft.com
+
+ABSTRACT                                                                                         1.1    Challenges and Existing Solutions
+Over the last decade, there has been a tremendous growth in data-                                State management is an important problem for all these applications
+intensive applications and services in the cloud. Data is created on                             and services. It exhibits several unique characteristics:
+a variety of edge sources, e.g., devices, browsers, and servers, and                             • Large State: The amount of state accessed by some applications
+processed by cloud applications to gain insights or take decisions.                                 can be very large, far exceeding the capacity of main memory. For
+Applications and services either work on collected data, or monitor                                 example, a targeted search ads provider may maintain per-user,
+and process data in real time. These applications are typically update                              per-ad and clickthrough-rate statistics for billions of users. Also,
+intensive and involve a large amount of state beyond what can fit in                                it is often cheaper to retain state that is infrequently accessed on
+main memory. However, they display significant temporal locality                                    secondary storage [18], even when it fits in memory.
+in their access pattern. This paper presents Faster, a new key-                                  • Update Intensity: While reads and inserts are common, there
+value store for point read, blind update, and read-modify-write                                     are applications with significant update traffic. For example, a
+operations. Faster combines a highly cache-optimized concurrent                                     monitoring application receiving millions of CPU readings every
+hash index with a hybrid log: a concurrent log-structured record                                    second from sensors and devices may need to update a per-device
+store that spans main memory and storage, while supporting fast                                     aggregate for each reading.
+in-place updates of the hot set in memory. Experiments show that
+                                                                                                 • Locality: Even though billions of state objects maybe alive at
+Faster achieves orders-of-magnitude better throughput – up to
+                                                                                                    any given point, only a small fraction is typically “hot” and ac-
+160M operations per second on a single machine – than alternative
+                                                                                                    cessed or updated frequently with a strong temporal locality. For
+systems deployed widely today, and exceeds the performance of
+                                                                                                    instance, a search engine that tracks per-user statistics (averaged
+pure in-memory data structures when the workload fits in memory.
+                                                                                                    over one week) may have a billion users “alive” in the system,
+ACM Reference Format:                                                                               but only have a million users actively surfing at a given instant.
+Badrish Chandramouli, Guna Prasaad, Donald Kossmann, Justin Levandoski,                             Further, the hot set may drift over time; in our example, as users
+James Hunter, Mike Barnett. 2018. Faster: A Concurrent Key-Value Store                              start and stop browsing sessions.
+with In-Place Updates. In SIGMOD’18: 2018 International Conference on
+Management of Data, June 10–15, 2018, Houston, TX, USA. ACM, New York,                           • Point Operations: Given that state consists of a large number
+NY, USA, 16 pages. https://doi.org/10.1145/3183713.3196898                                          of independent objects that are inserted, updated, and queried, a
+                                                                                                    system tuned for (hash-based) point operations is often sufficient.
+1     INTRODUCTION                                                                                  If range queries are infrequent, they can be served with simple
+                                                                                                    workarounds such as indexing histograms of key ranges.
+There has recently been a tremendous growth in data-intensive
+applications and services in the cloud. Data created on a variety                                • Analytics Readiness: Updates to state should be readily avail-
+of edge sources such as Internet-of-Things devices, browsers, and                                   able for subsequent offline analytics; for e.g., to compute average
+servers is processed by applications in the cloud to gain insights.                                 ad clickthrough-rate drift over time.
+Applications, platforms, and services may work offline on collected                                 A simple solution adopted by many systems is to partition the
+data (e.g., in Hadoop [13] or Spark [42]), monitor and process data in                           state across multiple machines, and use pure in-memory data struc-
+real time as it arrives (e.g., in streaming dataflows [12, 42] and actor-                        tures such as the Intel TBB Hash Map [5], that are optimized for
+based application frameworks [2]), or accept a mix of record inserts,                            concurrency and support in-place updates – where data is modi-
+updates, and reads (e.g., in object stores [30] and web caches [36]).                            fied at its current memory location without creating a new copy
+                                                                                                 elsewhere – to achieve high performance. However, the overall so-
+∗ Work performed during internship at Microsoft Research.
+                                                                                                 lution is expensive and often severely under-utilizes the resources
+Permission to make digital or hard copies of all or part of this work for personal or            on each machine. For example, the ad serving platform of a search
+classroom use is granted without fee provided that copies are not made or distributed            engine may partition its state across the main memory of hun-
+for profit or commercial advantage and that copies bear this notice and the full citation        dreds of machines, resulting in a low per-machine request rate and
+on the first page. Copyrights for components of this work owned by others than ACM
+must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,          poorly utilized compute resources. Further, pure in-memory data
+to post on servers or to redistribute to lists, requires prior specific permission and/or a      structures make recovery from failures complicated.
+fee. Request permissions from permissions@acm.org.
+                                                                                                    Key-value stores are a popular alternative for state management.
+SIGMOD’18, June 10–15, 2018, Houston, TX, USA
+© 2018 Association for Computing Machinery.                                                      A key-value store is designed to handle larger-than-memory [28]
+ACM ISBN 978-1-4503-4703-7/18/06. . . $15.00                                                     data, and supports failure recovery by storing data on secondary
+https://doi.org/10.1145/3183713.3196898
+storage. Many such key-value stores [25, 34, 40] have been proposed            Threads          Hash Index (§3)   Records         Allocators
+in the past. However, these systems are usually optimized for blind               ...
+                                                                                                                                     In-Memory
+updates, reads, and range scans, rather than point operations and           ..., r2 ,r1
+read-modify-writes (e.g., for updating aggregates). Hence, these sys-                                                           Append-Only-Log
+                                                                                  ...
+tems do not scale to more than a few million updates per second [8],
+even when the hot-set fits entirely in main memory. Caching sys-                  ...
+                                                                                                                                     Hybrid-Log
+tems such as Redis [36] and Memcached [30] are optimized for point
+operations, but are slow and depend on an external system such as                                          Concurrent &     Larger-Than-     In-Place
+                                                                                        Record Allocator
+a database or key-value store for storage and/or failure recovery.                                          Latch-free        Memory         Updates
+                                                                            §4            In-Memory             ✓                               ✓
+The combination of concurrency, in-place updates (in memory),
+                                                                            §5          Append-Only-Log         ✓                ✓
+and ability to handle data larger than memory is important in our           §6            Hybrid-Log            ✓                ✓                ✓
+target applications; but these features are not simultaneously met
+                                                                                              Figure 1: Overall Faster architecture.
+by existing systems. We discuss related work in detail in Sec. 8.
+                                                                           • (Sec. 7) We perform a detailed evaluation using the YCSB [4]
+1.2    Introducing Faster                                                     benchmark, evaluate the “up to orders-of-magnitude” better per-
+This paper describes a new concurrent key-value store called Faster,          formance and near-linear scalability of Faster with HybridLog.
+designed to serve applications that involve update-intensive state            Further, we use simulations to better understand the natural
+management. The Faster interface (Sec. 2.2 and Appendix E) sup-               caching behavior of HybridLog in comparison to more expen-
+ports, in addition to reads, two types of state updates seen in prac-         sive, state-of-the-art caching techniques.
+tice: blind updates, where an old value is replaced by a new value             Faster follows the design philosophy of making the common case
+blindly; and read-modify-writes (RMWs), where the value is atomi-          fast. By carefully (1) providing fast point-access to records using a
+cally updated based on the current value and an input (optional).          cache-efficient concurrent latch-free hash index; (2) choosing when
+RMW updates, in particular, enable us to support partial updates           and how, expensive or uncommon activities (such as index resizing,
+(e.g., updating a single field in the value) as well as mergeable aggre-   checkpointing, and evicting data from memory) are performed; and
+gates [39] (e.g., sum, count). Being a point-operations store, Faster      (3) allowing threads to perform in-place updates most of the time,
+achieves an in-memory throughput of 100s of million operations             Faster exceeds the throughput of pure in-memory systems for
+per second. Retaining such high performance while supporting data          in-memory workloads, while supporting data larger than memory
+larger than memory required a careful design and architecture. We          and adapting to a changing hot set.
+make the following contributions:                                              Implemented as a high-level-language component using dynamic
+• (Sec. 2) Towards a scalable threading model, we augment stan-            code generation, Faster blurs the line between traditional key-
+   dard epoch-based synchronization into a generic framework that          value stores and update-only “state stores” used in streaming sys-
+   facilitates lazy propagation of global changes to all threads via       tems (e.g., Spark State Store [14] and Flink [12]). Further, HybridLog
+   trigger actions. This framework provides Faster threads with            is record-oriented and approximately time-ordered, and can be fed
+   unrestricted access to memory under the safety of epoch protec-         into scan-based log analytics systems (cf. Appendix F).
+   tion. Throughout the paper, we highlight instances where this               The main result shown in this paper with the help of Faster
+   generalization helped simplify our scalable concurrent design.          and HybridLog is that it is possible to have it all: high update rates,
+• (Sec. 3 and 4) We present the design of a concurrent latch-free          low cost by limiting the memory footprint, support for larger-than-
+   resizable cache-friendly hash index for Faster. When coupled            memory data, and performance that exceeds pure in-memory data
+   with a standard in-memory record allocator, it serves as an in-         structures when the working-set fits in memory.
+   memory key-value store, which we found to be more performant
+   and scalable than popular pure in-memory data structures.               2      SYSTEM OVERVIEW
+• (Sec. 5 and 6) Log-structuring [24, 38] is a well-known technique        Faster is a concurrent latch-free key-value store that is designed
+   for handling data larger than memory and supporting easy fail-          for high performance and scalability across threads. We use latch-
+   ure recovery. It is based on the read-copy-update strategy, in          free atomic operations such as compare-and-swap, fetch-and-add,
+   which updates to a record are made on a new copy on the log.            and fetch-and-increment (cf. Appendix A) extensively in our design,
+   We find that such a design could limit throughput and scalability       and heavily leverage an extended epoch-based synchronization
+   in Faster. As noted earlier, in-place updates are critical for per-     framework (Sec. 2.3) to help us support in-place updates.
+   formance. In this respect, we propose HybridLog: a new hybrid
+   log that seamlessly combines in-place updates with a traditional        2.1          Faster Architecture
+   append-only log. The HybridLog organization allows Faster to            Fig. 1 shows the overall architecture of Faster. It consists of a
+   perform in-place updates of “hot” records and use read-copy-            hash index that holds pointers to key-value records and a record
+   updates for colder records. Further, it acts as an efficient cache by   allocator that allocates and manages individual records. The index
+   shaping what resides in memory without any per-record or per-           (Sec. 3) provides very efficient hash-based access to hash buckets.
+   page statistics. Doing so concurrently required us to solve novel       The hash bucket is a cache-line sized array of hash bucket entries.
+   technical challenges. Sec. 6.5 sketches the consistency guarantees      Each entry includes some metadata and an address (either logical
+   of Faster in the presence of failures.                                  or physical) provided by a record allocator. The record allocator
+stores and manages individual records. Hash collisions that are            epoch protection [23] into a framework enabling lazy synchroniza-
+not resolved at the index level are handled by organizing records          tion over arbitrary global actions. While systems like Silo [41],
+as a linked-list. Each record consists of a record header, key, and        Masstree [29] and Bw-Tree [25] have used epochs for specific pur-
+value. Keys and values may be fixed or variable-sized. The header          poses, we extend it to a generic framework that can serve as a
+contains some metadata and a pointer to the previous record in the         building block for Faster and other parallel systems. We describe
+linked-list. Note that keys are not part of the Faster hash index,         epoch protection next, and depict its use as a framework in Sec. 2.4.
+unlike many traditional designs, which provides two benefits:
+                                                                              Epoch Basics. The system maintains a shared atomic counter E,
+• It reduces the in-memory footprint of the hash index, allowing           called the current epoch, that can be incremented by any thread.
+   us to retain it entirely in memory.                                     Every thread T has a thread-local version of E, denoted by ET .
+• It separates user data and index metadata, which allows us to            Threads refresh their local epoch values periodically. All thread-
+   mix and match the hash index with different record allocators.          local epoch values ET are stored in a shared epoch table, with one
+   We describe three allocators in this paper (the table in Fig. 1         cache-line per thread. An epoch c is said to be safe, if all threads
+summarizes their capabilities): an in-memory allocator (Sec. 4) that       have a strictly higher thread-local value than c, i.e., ∀ T : ET > c.
+enables latch-free access and in-place updates to records; an append-      Note that if epoch c is safe, all epochs less than c are safe as well. We
+only log-structured allocator (Sec. 5) that provides latch-free access     additionally maintain a global counter Es , which tracks the current
+and can handle data larger than main-memory, but without in-               maximal safe epoch. Es is computed by scanning all entries in the
+place updates; and finally a novel hybrid-log allocator (Sec. 6) that      epoch table and is updated whenever a thread refreshes its epoch.
+combines latch-free concurrent access with in-place updates and            The system maintains the following invariant: ∀ T : Es < ET ≤ E.
+the ability to handle larger-than-memory data.
+                                                                               Trigger Actions. We augment the basic epoch framework with the
+                                                                           ability to execute arbitrary global actions when an epoch becomes
+2.2    User Interface
+                                                                           safe using trigger actions. When incrementing the current epoch, say
+Faster supports reads, advanced user-defined updates, and deletes.         from c to c + 1, threads can additionally associate an action that will
+We use dynamic code generation to integrate the update logic pro-          be triggered by the system at a future instant of time when epoch c
+vided as user-defined delegates during compile time into the store,        is safe. This is enabled using the drain-list, a list of ⟨epoch, action⟩
+resulting in a highly efficient store with native support for advanced     pairs, where action is the callback code fragment that must be
+updates. We cover code generation in Appendix E. The generated             invoked after epoch is safe. It is implemented using a small array
+Faster runtime interface consists of the following operations:             that is scanned for actions ready to be triggered whenever Es is
+• Read: Read the value corresponding to a key.                             updated. We use atomic compare-and-swap on the array to ensure
+• Upsert: Replace the value corresponding to a key with a new              an action is executed exactly once. We recompute Es and scan
+   value blindly (i.e. regardless of the existing value). Insert as new,   through the drain-list only when there is a change in current epoch,
+   if the key does not exist.                                              to enhance scalability.
+• RMW: Update the value of a key based on the existing value and
+   an input (optional) using the update logic provided by the user         2.4    Using the Epoch Framework
+   during compile-time. We call this a Read-Modify-Write (RMW)             We expose the epoch protection framework using the following
+   operation. The user also provides an initial value for the update,      four operations that can be invoked by any thread T :
+   which is used when a key does not exist in the store. Additionally,     • Acquire: Reserve an entry for T and set ET to E
+   users can indicate that an RMW operation is mergeable, also called      • Refresh: Update ET to E, Es to current maximal safe epoch and
+   a CRDT [39] (for conflict-free replicated datatype) during compile         trigger any ready actions in the drain-list
+   time. Such a data type can be computed as partial values that
+                                                                           • BumpEpoch(Action): Increment counter E from current value c
+   can later be merged to obtain the final value. For example, a
+                                                                              to (c + 1) and add ⟨c, Action⟩ to drain-list
+   summation-based update can be computed as partial sums and
+   these can be summed up for the final value.                             • Release: Remove entry for T from epoch table
+                                                                              Epochs with trigger actions can be used to simplify lazy synchro-
+• Delete: Delete a key from the store.
+                                                                           nization in parallel systems. Consider a canonical example, where
+Further, some operations may go pending in Faster due to several           a function active-now must be invoked when a shared variable
+reasons covered in this paper. Faster returns a PENDING status in          status is updated to active. A thread updates status to active
+such cases; threads issue a CompletePending request periodically           atomically and bumps the epoch with active-now as the trigger
+to process outstanding pending operations related to that thread.          action. Not all threads will observe this change in status imme-
+                                                                           diately. However, all of them are guaranteed to have observed it
+2.3    Epoch Protection Framework                                          when they refresh their epochs (due to sequential memory consis-
+Faster is based on a key design principle aimed at scalability: avoid      tency using memory fences). Thus, active-now will be invoked
+expensive coordination between threads in the common fast access           only after all threads see the status to be active and hence is safe.
+path. Faster threads perform operations independently with no                 We use the epoch framework in Faster to coordinate system
+synchronization most of the time. At the same time, they need to           operations such as memory-safe garbage collection (Sec. 4), index
+agree on a common mechanism to synchronize on shared system                resizing (Appendix B), circular buffer maintenance and page flush-
+state. To achieve these goals, we extend the idea of multi-threaded        ing (Sec. 5), shared log page boundary maintenance (Sec. 6.2), and
+      Tentative Bit                                                                                𝑇1
+                                                 Header
+          15 bits        48 bits                                                  𝑔1 𝑔2 𝑔3 𝑔4                Thread 𝑻𝟏               Thread 𝑻𝟐
+                                                      Key           Value
+            Tag         Address
+                                                                                        𝑇2         𝑇1      CAS entry 5 to           CAS entry 3 to
+                                   Next Bucket                                                             [tentative, 𝑔5 ]         [tentative, 𝑔5 ]
+                    8 bytes         Address                                       𝑔1 𝑔2 𝑔3 𝑔4              Scan bucket for          Scan bucket for
+                                                   16 bits 48 bits
+                                                                                                           duplicate entry 𝑔5       duplicate entry 𝑔5
+                                                   Meta       Address                                      (possibly tentative)     (possibly tentative)
+                                                                                        𝑇2         𝑇1
+                                                                                                           If (not found)           If (not found)
+                      64 bytes                            8 bytes                 𝑔1 𝑔2 𝒈𝟓 𝑔4 𝒈𝟓              Reset tentative bit      Reset tentative bit
+          Hash Bucket Format                     Record Format                               (a)                              (b)
+
+      Figure 2: Detailed Faster index and record format.                    Figure 3: (a) Insert bug; (b) Thread ordering in our solution.
+checkpointing (Sec. 6.5), while at the same time providing Faster           reducing hash collisions. The hash bucket for a key with hash value
+threads unrestricted latch-free access to shared memory locations           h is first identified using the first k bits of h, called the offset of
+in short bursts for user operations such as reads and updates.              h. The next 15 bits of h are called the tag of h. Tags only serve to
+                                                                            increase the hashing resolution and may be smaller, or removed
+2.5      Lifecycle of a Faster Thread                                       entirely, depending on the size of the address. The tentative bit is
+As our running example in the paper, we use Faster to implement             necessary for insert, and will be covered shortly.
+a count store, in which a set of Faster user threads increment
+the counter associated with incoming key requests. A thread calls           3.2      Index Operations
+Acquire to register itself with the epoch mechanism. Next, it issues        The Faster index is based on the invariant that each (offset, tag)
+a sequence of user operations, along with periodic invocations of           has a unique index entry, which points to the set of records whose
+Refresh (e.g., every 256 operations) to move the thread to current          keys hash to the same offset and tag. Ensuring this invariant while
+epoch, and CompletePending (e.g., every 64K operations) to handle           supporting concurrent latch-free reads, inserts and deletes of index
+any prior pending operations. Finally, the thread calls Release to          entries is challenging.
+deregister itself from using Faster.
+                                                                               Finding and Deleting an Entry. Locating the entry corresponding
+3     THE FASTER HASH INDEX                                                 to a key is straightforward: we identify the hash-bucket using k
+A key building block of Faster is the hash index, a concurrent,             hash bits, scan through the bucket to find an entry that matches the
+latch-free, scalable, and resizable hash-based index. As described in       tag. Deleting an entry from the index is also easy: we use compare-
+Sec. 2, the index works with a record allocator that returns logical        and-swap to replace the matching entry (if any) with zero.
+or physical memory pointers. For ease of exposition, we assume a                Inserting an Entry. Consider the case where a tag does not exist
+64-bit machine with 64-byte cache lines. On larger architectures, we        in the bucket, and a new entry has to be inserted. A naive approach
+expect to have larger atomic operations [19], allowing our design           is to look for an empty entry and insert the tag using a compare-and-
+to scale. In Sec. 4, 5, and 6, we will pair this index with different       swap. However, two threads could concurrently insert the same tag
+allocators to create key-value stores with increasing capabilities.         at two different empty slots in the bucket, breaking our invariant.
+                                                                            As a workaround, consider a solution where every thread scans
+3.1      Index Organization                                                 the bucket from left to right, and deterministically chooses the first
+The Faster index is a cache-aligned array of 2k hash buckets, where         empty entry as the target. They will compete for the insert using
+each bucket has the size and alignment of a cache line (Fig. 2). Thus,      compare-and-swap and only one will succeed. Even this approach
+a 64-byte bucket consists of seven 8-byte hash bucket entries and one       violates the invariant in presence of deletes, as shown in Fig. 3a.
+8-byte entry to serve as an overflow bucket pointer. Each overflow          A thread T1 scans the bucket from left to right and chooses slot 5
+bucket has the size and alignment of a cache line as well, and is           for inserting tag д5 . Another thread T2 deletes tag д3 from slot 3
+allocated on demand using an in-memory allocator.                           in the same bucket, and then tries to insert a key with the same
+   The choice of 8-byte entries is critical, as it allows us to operate     tag д5 . Scanning left to right will cause thread T2 to choose the
+latch-free on the entries using 64-bit atomic compare-and-swap              first empty entry 3 for this tag. It can be shown that this problem
+operations. On a 64-bit machine, physical addresses typically take          exists with any algorithm that independently chooses a slot and
+up fewer than 64 bits; e.g., Intel machines use 48-bit pointers. Thus,      inserts directly: to see why, note that just before thread T1 does a
+we can steal the additional bits for index operations (at least one         compare-and-swap, it may get swapped out and the database state
+bit is required for Faster). We use 48-bit pointers in the rest of the      may change arbitrarily, including another slot with the same tag.
+paper, but note that we can support pointers up to 63 bits long.                While locking the bucket is a possible (but heavy) solution,
+   Each hash bucket entry (Fig. 2) consists of three parts: a tag (15       Faster uses a latch-free two-phase insert algorithm that lever-
+bits), a tentative bit, and the address (48 bits). An entry with value      ages the tentative bit entry. A thread finds an empty slot and inserts
+0 (zero) indicates an empty slot. In an index with 2k hash buckets,         the record with the tentative bit set. Entries with a set tentative
+the tag is used to increase the effective hashing resolution of the         bit are deemed invisible to concurrent reads and updates. We then
+index from k bits to k + 15 bits, which improves performance by             re-scan the bucket (note that it already exists in our cache) to check
+if there is another tentative entry for the same tag; if yes, we back                                              Head Offset                           Tail Offset
+                                                                                                                     LA = k                              LA = k + 
+off and retry. Otherwise, we reset the tentative bit to finalize the           Increasing Logical Address
+
+insert. Since every thread follows this two-phase approach, we are
+guaranteed to maintain our index invariant. To see why, Fig. 3b
+
+
+
+
+                                                                                                        LA = k-1
+                                                                                                                                  In-Memory
+
+
+
+
+                                                                               LA = 0
+shows the ordering of operations by two threads: there exists no                        On-Disk                                  Circular Buffer
+interleaving that could result in duplicate non-tentative tags.
+
+3.3    Resizing and Checkpointing the Index                                      Flush Status   F   F         F    F   F   F     Closed Status   C   O   O   O   O     O
+
+For applications where the number of keys may vary significantly
+                                                                                Figure 4: Tail Portion of the Log-Structured Allocator
+over time, we support resizing the index on-the-fly. We leverage
+epoch protection and a state machine of phases to perform resizing         a fetch-and-increment or a normal in-place increment (if keys are
+at low overhead (cf. Appendix B). Interestingly, the use of latch-free     partitioned). The initial value for the insert of a new key is set to 0.
+operations always maintains the index in a consistent state even in
+the presence of concurrent operations. This allows us to perform              Deletes. We delete a record by atomically splicing it out of the
+an asynchronous fuzzy checkpoint of the index without obtaining            linked-list using a compare-and-swap on either a record header or
+read locks, greatly simplifying recovery (cf. Sec. 6.5).                   hash bucket entry (for the first record). When deleting the record
+                                                                           from a singleton linked-list, the entry is set to 0, making it avail-
+4     AN IN-MEMORY KEY-VALUE STORE                                         able for future inserts. A deleted record cannot be immediately
+                                                                           returned to the memory allocator because of concurrent updates
+We now build a complete in-memory key-value store using the
+                                                                           at the same location. We use our epoch protection framework to
+Faster hash index from Sec. 3, along with a simple in-memory
+                                                                           solve this problem: each thread maintains a thread-local (to avoid a
+allocator such as jemalloc [1]. Records with the same (offset, tag)
+                                                                           concurrency bottleneck) free-list of (epoch, address) pairs. When
+value are organized as a reverse singly-linked-list. The hash bucket
+                                                                           the epochs become safe, we can safely return them to the allocator.
+entry points to the tail (most recent record) in the list, which in turn
+points to the previous record, and so on (see Fig. 1). Each record may
+be fixed- or variable-sized, and consists of a 64-bit record header,
+                                                                           5       HANDLING LARGER DATA IN FASTER
+the key, and the value. The record header is shown in Fig. 2. Apart        As a strawman solution, we transform our in-memory Faster from
+from the previous pointer, we use a few bits (invalid and tombstone)       Sec. 4 into a full-fledged key-value store that can handle data larger
+to keep track of information that is necessary for log-structured          than memory by building a log-structured record allocator. Log
+allocators (cf. Sec. 5 and 6). These bits are stored as part of the        structuring is a well researched area [24, 25, 34], and our approach
+address word, but may be stored separately as well, if necessary.          is a straightforward adaptation of existing techniques, augmented
+                                                                           with epoch protection for lower synchronization overhead. Being
+                                                                           append-only, such a system does not perform well; we will show in
+Operations with In-Memory Allocator
+                                                                           Sec. 7.4.1 that it achieves a throughput of no more than 20 million
+In Faster, user threads read and modify record values in the safety        operations per second, and does not scale with the number of
+of epoch protection, with record-level concurrency handled by the          threads. However, this design is useful as a building block to help
+user’s read or update logic. For example, one could use fetch-and-         explain our main contribution in Sec. 6, where we will get back
+add for counters, take a record-level lock, or leverage application-       scalable performance using a novel hybrid log allocator.
+level knowledge of partitioning for latch-free updates. Operations
+on the store are described next.                                           5.1          Logical Address Space
+   Reads. We find the matching tag entry from the index as de-             We start by defining a global logical address space that spans main
+scribed in Sec. 3.2, and then traverse the linked-list for that entry      memory and secondary storage. The record allocator allocates and
+to find a record with the matching key.                                    returns 48-bit logical addresses corresponding to locations in this
+                                                                           address space. Unlike our pure in-memory version, the Faster
+   Updates and Inserts. Both blind updates (upserts) and RMW up-           hash index now stores the logical address of a record instead of its
+dates begin by finding the hash bucket entry for the key. If the           physical address. The logical address space is maintained using a
+entry does not exist, we use the two-phase algorithm described in          tail offset, which points to the next free address at the tail of the log.
+Sec. 3.2 to insert the tag along with the address of the new record,       An additional offset, called the head offset, tracks the lowest logical
+into an empty slot in the hash bucket. If the entry exists, we scan        address that is available in memory. The head offset is maintained
+the linked-list to find a record with a matching key. If such a record     at an approximately constant lag from the tail offset, equal to the
+exists, we perform the operation in-place. A thread has guaran-            memory available for the log. In order to minimize overhead, we
+teed access to the memory location of a record, as long as it does         update it only when the tail offset crosses page boundaries.
+not refresh its epoch. This property allows threads to update a               The contiguous address space between the current head and tail
+value in-place without worrying about memory safety. If such a             offsets (i.e., the tail portion of the log) is present in a bounded in-
+record does not exist, we splice in the new record into the tail of        memory circular buffer, as shown in Fig. 4. The circular buffer is a
+the list using a compare-and-swap. In our count store example,             linear array of fixed-size page frames, each of size 2F bytes, that are
+we increment the counter value for an existing key, using either           each allocated sector-aligned with the underlying storage device,
+           Increasing Logical Address     Read-Copy-Update      In-Place-Update                     Logical Address      Action
+                                                                                                    Invalid              Make a new record at tail-end
+  LA = 0
+
+
+
+
+                                                                                  LA = ∞
+                  Stable                                                                            < HeadOffset         Issue Async IO Request
+                                        Read-Only                 Mutable
+                                                                                                    < ReadOnlyOffset     Make a mutable copy at tail-end
+                   Disk                             In-Memory                                       <∞                   Update in-place
+
+               Figure 5: Logical Address Space in HybridLog                                       Table 1: Update scheme with Read-Only Marker
+
+in order to allow unbuffered reads and writes without additional
+memory copies. A logical address L greater than the head address                           (cf. Appendix C). Read and RMW operations are similar to their
+resides in main memory at offset equal to the last F bits of L, in the                     in-memory counterparts described in Sec. 4. However, updates are
+page frame with position equal to L ≫ F in the circular array.                             always appended to the tail of the log, and linked to the previous
+   New record allocation always happens at the tail. We maintain                           record. Further, logical addresses are handled differently. For a
+the tail offset as two values in one word – a page number and an                           retrieved logical address, we first check if the address is more than
+offset. For efficiency, a thread allocates memory using a fetch-and-                       the current head offset. If yes, the record is in memory and we can
+add on the offset; if the offset corresponds to an allocation that                         proceed as before. If not, we issue an asynchronous read request
+would not fit on the current page, it increments the page number                           for the record to storage. Being a record log, we retrieve only the
+and resets the offset. Other threads that see a new offset greater                         record and not the entire logical page. In our count store example,
+than page size wait for the offset to become valid, and retry.                             every counter increment results in appending the new counter to
+                                                                                           the tail of the log (reading the older value from storage if necessary),
+5.2          Circular Buffer Maintenance                                                   followed by a compare-and-swap to update the index entry.
+We need to manage the off-loading of log records to secondary                                 Every user operation is associated with a context that is used
+storage in a latch-free manner, as threads perform unrestricted                            to continue the operation when the I/O completes. Each Faster
+memory accesses between epoch boundaries. To achieve this, we                              thread has a thread-local pending queue of contexts of all com-
+maintain two status arrays: a flush-status array tracks if the current                     pleted asynchronous requests issued by that thread. Periodically,
+page has been flushed to secondary storage, and a closed-status                            the thread invokes a CompletePending function to dequeue these
+array determines if a page frame can be evicted for reuse. Since                           contexts and process the continuations. Note that the continuation
+we always append to the log, a record is immutable once created.                           may need to issue further I/O operations, e.g., for a previous logical
+When the tail enters a new page p + 1, we bump the epoch with                              address in the linked-list of records.
+a flush trigger action that issues an asynchronous I/O request to
+flush page p to secondary storage. This action is invoked only                             6     ENABLING IN-PLACE UPDATES IN FASTER
+when the epoch becomes safe – because threads refresh epochs at                            The log allocator design presented in the previous section, in ad-
+operation boundaries, we are guaranteed that all threads would                             dition to handling data larger than memory, enables a latch-free
+have completed writing to addresses in page p, and the flush is safe.                      access path for updates due to its append-only nature. But this
+When the asynchronous flush operation completes, the flush-status                          comes at a cost: every update involves atomic increment of the tail
+of the page is set to flushed.                                                             offset to create a new record, copying data from previous location
+   As the tail grows, an existing page frame may need to be evicted                        and atomic replace of the logical address in the hash index. Further,
+from memory, but we first need to ensure that no thread is accessing                       an append-only log grows fast, particularly with update-intensive
+the page. Traditional databases use a latch to pin pages in the buffer                     workloads, quickly making disk I/O a bottleneck.
+pool before every access so that it is not evicted when in use. For                           On the other hand, in-place updates have several advantages
+high performance, however, we leverage epochs to manage eviction.                          in such workloads: (1) frequently accessed records are likely to
+Recall that the head offset determines if a record is available in                         be available in higher levels of cache; (2) access paths for keys
+memory. To evict pages from memory, we increment the head                                  of different hash buckets do not collide; (3) updating parts of a
+offset and bump the current epoch with a trigger action to set the                         larger value is efficient as it avoids copying the entire record or
+closed-status array entry for the older page frame. When this epoch                        maintaining expensive delta chains that require compaction; and
+is safe, we know that all threads would have seen the updated                              (4) most updates do not need to modify the Faster hash index.
+head offset value and hence would not be accessing those memory
+addresses. Note that we must ensure that the to-be-evicted page is                         6.1    Introducing HybridLog
+completely flushed before updating the head offset, so that threads                        HybridLog is a novel data structure that combines in-place updates
+that need those records can retrieve it from storage.                                      (in memory) and log-structured organization (on disk) while pro-
+                                                                                           viding latch-free concurrent access to records. HybridLog spans
+5.3          Operations with Append-Only Allocator                                         memory and secondary storage, where the in-memory portion acts
+Blind updates simply append a new record to the tail of the log                            as a cache for hot records and adapts to a changing hot set.
+and update the hash index using a compare-and-swap as before. If                              In HybridLog the logical address space is divided into 3 contigu-
+the operation fails, we simply mark the log record as invalid (using                       ous regions: (1) stable region (2) read-only region and (3) mutable
+a header bit) and retry the operation. Deletes insert a tombstone                          region as shown in Fig. 5. The stable region portion is on secondary
+record (again, using a header bit), and require log garbage collection                     storage. The in-memory portion is composed of read-only and
+                                                                                           T1       T2      T3      T4
+         T1        T2        T3              T1’s         T3’s
+      Obtain L             Obtain L          View         View            Minimum                                           Read-Only Region
+       L < R1                           R1
+                 R1 → R2                 L                  4             RO Offset
+                                             4→5
+                           L < R2                                 R2                                                        Fuzzy Region
+                            L’ : 5                          5     L’      Maximum
+      L: 4 → 5                                                            RO Offset                                         Mutable Region
+
+                  Figure 6: Lost Update Anomaly                                Figure 7: Thread Local View of Hybrid Log Regions
+                                                                         T1 and T3 obtain the same logical address L from the Faster hash
+mutable regions. Records in the mutable region can be modified           index. T1 decides to do an in-place update as L is more than the
+in-place, while records in the read-only region cannot. In order to      current read-only offset R 1 . Meanwhile, a thread T2 updates the
+update a record currently in the read-only region, we follow the         read-only offset from R 1 to R 2 due to shifting of tail-offset. Now,
+Read-Copy-Update (RCU) strategy: a new copy is created in the            thread T3 compares L with R 2 and decides to create a new record
+mutable region and then updated. Further updates to such a record        at L ′ with the updated value of 5. However, thread T1 updates the
+are performed in-place, as long as it stays in the mutable region.       value to 5 at L. All future accesses will use the value at L ′ and hence
+   We implement HybridLog on the log allocator from Sec. 5 using         we have lost the update by T1 .
+an additional marker called the read-only offset, that corresponds          The above anomaly occurs because a thread T2 updates read-
+to a logical address residing in the in-memory circular buffer. The      only offset, while T1 is acting based on the current value. We could
+region between head-offset and read-only offset is the read-only         prevent this by obtaining a read lock on read-only offset for the
+region and the region after read-only offset is the mutable region.      entire duration of T1 ’s operation. However, such a locking scheme
+If a record is at a logical address more than read-only offset, it is    is expensive and unnecessarily delays shifting of read-only offset,
+updated in-place. If the address is between read-only and head offset,   which is integral to maintaining the circular buffer. On the other
+we create an updated copy at the end of tail and update the hash         hand, even if the read-only offset has shifted, the anomaly occurs
+index to point to the new location; if the address is less than head-    because one thread (T1 ) makes an update decision based on a stale
+offset, it is not available in memory and hence an asynchronous          value and another (T2 ) based on the new value of the offset.
+IO request is issued to retrieve the record from secondary storage.         We use another marker called the safe read-only offset to elimi-
+Once it is obtained, a new updated copy is created at the end of         nate such incorrect executions. This marker tracks the read-only
+tail followed by updating the hash index. This update scheme is          offset that has been seen by all the threads. It is designed based
+summarized in Table 1.                                                   on the following invariant: safe read-only offset is the minimum
+   The read-only offset is maintained at a constant lag from tail-       value of read-only offset seen by any active Faster thread. We
+offset and is updated only at page boundaries similar to the head-       maintain this using the epoch-trigger action mechanism as follows:
+offset. Since none of the pages with logical address less than the       whenever the read-only offset is updated, we bump the current
+read-only offset are being updated concurrently, it is safe to flush     epoch along with a trigger action that updates the safe read-only
+them to secondary storage. As tail-offset grows, read-only offset        offset to the new value. This epoch-based update for safe read-only
+shifts along making pages ready to be flushed. Once they are safely      offset satisfies the invariant because all threads that crossed the
+offloaded to disk, they can be evicted from the circular buffer (when    current epoch must have seen the new value of read-only offset.
+necessary) using the head-offset and closed-status array like in            With an additional marker, the safe read-only offset, HybridLog
+Sec. 5. Thus, the read-only offset serves as a light-weight indicator    is divided into 4 regions. We call the region between safe read-only
+of pages that are ready to be flushed to disk. Note that the read-       and read-only offset as fuzzy region, because some threads might
+only offset in HybridLog enables latch-free access to records in the     see it as after the read-only offset while some others may see it
+mutable region, whereas in traditional designs, records (or pages)       as before. Threads are guaranteed to obtain the latest values of
+must be pinned in the buffer pool before updating it to prevent          safe read-only and read-only offsets only when they refresh their
+concurrent updates while flushing them to disk.                          epochs. As a result, each thread might have a thread-local view of
+   The lag between read-only and tail offsets determines the divi-       these markers as shown in Fig. 7. Thread T4 has the highest value of
+sion of main memory buffer capacity into fast in-place updatable         read-only offset because it has refreshed its epoch recently, while T3
+and immutable read-only regions. In addition to helping flush pages      has stale values as it has not refreshed recently. However, note that
+safely to secondary storage, the read-only region also acts as a         the safe read-only offset for any thread is at most the minimum read-
+second-chance cache for records before being off-loaded to disk.         only offset (thread T3 ) and this is ensured by our epoch protection
+We discuss the caching behavior and impact of sizing the hybrid          framework. When the logical address of a record is less than safe
+log regions on Faster performance in Sec. 6.4.                           read-only, threads may try to create a new record concurrently
+                                                                         and only one will succeed due to the atomic compare-and-swap
+6.2     Lost-Update Anomaly                                              operation on the Faster hash index.
+The read-only offset is updated and read atomically. However, it is
+still possible that a thread decides on the update scheme based on       6.3    Fuzzy Region
+a stale value of the offset, leading to incorrect execution. Consider    When a record falls in the fuzzy region, interestingly, different types
+the scenario shown in Fig. 6, from our count store example. Threads      of updates can be handled differently. Here, we classify the types
+          Logical Address           Read-Modify-Write                      CRDT Update                         Blind Update
+          Invalid                   Create a new record at tail-end        Create a new record at tail-end
+          < HeadAddress             Issue Async IO Request
+                                                                                                               Create a new record at tail-end
+          < SafeReadOnlyAddress     Add to pending list                    Create a delta record at tail-end
+          < ReadOnlyAddress         Create an updated record at tail-end
+          <∞                        Update in-place concurrently           Update in-place concurrently        Update in-place concurrently
+                                         Table 2: Update scheme for different types of updates
+
+of updates into three, namely blind update, read-modify-write and            on our count store example (Appendix D addresses other kinds of
+CRDT update. The update scheme for each of these update types is             workloads). When a record is retrieved from disk for update, the
+summarized in Table 2.                                                       new record with updated count is created at the end of tail. The
+                                                                             record stays in memory and is available for in-place updates, until
+   Blind Update. This update does not read the old value of a key.           it enters the read-only region of the hybrid log. If a key is hot, it is
+Even if one thread is updating a previous location in-place, another         likely that there is a subsequent request before it is evicted from
+thread can create a new record at the end of tail with the new               memory resulting in a new mutable record. This serves as a second
+value. Since the updates are issued concurrently, semantics of the           chance for the key to remain cached in memory. Otherwise, it is
+application must allow all possible serial orders. Further, we can           evicted to disk, making space for hotter keys in memory.
+avoid an expensive retrieval from the disk in case the record is not
+available in memory, as we do not need the old value.                           Sizing the Hybrid Log Regions. Sizing the mutable and read-only
+                                                                             regions in the hybrid log allocator is important. One extreme (lag
+   Read-Modify-Write. This kind of update first reads and then up-           = 0) is an append-only store, while the other extreme (lag = buffer-
+dates a record based on the current value. Since we cannot be                size) is an in-memory store when data fits in memory. The size of
+entirely sure that no other thread is updating a value concurrently,         read-only region determines the degree of second chance provided
+we cannot create a new copy at the end of tail precisely to avoid            to a record to stay cached in memory. A smaller read-only (or larger
+the lost-update anomaly discussed earlier. So, we defer the update           mutable) region results in better in-memory performance due to
+by placing the context in a pending queue to be processed later,             in-place updates. However, a hot record might be evicted to disk
+similar to how records on storage are handled.                               simply because there was no access to that key for a very short time.
+                                                                             A larger read-only region, on the other hand, results in expensive
+   CRDTs. CRDT updates are RMWs, but present an interesting
+                                                                             append-only updates, causing the log to grow faster. Further, it
+middle-ground between blind updates and RMWs. Recall that CRDTs
+                                                                             causes a replication of records in the read-only and mutable region
+can be computed as independent partial values that can later be
+                                                                             effectively reducing the in-memory cache size. We observe that,
+merged to obtain the final value. Our running example (count store)
+                                                                             in practice, an 90 : 10 division of buffer size for the mutable and
+is a CRDT, as multiple partial counts can be summed to obtain
+                                                                             read-only regions result in good performance. We evaluate the
+the overall count value. With CRDT updates, we can handle the
+                                                                             performance impact of HybridLog region sizes in Sec. 7.4.2.
+fuzzy region similar to blind updates. When a record is in the fuzzy
+region (or on disk), we simply create and link a new delta record at
+the tail, with the update performed on the initial (empty) value. A
+                                                                             6.5     Recovery and Consistency in Faster
+read has to reconcile all delta records to obtain the final converged        In the event of a failure, the unflushed tail of HybridLog is lost.
+value. One can imagine a scheme that periodically collapses deltas           However, Faster can recover to a database state that is consistent
+to maintain a bound on the length of delta chains.                           with respect to the monotonicity property: for any two update re-
+                                                                             quests r 1 and r 2 issued (in order) by a thread, the state after recovery
+6.4    Analysis of the Hybrid Log                                            includes the effects of (1) none; (2) only r 1 ; or (3) both r 1 and r 2 . In
+                                                                             other words, the state after recovery cannot include the effects of
+   Cache Behavior and Shaping of the Log. The in-memory portion
+                                                                             r 2 without also including r 1 . We can achieve this property using
+of a key-value store acts like a cache and so performance heav-
+                                                                             a Write-Ahead-Log (WAL) that logs all the modifications due to
+ily depends on its efficiency. Several caching protocols have been
+                                                                             a request, similar to traditional databases and modern key-value
+proposed in the context of buffer pool management in databases
+                                                                             stores such as RocksDB. Applications can periodically obtain a
+and virtual memory management in operating systems such as
+                                                                             fuzzy checkpoint of Faster in memory, which can then be used
+First-In First-Out (FIFO), CLOCK, Least Recently Used (LRU) and
+                                                                             in combination with the WAL to recover to a consistent state. Re-
+an extended version of LRU, the LRU-K[33] Protocol. All of them
+                                                                             covering from a fuzzy checkpoint using a WAL is a well-studied
+(except FIFO) require fine-grained per-page (or per-record) statistics
+                                                                             problem [32, 37], and hence we do not cover it in this paper.
+to work efficiently. Interestingly, Faster is achieves a good caching
+behavior at a per-record granularity without any such overheads,                Eliminating the WAL. Having a separate WAL could introduce a
+by virtue of the access pattern. The hybrid in-place and copy update         bottleneck for update-intensive workloads, so we have designed a
+scheme of Faster results in efficient caching, quite similar to a            recovery scheme for Faster that does not require a WAL. We sketch
+Second-Chance FIFO protocol. We compare these protocols using a              our solution briefly below, but leave a detailed treatment of recovery
+simulation in Sec. 7.5.                                                      to future work. The basic idea is that we can treat HybridLog as our
+   Faster shapes the log based on the access pattern and helps               WAL, and delay commit in order to allow in-place updates within a
+keep the hot items in memory. Consider a write-heavy workload                limited time window.
+    Checkpointing Faster. While technically we can rebuild the en-                collection scheme (Appendix C) and do not include this cost in re-
+tire hash-index from the HybridLog, checkpointing the index peri-                 sults. Costs related to checkpointing and recovery are not included
+odically allows faster recovery. All operations on the Faster index               as well. We size the in-place-updatable region at 90% of memory
+are performed using atomic compare-and-swap instructions. So, the                 unless indicated otherwise. By default, we size the Faster index
+checkpointing thread can read the index asynchronously without                    with #keys/2 hash bucket entries. While Faster can be paired with
+acquiring any read locks. However, since the hash index is being                  in-memory allocators, all experiments in this paper use HybridLog,
+updated concurrently, such a checkpoint is fuzzy, and may not be                  and thus represent the complete version of the Faster key-value store
+consistent with respect to a location on the HybridLog. However,                  that can handle data larger than main-memory.
+we can use the HybridLog to recover a consistent version of the
+                                                                                     Setup. Experiments are carried out on two identical machines,
+hash index from this fuzzy checkpoint, as described next.
+                                                                                  one running Windows Server 2018 (for Faster) and another run-
+    We record the tail-offset of the HybridLog before starting (t 1 )
+                                                                                  ning Ubuntu Linux (for other systems, since they are optimized
+and after completing (t 2 ) the fuzzy checkpoint. All updates to the
+                                                                                  for Linux). Both are Dell PowerEdge R730 machines with 2.60GHz
+hash index during this interval correspond only to records between
+                                                                                  Intel Xeon CPU E5-2690 v4 CPUs. They have 2 sockets and 14 cores
+t 1 and t 2 on the log, because in-place updates do not modify the
+                                                                                  (28 hyperthreads) per socket. They have 256GB RAM and a 3.2TB
+index. However, some of these updates may be part of the fuzzy
+                                                                                  FusionIO NVMe SSD drive for the log. We pin threads to hardware
+checkpoint and some may not. During recovery, we scan through
+                                                                                  cores where possible. The two-socket experiments shard threads
+the records between t 1 and t 2 on the HybridLog in order, and update
+                                                                                  across sockets for a smoother gradient with an increasing number
+the recovered fuzzy index wherever necessary. The resulting index
+                                                                                  of threads. We preload input datasets into memory and run each
+is a consistent hash index that corresponds to HybridLog until t 2 ,
+                                                                                  test for 30secs, except for RocksDB, which is described below.
+because all updates to hash index entries after completing the fuzzy
+checkpoint (and recording the tail-offset t 2 ) correspond only to                   Workloads. We use an extended version of the YCSB-A workload
+records after t 2 on the log.                                                     from the Yahoo Cloud Serving Benchmark [4], with 250 million dis-
+    Finally, by moving the read-only offset of the HybridLog to t 2 ,             tinct 8 byte keys, and value sizes of 8 bytes and 100 bytes. Workloads
+we get a checkpoint corresponding to location t 2 in the log, after               are described as R:BU for the fraction of reads and blind updates in
+the corresponding flush to disk is complete. Note that our check-                 the workload. Further, we add read-modify-write (RMW) updates
+pointing algorithm can be performed in the background without                     in addition to the blind updates supported by the benchmark. Such
+quiescing the database. Every such checkpoint in Faster is incre-                 updates are denoted as 0:100 RMW in experiments (we only ex-
+mental, as we offload only data modified since the last checkpoint.               periment with 100% RMW updates in this paper). RMW updates
+Incremental checkpointing usually requires a separate bitmap-like                 increment a value by a number from a user-provided input array
+data structure to identify data that needs to be flushed, whereas                 with 8 entries, to model a running per-key “sum” operation.
+Faster achieves this by organizing data differently.                                 Apart from the provided Uniform and Zipfian (θ = 0.99) distri-
+   Discussion. The state after recovery using the above technique                 butions, we add a new hot set distribution in some experiments,
+may violate monotonicity due to in-place updates: update r 1 can                  which models a hot and cold set of keys, with items moving from
+modify a location l 1 ≥ t 2 , whereas a later update r 2 may modify a             cold to hot, staying hot for a while, and then becoming cold. This
+location l 2 < t 2 . Our checkpoint until t 2 , that includes l 2 but not l 1 ,   distribution models users of a search engine, for example.
+violates monotonicity. Interestingly, we can restore monotonicity                    Baseline Systems. We compare Faster with two categories of
+by using epochs and triggers so that threads can collaboratively                  systems: pure in-memory and larger-than-memory systems. In the
+switch over to a new version of the database, as identified by a                  pure in-memory category, we evaluate against Masstree [29], a
+location on HybridLog – the details are left as future work.                      high-performance pure in-memory range index, and Intel TBB con-
+                                                                                  current hash map [5], a highly optimized pure in-memory hash
+7     EVALUATION                                                                  index. In the category of systems that can handle large data, we
+We evaluate Faster in four ways. First, we compare overall through-               evaluate against RocksDB [40] and Redis [36], two leading key-
+put and multi-thread scalability of Faster to leading key-value                   value stores. Note that we add comparisons to stores that employ
+stores when the dataset fits in memory. Next, we perform experi-                  range indices mainly because such systems are deployed widely
+ments with data larger than main-memory, by varying the memory                    even for point workloads, and are known to be highly optimized for
+budget. Third, we perform micro-benchmarks to illustrate how the                  main memory (Masstree) and larger-than-memory (RocksDB). We
+specific design choices of Faster and HybridLog. Finally, we use                  configured RocksDB with write-ahead logging and checksums dis-
+simulations to evaluate the caching behavior of Faster.                           abled, with parameters as recommended on the RocksDB Wiki [9].
+                                                                                  We used direct I/O for reads and writes, and ran each test for 10
+7.1     Implementation, Setup, Workloads                                          minutes. With MassTree, we used the default configuration, pin-
+   Implementation. We implemented Faster in C# as an embedded                     ning software threads to cores. With Intel TBB, we stored values
+component that can be used with any application, and uses code                    in-line in the hash map. Redis is evaluated separately in Sec. 7.2.4.
+generation to inline user functions for performance. Threads issue
+a sequence of operations for 30 secs, and we measure the number of                7.2    Comparison to Existing Systems
+operations completed during that period. We point Faster to a file                  7.2.1 Single Thread Performance. For a single thread, we use
+on SSD to store the log. We assume an expiration-based garbage                    YCSB (8 byte payloads) with a 100% RMW workload, as well as
+                           7        FASTER         Intel TBB                                            7    FASTER                                 Intel TBB                                                  FASTER        Intel TBB                                                                        FASTER             Intel TBB
+                                                                                                                                                                                                                                                                                                              MassTree           RocksDB
+
+
+
+
+                                                                              Throughput (M ops/sec)
+
+
+
+
+                                                                                                                                                                                                                                                                               Throughput (M ops/sec)
+                                    MassTree       RocksDB                                                   MassTree                               RocksDB                                                    MassTree      RocksDB
+                           6                                                                            6                                                                                                150                                                                                            150
+  Throughput (M ops/sec)
+
+
+
+
+                                                                                                                                                                                Throughput (M ops/sec)
+                           5                                                                            5
+                           4                                                                            4                                                                                                100                                                                                            100
+                           3                                                                            3
+                           2                                                                            2                                                                                                 50                                                                                            50
+                           1                                                                            1
+                           -                                                                           -                                                                                                  -                                                                                              -
+                                    0:100   0:100    50:50 100:0 (ro)                                        0:100                           0:100    50:50 100:0 (ro)                                         0:100   0:100    50:50      100:0                                                              0:100      0:100       50:50     100:0
+                                    RMW     (wo)                                                             RMW                             (wo)                                                              RMW                                                                                            RMW
+                                        YCSB-A Variants (uniform)                                                                         YCSB-A Variants (Zipf)                                                   YCSB-A Variants (uniform)                                                                          YCSB-A Variants (Zipf)
+
+          (a) Single thread; uniform distr.                                                            (b) Single thread; Zipf distr.                                                                    (c) All threads; uniform distr.                                                                 (d) All threads; Zipf distr.
+                                                   Figure 8: Throughput comparison of Faster to other systems, YCSB dataset fitting in memory.
+                         150          FASTER (1cpu)        Intel TBB (1cpu)                                                       100                  FASTER (1cpu)         Intel TBB (1cpu)                                                                     50
+                                      Masstree (1cpu)      RocksDB (1cpu)                                                                              Masstree (1cpu)       RocksDB (1cpu)
+
+
+
+
+                                                                                                                                                                                                                                         Throughput (M ops/sec)
+Throughput (M ops/sec)
+
+
+
+
+                                      FASTER (2cpu)        Intel TBB (2cpu)
+                                                                                                                 Throughput (M ops/sec)
+                                                                                                                                          80           FASTER (2cpu)         Intel TBB (2cpu)
+                                      Masstree (2cpu)      RocksDB (2cpu)                                                                              Masstree (2cpu)       RocksDB (2cpu)                                                                       40
+                         100
+                                                                                                                                          60                                                                                                                      30
+                                                                                                                                                                                                                                                                                                        FASTER (50:50)
+                                                                                                                                          40                                                                                                                      20                                    RocksDB (50:50)
+                           50                                                                                                                                                                                                                                                                           FASTER (0:100)
+                                                                                                                                          20                                                                                                                      10                                    RocksDB (0:100)
+
+                           -                                                                                                              -                                                                                                                       -
+                                0         10        20      30       40        50                           60                                  0         10        20      30        40                          50       60                                          0   5                            10 15 20 25 30 35                    40   45
+                                                     Number of Threads                                                                                                Number of Threads                                                                                                                  Total Memory Budget (GB)
+
+                                (a) RMW updates; 8-byte payloads.                                                                              (b) Blind updates; 100-byte payloads.                                                     Figure 10: Throughput with increasing
+        Figure 9: Scalability with increasing #threads, YCSB dataset fitting in memory.                                                                                                                                                  memory budget, for 27GB dataset.
+
+varying read percentages with blind updates, with the dataset fitting                                                                                                                                       7.2.4 Comparison to Redis. Redis is an in-memory key-value
+in memory. The results for uniform and Zipf are shown in Fig. 8a                                                                                                                                         store (or cache) that differs from Faster in three ways:
+and Fig. 8b respectively. We note that Faster is able to achieve                                                                                                                                         • Redis is not concurrent, and the user is expected to incur the
+very high single-threaded throughput, which makes it a good fit                                                                                                                                             overhead of hash partitioning the data and operations.
+in embedded environments. Further, Faster, which handles data                                                                                                                                            • While Redis offers optional recoverability, it expects that all data
+larger than memory, outperforms pure in-memory systems as well.                                                                                                                                             will fit in memory and snapshots the database using fork.
+   7.2.2 All Threads Performance. We use all 56 threads (on two                                                                                                                                          • Redis is designed to be accessed over a network, and as such is
+sockets), and compare the systems with the same workload as                                                                                                                                                 designed with this bottleneck in mind. Thus, its performance is
+before. The results for uniform and Zipf are shown in Fig. 8c and                                                                                                                                           expected to be lower than embedded systems such as Faster.
+Fig. 8d respectively. Faster is able to achieve a throughput of up to                                                                                                                                       We investigated the last point by running redis-benchmark
+115M ops/sec for uniform, and 165M ops/sec for a Zipfian workload.                                                                                                                                       on a single thread, and with the following parameters: -d 8 -c
+Interestingly, Intel TBB hash does well with uniform, but faces                                                                                                                                          10 -P ${PIPELINE} -t set,get -r 1000000 -n 20000000. The
+some contention with the Zipf distribution and is unable to scale.                                                                                                                                       values are 8 bytes, we use 10 client threads, connected to localhost
+Other systems show much lower performance, as expected.                                                                                                                                                  (to avoid network overhead), and ran 20M get and set operations,
+   We also ran experiments varying the size of the tag in the index,                                                                                                                                     which access random records in the range between 0 and 1M. We
+to check its impact on throughput. Briefly, for the YCSB 50 : 50                                                                                                                                         varied the pipeline (batching) depth from 1 to 200. In this simplified
+uniform workload on all threads, we found that even with a tag of                                                                                                                                        scenario, we saw around 1.1M sets/sec and 1.4M gets/sec. For a key
+just 1 bit (or 4 bits), performance decreased by less than 14% (or                                                                                                                                       space of 250M (similar to our YCSB workload), we saw around 700K
+5%), verifying that Faster can robustly handle larger address sizes.                                                                                                                                     sets/sec and 900K gets/sec. These speeds are significantly lower
+                                                                                                                                                                                                         than those for single-threaded Faster.
+   7.2.3 Scalability. We plot performance with a Zipf distribution,
+with an increasing number of threads, using one CPU and using
+                                                                                                                                                                                                         7.3     Larger-than-Memory Experiments
+both CPUs. We first evaluate a 100% RMW YCSB workload with 8
+byte payloads in Fig. 9a. We see Faster scales very well on both one                                                                                                                                     We run YCSB with 100 byte payloads, for a core dataset size of
+CPU and two CPUs. Masstree (a pure in-memory range index) also                                                                                                                                           27GB, and set the number of threads to 14 (7 cores) on one socket.
+scales well, but has much lower absolute performance. The Intel                                                                                                                                          The memory budget for Faster includes 2GB of space for the hash
+TBB hash map scales well within one CPU, but falls over at around                                                                                                                                        index, which is sized at #key/8 hash buckets for this experiment.
+20 cores when running on two CPUs, likely because of locking                                                                                                                                                First, we use a 50 : 50 Zipf workload, and plot throughput vs.
+contention with the Zipf workload. We next evaluate a 0 : 100                                                                                                                                            RocksDB in Fig. 10. As expected, Faster slows down with limited
+blind upsert workload with 100 byte payloads in Fig. 9b. In this                                                                                                                                         memory because of increased random reads from SSD, but quickly
+case, performance is linear until 48 threads on two CPUs, but levels                                                                                                                                     reaches in-memory performance levels once the entire dataset fits
+off after this point because the larger 100 byte payloads cause the                                                                                                                                      in memory. We believe that the steep performance drop-off as we
+system to reach the maximum cross-socket available bandwidth.                                                                                                                                            reduce memory can be improved by optimizing the I/O path in
+                                                                                                                                                                                                         Faster; we plan to address this problem in future work.
+                       160                                                                           140                                                                                                             3
+                                       FASTER-AOL (zipf)                                                                                                 140                                                                                                                                                1
+                                       FASTER-AOL (uni)                                              120                                                                                                            2.5
+
+
+
+
+                                                                                                                                                               Log Growth Rate (MB/sec)
+                                                                            Throughput (M ops/sec)
+
+
+
+
+                                                                                                                                                                                                                                                                               Percentage of Fuzzy Ops
+                                                                                                                                                                                          Percentage of Fuzzy Ops
+                                       FASTER-HL (uni)                                                                                                   120
+                       120                                                                           100
+  Throughput (M ops/sec)
+
+
+
+
+                                       FASTER-HL (zipf)                                                                                                  100                                                         2                                                                                     0.1
+                                                                                                     80        Throughput - Uni                          80
+                           80                                                                                                                                                                                       1.5
+                                                                                                     60
+                                                                                                               Throughput - Zipf                                                                                                                                                                          0.01
+                                                                                                                                                         60
+                                                                                                               Log Rate - Uni
+                                                                                                                                                                                                                     1
+                                                                                                     40        Log Rate - Zipf                           40
+                           40
+                                                                                                                                                                                                                    0.5                                                                                  0.001
+                                                                                                     20                                                  20
+
+                                                                                                       0                                                 0                                                           0                                                                           0.0001
+                            0                                                                              0                           0.5           1
+                                 0            20          40           60                                                                                                                                                 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9                  1                                     0          20         40              60
+                                             Number of Threads                                                    IPU Region Factor                                                                                                 IPU Region Factor                                                                      Number of Threads
+
+Figure 11: Throughput with                                                  (a) Throughput & log growth rate.                                                                                                       (b) Percentage of fuzzy ops.                               Figure 13: Percentage of fuzzy
+append-only vs. hybrid logs.                                                                                   Figure 12: Effect of increasing IPU region.                                                                                                                     ops with increasing #threads.
+                            1                                                                                                        0.45                                                                                                                            0.7
+                                     FIFO       LRU_1    LRU_2                                                                               FIFO            LRU_1                                                        LRU_2                                                                                      FIFO         LRU_1        LRU_2
+                                     CLOCK      HLOG                                                                                  0.4                                                                                                                            0.6
+                           0.8                                                                                                               CLOCK           HLOG                                                                                                                                                    CLOCK        HLOG
+                                                                                                                                     0.35
+                                                                                                                  Cache Miss Ratio
+Cache Miss Ratio
+
+
+
+
+                                                                                                                                                                                                                                                  Cache Miss Ratio
+                                                                                                                                                                                                                                                                     0.5
+                                                                                                                                      0.3
+                           0.6                                                                                                       0.25                                                                                                                            0.4
+                                                                                                                                      0.2                                                                                                                            0.3
+                           0.4
+                                                                                                                                     0.15
+                                                                                                                                      0.1                                                                                                                            0.2
+                           0.2
+                                                                                                                                     0.05                                                                                                                            0.1
+                            0                                                                                                           0                                                                                                                             0
+                                       1/2           1/4           1/8                1/16                                                   1/2           1/4           1/8                                                          1/16                                     1/2                                         1               3/2
+                                                    Cache Size/Total Size                                                                                Cache Size / Total Size                                                                                                                                 Cache Size / Total Size
+
+     Figure 14: Cache miss ratio (Uniform).                                                                                          Figure 15: Cache miss ratio (Zipf).                                                                                      Figure 16: Cache miss ratio (Hot Set).
+   Next, with a 0 : 100 blind update workload, performance of                                                                                                                                                       we show log growth rate for 8 byte keys and values, for a total of
+Faster is slightly lower with enough memory, as expected. As the                                                                                                                                                    24 bytes per record, but the growth rate will multiply for larger
+memory budget drops, more data spills to storage, but throughput                                                                                                                                                    payloads. Finally, the plots for a Zipfian key distribution indicate
+does not drop by as much as it does for reads, because of the higher                                                                                                                                                that due to the concentration of keys, throughput is high at even
+efficiency of bulk sequential log writes (with no random reads) to                                                                                                                                                  lower IPU region factors than that for uniform, due to the shaping
+SSD. We see that RocksDB achieves around 500K operations per                                                                                                                                                        effect of the hybrid log. The log growth rate declines more rapidly
+second at best, for both these workloads.                                                                                                                                                                           as well (with increasing IPU region size), due to the same reason.
+   Finally, we use a 0 : 100 workload with 80% read-only region
+                                                                                                                                                                                                                       7.4.3 Fuzzy Region. We execute a 100% RMW workload (uni-
+and a uniform distribution. This stresses the write throughput of
+                                                                                                                                                                                                                    form) on all 56 threads, and vary the IPU region size from 0.25 to
+the system because of fewer in-place updates. We found Faster to
+                                                                                                                                                                                                                    1.0 of the database, which causes the log to grow faster, and in turn
+reach a sequential log write bandwidth of 1.74GB/sec, close to the
+                                                                                                                                                                                                                    results in the ReadOnlyAddress moving faster, which should result
+theoretical maximum of 2GB/sec for our SSD drive.
+                                                                                                                                                                                                                    in more updates going pending in the fuzzy region. Fig. 12b shows
+                                                                                                                                                                                                                    the percentage of fuzzy updates with increasing IPU region size.
+7.4                                  Detailed Evaluation of Faster
+                                                                                                                                                                                                                    Threads refresh their epochs every 256 operations. Even with a
+   7.4.1 Comparison to Append-Only. We run YCSB-A 50 : 50 (50%                                                                                                                                                      uniform key distribution and 56 threads, this percentage rises no
+reads and 50% blind updates) with the Faster append-only log                                                                                                                                                        more than 3%, and is higher than 0.5% only in the artificial scenario
+allocator. Our circular in-memory buffer has 215 pages, and each                                                                                                                                                    where less than 70% of memory is used for in-place updates.
+page is 4MB in size. Fig. 11 shows the performance for uniform                                                                                                                                                         Next, we keep the log growth rate fixed by fixing the IPU Region
+and Zipf distributions. We see that while performance scales lin-                                                                                                                                                   factor at 0.8, and vary the number of threads. As expected, Fig. 13
+early with the hybrid log, the creation of new entries in the log                                                                                                                                                   shows that the percentage of fuzzy operations increases with the
+and the contention on the tail result in the append-only log being                                                                                                                                                  number of threads, but stays below 1% even with all 56 threads.
+significantly slower. In case of hybrid log, Zipf performs much bet-
+ter than uniform, because the key skew results in better TLB and                                                                                                                                                    7.5           Simulation of Caching Behavior
+cache behavior. On the other hand, with append only, the perfor-
+                                                                                                                                                                                                                    We perform a simulation study to compare well-known caching pro-
+mance benefit of a Zipf distribution is outweighed by more failed
+                                                                                                                                                                                                                    tocols (Sec. 6.4) with the caching behavior of HybridLog (HLOG).
+compare-and-swap operations, because of conflicting updates.
+                                                                                                                                                                                                                    We maintain a constant-sized key buffer as a cache, and use each
+   7.4.2 Size of IPU region. We use a YCSB-A with 100% RMW                                                                                                                                                          caching protocol to evict a key whenever an accessed key is not
+workload, and vary the IPU Region Factor, defined as the fraction                                                                                                                                                   in the buffer. For HLOG, we have a read-only marker that is at
+of the dataset that is in the in-place-update (IPU) region of the log.                                                                                                                                              a constant lag from the tail address; when a key is in read-only
+Fig. 12a shows overall throughput achieved (on 56 threads) and the                                                                                                                                                  region, we copy it to end of tail like in Faster. We vary the cache
+rate at which the log grows (on the secondary axis), as we increase                                                                                                                                                 size and observe cache hit rate for 3 access patterns: uniform, zip-
+the IPU Region Factor. With a uniform distribution of keys, we see                                                                                                                                                  fian (θ = 0.99) and the hot-set distribution. The hot set distribution
+that throughput increases as we increase the IPU region, because                                                                                                                                                    consists of a shifting hot-set (1/5th total size) uniformly accessed
+we get more opportunities to perform in-place updates. Further,                                                                                                                                                     with 90% probability and the remaining cold-set accessed uniformly
+the log grows more slowly, which is highly desirable. Note that                                                                                                                                                     with a 10% probability. Our results are shown in Fig. 14, Fig. 15 and
+Fig. 16. HLOG performs as well as other protocols for the uniform        due to their key-ordered page format that is optimized for reads and
+distribution. In case of zipfian and hot-set distributions, HLOG’s       range queries, at the cost of greater complexity. Further, their use of
+cache miss rate is higher than LRU-1, LRU-2 and CLOCK protocols          read-copy-update can be expensive for update-intensive workloads.
+due to replication of keys in memory. The HLOG protocol results          RocksDB supports in-place updates in its in-memory component
+in two copies of hot keys one within the read-only region and one        (level 0), but is unable to exploit it to get acceptable performance
+in the mutable region, thus reducing the effective cache size. How-      for in-memory workloads. RocksDB generally achieves throughput
+ever, HLOG is better than simple FIFO as it provides keys a second       less than 1M ops/sec, and its “merge” operation is expensive for
+chance to stay in the cache. Overall HLOG’s caching behavior is          RMW workloads. In contrast, Faster targets point operations and
+competent with other optimized algorithms without requiring to           update-intensive workloads at very high performance.
+maintain extensive statistics, unlike other protocols (except FIFO),
+while still providing a latch-free fast-access path.                        Databases. In-memory databases are optimized for more general
+                                                                         data processing needs than what Faster is optimized for. They
+8   RELATED WORK                                                         cannot handle data that spills to secondary storage. ERMIA [22]
+                                                                         is a fast memory-optimized database that uses techniques such
+Faster contributes to a richly researched space of concurrent sys-       as latch-free structures, epoch protection, and log-structuring in
+tem designs, data structures, key-value stores, file systems, and        its design. However, it is append-only, and targets fully serializ-
+databases. We summarize the current state-of-the-art next.               able transactions instead of atomic point operations, leading to
+   In-Memory Designs and Structures. Many concurrent design pat-         lower expected performance for our target applications. Traditional
+terns have been proposed in the past, such as hazard pointers [31]       databases handle large data using a buffer pool. Faster avoids a
+and the repeat offender problem [20]. Epoch-based designs [16, 23]       buffer-pool and page latching, but uses coarse-grained regions in
+have been used by many systems [25, 29, 41] to alleviate specific        the log to achieve high performance while adapting to a chang-
+bottlenecks. However, we augment epoch protection with trigger           ing working set. H-Store [21] partitions the workload and avoids
+actions, and design it as a generic framework to enable lazy syn-        concurrency, but this strategy can create shuffle overheads, load
+chronization. Faster uses it as a building block at several instances    imbalance, and skew issues. Deuteronomy [26] and SQL Server
+in the paper (see Sec. 2.4). In-place updates are prevalent in pure      Hekaton [6] use hashing to index the recovery log and in-memory
+in-memory data structures. Read-copy-update was proposed to al-          database respectively, but are based on read-copy-update.
+low readers to be unaffected by concurrent writers. Fast sequential
+writes in modern storage resulted in the popularity of log structur-     9    CONCLUSIONS
+ing , which applies read-copy-update to data on an append-only           We present Faster, a new concurrent key-value store optimized
+log. Log structuring was first applied to file systems [38], but was     for update-intensive applications. Faster combines concurrent
+later used in key-value stores [24, 34, 35, 40]. The Faster hybrid log   latch-free execution, seamless integration of secondary storage,
+combines these techniques to achieve the best of both worlds: high       and in-place update capabilities, to achieve very high throughput
+performance for hot data and fast sequential logging to storage.         in a multi-threaded setting. Faster is based on a latch-free index
+                                                                         that works with HybridLog, a novel concurrent log that combines
+   Hash Key-Value Stores. In-memory caches and stores such as Re-
+                                                                         an in-place updatable region with a log-structured organization, to
+dis [36], Memcached [30], and improvements such as MemC3 [10]
+                                                                         optimize for the hot set without any fine-grained caching statistics.
+and MICA [27] are used to speed-up web deployments and alleviate
+                                                                         Experiments show that Faster achieves orders-of-magnitude better
+database load, but do not themselves handle data larger than mem-
+                                                                         throughput – up to 160M operations per second on a single machine
+ory (Redis supports a write-ahead log for recovery). Distributed
+                                                                         – than alternative systems deployed widely today, outperforms pure
+systems such as RAMCloud [35] and FaRM [7] focus on scaling
+                                                                         in-memory data structures when the workload fits in memory, and
+out the key-value store, e.g., by using partitioning, remote memory,
+                                                                         degrades gracefully as memory becomes limited.
+or RDMA, rather than leveraging storage for cold data. Reported
+single-node performance of all these systems is lower than our             Acknowledgments. We would like to thank David Lomet, Umar
+target. In contrast, Faster is a single-node concurrent high-level       Minhas, Rahul Potharaju, Ryan Stutsman, Kai Zeng, and the anony-
+language component that exploits storage using a hybrid log-based        mous reviewers for their detailed comments, help, and support.
+data organization. Streaming state stores, such as the Spark State
+Store [14] and the Storm Trident State Store [15], use a simple          REFERENCES
+partitioned in-memory hash table, synchronously checkpointed              [1] 2017. jemalloc. http://jemalloc.net/. (2017). [Online; accessed 30-Oct-2017].
+periodically. They do not support concurrent access and have low          [2] Phil Bernstein, Sergey Bykov, Alan Geller, Gabriel Kliot, and Jorgen Thelin.
+                                                                              2014. Orleans: Distributed Virtual Actors for Programmability and Scalabil-
+reported throughputs. Google Cloud Dataflow [17] stores recent                ity. Technical Report. https://www.microsoft.com/en-us/research/publication/
+state in memory, and offloads data periodically to BigTable [3],              orleans-distributed-virtual-actors-for-programmability-and-scalability/
+resulting in potentially high overhead due to the decoupling.             [3] Fay Chang, Jeffrey Dean, Sanjay Ghemawat, Wilson C. Hsieh, Deborah A. Wallach,
+                                                                              Mike Burrows, Tushar Chandra, Andrew Fikes, and Robert E. Gruber. 2008.
+                                                                              Bigtable: A Distributed Storage System for Structured Data. ACM Trans. Comput.
+   Range Key-Value Stores. Systems such as Masstree [29, 41] are              Syst. 26, 2, Article 4 (June 2008), 26 pages. https://doi.org/10.1145/1365815.
+pure in-memory range indices, and as such target different applica-           1365816
+tions. Systems such as Cassandra [11], RocksDB [34, 40], and Bw-          [4] Brian F. Cooper, Adam Silberstein, Erwin Tam, Raghu Ramakrishnan, and Russell
+                                                                              Sears. 2010. Benchmarking Cloud Serving Systems with YCSB. In Proceedings of
+Tree [25] are key-value stores that can handle state larger than main         the 1st ACM Symposium on Cloud Computing (SoCC ’10). ACM, New York, NY,
+memory. However, they are not a good fit for our target applications          USA, 143–154. https://doi.org/10.1145/1807128.1807152
+ [5] Intel Corporation. 2017. Intel Threading Building Blocks. https://www.                    for In-memory OLTP Database Systems. In Proceedings of the 12th International
+     threadingbuildingblocks.org/. (2017). [Online; accessed 30-Oct-2017].                     Workshop on Data Management on New Hardware (DaMoN ’16). ACM, New York,
+ [6] Cristian Diaconu, Craig Freedman, Erik Ismert, Per-Ake Larson, Pravin Mittal,             NY, USA, Article 9, 7 pages. https://doi.org/10.1145/2933349.2933358
+     Ryan Stonecipher, Nitin Verma, and Mike Zwilling. 2013. Hekaton: SQL Server’s        [29] Yandong Mao, Eddie Kohler, and Robert Tappan Morris. 2012. Cache Craftiness
+     Memory-optimized OLTP Engine. In Proceedings of the 2013 ACM SIGMOD Inter-                for Fast Multicore Key-value Storage. In Proceedings of the 7th ACM European
+     national Conference on Management of Data (SIGMOD ’13). ACM, New York, NY,                Conference on Computer Systems (EuroSys ’12). ACM, New York, NY, USA, 183–196.
+     USA, 1243–1254. https://doi.org/10.1145/2463676.2463710                                   https://doi.org/10.1145/2168836.2168855
+ [7] Aleksandar Dragojevic, Dushyanth Narayanan, Miguel Castro, and Orion Hodson.         [30] Memcached. 2017. https://memcached.org/. (2017). [Online; accessed 30-Oct-
+     2014. FaRM: Fast Remote Memory, In 11th USENIX Symposium on Networked                     2017].
+     Systems Design and Implementation (NSDI 2014). https://www.microsoft.com/            [31] Maged M. Michael. 2002. Safe Memory Reclamation for Dynamic Lock-free
+     en-us/research/publication/farm-fast-remote-memory/                                       Objects Using Atomic Reads and Writes. In Proceedings of the Twenty-first Annual
+ [8] Facebook. 2017. RocksDB Performance Evaluation. https://github.com/facebook/              Symposium on Principles of Distributed Computing (PODC ’02). ACM, New York,
+     rocksdb/wiki/performance-benchmarks. (2017). [Online; accessed 30-Oct-2017].              NY, USA, 21–30. https://doi.org/10.1145/571825.571829
+ [9] Facebook. 2017. RocksDB Wiki. https://github.com/facebook/rocksdb/wiki.              [32] C. Mohan, Don Haderle, Bruce Lindsay, Hamid Pirahesh, and Peter Schwarz. 1992.
+     (2017). [Online; accessed 30-Oct-2017].                                                   ARIES: A Transaction Recovery Method Supporting Fine-granularity Locking
+[10] Bin Fan, David G. Andersen, and Michael Kaminsky. 2013. MemC3: Compact                    and Partial Rollbacks Using Write-ahead Logging. ACM Trans. Database Syst. 17,
+     and Concurrent MemCache with Dumber Caching and Smarter Hashing. In                       1 (March 1992), 94–162. https://doi.org/10.1145/128765.128770
+     Presented as part of the 10th USENIX Symposium on Networked Systems Design           [33] Elizabeth J. O’Neil, Patrick E. O’Neil, and Gerhard Weikum. 1993. The LRU-K
+     and Implementation (NSDI 13). USENIX, Lombard, IL, 371–384. https://www.                  Page Replacement Algorithm for Database Disk Buffering. In Proceedings of the
+     usenix.org/conference/nsdi13/technical-sessions/presentation/fan                          1993 ACM SIGMOD International Conference on Management of Data (SIGMOD
+[11] Apache Software Foundation. 2017. Apache Cassandra. http://cassandra.apache.              ’93). ACM, New York, NY, USA, 297–306. https://doi.org/10.1145/170035.170081
+     org/. (2017). [Online; accessed 30-Oct-2017].                                        [34] Patrick O’Neil, Edward Cheng, Dieter Gawlick, and Elizabeth O’Neil. 1996. The
+[12] Apache Software Foundation. 2017. Apache Flink. https://flink.apache.org/.                Log-structured Merge-tree (LSM-tree). Acta Inf. 33, 4 (June 1996), 351–385.
+     (2017). [Online; accessed 30-Oct-2017].                                                   https://doi.org/10.1007/s002360050048
+[13] Apache Software Foundation. 2017. Apache Hadoop. http://hadoop.apache.org/.          [35] Diego Ongaro, Stephen M. Rumble, Ryan Stutsman, John Ousterhout, and Mendel
+     (2017). [Online; accessed 30-Oct-2017].                                                   Rosenblum. 2011. Fast Crash Recovery in RAMCloud. In Proceedings of the Twenty-
+[14] Apache Software Foundation. 2017. Spark State Store: A new framework for                  Third ACM Symposium on Operating Systems Principles (SOSP ’11). ACM, New
+     state management for computing Streaming Aggregates. https://issues.apache.               York, NY, USA, 29–41. https://doi.org/10.1145/2043556.2043560
+     org/jira/browse/SPARK-13809. (2017). [Online; accessed 30-Oct-2017].                 [36] Redis. 2017. https://redis.io/. (2017). [Online; accessed 30-Oct-2017].
+[15] Apache Software Foundation. 2017. Trident State Store. http://storm.apache.org/      [37] Kun Ren, Thaddeus Diamond, Daniel J. Abadi, and Alexander Thomson. 2016.
+     releases/current/Trident-state.html. (2017). [Online; accessed 30-Oct-2017].              Low-Overhead Asynchronous Checkpointing in Main-Memory Database Sys-
+[16] Keir Fraser. 2004. Practical Lock-Freedom. Technical Report.                              tems. In Proceedings of the 2016 International Conference on Management of Data
+[17] Google. 2017. Google Cloud Dataflow. https://cloud.google.com/dataflow/. (2017).          (SIGMOD ’16). ACM, New York, NY, USA, 1539–1551. https://doi.org/10.1145/
+     [Online; accessed 30-Oct-2017].                                                           2882903.2915966
+[18] Jim Gray and Goetz Graefe. 1997. The Five-minute Rule Ten Years Later, and           [38] Mendel Rosenblum and John K. Ousterhout. 1992. The Design and Implementa-
+     Other Computer Storage Rules of Thumb. SIGMOD Rec. 26, 4 (Dec. 1997), 63–68.              tion of a Log-structured File System. ACM Trans. Comput. Syst. 10, 1 (Feb. 1992),
+     https://doi.org/10.1145/271074.271094                                                     26–52. https://doi.org/10.1145/146941.146943
+[19] Timothy L. Harris, Keir Fraser, and Ian A. Pratt. 2002. A Practical Multi-Word       [39] Marc Shapiro, Nuno Preguiça, Carlos Baquero, and Marek Zawirski. 2011.
+     Compare-and-Swap Operation. In In Proceedings of the 16th International Sympo-            Conflict-free Replicated Data Types. In Proceedings of the 13th International
+     sium on Distributed Computing. Springer-Verlag, 265–279.                                  Conference on Stabilization, Safety, and Security of Distributed Systems (SSS’11).
+[20] Maurice Herlihy, Victor Luchangco, and Mark Moir. 2002. The Repeat Offender               Springer-Verlag, Berlin, Heidelberg, 386–400. http://dl.acm.org/citation.cfm?id=
+     Problem: A Mechanism for Supporting Dynamic-Sized, Lock-Free Data Structures.             2050613.2050642
+     In Proceedings of the 16th International Conference on Distributed Computing (DISC   [40] Facebook Open Source. 2017. RocksDB. http://rocksdb.org/. (2017). [Online;
+     ’02). Springer-Verlag, London, UK, UK, 339–353. http://dl.acm.org/citation.cfm?           accessed 30-Oct-2017].
+     id=645959.676129                                                                     [41] Stephen Tu, Wenting Zheng, Eddie Kohler, Barbara Liskov, and Samuel Madden.
+[21] Robert Kallman, Hideaki Kimura, Jonathan Natkins, Andrew Pavlo, Alexander                 2013. Speedy Transactions in Multicore In-memory Databases. In Proceedings of
+     Rasin, Stanley Zdonik, Evan P. C. Jones, Samuel Madden, Michael Stonebraker,              the Twenty-Fourth ACM Symposium on Operating Systems Principles (SOSP ’13).
+     Yang Zhang, John Hugg, and Daniel J. Abadi. 2008. H-store: A High-performance,            ACM, New York, NY, USA, 18–32. https://doi.org/10.1145/2517349.2522713
+     Distributed Main Memory Transaction Processing System. Proc. VLDB Endow. 1,          [42] Matei Zaharia, Mosharaf Chowdhury, Michael J. Franklin, Scott Shenker, and
+     2 (Aug. 2008), 1496–1499. https://doi.org/10.14778/1454159.1454211                        Ion Stoica. 2010. Spark: Cluster Computing with Working Sets. In Proceedings
+[22] Kangnyeon Kim, Tianzheng Wang, Ryan Johnson, and Ippokratis Pandis. 2016.                 of the 2Nd USENIX Conference on Hot Topics in Cloud Computing (HotCloud’10).
+     ERMIA: Fast Memory-Optimized Database System for Heterogeneous Work-                      USENIX Association, Berkeley, CA, USA, 10–10. http://dl.acm.org/citation.cfm?
+     loads. In Proceedings of the 2016 International Conference on Management of Data          id=1863103.1863113
+     (SIGMOD ’16). ACM, New York, NY, USA, 1675–1687. https://doi.org/10.1145/
+     2882903.2882905
+[23] H. T. Kung and Philip L. Lehman. 1980. Concurrent Manipulation of Binary             A     ATOMIC OPERATIONS
+     Search Trees. ACM Trans. Database Syst. 5, 3 (Sept. 1980), 354–382. https:
+     //doi.org/10.1145/320613.320619                                                      Faster heavily leverages native latch-free atomic 64-bit operations
+[24] Justin Levandoski, David Lomet, and Sudipta Sengupta. 2013. LLAMA: A Cache/S-        such as compare-and-swap (CAS), fetch-and-add, and fetch-and-
+     torage Subsystem for Modern Hardware. Proc. VLDB Endow. 6, 10 (Aug. 2013),
+     877–888. https://doi.org/10.14778/2536206.2536215
+                                                                                          increment. CAS compares a given value to that at the location and
+[25] Justin J. Levandoski, David B. Lomet, and Sudipta Sengupta. 2013. The Bw-Tree: A     swaps to a desired value atomically (all or nothing). Fetch-and-add
+     B-tree for New Hardware Platforms. In Proceedings of the 2013 IEEE International     adds a given value to the value at the location and returns the orig-
+     Conference on Data Engineering (ICDE 2013) (ICDE ’13). IEEE Computer Society,
+     Washington, DC, USA, 302–313. https://doi.org/10.1109/ICDE.2013.6544834              inal value. Similarly, fetch-and-increment atomically increments
+[26] Justin J. Levandoski, David B. Lomet, Sudipta Sengupta, Ryan Stutsman, and Rui       the value at the given location.
+     Wang. 2015. High Performance Transactions in Deuteronomy. In CIDR 2015,
+     Seventh Biennial Conference on Innovative Data Systems Research, Asilomar, CA,
+     USA, January 4-7, 2015, Online Proceedings. http://cidrdb.org/cidr2015/Papers/       B     RESIZING THE FASTER INDEX
+     CIDR15_Paper15.pdf                                                                   The hash index may need to be resized over time as keys are inserted
+[27] Hyeontaek Lim, Dongsu Han, David G. Andersen, and Michael Kaminsky. 2014.
+     MICA: A Holistic Approach to Fast In-Memory Key-Value Storage. In 11th USENIX        and removed from the store. Without resizing, bucket linked-lists
+     Symposium on Networked Systems Design and Implementation (NSDI 14). USENIX           could grow large and result in reduced performance, or there could
+     Association, Seattle, WA, 429–444. https://www.usenix.org/conference/nsdi14/
+     technical-sessions/presentation/lim
+                                                                                          be many wasted buckets, resulting in memory waste1 .
+[28] Lin Ma, Joy Arulraj, Sam Zhao, Andrew Pavlo, Subramanya R. Dulloor, Michael J.
+                                                                                          1 Index resizing does not address the problem of many keys mapping to the same
+     Giardino, Jeff Parkhurst, Jason L. Gardner, Kshitij Doshi, and Stanley Zdonik.
+     2016. Larger-than-memory Data Management on Modern Storage Hardware                  hash value, which is problematic for all hashing schemes. Standard techniques such
+    Recall that the index is sized in powers of 2. Logically, we have                 • Expiration: Data stored in cloud providers often has a maximum
+two versions of the hash index during resizing: one of the current                       time to live, after which it is deleted. We can use this property to
+size (old) and another (new) of double the size when growing, or half                    periodically delete chunks of log prefixes from storage.
+the size when shrinking. Further, resizing occurs in three phases:                    • Roll To Tail: We can roll forward a chunk of the log by scanning
+prepare-to-resize, resizing, and stable. We maintain both these val-                     from the head and copying over live key-values to the tail.
+ues (version and phase) in a single byte called ResizeStatus. A                          We prefer to use the expiration-based garbage collection mecha-
+thread reads ResizeStatus to determine what phase it is in. In the                    nism, as it reflects our use cases where the log is used for analytics,
+common stable phase, threads proceed directly with their operation                    and expires based on data collection guidelines. The Faster index
+on the active version of the table.                                                   keeps track of the earliest valid logical address, and when a thread
+    A hash index is logically divided into n contiguous chunks, where                 encounters an invalid address in a hash bucket, it simply deletes it.
+n is set to the smaller of the maximum concurrency and the number                     Further, any linked list traversal of log records is stopped when it
+of hash buckets in the active version. Chunks serve as the granu-                     encounters an invalid previous logical address.
+larity at which threads can independently perform resizing. There
+is a shared pin array of n counters, which are used only during                          Identifying Live Values. In the roll-to-tail approach, we need to
+resizing to indicate the number of threads updating buckets in a                      identify whether a given key is live or not, in order to determine if
+given chunk. When a thread wishes to resize, it allocates an index                    we should copy it to the tail. We could traverse the linked-list for
+of double (or half) the size, and sets the phase to prepare-to-resize.                the corresponding hash entry, but this may be expensive. Instead,
+It then bumps the current epoch with a future trigger action to                       we can reserve an overwrite bit in the record header to indicate that
+atomically set the phase to resizing and version to new. Threads                      the record has been overwritten by a subsequent operation. We can
+that are in the prepare-to-resize phase are aware that resizing is                    set this bit even if the record is in the read-only region (until it gets
+going to occur, but cannot start because other threads may not                        flushed to disk). On garbage collection, we perform the linked-list
+be aware of resizing yet. Therefore, they use fetch-and-increment                     scan only for records that do not have this bit set. This captures the
+to increment the pin count (if it is non-negative) in the pin array                   common case of a data item being hot and frequently updated, and
+entry corresponding to the chunk (in the old version) that they are                   then suddenly becoming cold — all earlier versions of the record
+operating over. Similarly, they decrement the pin count after their                   would have the overwrite bit set, assuming that the record was
+operation.                                                                            hot enough to get copied over to the tail before being flushed. The
+    Threads that are in the resizing phase know that all threads are                  final version of the record (now cold) likely has an entry in the
+using the pin array. Therefore, they compare-and-swap the pin                         in-memory index, allowing us to avoid a random seek into the log.
+count of the chunk from 0 to −∞ (until successful) to indicate that
+they are starting to resize that chunk. Threads in the prepare-to-
+resize phase that see a negative pin count refresh their value of
+                                                                                      D    HANDLING READ-HOT RECORDS
+ResizeStatus to enter the resizing state immediately.                                 The single HybridLog design we present in the paper works well
+    When splitting a chunk, a thread iterates over the records in                     for update-mostly workloads. Reads are simply treated as updates
+each hash bucket and copies over entries to one of two destination                    and copied over to the tail of HybridLog. Interestingly, this is a
+hash buckets in the new index (merging works similarly). Finally,                     good solution for read-mostly workloads where the working set fits
+it increments a counter (numChunks) to indicate that the chunk                        in memory as well, because the read-hot records get clustered into
+is done. Threads co-operatively grab other chunks to resize if the                    the tail of HybridLog in memory, and provide good in-memory
+chunk they are accessing is being resized by another thread (indi-                    performance without significant log growth.
+cated by a pin count of −∞). Finally, when numChunks reaches n,                           For a mixed workload with a non-trivial number of read-hot
+we are done with resizing, and can set ResizeStatus to stable in                      records, our design can accommodate a separate read cache. In fact,
+order to resume high-performance normal operation.                                    we can simply create a new instance of HybridLog for this purpose.
+    When using Faster with HybridLog, resizing leaves records                         The only difference between this log and the primary HybridLog
+on disk untouched. A split causes both new hash entries to point                      is that there is no flush to disk on page eviction. Record headers in
+to the same disk record, whereas a merge creates a meta-record                        these read-only records point to the corresponding records in the
+pointing to two disk records, in the two prior linked-lists, and adds                 primary log. As in normal HybridLog, the size of the “read-only”
+this meta-record to the linked-list for the merged hash entry.                        region controls the degree of “second chance” that records get (to
+                                                                                      move back to the tail) before being evicted from the read-only cache.
+C     GARBAGE COLLECTION FOR HYBRIDLOG                                                    For the hash index, we have two options: (1) The hash index can
+                                                                                      use an additional bit to identify which log the index address points
+HybridLog is a log-structured record store, and as such requires to
+                                                                                      to. When a read-only record is evicted, the index entry needs to be
+be trimmed from the head of the log in order not to grow indefinitely
+                                                                                      updated with the original pointer to the record on the primary log.
+on storage. Interestingly, HybridLog by its nature has lower garbage
+                                                                                      Index checkpoints need to overwrite these addresses with addresses
+collection overhead than traditional logs because in-place updates
+                                                                                      on the primary log. (2) We can keep a separate read-only hash index
+significantly reduce the rate at which the tail of the log grows. We
+                                                                                      to lookup the read-only HybridLog. Read or update operations on
+can garbage collect HybridLog in two ways:
+                                                                                      the main index that point to addresses on disk first check this
+                                                                                      index before issuing an I/O operation. This approach provides clean
+as adding key suffixes to spread the load of colliding keys are applicable, but are
+orthogonal to our proposal.                                                           separation, at the cost of an additional cache miss for read-hot
+objects. A detailed evaluation of these techniques is outside the         Status Read ( Key * , Input * , Output * , Context *) ;
+scope of this paper.                                                      Status Upsert ( Key * , Value * , Context *) ;
+                                                                          Status RMW ( Key * , Input * , Context *) ;
+                                                                          Status Delete ( Key * , Context *) ;
+E    INTERFACE AND CODE GENERATION                                        void Acquire () ; void Release () ;
+Faster separates a compile-time interface, which accepts user-defined     void CompletePending ( bool wait ) ;
+read and update logic in the form of functions; and a customized             Read takes a key, an input, and a pre-allocated buffer for storing
+runtime interface, whose code is generated for an application for         the output. Upsert and RMW take a key and value as parameters.
+the required read, upsert, and RMW operations.                            Threads call Acquire and Release to register and deregister with
+   The user-defined functions are defined over five types: Key, Value,    Faster. They call CompletePending regularly to continue pending
+Input, Output, and Context. The first two types represent the data        operations. A thread may optionally block (when wait = true),
+stored in Faster. The Input type is used to update or read a value        until all outstanding operations issued by the thread are completed.
+in the store. For instance, we may have a sequence of CPU readings           While it is possible to implement these advanced operations on
+used to update a per-device average: here, the key is a device-           top of a simple key-value interface, such layering adds significant
+id (long), input is the reading (int) and the value is the average        overheads to the end-to-end application performance. For example,
+CPU utilization (float). The Output type is for the output read (or       one might choose to use an atomic fetch-and-add instead of latches
+computed) from the value and an (optional) input. For example,            to build a sum-based update store, use non-latched operations in
+input could be a field id to select a field to be copied from the value   SingleReader and SingleWriter, or even use non-latched opera-
+on a read. Finally, the Context type represents user state that is        tions everywhere if they know that their input arrives partitioned.
+used to relate asynchronous callbacks with their corresponding
+original user operation.                                                  F   LOG ANALYTICS
+void CompletionCallback ( Context *) ;                                    The Faster record log is a sequence of updates to the state of the
+                                                                          application. Such a log can be directly fed into a stream processing
+// Read functions                                                         engine to analyze the application state across time. For example, one
+void SingleReader ( Key * , Input * , Value * , Output *) ;
+void ConcurrentReader ( Key * , Input * , Value * , Output *) ;
+                                                                          may measure the rate at which values grow over time, or produce
+                                                                          hourly dashboards of the hottest keys in the application. The size
+// Upsert functions                                                       of read-only and in-place updatable regions in HybridLog controls
+void SingleWriter ( Key * , Value * , Value *) ;                          the frequency of updates to values present in the log. Further, one
+void ConcurrentWriter ( Key * , Value * , Value *) ;
+                                                                          may handle point-in-time queries by scanning the log, or query
+// RMW functions                                                          historical values of a given key (since our record versions are linked
+void InitialUpdater ( Key * , Input * , Value *) ;                        in the log). Investigating these possibilities in a hybrid updates and
+void InPlaceUpdater ( Key , Input * , Value *) ;                          analytics system is an interesting direction for future work.
+void CopyUpdater ( Key * , Input * , Value * , Value *) ;
+
+   For functions that have two parameters of type Value, the first        G    ALGORITHMS FOR HYBRIDLOG AND FASTER
+represents the old value and the second represents the new, up-           We present algorithms for HybridLog in Alg. 1. Allocate is in-
+dated, value. Faster invokes the CompletionCallback with a user-          voked by a thread when it wishes to allocate a new record. New
+provided context associated with a pending operation, when com-           records are allocated at the tail using fetch-and-add. If the address
+pleted. To support reads, the user defines two functions. The first,      is within a logical page (common case), we simply return the logi-
+SingleReader, takes a key, an input, and the current value and            cal address. The first thread whose Allocate overflows the page
+allows the user to populate a pre-allocated output buffer. The sys-       handles buffer maintenance and resets the offset for the new page.
+tem guarantees read-only access to the value during the operation.        Other threads spin-wait for this thread to reset the offset.
+The second, ConcurrentReader, is similar, but may be invoked                  Next, we present the Read, Upsert, and RMW algorithms for
+concurrently with updates or writes; the user is expected to handle       Faster using HybridLog, in Algs. 2, 3, and 4 respectively. The
+concurrency (e.g., using an S-X lock).                                    find_tag procedure finds an existing (non-tentative) entry in the
+   Faster supports two kinds of updates: Upserts and RMWs. An             index, while find_or_create_tag returns an existing (non-tentative)
+upsert require two functions: SingleWriter overwrites the value           entry, or creates a new one, using the two-phase insert algorithm
+with a new value, where Faster guarantees exclusive write ac-             described in Sec. 3. The trace_back_until procedure traverses
+cess. ConcurrentWriter may be called (as its name implies) con-           the record linked-list that is present in memory to obtain the logical
+currently with other reads and writes. An RMW requires three              address of the record that corresponds to the key or first on-disk
+update functions: an InitialUpdater to populate the initial value,        record (obtained from the last record in memory).
+an InPlaceUpdater to update an existing value in-place, and a                 A read operation issues a read request to disk if logical address
+CopyUpdater to write the updated value into a new location, based         is less than head offset, reads using the single reader if record is
+on existing value and the input. Initial and copy updaters are guar-      in the safe-read-only region, or the concurrent reader if it is in the
+anteed exclusive access to the value, whereas in-place updaters may       fuzzy or mutable region. Upsert updates in-place if the record is in
+be invoked concurrently. Users can optionally indicate that an RMW        the mutable region, and creates a new copy at the tail otherwise.
+is mergeable, which allows Faster to apply CRDT optimizations.            RMW issues a read request if logical address is less than head offset;
+   We use these functions to generate the Faster runtime interface:       creates a new record at the tail if it is in the safe-read-only region;
+puts an operation into a pending list for processing later, if it is                  1 function Status Upsert(key, value, ctx)
+                                                                                      2     entry = find_or_create_tag(key);
+in the fuzzy region; and updates it in-place if it is in the mutable                  3     laddr = trace_back_until(key, entry.address, head_offset);
+region. For Reads and RMW, the operation context is enqueued into                     4     if laddr is valid and laddr > read_only_offset then
+a pending queue when the asynchronous operation is complete.                          5          paddr = get_physical_address(laddr);
+These operations continue processing (using their saved contexts)                     6          record = Obtain record at paddr;
+                                                                                      7          ConcurrentWriter(key, record.value, value);
+when the user invokes CompletePending.                                                8          return Status.OK;
+                                                                                      9     else
+ 1 function Allocate(int size)                                                       10          new_laddr = Allocate (size);
+ 2     offset = toffset.fetch_and_add(size);                                         11          new_record = record at new_paddr;
+ 3     if offset + size < page_size then                                             12          write key, entry.address at new_record;
+ 4           return (tpage ≪ page_size_bits) | offset;
+                                                                                     13          SingleWriter(key, new_record.value, value);
+ 5       else if offset < page_size then                                             14          updated_entry = unset tentative bit, tag, new_laddr;
+ 6            buffer_maintenance (tpage++);                                          15          if entry.CAS(entry, updated_entry) then
+ 7            index = tpage % buffer_size;                                           16                return Status.OK;
+ 8            spin-wait until closed-status[index] == ’C’;                           17          else
+ 9            flush-status[index] = ’D’; closed-status[index] = ’O’;                 18                new_record.invalid = true;
+10            allocate (or clean) frame[index] for tpage;                            19                return Upsert(key, value, ctx);
+11              if (offset + size) == page_size then
+12                    toffset.store(0);                                                         Algorithm 3: Upsert Algorithm in Faster
+13                    return ((tpage - 1) ≪ page_size_bits) | offset;
+14              else                                                                 1 function Status RMW(key, input, ctx)
+15                    toffset.store(size);                                           2     entry = find_or_create_tag(key);
+16                    return (tpage ≪ page_size_bits) | 0;                           3     laddr = trace_back_until(key, entry.address, head_offset);
+                                                                                     4     if laddr is invalid then
+17       else
+                                                                                     5          goto CREATE_RECORD;
+18              spin-wait until toffset < page_size;
+19              return Allocate(size);                                                6      else if laddr < head_offset then
+                                                                                      7           create context and issue async IO request to disk;
+20 procedure buffer_maintenance(long tpage)                                           8           return Status.Pending;
+21     index = tpage % buffer_size;
+                                                                                      9      else
+22     if head_offset is lagging then                                                10             paddr = get_physical_address(laddr);
+23          new_head = (tpage - buffer_size) ≪ page_size_bits;
+                                                                                     11             record = Obtain record at paddr;
+24          adjust new_head based on flush-status;
+                                                                                     12             if laddr < safe_ro_offset then
+25          old_head = head_offset;                                                  13                  goto CREATE_RECORD;
+26          head_offset.store(new_head);
+27          bump_epoch(( ) ⇒                                                         14             else if laddr < ro_offset then
+                                                                                     15                  add context to pending list;
+28               { close pages in range [old_head, new_head); });
+                                                                                     16                  return Status.Pending;
+29       if ro_offset is lagging then
+30            ro_offset.store((tpage - ro_lag) ≪ page_size_bits);                    17             else
+                                                                                     18                    InplaceUpdater(key, input, record.value);
+31            bump_epoch(( ) ⇒ { update_safe_ro(ro_offset)});
+                                                                                     19                    return Status.OK;
+32 procedure update_safe_ro(long new)
+33     old = safe_ro_offset;                                                         20      CREATE_RECORD:
+34     safe_ro_offset = new;                                                         21      new_laddr = Allocate (size);
+35     foreach page ∈ [old, new) do                                                  22      new_paddr = get_physical_address(new_laddr);
+36          async_flush_page(page, callback : ( ) ⇒ {flush-status[index] = ’F’;});   23      new_record = record at new_paddr;
+                                                                                     24      write key, entry.address at new_record;
+                Algorithm 1: Algorithms for HybridLog                                25      if laddr is invalid then
+                                                                                     26           InitialUpdater(key, input, new_record.value);
+                                                                                     27      else
+ 1 function Status Read(key, input, output, ctx)                                     28           CopyUpdater(key, input, record.value, new_record.value);
+ 2     entry = find_tag(key);                                                        29      updated_entry = unset tentative bit, tag, new_laddr;
+ 3     laddr = trace_back_until(key, entry.address, head_offset);                    30      if not entry.CAS(entry, updated_entry) then
+ 4     if laddr is invalid then                                                      31           new_record.invalid = true;
+ 5          return Status.Error;                                                     32           return RMW(key, input, ctx);
+ 6       else if laddr < head_offset then                                            33      return Status.OK;
+ 7            Create context and issue async IO request to disk;
+ 8            return Status.Pending;
+                                                                                                    Algorithm 4: RMW Algorithm in Faster
+ 9       else
+10              paddr = get_physical_address(laddr);
+11              record = obtain record at paddr;
+12              if laddr < safe_ro_offset then
+13                   SingleReader(key, input, record.value, output);
+14              else
+15                   ConcurrentReader(key, input, record.value, output);
+16              return Status.OK;
+
+                Algorithm 2: Read algorithm in Faster
