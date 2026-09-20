@@ -5167,6 +5167,8 @@ LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" 
 LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
 LOCATION["rbil"] = { index = "rbil/index.tsv", unit = "interrupt" }
+LOCATION["mathematics-in-lean"] = { index = "mathematics-in-lean/index.tsv", unit = "section" }
+LOCATION["programming-z3"] = { index = "programming-z3/index.tsv", unit = "section" }
 LOCATION["docker"] = { index = "docker/index.tsv", unit = "chapter" }
 LOCATION["ptrace-injection"] = { index = "ptrace-injection/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
@@ -5951,6 +5953,10 @@ providers[#providers + 1] = { name = "Books", key = "books", run = pick_books }
 -- list still reports each manual's frozen status.
 providers[#providers + 1] = { name = "RISC-V (manuals)", key = "books-riscv", run = pick_riscv_books }
 providers[#providers + 1] = { name = "Typeclassopedia (Haskell)", key = "typeclassopedia", run = pick_tco }
+-- Formal methods / SMT: Mathematics in Lean (Lean 4 + Mathlib proofs) and
+-- Programming Z3 (the Z3 SMT solver internals + API). Frozen web books.
+providers[#providers + 1] = { name = "Mathematics in Lean", key = "mathematics-in-lean", run = frozen_web_provider("mathematics-in-lean", "Mathematics in Lean> ") }
+providers[#providers + 1] = { name = "Programming Z3", key = "programming-z3", run = frozen_web_provider("programming-z3", "Programming Z3> ") }
 
 -- Every source in one list, each row carrying where its content lives. Rows are
 -- "<index>\t<display>": fzf shows column 2, the action looks the row up by
