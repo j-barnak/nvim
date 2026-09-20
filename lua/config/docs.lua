@@ -5780,19 +5780,63 @@ local providers = {
 	-- linux_mode setup guides at the chosen tag; :Src = full source. Vendored
 	-- libs under /src are not in the docs sparse.
 	{ name = "What The Fuzz (wtf)", key = "wtf", run = register_versioned("wtf", { url = "https://github.com/0vercl0k/wtf", tagre = "v[0-9]+\\.[0-9]+\\.[0-9]+", sparse = "/README.md /linux_mode", marker = "README.md", browse = "", exts = "-e md", prompt = "wtf docs> ", label = "wtf" }) },
-	-- kAFL (IntelLabs snapshot fuzzer for full VM kernel/driver targets): the
-	-- frozen intellabs.github.io/kAFL docs (Browse Documentation) plus the
-	-- versioned IntelLabs/kAFL source (Explore source). docs_mode "latest" opens
-	-- the frozen docs at their tip regardless of the chosen source tag.
-	{ name = "kAFL (Intel snapshot fuzzer)", key = "kafl", run = register_versioned("kafl", { src_url = "https://github.com/IntelLabs/kAFL", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kAFL", docs_mode = "latest", docs_fn = frozen_web_provider("kafl-docs", "kAFL docs> ") }) },
-	-- kAFL ecosystem components (source-only, versioned): the umbrella "kAFL"
-	-- entry above is IntelLabs/kAFL (deployment); these are the actual pieces.
-	{ name = "kAFL: fuzzer (source)", key = "kafl-fuzzer", run = register_versioned("kafl-fuzzer", { url = "https://github.com/IntelLabs/kafl.fuzzer", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.fuzzer", docs_mode = "none" }) },
-	{ name = "kAFL: targets (source)", key = "kafl-targets", run = register_versioned("kafl-targets", { url = "https://github.com/IntelLabs/kafl.targets", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.targets", docs_mode = "none" }) },
-	{ name = "kAFL: QEMU-Nyx (source)", key = "kafl-qemu", run = register_versioned("kafl-qemu", { url = "https://github.com/IntelLabs/kafl.qemu", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.qemu", docs_mode = "none" }) },
-	{ name = "kAFL: libxdc (Intel-PT decoder, source)", key = "kafl-libxdc", run = register_versioned("kafl-libxdc", { url = "https://github.com/IntelLabs/kafl.libxdc", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.libxdc", docs_mode = "none" }) },
-	-- kafl.linux is a full kernel fork; browse its KVM-Nyx host-patch tags.
-	{ name = "kAFL: Linux (KVM-Nyx host, source)", key = "kafl-linux", run = register_versioned("kafl-linux", { url = "https://github.com/IntelLabs/kafl.linux", tagre = "kvm-nyx.*", diskpat = "^kvm%-nyx", label = "kafl.linux", docs_mode = "none" }) },
+	-- kAFL (IntelLabs snapshot fuzzer for full VM kernel/driver targets): one
+	-- entry grouping the frozen intellabs.github.io/kAFL docs and every IntelLabs
+	-- kAFL source repo (the umbrella deployment repo + the components) under
+	-- sub-pickers. Scope is IntelLabs kAFL only - the nyx-fuzz org (Nyx, its
+	-- QEMU-Nyx, ...) stays in its own separate entries. register_versioned still
+	-- runs for each repo (VERSIONED_PICK / :V / :Src wiring preserved); built once
+	-- via an IIFE so no module-chunk locals are added (200-local cap).
+	{ name = "kAFL (Intel snapshot fuzzer)", key = "kafl", run = (function()
+		local docs = frozen_web_provider("kafl-docs", "kAFL docs> ")
+		local SRC = {
+			{ "kAFL (umbrella / deployment)", register_versioned("kafl", { src_url = "https://github.com/IntelLabs/kAFL", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kAFL", docs_mode = "none" }) },
+			{ "kafl.fuzzer (the fuzzer)", register_versioned("kafl-fuzzer", { url = "https://github.com/IntelLabs/kafl.fuzzer", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.fuzzer", docs_mode = "none" }) },
+			{ "kafl.targets", register_versioned("kafl-targets", { url = "https://github.com/IntelLabs/kafl.targets", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.targets", docs_mode = "none" }) },
+			{ "kafl.qemu (IntelLabs QEMU fork)", register_versioned("kafl-qemu", { url = "https://github.com/IntelLabs/kafl.qemu", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.qemu", docs_mode = "none" }) },
+			{ "kafl.libxdc (Intel-PT decoder)", register_versioned("kafl-libxdc", { url = "https://github.com/IntelLabs/kafl.libxdc", tagre = "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", diskpat = "^v%d", label = "kafl.libxdc", docs_mode = "none" }) },
+			{ "kafl.linux (KVM-Nyx host kernel)", register_versioned("kafl-linux", { url = "https://github.com/IntelLabs/kafl.linux", tagre = "kvm-nyx.*", diskpat = "^kvm%-nyx", label = "kafl.linux", docs_mode = "none" }) },
+		}
+		local function source_menu()
+			local labels = {}
+			for _, e in ipairs(SRC) do
+				labels[#labels + 1] = e[1]
+			end
+			fzf().fzf_exec(labels, {
+				prompt = "kAFL source> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = {
+					["default"] = function(sel)
+						if not (sel and sel[1]) then
+							return
+						end
+						for _, e in ipairs(SRC) do
+							if e[1] == sel[1] then
+								return e[2]()
+							end
+						end
+					end,
+				},
+			})
+		end
+		return function()
+			fzf().fzf_exec({ "Documentation", "Explore source (kAFL + components)" }, {
+				prompt = "kAFL> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = {
+					["default"] = function(sel)
+						if not (sel and sel[1]) then
+							return
+						end
+						if sel[1] == "Documentation" then
+							return docs()
+						end
+						return source_menu()
+					end,
+				},
+			})
+		end
+	end)() },
 	-- angr docs: narrative handbook (docs.angr.io sidebar order, "[Section] Title")
 	-- with the API Reference (angr.* modules) behind a separate sub-picker. Inlined
 	-- (not a module local) to stay under the 200-local main-chunk cap.
