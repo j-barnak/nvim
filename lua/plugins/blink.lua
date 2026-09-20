@@ -56,7 +56,6 @@ return {
 	dependencies = {
 		"saghen/blink.lib", -- main-branch dependency
 		"rafamadriz/friendly-snippets", -- snippets for the `snippets` source
-		"mikavilpas/blink-ripgrep.nvim", -- `ripgrep` source (project-wide words)
 	},
 	event = { "InsertEnter", "CmdlineEnter" },
 	-- Latest = the `main` branch, so build the Rust SIMD fuzzy matcher (the
@@ -84,12 +83,12 @@ return {
 			list = { selection = { preselect = false, auto_insert = false } },
 			documentation = { auto_show = true, auto_show_delay_ms = 200 },
 		},
-		-- No LSP source. path + snippets, plus ripgrep as the ONE word source
-		-- (whole-project words, which subsumes the old `buffer` source). In
-		-- strings, only `path` may fire, and only when the string follows
+		-- No LSP source. path + snippets, plus buffer as the ONE word source
+		-- (words from open buffers, in-memory so no external process). In strings,
+		-- only `path` may fire, and only when the string follows
 		-- include/require/import or is path-like (so prose strings stay quiet).
 		sources = {
-			default = { "path", "snippets", "ripgrep" },
+			default = { "path", "snippets", "buffer" },
 			providers = {
 				-- path: on everywhere in code; inside a string only in an
 				-- include/require/import context. Buffer fallback dropped so a
@@ -101,12 +100,7 @@ return {
 					end,
 				},
 				snippets = { enabled = not_in_string },
-				ripgrep = {
-					module = "blink-ripgrep",
-					name = "Ripgrep",
-					score_offset = -3, -- rank below path/snippets
-					enabled = not_in_string,
-				},
+				buffer = { enabled = not_in_string },
 			},
 		},
 		-- Command-line completion for `:` commands and `/` `?` search: menu opens
