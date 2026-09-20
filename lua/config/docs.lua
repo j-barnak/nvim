@@ -5532,6 +5532,42 @@ local providers = {
 			},
 		})
 	end },
+	-- Arm PSCI (Power State Coordination Interface, DEN0022) and SMCCC (SMC
+	-- Calling Convention, DEN0028): the core Arm firmware platform specs. Like the
+	-- SystemReady docs above, Arm serves these PDF-only, so the download URL is
+	-- resolved from Arm's doc-service JSON at build time, then split by bookmarks.
+	{ name = "Arm PSCI (Power State Coordination Interface)", key = "psci", run = function()
+		if vim.fn.filereadable(data_root .. "/std/arm-psci/.complete") == 1 then
+			return pick_pdf("arm-psci", "Arm PSCI> ")
+		end
+		vim.notify("Resolving Arm PSCI from Arm's doc service …")
+		vim.system({ "curl", "-fsSL", "--max-time", "40", "https://documentation-service.arm.com/documentation/den0022/latest" }, { text = true, timeout = 60000 }, function(res)
+			vim.schedule(function()
+				local ok, j = pcall(vim.json.decode, res.stdout or "")
+				local href = ok and j and j._links and j._links.resources and j._links.resources[1] and j._links.resources[1].href
+				if not href then
+					return vim.notify("Arm PSCI: could not resolve the PDF URL", vim.log.levels.ERROR)
+				end
+				pick_pdf("arm-psci", "Arm PSCI> ", href)
+			end)
+		end)
+	end },
+	{ name = "Arm SMCCC (SMC Calling Convention)", key = "smccc", run = function()
+		if vim.fn.filereadable(data_root .. "/std/arm-smccc/.complete") == 1 then
+			return pick_pdf("arm-smccc", "Arm SMCCC> ")
+		end
+		vim.notify("Resolving Arm SMCCC from Arm's doc service …")
+		vim.system({ "curl", "-fsSL", "--max-time", "40", "https://documentation-service.arm.com/documentation/den0028/latest" }, { text = true, timeout = 60000 }, function(res)
+			vim.schedule(function()
+				local ok, j = pcall(vim.json.decode, res.stdout or "")
+				local href = ok and j and j._links and j._links.resources and j._links.resources[1] and j._links.resources[1].href
+				if not href then
+					return vim.notify("Arm SMCCC: could not resolve the PDF URL", vim.log.levels.ERROR)
+				end
+				pick_pdf("arm-smccc", "Arm SMCCC> ", href)
+			end)
+		end)
+	end },
 	-- RISC-V Platform Specification (archived unified OS-A/M spec, 31 pages).
 	{ name = "RISC-V Platform Specification (archived unified spec)", key = "riscv-platform", run = function() pick_pdf("riscv-platform", "RISC-V Platform> ") end },
 	-- EBBR (Embedded Base Boot Requirements): the UEFI-based boot spec for embedded
