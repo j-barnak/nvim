@@ -4058,6 +4058,8 @@ local STD_URLS = {
 	["arm-a"] = "https://www.cs.princeton.edu/courses/archive/fall19/cos217/reading/ArmArchitectureReferenceManual.pdf",
 	["arm-m"] = "https://community.arm.com/cfs-file/__key/communityserver-discussions-components-files/471/DDI0553B_5F00_y_5F00_armv8m_5F00_arm.pdf",
 	["gdb-manual"] = "https://sourceware.org/gdb/download/onlinedocs/gdb.pdf",
+	-- Drepper's "ELF Handling For Thread-Local Storage" (7 chapters by outline).
+	["tls"] = "https://www.uclibc.org/docs/tls.pdf",
 	-- UEFI Specification, split per version (the "UEFI Specification" picker below
 	-- offers 2.10 and 2.9; each is its own ~2000-page spec PDF, cached separately).
 	["uefi-2.10"] = "https://uefi.org/sites/default/files/resources/UEFI_Spec_2_10_Aug29.pdf",
@@ -5170,6 +5172,7 @@ LOCATION["awesome-databases"] = { index = "awesome-databases/index.tsv", unit = 
 LOCATION["coding-for-ssds"] = { index = "coding-for-ssds/index.tsv", unit = "part" }
 LOCATION["miasm-docs"] = { index = "miasm-docs/index.tsv", unit = "module" }
 LOCATION["sicp-js"] = { index = "sicp-js/index.tsv", unit = "section" }
+LOCATION["maskray-linker"] = { index = "maskray-linker/index.tsv", unit = "post" }
 LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
 LOCATION["rbil"] = { index = "rbil/index.tsv", unit = "interrupt" }
@@ -5461,6 +5464,7 @@ local providers = {
 	{ name = "C++ standard (draft)", key = "cppstd", run = function() pick_pdf("cpp-draft", "C++ draft> ") end },
 	{ name = "DWARF 5 spec", key = "dwarf", run = function() pick_pdf("dwarf5", "DWARF 5> ") end },
 	{ name = "x86-64 System V ABI (Intel/AMD64)", key = "abi", run = function() pick_pdf("x86-64-abi", "x86-64 ABI> ") end },
+	{ name = "ELF Handling For Thread-Local Storage", key = "tls", run = function() pick_pdf("tls", "TLS> ") end },
 	{ name = "RISC-V ISA (unpriv + priv, H ext)", key = "riscv", run = function() pick_pdf("riscv", "RISC-V ISA> ") end },
 	{ name = "Arm ARM (A-profile, application)", key = "arm-a", run = function() pick_pdf("arm-a", "Arm A-profile> ") end },
 	{ name = "Arm ARM (M-profile, microcontroller)", key = "arm-m", run = function() pick_pdf("arm-m", "Arm M-profile> ") end },
@@ -6014,6 +6018,8 @@ providers[#providers + 1] = { name = "Programming Z3", key = "programming-z3", r
 -- SICP (JavaScript edition, sourceacademy.org/sicpjs) frozen from the site's JSON,
 -- one section per entry numbered 1.0 / 1.1 / 1.1.1 with JavaScript code preserved.
 providers[#providers + 1] = { name = "SICP JS (Structure and Interpretation, JS edition)", key = "sicp-js", run = frozen_web_provider("sicp-js", "SICP JS> ") }
+-- MaskRay Linker: Fangrui Song's linker/ELF blog posts, one per chapter.
+providers[#providers + 1] = { name = "MaskRay Linker (blog)", key = "maskray-linker", run = frozen_web_provider("maskray-linker", "MaskRay> ") }
 
 -- Every source in one list, each row carrying where its content lives. Rows are
 -- "<index>\t<display>": fzf shows column 2, the action looks the row up by
