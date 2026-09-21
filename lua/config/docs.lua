@@ -4872,6 +4872,9 @@ local WEB_BOOKS = {
 	{ title = "What The Fuzz (wtf) Articles", key = "wtf-articles", run = frozen_web_provider("wtf-articles", "wtf Articles> ") },
 	{ title = "Awesome Databases (papers + storage)", key = "awesome-databases", run = frozen_web_provider("awesome-databases", "Awesome Databases> ") },
 	{ title = "Coding for SSDs (codecapsule)", key = "coding-for-ssds", run = frozen_web_provider("coding-for-ssds", "Coding for SSDs> ") },
+	-- SICP (JavaScript edition, sourceacademy.org/sicpjs): sections numbered
+	-- 1.0 / 1.1 / 1.1.1, JavaScript code preserved.
+	{ title = "SICP (JavaScript edition)", key = "sicp-js", run = frozen_web_provider("sicp-js", "SICP JS> ") },
 	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
 	{ title = "PCIe (Articles)", key = "pcie-articles", run = pick_pcie_articles },
 	{ title = "Perf Wiki", key = "perf-wiki", run = frozen_web_provider("perf-wiki", "Perf Wiki> ") },
@@ -6023,9 +6026,6 @@ providers[#providers + 1] = { name = "Typeclassopedia (Haskell)", key = "typecla
 -- Programming Z3 (the Z3 SMT solver internals + API). Frozen web books.
 providers[#providers + 1] = { name = "Mathematics in Lean", key = "mathematics-in-lean", run = frozen_web_provider("mathematics-in-lean", "Mathematics in Lean> ") }
 providers[#providers + 1] = { name = "Programming Z3", key = "programming-z3", run = frozen_web_provider("programming-z3", "Programming Z3> ") }
--- SICP (JavaScript edition, sourceacademy.org/sicpjs) frozen from the site's JSON,
--- one section per entry numbered 1.0 / 1.1 / 1.1.1 with JavaScript code preserved.
-providers[#providers + 1] = { name = "SICP JS (Structure and Interpretation, JS edition)", key = "sicp-js", run = frozen_web_provider("sicp-js", "SICP JS> ") }
 -- MaskRay Linker: Fangrui Song's linker/ELF blog posts, one per chapter.
 providers[#providers + 1] = { name = "MaskRay Linker (blog)", key = "maskray-linker", run = frozen_web_provider("maskray-linker", "MaskRay> ") }
 
