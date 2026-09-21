@@ -4424,6 +4424,8 @@ local BOOKS = {
 	{ module = "Algorithms", key = "books-algo", items = {
 		{ title = "Algorithms Illuminated, Part 2", fmt = "epub", file = "Algorithms Illuminated (Part 2)_ Graph Algorithms and Data -- Tim Roughgarden -- First edition, San Francisco, CA, 2018 -- Soundlikeyourself -- 9780999282908 -- 60673f61ed5b43af2525a40cf00038f9 -- Anna’s Archive.epub" },
 		{ title = "The Algorithm Design Manual", fmt = "pdf", file = "The-Algorithm-Design-Manual.pdf" },
+		-- https://opendatastructures.org/ods-python.pdf (the HTML edition renders code/math as images; the PDF has selectable Python code)
+		{ title = "Open Data Structures (Morin, Python edition)", fmt = "pdf", slug = "open-data-structures", file = "ods-python.pdf" },
 	} },
 	{ module = "Security", key = "books-security", items = {
 		{ title = "Gray Hat Hacking (6th ed)", fmt = "pdf", slug = "gray-hat-hacking-6e", file = "Gray Hat Hacking_ The Ethical Hacker's Handbook, Sixth -- Allen Harper, Ryan Linn, Stephen Sims, Michael Baucom, -- 6th ed, New York, 2022 -- isbn13 9781264268948 -- 422f2de1f3c65dc5351a861be7c9ef14 -- Anna’s Archi.pdf" },
