@@ -1,0 +1,205 @@
+# Jitter
+
+## Miasm Emulation Engine
+
+This short document provides an introduction to the APIs of the Miasm emulation engine. This emulation engine is commonly referred to as **jitter** throughout the project's code (as it is based on [JiT](https://en.wikipedia.org/wiki/Just-in-time_compilation) methods).
+
+The first step is to obtain an instance of the jitter. To do this, we will go through an intermediate object, `Machine`. It will allow us to instantiate a set of elements linked to a given architecture supported by Miasm (x86, arm, mips, ...).
+
+```python
+from miasm.analysis.machine import Machine
+Machine.available_machine()
+```
+
+```python
+machine = Machine("x86_32")
+print(machine.name)
+```
+
+The `Machine` class in Miasm provides various interfaces:
+
+* `jitter`: an emulation engine
+* `dis_engine`: a disassembly engine
+* `lifter`: a lifting engine, to lift assembly code to the corresponding Miasm internal representation (IR)
+* `lifter_model_call`: as `lifter`, but function calls are abstracted
+* `mn`: low level object to interact with an architecture (assembly, disassembly of only a few bytes, etc.)
+* `gdbserver`: a GDB remote debugging server (to link with a `jitter` instance)
+
+The IR related objects are already discussed in [this notebook](../ir/lift.ipynb).
+
+To obtain an emulator instance, we first need to:
+
+1. instanciate a *symbol table* (`LocationDB` in Miasm, already explained in [this notebook](../locationdb/locationdb.ipynb)) ;
+1. (optionnaly) choose a backed for the emulation (more specifically, to JiT the code):
+
+    * "python": a backend entirely in Python, slow
+    * "gcc": a backend based on the compiler GCC (Assembly $\rightarrow$ IR Miasm $\rightarrow$ C $\rightarrow$ GCC), fast
+    * "llvm": a backend based on the LLVM JiT engine (Assembly $\rightarrow$ IR Miasm $\rightarrow$ IR LLVM $\rightarrow$ LLVM JiT), fast
+
+Note: using a JiT backend as `llvm` or `gcc` greatly improve the performance over the `python` one. As a result, without any argument, instanciating an emulator will automatically try to look for and choose the best suited backend. 
+
+```python
+from miasm.core.locationdb import LocationDB
+
+loc_db = LocationDB()
+jitter = machine.jitter(loc_db)
+print(jitter)
+```
+
+For now, our emulator is an empty box. It has:
+
+* registers, reachable from the `.cpu` attribute. These are initialized to 0.
+* a virtual memory, reachable from the `.vm` attribute. It starts empty.
+
+### CPU state
+
+Let's manipulate a few registers:
+
+```python
+# Read a register
+print(jitter.cpu.EAX)
+
+# Write a register
+jitter.cpu.EAX = 1
+print(jitter.cpu.EAX)
+```
+
+A few *helpers* are also available. For instance, one can get every registers using:
+
+```python
+# GPReg : General Purpose registers
+regs = jitter.cpu.get_gpreg()
+print(regs)
+```
+
+Note: in Miasm, `x86_32` implementation is merged with the `x86_64` one. As a result, the register names are the x64 ones. Still, the computation is made accordingly to the 32bits implementation, and registers can be accessed either using the x64 name or the 32bits name (ie `.EAX` and `.RAX`).
+
+### Virtual memory
+
+Initially, the virtual memory is empty. The *repr* output offers a summary of the availables pages: 
+
+```python
+jitter.vm
+```
+
+Memory pages can then be added.
+The **memory address is arbitrary** (no alignment requirement). **The size is also arbitrary** (byte precision).
+
+Optionnaly, a comment associated to the page can be provided.
+
+```python
+from miasm.jitter.csts import PAGE_READ, PAGE_WRITE, PAGE_EXEC
+jitter.vm.add_memory_page(0x1000, PAGE_READ | PAGE_WRITE | PAGE_EXEC, b"\x00" * 0x1000, "test page")
+jitter.vm.add_memory_page(0x112233, PAGE_READ | PAGE_WRITE | PAGE_EXEC, b"\x00" * 0x666, "no alignment, byte precision")
+jitter.vm
+```
+
+The memory can now be accessed, read and write:
+
+```python
+jitter.vm.get_mem(0x1000, 0x10)
+```
+
+```python
+jitter.vm.set_mem(0x1000, b"toto")
+jitter.vm.get_mem(0x1000, 0x10)
+```
+
+Note: having a byte-precision memory has some advantages. For instance:
+* when mapping a partially known structure, instead of defaulting unknown fields to 0, we can instead only map in memory the known field. As a result, we obtain a sparse memory layout and if the programm try to read an unknown field, the execution will stop right on the responsible instruction, helping the reversing work
+* allocation can be made byte-wise. Thus, it could be easier to detect overflows and underflows
+
+### Emulation
+
+We will now run the emulator.
+First, actual instructions are needed:
+
+```python
+jitter.vm.set_mem(0x1000, bytes.fromhex("B844332211C3"))
+```
+
+We will also enable debug logging.
+By default, the logger will logs executed instruction and register values.
+
+```python
+jitter.set_trace_log()
+```
+
+The emulation is initialized with `jitter.init_run(address)` and resumed with `jitter.continue_run()`.
+For convenience, `jitter.run(address)` is usually used, wrapping these two API.
+
+```python
+jitter.vm.add_memory_page(0x88880000, PAGE_READ | PAGE_WRITE | PAGE_EXEC, b"\x00" * 0x1000, "stack")
+jitter.vm.set_mem(0x88880000 + 0x1000 - 4, b"\xef\xbe\x37\x13")
+jitter.cpu.ESP = 0x88880000 + 0x1000 - 4
+
+jitter.run(0x1000)
+
+# The execution ends with an error, which is expected.
+# Indeed, we RET on 0x1337beef, which is not mapped in memory,
+# hence the "WARNING: address 0x1337BEEF is not mapped in virtual memory"
+```
+
+### Breakpoints
+
+One can register breakpoints to be raised just before a given address will be executed.
+
+As we control the CPU, the breakpoint implementation is invisible from the emulated environnement and we can use an arbitrary number of them.
+
+```python
+# Breakpoints are actually callbacks which receive the emulation instance in argument
+def hello_world(jitter):
+    print("Hello, world!")
+    print("EAX value is %d" % jitter.cpu.EAX)
+    # Stop execution right here
+    return False
+
+jitter.add_breakpoint(0x1005, hello_world)
+```
+
+If a breakpoint callback returns `True`, the emulation continues.
+Otherwise, the emulation will stop and the value returned by the `jitter.continue_run()` call is the callback return value.
+
+Note: if one need to add more arguments to the callback, there are many Pythonic way to do it.
+For instance, one can use `lambda` to capture an argument or object instance (ie. `jitter.add_breakpoint(address, obj.callback)` with a `def callback(self, jitter)` inside the `obj` definition).
+
+The breakpoint mechanism is used to implement several features. For instance:
+* it can be used to hook a function, by breakpointing on the function address, emulating a few side effects then returning to the return address. Indeed, modifying the programm counter (usually using `jitter.pc = XXX`) in a breakpoint will resume the execution on this new address
+* in Miasm examples, a breakpoint on a fake address is often used to properly stop the emulation. The callback is usually named `code_sentinelle` and allow to get back control after the emulation of a code snippet
+
+### Exercices
+
+For the interested reader, this section introduce a few exercice to practice the API.
+
+#### Exercice 1
+
+Starting from a new instance:
+1. Add a memory page which will act as a stack page
+1. Update the stack pointer accordingly
+1. Manually push a fake return address
+1. Map a `RET` instruction (0xC3) in another page
+1. Run the emulation and ensure it finish on your fake address
+
+#### Exercice 1 - Spoiler
+
+A few helpers are actually availables to reduce the burden of these manual actions:
+
+```python
+# Init a stack and set stack pointer accordingly (architecture agnostic way of writing)
+jitter.init_stack()
+
+# Push 0x1000 on the stack
+jitter.push_uint32_t(0x1000)
+
+# Pop 0x1000 from the stack
+print(hex(jitter.pop_uint32_t()))
+```
+
+#### Exercice 2
+
+Same a Exercice 1, but instead of ending on an error, we will this time add a breakpoint on the fake return address to properly stop the execution.
+
+
+#### Exercice 2 - Spoiler
+
+The example `jitter/x86_32.py` is exactly doing this.

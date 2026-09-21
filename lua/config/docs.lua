@@ -5168,6 +5168,7 @@ LOCATION["aflpp-articles"] = { index = "aflpp-articles/index.tsv", unit = "artic
 LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" }
 LOCATION["awesome-databases"] = { index = "awesome-databases/index.tsv", unit = "article" }
 LOCATION["coding-for-ssds"] = { index = "coding-for-ssds/index.tsv", unit = "part" }
+LOCATION["miasm-docs"] = { index = "miasm-docs/index.tsv", unit = "module" }
 LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
 LOCATION["rbil"] = { index = "rbil/index.tsv", unit = "interrupt" }
@@ -5780,6 +5781,10 @@ local providers = {
 		return narrative
 	end)() }) },
 	{ name = "Triton", key = "triton", run = register_versioned("triton", vspec(simple.triton, "v[0-9]+\\.[0-9]+(\\.[0-9]+)?", { label = "Triton", docs_mode = "latest", docs_fn = frozen_web_provider("triton-docs", "Triton (Python API)> ") })) },
+	-- Miasm (cea-sec): RE framework. :Docs = a generated API reference (static
+	-- ast docstring extraction of the miasm.* modules) plus the doc/ notebook
+	-- guides and cheatsheets; :Src = the versioned source. No online docs site.
+	{ name = "Miasm (RE framework)", key = "miasm", run = register_versioned("miasm", { src_url = "https://github.com/cea-sec/miasm", tagre = "v0\\.[0-9]+\\.[0-9]+", diskpat = "^v0", label = "miasm", docs_mode = "latest", docs_fn = frozen_web_provider("miasm-docs", "miasm docs> ") }) },
 	-- What The Fuzz (wtf): 0vercl0k's snapshot fuzzer. :Docs = README +
 	-- linux_mode setup guides at the chosen tag; :Src = full source. Vendored
 	-- libs under /src are not in the docs sparse.
