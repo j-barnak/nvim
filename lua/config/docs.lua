@@ -5169,6 +5169,7 @@ LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" 
 LOCATION["awesome-databases"] = { index = "awesome-databases/index.tsv", unit = "article" }
 LOCATION["coding-for-ssds"] = { index = "coding-for-ssds/index.tsv", unit = "part" }
 LOCATION["miasm-docs"] = { index = "miasm-docs/index.tsv", unit = "module" }
+LOCATION["sicp-js"] = { index = "sicp-js/index.tsv", unit = "section" }
 LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
 LOCATION["rbil"] = { index = "rbil/index.tsv", unit = "interrupt" }
@@ -6010,6 +6011,9 @@ providers[#providers + 1] = { name = "Typeclassopedia (Haskell)", key = "typecla
 -- Programming Z3 (the Z3 SMT solver internals + API). Frozen web books.
 providers[#providers + 1] = { name = "Mathematics in Lean", key = "mathematics-in-lean", run = frozen_web_provider("mathematics-in-lean", "Mathematics in Lean> ") }
 providers[#providers + 1] = { name = "Programming Z3", key = "programming-z3", run = frozen_web_provider("programming-z3", "Programming Z3> ") }
+-- SICP (JavaScript edition, sourceacademy.org/sicpjs) frozen from the site's JSON,
+-- one section per entry numbered 1.0 / 1.1 / 1.1.1 with JavaScript code preserved.
+providers[#providers + 1] = { name = "SICP JS (Structure and Interpretation, JS edition)", key = "sicp-js", run = frozen_web_provider("sicp-js", "SICP JS> ") }
 
 -- Every source in one list, each row carrying where its content lives. Rows are
 -- "<index>\t<display>": fzf shows column 2, the action looks the row up by
