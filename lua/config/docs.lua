@@ -4424,6 +4424,7 @@ local BOOKS = {
 	{ module = "Algorithms", key = "books-algo", items = {
 		{ title = "Algorithms Illuminated, Part 2", fmt = "epub", file = "Algorithms Illuminated (Part 2)_ Graph Algorithms and Data -- Tim Roughgarden -- First edition, San Francisco, CA, 2018 -- Soundlikeyourself -- 9780999282908 -- 60673f61ed5b43af2525a40cf00038f9 -- Anna’s Archive.epub" },
 		{ title = "The Algorithm Design Manual", fmt = "pdf", file = "The-Algorithm-Design-Manual.pdf" },
+		{ title = "Introduction to Algorithms (CLRS, 3e)", fmt = "pdf", slug = "introduction-to-algorithms-clrs", file = "Cormen Introduction to Algorithms.pdf" },
 		-- https://opendatastructures.org/ods-python.pdf (the HTML edition renders code/math as images; the PDF has selectable Python code)
 		{ title = "Open Data Structures (Morin, Python edition)", fmt = "pdf", slug = "open-data-structures", file = "ods-python.pdf" },
 	} },
@@ -4877,6 +4878,9 @@ local WEB_BOOKS = {
 	-- SICP (JavaScript edition, sourceacademy.org/sicpjs): sections numbered
 	-- 1.0 / 1.1 / 1.1.1, JavaScript code preserved.
 	{ title = "SICP (JavaScript edition)", key = "sicp-js", run = frozen_web_provider("sicp-js", "SICP JS> ") },
+	-- Algorithms, 4th ed. (Sedgewick & Wayne, algs4.cs.princeton.edu): 6 chapter
+	-- landings + 30 sections (1.1 .. 6.6), Java code preserved, sections indented.
+	{ title = "Algorithms (Sedgewick & Wayne, algs4)", key = "algs4", run = frozen_web_provider("algs4", "algs4> ") },
 	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
 	{ title = "PCIe (Articles)", key = "pcie-articles", run = pick_pcie_articles },
 	{ title = "Perf Wiki", key = "perf-wiki", run = frozen_web_provider("perf-wiki", "Perf Wiki> ") },
@@ -5185,6 +5189,7 @@ LOCATION["awesome-databases"] = { index = "awesome-databases/index.tsv", unit = 
 LOCATION["coding-for-ssds"] = { index = "coding-for-ssds/index.tsv", unit = "part" }
 LOCATION["miasm-docs"] = { index = "miasm-docs/index.tsv", unit = "module" }
 LOCATION["sicp-js"] = { index = "sicp-js/index.tsv", unit = "section" }
+LOCATION["algs4"] = { index = "algs4/index.tsv", unit = "section" }
 LOCATION["maskray-linker"] = { index = "maskray-linker/index.tsv", unit = "post" }
 LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
