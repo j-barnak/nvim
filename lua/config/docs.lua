@@ -4324,6 +4324,8 @@ local BOOKS = {
 		{ title = "Expert C Programming", fmt = "epub", file = "Expert C Programming -- Peter van der Linden -- 2002 -- 6a6a0df494fc411c9842373f70197e46 -- Anna’s Archive.epub" },
 		{ title = "Modern C (Gustedt)", fmt = "pdf", slug = "modern-c", file = "modernC.pdf" },
 		{ title = "Effective C (Seacord)", fmt = "pdf", slug = "effective-c", file = "Robert C. Seacord - Effective C_ An Introduction to Professional C Programming-No Starch Press (2025).pdf" },
+		-- http://uploads.mitechie.com/books/Managing_Projects_with_GNU_Make_Third_Edition.pdf
+		{ title = "Managing Projects with GNU Make (3e)", fmt = "pdf", slug = "managing-projects-with-gnu-make", file = "Managing_Projects_with_GNU_Make_Third_Edition.pdf" },
 	} },
 	{ module = "C++", key = "books-cpp", items = {
 		{ title = "Modern C++ Design (Alexandrescu)", fmt = "pdf", slug = "modern-cpp-design", file = "[Addison Wesley] Andrei Alexandrescu - Modern C++ Design Generic Programming and Design Patterns Applied.pdf" },
