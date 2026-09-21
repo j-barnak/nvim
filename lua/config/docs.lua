@@ -1867,7 +1867,11 @@ local simple = {
 		sparse = "/docs /crates /utils /bindings /README.md /MIGRATION.md /CONTRIBUTING.md /TROPHIES.md", -- all readable docs; /docs keeps docs/listings for the book's {{#include}} targets
 		marker = "docs/src",
 		browse = "",
-		exts = "-e md -e rst -e txt -e adoc", -- no -e rs: Rust source is :Src only
+		-- no -e rs: Rust source is :Src only. --exclude fuzzers: the fuzzers/ tree
+		-- (its example README.md files) comes in via the shared :Src sparse
+		-- (LIBAFL_SRC_SPARSE includes /fuzzers); keep those out of the doc listing
+		-- while leaving the fuzzer source reachable under :Src.
+		exts = "-e md -e rst -e txt -e adoc --exclude fuzzers",
 		prompt = "LibAFL> ",
 	},
 	-- DynamoRIO: open-source dynamic binary instrumentation (Intel Pin alternative)
