@@ -14,6 +14,7 @@ set -u
 CFG="${CFG:-$(cd "$(dirname "$0")/../.." && pwd)}"
 WE="$CFG/Resources/tools/webextract.py"
 BR="$CFG/Resources/tools/br_clean.py"
+PF="$CFG/Resources/tools/br_prefilter.py"
 CACHE="$CFG/Resources/docs/.webcache"
 OUT="$CFG/Resources/docs/beautiful-racket"
 SEL='div#doc'
@@ -149,7 +150,8 @@ while IFS=$'\t' read -r disp path; do
   url="$BASE$path"
   html=$(curl -fsSL --compressed --max-time 40 "$url" 2>/dev/null)
   [ -z "$html" ] && { echo "FAIL fetch $url" >&2; fail=$((fail+1)); continue; }
-  body=$(printf '%s' "$html" | python3 "$WE" content "$SEL" "$url" abs 2>/dev/null \
+  body=$(printf '%s' "$html" | python3 "$PF" 2>/dev/null \
+    | python3 "$WE" content "$SEL" "$url" abs 2>/dev/null \
     | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs 2>/dev/null \
     | python3 "$WE" clean "" "" 2>/dev/null \
     | python3 "$BR")
