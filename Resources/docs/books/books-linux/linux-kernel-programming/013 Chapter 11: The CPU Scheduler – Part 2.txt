@@ -1,0 +1,1791 @@
+11
+The CPU Scheduler – Part 2
+In this, our second chapter on the Linux kernel CPU (or task) scheduler, we continue our coverage
+from the previous chapter. In the preceding chapter, we covered several key areas regarding the work-
+ings (and visualization) of the CPU scheduler on the Linux OS. This included topics on what exactly
+the Kernel Schedulable Entity (KSE) on Linux is (it’s the thread!), the POSIX scheduling policies that
+Linux implements, using perf (and other tools) to see the thread/scheduler flow, and how the design
+of the modern scheduler is based upon modular scheduling classes. We also covered how to query
+any thread’s scheduling policy and priority (using a couple of command-line utilities), and finished
+by delving a lot deeper into the internal workings of the OS task scheduler.
+
+With this background in place, we’re now ready to explore more on the CPU scheduler on Linux; in
+this chapter, we shall cover the following areas:
+
+  •    Understanding, querying, and setting the CPU affinity mask
+  •    Querying and setting a thread’s scheduling policy and priority
+  •    An introduction to cgroups
+  •    Running Linux as an RTOS – an introduction
+  •    Miscellaneous scheduling related topics
+
+We do expect that you’ve read (or have the equivalent knowledge of) Chapter 10, The CPU Scheduler –
+Part 1, before tackling this one.
+
+Technical requirements
+I assume you have gone through the complete chapter on Kernel Workspace Setup, that has been up-
+loaded online, and have appropriately prepared a guest Virtual Machine (VM) running Ubuntu 22.04
+LTS (or a later stable release, or a recent Fedora distro) and installed all the required packages. If not,
+I highly recommend you do this first.
+
+To get the most out of this book, I strongly recommend you first set up the workspace environment,
+including cloning this book’s GitHub repository for the code, and work on it in a hands-on fashion. The
+repository can be found here: https://github.com/PacktPublishing/Linux-Kernel-Programming_2E.
+
+Understanding, querying, and setting the CPU affinity
+mask
+The task structure – the root data structure for the thread (or task), containing several dozen thread
+attributes – has a few attributes directly pertaining to scheduling: the priority (the nice as well as the
+Real-Time (RT) priority values), the scheduling class structure pointer, the runqueue the thread is
+on (if any), and so on. (FYI, we covered generic details on the task structure back in Chapter 6, Kernel
+Internals Essentials – Processes and Threads).
+
+Among these is an important member, the CPU affinity bitmask (the actual structure member is
+cpumask_t *cpus_ptr. FYI, until the 5.3 kernel, it was a member named cpus_allowed; this was
+changed in this commit: https://github.com/torvalds/linux/commit/3bd3706251ee8ab67e69d934
+0ac2abdca217e733). This bit mask is just that: a bit mask of the CPU cores that the thread (represented
+by that task structure) is allowed to run on. A simple visualization helps; on a system with 8 CPU cores,
+this is what the typical CPU affinity bitmask would (conceptually) look like:
+
+                              7   6   5   4   3   2   1    0   ←CPU core #
+                              0   0   1   1   1   1   1    1   ←Affinity bit
+
+In the example above, each cell represents a CPU core; the top row denotes the CPU core number,
+and the cells in the row below show a sample value for it: a bottom row cell can be set to either 0 or 1,
+representing whether the thread can run on the corresponding CPU core or not. So, here, with a CPU
+bitmask value of 0x3f (converting the binary number 0011 1111 to hexadecimal), it implies that this
+thread can be scheduled on CPU cores 0 to 5 but never on cores 6 and 7.
+
+By default, all the CPU affinity mask bits are set; thus, by default, a thread can run on any core; this
+makes sense. For example, on a box with (the OS seeing) 8 CPU cores, the default CPU affinity bitmask
+for each thread alive would be binary 1111 1111 (0xff hexadecimal).
+
+As this CPU affinity bitmask member’s held within the task structure, this tells us that the CPU affinity
+bitmask is a per-thread quantity; this makes sense too – the KSE on Linux is a thread, after all. At run-
+time, the scheduler decides which core the thread will actually run upon. In fact, think about it, it’s
+implicit: by design, each CPU core has a runqueue associated with it. Every runnable thread will be
+on a single CPU runqueue; it’s thus eligible to run, and by default, runs on the CPU that its runqueue
+represents. Of course, the scheduler has a load balancer component that can migrate threads to other
+CPU cores (runqueues, really) as the need arises (kernel threads called migration/n assist in this task
+when required, where n is the core number).
+
+The kernel does expose APIs to user space (system calls, of course, sched_{s,g}etaffinity(2) and
+their pthread wrapper library APIs), which allows an application to affine, or associate, a thread (or
+multiple threads) to particular CPU cores as it sees fit (by the same logic, we can do this within the
+kernel as well for any given kernel thread). For example, setting the CPU affinity mask to 1000 0001
+binary, which equals 0x81 in hexadecimal, implies that the thread can execute only upon CPU cores
+7 and 0 (remember, core counting starts from 0).
+
+              A key point: though you can manipulate the CPU affinity mask for a given thread(s), the
+              recommendation is to avoid doing so; the kernel scheduler subsystem understands the CPU
+              topography (or domains) in detail and can best load-balance the system.
+
+Having said that, explicitly setting the CPU affinity mask of a thread can be beneficial due to the
+following reasons:
+
+  •     Frequent cache invalidation (and thus unpleasant cache “bouncing”) can be greatly reduced
+        by ensuring a thread always runs on the same CPU core. (Chapter 13, Kernel Synchronization –
+        Part 2, has coverage on CPU caching in more detail).
+  •     Thread migration costs between cores can be effectively eliminated.
+  •     To fulfill CPU reservation – a strategy to bestow the core(s) exclusively to one thread by guaran-
+        teeing all other threads are explicitly not allowed to execute upon that core.
+
+The first two are useful in some corner cases; the third one, CPU reservation, tends to be a technique
+used in some time-critical, real-time systems where the cost of doing so is justified (FYI, this was
+achieved via the isolcpus= kernel parameter; these days, it’s considered deprecated and you’re to
+use the cpusets cgroup controller instead).
+
+Now that you understand the theory behind it, let’s actually write a user space C program to query
+and/or set the CPU affinity mask of any given thread.
+
+Querying and setting a thread’s CPU affinity mask
+As a demonstration, we provide a small user space C program to query and set a user space pro-
+cess’s (thread, really) CPU affinity mask. Querying the CPU affinity mask is achieved with the sched_
+getaffinity() system call, and setting it is done with its counterpart, the sched_setaffinity()
+system call:
+   #define _GNU_SOURCE
+   #include <sched.h>
+
+   int sched_getaffinity(pid_t pid, size_t cpusetsize,
+                                 cpu_set_t *mask);
+   int sched_setaffinity(pid_t pid, size_t cpusetsize,
+                                 const cpu_set_t *mask);
+
+A specialized data type called cpu_set_t is what is used to represent the CPU affinity bitmask (the
+third parameter). It’s quite sophisticated: its size is dynamically allocated based on the number of
+CPU cores seen on the system. This CPU mask (of type cpu_set_t) must first be initialized to zero;
+the CPU_ZERO() macro achieves this (several similar helper macros exist; do refer to the man page on
+CPU_SET(3)). The second parameter in both the preceding system calls is the size of the CPU set (we
+simply use the sizeof operator to obtain it). The first parameter is the Process ID (PID) of the process
+or thread whose CPU affinity mask you’d like to query or set.
+
+To understand this better, it’s instructive to see a sample run of our code (on GitHub, here: https://
+github.com/PacktPublishing/Linux-Kernel-Programming_2E/tree/main/ch11/cpu_affinity). Here,
+we run it on a native Linux system with 12 CPU cores:
+
+Figure 11.1: Our demo user space app showing the CPU affinity mask of the calling process
+
+Here, we have run the app with no parameters. In this mode, it queries the CPU affinity mask of
+itself (meaning, of the userspc_cpuaffinity calling process). We print out the bits of the bitmask:
+as you can clearly see in the preceding screenshot (Figure 11.1), it’s binary 1111 1111 1111 (which
+is equivalent to 0xfff), implying that, by default, the process is eligible to run on any of the 12 CPU
+cores available on the system!
+
+The app internally detects the number of CPU cores available by running the nproc utility via the
+useful popen() library API. Do note, though, that the value returned by nproc is the number of CPU
+cores available to the calling process; it may be less than the actual number of (online and offline)
+CPU cores, though it’s usually the same. The number of available cores can be changed in a few ways,
+the proper way being via the cgroup cpuset resource controller (we cover information on control
+groups (cgroups) later in this chapter).
+
+The querying code is as follows (the source file is ch11/cpu_affinity/userspc_cpuaffinity.c):
+      static int query_cpu_affinity(pid_t pid)
+      {
+          cpu_set_t cpumask;
+
+          CPU_ZERO(&cpumask);
+          if (sched_getaffinity(pid, sizeof(cpu_set_t), &cpumask) < 0) {
+               perror("sched_getaffinity() failed");
+               return -1;
+          }
+          disp_cpumask(pid, &cpumask, numcores);
+
+        return 0;
+   }
+
+Our disp_cpumask() function draws the bitmask (we leave it to you to check it out).
+
+If additional parameters are passed to this program – the PID of the process (or thread) as the first
+parameter, and a CPU bitmask (in hexadecimal) as the second parameter – we then attempt to set
+the CPU affinity mask of that process (or thread) to the value passed. Of course, changing the CPU
+affinity bitmask requires you to own the process or have root privileges (more correctly, to have the
+CAP_SYS_NICE capability).
+
+Here’s a quick demo: in Figure 11.2, nproc shows us the number of CPU cores (12); then, we run our
+app to query and set our (bash) shell process’s CPU affinity mask. On a laptop with 12 cores, let’s say
+that the affinity mask of bash is 0xfff (binary 1111 1111 1111) to begin with, as expected; here, we
+change it to 0xdae (binary 1101 1010 1110) and query it again to verify the change:
+
+Figure 11.2: Our demo app queries and then sets the CPU affinity mask of bash to 0xdae
+
+Okay, this is interesting. To begin with, the app correctly detects the number of CPU cores available
+to it as 12. It then queries the (default) CPU affinity mask of the bash process (as we pass its PID as the
+first parameter); it shows up, as 0xfff, as expected. Then, as we’ve also passed a second parameter –
+the bitmask to now set (0xdae) – it does so, setting the CPU affinity mask of bash to 0xdae. Now, as the
+terminal window we’re on is this very same bash process, running nproc again shows the value as 8,
+not 12! That’s indeed correct: the bash process now has only eight CPU cores available to it. (This is
+because we don’t revert the CPU affinity mask to its original value on exit.)
+
+Here’s the relevant code to set the CPU affinity mask:
+      // ch11/cpu_affinity/userspc_cpuaffinity.c
+      static int set_cpu_affinity(pid_t pid, unsigned long bitmask)
+      {
+          cpu_set_t cpumask;
+          int i;
+
+          printf("\nSetting CPU affinity mask for PID %d now...\n", pid);
+          CPU_ZERO(&cpumask);
+
+          /* Iterate over the given bitmask, setting CPU bits as required */
+          for (i=0; i<sizeof(unsigned long)*8; i++) {
+              /* printf("bit %d: %d\n", i, (bitmask >> i) & 1); */
+              if ((bitmask >> i) & 1)
+                   CPU_SET(i, &cpumask);
+          }
+
+          if (sched_setaffinity(pid, sizeof(cpu_set_t), &cpumask) < 0) {
+              perror("sched_setaffinity() failed");
+              return -1;
+          }
+          disp_cpumask(pid, &cpumask, numcores);
+          return 0;
+      }
+
+In the preceding code snippet, you can see we first set up the cpu_set_t bitmask appropriately (by
+looping over each bit; as you’ll know, the expression (bitmask >> i) & 1 tests the ith bit for being 1) and
+then employs the sched_setaffinity() system call to set the new CPU affinity mask on the given pid.
+
+               It’s important – and quite correct – to note that while anyone can always query any task’s
+               CPU affinity mask, you can’t set it unless you own the task, have root access, or have
+               CAP_SYS_NICE capability.
+
+Using taskset to perform CPU affinity
+Akin to how (in the preceding chapter) we used the convenient user space utility program, chrt, to get
+(or set) a process’s (or thread’s) scheduling policy and/or priority, you can use the user space taskset
+utility to get and/or set a given process’s (or thread’s) CPU affinity mask. A couple of quick examples
+follow; note that these examples were run on an x86_64 Linux VM with 6 CPU cores:
+
+Use taskset to query the CPU affinity mask of systemd (PID 1):
+   $ taskset -p 1
+   pid 1's current affinity mask: 3f
+   $
+
+Think about it: 0x3f is 0011 1111 in binary, which represents (all) 6 CPU cores being enabled for the
+process/thread in question (here, systemd).
+
+Now, as an example, let’s run the compiler under the aegis of taskset, using it to ensure that GCC –
+and its descendants (the assembler and linker processes) – run only on the first two CPU cores; the
+first parameter to taskset is the CPU affinity bitmask (03 is binary 0011):
+   $ taskset 03 gcc userspc_cpuaffinity.c -o userspc_cpuaffinity -Wall -O3
+
+Done. Do look up the man page on taskset(1) for complete usage details. (FYI, as mentioned in the
+previous chapter, the schedtool(8) utility too can be used to get/set the CPU affinity bitmask of a
+given thread/process.)
+
+Setting the CPU affinity mask on a kernel thread
+As a pretty interesting example, if we want to demonstrate a synchronization technique called per-CPU
+variables (as we shall indeed learn about and do in Chapter 13, Kernel Synchronization – Part 2, in the
+Per-CPU – an example kernel module section), we are required to create two kernel threads (kthreads)
+and guarantee that each of them runs on a separate CPU core. To do so, we must of course explicitly
+set the CPU affinity mask of each kernel thread to be different and non-overlapping (to keep it simple,
+let’s set the first kthread’s affinity mask to 0, and the second kthread’s mask to 1, in order to guarantee
+they execute on only CPU cores 0 and 1, respectively). But there’s a problem...the following section
+explains it.
+
+Hacking the availability of non-exported symbols
+The thing is, setting CPU affinity from within a module nowadays is unfortunately not a clean job –
+quite a hack, to be honest; we show it here but it’s definitely not recommended for production purposes.
+
+The reason is that the API within the kernel that we require to set the CPU affinity bitmask – sched_
+setaffinity() – is present but isn’t exported. As we learned from our earlier chapters on writing
+modules, an out-of-tree kernel module (like ours) can only use exported functions (and data). So
+what do we do?
+
+The “usual” approach that module developers used for many years (and indeed, that I used in the first
+edition of this book!) is to employ the convenience routine kallsyms_lookup_name() to look up any
+given symbol within the kernel and obtain its (kernel virtual) address.
+
+Armed with this, any decent C programmer can treat the address as a function pointer and invoke it
+at will, thus effectively overcoming the restriction that only exported functions can be called from an
+out-of-tree module! (A neat hack! Experienced kernel folk, though, will almost certainly groan at this.)
+
+True, but from kernel version 5.7, the community decided it was time to stop this (silly) abuse and simply
+unexported the kallsyms_lookup_name() (and the similar kallsyms_on_each_symbol()) functions!
+(The short form commit ID is 0bd476e6c671, have a look.) So, now what? Well, we can always look up
+any kernel symbol via the /proc/kallsyms pseudofile, as long as we have root access (that’s the secu-
+rity). Furthermore, with kernel address space layout randomization (KASLR) enabled (it typically is in
+modern kernels), this value changes on every boot, and thus can’t be hardcoded (also good for security).
+So, we write a small wrapper script to do this (it’s here: ch13/3_lockfree/percpu/run; yes, the code’s
+from Chapter 13, Kernel Synchronization – Part 2) and pass the address (of the sched_setaffinity()
+routine looked up via /proc/kallsyms) to the module as a parameter (ch13/3_lockfree/percpu/
+percpu_var.c), which then, treating it as a function pointer, manages to call it. Whew!
+
+Here’s the signature of the sched_setaffinity() function:
+      long sched_setaffinity(pid_t pid, const struct cpumask *new_mask);
+
+A brief snippet of the relevant code – where we use the passed the (via the module parameter named
+func_ptr) sched_setaffinity() function pointer to set the CPU affinity mask as desired – follows:
+
+          // ch13/3_lockfree/percpu/percpu_var.c
+          [ … ]
+          static unsigned long func_ptr;
+          module_param(func_ptr, ulong, 0);
+          unsigned long (*schedsa_ptr)(pid_t, const struct cpumask *) = NULL;
+          [ … ]
+          // set up the function pointer
+          schedsa_ptr = (unsigned long (*)(pid_t pid, const struct cpumask *in_mask))
+      func_ptr;
+          [ … ]
+                 /* pr_info("setting cpu mask to cpu #%u now...\n", cpu); */
+          cpumask_clear(&mask);
+          cpumask_set_cpu(cpu, &mask); // 1st param is the CPU number, not bitmask
+          /* !HACK! sched_setaffinity() is NOT exported, we can't call it
+                * sched_setaffinity(0, &mask); // 0 => on self
+           * so we invoke it via it's function pointer
+           */
+          ret = (*schedsa_ptr)(0, &mask); // 0 => on self
+          [ … ]
+
+While unconventional and controversial, it does work, but please avoid hacks like this in production.
+
+Now that you know how to get/set a (kernel) thread’s CPU affinity mask, let’s move on to the next log-
+ical step: how to programatically get/set a thread’s scheduling policy and priority! The next section
+delves into the details.
+
+Querying and setting a thread’s scheduling policy and
+priority
+In Chapter 10, The CPU Scheduler – Part 1, in the Thread Priorities section, you learned how to query the
+scheduling policy and priority of any given thread via the chrt utility (we also demonstrated a simple
+Bash script to do so). There, we mentioned the fact that chrt internally invokes the sched_getattr()
+system call in order to query these attributes.
+
+Very similarly, setting the scheduling policy and priority can be performed either by using the chrt
+utility (making it simple to do so within a script, for example), or programmatically within a (user
+space) C application with the sched_setattr() system call. In addition, the kernel exposes other APIs:
+sched_{g,s}etscheduler() and its pthread library wrapper APIs, pthread_{g,s}etschedparam() (as
+these are all user space APIs, we leave it to you to browse through their man pages to get the details
+and try them out for yourself).
+
+Setting the policy and priority within the kernel – on a kernel
+thread
+As you know by now, the kernel is most certainly neither a process nor a thread. Having said that, the
+Linux kernel is certainly multithreaded-capable and does contain threads, the so-called kernel threads
+(or kthreads). Like their user space counterparts, kernel threads can be created as required (from
+within the core kernel, a device driver, or a kernel module; the kernel exposes APIs for this purpose).
+
+They are schedulable entities (KSEs!) and, of course, each of them has a task structure and a ker-
+nel-mode stack; thus, just as with regular threads, they compete for the CPU resource and their sched-
+uling policy and priority can be programmatically queried or set as required.
+
+              If you’d like to learn more about and use kthreads, might I suggest the (free e-book!)
+              companion guide Linux Kernel Programming – Part 2, particularly Chapter 5, Working with
+              Kernel Timers, Threads, and Work Queues.
+
+              Regarding kthreads, how does one interpret their (quite weird) names (f.e., '[kworker/
+              u12:2]')? This link provides the answer: https://unix.stackexchange.com/a/152865
+
+So, to the point at hand: in user space, the modern preferred system call to query and set a thread’s
+scheduling attributes is sched_getattr() and sched_setattr(), respectively. In earlier days, it used
+to be the sched_{g|s}et_scheduler() pair of system calls. Now, the sched_{g|s}etattr() system
+calls receive a pointer to struct sched_attr, which holds all possibly required details; see the man
+page (https://man7.org/linux/man-pages/man2/sched_setattr.2.html).
+
+So, going the modern way, one would assume we’ll use the kernel implementation of these system
+calls to perform similar work within the kernel. Not so fast; the kernel community deems that the
+old(er) design – allowing user (app) and module developers to happily invoke these APIs with a policy
+such as SCHED_FIFO and use any (real-time) priority they think is correct – is fundamentally broken.
+
+ Why? As we can easily land up with situations like this: two or more SCHED_FIFO threads with the
+ same priority, and/or the usage of “random” priority values – with no careful thought behind them
+– being chosen. These can cause chaos in terms of CPU scheduling, and thus resource management.
+ Thus, what’s been done from the 5.9 kernel follows (allow me to quote directly from the commit, as
+ it’s really the best way to get the message across); here’s a portion of the commit, https://github.
+ com/torvalds/linux/commit/7318d4cc14c8c8a5dde2b0b72ea50fd2545f0b7a:
+
+      …
+      Therefore it doesn't make sense to expose the priority field; the
+      kernel is fundamentally incapable of setting a sensible value, it
+      needs systems knowledge that it doesn't have.
+
+      Take away sched_setschedule() / sched_setattr() from modules and
+      replace them with:
+
+          - sched_set_fifo(p); create a FIFO task (at prio 50)
+          - sched_set_fifo_low(p); create a task higher than NORMAL,
+                which ends up being a FIFO task at prio 1.
+          - sched_set_normal(p, nice); (re)set the task to normal
+
+      This stops the proliferation of randomly chosen, and irrelevant, FIFO
+      priorities that dont't really mean anything anyway.
+
+      The system administrator/integrator, whoever has insight into the
+      actual system design and requirements (userspace) can set-up
+      appropriate priorities if and when needed. ...
+
+Ah; so, now, dear module authors, we’re to use these APIs – sched_set_fifo(), sched_set_fifo_low(),
+and sched_set_normal() – when setting up (SCHED_)FIFO tasks (threads) within the kernel. As the
+above commit mentioned, we trust the administrator and/or user space developer(s) to program user
+apps and provide them with correct and meaningful real-time priority values as required; the kernel
+(or modules) aren’t supposed to know or question such decisions – it merely carries them out (again,
+an example of the provide mechanism, not policy design guideline in action).
+
+The first two APIs:
+
+   •       are wrappers around the sched_setscheduler_nocheck() function within the kernel
+   •       set the thread’s scheduling policy to SCHED_FIFO
+   •       set the thread’s (real-time) priority to MAX_RT_PRIO/2 (i.e. 50) and 1, respectively
+
+The sched_set_normal():
+
+   •       is a wrapper over the sched_setattr_nocheck()
+
+  •     sets the thread’s scheduling policy to SCHED_NORMAL (same as SCHED_OTHER, meaning non re-
+        al-time, Completely Fair Scheduler (CFS) driven)
+  •     sets the thread’s nice value to the second parameter
+
+                 Here, the *_nocheck() notation is meant to imply that the kernel doesn’t even bother to
+                 check whether the process context that’s running these APIs has sufficient privileges; it
+                 goes through regardless. (See the comment here: https://elixir.bootlin.com/linux/
+                 v6.1.25/source/kernel/sched/core.c#L7742.)
+
+Furthermore, these three APIs are GNU Public License (GPL) exported, implying they can only be
+employed by modules licensed under the GNU GPL.
+
+A real-world example – threaded interrupt handlers
+One example of the kernel’s usage of kernel threads is when the kernel (quite commonly) uses threaded
+interrupts (work queues are another example). Here, the kernel must create a dedicated kernel thread
+with the SCHED_FIFO (soft) real-time scheduling policy and a real-time priority value of 50 (halfway
+between), to correctly handle what’s called threaded interrupts. Let’s see the relevant code paths,
+https://elixir.bootlin.com/linux/v6.1.25/source/kernel/irq/manage.c#L1448:
+
+   static int
+   setup_irq_thread(struct irqaction *new, unsigned int irq, bool secondary)
+   {
+             struct task_struct *t;
+
+             if (!secondary) {
+                         t = kthread_create(irq_thread, new, "irq/%d-%s", irq,
+                                                 new->name);
+             } else {
+                         t = kthread_create(irq_thread, new, "irq/%d-s-%s", irq,
+                                                 new->name);
+             }
+             [ … ]
+
+The kthread_create() macro takes care of creating the kernel thread (the kthread). Now, the irq_
+thread() kernel-only API (invoked via the kthread_create() macro as the thread function) will, as
+part of its code path, set the scheduling policy and priority appropriately, https://elixir.bootlin.
+com/linux/v6.1.25/source/kernel/irq/manage.c#L1286:
+
+   /* Interrupt handler thread */
+   static int irq_thread(void *data)
+   {
+             struct callback_head on_exit_work;
+             struct irqaction *action = data;
+
+             [ ... ]
+             sched_set_fifo(current);
+             [ ... ]
+
+Aha! Notice the call to sched_set_fifo(); as we saw, it sets up the kthread (the calling thread, refer-
+enced by current) to use the policy SCHED_FIFO and a (real-time) priority of 50. Done.
+
+               Curious why SCHED_FIFO and priority 50 for IRQ (interrupt) threads? In fact, why use
+               threaded IRQ handlers at all? (FYI, nowadays, the norm is for the majority of drivers to
+               use threaded handlers.) Learn all about it in this book’s companion volume Linux Kernel
+               Programming – Part 2 (free e-book!), in Chapter 4, Handling Hardware Interrupts.
+
+Right, now that you understand to a good extent how CPU (or task) scheduling works at the level of
+the OS, we’ll move on to yet another quite compelling discussion – that of cgroups; read on!
+
+An introduction to cgroups
+In the hazy past, the kernel community struggled mightily with a rather vexing issue: though sched-
+uling algorithms and their implementations – the early 2.6.0 O(1) scheduler, and a little later (with
+2.6.23), the Completely Fair Scheduler (CFS) – promised, well, completely fair scheduling, it really
+wasn’t “completely fair” in any meaningful sense of the term!
+
+Think about this for a moment: let’s say you are logged in to a Linux server along with nine other people.
+Everything else being equal, it is likely that processor time is (more or less) fairly shared between all
+ten of you; of course, you will understand that it’s not really people that run on the processor(s) and
+eat memory, it’s processes and threads that do so on their behalf.
+
+For now, at least, let’s assume it’s (mostly) fairly shared. But, what if you, one of the ten users logged in,
+write a user space program that, in a loop, indiscriminately spawns off several new threads, each of
+which performs a lot of CPU-intensive work (and perhaps as an added bonus, allocates large swathes
+of memory as well) in each loop iteration!? The CPU bandwidth allocation (even via CFS) is no longer
+fair in any real sense of the term; your account will effectively hog the CPUs (and perhaps other system
+resources, such as memory and I/O, as well)!
+
+A generic solution that precisely and effectively managed CPU (and other resource) bandwidth was
+required, throttling (checking, not allowing) more of that resource to be consumed when the spec-
+ified limits were reached. Many proposed patches were discussed and discarded; ultimately, engi-
+neers from Google, IBM, and others obliged with a patch set that put the modern-day control groups
+(cgroups) solution into the Linux kernel (back in version 2.6.24, October 2007. The original ideas and
+implementation were by Paul Menage and Rohit Seth at Google in 2006.). In a nutshell, cgroups is a
+kernel feature that allows the system administrator (or anyone with root access) to be able to elegantly
+perform bandwidth allocation and fine-grained resource management on the various resources or
+controllers (as they are called in the cgroup lexicon) on a system. Do note: using cgroups, it’s not just
+the processors (CPU bandwidth), but also memory and block I/O bandwidth (and more) that can be
+carefully partitioned or allocated and monitored as required by your project or product.
+
+So, with the example we began this topic with – ten users on a Linux system – if all the processes
+were placed within the same that cgroup’s and the cgroups CPU controller was enabled for it, it would
+then, in the face of CPU contention, really result in fair CPU shares to each process! Or, you, as the
+sysad, can do more sophisticated things: you could divvy up the system into several cgroups – one for,
+say, building a project (a Yocto build, say), one for the web browsers, one for virtual machines, and
+so on – and then fine-tune and allocate resources (CPU, memory, and I/O) to each cgroup as desired!
+Indeed, it’s what pretty much all modern distros do automatically, courtesy of the powerful systemd
+framework (more on this follows); it’s what embedded Linux usually does as well, including Android.
+
+So, hey, you’re interested now! How do you enable this cgroups feature? Simple – it’s a kernel feature
+you enable (or disable) at quite a fine granularity in the usual way: by configuring the kernel. The
+relevant menu (via the convenient make menuconfig user interface) is General setup | Control Group
+support. Try this: grep your kernel config file for CGROUP; then if required, tweak your kernel config,
+rebuild, reboot with the new kernel, and test. (We covered kernel configuration in detail back in
+Chapter 2, Building the 6.x Linux Kernel from Source – Part 1, and the kernel build and install in Chapter
+3, Building the 6.x Linux Kernel from Source – Part 2).
+
+              Good news: cgroups is enabled by default on any (recent enough) Linux system that runs
+              the systemd init framework. As mentioned just now, you can query the cgroup controllers
+              enabled by grep-ping your kernel config file, and modify the config as desired; on desktop
+              and server class systems, this typically shouldn’t be required.
+
+From its initiation in 2.6.24, cgroups, like all other kernel features, continually evolve. Fairly recently,
+a point was reached where sufficiently improved cgroup features became incompatible with the old,
+resulting in a new cgroup design and release, one christened cgroups v2 (or simply cgroups2 – Tejun
+Heo is the maintainer); this was declared production-ready in the 4.5 kernel series (with the older one
+now referred to as cgroups v1 or as the legacy cgroups implementation). Note that, as of the time of
+this writing, both can and do exist together, with some limitations; many applications and frameworks
+still use the older cgroups v1 and are yet to migrate to v2. This is changing, though; soon, if not already,
+cgroups2 will become the de facto one to use, so plan on using it.
+
+In this coverage, we shall focus almost exclusively on using the modern version, cgroups v2. The best
+documentation is the official kernel one, available here (for kernel 6.1): https://www.kernel.org/
+doc/html/v6.1/admin-guide/cgroup-v2.html. (FYI, the docs for the latest kernel version are always
+available as well, here: https://docs.kernel.org/admin-guide/cgroup-v2.html.
+
+              A detailed rationale of why to use cgroups v2 as opposed to cgroups v1 can be found within
+              the kernel documentation here: https://www.kernel.org/doc/html/latest/admin-
+              guide/cgroup-v2.html#issues-with-v1-and-rationales-for-v2.
+
+Cgroup controllers
+A cgroup controller is the underlying kernel component that’s responsible for distributing a given
+resource (like CPU cycles, memory and I/O bandwidth, and so on) within and through a cgroup hi-
+erarchy: a cgroup and its descendants. You can think of it as a “resource limiter” of sorts for a given
+cgroup hierarchy.
+
+The man page on cgroups(7) describes in some detail the interfaces and various available (resource)
+controllers (or subsystems, as they are sometimes referred to). The cgroups v2 controllers typically
+available are as follows (Table 11.1 shows cgroups v2 stuff; the original cgroups v1 implementations
+for many of the controllers date back to 2.6.24):
+
+        Cgroups v2        What it controls (or constrains or regulates) when enabled         Since
+        controller                                                                           kernel
+        name                                                                                 version
+        cpu               CPU bandwidth (cycles)                                             4.15
+        cpuset            CPU affinity and memory-node placement (especially useful          5.0
+                          for large NUMA systems)
+        memory            Memory (RAM) usage                                                 4.5
+        io                Distribution of I/O resources                                      4.5
+        pids              Hard limit on the number of processes in the cgroup                4.5
+        devices           Creation of and access to device files (only via cgroup BPF        4.15
+                          programs)
+        rdma              Distribution and accounting of remote direct memory                4.11
+                          access (RDMA) resources
+        hugetlb           Limits the HugeTLB (huge pages) usage per cgroup                   5.6
+        misc             Various; see https://www.kernel.org/doc/html/v6.1/                  5.13
+                         admin-guide/cgroup-v2.html#misc
+
+Table 11.1: A summary of available cgroups v2 controllers on modern Linux systems
+
+We refer interested readers to said official kernel docs and the man pages for details; as an example,
+the PIDS controller is very useful in preventing fork bombs by allowing you to limit the number of
+processes that can be forked off from that cgroup or its descendants. (Fork bombs are a silly but nev-
+ertheless deadly DoS attack where the fork() system call is issued typically within an infinite loop!)
+
+Next, very importantly, how are the kernel cgroups made visible to (exposed), or interfaced with, user
+space? Ah, in the usual manner on Linux: control groups are exposed via a purpose-built synthetic
+or pseudo filesystem! It’s the cgroup filesystem, typically mounted at /sys/fs/cgroup. Well, with
+cgroups v2, the filesystem type is now called cgroup2 (you can simply do mount | grep cgroup to see
+this). There are plenty of interesting goodies to explore within it; it’s what we do as we make progress...
+
+Let’s begin with this: how can I find which controllers are enabled for my system (kernel, really)? It’s
+easy:
+   $ cat /sys/fs/cgroup/cgroup.controllers
+   cpuset cpu io memory hugetlb pids rdma misc
+
+Clearly, it shows a space-separated list of available controllers (I ran this on my x86_64 Fedora 38 VM.
+Also, note that using /proc/cgroups to peek at the controllers is cgroups v1 compatible only; don’t
+rely on it for cgroups v2.). The exact controllers you see here depend on how the kernel is configured.
+
+In cgroups v2, all controllers are mounted in a single hierarchy (or tree). This is unlike cgroups v1,
+where multiple controllers could be mounted under multiple hierarchies or groups. The modern init
+framework, systemd, is a user of both the v1 and v2 cgroups. In fact, it’s systemd that auto-mounts the
+cgroups v2 filesystem during startup (at /sys/fs/cgroup/).
+
+Exploring the cgroups v2 hierarchy
+ Looking under the cgroups (v2) pseudo filesystem mount point – always /sys/fs/cgroup by default
+– can make you stare in wonder at all the pseudo files (and folders) within (go ahead, peek at Figure
+11.3); this section will explore many of its more interesting and useful nooks and crannies!
+
+Let’s begin by confirming where the cgroups v2 hierarchy is mounted:
+   $ mount | grep cgroup2
+   cgroup2 on /sys/fs/cgroup type cgroup2
+   (rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot)
+
+Clearly, it’s as anticipated, at /sys/fs/cgroup. (Curious about the various mount options that follow
+in parentheses? They’re documented here: https://www.kernel.org/doc/html/v6.1/admin-guide/
+cgroup-v2.html#mounting).
+
+              Just in case you’re running an older distro (like Ubuntu 18.04 or so, as we did in this book’s
+              first edition), it’s possible you won’t find any controllers present in cgroup2. This is the case
+              in the presence of mixed cgroups, v1 and v2. To exclusively make use of the later version (as
+              we expect here) – and thus have all configured controllers visible – you must first disable
+              cgroups v1 by passing this kernel command-line parameter at boot: cgroup_no_v1=all
+              (recall, all available kernel parameters can be conveniently seen at https://www.kernel.
+              org/doc/html/latest/admin-guide/kernel-parameters.html. Then reboot and re-
+              check. With a later distro (like Ubuntu 22.04 or Fedora 38), you need not do this.
+
+Now let’s start exploring it!
+
+For this session, I am working on an x86_64 Fedora 38 VM, where I built and booted into a custom
+6.1.25 kernel. Let’s look at the overall scene to begin with:
+
+Figure 11.3: The root of the cgroups v2 hierarchy
+
+Under the root cgroup location – /sys/fs/cgroup – you can see several files and folders (needless to
+say, these are all volatile pseudofile objects; they’re mounted in RAM via sysfs). First off:
+
+  •      The “regular” files seen – like cgroup.controllers, cpu.pressure, and so on – are cgroup2
+         interface files.
+
+         These are further subdivided into core and controller interfaces; all the cgroup.* files are core
+         interface files, the cpu.* ones are interface files for the CPU controller, memory.* for the
+         memory controller, and so on.
+
+  •      The folders seen represent – at last! – the control groups or cgroups! Among the many seen, you’ll
+         find that not all are constrained. You might wonder who created them; the short answer (for
+         the ones there by default at least) is systemd; more on this soon follows.
+
+Enabling or disabling controllers
+Let’s check out a key core interface file, cgroup.controllers. The previous section briefly mentioned
+this. Its content is the list of available controllers for the cgroup; for the root cgroup, it’s the controllers
+that the kernel has been configured with. As we saw earlier, by default for a modern distro, it’s usually
+these: cpuset cpu io memory hugetlb pids rdma misc.
+
+Careful here: a controller showing up in this list does not necessarily mean it’s enabled within the
+cgroup hierarchy; in fact, the default is that none are! Enabling a controller indicates that its constraints
+on target resource distribution will take effect on the immediate children. To enable a controller, you
+write the string +<controller-name> to the cgroup.subtree_control pseudofile (and conversely, -<con-
+troller-name> to it to disable it). So, for example, to enable the CPU and I/O controllers but disable the
+memory controller on the current cgroup (and thus have it take effect on its descendants, the hierarchy
+that flows under it), do (as root):
+      echo "+cpu +io -memory" > cgroup.subtree_control
+
+So, now we know the cgroup.subtree_control file yields a space-separated list of controllers enabled
+to control resource distribution from this cgroup to its children.
+
+The kernel docs state it like this https://docs.kernel.org/admin-guide/cgroup-v2.html:
+
+                 “Top-down Constraint
+
+                  Resources are distributed top-down and a cgroup can further distribute a resource only
+                  if the resource has been distributed to it from the parent. This means that all non-root
+                 “cgroup.subtree_control” files can only contain controllers which are enabled in the
+                  parent’s “cgroup.subtree_control” file. A controller can be enabled only if the parent
+                  has the controller enabled and a controller can’t be disabled if one or more children
+                  have it enabled.”
+
+Take a moment to digest that statement. A couple more useful core cgroup interface files – that are
+only present within a cgroup folder (hierarchy) – to be aware of follow:
+
+  •     cgroup.events: Read-only; can have these values:
+
+             •     populated: 0 or 1. If 1, the cgroup or its descendants contains live processes, else it’s
+                   0. Thus, only if the value of populated is 1 is the cgroup worth delving into! Else, it’s an
+                   empty or unpopulated cgroup (our cgroups v2 “explorer” script, which we shall soon
+                   see, will show this).
+             •     frozen: 0 or 1. If 1, the cgroup is frozen, else it’s 0 (freezing a cgroup is akin to placing
+                   all its processes – and all its descendant cgroups and their processes as well! – in the
+                  “freezer,” implying that they remain in a stopped state until thawed).
+
+On a system where systemd is being used as the init manager (this is typical these days and we more or
+less assume it), there will always be a cgroup named init.scope (scope? worry not, we cover all of this).
+It consists of just the init process PID 1 (systemd). Let’s look up this init cgroup’s cgroup.events file:
+   $ cat /sys/fs/cgroup/init.scope/cgroup.events
+   populated 1
+   frozen 0
+
+As it is populated, one could delve further into it. Next, within a cgroup hierarchy, you’ll also find this
+cgroup interface file:
+
+  •     cgroup.kill: Write-only; writing 1 here has the cgroup tree and all its descendants die – the
+        processes within the target cgroup tree will be sent the SIGKILL signal.
+
+A few more cgroup files follow in the coming sections. Again, worry not, all core interfaces are doc-
+umented here: https://www.kernel.org/doc/html/v6.1/admin-guide/cgroup-v2.html#core-
+interface-files.
+
+Kernel documentation on cgroups v2
+What we’ve covered so far are the very basics; as you’ll appreciate, explaining cgroups in complete
+detail is simply too much to cover in this chapter and book; more importantly, it’s the job of a book to
+explain concepts and show examples helping you to learn. It’s completely pointless to simply repeat
+the details within the kernel docs; with regard to cgroups v2, the resource models, the interface files
+(for both the core as well as for each controller), the rules to work with them, namespace manage-
+ment, and so forth are covered excruciatingly well within the official 6.1 series kernel documentation
+for cgroups2 at: https://www.kernel.org/doc/html/v6.1/admin-guide/cgroup-v2.html#control-
+group-v2. And, for the latest kernel version, here: https://docs.kernel.org/admin-guide/cgroup-v2.
+html#control-group-v2.
+
+So, it is important to learn how to efficiently peruse the kernel docs (we talked about this briefly back
+in Online Chapter, Kernel Workspace Setup, in the Locating and using the Linux kernel documentation
+section). A screenshot (hopefully) helps you remember that these details are very much in the kernel
+documentation, just waiting for you to refer to them when required:
+
+Figure 11.4: Partial screenshot of the kernel documentation for Cgroups v2 / Controllers / CPU
+
+At the risk of repetition, I urge you to browse through the relevant docs when working with cgroups v2.
+
+Let’s move along and look within!
+
+The cgroups within the hierarchy
+Back to the cgroups within the root of the cgroups tree (or hierarchy, see Figure 11.3). As mentioned,
+the folders seen within there represent cgroups. For now, let’s hold off on the question of who (and
+how) they’re created; suffice it to say that they’ve been set up via systemd at boot.
+
+Let’s take a simple cgroup to begin with, represented by the folder init.scope. Taking a look within, we
+find that the kernel pre-populated it with a lot of (pseudo) files and interfaces; here is a truncated view:
+    $ cd /sys/fs/cgroup/
+    $ ls init.scope/
+    cgroup.controllers cgroup.threads io.latency                memory.high memory.swap.current
+    cgroup.events          cgroup.type        io.max            memory.low     memory.swap.events
+    cgroup.freeze          cpu.idle           io.pressure       memory.max     memory.swap.high
+    cgroup.kill            cpu.max            io.prio.class memory.min         memory.swap.max
+    [ … ]
+    cgroup.subtree_control                   io.bfq.weight memory.events.local           memory.stat
+    pids.peak
+    $
+
+It’s not all strange; we just spoke about a couple of key core interface files (in the previous section) –
+the cgroup.controllers and cgroup.subtree_control ones – and what they mean.
+
+For now, let’s investigate a few of the more interesting files here:
+    $ cat init.scope/cgroup.procs
+    1
+
+ Here, cgroup.procs shows the list of PIDs of processes that belong to this cgroup. It makes sense
+– systemd has set up an init.scope cgroup that contains just the init process, PID 1 – in fact, it’s sys-
+ temd itself. (Analogously, the <cgroup-name>/cgroup.threads pseudofile holds the PIDs of all threads
+ belonging to the cgroup.)
+
+To migrate a process to a given cgroup, write its PID to the target cgroup’s cgroup.procs file. The
+writer requires the appropriate permission to do so; root, of course, will work, but even non-root
+can write provided permission matches check out. (Migrating a process to another cgroup is akin to
+a cut-paste operation; it’s implicitly removed from the source cgroup. The changes can take a bit of
+time to propagate, though.)
+
+What if you forget what this interface file represents or how exactly to manipulate it? Simple: look up
+the kernel documentation. The relevant entry is here, of course: https://www.kernel.org/doc/html/
+v6.1/admin-guide/cgroup-v2.html#cpu. (The previous section was about precisely this.)
+
+Let’s look up some key interfaces with regard to the CPU controller within the init.scope cgroup
+(recall, we’re currently in the /sys/fs/cgroup folder):
+      $ cat init.scope/cpu.max             init.scope/cpu.weight           init.scope/cpu.weight.nice
+      max 100000
+      100
+      0
+
+We can see their values (what do they mean? Patience, we’re getting there: it’s covered in the Trying
+it out – constraining the CPU resource via cgroups v2 section!).
+
+Now, using cat is fine, but see how much easier – and nicer! – it is to employ a quick grep hack when
+the content of the files is just a single line (or so), this way: grep . <file-spec> ; so here, using this
+technique, we look up all CPU controller interfaces and their values like this:
+
+Figure 11.5: Screenshot conveniently showing all the CPU controller interface files and their current
+                                            value under the init.scope cgroup
+
+So now, I hope you realize that being able to see the wealth of interface (and other) pseudo files, and
+having the kernel docs at hand to understand them, empowers you to really start understanding
+cgroups (as with anything, really).
+
+You should also realize that cgroups can be nested; a cgroup can contain cgroups, which themselves
+contain cgroups. To see this, just look under a cgroup – a folder under the root one – looking for more
+folders.
+
+Let’s take another cgroup (which, again, systemd creates at boot) – system.slice – and look under it
+for sub-folders, thus its cgroups. A quick way to do so is like this:
+   $ find /sys/fs/cgroup/system.slice/ -maxdepth 1 -type d
+   /sys/fs/cgroup/system.slice/
+   /sys/fs/cgroup/system.slice/system-dbus\x2d:1.15\x2dorg.freedesktop.problems.
+   slice
+   /sys/fs/cgroup/system.slice/abrt-journal-core.service
+   /sys/fs/cgroup/system.slice/system-systemd\x2dfsck.slice
+   /sys/fs/cgroup/system.slice/sysroot.mount
+   /sys/fs/cgroup/system.slice/low-memory-monitor.service
+   [ … ]
+   /sys/fs/cgroup/system.slice/abrt-oops.service
+   /sys/fs/cgroup/system.slice/var-lib-nfs-rpc_pipefs.mount
+   $
+
+(Though I kept the depth parameter to a max of 1, this command revealed 55 cgroups on my box!) So,
+under each of these cgroups (represented by folders), we see similar (mirrored) content – their pseudo
+files representing core and controller interfaces – in effect limiting system resources, and possibly
+more cgroups (folders)! The design is deliberately recursive in nature.
+
+              Don’t forget though: the resource-constraining feature of a cgroup only comes into play
+              if the cgroup.subtree_control file within it, or in a parent cgroup, has the relevant
+              controllers enabled!
+
+So now, let’s begin with a small step: on a systemd-based Linux (which pretty much all modern dis-
+tros are), we’ll use the systemd-cgls utility (cgls = cgroup list) to “see” the cgroups under the init.
+scope one; running the utility with a parameter – the cgroup hierarchy to look within – has it show
+precisely that:
+   $ systemd-cgls /sys/fs/cgroup/init.scope
+   Directory /sys/fs/cgroup/init.scope:
+   └─1 /usr/lib/systemd/systemd --switched-root --system –deserialize=32
+
+It reveals every process running under the cgroup, along with its command line! This output was on a
+Fedora 38 VM; on Ubuntu, the output’s a tad more readable:
+   $ systemd-cgls /sys/fs/cgroup/init.scope
+   Directory /sys/fs/cgroup/init.scope:
+   └─1 /sbin/init
+
+Great; now lets look at the system.slice cgroup (on Fedora 38):
+   $ systemd-cgls /sys/fs/cgroup/system.slice
+   Directory /sys/fs/cgroup/system.slice:
+
+      ├─abrt-journal-core.service
+      │ └─1386 /usr/bin/abrt-dump-journal-core -D -T -f -e
+      ├─bolt.service
+      │ └─1425 /usr/libexec/boltd
+      ├─low-memory-monitor.service
+      │ └─1296 /usr/libexec/low-memory-monitor
+      ├─systemd-udevd.service …
+      │ └─udev
+      │   ├─     688 /usr/lib/systemd/systemd-udevd
+      │   ├─610731 (udev-worker)
+      │   ├─610732 (udev-worker)
+      [ … ]
+
+It shows several “services” (processes – most of which began life under the aegis of systemd) and
+their sub-processes (descendants); nice. Now let’s look at the big picture, all cgroups, by running the
+systemd-cgls utility with no parameters, which then reveals the entire cgroups hierarchy (under
+/sys/fs/cgroup by default; the --no-pager parameter is to simply not “page” the output with less):
+
+Figure 11.6: Partial screenshot of the cgroup hierarchy on the system
+
+It’s too big, of course, to show the entire thing here; do try it out on your system and study it. (Doing
+systemd-cgls -h reveals the help screen; see the man page for details.)
+
+Systemd and cgroups
+The manual management of cgroups can be a daunting task; the powerful systemd init framework
+that most workstation distros, enterprise and data center servers, and even embedded Linux run by
+default comes to the rescue. As we’ve already begun to notice, an interesting facet of systemd is that
+it takes over the role of creating and managing cgroups at boot, thus automatically leveraging their
+power for the benefit of users and their apps. (Of course, the more you learn about how it does so, the
+more you can tweak it to suit your project.)
+
+Also, realize that there exist several tools to help you visualize the defined cgroups (and slices/scopes)
+on the system; they include ps, and some from the systemd project itself – systemd-cgls, systemctl,
+and systemd-cgtop. (We’ll soon see our very own cgroups visualizer script as well!)
+
+Slice and scope
+As Figure 11.6 quite clearly reveals, systemd has the intelligence to auto-construct cgroups, logically
+grouping processes together. To do so, it defines and employs artifacts – a slice and scope. A slice is
+used to represent all processes belonging to a particular user, or, it could represent a “bunch” of ap-
+plications (processes) whose resources are managed via that unit. (In Figure 11.6, for my user account
+with a UID value of 1000, clearly, my slice is called user-1000.slice).
+
+A scope represents further logical splicing or splitting of the slice (quite a tongue-twister, no?); as a
+good example, all processes running within a terminal window are typically grouped by systemd into
+a session-<number>.scope cgroup (the term is prefixed with the word “session” as a session represents
+the processes that are spawned and managed within a Terminal window)! Again, in Figure 11.6, you
+can clearly see that a Terminal window, represented by the scope named session-9.scope, is one
+that’s been set up via sshd and has a Bash shell (whose PID is 1283555 and teletypewriter (tty) device
+is pts/4), is being represented or organized as a descendant of the user slice, and within it, in a “ses-
+sion” type scope.
+
+Furthermore, systemd organizes the hierarchy with (boot-time) scope and service units being assigned
+to an appropriate slice (internally getting their own cgroups). As mentioned, every user that logs in to
+the system will also be seen as a “slice” under the generic user.slice node in the tree and the apps
+they run will show up under that cgroup, of course (again, you can literally see my user slice in Figure
+11.6; it shows up as user-1000.slice, and under this hierarchy comes the “scope” units). Quoting
+from the systemd docs:
+
+              ”The (slice) name consists of a dash-separated series of names, which describes the path
+               to the slice from the root slice. The root slice is named -.slice. Example: foo-bar.
+               slice is a slice that is located within foo.slice, which in turn is located in the root
+               slice -.slice. ...”
+
+(You can see the root slice -.slice as the first slice in Figure 11.7).
+
+What if you’d like to change the defaults, the manner in which systemd sets up cgroups? There are
+broadly three ways to do so: first, by manually editing the service unit file(s); second, by using the
+systemctl set-property sub-command to perform the edits; and third, by employing what’s known
+as drop-in files within the systemd directory structure. As a quick example:
+   $ cat /usr/lib/systemd/system/user@.service
+   [ … ]
+   [Unit]
+   Description=User Manager for UID %i
+
+      Documentation=man:user@.service(5)
+      After=user-runtime-dir@%i.service dbus.service systemd-oomd.service
+      Requires=user-runtime-dir@%i.service
+      IgnoreOnIsolate=yes
+
+      [Service]
+      User=%i
+      PAMName=systemd-user
+      Type=notify-reload
+      ExecStart=/usr/lib/systemd/systemd --user
+      Slice=user-%i.slice
+      KillMode=mixed
+      Delegate=pids memory cpu
+      TasksMax=infinity
+      [ … ]
+
+                  Do look up the systemd portion in the Further reading section for this chapter; there are
+                  plenty of links to good materials that will guide you with the details, along with examples.
+
+Visualizing cgroups (and slices and scopes) with systemctl and systemd-
+cgtop
+We’ve already seen how to use systemd-cgls to scan the cgroup hierarchy. Another means to view it
+(under the aegis of systemd) is via the systemctl app and the systemd unit type. systemd defines several
+unit types: service, mount, swap, socket, target, device, automount, timer, path, slice, and scope.
+Of these, only the last two are relevant to us here, so let’s look at them via the systemctl command:
+
+Figure 11.7: Screenshot showing how to view the systemd-generated cgroup hierarchy at the slice
+                                               and scope levels
+
+Now that you have a grip on the basics of cgroups2, here’s a partial screenshot of the cgroups(7) man
+page highlighting some more key points; do study it:
+
+Figure 11.8: Partial screenshot of the cgroups.7 man page
+
+Is there a way to see which cgroup a given process belongs to, if any? Of course: one way is to see
+them all and filter for the process of interest. Viewing the process listing via ps with cgroup info is
+easy; simply tack on the -o cgroup option; here is an example (the f option has the benefit of showing
+parent-child relationships):
+      $ ps fw -eo pid,user,cgroup,args
+         PID USER      CGROUP                           COMMAND
+              2 root    -                                                    [kthreadd]
+              3 root    -                                                     \_ [rcu_gp]
+              4 root    -                                                     \_ [rcu_par_gp]
+              5 root    -                                                     \_ [slub_flushwq]
+              [ … ]
+
+Notice how kernel threads don’t belong to any cgroup (makes sense, as they’re part of the kernel).
+Okay, here’s more of the above ps output showing a few processes that are attached (by systemd) to
+the init.scope and system.slice cgroups (of course, the init.scope cgroup has just one process
+within it – systemd itself):
+      1377834 root      -                                               \_ [kworker/1:1-ata_
+      sff]
+               1 root      0::/init.scope                            /usr/lib/systemd/systemd
+      --switched-root --system [...]
+         1096 root      0::/system.slice/systemd-jo /usr/lib/systemd/systemd-journald
+         1109 root      0::/system.slice/systemd-ud /usr/lib/systemd/systemd-udevd
+         1228 systemd+ 0::/system.slice/systemd-oo /usr/lib/systemd/systemd-oomd
+         1229 systemd+ 0::/system.slice/systemd-re /usr/lib/systemd/systemd-resolved
+          [ … ]
+
+(The cgroup names do get truncated here.) And here – interesting! – is this ps process itself:
+      [ … ]
+            1392 root     0::/system.slice/sshd.servi sshd: /usr/sbin/sshd -D
+      [listener] 0 of 10-100 startups
+      1283542 root      0::/user.slice/user-1000.sl       \_ sshd: kaiwan [priv]
+      1283547 kaiwan    0::/user.slice/user-1000.sl       |    \_ sshd: kaiwan@pts/4
+      1283555 kaiwan    0::/user.slice/user-1000.sl       |         \_ -bash
+      1283732 root      0::/user.slice/user-1000.sl       \_ sshd: kaiwan [priv]
+      1283739 kaiwan    0::/user.slice/user-1000.sl       |    \_ sshd: kaiwan@pts/3
+      1283749 kaiwan    0::/user.slice/user-1000.sl       |         \_ -bash
+      1377837 kaiwan   0::/user.slice/user-1000.sl        |              \_ ps fw -eo
+      pid,user,cgroup,args
+      [ … ]
+
+Notice how it belongs to the user.slice/user-1000.slice cgroup (also, I did an ssh to my Fedora
+VM; hence my ps process is within the sshd … / bash hierarchy).
+
+Glance back at Figure 11.7 to see all the slices. Something to question: if you dig a bit, you’ll often find
+that no processes seem to belong to several of the slices seen (like machine.slice, system-dbus…,
+system-getty, system-modprobe, and so on); how come? Simple: the cgroups do exist (created by
+systemd at boot) but are currently unpopulated – there are no processes within them, which is okay.
+
+So, when the user spawns off a new process (an app, say), does it appear by default in a cgroup? If so,
+which one? Ah, these are important questions. The answer’s roughly like this: with systemd managing
+the system (typically the case), it will ensure it places every new process into an appropriate slice and
+scope, and thus cgroup. So, when I run, say, vim, to edit a file, this is what happens.
+
+Before running vim:
+    $ ps fw -eo pid,user,cgroup,args | grep "[v]im"
+    $
+
+               Quick tip: using the regular expression as "[v]im" and not "vim" is very helpful; it has
+               grep avoid showing itself in the output!
+
+After running vim:
+    $ ps fw -eo pid,user,cgroup,args | grep "[v]im"
+    1378003 kaiwan       0::/user.slice/user-1000.sl                        \_ vim cgroupsv2_
+    explore
+    $
+
+Aha! As expected with systemd, our dear vim process has become part of my user slice! It’s thus tracked
+and managed, and any resource allocation constraints that apply to the user-1000.slice (and ances-
+tors) slice(s) will apply to it as well.
+
+Back to the question: what if it’s a box not running systemd? Then there is no cgroups management…
+it’s left to you. You can set it up so that processes are placed into cgroups (we do cover the basics of
+manually creating and managing a cgroup with a CPU controller in the upcoming The manual way – a
+cgroups v2 CPU controller section). Be aware that there is tooling to help with cgroup management be-
+sides the big guy, systemd (see systemd-run(1)); a good example is the cg* tool suite (via the cgroup-
+tools/libcgroup package, which installs tools like cgcreate, cgexec, and cgclassify).
+
+Getting a quick brief on kernel namespaces
+ A quick but useful deviation: it’s interesting to realize that the whole shebang with regard to containers
+– a powerful, industry-standard, and de facto way to manage application deployment – is essentially
+ based on two key technologies within the Linux kernel: cgroups and namespaces. You can think of
+ containers as essentially lightweight VMs (to some extent); the majority of container technologies in
+ use today (Docker, LXC, Kubernetes, and others) are, at heart, a marriage of these two baked-in Linux
+ kernel technologies: cgroups and namespaces.
+
+A kernel namespace is a critically important notion and structure for the whole container idea’s
+implementation (the structure in the kernel is struct nsproxy). With namespaces, the kernel can
+partition its resources in a way that a set of processes in one namespace sees certain values and a
+set of processes in another namespace sees certain other values. Why is this required? Take, as an
+example, two containers; to have clean isolation, each must see processes with PID 1, 2, and so on.
+Similarly, each must have, perhaps, its own domain name and hostname, its own set of mounts whose
+content is unique to that container (/proc for one), network interfaces that are unique to each, and so
+on. The kernel can maintain many namespaces; by default, they’re all optional, so the kernel always
+maintains the notion of a <FOO> global namespace for each of them (where FOO is the name of the
+namespace, like mount, PID, and so on):
+
+          Namespace                 What it provides
+          Mount                     Each mount namespace has its own filesystem layout (thus
+                                    the contents of /proc in mount ns1 are different from its
+                                    content in mount ns2!)
+          PID                       Process isolation (thus each namespace can have a PID 1
+                                    process within it)
+          Network                   Network isolation
+          UTS                       Domain name and hostname isolation
+          IPC                       IPC resources (shared memory, message queues, and
+                                    semaphores) can be isolated
+          User                      User ID isolation (allowing processes in different
+                                    namespaces to have the same UID/GID)
+
+Table 11.2: Kernel namespaces
+
+On a related note: as you’re probably aware, the clone() system call is used under the hood to create
+threads on Linux (pthread_create() calls it). Among its many flags – used to inform the kernel on
+how to create a custom process, or in other words, a thread – are flags labeled CLONE_NEW* (for exam-
+ple, CLONE_NEWPID, CLONE_NEWNS, CLONE_NEWNET, and so on). These are the ones that have the kernel
+create the process in a new namespace. The other namespace-related system calls include the setns(),
+unshare(), and ioctl_ns(); do check out their man pages for more.
+
+(Again, the Further reading section for this chapter has links to more on kernel namespaces and con-
+tainer tech.) Okay, back to our cgroups discussions!
+
+Using systemd-cgtop
+Another way to both visualize the cgroups hierarchy and simultaneously observe at runtime which
+cgroups – and the slices/services within them – are using the lion’s share of resources is via the very
+useful systemd-cgtop tool (in effect, the equivalent of the venerable top utility for systemd cgroups)!
+
+By default, in the output of systemd-cgtop, cgroups are ordered by CPU load. The help screen is useful:
+      $ systemd-cgtop -h
+
+   systemd-cgtop [OPTIONS...] [CGROUP]
+
+   Show top control groups by their resource usage.
+
+       -h --help                            Show this help
+            --version                       Show package version
+       -p --order=path                      Order by path
+       -t --order=tasks                     Order by number of tasks/processes
+       -c --order=cpu                       Order by CPU load (default)
+       -m --order=memory                    Order by memory load
+       -i --order=io                        Order by IO load
+       -r --raw                             Provide raw (not human-readable) numbers
+            --cpu=percentage                Show CPU usage as percentage (default)
+            --cpu=time                      Show CPU usage as time
+     -P                                     Count userspace processes instead of tasks
+   (excl. kernel)
+     -k                                     Count all processes instead of tasks (incl.
+   kernel)
+            --recursive=BOOL         Sum up process count recursively
+       -d --delay=DELAY              Delay between updates
+       -n --iterations=N             Run for N iterations before exiting
+       -1                            Shortcut for --iterations=1
+       -b --batch                    Run in batch mode, accepting no input
+            --depth=DEPTH            Maximum traversal depth (default: 3)
+       -M --machine=                 Show container
+
+   See the systemd-cgtop(1) man page for details.
+
+You can also interactively switch the sorted-on field; the man page explains this:
+   ...
+   (type) p, t, c, m, i
+              Sort the control groups by path, number of tasks, CPU load, memory
+   usage, or I/O load, respectively. This setting may also be controlled using the
+   --order= command line switch.
+   …
+
+I suggest you run the utility on your Linux system and try out the option switches.
+
+Careful, though: merely running the systemd-cgtop utility isn’t enough; (as stated before) if resource
+accounting isn’t enabled on a cgroup(s), it can’t tell anything about its resource usage. The systemd-
+cgtop man page states this key point as follows:
+
+   ... unless "CPUAccounting=1", "MemoryAccounting=1" and "BlockIOAccounting=1"
+   are enabled for the services in question, no resource accounting will be
+
+      available for system services and the data shown by systemd-cgtop will be
+      incomplete.
+
+Our cgroups v2 explorer script
+With the existing cgroups visualization tooling, one issue is this: we can’t immediately see if a cgroup
+is populated or empty; further, even if it is populated, we can’t straight away see which controllers
+within it are enabled (or disabled). Knowing these is key to understanding the cgroup tree on the
+system. Our Bash script cgroupsv2_explore (https://github.com/PacktPublishing/Linux-Kernel-
+Programming_2E/blob/main/ch11/cgroups/cgroupsv2_explore) attempts to remedy the situation by
+showing the following things (and more):
+
+  •      Given a starting cgroup as a parameter, it recursively iterates over all nested cgroups; if none
+         is specified, it simply begins at the root of the cgroup tree (/sys/fs/cgroup) and thus scans
+         the entire tree.
+  •      For each cgroup it parses, it first checks: if it isn’t populated (if it has no live processes within
+         it), skip to the next cgroup, else display some content regarding it, such as:
+
+           •     Sub-controllers (in effect, the content of cgroup.subtree_control pseudofile for that
+                 cgroup! Refer back to our brief on sub-controllers...)
+           •     The cgroup type (domain/domain threaded/threaded/…)
+           •     The frozen state (0/1, no/yes)
+           •     Processes belonging to this cgroup: by default, it shows the number of processes (within
+                 parentheses) and then the list of PIDs; if the -p option is passed to this script, it displays
+                 the processes within it (via ps)
+           •     Threads belonging to this cgroup: by default, it shows the number of threads (within
+                 parentheses) and then the list of PIDs; if the -t option is passed to this script, it displays
+                 the threads within it (via ps)
+           •     Data pertaining to a few controllers within the cgroup; as of now (it’s still evolving!):
+
+                   •     CPU
+                   •     Memory
+
+Furthermore, there are option switches our script accepts:
+
+  •    -d: Controls the depth to which to scan the tree
+  •    -v: Displays in verbose mode
+  •    -p / -t: Shows the processes and/or threads belonging to each cgroup (as already noted)
+
+The cgroupv2_explore script’s help screen reveals all of this in one stroke:
+
+Figure 11.9: Screenshot of our cgroupsv2_explore bash script showing its help screen
+
+Right. Let’s just run it with a depth of 1 (thus having it report only the first level folders under the
+cgroup root) to keep the output minimized (the screenshot’s truncated for brevity):
+
+Figure 11.10: Truncated screenshot of our cgroupsv2_explore bash script showing the output when
+                                           run at a depth setting of 1
+
+The output format corresponds to what was just described. Notice here (Figure 11.10) how the /sys/
+fs/cgroup/init.scope cgroup has no sub-controllers, implying that no resource constraints are ac-
+tually being imposed! But the /sys/fs/cgroup/system.slice cgroup does have the memory and pids
+sub-controllers enabled, thus the system will keep those resources under the constraints specified
+therein. You can also see how here (Figure 11.10), several cgroups – starting from machine.slice
+and up to the sys-kernel-tracing.mount one (among others) – are empty, unpopulated (with no live
+processes within).
+
+You can run the script passing it a particular cgroup; it will recursively show that cgroup’s metadata
+as well as all its descendant cgroups, if any. We try out this feature in the next section when we create
+our own cgroup! For now, as an exercise, do try out the script yourself on various cgroups.
+
+Trying it out – constraining the CPU resource via cgroups v2
+As we’re focused on CPU (task) scheduling here, we now take the time to look at two ways in which
+we can specify resource constraints on CPU usage by process(es) within a cgroup:
+
+  •     The easy way, by leveraging systemd (with a service that starts at boot).
+  •     The manual way, by creating and managing a cgroup (v2) via a Bash script that imposes resource
+        constraints on CPU usage for a demo app.
+
+Let’s now get started with the first way.
+
+              This discussion does assume you have some basic knowledge with regard to systemd and
+              setting up service units; if not, do refer to resources within the Further reading section
+              (you’ll find a few systemd resources here: https://github.com/PacktPublishing/
+              Linux-Kernel-Programming_2E/blob/main/Further_Reading.md#chapter-4-
+              writing-your-first-kernel-module-lkms-part-1---further-reading) and famil-
+              iarize yourself with these basics.
+
+Leveraging systemd to set up CPU resource constraints on a service
+Systemd can appear to act as an abstraction layer above cgroups, allowing the sys admin to quite
+easily set resource constraints on cgroups. Systemd lets the administrator (or root users) define ser-
+vices that it auto-launches at boot, subjecting the process(es) to many attributes and/or constraints
+that you specify in the service unit file – metadata that defines what’s to be run and how exactly it is
+to be run. A systemd service unit file is typically named <foo>.service (you’ll usually find several of
+the system-defined ones under /etc/systemd/system). It’s a plain ASCII text file divided into a few
+sections: [Unit], [Service], [Install], and so on (do learn the details via the resources provided
+in the Further reading section just mentioned). For example, the pathname to the app (service) to run
+is specified via the ExecStart= directive in the [Service] section. (You’ll very shortly see a demo of
+a few simple service units.)
+
+Among various specifiers within the [Service] section, you can specify the CPUQuota= directive; it
+can be set to the percentage of processor cycles (CPU time) to allocate at maximum to the service!
+Similarly, the AllowedCPUs=n sets the maximum number of CPU cores the service can employ while it
+executes. Analogously, memory, process, I/O, and even network accounting constraints can be applied
+to the service! To see these, and more, do look up the man page on systemd.resource-control(5).
+
+Also, recall what we’ve learned regarding thread scheduling policies and priorities (refer to Chapter
+10, The CPU Scheduler – Part 1, in the The POSIX Scheduling Policies section). With systemd, you can set
+the nice value, CPU scheduling policy, priority, and CPU affinity mask very easily on a service unit by
+employing appropriate directives.
+
+The man page on systemd.exec(5) (https://man7.org/linux/man-pages/man5/systemd.exec.5.html)
+shows this clearly; a brief quote from it via a partial screenshot follows:
+
+Figure 11.11: Partial screenshot of the systemd.exec(5) online man page showing a few relevant CPU
+                  scheduler-related attributes that can be easily set on a systemd service unit
+
+As a demo, we have written a C program to generate prime numbers (from 2 to a specified maximum).
+It’s designed to accept two parameters:
+
+  •    The maximum number to which to generate primes up to
+  •    The maximum amount of time it can take to do so (in seconds; an alarm’s used to have it commit
+       suicide (kill itself) once this time has elapsed)
+
+The idea is this: when run with no (CPU) resource constraints, it will be able to generate quite a lot of
+prime numbers in the allotted time period.
+
+ But, when run under severe CPU constraints – set up via systemd using cgroups v2 kernel technology!
+– you’ll find it can generate (relatively) few primes!
+
+Here, we shan’t delve into the nitty-gritty of setting up systemd service units (nor of the prime num-
+ber generator program); do browse through links provided in the Further reading section on sys-
+temd. We shall leave it to you to go through and try out the prime number generator code in detail;
+it’s here: ch11/cgroups/cpu_constrain/primegen/; also, the systemd service units and a couple of
+supporting scripts are at ch11/cgroups/cpu_constrain/systemd_svcunit/ (link: https://github.
+com/PacktPublishing/Linux-Kernel-Programming_2E/tree/main/ch11/cgroups/cpu_constrain/
+systemd_svcunit).
+
+A setup Bash script – setup_service – sets things up so that the service is installed and run immedi-
+ately (of course, we can set it to run every time the system boots but this is a much easier way to test
+it and, of course, we don’t want to trouble your system by running a useless prime number generator
+program every time you reboot!).
+
+Without further ado, here’s the service unit for running our prime number generator program without
+any constraints; in fact, we’ve given it a boost by – so easily! – setting the CPU scheduling policy to
+SCHED_FIFO and the priority to (a pretty arbitrary) value of 83 (recall, the range is 1 to 99):
+
+   $ cd <book_src>/ch11/cgroups/cpu_constrain/systemd_svcunit
+   $ ls
+   run_primegen      svc1_primes_normal.service        svc3_primes_lowram.service
+   setup_service        svc2_primes_lowcpu.service
+   $ cat svc1_primes_normal.service
+   # svc1_primes_normal.service
+   # NORMAL version, no artificial CPU (or other) constraints applied
+   [Unit]
+   Description=My test prime numbers generator app to launch at boot (normal
+   version)
+   [ … ]
+   After=mount.target
+
+   [Service]
+   # run_primegen: the script that launches the app.
+   # Our setup_service script ensures it copies all required files to this
+   location.
+   # UPDATE the /path/to/executable if required.
+   ExecStart=/usr/local/bin/systemd_svcunit_demo/run_primegen
+
+   # Optional: Apply 'better' cpu sched settings for this process
+   CPUSchedulingPolicy=fifo
+   CPUSchedulingPriority=83
+
+      # (Below) So that the child process - primegen - runs with these sched
+      settings!
+      # (well it's anyway the default)
+      CPUSchedulingResetOnFork=false
+      # Nice value applies for only the default 'other/normal' cpu sched policy
+      #Nice=-20
+
+      [ … ]
+      # UPDATE to your preference
+      [Install]
+      WantedBy=graphical.target
+      #WantedBy=multi-user.target
+      $
+
+A tiny bash script, run_primegen, is executed, which, in turn, invokes the prime number generator
+program, essentially like this:
+      /usr/local/bin/systemd_svcunit_demo/primegen 100000 3
+
+Thus, it will have our simple prime number generator process attempt to generate primes up to a
+maximum of 100,000 for a maximum of 3 seconds.
+
+Attempt 1.1 – Executing the prime number generator under systemd with
+no resource constraints, SCHED_FIFO policy, and rtprio 83
+Right, let’s simply have systemd execute the script. We execute our setup script passing the service unit
+file as a parameter, which has systemd execute the run_primegen program (see the source for details;
+the output below is from my x86_64 Fedora 38 guest running our custom 6.1.25 kernel):
+
+Figure 11.12: Screenshot showing our systemd service unit has set up and executed the prime number
+                                  generator program with no resource constraints
+
+All right! The systemctl status <service.unit> command shows its status and whatever output it
+generated (Figure 11.12; usefully, systemd auto-saves all stdout, stderr, and kernel printk output
+to the logs).
+
+In this particular run, it managed to generate prime numbers from 2 to 99,991 within the 3 seconds it
+had, with no resource (CPU) constraints, and running as SCHED_FIFO with a high priority. (You’ll real-
+ize, of course, that the number of primes generated can vary quite a bit depending on the hardware
+system. Quick tip: to see the full output, simply run journalctl -b.)
+
+By the way, our script deliberately disables the service after running it once; you can change this by
+changing, in the setup_service script, the variable KEEP_PROGRAM_ENABLED_ON_BOOT to the value 1.
+
+As Figure 11.12 shows, run
+      systemctl status svc1_primes_normal.service --no-pager -l
+
+to see the status of the service.
+
+Furthermore, and quite often useful, the systemctl show <service-unit-name> command shows
+all settings for that service unit; let’s do this, grep-ping for CPU-related ones:
+
+Figure 11.13: Screenshot shows the CPU-related settings within the service unit
+
+We’ve highlighted a couple of the CPU settings we explicitly specified in the service unit file svc1_
+primes_normal.service. The others are set to defaults, of course (by the way, the settings named
+LimitCPU* are to specify the (older-style) resource limits for processes within the service unit).
+
+So, keep in mind that this run – with no CPU constraints at all, a SCHED_FIFO policy, and an RT priority
+of 83 (and within about 3 seconds) – yielded around 99,991 primes on my system.
+
+Attempt 1.2 – Executing the prime number generator under systemd with
+constraints on the CPU resource, SCHED_OTHER, and rtprio 0
+Now we run the same prime number generation program on the very same system, but this time, with
+some definite CPU constraints specified via systemd. The service unit file used now is this one: ch11/
+cgroups/cpu_constrain/systemd_svcunit/svc2_primes_lowcpu.service. Pretty much everything
+is the same as the first one (that we just saw in the previous section) except this:
+      #--- Apply CPU constraints ---
+
+    CPUQuota=10%
+    AllowedCPUs=1
+
+We also remove the lines CPUSchedulingPolicy=fifo and CPUSchedulingPriority=83, thus keeping
+the process to defaults: a scheduling policy of SCHED_OTHER and a real-time priority of 0, and, of course,
+we’ve constrained it to use just 10% CPU bandwidth and just 1 core! Let’s run it and then check the status:
+    $ ./setup_service svc2_primes_lowcpu.service
+    [ … ]
+    $ systemctl status svc2_primes_lowcpu.service --no-pager -l
+    ○ svc2_primes_lowcpu.service - My test prime numbers generator app to launch at
+    boot (CPU constrained version)
+         Loaded: loaded (/usr/lib/systemd/system/svc2_primes_lowcpu.service;
+    disabled; preset: disabled)
+        Drop-In: /usr/lib/systemd/system/service.d
+                    └─10-timeout-abort.conf
+          Active: inactive (dead)
+
+    Aug 27 17:26:27 fedora run_primegen[52673]: 30347, 30367, 30389, 30391,
+    30403, 30427, 30431, 30449, 30467, 30469, 30491, 30493, 30497, 30509,
+    30517, 30529,
+    [ … ]
+    Aug 27 17:26:28 fedora run_primegen[52673]:              31531,     31541, primegen.c:buzz()
+    Aug 27 17:26:28 fedora run_primegen[52672]: Terminated
+    Aug 27 17:26:28 fedora systemd[1]: svc2_primes_lowcpu.service: Deactivated
+    successfully.
+    $
+
+ Aha! This time, the program – under the constraint of only 10% CPU bandwidth (quota), allowed to
+ run on exactly 1 core, SCHED_OTHER, and rtprio 0 – yields primes up to only the number 31,541 in the
+ 3 seconds it’s (internally) allowed to run for, as compared to well over 99 thousand primes in the first
+“normal” case, showing that the first case generated close to 70% more primes than the second, proving
+ the efficacy of systemd cgroups control. So there we are.
+
+               As a demo to illustrate how memory limits can be set on a cgroup, we have provided an-
+               other sample service unit: svc3_primes_lowram.service. Within it, the cgroup memory
+               limits are specified via the MemoryHigh and MemoryMax systemd settings (do look up the
+               systemd.resource-control man page, specifically the section called Memory Accounting
+               and Control for details). Our service deliberately has the stress-ng program allocate huge
+               amounts of memory, thus breaching the specified limits and causing the Out of Memory
+               (OOM) killer (or the systemd-oomd process, if configured) to kill off the cgroup task(s). (We
+               covered the OOM killer in some detail in Chapter 9, Kernel Memory Allocation for Module
+               Authors – Part 2, in the Stayin’ alive – the OOM killer section). Be careful when you run it;
+               we definitely recommend doing so on a test VM.
+
+The manual way – a cgroups v2 CPU controller
+Let’s try, no, let’s do something interesting (Do, or do not. There is no try -Yoda.). We shall now manually
+create a new cgroup under the cgroups v2 hierarchy on the system. We’ll then set up a CPU controller
+for it and set a user-specified upper limit on how much CPU bandwidth processes within the cgroup
+can actually make use of! We’ll then run our prime number generator program within it to see how
+it’s affected by the constraints we’ve set.
+
+Here, we outline the steps you will typically take to do this (all of these steps require you to be running
+with root access):
+
+   1.      Ensure your kernel supports cgroups v2; we expect you’re running on a 4.5 or later kernel,
+           with cgroups v2 support enabled.
+
+                         How can I check I am running cgroups v2?
+
+                         Simple: run mount | grep cgroup ; the output must contain the substring type
+                         cgroup2.
+
+      2.   Create a cgroup within the hierarchy (typically within /sys/fs/cgroup/). This is achieved by
+           simply creating a directory with the required cgroup name under the cgroup v2 hierarchy; for
+           example, to create a sub-group called test_group, do this:
+              mkdir /sys/fs/cgroup/test_group
+
+      3.   Add a cpu controller to the new cgroup; this is achieved by doing this (as root):
+              echo "+cpu" > /sys/fs/cgroup/test_group/cgroup.subtree_control
+
+           Recall that without controllers, no resource constraints are being applied to the cgroup (and
+           its descendants; reread the Enabling or disabling controllers section, especially the Top-down
+           constraint paragraph we mentioned there if you wish).
+
+      4.   The juicy bit is here: set up the maximum allowable CPU bandwidth for the processes that will
+           belong to this cgroup. This is effected by writing two integers into the <cgroups-v2-mount-
+           point>/<our-cgroup>/cpu.max (pseudo) file. For clarity, the explanation of this file, as per
+           the kernel documentation (https://docs.kernel.org/admin-guide/cgroup-v2.html#cpu-
+           interface-files), is reproduced here:
+
+              cpu.max
+              A read-write two value file which exists on non-root cgroups. The default
+              is "max 100000".
+              The maximum bandwidth limit. It's in the following format:
+              $MAX $PERIOD
+              which indicates that the group may consume up to $MAX in each $PERIOD
+              duration. "max" for $MAX indicates no limit. If only one number is
+              written, $MAX is updated.
+
+         In effect, all processes in the cgroup will be collectively allowed to run for $MAX out of a period
+         of $PERIOD microseconds; so, for example, with MAX = 300,000 and PERIOD = 1,000,000,
+         we’re effectively allowing all processes within the sub-control group to run for 0.3 seconds out
+         of a period of 1 second! In other words, with 30% CPU bandwidth or utilization. As the kernel
+         doc says, by default, the MAX is the same as the PERIOD thus implying 100% CPU utilization
+         by default.
+
+   5.    Insert a process (or several) into the new cgroup; this is achieved by writing their PIDs into
+         the <cgroups-v2-mount-point>/<our-cgroup>/cgroup.procs pseudofile.
+
+That’s it; the processes under the new cgroup will now perform their work under the CPU bandwidth con-
+straint imposed (if any); when done, they will die as usual... you can remove (or delete) the cgroup with
+a simple rmdir <cgroups-v2-mount-point>/<our-cgroup>.
+
+               For convenience, a Bash script that carries out the preceding steps is available here:
+               ch11/cgroups/cpu_constrain/cpu_manual/cgv2_cpu_ctrl.sh (https://github.
+               com/PacktPublishing/Linux-Kernel-Programming_2E/blob/main/ch11/cgroups/
+               cpu_constrain/cpu_manual/cgv2_cpu_ctrl.sh. Do check it out!
+
+To make it interesting, this script allows you to pass the maximum allowed CPU bandwidth as a pa-
+rameter – the $MAX value discussed in step 4; in effect, it’s a way to specify the maximum allowed CPU
+bandwidth to all processes within the cgroup (we’ll see this shortly). Now, within the script, after the
+new cgroup has been created and set up (with the maximum allowed CPU bandwidth you specify), we
+run our prime number generator program like this:
+   primegen 1000000 5
+
+Everything’s similar to the previous case with systemd, except that we ask it to generate more primes
+and allow it more time, 5 seconds, to run; this is to give it a chance to do some work, as the script has
+to then query and write it’s PID into the <cgroups-v2-mount-point>/<our-cgroup>/cgroup.procs
+pseudofile.
+
+A couple of test runs here will help you understand it’s working:
+   $ sudo ./cgv2_cpu_ctrl.sh
+   [+] Checking for cgroup v2 kernel support
+   cgv2_cpu_ctrl.sh: detected cgroup2 fs here: /sys/fs/cgroup
+
+   Usage: cgv2_cpu_ctrl.sh max-to-utilize(us) [run-cgroupsv2_explore-script]
+   max-to-utilize : REQUIRED: This value (microseconds) is the max amount of
+     time the processes in the control group we create will be allowed to utilize
+   the
+        CPU; it's relative to the period, which is set to the value 1000000.
+     So, f.e., passing the value 300,000 (out of 1,000,000) implies a max CPU
+   utiltization
+        of 0.3 seconds out of 1 second (i.e., 30% utilization).
+
+          The valid range for the $MAX value is [1000-1000000].
+      run-cgroupsv2_explore-script : OPTIONAL: OFF by default.
+        Passing 1 here has the script invoke our cgroupsv2_explore bash script,
+      passing
+          the new cgroup as the one to show details of.
+      $
+
+You’re expected to run it as root and to pass, as the first parameter, the $MAX value (the usage screen
+seen previously quite clearly explains it, including displaying the valid range – the microseconds value).
+
+Right, here we run our Bash script with the parameter 800000, implying a CPU bandwidth of 800,000
+out of a period of 1,000,000; in effect, a quite high CPU utilization of 0.8 seconds out of every 1 second
+on the CPU (i.e., 80% CPU utilization):
+      $ sudo ./cgv2_cpu_ctrl.sh 800000
+      [+] Checking for cgroup v2 kernel support
+      cgv2_cpu_ctrl.sh: detected cgroup2 fs here: /sys/fs/cgroup
+      [+] Creating a cgroup here: /sys/fs/cgroup/test_group
+      [+] Adding a 'cpu' controller to it's cgroups v2 subtree_control file
+
+      ***
+      Now allowing 800000 out of a period of 1000000 to all processes in this cgroup,
+      i.e., 80.000% !
+      ***
+
+      [+] Launch the prime number generator process now ...
+      ../primegen/primegen 1000000 5 &
+
+        2,    3,        5,        7,      11,      13,      17,      19,       23,       29,
+      31,       37,       41,       43,      47,      53,
+      [ … ]
+           3071 pts/1        00:00:00 primegen
+      [+] Insert the 3071 process into our new CPU ctrl cgroup
+         227,    229,    233,    239,    241,    251,              257,     263,      269,       271,
+      277,    281,    283,    293,    307,    311,
+      cat /sys/fs/cgroup/test_group/cgroup.procs
+      3071
+      [ … ] 7541,       7547,     7549,    7559,    7561,
+
+      ............... sleep for 6 s, allowing the program to execute ................
+
+        7573,   7577,   7583,   7589,   7591,   7603,             7607,    7621,     7639,     7643,
+      7649,   7669,   7673,   7681,   7687,   7691,
+
+   [ … ]
+
+    41143, 41149, 41161, 41177, 41179, 41183,                        41189,     41201,     41203,     41213,
+   41221, 41227, 41231, 41233, 41243, 41257,
+   primegen.c:buzz()
+         [+] Removing our (cpu) cgroup
+   $
+
+Study our script’s output; you can see that it does its job. After verifying cgroup v2 support, it creates
+a cgroup called test_group under /sys/fs/cgroup/ and adds a cpu controller to it. It then proceeds
+to set up the maximum allowed CPU bandwidth to 800,000 out of a period of 1,000,000 (i.e., 80% CPU
+utilization) maximum, as this is the value we passed. It then launches our prime number generator
+app (with appropriate parameters), and – key of course – adds its PID to the cgroup. In our test run
+here, with 80% CPU bandwidth available to it, it happens to generate primes up to the number 41,257
+(within the 5 seconds allotted; of course, this number can and very likely will vary on different systems).
+The script then cleans up, deleting the cgroup.
+
+However, to really appreciate the cgroups effect, let’s run our script again (study the following output
+in Figure 11.14), but this time, with a maximum CPU bandwidth of just 1,000 (the $MAX value) – in effect,
+a max CPU utilization of just 0.1%!:
+
+Figure 11.14: Screenshot showing how our Bash script creates a cgroup, sets it up to allocate only
+           0.1% CPU bandwidth, and then adds and runs our prime number generator program within it
+
+What a difference! This time – with a measly 0.1% CPU bandwidth allocation – our poor prime number
+generator process could emit prime numbers from 2 to just 659 (as opposed to up to the prime 41,257
+with 80% CPU bandwidth). This clearly proves the efficacy of the cgroups v2 CPU controller.
+
+One more thing: let’s now rerun the script the same way, except that we’ll pass the second parameter
+as 1; under the hood, this enables our cgroupsv2_explore bash script – with the first parameter set
+to -p to show the processes within it, and the second parameter as the new cgroup! – to execute, thus
+revealing some details about it. In the truncated screenshot (Figure 11.15), we show and highlight
+only its output:
+
+Figure 11.15: Truncated screenshot of the output of our cgv2_cpu_ctrl.sh script – this time, with its
+        second parameter set to 1, thus allowing our (earlier) cgroupsv2_explore script to display some
+                                        details regarding the new cgroup
+
+Fantastic; it’s all there as expected.
+
+On a related note, one can affect the weightage of CPU distributed to processes within a cgroup by
+fiddling with the cpu.weight pseudofile. It gets a default value of 100 for all tasks within the cgroup.
+
+As such, it simply means that all of them will receive an equal share of the CPU resource; the actual
+value assigned doesn’t really matter. It’s only when you vary the weight between processes (tasks)
+that it matters.
+
+               A key point to realize with the CPU resource controller (and others in general): the con-
+               straints you specify only have meaning and are applied when the resource in question
+              – here, the CPU cores – are saturated; otherwise, processes are free to (happily?) use as
+               much CPU as they’d like to. Makes sense!
+
+ So, now, finally, I hope you can see why, in the prior chapter’s Figure 10.1, at the very top of it, the
+“Cgroups v2” layer was displayed. We can now quite clearly see how cgroups are deeply embedded
+ into the very fabric of the Linux kernel; thus, they can be programmed to affect the allocation (or
+ bandwidth/utilization) of various resources, including the CPU, and thus realize how much this affects
+ CPU scheduling.
+
+               Simple exercise: run the ch11/cgroups/cpu_constrain/cpu_manual/cgv2_cpu_ctrl.
+               sh Bash script on your system, having it allocate different amounts of CPU bandwidth
+               utilization and enabling it to show output from our earlier cgroupsv2_explore script.
+               Study the results.
+
+With that, we complete our coverage of a really powerful and useful kernel feature: cgroups (v2). Let’s
+move on to the final section of this chapter: an introduction to learning what a Real-Time Operating
+System (RTOS) is, and how it’s possible to convert regular Linux into one by applying appropriate
+patches and configuring it.
+
+Running Linux as an RTOS – an introduction
+Mainline or vanilla Linux (the kernel you download from https://kernel.org, or even a typical
+Linux Git kernel tree) is decidedly not an RTOS; it’s a General Purpose Operating System (GPOS; as
+is Windows, macOS, and Unix). In an RTOS, where hard real-time (RT) characteristics come into play,
+not only must the software obtain the correct result but there are deadlines associated with doing so;
+it must guarantee it meets these deadlines, every single time.
+
+One can very broadly categorize an OS based on its RT characteristics in this manner (see Figure 11.16);
+at the left extreme are the non-RT OSs, and at the right extreme is the RTOS:
+
+Figure 11.16: Categorizing an OS on the RT scale
+
+The mainline or “vanilla” Linux OS, though not an RTOS, does a tremendous job performance-wise
+without even breaking a sweat. It easily qualifies as being a soft real-time OS: one where deadlines
+are met most of the time, on a “best effort” basis (it’s sometimes said to meet the “five-9s” qualifier, as
+it meets its deadlines 99.999% of the time!). Nevertheless, true hard real-time domains (for example,
+many types of military operations, transport, robotics, telecom, factory floor automation, stock ex-
+changes, medical electronics, and so on) require hard real-time guarantees and thus require an RTOS.
+Thus, for these domains, plain vanilla Linux, a GPOS, just won’t cut it.
+
+A key point in this context is that of determinism: an oft-missed point regarding real time is that the
+software response time to an (external) event need not always be really fast (responding, say, within
+a few microseconds). It may be a lot slower (in the range of, say, tens of milliseconds); by itself, that
+isn’t what really matters in an RTOS. What does matter is that the system is reliable and predictable,
+working in the same consistent manner and always guaranteeing the deadline is met; such systems
+are said to have deterministic response and this is a key characteristic of real-time systems.
+
+For example, the time taken to respond to a scheduling request should be consistent, predictable, and
+not bounce all over the place. The variance from the required time (or baseline) is often referred to
+as the jitter; an RTOS works to keep the jitter tiny, even negligible. In a GPOS, this is often impossible
+and isn’t even a design goal in the first place! Thus, in such non-RT systems, the jitter can vary tre-
+mendously, at one point being low and very high at the next.
+
+              Overall, the ability to maintain a stable, even, predictable response with minimal jit-
+              ter – even in the face of extreme workload pressures – is termed determinism and is the
+              hallmark of an RTOS. To provide such a deterministic response, its algorithms must, as
+              far as possible, be designed to correspond to O(1) (big-Oh 1) algorithmic time complexity.
+
+Another goal of an RT system is that of reducing latencies and delays. Actually, that statement’s not
+quite accurate: reducing the maximum or worst-case latency experienced to an acceptable level is
+the goal; the (ironic) reality is that the minimum and average latencies can be – and often are – worse
+than on non-RT systems.
+
+Thomas Gleixner, along with community support, has worked toward the goal of converting the regular
+(or plain vanilla) non-RT Linux kernel into a hard RTOS for a long while now. He and his collaborators
+succeeded a long while back: ever since the 2.6.18 kernel (released in September 2006), there have been
+out-of-tree patches that convert the Linux kernel into an RTOS! These patches can be found, for many
+versions of the kernel, here: https://mirrors.edge.kernel.org/pub/linux/kernel/projects/rt/.
+The older name for this project was “preemptible real-time” or simply, PREEMPT_RT. Later (from October
+2015, kernel version 4.1 onward), the Linux Foundation (LF) took over stewardship of this project – a
+very positive step! – and renamed it the Real-Time Linux (RTL) Collaborative Project (https://wiki.
+linuxfoundation.org/realtime/rtl/start), or simply, RTL (don’t confuse this project with co-kernel
+approaches such as Xenomai or RTAI, or the older and now-defunct attempt called RTLinux).
+
+An FAQ, of course, is “Why aren’t these patches to convert Linux into a hard real-time OS in mainline
+itself?” Well, it turns out that:
+
+  •     Much of the RTL work has indeed been merged into the mainline kernel; this includes important
+        areas such as the scheduling subsystem, mutexes and spinlocks, lockdep, threaded interrupts,
+        PI (priority inheritance), tracing, and so on. In fact, an ongoing primary goal of RTL is to get
+        itself merged into mainline; as of this writing, it’s (very) close!
+  •     Traditionally, Linus Torvalds deems that Linux, being primarily designed and architected as a
+        GPOS, should not have highly invasive features that only an RTOS really requires; so, though
+        patches do get merged in, it’s a slow deliberated process.
+
+We have included several interesting articles and references to RTL (and hard real-time in general) in
+the Further reading section of this chapter; do take a look.
+
+What you’re going to do next is interesting indeed: we present a brief on how you can patch the main-
+line 6.1 LTS kernel with the (currently still) out-of-tree RTL patches, configure it, build it, and boot it;
+you will thus end up running an RTOS – Real-Time Linux or RTL! We shall do this on our x86_64 Linux
+VM (or native system).
+
+Pointers to building RTL for the mainline 6.x kernel (on x86_64)
+Here, instead of covering in detail how to patch a vanilla Linux kernel, configure it, and build it
+as a real-time kernel (as RTL), we simply point you to a brief tutorial on the superb RTL Wiki site:
+HOWTO setup Linux with PREEMPT_RT properly: https://wiki.linuxfoundation.org/realtime/
+documentation/howto/applications/preemptrt_setup.
+
+                 As a matter of fact, the first edition of this book went into an in-depth explanation of
+                 patching, configuring, and building RTL; do refer to it for these details if you wish.
+
+This short tutorial – a portion of the large and very useful RTL Wiki site – explains things:
+
+  •     Download the RTL patch set for a given stable kernel (from https://mirrors.edge.kernel.
+        org/pub/linux/kernel/projects/rt/; as of this writing, the tutorial just mentioned uses the
+        RTL patches for the 4.4 LTS kernel):
+
+             •    FYI, the patch set often shows up in two forms. The first is a single patch file named
+                  patch-<kver>-rt<xy>.tar.xz (as well as a gzip one, and a sign file); it’s easier to
+                  download and extract this one – the entire RTL patch is in this one file. The other
+                  form is a patch series (multiple patch files) in a file named patches-<kver>-rt<xy>.
+                  tar.xz; with this approach, when extracted, the RTL patch files are in a folder named
+                  patches/. There can be several patches (which must be applied in order – see the
+                  series file; for example, with the patches-6.1.75-rt23.tar.xz file, it expands into
+                  a series of 63 patch files).
+
+  •       Extract the patch(es) and patch the kernel source tree
+  •       Configure the kernel, setting it up for full kernel preemption, for RTL (CONFIG_PREEMPT_RT=y);
+          see the tips that follow
+  •       Build it in the usual manner (which we covered in-depth in Chapter 2, Building the 6.x Linux
+          Kernel from Source – Part 1, and Chapter 3, Building the 6.x Linux Kernel from Source – Part 2, in
+          any case)
+
+                A few quick tips regarding kernel configuration for RTL: To configure building Linux as
+                RTL, within the make menuconfig UI, navigate to General Setup | Preemption Model.
+                Assuming you’ve downloaded and applied the (out-of-tree) RTL patch(es), you should see
+                4 choices here (in place of the usual 3). The fourth is the one we want: Fully Preemptible
+                Kernel (Real-Time). Select it (CONFIG_PREEMPT_RT=y). However, you might find only the
+                usual first 3 choices; this is as the fourth one depends upon CONFIG_EXPERT being on (y):
+
+                Depends on: <choice> && EXPERT [=y] && ARCH_SUPPORTS_RT [=y]
+
+                So, if, in spite of applying the RTL patch set, the fourth RTL option is not seen, first, turn
+                on General Setup | Configure standard kernel features (expert users); the fourth RTL
+                choice should then be visible and you can enable it.
+
+                Also, it’s interesting to note that the dynamic preemption model is turned off when PREEMPT_
+                RT (RTL, in effect) is turned on. We covered this in the previous chapter in the section The
+                dynamic preemptible kernel feature.
+
+As of this writing, the supported patche to 6.1 LTS were for the 6.1.77[-rt24], 6.1.75[-rt23], 6.1.67[-
+rt20], 6.1.46[-rt14] and 6.1.38[-rt13] kernels (here: https://mirrors.edge.kernel.org/pub/linux/
+kernel/projects/rt/6.1/); at the time of writing this material, I selected the 6.1.46 one (note that
+the particular RTL patches available against a given base kernel can and do change as things evolve).
+
+Once built, perform the usual remaining steps (on the x86_64: sudo make modules_install && sudo
+make install), then reboot. From the bootloader menu, be sure to select your cool new RTL kernel!
+Once on a shell, verify that it is indeed the real-time kernel. Here’s some output I got:
+      $ uname -a
+      Linux fedora 6.1.46-rt14-rc1 #1 SMP PREEMPT_RT [ ... ] x86_64 GNU/Linux
+
+Interestingly, the presence of the /sys/kernel/realtime (pseudo)file, and its value being 1, indicates
+it’s a real-time kernel, RTL:
+      $ cat /sys/kernel/realtime
+      1
+
+So great, we’re now – as promised – running Linux in its RTL avatar, a hard real-time operating system,
+an RTOS!
+
+Do note carefully: merely running the OS as a real-time system is nowhere near sufficient when de-
+ploying a real-time project; the applications too need to be carefully designed and written – especially
+their time-critical regions – with real-time guidelines in mind. Again, the RTL Wiki site provides many
+pointers on the same; be sure to check them out.
+
+Miscellaneous scheduling related topics
+We close this chapter with a couple of miscellaneous yet useful topic mentions.
+
+A few small (kernel space) routines to check out
+Here are a few kernel routines you may find useful (we leave it to you to look up the details and sample
+usage within the kernel):
+
+  •     rt_prio(): Given the priority as a parameter, returns a Boolean to indicate whether it’s a
+        real-time task or not.
+  •     rt_task(): Based on the priority value of the task, given the task structure pointer as a parame-
+        ter, returns a Boolean to indicate whether it’s a real-time task or not (a wrapper over rt_prio()).
+  •     task_is_realtime(): Similar, but based on the scheduling policy of the task. Given the task
+        structure pointer as a parameter, returns a Boolean to indicate whether it’s a real-time task
+        or not.
+
+As the above routines all fall within a header (include/linux/sched/rt.h), simply include it and
+directly use them within your module.
+
+The ghOSt OS
+These days, there’s a steady rise of whole new technology domains with regard to hardware and
+software; take, for example, NUMA with chiplets, processor accelerators (GPUs, TPUs, DPUs), AMD
+CCX, AWS Nitro, and so on. Not only that, but cloud-based workloads have special needs; for example,
+microsecond (scheduling) latencies are required for certain high-speed networking/telecom projects.
+These greatly stress – if not overwhelm – the capabilities of existing OS schedulers.
+
+Sure, we could build or employ a data plane OS or write several custom scheduling classes to address
+these concerns, but testing, refining, and deploying them at scale (think datacenter workloads) is hard
+to do quickly, correctly and efficiently.
+
+These and similar scenarios are giving rise to an OS and user space abstraction of sorts with regard to
+scheduling; Google has proposed a relatively new system, christened ghOSt – providing fast and flexible
+user-space delegation of Linux scheduling – to address just such needs and scenarios. It’s aimed at both
+the research community and at datacenters in production. It consists of both kernel and user space
+code; the intent is that the kernel code remains largely stable (essentially, it’s a custom scheduling
+class). The user space portion is where policy decisions are made (via regular processes called agents
+that communicate with the ghOSt kernel code); thus, it can and does change fast, and is kept open
+source (https://github.com/google/ghost-userspace).
+
+The overall idea seems to be to provide “policies for a range of scheduling objectives, from µs-scale latency,
+to throughput, to energy efficiency….” The kernel implementation uses eBPF to help accelerate code
+paths. As of this writing, it seems to be in an experimental development phase and is not considered
+to be an officially supported Google product. The Further reading section of this chapter has more on
+this topic area.
+
+Summary
+In this, our second chapter on CPU (or task) scheduling on the Linux OS, you have learned several
+key things. Among them, you learned how to programmatically query and set any (user or kernel)
+thread’s CPU affinity mask; this naturally led to how you can programmatically query and set any
+thread’s scheduling policy and priority.
+
+The whole notion of being “completely fair” (via the CFS implementation) was brought into question,
+and some light (quite a bit!) was shed on the elegant solution called cgroups (v2), which is now deeply
+embedded into the Linux kernel. We covered how systemd helps auto-integrate cgroups into modern
+distros, servers and even embedded systems, automatically and dynamically creating and maintaining
+various cgroups (via its slice and scope artifacts). You even learned how to leverage the cgroups v2
+CPU controller to allocate CPU bandwidth (or utilization) as desired to processes in a sub-group, both
+via systemd unit files and manually.
+
+We then briefly delved into what an RTOS is and found that though vanilla Linux is a GPOS, an RTL
+(out-of-tree) patch set very much exists, which, once applied and the kernel is configured and built,
+has you running Linux as a true hard real-time system, an RTOS. (We do note that carefully designing
+and writing your RT apps is equally important for true RT systems.) We ended with a quick mention
+of a few kernel scheduler-related routines and Google’s research project, the ghOSt OS.
+
+That’s quite a bit! Take the time to properly understand the material and work on it in a hands-on fash-
+ion. Once done, do join me on a really important aspect; let’s together adventure into the intricacies
+of kernel synchronization in this book’s final two chapters!
+
+Questions
+As we conclude, here is a list of questions for you to test your knowledge regarding this chapter’s
+material: https://github.com/PacktPublishing/Linux-Kernel-Programming_2E/blob/main/
+questions/ch11_qs_assignments.txt. You will find some of the questions answered in the book’s
+GitHub repo: https://github.com/PacktPublishing/Linux-Kernel-Programming_2E/tree/main/
+solutions_to_assgn.
+
+Further reading
+To help you delve deeper into the subject with useful materials, we provide a rather detailed list of online
+references and links (and at times, even books) in a Further reading document in this book’s GitHub
+repository. The Further reading document is available here: https://github.com/PacktPublishing/
+Linux-Kernel-Programming_2E/blob/main/Further_Reading.md.
+
+Leave a review!
+Enjoying this book? Help readers like you by leaving an Amazon review. Scan the QR code below for
+a 20% discount code.
+
+*Limited Offer

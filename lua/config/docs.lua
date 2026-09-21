@@ -4418,6 +4418,7 @@ local BOOKS = {
 		{ title = "Bootlin: Embedded Linux (QEMU labs)", fmt = "epub", file = "embedded-linux-qemu-labs.epub" },
 		{ title = "UNIX and Linux System Administration Handbook (Nemeth et al.)", fmt = "pdf", slug = "unix-and-linux-system-administration-handbook", file = "Evi Nemeth, Garth Snyder, Trent R. Hein, Ben Whaley, Dan Mackin - UNIX and Linux System Administration Handbook (2017, Addison-Wesley) - libgen.li.pdf" },
 		{ title = "Linux Kernel Debugging (Billimoria)", fmt = "pdf", slug = "linux-kernel-debugging", file = "Linux Kernel Debugging _ Leverage Proven Tools and Advanced -- Kaiwan N_ Billimoria -- 1, 2022 -- Packt Publishing, Limited -- 9781801075039 -- ac6af3f8aa9c68633b17802fb74da07b -- Anna’s Archive 2.pdf" },
+		{ title = "Linux Kernel Programming (Billimoria, 2e)", fmt = "pdf", slug = "linux-kernel-programming", file = "LinuxKernelProgrammingKaiwan.pdf" },
 		{ title = "Linux Kernel Programming Part 2: Char Device Drivers (Billimoria)", fmt = "pdf", slug = "linux-kernel-programming-part-2", file = "Linux Kernel Programming Part 2 - Char Device Drivers and -- Kaiwan N Billimoria -- Linux Kernel Programming Part 2, 2021 -- PACKT PUBLISHING LIMITED -- isbn13 9781801079518 -- f4482a5ca3621159ae3f53403712405c -- A.pdf" },
 	} },
 	{ module = "Algorithms", key = "books-algo", items = {

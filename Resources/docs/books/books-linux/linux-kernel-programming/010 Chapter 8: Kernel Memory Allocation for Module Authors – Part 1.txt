@@ -1,0 +1,2375 @@
+8
+Kernel Memory Allocation for
+Module Authors – Part 1
+In the previous two chapters, one on the kernel’s internal aspects and architecture and the other on
+the essentials of memory management internals, we covered key aspects that serve to provide the
+required background information for this and the following chapter. In this and the next chapter,
+we will get down to the actual allocation and freeing of kernel memory by various means. We will
+demonstrate this via kernel modules that you can test and tweak, elaborate on the whys and hows of
+allocation, and provide many real-world tips and tricks to enable a kernel or driver developer like you
+to gain maximum efficiency when working with memory within your kernel module.
+
+In this chapter, we will cover the kernel’s two primary memory allocators – the Page Allocator (PA)
+(aka the Buddy System Allocator (BSA)) and the slab allocator. We will delve into the nitty-gritty of
+working with their APIs within kernel modules. We will go well beyond simply seeing how to use the
+APIs, clearly demonstrating why memory efficiency isn’t optimal in many cases, and how to overcome
+these situations. Chapter 9, Kernel Memory Allocation for Module Authors – Part 2, will continue our
+coverage of the kernel memory allocators, delving into a few more advanced areas.
+
+In this chapter, we will cover the following topics:
+
+  •    Introducing kernel memory allocators
+  •    Understanding and using the kernel page allocator (or BSA)
+  •    Understanding and using the kernel slab allocator
+  •    Size limitations of the kmalloc API
+  •    Slab allocator – a few additional details
+  •    Caveats when using the slab allocator
+
+Technical requirements
+I assume that you have gone through Online Chapter, Kernel Workspace Setup, and have appropriately
+prepared a guest Virtual Machine (VM) running Ubuntu 22.04 LTS (or a later stable release) and in-
+stalled all the required packages. If not, I highly recommend you to do this first.
+
+To get the most out of this book, I strongly recommend first setting up the workspace environment,
+including cloning this book’s GitHub repository (https://github.com/PacktPublishing/Linux-
+Kernel-Programming_2E) for the code, and working on it in a hands-on fashion.
+
+The topics covered here assume you have at least basic familiarity with the process Virtual Address
+Space (VAS) and virtual memory basics (including physical memory layout concepts like UMA and
+NUMA); we covered these areas in Chapter 6, Kernel Internals Essentials – Processes and Threads, and
+Chapter 7, Memory Management Internals – Essentials. Ensuring you understand them before going into
+the following material is important.
+
+Introducing kernel memory allocators
+Dynamically allocating, and subsequently freeing, kernel memory – both physical and virtual – is the
+key topic area here. The Linux kernel, like any other OS, requires a sturdy algorithm and implemen-
+tation to perform this really key task. The primary (de)allocator engine in the Linux OS is referred to
+as the PA, or the BSA. Internally, it uses a so-called buddy system algorithm to efficiently organize
+and parcel out free chunks of system RAM. You will find more on the algorithm in the Understanding
+and using the kernel page allocator (or BSA) section of this chapter.
+
+               In this chapter and throughout this book, when we use the notation (de)allocate, please
+               read it as both words: allocate and deallocate.
+
+Of course, being imperfect, the page allocator is not the only or always the best way to obtain and
+subsequently release system memory. Other technologies exist within the Linux kernel to do so. High
+on the list of these is the kernel’s slab allocator or slab cache system (we use the word slab here as
+the generic name for this type of allocator as it originated with this name; in practice, though, the
+internal implementation of the modern slab allocator used by the Linux kernel is called SLUB (the
+unqueued slab allocator); more on this later).
+
+Think of it this way: the slab allocator solves some issues and optimizes performance with the page
+allocator. What issues exactly? Patience, you’ll soon see... For now, though, it’s important to understand
+that the only way in which to actually (de)allocate physical memory is via the page allocator. In effect, the
+page allocator is the primary ‘engine’ for memory (de)allocation on the Linux OS!
+
+               To avoid confusion and repetition, we will from now on refer to this primary allocation
+               engine as the page allocator. You will understand that it’s also known as the BSA (derived
+               from the name of the algorithm that drives it).
+
+Thus, the slab allocator is layered upon (or above) the page allocator. Various core kernel subsystems,
+as well as non-core code within the kernel, such as modules and device drivers, can allocate (and
+deallocate) memory either directly via the page allocator or indirectly via the slab allocator. The
+following diagram illustrates this:
+
+Figure 8.1: Linux’s page allocator engine with the slab allocator layered above it
+
+A few things to be clear about at the outset are:
+
+  •     The Linux kernel and all of its core components and subsystems (excluding the memory man-
+        agement subsystem itself and perhaps a few very arch-specific users) ultimately use the page
+        allocator (or BSA) for memory (de)allocation. This includes non-core stuff, such as kernel
+        modules and device drivers.
+  •     The slab and page allocators reside completely in kernel (virtual) address space and are not
+        directly accessible from user space.
+  •     The page frames (RAM) from where the page allocator gets memory is within the kernel’s low-
+        mem region, or the direct-mapped RAM region of the kernel segment (we covered the kernel
+        segment in detail in the previous chapter)
+  •     The slab allocator is ultimately a user of the page allocator, and thus gets its memory from there
+        itself (which again implies that the memory ultimately comes from the kernel lowmem region)
+  •     User space dynamic memory allocation with the familiar malloc family of APIs does not directly
+        map to the preceding layers (that is, calling malloc() in user space does not directly result
+        in a call to the page or slab allocator). It does so indirectly. How exactly? You will learn how,
+        patience! (This key coverage is found in two sections of Chapter 9, Kernel Memory Allocation
+        for Module Authors – Part 2, within the ones involving demand paging; look out for it as you
+        cover that chapter!)
+  •     Also, to be clear, Linux kernel memory is non-swappable. It can never be swapped out to disk;
+        this was decided in the early Linux days to keep performance high. User space memory pages
+        are always swappable by default, though this can be changed by the system programmer via
+        the mlock()/mlockall() system calls.
+
+Now, fasten your seatbelts! With this very basic understanding, let’s begin the journey of learning
+(the basics of) how the Linux kernel’s memory allocators work and, more importantly, how to work
+well with them.
+
+Understanding and using the kernel page allocator (or
+BSA)
+In this section, you will learn about two aspects of the Linux kernel’s primary (de)allocator engine,
+the page allocator (or BSA):
+
+  •     First, we will cover the fundamentals of the algorithm behind this software (called the “buddy
+        system”).
+  •     Secondly, we will cover the actual and practical usage of the APIs it exposes to the kernel or
+        driver developer.
+
+Understanding the basics of the algorithm behind the page allocator is important. You will then be
+able to understand the pros and cons of it, and thus, when and which APIs to use in which situation.
+Let’s begin with its inner workings. Again, remember that the scope of this book with regard to the
+internal memory management details is limited. We shall cover it to a depth deemed sufficient for a
+typical module/driver author and no more.
+
+The fundamental workings of the page allocator
+We will break up this discussion into a few relevant parts. Let’s begin with how the kernel’s page allo-
+cator tracks free physical page frames via its freelist data structures.
+
+Understanding the organization of the page allocator freelist
+The key to the page allocator (buddy system) algorithm is its primary internal metadata structure. It’s
+called the buddy system freelist and consists of an array of pointers to (the oh-so-common!) doubly
+linked circular lists. The index of this array of pointers is called the order of the list – it’s the power to
+which to raise 2 to. The array length is from 0 to MAX_ORDER-1. The value of MAX_ORDER is arch-depen-
+dent; on the x86 and ARM platforms, it’s 11, whereas on a large-ish system such as the Itanium, it’s
+17. Thus, on the x86 and ARM, the order (indices) range from 20 to 210; that is, from 1 to 1,024. What
+does that mean? Do read on...
+
+Each doubly linked circular list points to free and physically contiguous page frames of size 2order pages. Thus,
+assuming a page size of 4 KB, we end up with eleven lists (0-10) with the following size characteristics:
+
+  •     Order 0: 20 = 1 page = 4 KB chunks
+  •     Order 1: 21 = 2 pages = 8 KB chunks
+  •     Order 2: 22 = 4 pages = 16 KB chunks
+
+  •     Order 3: 23 = 8 pages = 32 KB chunks
+  •     [ … and so on … ]
+  •     Order 10: 210 = 1024 pages = 1024*4 KB = 4 MB chunks
+
+A diagram will help! The following is a simplified conceptual illustration of (a single instance of) the
+page allocator freelist:
+
+Figure 8.2: Buddy system/page allocator freelist on a system with a page size of 4 KB and MAX_OR-
+                                                    DER of 11
+
+In Figure 8.2, each memory “chunk” is represented by a square box (to keep it simple, we use the same
+size for all chunks in our diagram). Internally, of course, these aren’t the actual memory pages; rather,
+the boxes represent metadata structures (struct page) that point to physical memory frames. (Recall,
+we mentioned the importance of struct page in Chapter 7, Memory Management Internals – Essentials,
+in the An introduction to physical memory models section).
+
+On the right side of Figure 8.2, we show the size of each individual physically contiguous free memory
+chunk that could possibly be enqueued on the list to the left.
+
+The kernel gives us a convenient (summarized) view into the current state of the page allocator via
+the proc filesystem (via the /proc/buddyinfo pseudofile); here’s an example from our Ubuntu VM
+with 1 GB RAM:
+
+Figure 8.3: Annotated screenshot of sample /proc/buddyinfo output
+
+As you can tell from Figure 8.3, our VM is a pseudo-NUMA box with one node (Node 0) and two zones
+(DMA and DMA32). (We covered what NUMA is, and associated topics, in Chapter 7, Memory Management
+Internals – Essentials, under the Physical RAM organization section). The numbers following zone XXX
+are the number of free (physically contiguous!) page frames on the order 0, order 1, order 2, …, right
+up to the order MAX_ORDER-1 (here, 11 – 1 = 10) list. So, let’s take a couple of examples from the pre-
+ceding output (Figure 8.3):
+
+  •    There are 35 single-page free chunks of RAM in the order 0 list for node 0, zone DMA.
+  •    In node 0, zone DMA32, order 3, the number shown in Figure 8.3 is 678; now, take 2order = 23 =
+       8 page frames = 32 KB (assuming a page size of 4 KB); this implies that there currently are 678
+       32-KB physically contiguous free chunks of RAM on that list.
+
+It is important to note that each chunk is guaranteed to be physically contiguous RAM in and of itself.
+Also, notice that the size of the memory chunks on a given order is always double that of the previous
+order (and half that of the next one). This mathematical property is going to be the case, of course,
+as they’re all powers of 2.
+
+              Note that MAX_ORDER can (and does) vary with the architecture. On regular x86 and ARM
+              systems, it’s 11, yielding the largest possible chunk size of 4 MB of physically contiguous
+              RAM on order 10 of the freelist(s) (as the last order will be 210 = 1024 page frames = 1024
+             * 4KB = 4096 KB = 4 MB). As an alternate example, on some high-end enterprise servers
+              running the Itanium (IA-64) processor, MAX_ORDER can be as high as 17 (implying a largest
+              chunk size on order (17-1), thus of 216 = 65,536 pages = 512 MB chunks of physically con-
+              tiguous RAM on order 16 of the freelists, for a 4 KB page size). The IA-64 MMU supports
+              up to eight page sizes ranging from a mere 4 KB right up to 256 MB. As another example,
+              with a page size of 16 MB, the order 16 list could potentially have physically contiguous
+              RAM chunks of size 65,536 * 16 MB = 1 TB each!
+
+Another key point: the kernel keeps multiple PA/BSA freelists – one for every node:zone that is present
+on the system! This lends itself to a natural way to allocate memory on a NUMA system.
+
+The following diagram shows how the kernel instantiates multiple freelists – one per node:zone present
+on the system (diagram credit: Professional Linux Kernel Architecture, Mauerer, Wrox Press, Oct 2008):
+
+Figure 8.4: Page allocator (BSA) “freelists,” one per node:zone on the system; Diagram credit: Pro-
+                        fessional Linux Kernel Architecture, Mauerer, Wrox Press, Oct 2008
+
+Furthermore (as can be seen in Figure 8.4), when the kernel is called upon to allocate RAM via the
+page allocator, it picks the optimal freelist to allocate memory from – the one associated with the node
+upon which the thread asking the request is running (recall the NUMA architecture from the previous
+chapter). If the zone(s) on this node is out of memory or cannot allocate it for whatever reason, the
+kernel then uses a fallback list to figure out which freelist to attempt to allocate memory from. (In
+reality, the real picture is even more complex; we provide some more details in the Page allocator
+internals – a few more details section).
+
+Let’s now understand (in a conceptual way) how all of this works to (de)allocate memory pages!
+
+The workings of the page allocator
+The actual (de)allocation strategy can be explained by using a simple example. Let’s say a device
+driver requests 128 KB of memory. To fulfill this request, the page allocator (BSA) algorithm will do
+this (simplified and conceptually):
+
+   1.   The algorithm expresses the amount to be allocated (128 KB here) in pages. Thus, here (as-
+        suming a page size of 4 KB), it’s 128K/4K = 32 pages.
+   2.   Next, it determines to what power 2 must be raised to get 32. That’s log232 (or ln 2), which is 5
+        (as 25 is 32). Thus the order 5 list will have free memory chunks of precisely this required size.
+   3.   It now checks the list on order 5 of the appropriate (closest) node:zone page allocator freelist.
+        If a memory chunk is available (it will be of size 25 pages = 128 KB), dequeue it from the list on
+        order 5, update the list, and allocate it to the requester. Job done! Return to caller.
+
+                          Why do we say of the appropriate (closest) node:zone page allocator freelist? Does
+                          that mean there’s more than one of them? Yes, indeed! We repeat: the reality is
+                          that there will be several PA freelist data structures, one each per node:zone on
+                          the system. (Also see more details in the upcoming Page allocator internals – a few
+                          more details section.)
+
+      4.   If not even one memory chunk is available on the order 5 list (that is, if it’s null), then check
+           the list on the next order; that is, the order 6 linked list (if it’s not empty, it will have 26 pages =
+           256 KB memory chunks enqueued on it, each chunk being double the size of what we want).
+      5.   If the order 6 list is non-null, then take (dequeue) a chunk of memory from it (which will be
+           256 KB in size, double what’s required), and do the following:
+
+             •     Update the (order 6) list to reflect the fact that one chunk is now removed.
+             •     Cut the chunk in half, thus obtaining two 128 KB halves or buddies! (Please see the
+                   following information box.)
+             •     Migrate (enqueue) one half (of size 128 KB) to the order 5 list.
+             •     Allocate the other half (of size 128 KB) to the requester.
+             •     Job done! Return to caller.
+
+      6.   If the order 6 list is also empty, then it repeats the preceding process with the order 7 list, and
+           so on (recursively), until it succeeds.
+      7.   If all the remaining higher-order lists are empty (null), it will fail the request (this would be
+           very unlikely).
+
+                  We can cut or slice a memory chunk in half because every chunk on the list is guaranteed
+                  to be physically contiguous memory. Once cut, we have two halves; each is called a buddy
+                  block, hence the name of this algorithm. Pedantically, it’s called the binary buddy system
+                  as we use power-of-2-sized memory chunks. More correctly, a buddy block is defined as a
+                  block that is of the same size and physically adjacent to another.
+
+You will understand that the preceding description is conceptual. The actual code implementation is
+certainly more complex and optimized. By the way, the code – the “heart” of the zoned buddy alloca-
+tor, as its comment literally says, is here: mm/page_alloc.c:__alloc_pages() (FYI, here, on 6.1.25:
+https://elixir.bootlin.com/linux/v6.1.25/source/mm/page_alloc.c#L5523). Being beyond the
+scope of this book, we won’t attempt to delve into the code-level details of the allocator.
+
+Working through a few scenarios
+Now that we have the basics of the algorithm, let’s consider a few scenarios: first, a simple straight-
+forward case, and after that, a couple of more complex cases.
+
+The simplest case
+Let’s say that a kernel-space device driver (or some core code) requests 128 KB and receives a memory
+chunk from the order 5 list of one of the freelist data structures. At some later point in time, it will
+(should/must) necessarily free the memory chunk by employing one of the page allocator-free APIs.
+Now, this “free” API’s algorithm calculates – via its order (and thus size) – that the just-freed chunk
+belongs on the order 5 list; thus, it enqueues it there. (You’ll soon see that a parameter to both the
+alloc and free APIs is the order of the list.)
+
+A more complex case
+Now, let’s say that, unlike the previous simple case, when the device driver requests 128 KB, the order
+5 list is null; thus, as per the page allocator algorithm, we go to the list on the next order, 6, and check
+it. Let’s say it’s non-null; the algorithm now dequeues an order 6 chunk of size 256 KB, and splits (or
+cuts) it in half. So, we now have two halves that are physically adjacent and equally sized – buddy blocks.
+Now, one buddy block (of size 128 KB) goes to the requester, and the remaining buddy block (again,
+of size 128 KB) is enqueued on to the order 5 list.
+
+The really interesting property of the buddy system is what happens when the requester (the driver),
+at some later point in time, frees the memory chunk. As expected, the algorithm calculates (via its
+order) that the just-freed chunk belongs on the order 5 list. But before blindly enqueuing it there, it
+looks for its buddy block, and in this case, it (possibly) finds it! It now merges the two buddy blocks
+into a single larger block (of size 256 KB) and places (enqueues) the merged block on the order 6 list.
+This is fantastic – it has even helped to defragment memory!
+
+The downfall case
+Let’s make it interesting now by not using a convenient rounded power-of-2 size as the allocation
+requirement. This time let’s say that the device driver requests a memory chunk of size 132 KB. What
+will the buddy system allocator do? As, of course, it cannot allocate less memory than requested, it
+allocates more – you guessed it (see Figure 8.2) – the next appropriately-sized (equal to or more than
+the request) available memory chunk is on order 7 of the freelist, of size 256 KB. But the consumer (the
+driver) is only going to see and use the first 132 KB of the 256 KB chunk allocated to it. The remaining
+(124 KB) is wasted (think about it, that’s close to 50% wastage!). This is called internal fragmentation
+(or wastage) and is the critical failing of the binary buddy system!
+
+              You will learn, though, that there is indeed a mitigation to this: a patch was contributed to
+              deal with similar scenarios (via the alloc_pages_exact() / free_pages_exact() APIs).
+              We will cover the APIs to use the page allocator shortly.
+
+Page allocator internals – a few more details
+In this book, we do not intend to delve into code-level detail on the internals of the page allocator.
+Having said that, here’s the thing: in terms of data structures, the zone structure contains an array
+of free_area structures, the so-called page allocator ‘freelists’. This makes sense; as you’ve learned,
+there can be (and usually are) multiple page allocator freelists on the system, one per node:zone; let’s
+look them up at the code level:
+      // include/linux/mmzone.h
+      struct zone {
+           [ ... ]
+           /* free areas of different sizes */
+           struct free_area free_area[MAX_ORDER];
+           [ ... ]
+      };
+
+The free_area structure is the implementation of the doubly-linked circular lists (of free memory page
+frames within that node:zone) along with the number of page frames that are currently free within it:
+      struct free_area {
+           struct list_head free_list[MIGRATE_TYPES];
+           unsigned long nr_free;
+      };
+
+Why does the free_area structure contain an array of linked lists and not just one list? Without delving
+into the details, we’ll mention that the kernel layout for the buddy system freelists is more complex
+than let on until now: from the 2.6.24 kernel, each freelist we have seen is further broken up into
+multiple (up to 6) individual freelists to cater to different page migration types (referring to whether
+the kernel can literally migrate or move around the page to reduce fragmentation effects. There are
+five possible migration types (all of which may not be enabled): unmovable, movable, reclaimable,
+CMA, and isolate). This was required to deal with complications when trying to keep memory (RAM)
+defragmented.
+
+Besides, as mentioned earlier, these freelists exist per node:zone on the system. So, for example, on an
+actual NUMA system with 4 nodes and 3 zones per node, there will be 12 (4 x 3) freelists. Not just that,
+we now realize that each free_area structure actually consists of (up to) 6 freelists, one per migration
+type. Thus, on such a system, a total of up to 6 x 12 = 72 freelist data structures would exist system-wide!
+
+                If you are interested, dig into the details; the output of /proc/buddyinfo is merely a nice
+                summary view of the state of the buddy system freelists (as Figure 8.3 shows). For a more
+                detailed and realistic view (of the type mentioned previously, showing all the freelists),
+                look up /proc/pagetypeinfo (this requires root access); it shows all the freelists (broken
+                up into page migration types as well). Note, though, that all six migration types need not
+                necessarily be defined on a system.
+
+The design of the page allocator (buddy system) algorithm is one of the best-fit classes. It confers
+the major benefit of helping defragment physical memory as the system runs. The pros of the page
+allocator (buddy system) algorithm are as follows:
+
+  •     Helps defragment memory (external fragmentation is mitigated)
+  •     Guarantees the allocation of a physically contiguous memory chunk
+  •     Guarantees CPU cacheline-aligned memory blocks
+  •     Fast (well, fast enough; the algorithmic time complexity is O(log n))
+
+On the other hand, by far the biggest downside is that internal fragmentation or wastage can be much
+too high.
+
+Okay, great! We have covered a good deal of background material on the internal workings of the page
+or buddy system allocator. Time to get our hands dirty; let’s now dive into understanding and using
+the page allocator APIs to allocate and free kernel memory.
+
+Learning how to use the page allocator APIs
+The Linux kernel provides (exposes to the core and modules) a set of APIs to allocate and deallocate
+memory (RAM) via the page allocator. These are often referred to as the low-level (de)allocator routines.
+The following table summarizes the page allocation APIs; you’ll notice that in all the APIs or macros
+that have two parameters, the first parameter is called the GFP flags or bitmask (its named gfp_mask);
+we shall explain it in detail shortly, please ignore it for now. The second parameter is order – the order
+of the freelist, that is, the amount of memory to allocate is 2order page frames.
+
+                In the following discussions, we quite often use the term ‘kernel logical address’. As stated
+                in Chapter 7, Memory Management Internals – Essentials, in the Examining the kernel segment
+                section, the distinction between the ‘logical’ and ‘virtual’ address is quite pedantic. Kernel
+                logical address is meant to denote an address within the kernel lowmem region; all other
+                kernel addresses are termed kernel virtual addresses (KVAs). For all practical purposes,
+                you can treat them as the same.
+
+All the following API prototypes can be found in include/linux/gfp.h:
+
+ API or macro
+                        Comments                                           API signature or macro
+ name
+                       Allocates exactly one page frame. The
+                       allocated memory will have random content;
+                       it’s a macro, a wrapper around the __get_           #define __get_free_
+__get_free_
+                       free_pages() API.                                   page(gfp_mask) \ __get_
+ page()
+                                                                           free_pages((gfp_mask), 0)
+                        The return value is a pointer to the just-
+                        allocated memory’s kernel logical address.
+
+                     Allocates 2order physically contiguous page
+                     frames. The allocated memory will have               unsigned long __get_free_
+__get_free_
+                     random content; the return value is a pointer        pages(gfp_t gfp_mask,
+ pages()
+                     to the just-allocated memory’s kernel logical        unsigned int order);
+                     address.
+                     Allocates exactly one page frame; its
+                     contents are set to ASCII zero (NULL; that is,
+ get_zeroed_                                                              unsigned long get_zeroed_
+                     it’s zeroed out); the return value is a pointer
+ page()                                                                   page(gfp_t gfp_mask);
+                     to the just-allocated memory’s kernel logical
+                     address.
+                     Allocates exactly one page frame. The
+                     allocated memory will have random content;
+                     it’s a macro (wrapper) over the alloc_
+                                                                          #define alloc_page(gfp_
+                     pages() API; the return value is a pointer to
+ alloc_page()                                                             mask) \ alloc_pages(gfp_
+                     the just-allocated memory’s page metadata
+                                                                          mask, 0)
+                     structure; it can be converted into a kernel
+                     logical address via the page_address()
+                     function.
+                                 order
+                     Allocates 2 physically contiguous page
+                     frames. The allocated memory will have
+                     random content; the return value is a pointer        struct page *
+ alloc_pages()       to the start of the just-allocated memory’s          alloc_pages(gfp_t gfp_mask,
+                     page metadata structure; it can be converted         unsigned int order);
+                     into a kernel logical address via the page_
+                     address() function.
+
+Table 8.1: Low-level (BSA/page) allocator – popular exported allocation APIs
+
+All the preceding APIs are exported (via the EXPORT_SYMBOL() macro), and hence available to kernel
+module and device driver developers; worry not, you will soon see a kernel module that demonstrates
+using them.
+
+As mentioned before, the Linux kernel considers it worthwhile to maintain a (small) metadata struc-
+ture to track every single page frame of RAM. It’s called the page structure. The point here is to be
+careful: unlike the usual semantics of returning a pointer (a virtual address) to the start of the newly
+allocated memory chunk, notice how both the alloc_page() and alloc_pages() APIs mentioned
+previously (Table 8.1) return a pointer to the start of the newly allocated memory’s page structure, not
+the memory chunk itself (as the other APIs do). You must obtain the actual pointer to the start of the
+newly allocated memory by invoking the page_address() API on the page structure address that is
+returned. In any case, the example code in the Writing a kernel module to demo using the page allocator
+APIs section of this chapter will illustrate the usage of all the preceding APIs.
+
+Before we can make use of the page allocator APIs mentioned here, though, it’s imperative to under-
+stand at least the basics regarding the Get Free Page (GFP) flags, which are the topic of the section
+that follows.
+
+Dealing with the GFP flags
+You will notice that the first parameter to all the previous allocator APIs (or macros) is gfp_t gfp_mask.
+What does this mean? Essentially, these are the GFP - Get Free Page - flags; they affect the behavior
+of the kernel when allocating memory; we shall come to the details shortly. These are flags (there
+are several of them) used by the kernel’s internal memory management code layers. For all practical
+purposes, for the typical kernel module (or device driver) developer, just two GFP flags are crucial (as
+mentioned before, the rest are for internal usage). They are as follows:
+
+   •    GFP_KERNEL
+   •    GFP_ATOMIC
+
+Deciding which of these to use when performing memory allocation via the page allocator APIs is
+important; a key rule to always remember is the following:
+
+If the code is running in process context and it is safe to sleep, use the GFP_KERNEL flag. If it is unsafe to sleep
+(typically, when in any type of atomic or interrupt context), you must use the GFP_ATOMIC flag.
+
+Following the preceding rule is critical. Getting this wrong can result in the entire machine freezing,
+kernel crashes, and/or random bad stuff happening. So, what exactly do the statements safe/unsafe
+to sleep really mean? For this and more, we defer to the The GFP flags – digging deeper section in this
+chapter, that follows. It is important though, so I definitely recommend you read it.
+
+                Linux Driver Verification (LDV) project: back in Online Chapter, Kernel Workspace Setup,
+                in the The LDV – Linux Driver Verification – project section, we mentioned that this project
+                has useful “rules” with respect to various programming aspects of Linux modules (drivers,
+                mostly) as well as the core kernel.
+
+                Regarding our current topic, here’s one of the rules, a negative one, implying that you cannot
+                do this: “Using a blocking memory allocation when spinlock is held” (http://linuxtesting.
+                org/ldv/online?action=show_rule&rule_id=0043). When holding a spinlock, you’re
+                not allowed to do anything that might block; this includes kernel-space memory allocations
+                with anything but GFP_ATOMIC. Thus, very important, you must use the GFP_ATOMIC flag
+                when performing a memory allocation in any kind of atomic or non-blocking context,
+                like when holding a spinlock (you will learn that this isn’t the case with the mutex lock;
+                you are allowed to perform blocking activities while holding a mutex). Violating this rule
+                leads to instability and even raises the possibility of (an implicit) deadlock. The LDV page
+                mentions a device driver that was violating this very rule and the subsequent fix (https://
+                git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=5
+                b0691508aa99d309101a49b4b084dc16b3d7019). Take a look: the patch clearly shows (in
+                the context of the kzalloc() API, which we shall soon cover) the GFP_KERNEL flag being
+                replaced with the GFP_ATOMIC flag.
+
+Another commonly used GFP flag is __GFP_ZERO. Its usage implies to the kernel that you want zeroed-out
+memory pages. It’s often bitwise-ORed with GFP_KERNEL or GFP_ATOMIC flags to return memory ini-
+tialized to zero (a good programming practice in general!).
+
+              The kernel developers have taken the trouble to document the GFP flags in detail. Look
+              up include/linux/gfp_types.h. Within it, there’s a long and detailed comment; it’s
+              headed DOC: Useful GFP flag combinations (on 6.1.25, here: https://elixir.bootlin.
+              com/linux/v6.1.25/source/include/linux/gfp_types.h#L263).
+
+For now, and so that we get off the ground quickly, just understand that using the Linux kernel’s memory
+allocation APIs with the GFP_KERNEL flag is indeed the common case for kernel-internal allocations.
+
+Freeing pages with the page allocator
+The flip side of allocating memory is freeing it, of course. We all understand the basic rule: free memory
+that you (dynamically) allocated, so as to prevent leakage. Memory leaks within the kernel are definitely
+not something you’d like to contribute to. For the page allocator APIs shown in Table 8.1, here are the
+corresponding free APIs:
+
+ API or macro name       Comment                                            API signature or macro
+                         Free the (single) page that was allocated
+                         via the __get_free_page(), get_zeroed_              #define free_page(addr)
+ free_page()
+                         page(), or alloc_page() APIs; it’s a simple        __free_pages((addr), 0)
+                         wrapper over the free_pages() API.
+                         Free multiple pages that were allocated
+                                                                            void free_pages(unsigned
+                         via the __get_free_pages() or alloc_
+ free_pages()                                                               long addr, unsigned int
+                         pages() APIs (it’s a wrapper over __free_
+                                                                            order)
+                         pages()).
+                         (Same as the preceding row, plus) it’s the
+                                                                             void __free_pages(struct
+                         underlying routine where the work gets
+__free_pages()                                                               page *page, unsigned int
+                         done; also, note that the first parameter is a
+                                                                             order)
+                         pointer to the page metadata structure.
+
+Table 8.2: Common free page(s) APIs to use with the page allocator
+
+You can see that the actual underlying API in the preceding functions is free_pages(), which itself
+is just a wrapper over the mm/page_alloc.c:__free_pages() code. The first parameter to the free_
+pages() API is the pointer to the start of the memory chunk being freed; this, of course, being the
+return value from the allocation routine. However, the first parameter to the underlying API, __free_
+pages(), is the pointer to the page metadata structure of the start of the memory chunk being freed.
+
+                Generally speaking, unless you really know what you are doing, you’re advised to invoke
+                the foo() wrapper routine and not its internal __foo() routine. One reason to do so is
+                simply correctness (perhaps the wrapper uses some necessary synchronization mecha-
+                nism – like a lock – prior to invoking the underlying routine). Another reason to do so
+                is validity checking (which helps code remain robust and secure). Often, the __foo()
+                routines bypass validity checks in favor of speed.
+
+Let’s now move on to some useful guidelines to follow when allocating or freeing memory within
+the kernel.
+
+A few guidelines to observe when (de)allocating kernel memory
+As all experienced C/C++ application developers know, allocating and subsequently freeing memory
+is a rich source of bugs! This is primarily because C is an unmanaged language, as far as memory is
+concerned; hence, you can quite easily hit all sorts of memory bugs. These include the well-known
+memory leakage, buffer overflows/underflows for both read/write, double-free, and Use After Free
+(UAF) bugs.
+
+Unfortunately, it’s no different in kernel space; it’s just that the consequences are (much) worse! Be
+extra careful! Please do take care to ensure the following:
+
+  •     Favor routines that initialize the just-allocated memory to zero.
+  •     Think about and use the appropriate GFP flag(s) when performing an allocation; more on this
+        in the The GFP flags – digging deeper section, but briefly, note the following:
+
+            •   When in process context where it’s safe to sleep, use GFP_KERNEL.
+            •   When in an atomic context, such as when processing a (hardware) interrupt or holding
+                a spinlock, use GFP_ATOMIC.
+
+  •     When using the page allocator (as we’re doing now), try as much as possible to keep the alloca-
+        tion size as a rounded power-of-2 pages (again, the rationale behind this and ways to mitigate
+        this – when you don’t require so much memory, the typical case – are covered in detail in the
+        coming sections of this chapter).
+  •     You only ever attempt to free memory that you allocated earlier; needless to say (but we’ll say
+        it!), don’t miss freeing it, don’t use the wrong pointer, and don’t double-free it.
+  •     Don’t attempt to access already-freed memory (this results in the UAF bug).
+  •     Keep the original memory chunk’s pointer safe from reuse, manipulation (ptr ++ or something
+        similar), and corruption, so that you can correctly free it when done.
+  •     Check (and recheck!) the parameters passed to APIs. Is a pointer to the previously allocated
+        block required, or rather a pointer to its underlying page structure?
+
+                  Finding it difficult and/or worried about issues in production? Don’t forget, you have help
+                  via the kernel’s (as well as third-party) static and dynamic analysis tooling! Make sure
+                  to learn how to use powerful static analysis tools found within the kernel (Coccinelle,
+                  sparse, and others, such as cppcheck or smatch). For dynamic analysis, learn how to
+                  install and use KASAN (the Kernel Address Sanitizer). The Linux Kernel Debugging book
+                  covers this and more...
+
+                  Also recall the ‘better’ Makefile template I provided in Chapter 5, Writing Your First Kernel
+                  Module – Part 2, in the A better Makefile template section. It contains targets that use several
+                  of these tools; please do use it!
+
+Alright, now that we’ve covered both the (common) allocation and free APIs of the page allocator, it’s
+time to put this learning to use. Let’s write some code!
+
+Writing a kernel module to demo using the page allocator APIs
+Let’s now get hands-on with the low-level page allocator and free APIs that we’ve learned about so far.
+In this section, we will show relevant code snippets (not every single line), followed by an explanation
+where warranted, from our demo kernel module (ch8/lowlevel_mem/lowlevel_mem.c).
+
+In the primary worker routine, bsa_alloc(), of our small LKM, we highlight some code comments
+that show what we are trying to achieve. A few points to note:
+
+   1.      First, we do something very interesting: we use our small kernel “library” function klib.c:show_
+           phy_pages() to literally show you how physical RAM page frames are identity mapped to ker-
+           nel virtual pages in the kernel lowmem region (The exact working of the show_phy_pages()
+           routine is discussed very shortly):
+              // ch8/lowlevel_mem/lowlevel_mem.c
+              [...]
+              static int bsa_alloc(void)
+              {
+                    int stat = -ENOMEM;
+                    u64 numpg2alloc = 0;
+                   const struct page *pg_ptr1;
+
+                  /* 0. Show the identity mapping: physical RAM page frames to kernel
+              virtual addresses, from PAGE_OFFSET for 5 pages */
+              pr_info("0. Show identity mapping: RAM page frames : kernel virtual pages
+              :: 1:1\n" "(PAGE_SIZE = %ld bytes)\n", PAGE_SIZE);
+                  /* Show the virt, phy addr and PFNs (page frame numbers). ... */
+                   show_phy_pages((void *)PAGE_OFFSET, 5 * PAGE_SIZE, 1);
+
+      2.   Second, we allocate one page of memory via the underlying __get_free_page() page allocator
+           API (that we saw previously in Table 8.1):
+
+              /* 1. Allocate one page with the __get_free_page() API */
+              gptr1 = (void *)__get_free_page(GFP_KERNEL);
+              if (!gptr1) {
+                     pr_warn("__get_free_page() failed!\n");
+                     /* As per convention, we emit a printk above saying that the
+                      * allocation failed. In practice it isn't required; the kernel
+                      * will definitely emit many warning printk's if a memory alloc
+                      * request ever fails! Thus, we do this only once (here; could
+                      * also use the WARN_ONCE()); from now on we don't pedantically
+                      * print any error message on a memory allocation request
+                      * failing. */
+                     goto out1;
+              }
+              pr_info("#.       BSA/PA API         Amt alloc'ed              KVA\n"); // header
+              pr_info("1.     __get_free_page()           1 page      %px\n", gptr1);
+
+        We emit a couple of printk functions here, showing a header line and then showing the de-
+        tails of a particular allocation made (KVA, of course, is Kernel Virtual Address). Recall from
+        the previous chapter that the KVAs seen are page allocator memory that lies very much in the
+        direct-mapped RAM or lowmem region of the kernel segment/VAS.
+
+        Now, for security, we should consistently, and only, use the %pK format specifier when printing
+        kernel addresses so that a hashed value and not the real virtual address shows up in the kernel
+        logs. However, here, in order to show you the actual KVA, we simply use the %px format spec-
+        ifier (which, like %pK, is portable as well; for security, please don’t use the %px format specifier
+        in production!).
+
+        Next, notice the detailed comment in the error code path of the first __get_free_page() API
+        (in the preceding code snippet). It mentions the fact that you don’t really have to print an
+        out-of-memory error or warning messages. (Curious? To find out why, visit https://lkml.
+        org/lkml/2014/6/10/382.)
+
+        In this example module (as with several earlier ones and more to follow), we code our printk
+        (or pr_<foo>() macro) instances for portability by using appropriate printk format specifiers
+        (such as %zd, %zu, %pK, %px, and %pa).
+
+   3.   Now, let’s move on to our second memory allocation using the page allocator; see the following
+        code snippet:
+            /*2. Allocate 2^bsa_alloc_order pages with the __get_free_pages() API */
+            numpg2alloc = powerof(2, bsa_alloc_order); /* returns 2^bsa_alloc_order
+            */
+            gptr2 = (void *)__get_free_pages(GFP_KERNEL|__GFP_ZERO, bsa_alloc_order);
+            if (!gptr2) {
+                  /* no error/warning printk now; see above comment */
+
+                 goto out2;
+         }
+         pr_info("2. __get_free_pages()           2^%d page(s)      %px\n",
+                   bsa_alloc_order, gptr2);
+
+      In the preceding code snippet, we allocate 23 – that is, 8 – pages of memory via the page alloca-
+      tor’s __get_free_pages() API (as the default value of our module parameter, bsa_alloc_order,
+      is 3).
+
+                     An aside: notice that we use the GFP_KERNEL|__GFP_ZERO GFP flags to ensure
+                     that the allocated memory is zeroed out, a best practice. Then again, zeroing out
+                     large memory chunks can result in a slight performance hit.
+
+      Now, we ask ourselves the question: is there a way to verify that the memory is physically con-
+      tiguous (as promised)? It turns out that yes, we can actually retrieve and print out the physical
+      address of the start of each allocated page frame and retrieve its Page Frame Number (PFN)
+      as well.
+
+                     The PFN is a simple concept: it’s just the index or page number – for example,
+                     the PFN of physical address 8192 is 2 (8192/4096). As we showed previously how
+                     to (and importantly, when you can) translate kernel virtual addresses to their
+                     physical counterparts earlier (and vice versa; this coverage is in Chapter 7, Memory
+                     Management Internals – Essentials, in the Direct-mapped RAM and address translation
+                     section), we won’t repeat it here.
+
+      To do this work of translating virtual addresses to physical addresses and checking for conti-
+      guity, we write a small “library” function, which is kept in a separate C file in the root of this
+      book’s GitHub source tree, klib.c. Our intent is to modify our kernel module’s Makefile to
+      link in the code of this library file as well! (Doing this properly was covered back in Chapter 5,
+      Writing Your First Kernel Module – Part 2, in the Performing library emulation via multiple source
+      files section.) Here’s our invocation of our library routine ( just as was done in the beginning
+      portion of our bsa_alloc() function):
+         show_phy_pages(gptr2, numpg2alloc * PAGE_SIZE, 1);
+
+      The following is the code of our library routine (in the <booksrc>/klib.c source file; again,
+      for clarity, we won’t show the entire code here):
+         // klib.c
+         [...]
+         int loops = len/PAGE_SIZE, i;
+         /* show_phy_pages() - show the virtual, physical addresses and PFNs of
+         the memory range provided on a per-page basis.
+          * ! NOTE      NOTE     NOTE !
+
+             * The starting kernel address MUST be a 'linear' address, i.e., an
+            adrress within the 'lowmem' direct-mapped region of the kernel segment,
+            else this will NOT work and can possibly crash the system.
+             * @kaddr: the starting kernel virtual address
+             * @len: length of the memory piece (bytes)
+             * @contiguity_check: if True, check for physical contiguity of pages
+             * 'Walk' the virtually contiguous 'array' of pages one by one (that is,
+            page by page), printing the virt and physical address (and PFN- page
+            frame number). This way, we can see if the memory really is *physically*
+            contiguous or not.
+             */
+            void show_phy_pages(const void *kaddr, size_t len, bool contiguity_check)
+            {
+                  [...]
+                  if (len % PAGE_SIZE)
+                      loops++;
+                  for (i = 0; i < loops; i++) {
+                      pa = virt_to_phys(vaddr+(i*PAGE_SIZE));
+                      pfn = PHYS_PFN(pa);
+
+                      if (!!contiguity_check) {
+                      /* what's with the 'if !!(<cond>) ...' ??
+                       * a 'C' trick: ensures that the if condition always
+                       * evaluates to a boolean - either 0 or 1. Cool, huh. */
+                          if (i && pfn != prev_pfn + 1)
+                           pr_notice(" *** physical NON-contiguity detected ***\n");
+                      }
+                      [...]
+                      pr_info("%05d 0x%px %pa %ld\n", i, vaddr+(i*PAGE_SIZE), &pa,
+            pfn);
+                      if (!!contiguity_check)
+                          prev_pfn = pfn;
+                  }
+            }
+
+        Study the preceding function. We walk through our given memory range, (virtual) page by (vir-
+        tual) page, obtaining the physical address and PFN, which we then emit via printk (notice how
+        we use the %pa format specifier to portably print a physical address – it requires it to be passed
+        by reference though). Not only that, if the third parameter to our klib.c:show_phy_pages()
+        function, contiguity_check, is 1, we check whether the PFNs are just a single digit apart,
+        thus checking that the pages are indeed physically contiguous or not. (By the way, the simple
+        powerof() function that we make use of is also within our library code).
+
+      4.   Now, let’s continue with the kernel module code:
+              /* 3. Allocate and init one page with the get_zeroed_page() API */
+              gptr3 = (void *)get_zeroed_page(GFP_KERNEL);
+              if (!gptr3)
+                       goto out3;
+              [...]
+              pr_info("3.     get_zeroed_page()       1 page         %px\n", gptr3);
+
+           As seen in the preceding snippet, we allocate a single page of memory but ensure it is zeroed
+           out by employing the PA get_zeroed_page() API. pr_info() shows the actual KVAs (using
+           either the %px or %pK format specifiers has the addresses printed in a port-able fashion as well,
+           irrespective of whether you’re running a 32- or 64-bit system).
+
+      5.   Next, we allocate one page with the alloc_page() API. Careful here! It does not return the
+           pointer to the allocated page, but rather the pointer to the metadata structure page representing
+           the allocated page; here’s the function signature: struct page * alloc_page(gfp_mask). Thus,
+           we must use the page_address() helper to convert it into a kernel logical (or virtual) address:
+              /* 4. Allocate one page with the alloc_page() API. */
+              pg_ptr1 = alloc_page(GFP_KERNEL);
+              if (!pg_ptr1)
+                    goto out4;
+              gptr4 = page_address(pg_ptr1);
+              pr_info("4.            alloc_page()     1 page         %px\n"
+                        " (struct page addr = %px)\n", (void *)gptr4, pg_ptr1);
+
+           In the preceding code snippet, we allocate one page of memory via the alloc_page() PA API.
+           As explained, we need to convert the page metadata structure returned by it into a KVA (or
+           kernel logical address) via the page_address() API.
+
+      6.   Next, allocate 2^3 = 8 pages with the alloc_pages() API. The same warning as the preceding
+           code snippet applies here too:
+              /* 5. Allocate 2^3 = 8 pages with the alloc_pages() API. */
+              gptr5 = page_address(alloc_pages(GFP_KERNEL, 3));
+              if (!gptr5)
+                    goto out5;
+              pr_info("5.           alloc_pages()    %lld pages         %px\n",
+                        powerof(2, 5), (void *)gptr5);
+
+        In the preceding code snippet, we combine alloc_pages() wrapped within the page_address()
+        API to allocate 2^3 = 8 pages of memory!
+
+        Interestingly, we use several local goto statements in the code (have a glance at the code in
+        the repo). Looking carefully at it, you will notice that it actually keeps the error handling code
+        paths clean and logical! This is indeed part of the Linux kernel coding style guidelines.
+
+                      Usage of the (often pedantically controversial) goto statement in Linux is doc-
+                      umented clearly right here: https://elixir.bootlin.com/linux/v6.1.25/
+                      source/Documentation/process/coding-style.rst#L526. I urge you to check
+                      it out! Once you understand the usage pattern, you’ll find that it helps reduce the
+                      all-too-typical memory leakage (and similar) cleanup errors!
+
+   7.   Finally, in the cleanup method, prior to being removed from kernel memory, we free up all
+        the memory chunks we just allocated in the cleanup code of the kernel module.
+   8.   In order to link our library klib code with our lowlevel_mem_lkm kernel module, the Makefile
+        changes to have the following (recall that we learned about compiling multiple source files into
+        a single kernel module in Chapter 5, Writing Your First Kernel Module – Part 2, in the Performing
+        library emulation via multiple source files section):
+            FNAME_C := lowlevel_mem
+            [ ... ]
+            PWD               := $(shell pwd)
+            obj-m             += ${FNAME_C}_lkm.o
+            lowlevel_mem_lkm-objs := ${FNAME_C}.o ../../klib.o
+
+Phew! That was a fair bit to cover. Do ensure you understand the code, and then read on to see it in
+action.
+
+Deploying our lowlevel_mem_lkm kernel module
+Okay, time to see our ch8/lowlevel_mem kernel module in action! Let’s build and deploy it on both a
+Raspberry Pi 4 (running the default Raspberry Pi OS built for 32-bit) and on an x86_64 VM (running
+Ubuntu 22.04 LTS).
+
+Trying it out on a 32-bit Raspberry Pi
+On the Raspberry Pi 4 Model B (here, running a stock Raspberry Pi 32-bit kernel version 5.15.76-v7l+),
+we build and then insmod our lowlevel_mem_lkm kernel module (this portion isn’t seen in Figure 8.5).
+We then do an lsmod followed by removing (unloading) it with rmmod, and then showing the kernel
+log via dmesg.
+
+The following screenshot shows the output:
+
+Figure 8.5: The lowlevel_mem_lkm kernel module’s output on a Raspberry Pi 4 Model B
+
+Check it out! In step 0 of the output in Figure 8.5 our show_phy_pages() ‘library’ routine clearly shows
+that KVA 0xc000 0000 has pa (physical address) 0x0, KVA 0xc000 1000 has pa 0x1000, and so on, for
+five pages (along with the PFN on the extreme right); you can literally see the 1:1 identity mapping
+of physical RAM page frames to kernel virtual pages (in the lowmem region of the kernel segment)!
+
+Next, after showing a header line, the initial memory allocation with the __get_free_page() API goes
+through as expected. More interesting is our case 2. Here (middle-to-lower portion of Figure 8.5), we
+can clearly see that the physical address and PFN of each allocated page (from 0 to 7, for a total of
+8 pages, via the __get_free_pages() API, our point #3 in the code narrative) is consecutive, (again)
+showing that the memory pages allocated are indeed physically contiguous!
+
+Trying it out on an x86_64 VM
+We build and run the same module on an x86_64 VM running Ubuntu 22.04 LTS (running a custom
+6.1 kernel). The following screenshot shows the output:
+
+Figure 8.6: The lowlevel_mem_lkm kernel module’s output on a x86_64 VM running Ubuntu 22.04 LTS
+
+This time, with the PAGE_OFFSET value being a 64-bit quantity (the value here happens to be
+0xffff934cc0000000; realize it can certainly change due to KASLR!), you can again clearly see the
+identity mapping of physical RAM frames to kernel virtual addresses (for 5 pages). Let’s take a moment
+and look carefully at the kernel logical addresses returned by the page allocator APIs. In this particular
+case, in Figure 8.6, you can see that they are all in the range 0xffff 934c c000 xxxx. All these very
+much fall within the kernel’s direct-mapped physical memory (RAM is mapped here into the kernel
+segment), aka the lowmem region.
+
+               If all this seems new and strange to you, please refer to Chapter 7, Memory Management
+               Internals – Essentials, particularly the Examining the kernel segment and Direct-mapped RAM
+               and address translation sections.
+
+The reality is that the page allocator memory (in effect the buddy system free lists) directly maps the
+(free) physical RAM within the direct-mapped or lowmem region of the kernel VAS. Thus, it obviously
+returns memory from this region. The specific address range used is of course very arch-specific.
+
+Though it is tempting to claim that you’re now done with the page allocator and its APIs, the reality
+is that this is (as usual) not quite the case. Do read on to see why – it’s really important to understand
+these aspects.
+
+The page allocator and internal fragmentation (wastage)
+Though all looks good and innocent on the surface, I urge you to delve a bit deeper. Just under the
+surface, a massive (unpleasant!) surprise might await you: the blissfully unaware kernel/driver de-
+veloper. The APIs we covered previously regarding the page allocator (see Table 8.1) have the dubious
+distinction of being able to internally fragment – in simpler terms, waste – very significant portions
+of kernel memory!
+
+To understand why this is the case, you must understand at least the basics of the page allocator algo-
+rithm and its freelist data structures. The section titled The fundamental workings of the page allocator
+covered this ( just in case you haven’t read it, please do so).
+
+In the Working through a few scenarios section, you have seen that when we make an allocation request of
+convenient, perfectly rounded powers-of-two-size pages (note, pages, not bytes), it goes very smoothly.
+However, when this isn’t the case – let’s say the driver requests 132 KB of memory – then we end up
+with a major issue: the internal fragmentation or wastage is very high (as seen, this by default results
+in an allocation of 256 KB, thus incurring a wastage of 256 - 132 = 124 KB). This is a serious downside
+and must be addressed. We will see how, in two ways, in fact. Do read on!
+
+The ‘exact’ page allocator API pair
+Realizing the vast potential for memory wastage within the default page allocator (or BSA), a devel-
+oper from Freescale Semiconductor (see the information box) contributed a patch to the kernel page
+allocator that extends the PA API, adding a couple of new ones.
+
+               In the 2.6.27-rc1 series, on 24 July 2008, Timur Tabi submitted a patch to mitigate
+               the page allocator wastage issue. Here’s the relevant commit: https://github.com/
+               torvalds/linux/commit/2be0ffe2b29bd31d3debd0877797892ff2d91f4c.
+
+Using these APIs leads to more efficient allocations for large-ish chunks (multiple pages) of memory
+with far less wastage. The new (well, it was new back in 2008, at least) pair of APIs to allocate and
+free memory are as follows:
+      #include <linux/gfp.h>
+      void *alloc_pages_exact(size_t size, gfp_t gfp_mask);
+      void free_pages_exact(void *virt, size_t size);
+
+The first parameter to the alloc_pages_exact() API, size, is in bytes: obviously, it’s the number of
+bytes to allocate; the second is the “usual” GFP flags value discussed earlier (in the Dealing with the
+GFP flags section; GFP_KERNEL for the typical might-sleep process context cases, and GFP_ATOMIC for
+the can’t-sleep interrupt or atomic context cases).
+
+Note that the memory allocated by this API is still guaranteed to be physically contiguous. Also, the
+amount that can be allocated at a time (with one function call) is limited by MAX_ORDER; in fact, this is
+true of all the other regular page allocation APIs that we have seen so far. We will discuss a lot more
+about this aspect in the upcoming Size limitations of the kmalloc API section. There, you’ll realize that
+the discussion is in fact not limited to the slab cache but to the page allocator as well!
+
+The free_pages_exact() API must only be used to free memory allocated by its counterpart, alloc_
+pages_exact(). Also, note that the first parameter to the “free” routine is the value returned by the
+matching alloc routine (the pointer to the allocated memory chunk).
+
+The implementation of alloc_pages_exact() is simple and clever: it first allocates the entire memory
+chunk requested “as usual” via the __get_free_pages() API. Then, it loops over pages – from the end
+of the memory region specified (from the nearest page boundary) for use to the amount of actually
+allocated memory (which is typically far greater) – freeing up those unnecessary memory pages! So,
+in our example, if you allocate 132 KB via the alloc_pages_exact() API, it will actually first internally
+allocate 256 KB via __get_free_pages() (because it must; that’s the algorithm), but will then free up
+the unused memory from 132 KB to 256 KB!
+
+Another example of the beauty of open source! A demo of using these APIs can be found in the module
+code here: ch8/page_exact_loop; we will leave it to you to try it out.
+
+Before we began this section, we mentioned that there were two ways in which the wastage issue
+of the page allocator can be addressed. One is by using (more efficient than the other PA APIs) the
+alloc_pages_exact() and free_pages_exact() API pair, as we just learned; the other – in fact, the
+common approach – is by using a different layer altogether to allocate memory – the slab allocator.
+We will soon cover it; until then, hang in there. Next, let’s cover more details, crucial to understand,
+on the (typical) GFP flags and how you, the kernel module or driver author, are expected to use them.
+
+The GFP flags – digging deeper
+With regard to our discussions on the low-level page allocator APIs, the first parameter to every func-
+tion is the so-called GFP mask. When discussing the APIs and their usage, we mentioned a key rule.
+
+If your kernel/driver code is running in process context and it is safe to sleep, use the GFP_KERNEL flag.
+If it is currently unsafe to sleep (typically, when in any type of atomic, including interrupt, context, or
+when holding a spinlock), you must use the GFP_ATOMIC flag.
+
+We will elaborate on this in the following sections.
+
+Never sleep in interrupt or atomic contexts
+ Just what does the phrase safe to sleep actually mean? To answer this, think of blocking calls (APIs): a
+ blocking call is one where the calling process (or thread) is put into a sleep state because it is waiting
+ on something, an event, to occur and the event it’s waiting on hasn’t occurred yet. Thus, it waits – it
+“sleeps”. When, at some future point in time, the event it is waiting on occurs or arrives, it is woken up
+ by the kernel (or device driver) and proceeds forward.
+
+One example of a user-space blocking API includes the sleep() C library API. Say you do this: sleep(5);.
+Here, the event being waited upon is the elapse of a certain amount of time (the parameter to the
+function, in seconds). So, the process context that called this function goes to sleep, and is woken
+up once the event occurs – the elapse of 5 seconds of time! Another example is the read() system
+call and its variants, where the event being waited on is (typically) storage or network data becoming
+available. With the wait4() system call, the event being waited on is the death or stoppage/continuing
+of a child process, and so on.
+
+So, any function that might possibly block can end up spending some time asleep; note that while
+asleep, it’s certainly off the CPU run queues, and in a wait queue; in effect, while sleeping, it isn’t
+even a candidate to be scheduled! Invoking this possibly blocking functionality when in kernel mode
+(which, of course, is the mode we are in when working on kernel modules) is only allowed when in
+process context and, within this, when it’s safe to sleep (holding certain locks, like a spinlock, makes it
+unsafe to sleep, whereas holding a mutex lock implies it’s okay to sleep or block). It is a bug to invoke
+a blocking call of any sort in a context where it is unsafe to sleep, such as when in an interrupt or
+atomic context. Think of this as a golden rule. Violating this, that is, sleeping in an atomic context – is
+wrong, is buggy, and must never happen.
+
+               You might wonder, how can I know in advance whether my code is running in an atomic (or
+               interrupt) or in process context? In one way, the kernel helps us out: when configuring the
+               kernel (recall make menuconfig from Chapter 2, Building the 6.x Linux Kernel from Source
+              – Part 1), under the Kernel Hacking / Lock Debugging menu, there is a Boolean tunable
+               called "Sleep inside atomic section checking". Turn it on! (The config option is
+               named CONFIG_DEBUG_ATOMIC_SLEEP; you can always grep your kernel config file for
+               it. Again, in Chapter 5, Writing Your First Kernel Module – Part 2, under the Configuring a
+              “debug” kernel section, this is something you should definitely turn on). Furthermore, we
+               shall come to a few macros (like in_task()) that allow you to figure out whether you’re
+               executing code in process context or not.
+
+Another way to think of this situation is by considering this: how exactly do you put a process or thread
+to sleep? The short answer is, by having it invoke the scheduling code – the schedule() function. Thus,
+by implication of what we have just learned (as a corollary), schedule() must only be called from
+within a context where it’s safe to sleep; process context usually is safe, interrupt context never is (a
+lot of detail on CPU scheduling is the content of both Chapter 10 and Chapter 11).
+
+This is really important to keep in mind! (We briefly covered what process and interrupt context are in
+Chapter 4, Writing Your First Kernel Module – Part 1, in the Process and interrupt contexts section. More-
+over, as covered there, you can always employ the in_task() macro to determine whether the code
+is currently running in a process or interrupt context). Similarly, you can use the in_atomic() macro;
+if the code is an atomic context – where it must typically run to completion without interruption – it
+returns True; otherwise, False. Note well: you can be in process context but be atomic at the same
+time – for example, when holding certain kinds of locks (spinlocks; we will, of course, cover this in
+the final two chapters on synchronization); the converse cannot happen (i.e., in interrupt context, the
+code is always atomic).
+
+A quick note on other internal-usage GFP flags
+ Besides the GFP flags we, as module/driver authors, are focused upon – the GFP_KERNEL and GFP_ATOMIC
+ ones – the kernel has several other rather exotic [__]GFP_* flags that are used internally; several are for
+ the express purpose of reclaiming memory. These include (but are not limited to) __GFP_IO, __GFP_FS,
+__GFP_DIRECT_RECLAIM, __GFP_KSWAPD_RECLAIM, __GFP_RECLAIM, and __GFP_NORETRY.
+
+Internally, the kernel uses these GFP flags to specify precisely the kind of expected internal behav-
+ior when performing a memory allocation. To help make this clear, consider the following (typical)
+examples.
+
+If memory runs short, the kernel can free up some memory by first writing it to persistent storage (into,
+typically, the swap partition or file), marking its location in swap, and then freeing it. Now, let’s say
+a filesystem component makes a memory request; as RAM is in short supply, the kernel tries to free
+some memory by asking to write out some ‘older’ memory pages (possibly using a Least Frequently
+Used (LFU) algorithm). But, consider this: what if the same filesystem code paths are involved in
+writing out these memory pages and those code paths require a memory allocation just then? This
+could result in twisted recursive behavior, and even in deadlock! Thus, the kernel, when performing a
+memory allocation, in this case, does not use a GFP flag named __GFP_IO that specifies whether, while
+performing the allocation, physical I/O can be started (or not). Similarly, there’s a flag named __GFP_FS
+specifying whether or not the kernel’s able to call down to the low-level filesystem code paths. The
+GFP_NOWAIT flag specifies semantics that tell the kernel not to wait for direct memory reclamation,
+not to start physical I/O, and not to use any low-level filesystem callbacks.
+
+When the kernel is in a situation where the code path must remain atomic (it can’t sleep or block in
+any manner) and the allocation must succeed or fail immediately (preferably the former), the GFP_
+ATOMIC flag’s the ticket. This, of course, is the case with atomic code paths, like any kind of interrupt
+context or when holding a spinlock (note, though, that even this isn’t considered okay for handling
+Non-Maskable Interrupts (NMIs)).
+
+Viewing the flags mentioned at the code level: include/linux/gfp_types.h
+    #define GFP_ATOMIC       (__GFP_HIGH|__GFP_ATOMIC|__GFP_KSWAPD_RECLAIM)
+    #define GFP_KERNEL       (__GFP_RECLAIM | __GFP_IO | __GFP_FS)
+
+So, with the GFP_KERNEL flag, we can now see that the alloc API can actively reclaim memory, and
+start physical and/or filesystem I/O, thus increasing the chances of obtaining the requested memory.
+
+As already mentioned, the gfp_types.h header has detailed comments on the meaning of each of
+these flags; do look it up.
+
+             A quick aside on the Linux Driver Verification (LDV) project: back in Online Chapter, Kernel
+             Workspace Setup, we mentioned that this project has useful “rules” with respect to various
+             programming aspects of Linux modules (drivers, mostly) as well as the core kernel.
+
+             With regard to our current topic, here’s one of the rules, a negative one, implying that you
+             cannot do this: Not disabling IO during memory allocation while holding a USB device lock
+             (http://linuxtesting.org/ldv/online?action=show_rule&rule_id=0077). Some
+             quick background: when you specify the GFP_KERNEL flag, it implicitly means (among
+             other things) that the kernel can start an I/O (input/output; reads/writes) operation to
+             reclaim memory. The trouble is, at times this can be problematic and should not be done;
+             to get over this, you’re expected use the GFP_NOIO flag as part of the GFP bitmask when
+             allocating kernel memory.
+
+             That’s precisely the case that this LDV ‘rule’ is referring to: in the particular situation
+             encountered, between the usb_lock_device() and usb_unlock_device() APIs, the
+             GFP_KERNEL flag shouldn’t be used and the GFP_NOIO flag should be used instead. (You can
+             see several instances of this flag being used in this code: drivers/usb/core/message.c.)
+             The LDV page mentions the fact that a couple of USB-related driver source files were fixed
+             to adhere to this rule.
+
+Page allocator – pros and cons
+Let’s conclude this section on the page allocator/BSA by quickly summarizing its pros and cons.
+
+Page allocator/BSA – pros:
+
+  •    It’s fast; uses the kernel’s identity-mapped RAM (obtained and mapped at boot); pages are in
+       the lowmem region and thus pre-mapped; no page table setup is required.
+  •    Guarantees memory chunks that are physically contiguous and CPU cacheline-aligned.
+  •    Actually helps to defragment RAM by merging ‘buddy’ blocks (a buddy block is a block that’s
+       of the same size and physically contiguous).
+
+Page allocator/BSA – cons:
+
+  •    Primary issue: internal fragmentation or wastage can be (too) high.
+  •    The granularity of an allocation request is a page; so (assuming 4K pages), asking for 128 bytes
+       gets you 4,096 (this is mitigated in many cases by using the superior alloc_pages_exact()/
+       free_pages_exact() API pair (but not in this case!).
+  •    There is an upper limit to how much can be allocated with a single API call; practically, as-
+       suming MAX_ORDER=11 and page size of 4K, it’s 4 MB.
+
+Alright, now that you’re armed with a good amount of detail on the page allocator (it is, after all, the
+internal “engine” of RAM (de)allocation!), its APIs, and how to use them, let’s move on to a very im-
+portant topic – the motivation(s) behind the slab allocator, its APIs, and how to use them.
+
+Understanding and using the kernel slab allocator
+As seen in the first section of this chapter, Introducing kernel memory allocators, the slab allocator or slab
+cache is layered above the page allocator (or BSA; refer back to Figure 8.1). The slab allocator justifies
+its very existence with two primary ideas or purposes:
+
+  •     Object caching: Here, it serves as a cache of common “objects”; these are the frequently allo-
+        cated data structures within the Linux kernel. This idea – which we’ll of course expand upon
+       – has the slab cache allocate (and subsequently freeing) these objects on demand, resulting in
+        higher performance.
+  •     Mitigate the high wastage (internal fragmentation) of the page allocator by providing small,
+        conveniently sized caches, of various sizes that are typically fragments of a page.
+
+Let’s now examine these ideas in a more detailed manner.
+
+The object caching idea
+Okay, we begin with the first of these design ideas – the notion of a cache of common objects. A long
+time ago, a SunOS developer, Jeff Bonwick, noticed that certain kernel objects – data structures, typi-
+cally – were allocated and deallocated frequently within the OS. He thus had the idea of pre-allocating
+them in a cache of sorts. This evolved into what we call the slab cache.
+
+Thus, on the Linux OS as well, the kernel (as part of boot time initialization) pre-allocates a fairly
+large number of objects into several slab caches. The reason: performance! When core kernel code
+(or a device driver) requires memory for one of these objects, it directly requests the slab allocator.
+If cached, the allocation is almost immediate (the converse being true as well, at deallocation). You
+might wonder, is all this really necessary? Indeed, it is!
+
+A good example of high performance being required is within the critical code paths of the network
+and block I/O subsystems. Precisely for this reason, several network and block I/O data structures (the
+network stack’s socket buffer, sk_buff, the block layer’s biovec, and, of course, the core task_struct
+data structures or objects, being a few good examples) are auto-cached (pre-allocated) by the kernel
+within the slab caches. Similarly, filesystem metadata structures (such as the inode and dentry struc-
+tures, and so on), the memory descriptor (struct mm_struct), and several more are pre-allocated on
+slab caches. Can we see these cached objects? Yes, just a bit further down, we will do precisely this
+(via /proc/slabinfo).
+
+The other reason that the slab (or, more correctly now, the SLUB) allocator has far superior perfor-
+mance is simply that when traditional heap-based allocators allocate and deallocate memory often,
+they end up creating “holes” in memory (fragmentation). Because the slab objects are allocated once
+(at boot) into the caches, and freed back there (thus not really “freed up”), performance remains high.
+Of course, the modern kernel has the intelligence to, in a graceful manner, start freeing up the slab
+caches when memory pressure – the demand for precious RAM – gets too high.
+
+                  Again, there are typically gaps between theory and practice; at times, when RAM runs
+                  very low, the kernel responds in a rather heavy-handed fashion, bringing in its heavy gun
+                 – the Out-Of-Memory (OOM) killer! (Worry not, we discuss it in depth in Chapter 9, Kernel
+                  Memory Allocation for Module Authors – Part 2, in the Stayin’ alive – the OOM killer section).
+                  Let’s be patient, and leave that discussion until then.
+
+The current state of the slab caches – the object caches, the number of objects in a cache, the number
+in use, the size of each object, and so on – can be looked up in several ways: raw views via the proc and
+sysfs filesystems, or a more human-readable view via various frontend utilities, such as smem, vmstat,
+slabtop (along with the eBPF slabratetop), and (the kernel-supplied app) slabinfo.
+
+A few FAQs regarding (slab) memory usage and their answers
+To help understand things, the typical FAQ format can prove useful. Before jumping into it, a quick
+note on how to use the powerful slabinfo utility: within your kernel source tree, simply switch to the
+tools/vm directory, and type make; the slabinfo utility (along with others) will get built. Running it
+requires root access. Once it’s built, for convenience, I usually create a soft link to slabinfo within a
+directory that’s in the default PATH (with something like this):
+      sudo ln –s <path/to/>linux-6.1.25/tools/vm/slabinfo /sbin
+
+What slab caches are currently in use by the kernel?
+Running sudo vmstat –m reveals all of them; try it (note that some caches can be empty).
+
+The following is some example output:
+      $ sudo vmstat -m | grep -C3 task_struct
+      files_cache                         644       644      704       23
+      signal_cache                       1165     1484     1152        28
+      sighand_cache                       750       825    2112        15
+      task_struct                        2210     2356     6592          4
+      cred_jar                           4770     6111       192       21
+      anon_vma_chain                  147015 153792           64       64
+      anon_vma                          98484 101517         104       39
+      $
+
+(Spot the task structure in the output!) The man page on vmstat reveals the precise meaning of each
+column (from left to right):
+      FIELD DESCRIPTION FOR SLAB MODE
+             cache: Cache name
+             num: Number of currently active objects
+             total: Total number of available objects
+             size: Size of each object            (bytes)
+             pages: Number of pages with at least one active object
+
+How can I see the overall system-wide memory usage?
+There are several ways; one is via the smem utility:
+   $ smem --kernel /home/c2kp/kernels/linux-6.1.25/vmlinux -wk --realmem=3G
+   Area                                    Used           Cache    Noncache
+   firmware/hardware                    47.6M                 0       47.6M
+   kernel image                         37.4M                 0       37.4M
+   kernel dynamic memory                   1.2G           1.1G      156.1M
+   userspace memory                        1.0G          378.6M      649.6M
+   free memory                         684.3M            684.3M            0
+
+Running smem with --kernel (give the path to the uncompressed vmlinux image; this is why we’re
+using our x86_64 VM with our custom 6.1 kernel – we know where the vmlinux file is), –w (show
+whole system), –k (show abbreviated units), and --realmem (specifies the actual amount of RAM on
+the system) reveal this.
+
+Here, we can see that within ‘kernel dynamic memory’ (highlighted), 1.1 GB of 1.2 GB being used is
+cached! For what?
+
+A major user of cache memory (which is simply page frames, RAM) is the kernel’s page cache; it’s essen-
+tially RAM that the kernel uses to cache every single piece of filesystem I/O (a bit more on this follows
+shortly). The free utility shows the approximate cache usage as 1.5 GB here (the column named buff/
+cache); of this, most is indeed taken up by the kernel page cache:
+
+   $ free -h
+                   total           used                free       shared   buff/cache     available
+   Mem:            2.9Gi          796Mi               693Mi        7.0Mi       1.5Gi           2.0Gi
+   Swap:           8.9Gi              0B              8.9Gi
+
+Don’t confuse the system’s page cache usage with that of slab caches... page cache memory usage is
+typically much higher, accounting for significant amounts of RAM. What about the amount taken by
+the kernel’s slab caches?
+
+How much RAM exactly is taken up by the slab caches?
+The slabinfo utility can easily answer this FAQ; we run it with the –T (totals) option switch:
+   $ sudo ./slabinfo -T |grep -A3 "^% PartObj"
+   % PartObj            4%                    0%                    54%                   4%
+   Memory             1.2M                  4.0K                  31.0M            144.7M
+   Used               1.1M                  4.0K                  30.2M            138.5M
+   Loss             52.0K                         0                1.2M                 6.1M
+
+Here, a total of almost 145 MB of RAM is being currently used by the slab caches, of which 138.5 MB
+is in active use (see the row entitled Used) and 6.1 MB is ‘lost’, in effect, wasted (see the row entitled
+Loss); more on this follows.
+
+Another common way to look this up:
+      $ grep "^Slab" /proc/meminfo
+      Slab:               148172 kB
+
+As an important aside, learning to use and interpret the myriad slabinfo options (as well as the
+slab[rate]top utilities) can in general be very helpful when learning and/or debugging user and
+kernel memory issues. My earlier book, Linux Kernel Debugging, covers these topics in more detail.
+As a sample, the next FAQ is from there.
+
+Of the many slab caches that are currently allocated (and have some data
+content), which takes up the most kernel memory?
+This is easily answered, again, by the slabinfo utility: one way is to run it with the -B switch, to display
+the space taken in bytes, allowing you to easily sort on this column. Even simpler, the -S option switch
+has slabinfo sort the slab caches by size (largest first) with nice, human-readable size units displayed.
+
+As is now hopefully apparent, significant amounts of memory (RAM) can be used by caches main-
+tained by the kernel (among them are the page cache, dcache, icache, slab caches, and so on)! This, in
+fact, is a common feature on Linux that puzzles those new to it: the kernel can and will use RAM for
+caching, thus greatly improving performance. It is, of course, designed to intelligently throttle down
+the amount of memory used for caching as memory pressure increases. As mentioned, a significant
+percentage of memory can go toward caching (especially the page cache; it’s used to cache the content
+of files as I/O is performed upon them). This is fine, as long as memory pressure is low.
+
+               Look up /proc/meminfo for fine-granularity detail on system memory usage; the fields
+               displayed are numerous. The man page on proc(5) describes them under the /proc/
+               meminfo section.
+
+Now that you understand the motivation behind the slab allocator (there’s more on this too), let’s
+dive into learning how to use the APIs it exposes for both the core kernel and module/driver authors.
+
+Learning how to use the slab allocator APIs
+You may have noticed that, so far, we haven’t explained the second “design idea” behind the slab allo-
+cator (or slab cache), namely, mitigate the high wastage (internal fragmentation) of the page allocator
+by providing small, conveniently sized caches, typically, fragments of a page. We will soon see what
+exactly this means in a practical fashion, along with the kernel slab allocator APIs.
+
+Allocating slab memory
+Though several APIs to perform memory allocation and freeing exist within the slab layer, there are
+just a couple of really key ones, with the rest falling into a “convenience or helper” functions category
+(which we will of course mention later). The key slab allocation APIs for the kernel module or device
+driver author are kmalloc() and kzalloc() (the latter being preferred, as will soon be explained);
+their signatures are as follows:
+
+   #include <linux/slab.h>
+   void *kmalloc(size_t size, gfp_t flags);
+   void *kzalloc(size_t size, gfp_t flags);
+
+Be sure to include the <linux/slab.h> header file when using any slab allocator APIs.
+
+The kmalloc() and kzalloc() routines tend to be the most frequently used APIs for memory allocation
+within the kernel. A quick check – we’re not aiming to be perfectly precise here – with the very useful
+cscope code browsing utility on the 6.1.25 Linux kernel source tree reveals the (approximate) frequency
+of usage: kmalloc() is called close to 4,800 times and kzalloc() is called a little over 13,000 times!
+
+Both the kmalloc() and kzalloc() functions accept two parameters:
+
+  •     The first parameter to pass is the size of the memory chunk required in bytes.
+  •     The second parameter is the type of memory to allocate, specified via the now-familiar GFP
+        flags. (We covered this topic in the Dealing with the GFP flags and The GFP flags – digging deeper
+        sections. If you’re not familiar with them, I suggest you read those sections first.)
+
+              To mitigate the risk of Integer Overflow (IoF) bugs, you should avoid dynamically cal-
+              culating the size of memory to allocate (the first parameter to these APIs). The kernel
+              documentation warns us precisely about this:
+
+              https://www.kernel.org/doc/html/latest/process/deprecated.html#open-
+              coded-arithmetic-in-allocator-arguments. In general, always avoid using deprecated
+              stuff in the kernel; they’re even documented here: Deprecated Interfaces, Language Features,
+              Attributes, and Conventions: https://www.kernel.org/doc/html/latest/process/
+              deprecated.html#deprecated-interfaces-language-features-attributes-and-
+              conventions.
+
+Right, back to the APIs; upon successful allocation, the return value is a pointer, the kernel logical ad-
+dress (remember, it’s still a virtual address, a KVA, not a physical address) of the start of the memory
+chunk (or slab) just allocated. Indeed, you’ll notice that but for the second parameter, the kmalloc()
+and kzalloc() APIs closely resemble their user space counterpart, the all-too-familiar glibc malloc()
+(and friends) APIs. Don’t get the wrong idea, though: internally, they’re completely different. The malloc()
+API returns a user space virtual address (a UVA) and, as mentioned earlier, there is no direct correlation
+between the user-mode malloc() and the kernel-mode kmalloc()/kzalloc() APIs (we’ll typically
+abbreviate this key pair of APIs as k{m|z}alloc()). So, no, a call to malloc() does not result in an
+immediate call to k{m|z}alloc(); more on this later!
+
+Next, it’s important to understand that the memory returned by these slab allocator APIs is guaranteed
+to be physically contiguous. Furthermore, another key benefit is that the return address is guaranteed
+to be on a CPU cacheline boundary; that is, it will be hardware cacheline-aligned. Both these points
+are important performance-enhancing benefits.
+
+               Every CPU reads and writes data (from and to CPU caches <-> RAM) in an atomic unit called
+               the CPU cacheline. The size of the cacheline varies with the CPU. You can usually look this
+               up with the getconf utility – for example, try doing getconf -a|grep CACHE_LINESIZE
+               (note that the unit is bytes, not bits). On modern CPUs, the cachelines for instructions and
+               data are often separated out (as are the CPU caches themselves). A typical CPU cacheline
+               size is 64 bytes. We cover (a lot) more on this topic in Chapter 13, Kernel Synchronization –
+               Part 2, in the Understanding CPU caching basics, cache effects, and false sharing section. You
+               can also refer to the Further reading section for more.
+
+The content of a memory chunk immediately after allocation by kmalloc() is random (again, like the
+malloc()). Indeed, the reason why the kzalloc() API is the preferred and recommended API to use
+is that it sets to zero the allocated memory, preventing several classes of bugs (such as the common
+Uninitialized Memory Reads (UMR) one). Some may argue that the initialization of the memory slab
+takes some time, thus reducing performance. Our counter argument is that unless the memory allo-
+cation code is in an extremely time-critical code path (which, you could reasonably argue, is not good
+design in the first place, but sometimes can’t be helped), you should, as a best practice, initialize your
+memory upon allocation. A whole slew of memory bugs and security side effects can thereby be avoided.
+
+               Many parts of the Linux kernel core code certainly use the slab layer for memory. Within
+               these, there are time critical code paths – good examples can be found within the network
+               and block I/O subsystems. For maximizing performance, the slab (actually SLUB) layer code
+               has been written to be lockless (via a lock-free technology called per-CPU variables). We
+               cover lock-free kernel synchronization in Chapter 13, Kernel Synchronization – Part 2, in the
+               Lock-free programming with per-CPU and RCU section. Also, see more on the performance
+               challenges and implementation details of the slab layer in the Further reading section.
+
+Freeing slab memory
+Of course, you must free the slab memory you allocated at some point in the future (thus not leaking
+memory); the kfree() routine serves this purpose.
+
+Using kfree() to free slab memory
+Analogous to the user space free() API, kfree() takes a single parameter – the pointer to the mem-
+ory chunk to free. It must be a valid kernel logical (or virtual) address (a KVA) and must have been
+initialized by, that is, it should be the return value of one of the slab layer APIs (k{m|z}alloc() or one
+of its helpers). Its API signature is simple:
+      void kfree(const void *);
+
+Just as with free(), there is no return value. As mentioned before, take care to ensure that the pa-
+rameter to kfree() is the precise value returned by k{m|z}alloc(). Passing an incorrect value will
+result in memory corruption, ultimately leading to an unstable system.
+
+There are a few additional points to note. Let’s assume we have allocated some slab memory with
+kzalloc():
+
+   static char *kptr = kzalloc(1024, GFP_KERNEL);
+
+Later, after usage, we would like to free it, so we do the following:
+   if (kptr)
+        kfree(kptr);
+
+This code – checking that the value of kptr is not NULL before freeing it – is unnecessary; just perform
+kfree(kptr); and it’s done.
+
+Another example of incorrect code (pseudo-code) is shown as follows:
+   static char *kptr = NULL;
+   while (<some-condition-is-true>) {
+            if (!kptr)
+                  kptr = kzalloc(num, GFP_KERNEL);
+            [... work on the slab memory ...]
+            kfree(kptr);
+   }
+
+Interesting: here, from the second loop iteration onward, the programmer has assumed that the kptr
+pointer variable will be set to NULL upon being freed! This is definitely not the case (it would have
+been quite a nice semantic to have though; also, the same argument applies to the “usual” user space
+library APIs). Thus, here, we hit a dangerous bug: on the loop’s second iteration, the if condition will
+likely turn out to be false, thus skipping the allocation. Then, we hit the kfree(), which, of course,
+will now corrupt memory (due to a double-free bug)!
+
+               We provide a demo of this very case in the LKM here: ch8/slab2_buggy, and leave
+               it to you to study and try out.
+
+Using kfree_sensitive() (previously kzfree()) to free slab memory
+With regard to initializing memory buffers after (or during) allocation, just as we mentioned with re-
+gard to allocations, the same holds true for freeing memory. You should realize that the kfree() API
+merely returns the just-freed slab to its corresponding cache, leaving the internal memory content
+intact! Thus, just prior to freeing up your memory chunk, a (slightly pedantic) best practice is to wipe
+out (overwrite) the memory content. This is especially true for security reasons (such as in the case
+of an info-leak where a malicious attacker could conceivably scan freed memory for secrets). The
+Linux kernel provides the kfree_sensitive() API for this express purpose (the signature is identical
+to that of kfree()).
+
+             The API was (mis)named kzfree() in earlier kernels; from 5.9, this has been fixed, renam-
+             ing it to kfree_sensitive(). The rationale is explained in the commit here: https://
+             github.com/torvalds/linux/commit/453431a54934d917153c65211b2dabf45562ca88.
+
+             Careful! In order to overwrite “secrets,” a simple memset() of the target buffer might just
+             not work. Why not? The compiler might optimize away the code (as the buffer is no longer
+             to be used). David Wheeler, in his excellent work Secure Programming HOWTO (https://
+             dwheeler.com/secure-programs/), mentions this very fact and provides a solution: “One
+             approach that seems to work on all platforms is to write your own implementation of memset
+             with internal “volatilization” of the first argument.” (This code is based on a workaround
+             proposed by Michael Howard):
+
+                 void *guaranteed_memset(void *v,int c,size_t n)
+                 { volatile char *p=v; while (n--) *p++=c; return v; }
+
+             Then place this definition into an external file to force the function to be external (define
+             the function in a corresponding .h file, and #include the file in the callers, as is usual).
+             This approach appears to be safe at any optimization level (even if the function gets inlined).
+
+The kernel’s kfree_sensitive() API should work just fine. Take care when doing similar stuff in user
+space.
+
+Data structures – a few design tips
+Using the slab APIs for memory allocation in kernel space is highly recommended. For one, it guar-
+antees both physically contiguous as well as (hardware) cacheline-aligned memory. This is good for
+performance; in addition, let’s check out a few quick tips that can yield big returns.
+
+CPU caching can provide tremendous performance gains. Thus, especially for time-critical code, take
+care to design your data structures for best performance:
+
+  •    Keep the most important (frequently accessed, “hot”) members together and at the top of
+       the structure. To see why, imagine there are five important members (of a total size of say, 56
+       bytes) in your data structure and you keep them all together and at the top of the structure.
+       Say the CPU cacheline size is 64 bytes. Now, when your code accesses any one of these five
+       important members (for anything, read or write), all five members will be fetched into the CPU
+       cache(s) as the CPU’s memory read/writes work in an atomic unit of CPU cacheline size; this opti-
+       mizes performance (as working on the cache memory silicon is typically multiple times faster
+       than working on RAM).
+  •    Try and align the structure members such that a single member does not “fall off a cacheline.”
+       Usually, the compiler helps in this regard, and you can even use compiler attributes to explic-
+       itly specify this.
+
+  •     Accessing memory sequentially results in high performance due to effective CPU caching. How-
+        ever, we can’t seriously push the case for making all our data structures arrays! Experienced
+        designers and developers know that using linked lists is extremely common. But doesn’t that
+        actually hurt performance? Well, yes, to some extent. Thus, a suggestion: when using linked
+        lists, keep the “node” of the list as a large data structure (with “hot” members at the top and
+        together). This way, we try and maximize the best of both cases as the large structure is es-
+        sentially an array. (Think about it, the list of task structures that we saw in Chapter 6, Kernel
+        Internals Essentials – Processes and Threads, the task list is a perfect real-world example of a linked
+        list with large data structures as nodes).
+  •     See more techniques on leveraging CPU caches in the Further reading section.
+
+The upcoming section deals with a key aspect: we learn exactly which slab caches the kernel uses
+when allocating (slab) memory via the popular k{m|z}alloc() APIs.
+
+The actual slab caches in use for kmalloc
+We’ll take a quick deviation – very important, though – before trying out a kernel module using the
+basic slab APIs. It’s important to understand where exactly the memory allocated by the k{m|z}alloc()
+APIs is coming from. Well, it’s from the slab caches, yes, but which ones exactly? A quick grep on the
+output of sudo vmstat -m reveals this for us (the following screenshot is on our x86_64 Ubuntu 22.04
+LTS guest running (one of) our custom 6.1 kernels. Also, we deliberately filter out the kmalloc-rcl-*
+caches here; they’re explained very shortly):
+
+Figure 8.7: Screenshot of sudo vmstat -m showing the kmalloc-n slab caches
+
+That’s very interesting! The kernel has a slew of dedicated slab caches for generic kmalloc memory
+of varying sizes, ranging from 8,192 bytes down to a mere 8 bytes! This has us realize something critical –
+with the page allocator, if we had requested, say, 12 bytes of memory, it would have ended up giving us
+a whole page (4 KB) – the wastage is just too high. Here, with the slab allocator, an allocation request
+for 12 bytes ends up actually allocating just 16 bytes (from the second-to-last cache seen in Figure
+8.7)! Fantastic. It should be quite clear why it works this way: the kernel slab allocator uses a best-fit
+approach. Plus, if we request an amount (12 bytes) that’s in between two slab caches (the kmalloc-8
+one and the kmalloc-16 one), obviously, the kernel will pick the greater of the two (as we can always
+allocate more than what was asked, never less). Thus, it actually allocates a 16 byte ‘slab’ while letting
+us think it’s 12 bytes in size.
+
+Also, note the following:
+
+  •      Upon calling kfree[_sensitive](), the memory is freed back into the appropriate slab cache.
+  •      The precise sizing of the slab caches for kmalloc varies with the architecture. On our Raspberry
+         Pi system (an ARM CPU, of course), the generic memory kmalloc-N caches ranged from 64
+         bytes to 8,192 bytes.
+  •      The preceding screenshot also reveals a clue. Very often, the demand is for small-to-tiny frag-
+         ments of memory. As an example, in the preceding screenshot, the column labeled Num rep-
+         resents the Number of currently active objects; the maximum number is from the 8- and 16-byte
+         kmalloc slab caches (of course, this may not always be the case). Quick tip: use the slabtop
+         utility (you’ll need to run it as root): the rows toward the top reveal the current frequently
+         used slab caches.
+
+Linux keeps evolving, of course. As of the 5.0 mainline kernel, there is a newly introduced kmalloc
+cache type, called the reclaimable cache (the naming format is kmalloc-rcl-N). Thus, performing a
+grep as done previously on a 5.x kernel or later will also reveal these caches:
+
+      $ sudo vmstat -m | grep --color=auto "^kmalloc"
+      kmalloc-rcl-8k                     0       0    8192         4
+      kmalloc-rcl-4k                     0       0    4096         8
+      kmalloc-rcl-2k                     0       0    2048       16
+      [...]
+      kmalloc-8k                      144      144    8192         4
+      kmalloc-4k                     1185     1200    4096         8
+      kmalloc-2k                     1072     1072    2048       16
+      [...]
+
+The new kmalloc-rcl-N caches help internally with more efficiencies (to reclaim pages under pressure
+and as an anti-fragmentation measure). However, a module author like you need not be concerned
+with these details. (The commit for this work can be viewed here: https://github.com/torvalds/
+linux/commit/1291523f2c1d631fea34102fd241fb54a4e8f7a0.)
+
+              vmstat -m is essentially a wrapper over the kernel’s /sys/kernel/slab content (more
+              on this follows). Deep internal details of the slab caches can be seen using utilities such as
+              slabinfo, slabtop, as well as the powerful crash utility (on a “live” system, the relevant
+              crash command is kmem -s (or kmem -S)).
+
+Right! Time to again get hands-on with some code to demonstrate the usage of the slab allocator APIs!
+
+Writing a kernel module to use the basic slab APIs
+In the following code snippet, look at the demo kernel module code (found at ch8/slab1/). In the ini-
+tialization code, we merely perform a couple of slab layer allocations (via the kmalloc() and kzalloc()
+APIs), print some information, and free the buffers in the cleanup code path (of course, the full source
+code is accessible at this book’s GitHub repository). Let’s look at the relevant parts of the code step
+by step.
+
+At the start of the init code of this kernel module, we initialize a global pointer (gkptr) by allocating
+1,024 bytes to it (C programmers, remember: pointers have no memory!) via the kmalloc() slab allocation
+API. Notice that, as we’re certainly running in process context here and it is thus “safe to sleep,” we
+use the GFP_KERNEL flag for the second parameter ( just in case you want to refer back for more infor-
+mation, the earlier section titled The GFP flags – digging deeper has it covered):
+   // ch8/slab1/slab1.c
+   #define pr_fmt(fmt) "%s:%s(): " fmt, KBUILD_MODNAME, __func__
+   [...]
+   #include <linux/slab.h>
+   [...]
+   static char *gkptr;
+   struct myctx {
+        u32 iarr[100];
+        u64 uarr[100];
+        char uname[128], passwd[16], config[16];
+   };
+   static struct myctx *ctx;
+
+   static int __init slab1_init(void)
+   {
+        /* 1. Allocate slab memory for 1 KB using the kmalloc() */
+        gkptr = kmalloc(1024, GFP_KERNEL);
+        if (!gkptr) {
+             WARN_ONCE(1, "kmalloc() failed!\n");
+             /* As mentioned earlier, there is really no need to print an
+              * error msg when a memory alloc fails; the situation "shouldn't"
+              * typically occur, and if it does, the kernel will emit a chain
+
+                  * of messages in any case. Here, we use the WARN_ONCE()
+                  * macro pedantically, and as this is a 'learning' program..
+                  * In practice, simply returning an appropriate -ve errno (-ENOMEM
+                  * here) is enough. */
+                 goto out_fail1;
+             }
+             pr_info("kmalloc() succeeds, (actual KVA) ret value = %px\n", gkptr);
+
+          /* Commit 091cb09 (5.4 kernel) has the print_hex_dump_bytes() perform
+              * printing at log level KERN_DEBUG; in effect, it only shows up if
+           * -DDEBUG (or you use the dynamic debug facility). So, I've set DEBUG on
+      in the Makefile */
+             print_hex_dump_bytes("gkptr before memset: ", DUMP_PREFIX_OFFSET, gkptr,
+      32);
+          memset(gkptr, 'm', 1024);
+             print_hex_dump_bytes(" gkptr after memset: ", DUMP_PREFIX_OFFSET, gkptr,
+      32);
+
+In the preceding code, also notice that we use the print_hex_dump_bytes() kernel convenience
+routine as a convenient way to dump the buffer memory in a human-readable format. Its signature is:
+      void print_hex_dump_bytes(const char *prefix_str, int prefix_type,
+              const void *buf, size_t len);
+
+Its parameters are as follows: prefix_str is any string you would like to prefix to each line of the hex
+dump; prefix_type is one of DUMP_PREFIX_OFFSET, DUMP_PREFIX_ADDRESS, or DUMP_PREFIX_NONE; buf
+is the source buffer to hex-dump; and len is the number of bytes to dump. Note that (as shown in the
+comment), from Linux 5.4, it only emits printk when the symbol DEBUG is defined (or when using the
+kernel’s powerful dynamic debug facility, a topic covered in depth in the Linux Kernel Debugging book).
+
+                  Quick Tip: When given a Git Commit ID (hash) of the Linux kernel project (it’s often an
+                  abbreviated one, like the one in the above code comment – 091cb09), you can easily look
+                  it up on a Git-based repo via the git blame command. Alternatively, for the Linux kernel,
+                  you can navigate to https://github.com/torvalds/linux and search the repo for via the
+                  commit ID; it will yield the resulting commit. (In this example, here it is: https://github.
+                  com/torvalds/linux/commit/091cb0994edd20d67521094ac9c6ec9804058d9a).
+
+Up next is a typical strategy – a best practice – followed by many device drivers: they keep all their
+required or ‘context’ information in a single data structure, often termed the driver context (or the
+driver’s private) structure. We mimic this by declaring a (silly/sample) data structure called myctx, as
+well as a global pointer to it called ctx (the structure and pointer definition is in the preceding code
+block). Its allocation is serviced by the kzalloc() API:
+         /* 2. Allocate memory for and initialize our 'context' structure */
+             ctx = kzalloc(sizeof(struct myctx), GFP_KERNEL);
+
+        if (!ctx)
+             goto out_fail2;
+       pr_info("context struct alloc'ed and initialized (actual KVA ret = %px)\n",
+   ctx);
+        print_hex_dump_bytes("ctx: ", DUMP_PREFIX_OFFSET, ctx, 32);
+        return 0;             /* success */
+   out_fail2:
+        kfree(gkptr);
+   out_fail1:
+        return -ENOMEM;
+   }
+
+Here, we allocate and initialize ctx to the size of the myctx data structure via the useful kzalloc()
+wrapper API. The subsequent hexdump will show (provided DEBUG is defined!) that it is indeed initial-
+ized to all zeroes (for readability, we will only “dump” the first 32 bytes).
+
+Do notice how we handle the error paths using goto; this has already been mentioned a few times
+earlier in this book, so we won’t repeat ourselves here. Finally, in the cleanup code of the kernel module,
+we kfree() both buffers, preventing any memory leakage:
+   static void __exit slab1_exit(void)
+   {
+        kfree(ctx);
+        kfree(gkptr);
+        pr_info("freed slab memory, removed\n");
+   }
+
+A screenshot of a sample run on my Raspberry Pi 4 follows. I used our ../../lkm convenience script
+to build, load the module, and run dmesg:
+
+Figure 8.8: Partial screenshot of our slab1.ko kernel module in action on a Raspberry Pi 4
+
+Okay, now that you have a grip on the basics of using the common slab allocator APIs, kmalloc(),
+kzalloc(), and kfree[_sensitive](), let’s go further.
+
+In the next section, we will dive deep into a really key concern – the reality of size limitations on the
+memory you can obtain via the slab (and page) allocators. Read on!
+
+Size limitations of the kmalloc API
+One of the key advantages of both the page and slab allocators is that the memory chunk they provide
+upon allocation is not only virtually contiguous (obviously) but is also guaranteed to be physically
+contiguous memory. Now that is a big deal and will certainly help performance.
+
+But (there’s always a but, isn’t there!), precisely because of this guarantee, it becomes impossible to
+serve up any given large (memory) size when performing an allocation. In other words, there must be
+a limit to the amount of memory you can obtain from the slab allocator with a single call to our dear
+k{m|z}alloc() APIs. What is the limit? (This is indeed a really frequently asked question).
+
+Firstly, you should understand that, technically, this limit is determined by two factors:
+
+   •    One, the system page size (determined by the PAGE_SIZE macro).
+   •    Two, the number of “orders” (determined by the MAX_ORDER macro); that is, the number of lists
+        in the page allocator (or BSA) freelist data structures (see Figure 8.2).
+
+With a standard 4-KB page size and a (typical) MAX_ORDER value of 11, the maximum amount of
+memory that can be allocated with a single kmalloc() or kzalloc() API call is 4 MB. This is the case
+on both the x86_64 and ARM (32 and 64-bit) architectures.
+
+You might wonder, how exactly is this 4-MB limit arrived at? Think about it: once a slab allocation request
+exceeds the maximum slab cache size that the kernel provides (often 8 KB), the kernel simply passes
+ the request down to the page allocator. The page allocator’s maximum allocable size is determined by
+                                                                       (MAX_ORDER-1)
+ MAX_ORDER. With it set to 11, the maximum allocable buffer size is 2                = 210 pages = 1024 pages
+= 1024 * PAGE_SIZE bytes = 1024 * 4 KB = 4 MB!
+
+Testing the limits – memory allocation with a single call
+A key thing for developers (and everyone else, for that matter) is to be empirical in your work! The
+English word empirical means based on what is experienced or seen, rather than on theory. This is
+a critical rule to always follow – do not simply assume things or take them at face value. Try them out for
+yourself and see.
+
+Let’s do something interesting: let’s write a kernel module that allocates memory from the (generic)
+slab caches (via the kmalloc() API). We will do so in a loop, allocating – and subsequently freeing – a
+(calculated) amount on each loop iteration. The key point here is that we will keep increasing the
+amount allocated by a given step size (we’ll even modularize this quantity).
+
+The loop terminates when kmalloc() fails; this way, we can test just how much memory we can actu-
+ally allocate with a single call to kmalloc() (you’ll realize, of course, that kzalloc(), being a simple
+wrapper over kmalloc(), faces precisely the same limits).
+
+In the following code snippet, we show the relevant code. The test_maxallocsz() function is called
+from the init code of the kernel module:
+   // ch8/slab3_maxsize/slab3_maxsize.c
+   [...]
+   static int stepsz = 204800;            // 200 Kb
+   module_param(stepsz, int, 0644);
+   MODULE_PARM_DESC(stepsz,
+   "Amount to increase allocation by on each loop iteration (default=200 KB");
+
+   static int test_maxallocsz(void)
+   {
+       size_t size2alloc = 0;
+       void *p;
+
+       while (1) {
+            p = kmalloc(size2alloc, GFP_KERNEL);
+            if (!p) {
+                  pr_alert("kmalloc fail, size2alloc=%zu\n", size2alloc);
+       // WARN_ONCE(1, "kmalloc fail, size2alloc=%zu\n", size2alloc);
+                 return -ENOMEM;
+            }
+            pr_info("kmalloc(%7zu) = 0x%px\n", size2alloc, p);
+            kfree(p);
+            size2alloc += stepsz;
+       }
+       return 0;
+   }
+
+                Notice how our printk functions use the %zu format specifier for the size_t (essentially
+                an unsigned integer) variable? %zu is a portability aid; it makes the variable format correct
+                for both 32- and 64-bit systems!
+
+Let’s run this kernel module on our Raspberry Pi 4 device running the stock Raspberry Pi OS. Almost
+immediately, upon insmod, you will see an error message, Cannot allocate memory, printed by the
+insmod process; the following (truncated) screenshot shows what has occured:
+
+Figure 8.9: The first insmod of our slab3_maxsize.ko kernel module on a Raspberry Pi 4 running a
+                                                  stock kernel
+
+This is expected! Think about it, the init function of our kernel module code has indeed failed (with
+failure code -ENOMEM) after all. Don’t get thrown by this; looking up the kernel log reveals what trans-
+pired (Figure 8.9).
+
+The fact is that on the very first test run of this kernel module, you will find that at the place where
+kmalloc() fails, the kernel dumps some diagnostic information, including a pretty lengthy kernel
+stack trace. This is due to kernel code paths invoking the WARN() macro when a kernel memory allo-
+cation failed, as, in the normal case, this simply shouldn’t happen. Look again at the bottom portion
+of Figure 8.9; the stack trace includes the __alloc_pages() function; in the earlier The workings of the
+page allocator section, we literally pointed out that this function is documented as being the ‘heart’ of
+the zoned buddy allocator! It being here in the stack (call or back) trace shows that it failed; hence, we
+get the result we see.
+
+(A nagging thing, perhaps: why are the return pointers from the kmalloc(), the KVAs – as seen in
+Figure 8.8 – often the same? Easy: it’s as we allocated and then almost immediately release (free) the
+memory chunk, often leading to it being available and thus reused.)
+
+So, our slab memory allocations worked, up to a point. To clearly see the failure point, simply scroll
+down in the kernel log (dmesg) display. The following screenshot shows this:
+
+Figure 8.10: Partial screenshot showing the lower part of the dmesg output (of our ch8/slab3_maxsize.
+                                         ko kernel module) on a Rasperry Pi 4
+
+Aha, look at the last line of output (Figure 8.10): kmalloc() fails when attempting to allocate above 4
+MB (here, at 4,300,800 bytes), precisely as expected; until then, it succeeds.
+
+Also, now the beginning of the stack backtrace can be seen; read it bottom-up of course and it’s all
+crystal clear – you can literally see our kmalloc() ending up in __alloc_pages(), which, because it
+failed, led to this turn of events.
+
+As an interesting aside, notice that we have (quite deliberately) performed the very first allocation in
+the loop with size 0; it does not fail (but that doesn’t mean you use it):
+
+kmalloc(0, GFP_xxx); returns the zero pointer; on x86[_64], it’s the value 16 or 0x10 (see include/
+linux/slab.h for details). In effect, it’s an invalid virtual address living in the page 0 NULL pointer trap.
+Accessing it will, of course, lead to a page fault (originating from the MMU), a bug.
+
+Similarly, attempting kfree(NULL); or kfree() on the zero pointer results in kfree() becoming a no-op.
+
+Hang on, though – there’s an extremely important point to note here: in the section titled The actual slab
+caches in use for kmalloc, we saw that the slab caches that are used to allocate memory to the caller are
+the kmalloc-N slab caches, where N ranges from 64 to 8,192 bytes (on the Raspberry Pi, and thus the
+ARM[64] processor for this discussion). Also, FYI, you can perform the following quickly to verify this:
+      sudo vmstat -m | grep -v "\-rcl\-" | grep --color=auto "^kmalloc-[0-9]"
+
+But clearly, in the preceding kernel module code example, we have allocated via kmalloc() much
+larger quantities of memory (right from 0 bytes through 8 KB and then right up to 4 MB). Under the
+hood, the way it really works is that the kmalloc() API only uses the kmalloc-N slab caches for memory
+allocations less than or equal to 8,192 bytes (if available); any allocation request for larger memory
+chunks is then passed to the underlying page (or buddy system) allocator (see Figure 8.1)!
+
+Now, recall what we learned: the page allocator uses the buddy system freelists (on a per node:zone basis)
+and the maximum size of memory chunks enqueued on the freelists are 2(MAX_ORDER-1) = 210 pages, which,
+given a page size of 4 KB and MAX_ORDER of 11, is 4 MB. This neatly ties in with our theoretical discussions.
+
+So, there we have it: both in theory and in practice, you can now see that (again, given a page size
+of 4 KB and MAX_ORDER of 11), the maximum size of memory that can be allocated via a single call to
+kmalloc() or kzalloc() is 4 MB.
+
+Checking via the /proc/buddyinfo pseudofile
+It’s really important to realize that although we figured out that 4 MB of RAM is the maximum we
+can get at one shot, it definitely doesn’t mean that you will always get that amount when you request
+it. No sir, of course not; it completely depends upon the amount of free memory present within the
+particular freelist at the time of the memory request. Think about it: what if you were running on a
+Linux system that has been up for several days (or weeks)? The likelihood of finding physically con-
+tiguous 4 MB chunks of free RAM is quite low (again, this depends upon the amount of RAM on the
+system and its workload).
+
+As a rule of thumb, if the preceding experiment did not yield a maximum allocation of what we have
+deemed to be the maximum size (that is, 4 MB), why not try it on a freshly booted guest system? Now,
+the chances of having physically contiguous 4 MB chunks of free RAM are a lot better.
+
+Unsure about this? Let’s get empirical again and look up the content of /proc/buddyinfo – both on an
+in-use and a freshly booted system – to figure out whether the memory chunks are available. In the
+following command-line snippet, on my in-use native x86_64 Ubuntu system (up for over 7 days, with
+32 GB RAM), we look it up, highlighting the order 10 quantity of free chunks – i.e., 4 MB free chunks
+of RAM – in the Normal zone in bold (the output wraps):
+    $ grep -w "Normal" /proc/buddyinfo
+    Node 0, zone      Normal   23653     5314     1284      747      233       67      16       17
+    18      0         0
+
+As we learned earlier (in the Understanding the organization of the page allocator freelist section), the
+numbers seen in the preceding code block are in the sequence order 0 to MAX_ORDER-1 (typically, 0
+to 11 – 1, so 0 to 10), and they represent the number of 2order contiguous free page frames in that order.
+
+In the preceding output, we can see that, for the Normal zone, we do not have free blocks on the order
+10 list (that is, the 4 MB chunks; it’s zero). On a freshly booted Linux system, the chances are high
+that we will. In the following output, on the same system that’s just been rebooted, we see that there
+are 6,571 (!) chunks of free, physically contiguous 4 MB RAM available in node 0 in the Normal zone:
+    $ grep -w "Normal" /proc/buddyinfo
+    Node 0, zone   Normal        3859    6778     6131     5025    3810     2274     1130      382
+    78      9   6571
+
+You’ll realize that, as system uptime increases, chances of “cutting” the higher sized chunks into
+smaller pieces as required, goes up... Thus we find that memory tends to percolate from the higher
+to lower orders as time marches on.
+
+ Of course, there’s more to explore. In the following section, we cover more on using the slab allocator
+– the resource-managed API alternatives, additional slab helper APIs that are available, and a note on
+ cgroups and memory in modern Linux kernels.
+
+Slab allocator – a few additional details
+A few more key points remain to be explored. First, we’ll divulge some information on using the kernel’s
+resource-managed versions of the memory allocator APIs, followed by a few additionally available slab
+helper routines within the kernel, and then have a brief look at cgroups and memory. We recommend
+you go through these sections as well. Please, do read on!
+
+Using the kernel’s resource-managed memory allocation APIs
+Especially useful when working on device drivers, the kernel provides a few managed APIs for memory
+allocation. These are formally referred to as the device resource-managed or devres APIs (the link to
+the official kernel documentation on this is https://www.kernel.org/doc/html/latest/driver-api/
+driver-model/devres.html). All these APIs are prefixed with devm_; though there are several of them,
+we will focus on only one common use case here – that of using the resource-managed versions in
+place of the usual memory allocation APIs, the k{m|z}alloc() ones. They are as follows:
+    #include <linux/device.h>
+
+      void *devm_kmalloc(struct device *dev, size_t size, gfp_t gfp);
+      void *devm_kzalloc(struct device *dev, size_t size, gfp_t gfp);
+
+The reason why these resource-managed APIs are useful is that there is no need for the developer to
+explicitly free the memory allocated by them. The kernel resource management framework guarantees
+that it will automatically free the memory buffer upon driver detach, or if it’s a kernel module, when
+the module is removed (or the device is detached, whichever occurs first). This feature immediately
+enhances code robustness. Why? Simple, we’re all human and make mistakes. Leaking memory (es-
+pecially on error code paths) is indeed a pretty common bug!
+
+A few relevant points regarding the usage of these APIs:
+
+  •      A key point – please do not attempt to blindly replace all k{m|z}alloc() instances with the
+         corresponding devm_k{m|z}alloc()! These resource-managed allocations are designed to be
+         used only in the init and/or probe() methods of a device driver (all drivers that work with the
+         kernel’s unified device model will typically supply the probe() and remove() (or disconnect())
+         methods. We will not delve further into these aspects here).
+  •      devm_kzalloc() is usually preferred as it initializes the buffer as well. Internally (as with
+         kzalloc()), it is merely a thin wrapper over the devm_kmalloc() API.
+  •      The second and third parameters are the usual ones, as with the k{m|z}alloc() APIs – the
+         number of bytes to allocate and the GFP flags to use. The first parameter, though, is a pointer
+         to struct device. Quite obviously, it represents the device that your driver is driving (every
+         driver will have access to this structure).
+  •      As the memory allocated by these APIs is auto-freed (on driver detach or module removal), you
+         don’t have to do anything (to free the memory). It can, though, be freed via the devm_kfree()
+         API. Your doing this manually, however, is usually an indication that the managed APIs are
+         the wrong ones to use.
+  •      Licensing: The managed APIs are exported (and thus available) only to modules licensed
+         under the GPL.
+
+Additional slab helper APIs
+There are several helper slab allocator APIs, friends of the k{m|z}alloc() API family. These include the
+kcalloc() and kmalloc_array() APIs for allocating memory for an array, as well as krealloc(), whose
+behavior is analogous to realloc(), the familiar user space API. (Under the hood, kmalloc_array()
+calls the check_mul_overflow() macro, which performs multiplication with overflow checking! Neat.)
+
+In conjunction with allocating memory for an array of elements, the array_size() and struct_size()
+kernel helper routines can be very helpful. In particular, struct_size() has been heavily used to
+prevent – and indeed fix – many integer overflow (IoF, and related) bugs when allocating an array
+of structures, a common task indeed. As a quick example, here’s a small code snippet from net/
+bluetooth/mgmt.c:
+
+      rp = kmalloc(struct_size(rp, addr, i), GFP_KERNEL);
+      if (!rp) {
+           err = -ENOMEM; [...]
+
+FYI, it’s worth browsing through the include/linux/overflow.h kernel header file.
+
+(Keep in mind the already covered kfree_sensitive() API as well.) The resource-managed versions
+of these APIs are also available: devm_kcalloc() and devm_kmalloc_array().
+
+Control groups and memory
+The Linux kernel supports a very sophisticated resource management system called cgroups (con-
+trol groups), which, in a nutshell, is used to hierarchically organize processes and perform resource
+management.
+
+               We shall cover a lot more on cgroups, with examples that leverage the cgroups v2 CPU
+               controller, in Chapter 11, The CPU Scheduler – Part 2, in the section titled An introduction
+               to cgroups. If the following paragraphs here don’t make too much sense to you now, I
+               recommend you first read up on cgroups (in the chapter and section just mentioned) and
+               then come back here.
+
+Among the several resource controllers within the cgroups framework is one for controlling mem-
+ory bandwidth. By carefully configuring it, the sysadmin can effectively regulate the distribution of
+memory on the system. Memory protection is possible, both as (what is called) hard and best-effort
+protection via certain memcg (memory cgroup) pseudofiles (particularly, the memory.min and memory.
+low files). In a similar fashion, within a cgroup, the memory.high and memory.max pseudofiles are the
+main mechanism to control the memory usage of a cgroup. Of course, as there is a lot more to it than
+is mentioned here, I refer you to the kernel documentation on the new cgroups (v2) here: https://
+www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html.
+
+Right, now that you have learned how to better use the slab allocator APIs, let’s dive a bit deeper still.
+The reality is that there are still a few important caveats regarding the size of the memory chunks
+allocated by the slab allocator APIs. Do read on to find out what they are!
+
+Caveats when using the slab allocator
+ We will split up this discussion into three parts. We will first re-examine some necessary background
+ (which we covered earlier), then actually flesh out the problem that we’re getting at with two use cases
+– the first being very simple; the second being a more real-world case of the issue at hand.
+
+Background details and conclusions
+So far, you have learned some key points:
+
+   •    The page (or buddy system) allocator allocates pages to the caller in powers of 2 pages; in other
+        words, the granularity of an allocation request is a page (typically 4K). The power to raise 2
+        is called the order; it typically ranges from 0 to 10 (on both x86[_64] and ARM[_64], assuming
+        a page size of 4K and MAX_ORDER of 11).
+   •    This is fine, except when it’s not. When the amount of memory requested is very small, or just
+        over a certain threshold, the wastage (or internal fragmentation) can be huge.
+
+  •      In the day-to-day operation of the OS and its drivers, requests for fragments of a page ((much)
+         less than 4,096 bytes) are very common. Thus, the slab allocator, layered upon the page allocator
+         (see Figure 8.1) is designed with object caches, as well as small generic memory caches, to
+         efficiently fulfill requests for small amounts of memory.
+  •      The page allocator guarantees physically contiguous page and hardware cacheline-aligned
+         memory.
+  •      The slab allocator too guarantees physically contiguous and hardware cacheline-aligned mem-
+         ory.
+
+So, fantastic – this leads us to conclude that when the amount of memory required is large-ish and a
+perfect (or close) power of 2, use the page allocator. When it’s quite small (less than a page), use the
+slab allocator. Indeed, the kernel source code of kmalloc() has a comment that neatly sums up how
+the kmalloc() API should be used (reproduced in bold font as follows):
+      // include/linux/slab.h
+      [...]
+       * kmalloc - allocate memory
+       * @size: how many bytes of memory are required.
+       * @flags: the type of memory to allocate.
+       * kmalloc is the normal method of allocating memory
+       * for objects smaller than page size in the kernel.
+
+Sounds great, but there is still a problem! To see it, let’s learn how to use another useful slab API,
+ksize(). Its signature is as follows:
+
+      size_t ksize(const void *);
+
+The parameter to ksize() is a pointer to an existing slab cache (it must be a valid one). In other words,
+it’s the return address from one of the slab allocator APIs (typically one of [devm_]k{m|z}alloc()).
+The return value of ksize() is the actual number of bytes allocated.
+
+Okay, now that you know what ksize() is for, let’s use it in a more practical fashion, first with a simple
+use case and then with a better one!
+
+Testing slab allocation with ksize() – case 1
+To understand what we’re getting at, consider a small example. (For readability, we will not show the
+essential validity checks. Also, as this is a tiny code snippet, we haven’t provided it as a kernel module
+in the book’s code base):
+      struct mysmallctx {
+          int tx, rx;
+          char passwd[8], config[4];
+      } *ctx;
+
+      pr_info("sizeof struct mysmallctx = %zd bytes\n", sizeof(struct mysmallctx));
+
+   ctx = kzalloc(sizeof(struct mysmallctx), GFP_KERNEL);
+   pr_info("(By now, the context structure is allocated and initialized to
+   zero)\n"
+             "*actual* size allocated = %zu bytes\n", ksize(ctx));
+
+The resulting output on my x86_64 Ubuntu guest system is as follows:
+   $ dmesg
+   [...]
+   sizeof struct mysmallctx = 20 bytes
+   (By now, the context structure is allocated and initialized to zero)
+   *actual* size allocated = 32 bytes
+
+So, we attempted to allocate 20 bytes with kzalloc(), but actually obtained 32 bytes, thus incurring a
+wastage of 12 bytes, or 60%! This is expected. Recall the kmalloc-N slab caches – on x86, there is one for
+16 bytes and another for 32 bytes (among the many others). So, when we ask for an amount in between
+the two, we obviously get memory from the higher of the two (the allocators essentially use a version
+of the best-fit approach). (Incidentally, and FYI, on our ARM-based Raspberry Pi system, the smallest
+slab cache for kmalloc is 64 bytes, so, of course, there we will get 64 bytes when we ask for 20 bytes.)
+
+              Note that the ksize() API works only on allocated slab memory; you cannot use it on the
+              return value from any of the page allocator APIs (which we saw in the Learning how to use
+              the page allocator APIs section).
+
+Now for the second, and more interesting, use case.
+
+Testing slab allocation with ksize() – case 2
+Okay, now, let’s extend our earlier kernel module (ch8/slab3_maxsize) to
+
+ch8/slab4_actualsize. Here, we will perform the same loop, allocating memory with the kmalloc()
+API and freeing it as before, but this time, we will also document the actual amount of memory allo-
+cated to us in each loop iteration by the slab layer, by invoking the ksize() API:
+   // ch8/slab4_actualsize/slab4_actualsize.c
+   static int test_maxallocsz(void)
+   {
+      /* This time, initialize size2alloc to 100, as otherwise we'll get a
+        * divide error! */
+       size_t size2alloc = 100, actual_alloced;
+       void *p;
+
+        pr_info("kmalloc(      n) : Actual : Wastage : Waste %%\n");
+        while (1) {
+            p = kmalloc(size2alloc, GFP_KERNEL);
+
+             if (!p) {
+                pr_alert("kmalloc fail, size2alloc=%zu\n", size2alloc); // pedantic
+                return -ENOMEM;
+             }
+             actual_alloced = ksize(p);
+             /* Print the size2alloc, the amount actually allocated,
+               * the delta between the two, and the percentage of waste
+               * (integer arithmetic, of course :-) */
+             pr_info("kmalloc(%7zu) : %7zu : %7zu : %3zu%%\n",
+                  size2alloc, actual_alloced, (actual_alloced - size2alloc),
+                  (((actual_alloced - size2alloc) * 100) / size2alloc));
+             kfree(p);
+             size2alloc += stepsz;
+          }
+          return 0;
+      }
+
+The output of this kernel module is indeed interesting to scan! In the following figure, we show a
+partial screenshot of the output I got on my x86_64 Ubuntu 22.04 LTS guest running our custom-built
+6.1 kernel (loaded via our convenience lkm script):
+
+Figure 8.11: Partial screenshot of our ch8/slab4_actualsize/slab4_actualsize.ko kernel module in
+                                                      action
+
+ The module’s printk output can be seen clearly in the upper and middle portions of Figure 8.11. The
+ remainder of the screenshot is some of the diagnostic information from the kernel – this is emitted
+ as a kernel-space memory allocation request failed. All this kernel diagnostic information is a result
+ of the first invocation of the kernel calling the WARN_ONCE() macro, as the underlying page allocator
+ code, mm/page_alloc.c:__alloc_pages() – the “heart” of the buddy system allocator, as it’s known
+– failed! This should typically never occur, hence the diagnostics (the details on the kernel diagnostic
+ is beyond this book’s scope, so we will leave this aside. Having said that, we do examine the kernel
+ stack backtrace to some extent in the coming chapters. Furthermore, details like this are covered in
+ depth in the Linux Kernel Debugging book).
+
+By the way, in this module, we don’t even code the module exit (cleanup) routine as we know it’s going
+to return failure in the init code path itself and thus we’ll never need to rmmod it.
+
+Interpreting the output from case 2
+Look closely at the preceding screenshot (Figure 8.11; here, we will simply ignore the kernel diagnos-
+tics emitted by the WARN_ONCE() macro, which got invoked because a kernel-level memory allocation
+failed!). Though quite self-explanatory, the key portion of Figure 8.11’s output has the timestamp from
+dmesg (we ignore it), followed by four columns, as its header line shows:
+
+   •     kmalloc(n): The number of bytes requested by kmalloc() (where n is the required amount).
+   •     Actual: The actual number of bytes allocated by the slab allocator (revealed via ksize()).
+   •     Wastage: The wastage (bytes); the difference between the actual and required bytes.
+   •     Waste %: The wastage as a percentage.
+
+As an example, in the second allocation (highlighted in Figure 8.11 by a rectangle), we requested
+204,900 bytes, but actually obtained 262,144 bytes (256 KB). This makes sense, as this is the precise
+size of one of the page allocator lists on a buddy system freelist (it’s order 6, as 26 = 64 pages = 64 x 4 =
+256 KB; see Figure 8.2). Hence, the delta, the wastage really, is 262,144 – 204,900 = 57,244 bytes, which,
+when expressed as a percentage, is 27%.
+
+It works like this: the closer the requested (or required) size gets to the kernel’s available (or actual)
+size, the less the wastage will be; the converse is true as well.
+
+Let’s look at another example from the preceding output (the snipped output is reproduced as follows
+for clarity):
+      [ … ]
+      [ 3948.215700] kmalloc(1638500) : 2097152 :           458652 :     27%
+      [ 3948.215741] kmalloc(1843300) : 2097152 :           253852 :     13%
+      [ 3948.215782] kmalloc(2048100) : 2097152 :             49052 :     2%
+      [ 3948.216309] kmalloc(2252900) : 4194304 : 1941404 :              86%
+      [ 3948.216396] kmalloc(2457700) : 4194304 : 1736604 :              70%
+      [ 3948.216478] kmalloc(2662500) : 4194304 : 1531804 :              57%
+      [ … ]
+
+From the preceding output, you can see that when kmalloc() requests 1,638,500 bytes (a little over
+1.5 MB), it actually gets 2,097,152 bytes (exactly 2 MB), and the wastage is 27%. The wastage then suc-
+cessively reduces as we get closer to an allocation “boundary” or threshold (the actual size of the kernel’s
+slab cache or page allocator memory chunk) as it were: to 13%, then down to just 2%. But look: with
+the next allocation, when we cross that threshold, asking for just over 2 MB (2,252,900 bytes), we get 4
+MB, a wastage of 86%! Then, the wastage again drops as we move closer to the 4-MB memory size...
+
+This is important! You might think you’re being very efficient by virtue of the mere use of the slab
+allocator APIs, but the slab layer invokes the page allocator when the amount of memory requested
+is above the maximum size that the slab layer can provide (typically, 8 KB, which is the case in our
+preceding experiments). Thus, the page allocator, suffering from its usual wastage issues, ends up
+allocating far more memory than you require, or indeed ever use. What a waste!
+
+The moral of the story: check and recheck your code that allocates memory with the slab APIs. Run trials
+on it using ksize() to figure out how much memory is actually being allocated, not how much you
+think is being allocated.
+
+There are no shortcuts. Well, there is one:
+
+              If you require less than a page of memory (a very, very typical use case), just use the slab
+              APIs.
+
+If you require more than 1 page of memory, the preceding discussion comes into play. Another thing:
+using the alloc_pages_exact()/free_pages_exact() APIs (covered in the The ‘exact’ page allocator
+API pair section) should help reduce wastage as well (of course this implies you’ve decided to use these
+APIs and not the slab ones; it’s not the typical case).
+
+               Even better, you can check the actual – and more accurate – size of slab memory allo-
+               cated via the /sys/kernel/slab/<slab-name>/slab_size pseudofile (we shall come
+               across this in the following chapter, in the Extracting useful information regarding slab
+               caches section)
+
+Graphing it
+As an interesting aside, we can use the well-known gnuplot utility to plot a graph from the previously
+gathered data. We must minimally modify the kernel module to only output what we’d like to graph:
+the required (or requested) amount of memory to allocate (x axis), and the percentage of waste that
+occurred at runtime (y axis). You can find the code of our slightly modified kernel module in the book’s
+GitHub repository here: ch8/slab4_actualsz_wstg_plot (https://github.com/PacktPublishing/
+Linux-Kernel-Programming_2E/tree/main/ch8/slab4_actualsz_wstg_plot).
+
+We also reduce the ‘step size’ to 20 KB (from 200K) to make the graph more granular. So, we build and
+insert this kernel module, “massage” the kernel log, saving the data in an appropriate column-wise
+format as required by gnuplot (in a file called plotdata.txt). The good news: all of this, including
+generating the plot (via gnuplot) is automated via our plot_graph.sh helper script; simply run it and
+see! (To understand the workings of the very useful gnuplot utility, refer to the Further reading section
+of this chapter.)
+
+We also provide a helpful Readme file in the GitHub repo within this directory to guide you. Lo and
+behold, the plot:
+
+Figure 8.12: A gnuplot generated graph showing the size requested by kmalloc() (x-axis, bytes) versus
+                                  the wastage incurred (y-axis, as a percentage)
+
+This “saw-tooth”-shaped graph helps visualize what you just learned. The closer a kmalloc() (or
+kzalloc(), or indeed any page allocator API) allocation request size is to any of the kernel’s predefined
+freelist sizes, the less wastage there is. But the moment this threshold is crossed, the wastage zooms
+up – spikes! – to close to 100% (as seen by the almost perfectly vertical lines in the preceding graph).
+
+Finding internal fragmentation (wastage) within the kernel
+The previous section demonstrated how internal fragmentation – wastage – can occur when allocating
+memory via the two now familiar slab APIs (the k{m|z}alloc() pair). The wastage seen there, though,
+tends to naturally be more so when the amount to be allocated goes well beyond a page.
+
+Not to say that the wastage doesn’t increase even for smaller numbers – the absolute amount wasted is
+less, though the percentage of wastage is consistent and can be pretty high when you ask for amounts
+of memory just over a given ‘threshold’ (the typical example: requesting 63 bytes gets you 64, whereas
+requesting 65 bytes gets you 128 (the ksize() API can be used to verify this)).
+
+Here, we concern ourselves with exactly how much wastage is incurred for memory allocation requests
+of less than a page in size, the typical quantities requested. We’ll show you two ways to quantify it:
+one, an easy approach, the second a bit more cumbersome (made easier with a custom script) but
+very valuable. Let’s begin with the first approach.
+
+The easy way with slabinfo
+ The slabinfo utility, which we learned to build in the A few FAQs regarding (slab) memory usage and
+ their answers section earlier in this chapter, can be very helpful. An easy way to lookup wastage or
+‘loss’ is simply to run slabinfo (as root) with the –L option switch (Sort by loss; the first command
+ is used to simply show the help for the -L option switch):
+   # sudo slabinfo -h |grep "^-L"
+   -L|--Loss                    Sort by loss
+   # slabinfo -L | head -n5
+   Name             Objects     Objsize        Loss Slabs/Part/Cpu       O/S O %Fr %Ef      Flg
+   dentry              148162       192       14.9M        5297/20/0      28 1     0   65   PaZFU
+   kmalloc-4k            1153      4096       14.2M          579/4/0       2 3     0   24   PZFU
+   buffer_head         132952       104       13.4M        6648/4/0       20 0     0   50   PaZFU
+   lsm_inode_cache 134919            24       13.0M        3988/53/0      34 0     1   19   PZFU
+   ext4_inode_cache 58224          1184        7.4M          2330/2/0     25 3     0   90   PaZFU
+
+The key column here, of course, is the one labeled Loss; it specifies the wastage the given slab cache
+(first column) has incurred so far; the output is also sorted by the loss (highest first). The second and
+third columns specify the number of objects in the slab and the size of each object respectively; thus,
+their product is the total amount of space taken by that slab cache. FYI, O/S stands for Objects/Slab,
+O is the order of the allocation, the next two columns specify the amount of free memory and effec-
+tive memory usage within the cache in percentage terms, and the last column is the slab flags (here,
+they’re populated as I passed them when booting; this aspect is covered very shortly).
+
+The slabinfo –L output has the advantage of showing the loss (wastage) incurred by all slab caches
+(not just the kmalloc-N ones) but the downside of only showing the total wastage; contrast this with
+the following approach.
+
+                   Even better, you can check the actual – and more accurate – size of slab memory allo-
+                   cated via the /sys/kernel/slab/<slab-name>/slab_size pseudofile (we shall come
+                   across this in the following chapter, in the Extracting useful information regarding slab
+                   caches section)
+
+More details with alloc_traces and a custom script
+As will be fully explained in the following chapter, the kernel can sometimes run into a difficult sit-
+uation where primary memory (RAM) and swap are both exhausted; in this dire circumstance, the
+kernel has no choice but to invoke the (dreaded?) OOM killer!
+
+This is a kernel component that literally kills the key culprit, the process that is the memory hogger
+(it kills its descendants as well! Talk about being ruthless...).
+
+Conceivably, on a system with limited memory (think embedded, or otherwise), if the slab caches
+suffer from a lot of wastage (loss), it’s entirely possible that the OOM killer will be invoked, at times
+during system boot itself while the kernel’s initializing. This very situation is what led to a developer
+posting a patch (which got merged recently into the 6.1 kernel); here’s the link to the commit:
+
+https://github.com/torvalds/linux/commit/6edf2576a6cc46460c164831517A36064eb8109c. This
+patch sets up a means for one to track all of the kmalloc-N slab cache’s wastage (and other info), and
+importantly, even shows the call stack leading up to the allocation request! This lets us see the details
+of the allocation request, and thus helps us debug such situations...
+
+The crux of this as it relates to our discussion: once you turn on certain SLUB debug flags, the wastage
+info gets integrated into a new pseudofile (named alloc_traces) under debugfs here: /sys/kernel/
+debug/slab/kmalloc-*; let’s check it out (here, we assume that CONFIG_SLUB_DEBUG=y; it typically is):
+
+      1.   Reboot your Linux box, and at the bootloader, pass along this kernel command-line parameter
+           (in addition to the usual ones): slub_debug=FZPU.
+
+              a. You’ll find the list of all kernel parameters documented here (very valuable): https://
+                 www.kernel.org/doc/html/latest/admin-guide/kernel-parameters.html.
+              b.    The kernel SLUB layer typically has the full debugging technology built in but off (dis-
+                    abled) by default (as it can affect performance). To turn it on, certain SLUB debug flags
+                    are provided, which are passed via the slub_debug=<debug-flags> kernel parameter.
+                    The detailed info on the SLUB debug flags we employ here (FZPU) is covered in the Linux
+                    Kernel Debugging book; we shan’t repeat it here. You can also look it up via the official
+                    kernel doc on it: https://docs.kernel.org/mm/slub.html.
+
+      2.   Once within a root shell, look up the pseudofiles for a given slab (SLUB) cache’s allocation and
+           free tracking; as an example, let’s look it up for the kmalloc-64 slab cache:
+              # ls /sys/kernel/debug/slab/kmalloc-64/
+              alloc_traces       free_traces
+
+Right, got it, now let’s look at the alloc_traces file’s current content:
+
+   # cat /sys/kernel/debug/slab/kmalloc-64/alloc_traces
+   975 populate_error_injection_list+0x8d/0x110 waste=15600/16
+   age=6363993/6363993/6363994 pid=1 cpus=0
+             __kmem_cache_alloc_node+0x279/0x2b0
+             kmalloc_trace+0x2a/0xa0
+             populate_error_injection_list+0x8d/0x110
+             init_error_injection+0x1b/0x75
+             do_one_initcall+0x49/0x210
+             kernel_init_freeable+0x27b/0x2e8
+             kernel_init+0x1b/0x160
+             ret_from_fork+0x22/0x30
+
+       403 get_mountpoint+0xab/0x190 waste=9672/24 age=6360787/6361173/6363388
+   pid=332-1199 cpus=0-1,3-5
+             __kmem_cache_alloc_node+0x279/0x2b0
+             kmalloc_trace+0x2a/0xa0
+             get_mountpoint+0xab/0x190
+             lock_mount+0x53/0x100
+             path_mount+0x535/0xb80
+             __x64_sys_mount+0x10c/0x150
+             do_syscall_64+0x5c/0x90
+             entry_SYSCALL_64_after_hwframe+0x63/0xcd
+   [ ... ]
+
+The output is sorted by maximum wastage; the first two are seen above. Here’s how to interpret them
+(let’s do so for the first trace):
+   975 populate_error_injection_list+0x8d/0x110 waste=15600/16
+   age=6363993/6363993/6363994 pid=1 cpus=0
+
+The populate_error_injection_list() function (at an offset of 0x8d bytes into the function, whose
+length is 0x110 bytes) made 975 requests for memory of 64 bytes each (as this is the kmalloc-64 cache,
+after all), wasting 16 bytes each time, thus wasting a total of 975 * 16 = 15,600 bytes. The stack trace
+(read it bottom-up) shows the history, the way it got here (great for debugging!).
+
+Let’s delve deeper: the function’s here: lib/error-inject.c:populate_error_injection_list();
+looking up its code (ver 6.1.25) reveals a single memory allocation via the slab layer here:
+   struct ei_entry *ent;
+   […]
+   ent = kmalloc(sizeof(*ent), GFP_KERNEL);
+   if (!ent)
+                break;
+   […]
+
+Now, the structure instance being allocated – struct ei_entry – has a size of 46+2 = 48 bytes (on 64-
+bit; check by looking it up, keeping in mind that padding can occur due to alignment requirements
+(there are 2 bytes of padding here)). Thus, each allocation is serviced by, guess who, the kmalloc-64
+slab cache (best-fit) and thus wastes exactly 64 - 48 = 16 bytes. This may seem acceptable, but, ap-
+parently, it happened (until now) 975 times, thus ending up wasting 15,600 bytes! Even this isn’t too
+bad if the memory is freed up quickly; what if it isn’t? Ah, then we have problems (including the kind of
+trigger-happy OOM killer fellow) … at least we can now effectively debug!
+
+              Exercise: Interpret the second trace instance seen above.
+
+Do note carefully – the wastage tracking is only for the kmalloc-* slab caches (as these are the ones
+from where (slab) memory requests will typically be satisfied).
+
+Running a script to see the SLUB wastage or loss
+To ease the burden of looking up the /sys/kernel/debug/slab/kmalloc-*/alloc_traces pseudofile,
+I wrote a quick custom script (ch8/wastage_kmalloc_slabs.sh); it shows only the top line (not the
+stack trace) of allocation instances where wastage has occurred, sorted by highest wastage first, for all
+kmalloc-* caches (it essentially iterates over the output of this command: grep -r -H -w waste /sys/
+kernel/debug/slab/kmalloc-[1-9]*/alloc_traces). Not only that, it separates the slab allocations
+performed by the kernel (internal) routines and by kernel modules. To keep the output human-read-
+able, it shows only the top ten ‘wasters’; the output ‘reports’ containing the full details are pointed to.
+Do go through its code and try it out.
+
+              Note: To try this script, you must be running a recent 6.1 kernel (or later) and boot the
+              system passing slub_debug=FZPU on the kernel command line.
+
+Here’s a sample run (for a change, this one’s on my native x86_64 Fedora 39 system running a recent
+6.6 kernel; I’ve truncated a portion of the right side so as to obtain a readable screenshot):
+
+Figure 8.13: Partial screenshot showing our ch8/wastage_kmalloc_slabs.sh script executing; focus
+                           on the waste=total/each portion of the the highlighted output
+
+The script (a wrapper over the recent kernel’s alloc_traces pseudofile) essentially iterates over each
+kmalloc-N slab and shows only those allocations that resulted in positive wastage (and the precise
+amount of wastage incurred); it can take a while though… In this particular run, there’s no memory
+wastage by modules.
+
+The interpretation remains the same; also, modules might show up (with their name within square
+brackets). The waste=x/y is the critical thing; x is the total number of bytes wasted, y is the number
+of bytes wasted each time; we sort the output from highest to lowest x, i.e., the total bytes wasted.
+
+This script thus gives us a quick way to spot if our kernel or a module code’s is wasting precious kernel
+memory!
+
+(Notice the ‘age=…' fields? We’ll cover what this means in the next chapter, so keep a keen eye out).
+
+So, with this, we’ve covered a significant amount of stuff. The next section very briefly highlights the
+pros and cons of the SLUB layer.
+
+Slab layer - pros and cons
+Right, let’s now summarize the slab (SLUB) allocator pros and cons in a table:
+
+ Slab allocator: pros                                      Slab allocator: cons
+Fast – uses the kernel’s identity-mapped RAM
+                                                           There is an upper limit to how much can be
+(obtained and mapped at boot); pages are in the
+                                                           allocated with a single API call; practically,
+lowmem region and thus pre-mapped; no page
+                                                           assuming MAX_ORDER=11 and a page size of 4K,
+table setup is required ( just as with the page
+                                                           it’s 4 MB.
+allocator/BSA).
+                                                           Security: by default, freed memory is not cleared,
+                                                           which could result in info-leakage scenarios. Can
+Guarantees that memory chunks are physically
+                                                           build the kernel with CONFIG_PAGE_POISONING
+contiguous and CPU cacheline-aligned.
+                                                           or use kfree_sensitive() (can result in a slight
+                                                           performance impact).
+The ability to allocate fragments of a page                Have to carefully check allocations (with ksize()
+(typically from as small as 8 bytes (on the x86) up        or slab tools or alloc_traces) to ensure too
+to 8K).                                                    much wastage doesn’t occur.
+
+Table 8.3: Summary of the pros and cons of the slab allocator (k{m|z}alloc() / k[z]free())
+
+We finish with a quick mention of different internal implementations of the slab allocator.
+
+Slab layer – a word on its implementations within the kernel
+We end this section and this chapter with a quick word on the actual slab layer implementations (yes,
+there are several) within the kernel. Let’s check it out!
+
+There are at least three different mutually exclusive kernel-level implementations of the slab allocator;
+only one of them can be in use at runtime. The one to be used at runtime is selected at the time of
+configuring the kernel (you learned this procedure in detail in Chapter 2, Building the 6.x Linux Kernel
+from Source – Part 1). The relevant kernel configuration options are as follows:
+
+  •     CONFIG_SLAB
+  •     CONFIG_SLUB
+  •     CONFIG_SLOB
+
+The first (SLAB) is the early, well-supported, but quite under-optimized one. The second implementation,
+SLUB, aka the Unqueued Allocator, is a major improvement on the first in terms of memory efficiency,
+performance, and better diagnostics and is the one selected by default. The SLOB allocator (aka the
+Simple Allocator) is a drastic simplification and, as per the kernel config help, “does not perform well
+on large systems.” The official kernel documentation has a useful page on SLUB here: Short users guide
+for SLUB (https://www.kernel.org/doc/html/latest/mm/slub.html; much of the content here is to
+do with interpreting and analyzing the output of slabinfo, something I cover in some detail in the
+Linux Kernel Debugging book).
+
+Summary
+In this chapter, you learned – to a good level of detail – how both the page (or buddy system) and the
+slab allocators work. Recall that the actual “engine” of allocating (and freeing) RAM within the kernel
+is ultimately the page (or buddy system) allocator, with the slab allocator being layered on top of it to
+provide optimization for typical less-than-a-page-in-size allocation requests, and to efficiently allocate
+several well-known kernel data structures (‘objects’).
+
+You learned how to efficiently use the APIs exposed by both the page and slab allocators, with several
+demo kernel modules to help show this in a hands-on manner. A good deal of focus was (quite rightly)
+given to the real issue of the developer issuing a (slab) memory request for a certain N number of
+bytes, but you learned that it can be very sub-optimal, with the kernel actually allocating much more
+(the wastage can climb very close to 100%)! You now know how to check for and mitigate these cases.
+Well done!
+
+The next chapter covers more on optimal allocation strategies, as well as some more advanced topics
+on kernel memory allocation, including the creation of custom slab caches, using the kernel’s vmalloc
+allocation interfaces, what the OOM killer is all about, and more. So, first ensure you’ve understood
+the content of this chapter and worked on the kernel modules and assignments (as follows). Then,
+let’s get you on to the next one!
+
+Questions
+As we conclude, here is a list of questions for you to test your knowledge regarding this chapter’s mate-
+rial: https://github.com/PacktPublishing/Linux-Kernel-Programming_2E/blob/main/questions/
+ch8_qs_assignments.txt. You will find some of the questions answered in the book’s GitHub repo:
+https://github.com/PacktPublishing/Linux-Kernel-Programming_2E/tree/master/solutions_
+to_assgn.
+
+Further reading
+To help you delve deeper into the subject with useful materials, we provide a rather detailed list of online
+references and links (and at times, even books) in a Further reading document in this book’s GitHub
+repository. The Further reading document is available here: https://github.com/PacktPublishing/
+Linux-Kernel-Programming_2E/blob/master/Further_Reading.md.
+
+Leave a review!
+Enjoying this book? Help readers like you by leaving an Amazon review. Scan the QR code below for
+a 20% discount code.
+
+*Limited Offer

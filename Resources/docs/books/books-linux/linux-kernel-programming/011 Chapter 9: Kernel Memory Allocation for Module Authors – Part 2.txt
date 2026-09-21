@@ -1,0 +1,2400 @@
+9
+Kernel Memory Allocation for
+Module Authors – Part 2
+The previous chapter covered the basics (and a lot more!) of using the available APIs for memory allo-
+cation via both the page allocator (PA) or Buddy System Allocator (BSA) and the slab allocators within
+the kernel. In this chapter, we will delve further into this large and interesting topic. We will cover
+the creation of custom slab caches, the vmalloc interfaces, and, very importantly, given the wealth
+of choice, which APIs to use in which situation. We shall then delve into some key kernel internal
+details regarding memory reclamation, the dreaded Out of Memory (OOM) killer, and demand paging.
+
+These areas tend to be important to understand when working with kernel modules, especially with
+device drivers. A Linux system project’s sudden crash with merely a Killed message on the console
+requires some explanation, yes!? The OOM killer’s likely the sweet chap behind this...
+
+Briefly, within this chapter, these are the main areas covered:
+
+  •     Creating a custom slab cache
+  •     Debugging kernel memory issues – a quick mention
+  •     Understanding and using the kernel vmalloc() API
+  •     Memory allocation in the kernel – which APIs to use when
+  •     Memory reclaim – a key kernel housekeeping task
+  •     Stayin’ alive – the OOM killer
+
+Technical requirements
+I assume that you have gone through Online Chapter, Kernel Workspace Setup, and have appropriately
+prepared a guest VM (or a native system) running Ubuntu 22.04 LTS (or a later stable release) and
+installed all the required packages. If not, I highly recommend you do this first.
+
+Also, the last section of this chapter deliberately runs a very memory-intensive app, so intensive that
+the kernel will take some drastic action (killing off some process(es))! I highly recommend you try
+out stuff like this on a safe, isolated system, preferably a Linux test VM (with no important data on it).
+
+To get the most out of this book, I strongly recommend you first set up the workspace environment,
+including cloning this book’s GitHub repository for the code, and work on it in a hands-on fash-
+ion. The GitHub repository can be found at https://github.com/PacktPublishing/Linux-Kernel-
+Programming_2E.
+
+Creating a custom slab cache
+As explained in detail in the previous chapter, a key design concept behind slab caches is the power-
+ful idea of object caching. By caching frequently used objects – data structures, really – the memory
+alloca­tion/free work for those objects are much quicker and thus overall performance receives a boost.
+
+So, think about this: what if we’re writing a driver and within it, we notice that a certain data structure
+(an object) is very frequently allocated and freed? Normally, we would use the usual kzalloc() (or
+kmalloc()) followed by the kfree() APIs to allocate and free this object. Some good news: the Linux
+kernel sufficiently exposes the slab layer API to us, the module/driver authors, allowing us to create
+custom slab caches. In this section, you’ll learn how you can leverage this powerful feature.
+
+Creating and using a custom slab cache within a kernel module
+In this section, we will create, use, and subsequently destroy a custom slab cache. At a broad level,
+we’ll be performing the following three steps:
+
+      1.   Creating a custom slab cache of a given size with the kmem_cache_create() API. This is often
+           done as part of the init code path of the kernel module (or within the probe method of a driver).
+      2.   Using the slab cache. Here we will do the following:
+
+             •      Issue the kmem_cache_alloc() API to allocate a single instance of the custom object(s)
+                    within your slab cache.
+             •      Use the object.
+             •      Free it back to the custom cache with the kmem_cache_free() API.
+
+      3.   Destroying the custom slab cache when done with kmem_cache_destroy(). This is often done
+           as a part of the cleanup code path of the kernel module (or within the remove/detach/discon-
+           nect method of a driver).
+
+Let’s explore each of these APIs in a bit of detail. We’ll start with the creation of a custom (slab) cache.
+
+Step 1 – creating a custom slab cache
+First, of course, let’s learn how to create the custom slab cache. The signature of the kmem_cache_
+create() kernel API is as follows:
+
+      #include <linux/slab.h>
+      struct kmem_cache *kmem_cache_create(const char *name,
+                 unsigned int size, unsigned int align, slab_flags_t flags,
+                 void (*ctor)(void *));
+
+The first parameter is the name of the cache, as will be revealed by proc (and hence by other wrap-
+per utilities over proc, such as vmstat, slabtop, and so on). It usually matches the name of the data
+structure or object being cached (but does not have to).
+
+The second parameter, size, is a key one here – it’s the size in bytes for each object within the new
+cache. Based on this object size (using a best-fit algorithm), the kernel’s slab layer constructs a cache of
+objects. The actual size of each object within the cache could be (slightly) larger than what’s requested
+due to three reasons:
+
+  •       We can always provide more, but never less, than the memory size requested.
+  •       Some space for metadata (housekeeping information) is required.
+  •       The kernel is limited in being able to provide a cache of the exact size required. It uses the
+          memory of the closest possible (equal to or larger) matching size from the available slab cach-
+          es (recall what you learned in Chapter 8, Kernel Memory Allocation for Module Authors – Part 1,
+          in the Caveats when using the slab allocator section, where we clearly saw that more memory
+          (sometimes a lot!) could be used).
+
+                Recall from Chapter 8, Kernel Memory Allocation for Module Authors – Part 1, that the ksize()
+                API can be used to query the actual size of the allocated object. There is another API with
+                which we can query the size of the individual objects within the new slab cache: unsigned
+                int kmem_cache_size(struct kmem_cache *s); you’ll see this being used shortly.
+
+The third parameter, align, is the alignment required for the objects within the cache. If unimportant,
+just pass it as 0. Quite often, though, there are very particular alignment requirements, for example,
+to ensure that the object is aligned to the size of a word on the machine (32 or 64 bits). To do so, pass
+the value as sizeof(long) (the unit for this parameter is bytes, not bits).
+
+The fourth parameter, flags, can either be 0 (implying no special behavior) or the bitwise-OR operator
+of the following flag values. For clarity, we have directly reproduced the information on the following
+flags from the comments within the source file, mm/slab_common.c:
+   // mm/slab_common.c
+   [...]
+      * The flags are
+      *
+      * %SLAB_POISON - Poison the slab with a known test pattern (a5a5a5a5)
+      * to catch references to uninitialized memory.
+      *
+      * %SLAB_RED_ZONE - Insert `Red` zones around the allocated memory to
+      * check for buffer overruns.
+      *
+      * %SLAB_HWCACHE_ALIGN - Align the objects in this cache to a hardware
+      * cache line. This can be beneficial if you're counting cycles as
+      * closely as davem.
+   [...]
+
+Let’s quickly check out these flags:
+
+  •      The first of them, SLAB_POISON, provides slab “poisoning,” that is, initializing the cache memory
+         to a previously known value (0xa5a5a5a5). Doing this can help during debug situations (where
+         we peek at raw memory to see what’s going on and this memory pattern catches the eye).
+  •      The second flag, SLAB_RED_ZONE, is interesting, inserting red zones (analogous to guard pages)
+         around the allocated buffer. This is a common way of checking for the unfortunately pretty
+         common OOB (Out Of Bounds) or buffer overflow/underflow errors. It’s almost always used
+         in a debug context (typically during development/test).
+  •      The third possible flag, SLAB_HWCACHE_ALIGN, is commonly used and is recommended for
+         performance. It guarantees that all the cache objects are aligned to the hardware (CPU) cache
+         line size. The usage of this flag is precisely why the memory allocated via the popular k{m|z}
+         alloc() APIs is aligned to the hardware (CPU) cache line. (We cover some details on CPU
+         caching concepts in Chapter 13, Kernel Synchronization – Part 2.)
+
+Finally, the fifth parameter to kmem_cache_create() is very interesting too: a function pointer, void
+(*ctor)(void *);. This is modeled as a constructor function (as in object orientation and OOP lan-
+guages). It conveniently allows you to initialize the slab object allocated from the custom slab cache
+the moment it’s allocated! As one example of this feature in action within the kernel, see the code of
+the Linux Security Module (LSM) called integrity (here security/integrity/iint.c:integrity_
+iintcache_init()); it invokes the following:
+
+      iint_cache = kmem_cache_create("iint_cache", sizeof(struct integrity_iint_
+      cache), 0, SLAB_PANIC, init_once);
+
+The init_once() function – the constructor – initializes the cached object instance (which was just
+allocated). The constructor function is called whenever new pages are allocated by this cache.
+
+               Though it may seem counter-intuitive, the fact is that the modern Linux kernel is quite
+               object-oriented in design terms. The code, of course, is mostly plain old C, a traditional
+               procedural language. Nevertheless, a vast number of architecture implementations within
+               the kernel (the driver model being a big one) are quite object-oriented in design: method
+               dispatch via virtual function pointer tables, the so-called “strategy” design pattern, and
+               so on. See a two-part article on LWN depicting this in some detail here: Object-oriented
+               design patterns in the kernel, part 1, June 2011 (https://lwn.net/Articles/444910/).
+
+The return value from the kmem_cache_create() API is a pointer to the newly created custom slab
+cache on success, and NULL on failure. This pointer is usually kept global, as you will require access
+to it in order to actually allocate objects from it (our next step).
+
+It’s important to understand that the kmem_cache_create() API can only be called from process con-
+text. A fair bit of kernel code (including many drivers) creates and uses its own custom slab caches.
+For example, in the 6.1 Linux kernel, there are over 430 instances of this API being invoked.
+
+All right, now that you have a custom (slab) cache available, how exactly do you use it to allocate
+memory objects? Read on; the next section covers precisely this.
+
+Step 2 – using our custom slab cache’s memory
+So, we created a custom slab cache; internally, the kernel will have pre-allocated several objects of
+your custom structure within it, ready for you to use! To use it, you must issue the kmem_cache_alloc()
+API. Its job is that given the pointer to a slab cache, it returns a single instance of an object on that slab
+cache (in fact, this is how the k{m|z}alloc() APIs work under the hood!). Its signature is as follows
+(of course, remember to always include the <linux/slab.h> header for all slab-based APIs):
+   void *kmem_cache_alloc(struct kmem_cache *s, gfp_t gfpflags);
+
+Let’s look at its two parameters:
+
+  •     The first parameter to kmem_cache_alloc() is the pointer to the (custom) cache that we created
+        in the previous step (the pointer being the return value from the kmem_cache_create() API).
+  •     The second parameter is the usual GFP flags to pass along (remember the essential rule for
+        driver/module authors: use GFP_KERNEL for normal process-context allocations when it’s safe
+        to sleep, else GFP_ATOMIC when in any kind of atomic context).
+
+As with the now-familiar k{m|z}alloc() APIs, the return value is a pointer to the newly allocated
+memory chunk – a kernel virtual address.
+
+Use the newly allocated memory object, and when done, do not forget to free it with the following:
+   void kmem_cache_free(struct kmem_cache *s, void *x);
+
+Here, take note of the following with respect to the kmem_cache_free() API:
+
+  •     The first parameter to kmem_cache_free() is, again, the pointer to the (custom) slab cache that
+        you created in the previous step (the return value from kmem_cache_create()).
+  •     The second parameter is the pointer to the memory object you wish to free – the object instance
+        that you were just allocated/given with kmem_cache_alloc() – and thus have it return to the
+        cache specified by the first parameter!
+
+Similar to the k[z]free() APIs, there is no return value.
+
+Step 3 – destroying our custom cache
+When completely done (often in the cleanup or exit code path of the kernel module, or your driver’s
+remove method), you must destroy the custom slab cache that you created earlier using the following
+API:
+   void kmem_cache_destroy(struct kmem_cache *);
+
+The parameter, of course, is the pointer to the (custom) cache that you created in the first step (the
+return value from the kmem_cache_create() API).
+
+Now that you have understood the procedure and its related APIs, let’s get hands-on with a kernel
+module that creates its own custom slab cache, uses it, and then destroys it.
+
+Custom slab – a demo kernel module
+Time to get our hands dirty with some code! Let’s look at a simple demonstration of using the preceding
+APIs to create our very own custom slab cache. As usual, we show only relevant code snippets here. I
+urge you to clone the book’s GitHub repository, browse the full code, and try it out yourself! You can
+find the code for this file in ch9/slab_custom/slab_custom.c.
+
+Let’s get started:
+      // ch9/slab_custom/slab_custom.c
+      #define OURCACHENAME       "our_ctx"
+      /* Our 'demo' structure, one that (we imagine) is often allocated and freed;
+       * hence, we create a custom slab cache to hold pre-allocated 'instances'
+       * of it... Size of one structure instance: 328 bytes.
+       */
+      struct myctx {
+            u32 iarr[10];        // 40 bytes; total=40
+            u64 uarr[10];        // 80 bytes; total=120
+            s8 uname[128], passwd[16], config[64];      // 128+16+64=208 bytes;
+                                                        // total=328
+      };
+      static struct kmem_cache *gctx_cachep;
+
+In the preceding code, we declared a (global) pointer (gctx_cachep) to the to-be-created custom slab
+cache – which will hold objects; namely, our fictional often-allocated-and-freed data structure, myctx.
+
+In the following, see the code that creates the custom slab cache:
+      static int create_our_cache(void)
+      {
+            int ret = 0;
+            void *ctor_fn = NULL;
+
+            if (use_ctor == 1)
+                ctor_fn = our_ctor;
+            pr_info("sizeof our ctx structure is %zu bytes\n"
+                     " using custom constructor routine? %s\n",
+                     sizeof(struct myctx), use_ctor==1?"yes":"no");
+
+           /* Create a new slab cache:
+            * kmem_cache_create(const char *name, unsigned int size, unsigned int
+               align, slab_flags_t flags, void (*ctor)(void *));
+            * When our constructor's enabled (the default), this call will trigger it.
+      */
+             gctx_cachep = kmem_cache_create(OURCACHENAME, // name of our cache
+
+                   sizeof(struct myctx), // (min) size of each object
+                   sizeof(long),               // alignment
+                   SLAB_POISON |        /* use slab poison values (explained soon) */
+                   SLAB_RED_ZONE |   /* good for catching buffer under|over-flow bugs */
+                   SLAB_HWCACHE_ALIGN, /* good for performance */
+                   ctor_fn);                        // ctor: here, on by default
+
+       if (!gctx_cachep) {
+                 [...]
+                 if (IS_ERR(gctx_cachep))
+                      ret = PTR_ERR(gctx_cachep);
+       }
+       return ret;
+   }
+
+Hey, that’s interesting: notice that our cache creation API supplies a constructor function to help
+initialize any newly allocated object; here it is:
+   /* The parameter to the constructor is the pointer to the just-allocated memory
+   * 'object' from our custom slab cache. Here, in our 'constructor' routine,
+   * we initialize the just-allocated memory object.
+   */
+   static void our_ctor(void *new)
+   {
+           struct myctx *ctx = new;
+           struct task_struct *p = current;
+
+           /* TIPS:
+        * 1. To see how exactly we got here, insert this call: dump_stack(); (read
+   its output bottom-up ignoring call frames that begin with '?')
+        * 2. Count the number of times the below printk's emitted; its, in effect,
+   the number of objects cached by the kernel within this slab cache. */
+       pr_info("in ctor: just alloced mem object is @ 0x%px\n", ctx);             /* %pK in
+   production */
+           memset(ctx, 0, sizeof(struct myctx));
+
+           /* As a demo, we init the 'config' field of our structure to some
+            * (arbitrary) 'accounting' values from our task_struct
+            */
+           snprintf_lkp(ctx->config, 6 * sizeof(u64) + 5, "%d.%d,%ld.%ld,%ld,%ld",
+                  p->tgid, p->pid, p->nvcsw, p->nivcsw, p->min_flt, p->maj_flt);
+   }
+
+               The comments in the preceding code are self-explanatory; do read them. The constructor
+               routine, if set up (depending on the value of our use_ctor module parameter; it’s 1 by
+               default), will be auto-invoked by the kernel whenever a new memory object is allocated
+               to our cache. (Also, as we employ our safer snprintf_lkp() wrapper, which is defined
+               in our klib.c library file, we have our Makefile link to the klib.o file as well.)
+
+Next, within the init code path, we call our use_our_cache() function. It allocates an instance of our
+myctx object via the kmem_cache_alloc() API, and, if our custom constructor routine is enabled, it
+runs, initializing the object. We then dump its memory to show that it was indeed initialized as coded,
+freeing it when done (for brevity, we’ll leave out showing the error code paths):
+         obj = kmem_cache_alloc(gctx_cachep, GFP_KERNEL);
+          pr_info("Our cache object size is %u bytes; ksize=%lu\n",
+                  kmem_cache_size(gctx_cachep), ksize(obj));
+          print_hex_dump_bytes("obj: ", DUMP_PREFIX_OFFSET, obj, sizeof(struct
+      myctx));
+          kmem_cache_free(gctx_cachep, obj);
+
+Finally, in the exit code path, we destroy our custom slab cache:
+      kmem_cache_destroy(gctx_cachep);
+
+The following output from a sample run helps us understand how it works. Figure 9.1 is a partial screen-
+shot showing the output on our x86_64 Ubuntu 22.04 LTS guest running our custom Linux 6.1 kernel:
+
+Figure 9.1: Some output from our slab_custom kernel module on an x86_64 VM
+
+Great! Hang on, though, there are a couple of key points to take note of here:
+
+  •     As our constructor routine is enabled by default (the value of our use_ctor module parameter
+        is 1), it runs whenever a new object instance is allocated by the kernel slab layer to our new
+        cache. Here, we performed just a single kmem_cache_alloc(), yet our constructor routine has
+        run 18 times, implying that the kernel’s slab code (pre)allocated 18 objects to our brand-new
+        cache! Of course, this number can vary.
+  •     As seen in the preceding screenshot, the size of each object is seemingly 328 bytes, which
+        matches the actual structure size (as shown by these three APIs: sizeof(), kmem_cache_size(),
+        and ksize()). However, again, this is not true! The actual size of the object as allocated by the
+        kernel is larger; we can see this via vmstat:
+            $ sudo vmstat -m | head -n1
+            Cache                             Num   Total    Size    Pages
+            $ sudo vmstat -m | grep our_ctx
+            our_ctx                             0       18     448        18
+
+              As highlighted in the preceding output block, the actual size of each allocated object is
+              not 328 bytes but 448 bytes (thus, the wastage is 120 bytes per object allocated, close to
+              27%!). Just as we saw earlier, this is important for you to realize, and indeed check for.
+
+              FYI, you can always check out the man page of vmstat(8) for the precise meaning of
+              each column.
+
+Right, let’s now move on to seeing how we can extract some internal details regarding the slab caches.
+
+Extracting useful information regarding slab caches
+Continuing the discussion from the previous section, if the ksize() API returns the size of the allo-
+cated object as the same number (328 here) as the sizeof() operator does, then how exactly are we
+to figure out that there’s indeed some wastage incurred? Using vmstat is one easy way, via the slab
+statistics maintained by the kernel.
+
+Within the sysfs pseudo filesystem, in the /sys/kernel/slab directory, there will exist a (pseudo)
+directory for every slab cache currently on the system! Looking up its content reveals useful internal
+details regarding the cache in question (you will require root access). As an example, once our previous
+slab_custom kernel module is inserted into the kernel, run this command (as root):
+
+   # grep . /sys/kernel/slab/our_ctx/*
+
+Recall that we named our custom slab cache our_ctx.
+
+              Tip: For (pseudo) files with a single value within them (very common with sysfs), to see
+              the filename followed by its current content, you can leverage this grep command style
+              (as we do just below): grep . <path/to/files>/*.
+
+Using grep this way is an efficient way to quickly reveal the value of each (pseudo) file within the
+directory; a screenshot of the output I got when doing so follows:
+
+Figure 9.2: Screenshot showing how one can quickly extract useful info from any existing kernel slab
+                                   cache (with relevant values highlighted here)
+
+Do study Figure 9.2; we get all relevant details regarding our slab cache! To “zoom” in on the specific
+values of interest, simply do this:
+      # grep . /sys/kernel/slab/our_ctx/* | grep -E "object_size|slab_size"
+      /sys/kernel/slab/our_ctx/object_size:328
+      /sys/kernel/slab/our_ctx/slab_size:448
+
+So, given the name of a slab cache, writing a small script to extract (“grok”) these values and then
+calculate the wastage is an exercise I’ll leave to you, dear reader! We’ll round off the discussion on
+creating and using custom slab caches with understanding the slab shrinker interface.
+
+Understanding slab shrinkers
+Caches are good for performance. Visualize reading the content of a large file from disk as opposed to
+reading its content from RAM. There’s no question that the RAM-based I/O is much faster! As can be
+imagined, the Linux kernel leverages these ideas and thus maintains several caches – the page cache,
+dentry cache, inode cache, slab caches, and so on. These caches indeed greatly help performance,
+but think about it; they’re not a mandatory requirement.
+
+Thus, when memory pressure reaches high levels (implying that too much memory is in use and too
+little is free), the Linux kernel has mechanisms to intelligently free up caches; this constitutes a part
+of what’s called memory reclamation – it’s a continuous ongoing process. Kernel threads (typically
+named kswapd*) reclaim memory as part of their housekeeping chores (more on this in the Memory
+reclaim – a key kernel housekeeping task and Stayin’ alive – the OOM killer sections).
+
+In the case of the slab cache(s), the fact is that some kernel subsystems and drivers create their own
+custom slab caches, as we covered earlier in this chapter. To integrate well and cooperate with the
+kernel, best practice demands that your custom slab cache code registers a shrinker interface. When
+this is done, and when memory pressure gets high enough, the kernel might well invoke several slab
+shrinker callbacks, which are expected to ease the memory pressure by freeing up (shrinking) slab
+objects.
+
+The API to register a shrinker function with the kernel is the register_shrinker() API; this is its
+signature:
+   int register_shrinker(struct shrinker *shrinker, const char *fmt, …);
+
+The first parameter is a pointer to a shrinker structure. This structure contains (among other house-
+keeping members) function pointers to two callback routines:
+
+  •     The first routine, count_objects(), merely counts and returns the number of objects that
+        would be freed (when it is actually invoked). If it returns 0, this implies that the number of
+        freeable memory objects cannot be determined now, or that we should not even attempt to free
+        any right now. Also, it returns SHRINK_EMPTY if there aren’t any objects to free in the first place.
+  •     The second routine, scan_objects(), is invoked only if the first callback routine returns a non-ze-
+        ro value (besides SHRINK_EMPTY). This is the routine that, when invoked, actually frees up,
+        or shrinks, the slab cache in question. It returns the actual number of objects freed up in this
+        reclaim cycle or SHRINK_STOP if the reclaim attempt could not progress (due to possible
+        deadlocks).
+
+              FYI, the register_shrinker() API was updated recently, in the 6.0 kernel, to include
+              an identifying name printf-format-style string (commit e33c267: https://github.com/
+              torvalds/linux/commit/e33c267ab70de4249d22d7eab1cc7d68a889bac2). Further,
+              if CONFIG_SHRINKER_DEBUG is enabled (set to y), the content of /sys/kernel/debug/
+              shrinker shows all registered slab shrinkers. Only a few components within the 6.1 kernel
+              seem to be making use of the shrinker interface; as one example, the code in drivers/md/
+              dm-bufio.c (a way to perform cached I/O on devices) registers a shrinker interface and
+              then, when its scan_objects callback is invoked, it uses a workqueue function (drivers/
+              md/dm-bufio.c:shrink_work()) to try and evict buffers as required.
+
+We’ll now wrap up the discussion on the slab layer with a quick summary of the pros and cons of
+using this layer for memory (de)allocation. This is very important for you as a kernel/driver author
+and something to be keenly aware of!
+
+Summarizing the slab allocator pros and cons
+In this section, we will very briefly summarize things you have already learned by now. This is intended
+as a way for you to quickly look up and recollect these key points!
+
+The pros of using the slab allocator (or slab cache) APIs to allocate and free kernel memory are as
+follows:
+
+  •        (Very) fast (as it uses pre-cached memory objects).
+  •        Allocation of a physically contiguous memory chunk is guaranteed.
+  •        Hardware (CPU) cacheline-aligned memory is guaranteed when the SLAB_HWCACHE_ALIGN flag
+           is specified when creating the cache. This is the case for kmalloc(), kzalloc(), and so on.
+  •        You can create your own custom slab cache for (frequently alloc-ed/freed) objects.
+
+The cons of using the slab allocator (or slab cache) APIs are the following:
+
+  •        A limited amount of memory can be allocated at a time; typically, just 8 KB directly via the slab
+           interfaces, or up to 4 MB indirectly via the page allocator on most current platforms (the pre-
+           cise upper limits depend upon the architecture and system page size; these are the values for
+           both x86[_64] and ARM platforms with a page size of 4,096 bytes and a MAX_ORDER value of 11).
+  •        Using the k{m|z}alloc() APIs incorrectly: asking for too much memory, or asking for a mem-
+           ory size just over a threshold value (discussed in detail in Chapter 8, Kernel Memory Allocation
+           for Module Authors – Part 1, under the Size limitations of the kmalloc API section), can certainly
+           lead to internal fragmentation (wastage). It’s designed to be optimized for common cases only,
+           really – for allocations of size less than one page.
+
+Now, let’s move on to – merely mentioning – another key aspect for the kernel/driver developer to
+understand: effectively debugging when things go wrong with respect to memory allocations/freeing,
+particularly within the slab layer.
+
+Debugging kernel memory issues – a quick mention
+Memory corruption is unfortunately a very common root cause of bugs, and being able to debug them
+is a key skill. Well, unfortunately (and with apologies), we don’t cover kernel memory debugging in
+this book due to two primary reasons:
+
+      1.   This isn’t a book on kernel debugging.
+      2.   Topics on kernel debugging have been covered in depth in my recent (up to date as of the 5.10
+           LTS kernel) Linux Kernel Debugging (LKD) book, including two whole chapters of very detailed
+           coverage on debugging kernel memory issues.
+
+Nevertheless, in this book, I consider it my duty to at least mention the various tools and approaches
+one typically employs when debugging kernel memory issues. You would do well to gain familiarity
+with the powerful dynamic (runtime) analysis frameworks/tools that are mentioned here:
+
+  •     The Sanitizer toolset:
+
+            •   KASAN (the Kernel Address Sanitizer): Available for x86_64 and AArch64, 4.x kernels
+                onward
+            •   KMSAN (the Kernel Memory Sanitizer): The kernel equivalent of the user-space MSAN
+                (Memory Sanitizer) tooling, which can catch the deadly UMR (Uninitialized Memory
+                Reads) bug (recent, 6.1 onward)
+            •   UBSAN (Undefined Behavior Sanitizer): Catches many types of arithmetic and mem-
+                ory-related UB, including the UMR bug (4.5 onward)
+
+  •     SLUB debug techniques:
+
+            •   Relies on CONFIG_SLUB_DEBUG=y and passing various flags at boot to the kernel to enable
+                different kinds of SLUB memory debug (the flags include F:sanity checks, Z:red
+                zoning, P:poisoning, U:user tracking, and so on… FYI, we employed SLUB debug-
+                ging and its flags a bit in Chapter 8, Kernel Memory Allocation for Module Authors – Part
+                1, in the More details with alloc_traces and a custom script section).
+            •   Learn how to use the powerful slabinfo utility.
+
+  •     kmemleak (to catch memory leaks, though KASAN seems superior).
+  •     The eBPF tool memleak[-bpfcc] can be used to track kernel-level allocations that haven’t been
+        freed yet. It’s powerful – it even shows the amount of memory allocated as well as the call
+        trace leading up to the allocation! (Try it: sudo memleak-bpfcc -s 5). Well, as of now it isn’t
+        completely stable, a case of Your Mileage May Vary (YMMV)...
+  •     KFENCE: A statistical approach to catching memory bugs; must run for long periods, but
+        with low enough overhead to even run in production! (In fact, if supported on the arch being
+        compiled for, and either SLAB or SLUB is enabled, it’s typically turned on by default).
+  •     kmemcheck (note, though, that kmemcheck was removed in Linux 4.15).
+
+There’s more (quoting verbatim from the LKD book):
+
+You can catch kernel memory bugs indirectly with the following:
+
+  •     Static analysis tools: checkpatch.pl, sparse, smatch, Coccinelle, cppcheck, flawfinder, and GCC
+  •     Tracing techniques
+  •     K[ret]probes instrumentation
+  •     Post-mortem analysis tooling (logs, Oops analysis, kdump/crash, and [K]GDB)
+
+Okay. I’ll summarize this information with specifics on the tools you can use in the following table.
+
+Table 9.1: A summary of tools (and techniques) you can use to detect kernel memory issues
+
+A few notes to match the numbers in square brackets in the second column follow:
+
+  •     [1]: Modern GCC/Clang compilers definitely emit a warning for UMR, with recent ones even
+        being able to auto-initialize local variables (if so configured).
+  •    [2]: KASAN catches (almost!) all the OOB/UAF/UAS/double-free/leakage defects – wonderful!
+       The SLUB debug approach can catch a couple of these, but not all. Vanilla kernels don’t seem
+       to catch any.
+  •     [3]: By vanilla kernel, I mean that this defect was caught on a regular distro kernel (with no
+        special config set for memory checking).
+
+(At the risk of over-selling, I’d urge you to also read the Linux Kernel Debugging book). Okay, let’s now
+move on to learning about another important kernel memory region, the vmalloc region and it’s
+allocation API, vmalloc() (and friends).
+
+Understanding and using the kernel vmalloc() API
+As we learned in the previous chapter, ultimately there is just one engine for memory allocation within
+the kernel – the page (or buddy system) allocator. Layered on top is the slab allocator (or slab cache)
+machinery. In addition to these two layers, there is another completely virtual address space within
+the kernel’s virtual address space from where virtual pages can be allocated at will – this is called the
+kernel vmalloc region.
+
+Within the kernel segment or VAS is the vmalloc address space, aka the vmalloc region, extending from
+VMALLOC_START to VMALLOC_END-1 (the precise addresses and the space available are arch-dependant;
+incidentally, we covered all this in some detail in Chapter 7, Memory Management Internals – Essentials,
+under the Examining the kernel segment section). It’s a completely virtual region to begin with, that is,
+its virtual pages are initially not mapped to any physical page frames.
+
+ For a quick refresher, revisit the diagram of the user and kernel segments – in effect, the complete
+ VAS – by re-examining, f.e., Figure 7.12. You will find this in Chapter 7, Memory Management Internals
+– Essentials, under the Examining the kernel VAS section.
+
+In this book, our purpose is not to delve into the gory internal details regarding the kernel’s vmalloc
+region. Instead, we present enough information for you, the module or driver author, to use this region
+for the purpose of allocating this type of memory at runtime.
+
+Learning to use the vmalloc family of APIs
+You can allocate virtual memory (in kernel space, of course) from the kernel’s vmalloc region – you
+can think of it as a global “pool” of allocatable virtual memory pages within the kernel – using the
+vmalloc() API:
+
+   #include <linux/vmalloc.h>
+   void *vmalloc(unsigned long size);
+
+Some key points to note about vmalloc:
+
+   •    The vmalloc() API allocates contiguous virtual memory to the caller. There is no guarantee
+        that the allocated region will be physically contiguous; it may or may not be (the larger the
+        allocation, the less chance that it’s physically contiguous).
+   •    The content of the virtual pages allocated is, in theory, random; in practice, it appears to be
+        arch-dependent (the x86_64, at least, seems to zero out the memory region); of course (at
+        the risk of a slight performance hit), you’re recommended to ensure memory zeroing out by
+        employing the vzalloc() wrapper API (it’s signature is identical to that of the vmalloc()).
+   •    The vmalloc() (and friends) API must only ever be invoked from a safe-to-sleep (or non-atomic)
+        process context (as it might cause the caller to sleep; thus, calling it in process context but
+        while holding a spinlock violates this rule; don’t do it).
+   •    The return value of v{m|z}alloc() is the kernel virtual address (or KVA) (within the kernel’s
+        vmalloc region) on success or NULL on failure; though unlikely to fail, it’s your job as a good
+        developer to check for the failure case.
+   •    The start of the vmalloc memory region just allocated is guaranteed to be on a page boundary
+        (in other words, the allocation is always page-aligned). This tells us something: the v{m|z}
+        alloc() APIs are meant to be used for large-ish memory allocations, when the fact that the
+        allocated region may not be physically contiguous is okay.
+   •    The actual allocated memory (from the page allocator) might well be larger than what’s re-
+        quested (as again, it internally allocates sufficient pages to cover the size requested).
+
+It will strike you that this API seems very similar to the familiar user space malloc(). Indeed it is at
+first glance, except that, of course, it’s a kernel space allocation (and again, as with the kmalloc()
+family, remember that there is no direct correlation between the user and kernel allocation APIs).
+
+This being the case, how is vmalloc() helpful to us module or driver authors? When you require a large,
+virtually contiguous buffer of a size greater than the slab APIs (that is, k{m|z}alloc() and friends)
+can provide – recall that it’s typically 4 MB with a single allocation on both ARM and x86[_64] – then
+you should use vmalloc()!
+
+FYI, the kernel uses vmalloc() for various reasons. Some of them are as follows:
+
+  •       Allocating space for the (static) memory of kernel modules when they are loaded into the
+          kernel (deep within kernel/module/main.c:load_module()).
+  •       If CONFIG_VMAP_STACK is defined (it typically is these days), then vmalloc() is used for the
+          allocation of the kernel-mode stack of every thread at birth (in kernel/fork.c:alloc_thread_
+          stack_node()).
+  •       Internally, while servicing an operation called the ioremap() (and friends).
+  •       Within the Linux socket filter (bpf) code paths, and so on.
+
+For convenience, the kernel provides the vzalloc() wrapper API (analogous to kzalloc()) to al-
+locate and zero out the memory region – a good coding practice, no doubt, but one that might hurt
+time-critical code paths slightly:
+      void *vzalloc(unsigned long size);
+
+Once you are done with using the allocated virtual buffer, you must of course free it:
+      void vfree(const void *addr);
+
+As expected, the parameter to vfree() is the return address from v{m|z}alloc() (or even the under-
+lying __vmalloc() API that these invoke). Passing NULL to vfree() causes it to just harmlessly return.
+
+Trying out vmalloc()
+In the following code snippet, we show some sample code from our ch9/vmalloc_demo kernel module.
+As usual, I urge you to clone the book’s GitHub repository and try it out yourself (for brevity, we don’t
+show the whole of the source code in the following snippet; we show our primary vmalloc_try()
+function invoked by the module’s init code):
+      static int vmalloc_try(void)
+      {
+          if (!(vptr_rndm = vmalloc(10000))) {
+               pr_warn("vmalloc failed\n");
+               goto err_out1;
+          }
+          pr_info("1. vmalloc(): vptr_rndm = 0x%pK (actual=0x%px)\n",
+                    vptr_rndm, vptr_rndm);
+          print_hex_dump_bytes(" content: ", DUMP_PREFIX_NONE, vptr_rndm, DISP_
+      BYTES);
+
+The vmalloc() API in the preceding code block allocates a contiguous kernel virtual memory region
+of (at least) 10,000 bytes; in reality, the memory allocated will be page-aligned! We then employ the
+kernel’s print_hex_dump_bytes() helper routine to dump the first 16 bytes of this region.
+
+Moving on, the following code employs the vzalloc() API to again allocate another contiguous kernel
+virtual memory region of (at least) 10,000 bytes (again, it will be page-aligned memory, though); this
+time, the memory contents are set to zeroes (performing the memory dump via the print_hex_dump_
+bytes() helper will prove this):
+
+        /* 2. vzalloc(); memory contents are set to zeroes */
+        if (!(vptr_init = vzalloc(10000))) {
+             pr_warn("%s: vzalloc failed\n", OURMODNAME);
+             goto err_out2;
+        }
+        pr_info("2. vzalloc(): vptr_init = 0x%pK (actual=0x%px)\n",
+                    vptr_init, (TYPECST)vptr_init);
+        print_hex_dump_bytes(" content: ", DUMP_PREFIX_NONE, vptr_init,
+                        DISP_BYTES);
+
+A couple of points regarding the just-seen code:
+
+  •     One, notice the error handling with the goto statement (at the target labels of multiple goto
+        instances, where we use vfree() or whatever’s appropriate to free up previously allocated
+        memory buffers as required), typical of kernel code.
+  •     Two, for now, please ignore the kvmalloc(), kcalloc(), and __vmalloc() friend routines; we’ll
+        cover them in the Friends of vmalloc() section. Let’s continue with the code:
+              /* 3. kvmalloc(): allocate 'kvn' bytes with the kvmalloc(); if kvn is
+               * large (enough), this will become a vmalloc() under the hood, else
+               * it falls back to a kmalloc() */
+                if (!(kv = kvmalloc(kvn, GFP_KERNEL))) {
+                      pr_warn("kvmalloc failed\n");
+                      goto err_out3;
+                }
+                [...]
+
+                /* 4. kcalloc(): allocate an array of 1000 64-bit quantities and zero
+            out the memory */
+               if (!(kvarr = kcalloc(1000, sizeof(u64), GFP_KERNEL))) {
+                      pr_warn("kvmalloc_array failed\n");
+                      goto err_out4;
+               }
+               [...]
+               /* 5. __vmalloc(): <seen later> */
+
+                   [...]
+                   return 0;
+             err_out5:
+                 vfree(kvarr);
+             err_out4:
+                   vfree(kv);
+             err_out3:
+                   vfree(vptr_init);
+             err_out2:
+                   vfree(vptr_rndm);
+             err_out1:
+                   return -ENOMEM;
+             }
+
+ The reality is that from the 5.8.0 kernel onward, the vmalloc() API is a wrapper over the underlying
+__vmalloc_node() function (the “node” implies that it’s NUMA-aware code, that’s all). __vmalloc()
+takes just two parameters – the size to allocate and the GFP flags bitmask.
+
+On kernels prior to 5.8.0, though, the exported wrapper __vmalloc() API takes an additional param-
+eter, a page protection bitmask, via which the protections of the pages allocated can be set! We can
+leverage this to, say, allocate pages that are read-only (which is precisely what we do in our demo). We
+cover more on this aspect in the upcoming Specifying memory protections section.
+
+Now, check out the code that uses the __vmalloc() API on kernels below version 5.8.0:
+      [ ... ]
+      /* 5. __vmalloc(): allocate some 42 pages and set protections to RO */
+      #undef WR2ROMEM_BUG
+         /* #define WR2ROMEM_BUG */
+      [ ... ]
+          /* In 5.8.0, commit 88dca4c 'mm: remove the pgprot argument to __vmalloc'
+      has removed the pgprot arg from the __vmalloc(). So, only attempt this when
+      we're on kernels < 5.8.0 */
+      #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
+         vrx = __vmalloc(42 * PAGE_SIZE, GFP_KERNEL, PAGE_KERNEL_RO);
+         if (!vrx) {
+                 pr_warn("__vmalloc failed\n");
+                 goto err_out5;
+         }
+         pr_info("5. __vmalloc():            vrx = 0x%pK (actual=0x%px)\n", vrx, vrx);
+
+         /* Try reading the memory, should be fine */
+         print_hex_dump_bytes(" content: ", DUMP_PREFIX_NONE, vrx, DISP_BYTES);
+      [ ... ]
+
+We also have a bit of an experiment going on (though it’s enabled only for the older < 5.8 kernels): if
+the macro WR2ROMEM_BUG is defined (it’s not by default), we attempt to write into the read-only vmalloc
+region we allocated! This, of course, will cause a kernel bug, an Oops; here’s the relevant code snippet:
+    ifdef WR2ROMEM_BUG
+       /* Try writing to the RO memory! We should, of course, find that the kernel
+   crashes (emits an Oops!) */
+       pr_info("6. Attempting to now write into a kernel vmalloc-ed region that's
+   RO!\n");
+        *(u64 *) (vrx + 4) = 0xba;
+   #endif /* WR2ROMEM_BUG */
+
+Try this out when running on an older, < 5.8, kernel, and be prepared for a nice kernel Oops!
+
+The cleanup code path of our kernel module is straightforward; we of course free all the previously
+allocated memory regions:
+   static void __exit vmalloc_demo_exit(void)
+   {
+   #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
+        vfree(vrx);
+   #endif
+        kvfree(kvarr);
+        kvfree(kv);
+        vfree(vptr_init);
+        vfree(vptr_rndm);
+        pr_info("removed\n");
+   }
+
+We’ll leave it to you to try out and verify this demo kernel module.
+
+Now, let’s delve briefly into another key and really interesting aspect – how exactly does a user-space
+malloc() memory allocation become physical memory? Do read on to find out!
+
+A brief note on user-mode memory allocations and demand
+paging
+Without delving into deep detail regarding the internal workings of vmalloc() or the user-space
+malloc() APIs, we’ll nevertheless cover some crucial points that a competent kernel/driver developer
+like you must understand.
+
+In a user-space app (within a process or thread), let’s say we do this:
+   p = malloc(10000);
+
+Let’s assume it succeeds. It’s a very common misconception to think that now, 10,000 bytes of physical
+RAM are available at address p onward. Guess what: on modern OSs like Linux, this simply isn’t neces-
+sarily true (at least immediately)! We don’t blame you for thinking this; it’s just how modern OSs work.
+
+It’s quite enlightening to clearly understand how memory allocation really works for the popular
+user-space malloc() API and friends – it’s all via demand paging! Meaning, the successful return
+of these APIs does not mean anything in terms of physical memory allocation. When a user-space
+malloc() returns success, all that has really happened so far is that a virtual memory region has been
+reserved; no physical memory has actually been allocated yet! The actual allocation of a physical
+page frame only happens on a per-page basis as and when the virtual page is accessed (for anything:
+reading, writing, or execution).
+
+ But how does this happen internally? The answer: it’s simply a part, a side effect, of the usual memory
+ management code translating a virtual address to its corresponding physical counterpart (how else
+ would the machine work?). We covered this topic in brief in Chapter 7, Memory Management Internals
+– Essentials, in the Getting from virtual to physical addresses section.
+
+So, to quickly summarize: whenever the kernel (running in process or interrupt context), or a us-
+er-space process or thread, accesses a virtual address, this virtual address is sent – via the CPU – to, and
+is interpreted by, the Memory Management Unit (MMU), which is a part of the silicon on the CPU
+core. Hardware optimizations are checked: is the code/data already within the CPU internal L1/L2/…
+caches; if so, work on it and the job’s done. If not, do we have a Translation Lookaside Buffer (TLB)
+hit? If so, the memory translation (virtual-to-physical address) is already available; if not (we have a
+TLB-miss – expensive!), and the MMU will now walk the paging tables of the process (which are in
+kernel memory), effectively translating the virtual address and thus obtaining the physical address. It
+then caches the translation in the TLB(s) and places the physical address on the address bus, and the
+CPU goes on its merry way.
+
+But, think about this: what if the MMU cannot translate the given virtual address to a physical address?
+This can happen for several reasons; some are as follows:
+
+   •    The virtual address doesn’t (yet) have a mapping to a physical address.
+   •    The virtual address is simply incorrect (a bug).
+
+The first case is in fact what will happen here with our malloc() example – when the thread “touches”
+any memory in any manner (reads/writes/executes) within the newly allocated virtual page, the virtual
+address is sent to the MMU. Now, think, the MMU fails to translate it to physical address as, naturally,
+there is no mapping, no physical page frame (yet), only a virtual page. At this point, the MMU essen-
+tially gives up as it cannot handle this situation (it’s silicon, after all, poor fellow). Instead, it hands off
+control to the OS, invoking its page fault handler code – an exception or fault handler routine that runs
+in the current process’s context – in other words, in the context of current. The page fault handler
+resolves the situation; in our case, with malloc(), once it determines that this is indeed a legal access,
+it requests the page allocator (or BSA) for a single physical page frame (at order 0) and maps it to the
+virtual page (updating the paging table of the process).
+
+Thus, we can now see that the virtual page was actually allocated physically only on demand, only
+when it was accessed and not before. This approach to physical memory allocation is termed demand
+paging (or lazy allocation, and all modern OSs essentially do the same thing)!
+
+              Also, as a corollary: if a user-space process or thread performs an malloc() and then a
+              memset() on the memory region, the physical frames will be allocated the moment each
+              virtual page is written to! This also applies to APIs like calloc(); thus, in a real-time
+              system, we prefer the developer to use APIs like this to pre-fault in the required memory
+              frames before hitting the time-critical code paths.
+
+It’s equally important to realize that this demand paging (or lazy allocation) OS technique is not the
+case for kernel memory allocations carried out via the page (buddy system), the slab allocator, and even
+the vmalloc memory region.
+
+Thus, when kernel memory is allocated via kernel APIs, understand that actual physical page frames
+are allocated immediately. (On Linux, it’s all very fast because, recall, by the time the system is up,
+the buddy system allocator per-node and per-zone freelists have already mapped all system physical
+RAM into the kernel’s lowmem region and can therefore use it at will.) vmalloc() (and friends) too
+ultimately uses the page allocator to satisfy memory allocation requests; it’s just that the virtual pages
+come from a designated “vmalloc region” within the kernel VAS.
+
+You can go ahead and refer to Figure 9.9, which quite nicely maps all of this out; for now, ignore the
+portion on the OOM killer. We will of course cover it in a later section.
+
+Recall what we did in an earlier program, ch8/lowlevel_mem; there, we used our show_phy_pages()
+library routine to display the virtual address, the physical address, and the Page Frame Number
+(PFN) for a given memory range, thereby verifying that the low-level page allocator routines really
+do allocate physically contiguous memory chunks. Now, you might think, why not call this same
+function in this ch9/vmalloc_demo kernel module? If the PFNs of the allocated (virtual) pages are not
+consecutive, we again prove that, indeed, it’s only virtually contiguous. It sounds tempting to try, but it
+doesn’t work! Why? Simply because, as stated earlier (in Chapter 8, Kernel Memory Allocation for Module
+Authors – Part 1), we should not attempt to translate from virtual to physical any addresses other than
+direct-mapped (identity-mapped/lowmem region) ones – the ones the page or slab allocators supply.
+It just doesn’t work with addresses within the vmalloc region. However (and as we’ve learned), it’s
+still important to understand that, under the hood, though the vmalloc-ed memory isn’t necessarily
+physically contiguous, it has indeed been physically allocated immediately (and is not demand-paged
+as user-space memory allocations are).
+
+A few more points on vmalloc() and some associated information follow; do read on.
+
+Friends of vmalloc()
+A few vmalloc()-related APIs, “friends” of vmalloc(), in an FAQ style, follow.
+
+Is this vmalloc-ed (or module region) memory?
+To figure out whether a given KVA (kernel virtual address) was allocated by one of the vmalloc()
+family, a quick helper function is available:
+      mm/vmalloc.c:bool is_vmalloc_addr(const void *x)
+
+The parameter, of course, is the address to check; if it was allocated via vmalloc() (or friends), it re-
+turns True, else False. Internally, it checks whether the address passed is within the kernel’s vmalloc
+region. (This routine was merged in the 5.6 kernel.)
+
+On a related note, the kernel provides another helper routine:
+      mm/vmalloc.c:int is_vmalloc_or_module_addr(const void *x)
+
+Clearly, it returns True if the parameter (the kernel virtual address) passed is within either the kernel
+module region or the kernel vmalloc region. If neither, it returns False.
+
+Unsure which API to use? Try kvmalloc()
+In many cases, the precise API (or memory layer) used to perform a memory allocation does not really
+matter to the caller. So, a pattern of usage that emerged in a lot of in-kernel (and module) code paths
+went something like the following pseudocode:
+      kptr = kmalloc(n);
+      if (!kptr) {
+           kptr = vmalloc(n);
+           if (unlikely(!kptr))
+                <... failed, cleanup ...>
+      }
+      <ok, continue with kptr>
+
+The cleaner alternative to this kind of code is the interesting kvmalloc() API. Internally, it attempts
+to allocate the requested n bytes of memory like this:
+
+      1.   First, try the allocation via the more efficient kmalloc().
+      2.   If it succeeds, fine, we have quickly obtained physically contiguous memory and our job’s
+           done; return to caller.
+      3.   If not, fall back to allocating the memory request via the slower but surer vmalloc() API (thus
+           obtaining virtually contiguous memory) and then return to the caller.
+
+Its signature is as follows:
+      #include <linux/mm.h>
+      void *kvmalloc(size_t size, gfp_t flags);
+
+(Remember to include the header file <linux/mm.h>.) Note that for the invoked vmalloc() to go through
+(if it comes to that), only the GFP_KERNEL flag must be supplied. As usual, the return value is a pointer
+(a kernel virtual address) to the allocated memory, or NULL on failure.
+
+Free the memory obtained with kvfree:
+   void kvfree(const void *addr);
+
+Here, the parameter, of course, is the return address from kvmalloc().
+
+Similarly, and analogous to the {k|v}zalloc() APIs, we also have the kvzalloc() API, which, of
+course, zeroes the memory content. I’d suggest you use it in preference to the kvmalloc() API (with
+the usual caveat: it’s safer but a bit slower).
+
+Further, you can use the kvmalloc_array() API to allocate virtual contiguous memory for an array of
+items. It allocates n elements of size bytes each. Its implementation is shown as follows:
+   // include/linux/slab.h
+   static inline __alloc_size(1, 2) void *kvmalloc_array(size_t n, size_t
+   size, gfp_t flags)
+   {
+             size_t bytes;
+             if (unlikely(check_mul_overflow(n, size, &bytes)))
+                       return NULL;
+             return kvmalloc(bytes, flags);
+   }
+
+A key point here: notice how a validity check for the dangerous integer overflow (IoF) bug is made
+(via the check_mul_overflow() routine); that’s important and interesting. Do write robust code by
+performing similar validity checks in your code where required.
+
+              This check for IoF is key; but why exactly? Think about this: when allocating memory for
+              an array of objects, we often write the code something like this:
+
+   ptr = kmalloc(num*sizeof(struct mystruct));
+
+              Well, so? What if the multiplication causes an overflow? In fact, it often occurs that, due
+              to overflow and the size parameter’s data type being unsigned, the result is a number
+              smaller than intended; this can be leveraged by malicious hackers to try and incorporate
+              a BoF (buffer overflow) attack vector. The results can be disastrous, a security-critical bug
+              waiting to strike at an inopportune moment! (See the Further reading section for more on
+              arithmetic overflow.)
+
+Next, the kvcalloc() API is functionally equivalent to the calloc() user-space API, and is just a simple
+wrapper over the kvmalloc_array() API:
+   void *kvcalloc(size_t n, size_t size, gfp_t flags);
+
+We also mention that for code requiring NUMA awareness (we covered NUMA and associated topics
+in Chapter 7, Memory Management Internals – Essentials, in the Physical RAM organization section), the
+following APIs are available, with which we can specify the particular NUMA node to allocate the
+memory from as a parameter (this being the point to NUMA systems; do see the information box
+that follows shortly):
+      void *kvmalloc_node(size_t size, gfp_t flags, int node);
+
+Similarly, we have the kzalloc_node() API as well, which sets the memory content to zero.
+
+In fact, generally, most of the kernel-space memory APIs we have seen ultimately boil down to one
+that takes a NUMA node as a parameter. For example, take the call chain for one of the primary page
+allocator APIs, __get_free_page():
+      __get_free_page() -> __get_free_pages() -> alloc_pages()
+       -> mm/page_alloc.c:struct page *__alloc_pages(gfp_t gfp, unsigned int order,
+      int preferred_nid, nodemask_t *nodemask)
+      (Its comment says: "This is the 'heart' of the zoned buddy allocator.").
+
+Of course, you must free the memory you take; for the preceding kv*() APIs (and the kcalloc() API),
+free the memory obtained with kvfree().
+
+               Another internal detail worth knowing about, and a reason the k[v|z]malloc[_array]()
+               APIs are useful: with a regular kmalloc(), the kernel will indefinitely retry allocating the
+               memory requested if it’s small enough (this number currently being defined as CONFIG_
+               PAGE_ALLOC_COSTLY_ORDER, which is 3, implying 8 pages or less); this can actually hurt
+               performance! With the kvmalloc() API, this indefinite retrying is not done (this behavior
+               is specified via the GFP flags __GFP_NORETRY|__GFP_NOWARN), thus speeding things up.
+               This LWN article goes into detail regarding the rather weird indefinite-retry semantics of
+               the slab allocator: The “too small to fail” memory-allocation rule, Jon Corbet, December 2014
+               (https://lwn.net/Articles/627419/).
+
+Regarding the vmalloc_demo kernel module we saw earlier in this section, take a quick look at the
+code again (ch9/vmalloc_demo/vmalloc_demo.c). We use the kvmalloc() as well as kcalloc() APIs
+(steps 3 and 4 in the comments). Let’s run it on an AArch64 Raspberry Pi 4 (running a recent 6.1 64-bit
+kernel) system and see the output:
+
+Figure 9.3: Output on loading our vmalloc_demo.ko kernel module
+
+ We can see from Figure 9.3 that we’re running on a Raspberry Pi 4 with a recent 6.1.21-v8+ stock kernel.
+ Further, look at the “actual” return (kernel virtual) addresses from the APIs in the preceding output
+– note that they all belong within the kernel’s vmalloc region.
+
+Given the memory address (the KVA), how can one check whether the allocation is from the kernel’s
+vmalloc range? There are several ways:
+
+   •    Directly look up the /proc/vmallocinfo pseudofile.
+   •    Use the procmap utility; it will show all kernel regions with their start and end address values
+        (https://github.com/kaiwan/procmap).
+   •    Another (programmatic way) is via the already-mentioned is_vmalloc_addr() API.
+
+Notice the return address of kvmalloc() (step 3 in Figure 9.3); let’s search for it under proc:
+    $ sudo grep "^0x00000000bd7bc75a" /proc/vmallocinfo
+    0x00000000bd7bc75a-0x0000000035088340 6295552 0xffffffdf7fdca170 pages=1536
+    vmalloc vpages
+
+There it is! We can clearly see how using the kvmalloc() API for a large quantity of memory (5 MB)
+resulted in the vmalloc() API being internally invoked (the kmalloc() API would have failed and
+would not have emitted a warning, nor retried) and thus, as you can see, it under /proc/vmallocinfo.
+
+To interpret the preceding fields of /proc/vmallocinfo, refer to the kernel documentation here:
+https://www.kernel.org/doc/Documentation/filesystems/proc.txt.
+
+              Exercise: A little something for you to try out – in our ch9/vmalloc_demo kernel module,
+              change the amount of memory to be allocated via kvmalloc() by passing kvnum=<# bytes
+              to alloc> as a module parameter.
+
+Miscellaneous helpers – vmalloc_exec() and vmalloc_user()
+FYI, up to the 5.8.0 version, the kernel provided an internal helper API, vmalloc_exec() – it’s (again) a
+wrapper over the vmalloc() API and is used to allocate a virtually contiguous memory region that has
+execute permissions set upon it. An interesting user is the kernel module allocation code path (kernel/
+module.c:module_alloc()); the space for the kernel module’s (executable section) memory is allocated
+via this routine. This routine isn’t exported, though. From 5.8.0 (see commit 7a0e27b), vmalloc_exec()
+has been removed (merged into its only caller, the module_alloc() function). It’s now a wrapper over
+the recent way to specify memory protections, the __vmalloc_node_range() API(which isn’t exported
+and thus unavailable to modules). The other helper routine we mention is vmalloc_user(); it’s (yet
+again) a wrapper over the __vmalloc_node_range() API and is used to allocate a zeroed-out virtually
+contiguous memory region suitable for mapping into user VAS. This routine is exported; it’s used, for
+example, by several device drivers as well as the kernel’s perf events ring buffer.
+
+Specifying memory protections
+As we’ve already seen from the Trying out vmalloc() section, up until the 5.8.0 kernel, the __vmalloc()
+API could be easily leveraged to specify the particular protections (for example, read-only) of a (vmal-
+loc-ed) memory region. But, after 5.8.0, only the underlying kernel routine __vmalloc_node_range()
+can do this; so, what’s the problem? It isn’t exported (whereas __vmalloc() is). Practically speaking,
+this implies that only kernel-internal code (and in-tree drivers) can leverage such facilities.
+
+Of course, with sufficient effort, one can overcome this seeming limitation: instead of using __vmalloc()
+or the __vmalloc_node_range() APIs, we might avail of some alternate means, perhaps memory map-
+ping some kernel memory into user space via an mmap() method, and using the mprotect() system
+call from a user-space app to set up appropriate protections (or, better, even setting up protections
+through well-known and tested LSM frameworks, such as SELinux, AppArmor, Integrity, and so on).
+
+              In user-space applications, performing a similar memory protection setting upon an ar-
+              bitrary memory region can be done via the mprotect() system call; do look up its man
+              page for usage details (it even kindly provides example code! Link: https://man7.org/
+              linux/man-pages/man2/mprotect.2.html).
+
+Hang on, why make memory read-only? Specifying memory protections at allocation time to, say,
+read-only may appear to be a pretty useless thing to do: how would you then initialize that memory to
+some meaningful content? Well, think about it – guard pages are the perfect use case for this scenario
+(like the red zone regions that the SLUB layer keeps when in debug mode).
+
+Okay, something new-ish: from the 5.13 kernel, a performance feature regarding vmalloc() was merged,
+allowing the possibility to employ huge pages when vmalloc() is called (the commit is entitled mm/
+vmalloc: hugepage vmalloc mappings commit # 121e6f3).
+
+              Huge pages are MMU-supported pages of a large size (typically much larger than the usual
+              4K page we’re all so used to and love). For example, the x86_64 uses huge pages of size
+              2 MB for the kernel region when possible. Using huge pages has the beneficial effect of
+              significantly reducing TLB pressure (and thus improving the TLB hit rate, as each huge
+              page of size 2 MB provides a 2 M / 4 K = 512X improvement!).
+
+So, is there a way to figure out whether a vmalloc() we’ve performed is using huge pages? Yes, indeed:
+the bool is_vm_area_hugepages(const void *addr) inline function returns a Boolean. It, however,
+works via find_vm_area(), which isn’t exported; hence we can’t use it in an out-of-tree module. Oh
+well. Also, on smaller systems (embedded), using huge pages can result in significant wastage (due
+to internal fragmentation); the kernel provides a parameter you can pass at boot, nohugevmalloc, to
+turn off this feature.
+
+We conclude this section with a quick comparison between the typical kernel memory allocator APIs:
+kmalloc() and vmalloc().
+
+The kmalloc() and vmalloc() APIs – a quick comparison
+A quick comparison between the kmalloc() (or kzalloc()) and vmalloc() (or vzalloc()) APIs is
+presented in the following table:
+
+    Characteristic       kmalloc() / kzalloc() APIs             vmalloc() / vzalloc() APIs
+    Memory allocated                                            Virtually contiguous (no guarantee
+                         Physically contiguous
+    is                                                          on physical contiguity)
+    Memory               Aligned to hardware (CPU) cache
+                                                                Page-aligned
+    alignment            line
+    Minimum              Arch-dependent; as low as 8 bytes
+                                                                One page
+    granularity          on x86[_64]
+                         Faster (physical RAM allocated)        Slower but can service large (virtual)
+                         for small memory allocations (the      allocations (even over 4 MB; size
+    Performance
+                         typical case); ideal for allocations   depends on the size of the arch-
+                         < 1 page                               specific vmalloc region)
+                                                                Can be very large (and is arch-
+                                                                dependant; the kernel vmalloc
+    Size limitation      Limited in size (to typically 4 MB)    region’s size can even be several
+                                                                terabytes on 64-bit systems, though
+                                                                much less on 32-bit)
+
+                            Suitable for almost all use cases
+                            where performance matters, and          Suitable where large software
+                            the memory required is small,           (virtually) contiguous buffers are
+      Suitability
+                            including DMA (still, use the DMA       required; slower, cannot be used in
+                            API); can work in atomic/interrupt      atomic/interrupt contexts
+                            contexts
+                            Easy and direct (wrt debugging          Indirect; the JTAG debugger, if
+      Debugging (via        memory via hardware JTAG (or            supported, will have to “walk” the
+      JTAG)                 the like)) as this memory is direct-    paging tables to translate from a
+                            mapped                                  virtual to a physical address
+
+Table 9.2: Comparison between the kmalloc() and vmalloc() families of APIs
+
+This does not imply that one is superior to the other. Their usage depends upon the circumstance at
+hand. This leads us on to our next – indeed very important – topic: how do you decide which memory
+allocation API to use when? Making the right decision is critical for the best possible system perfor-
+mance and stability – do read on to find out how to make that choice!
+
+Memory allocation in the kernel – which APIs to use
+when
+A really quick summary of what we have learned so far: the kernel’s underlying engine for memory
+allocation (and freeing) is called the page (or buddy system) allocator. Ultimately, every single memory
+allocation (and subsequent free) goes through this layer. It has its share of problems, though, the chief
+one being internal fragmentation or wastage (due to its minimum granularity being a page or multiple
+pages). Thus, we have the slab allocator (or slab cache) layered above it, providing the power of object
+caching and caching fragments of a page (helping alleviate the page allocator’s wastage issues). Also,
+don’t forget that you can create your own custom slab caches. Further, the kernel has a vmalloc region
+and APIs to allocate large virtual memory swathes from within it.
+
+With this information in mind, let’s move along. To understand which API to use when, let’s first look
+at the kernel memory allocation API set.
+
+Visualizing the kernel memory allocation API set
+The following conceptual diagram shows us the Linux kernel’s memory allocation layers as well as
+the prominent APIs within them; do note the following:
+
+  •      Here we only show the typically/often-used APIs exposed by the kernel to module/driver authors
+         (with the exception being the one that ultimately performs all the allocation work under the
+         hood: the __alloc_pages() API right at the bottom! See Figure 9.4).
+  •      For brevity, we haven’t shown the corresponding memory-freeing APIs.
+
+The following is a diagram showing several of the (exposed to module/driver authors) kernel memory
+allocation APIs:
+
+Figure 9.4: Conceptual diagram showing the kernel’s memory allocation API set (mostly for module/
+                                                driver authors)
+
+(Figure 9.4 also shows that anyone in kernel space can use (most of) these APIs - core code, any sub-
+system code, device drivers, modules, and so on; its understood that out-of-tree modules can use only
+exported routines). Now that you have seen the wealth of (exposed) memory allocation APIs available,
+the following sections delve into helping you make the right decision as to which to use under what
+circumstances.
+
+Selecting an appropriate API for kernel memory allocation
+With this wide choice of memory allocation APIs, how do we choose which to use when? Though
+we have already talked about this very case in this chapter as well as the previous one, we’ll again
+summarize it as it’s very important. Broadly speaking, there are two ways to look at it – the API to use
+depends upon the following:
+
+  •     The amount of memory required
+  •     The type of memory required
+
+We will illustrate both cases in this section.
+
+First, to decide which API to use by the type, amount, and contiguity of the memory to be allocated,
+scan through the following flowchart (starting in the upper-right corner from the label Start here):
+
+Figure 9.5: Decision flowchart for which kernel memory allocation API(s) to use for a module/driver
+
+Of course, it’s not trivial; not only that, but I’d also like to remind you to recall the detailed discussions
+we covered earlier in the previous chapter, including the GFP flags to use (and the do not sleep in atomic
+context rule); in effect, the following key points:
+
+  •      When in any atomic (“can’t sleep”) context, including interrupt contexts, ensure you only use
+         the GFP_ATOMIC flag.
+  •      Else, when in process context, you decide whether to use the GFP_ATOMIC or GFP_KERNEL flag;
+         use GFP_KERNEL when it’s safe to sleep.
+  •      Then, as covered in Chapter 8, Kernel Memory Allocation for Module Authors – Part 1, in the Cave-
+         ats when using the slab allocator section: when using the k{m|z}alloc() API and friends, make
+         sure to check the actual allocated memory size with ksize(). Even better, check the actual
+         size allocated via the /sys/kernel/slab/<slab-name>/slab_size pseudofile (as we learned
+         in the Extracting useful information regarding slab caches section).
+
+Next, to decide which API to use by the type of memory to be allocated, scan through the following table:
+
+      Type of memory required                    Allocation method        APIs to use
+      Kernel modules, typical case:
+      regular usage for small amounts                                      kmalloc(), kzalloc(),
+                                                 Slab allocator
+      (less than one page), physically                                     kcalloc(), krealloc()
+      contiguous
+      Device drivers: regular/typical
+      usage for small amounts (< 1 page),
+                                                 Resource-managed          devm_kmalloc() and devm_
+      physically contiguous; recommended
+                                                 APIs                      kzalloc()
+      for drivers in their probe() or init
+      methods (no explicit free required!)
+                                                                          __get_free_page[s](), get_
+      Physically contiguous, general-
+                                                 Page allocator           zeroed_page(), and alloc_
+      purpose usage
+                                                                           page[s][_exact]()
+                                                 Purpose-built DMA        (not covered here: dma_
+      Physically contiguous, for Direct          API layer, with          alloc_coherent(), dma_map_
+      Memory Access (DMA)                        CMA (or slab/page        [single|sg](), Linux DMA
+                                                 allocator)               Engine APIs, and so on)
+      Virtually contiguous (for large            Indirect via page
+                                                                           vmalloc() and vzalloc()
+      software-only buffers)                     allocator
+      Virtually or physically contiguous,        Either slab or
+                                                                           kvmalloc[_array]()
+      when unsure of runtime size                vmalloc region
+                                                                          kmem_cache_{create|destroy}
+                                                 Creates and uses a
+      Custom data structures (objects)                                    () and kmem_cache_
+                                                 custom slab cache
+                                                                          {alloc|free}()
+
+Table 9.3: Guidelines for deciding on which memory allocation API to use depending on the situation
+                                                       at hand
+
+Of course, there is some overlap with this table and the flowchart in Figure 9.5.
+
+              As a generic rule of thumb, your first choice should be the slab allocator APIs, that is, via
+              [devm_]kzalloc() or [devm_]kmalloc(); these are the most efficient for typical allo­
+              cations, those less than a page in size.
+
+Also, recall that when unsure of the runtime size required, you could use the kvmalloc() API. Again,
+if the size required happens to be a perfectly rounded power-of-2 number of pages (20, 21, ..., 2MAX_ORDER-1
+pages), then using the low-level page allocator APIs will be optimal.
+
+A word on DMA and CMA
+On the topic of DMA, though its study and usage are beyond the scope of this book, I would nevertheless
+like to mention that Linux has a purpose-built set of APIs for DMA christened the DMA Engine. Driver
+authors performing DMA operations are very much expected to use these APIs and not directly use
+the slab or page allocator APIs (subtle hardware issues do turn up if you do so).
+
+Further, several years back, Samsung engineers successfully merged a patch into the mainline kernel
+called the Contiguous Memory Allocator (CMA). Essentially, it allows the allocation of large, physically
+contiguous memory chunks (of sizes over the typical 4 MB limit!). This is required for DMA on some
+memory-hungry devices (want to stream that ultra-HD quality movie on a big-screen tablet or TV?).
+The cool thing is that the CMA code is transparently built into the DMA Engine and DMA APIs. Thus, as
+usual, driver authors performing DMA operations should just stick to using the Linux DMA Engine layer.
+
+Also, realize that our discussion has mostly been with regard to the typical kernel module or device
+driver author. Within the OS itself, the demand for single pages tends to be quite high (due to the OS
+servicing demand paging via the page fault handler, for servicing what are called minor or “good” faults).
+Thus, under the hood, the memory management subsystem tends to issue the __get_free_page[s]
+() APIs quite frequently. Also, to service the memory demand for the page cache (and other internal
+caches), the page allocator plays an important role.
+
+All right, well done; with this you have (almost!) completed our two chapters of coverage on the
+various kernel memory allocation layers and APIs focused on module/driver authors! Let’s finish off
+this large topic with a couple of remaining important areas – the Linux kernel’s memory reclamation
+procedures and the (fairly controversial) OOM killer; do read on!
+
+Memory reclaim – a key kernel housekeeping task
+As you will be aware, the kernel tries, for optimal performance, to keep the working set of memory
+pages as high up as possible in the memory pyramid (or hierarchy).
+
+              The so-called memory pyramid (or memory hierarchy) on a system consists of (in order,
+              from smallest size but fastest speed to largest size but slowest speed): CPU registers, CPU
+              caches (LI, L2, L3, ...), RAM, and swap (raw disk/flash/SSD partition). In the following
+              discussion, we ignore CPU registers as their size is minuscule.
+
+In a modern processor, as code executes and data is worked upon, the processor uses its hardware
+caches (L1, L2, and so on) to hold the current working set of pages within its multilevel CPU instruction
+and data caches. But of course, CPU cache memory is very limited, thus it will soon run out, causing
+the memory to spill over into the next hierarchical level – RAM. On modern systems, even many em-
+bedded ones, there’s quite a bit of RAM; still, it does run short at times. When this occurs (simplifying
+it), the OS spills over the memory pages that can no longer fit in RAM into a raw disk partition – swap.
+Thus, the system continues to work well, albeit at a significant performance cost once swap is (often)
+used (of course, we’re referring to user space pages being possibly swapped here; as you know, ker-
+nel pages are simply non-swappable. The, again, it’s typically user space that’s the resource hogger).
+
+Zone watermarks and kswapd
+The Linux kernel, in an effort to ensure that a given minimum amount of free memory pages are al-
+ways available within RAM, continually performs background page reclamation work – indeed, you
+can think of this as routine housekeeping. Who, within the kernel, performs this work?
+
+              (Hey, what exactly do we mean by the term “to reclaim” memory? Freeing up the memory
+              page, in effect, making it available to the system.)
+
+The kswapd kernel thread(s) are continually monitoring memory usage on the system and invoke a
+page reclaim mechanism when they sense that memory is running low.
+
+This page reclamation work is done on a per-node:zone basis. The kernel uses so-called watermark lev-
+els – min, low, and high – per node:zone to determine when to reclaim memory pages in an intelligent
+fashion. You can always look up /proc/zoneinfo to see the current watermark levels; note that the
+unit of watermark levels is pages.
+
+A quick example (with truncated output) on my native x86_64 laptop running Ubuntu 22.04 is as follows:
+   $ sudo grep -A2 -E "^Node |min" /proc/zoneinfo
+   Node 0, zone          DMA
+   [ ... ]
+   --
+   Node 0, zone      Normal
+      pages free        75060
+             boost      0
+             min        16188
+             low        23952
+             high       31716
+   [ ... ]
+
+Here, the situation’s quite comfortable; within our node 0, zone Normal region, the “high” watermark
+is at 31,716 pages, and currently, 75,060 pages are free. If the number of free pages in the zone is
+somewhere between the low and min watermarks, or less than that, we have a problem. Thus, here,
+no problems. Also, as we mentioned earlier, caches are typically the first victims of page reclamation
+and are (intelligently) shrunk down as memory pressure increases.
+
+So, what if memory pressure does increase? The kernel’s page reclamation algorithm – so-called PFA
+or simply “reclaim” – loosely (and typically) encodes these steps:
+
+  •    If number of low (zone watermark) pages < free pages < high pages
+
+       (In other words, if the number of free pages is between the high and low zone watermarks), the
+       kernel begins to evict some caches and performs “gentle” swapping; this should free sufficient
+       pages to have the “pages free” number climb above “high” and all’s well.
+
+  •    If this doesn’t work and number of min (zone watermark) pages < free pages < low pages
+
+       (IOW, if the number of free pages is between the low and min zone watermarks), the kernel
+       continues to evict caches (to a greater extent) and performs aggressive swapping; this should
+       help...
+
+  •    If it doesn’t and the number of free pages continues to fall and number of free pages < min (zone
+       watermark) pages
+
+       (In other words, if the number of free pages goes below the min zone watermark), the kernel is
+       now “alarmed”; it now works hard to aggressively reclaim memory pages by doing the following:
+
+          •    It aggressively continues to evict (drop) caches.
+          •    It continues to perform aggressive swapping.
+          •    It denies any new memory requests on that zone.
+
+Quite recently, a couple of new features related to page reclaim have been merged; we’ll briefly in-
+troduce them now.
+
+The new multi-generational LRU (MGLRU) lists feature
+The Linux kernel has traditionally figured out which pages to reclaim (evict, in effect) via a typical
+Least Recently Used (LRU) algorithm; pages that haven’t been accessed recently are unlikely to be
+required in the near future and vice versa. So, traditionally, (but simplifying it), the kernel has main-
+tained a pair of LRU lists: active and inactive LRU lists. This seems reasonable, but experience has
+shown that it doesn’t always work well and can in fact contribute to slowing the system down! (For
+example, sequentially reading a large file is a common operation in many scenarios, so pages that
+have just been read go onto the active list. But if your app(s) will not need those pages again; now
+it’s very sub-optimal). Also, the way anonymous pages (those that aren’t file backed) are scanned at
+runtime using a reverse-mapping (rmap) approach (see this link for details: http://lastweek.io/
+notes/rmap/) is considered expensive.
+
+Merged as recently as in the 6.1 kernel, the new multi-generational LRU (aka MGLRU) feature has
+essentially these characteristics:
+
+  •     There now exists a whole bunch of LRU lists between the active and inactive ones to provide
+        much finer granularity in picking a page to reclaim; each is called a generation.
+        They’re organized by page age, from the youngest generation (generation 0, which of course
+        holds the most recently used pages, the active ones) to the oldest generation (generation N-1,
+        which holds the LRU pages). At reclaim time, older-generation pages are the obvious candi-
+        dates for eviction.
+  •     The number of generations N (and thus lists) is set within the kernel code; Android-based
+        systems typically have the number as 4, and high-end cloud/enterprise servers might use a
+        much higher value. In the default codebase, we have (in include/linux/mmzone.h):
+             /* MAX_NR_GENS is set to 4 so that the multi-gen LRU can support twice
+            the
+             * number of categories of the active/inactive LRU when keeping track of
+             * accesses through page tables. [ … ]
+             */
+            #define MIN_NR_GENS                     2U
+            #define MAX_NR_GENS                    4U
+
+  •     It does not use the costly rmap approach to finding anonymous pages; instead, it scans the
+        process PTEs themselves, looking for the recent bit flag being set or cleared (and, as an op-
+        timization, for only those threads that have run since the last scan). It’s thus definitely faster.
+  •     It uses less CPU (“demonstrates 51% less CPU usage from kswapd”).
+  •     It uses a little more memory (“~500 bytes per-memcg and per-node and ~50 bytes per-process
+        memory overhead”).
+
+The multi-generational LRU itself is a kernel-configurable feature (CONFIG_LRU_GEN); as of the time of
+writing, it’s still considered an opt-in feature and isn’t tightly meshed into the memory management
+subsystem (the traditional code using the pair of active/inactive lists is still present, though unused
+when MGLRU is activated). On my Ubuntu 22.04 LTS distro kernel, it’s not configured by default. Even
+if configured, it may be off by default and can be turned on via a tunable under debugfs (/sys/kernel/
+debug/lru_gen). (More recently, Fedora 39 running the 6.6-based distro kernel, and Ubuntu 23.04
+running a 6.5-based one, enables MGLRU.) When configured, various sysctls (or tunables) appear
+under /sys/kernel/mm/lru_gen and a couple in debugfs.
+
+Trying it out – seeing histogram data from MGLRU
+MGLRU generates data via callbacks to the following pseudofiles: /sys/kernel/debug/lru_gen and /
+sys/kernel/mm/lru_gen. Here, let’s check out the first one, the simpler case: reading from the /sys/
+kernel/debug/lru_gen psuedofile yields the data, essentially, a histogram of the number of pages that
+were accessed at a different point in time. This is shown for each memcg (memory control group; FYI,
+we cover control groups in Chapter 11, The CPU Scheduler – Part 2) and for each NUMA node.
+
+The output format is as follows:
+      memcg   memcg_id    memcg_path
+         node   node_id
+                min_gen_nr    age_in_ms      nr_anon_pages       nr_file_pages
+                …
+                max_gen_nr    age_in_ms      nr_anon_pages       nr_file_pages
+
+                Control groups are essentially a means to elegantly apply resource constraints (where the
+                resource can be CPU/memory/IO/network/… bandwidth) on a group of processes, i.e., on
+                a control group (a cgroup). So, groups of processes – cgroups – with memory bandwidth
+                constraints fall under “memory cgroups” or, simply, memcgs. As one example, they are
+                very useful on cloud workloads, ensuring boundaries that VMs must adhere to in terms of
+                memory (as well as CPU and IO) usage! You’ll find a bit more information about cgroups
+                in the last portion of this chapter as well.
+
+So, let’s look at and learn how to interpret MGLRU data! A quick sampling of the data generated by
+MGLRU (on my x86_64 Ubuntu guest) is as follows:
+
+Figure 9.6: An annotated screenshot of a portion of the MGLRU output
+
+As we’re on a pseudo-NUMA system, it’s always memcgs with node #0… More interesting are the gener-
+ation numbers, which, here, can range from 0 to 3, implying a total of four generations (as MAX_NR_GENS
+= 4), with 0 being the youngest and 3 the oldest.
+
+It’s followed by the “age” of the page (in ms) and the number of pages accessed (in that time interval)
+in that generation – for both anonymous pages followed by file-backed pages. So now, we can literally
+see how the kernel tracks page usage in one sense and can thus make better decisions when it comes
+to page reclamation.
+
+               The following material makes use of the systemd-cgls utility; if it isn’t clear, don’t worry –
+               we cover all of this (systemd slices and scope, and so on) in Chapter 11, The CPU Scheduler
+              – Part 2, in the Systemd and cgroups section.
+
+So, looking at Figure 9.6, you may well wonder: which processes belong to a given named memcg (for
+example, to the memcg named /user.slice/user-1001.slice/session-7.scope)? A quick way is to
+run the systemd-cgls command; it will show the entire cgroup hierarchy (tree) from which you can
+pick up the relevant cgroup(s). Tip: Passing the -u <cgroup-name> option switch can help narrow it
+down; for example, on my system, I looked up the processes belonging to the <...>/session-7.scope
+memcg (which happens to be for the user with UID 1001) like this:
+   $ systemd-cgls -u session-7.scope
+   Unit session-7.scope (/user.slice/user-1001.slice/session-7.scope):
+   ├─2598 sshd: c2kp [priv]
+   ├─2712 sshd: c2kp@pts/4
+   └─2713 -bash
+
+So, we can now see that this particular memcg - memory cgroup - whose processes pages are being
+tracked by MGLRU, has three processes within it: 2 sshd and 1 Bash process.
+
+To delve deeper into MGLRU, I refer you to the official kernel documentation on it:
+
+  •     Multi-Gen LRU: Provides documentation on quick start, enabling/disabling it, the various tun-
+        ables present, and their meaning: https://www.kernel.org/doc/html/v6.1/admin-guide/
+        mm/multigen_lru.html
+  •     MGLRU design doc: https://www.kernel.org/doc/html/v6.1/mm/multigen_lru.html
+
+A quick introduction to DAMON – the Data Access Monitoring
+feature
+The purpose of DAMON – the Data Access MONitor – is to capture and analyze memory access patterns
+of user-space processes, helping developers to gain insight into them and thus be able to optimize
+them. This feature was merged in the 5.15 kernel.
+
+The kernel component of DAMON essentially divides the target process into equally sized regions
+that it monitors for data access. It’s clever: if a region is looking to be a hotspot, it divides it further.
+The number of accesses made to each region is provided as a histogram. In effect, we have a produc-
+er-consumer architecture: the DAMON kernel component is the producer (of data access patterns of a
+given user-space process).
+
+The consumer can be a user-mode app or the kernel itself; by analyzing the data access patterns to
+the workload, they can even request changes to the memory region (to optimize access!), effected via
+calls to the well-known madvise() system call. (To do so, DAMON sets up a way to specify “schemes”;
+details can be found in the official kernel docs here: https://www.kernel.org/doc/html/v6.1/admin-
+guide/mm/damon/usage.html#schemes-n.)
+
+To deal with the very large VAS on 64-bit Linux, DAMON begins by only monitoring data accesses to
+the text, heap, and stack segments (or mappings).
+
+Now, to make it suitable for production use (which is the intent), monitoring every single page in each
+of these mappings would be prohibitively expensive. So (kind of like the KCSAN (Kernel Concurrency
+SANitizer) does), it instead uses a sampling-based or statistical approach, picking a random page in
+each of these mappings and recording accesses made to it, in the hope that they represent the typical
+data access pattern to that region. It uses intelligence to “zoom” in on hotspots and further sub-divide
+them into more regions, thus getting a better sampling.
+
+To use DAMON, several interfaces are made available:
+
+  •    Via a DAMON user-mode tool named damo (https://github.com/awslabs/damo).
+  •    Via sysfs (under /sys/kernel/mm/damon/admin/); these are documented here: https://www.
+       kernel.org/doc/html/v6.1/admin-guide/mm/damon/usage.html#sysfs-interface.
+  •    Via a debugfs interface; this, however, was used initially and is now considered deprecated.
+       Use the sysfs ones instead.
+  •    Via kernel APIs (for kernel devs; https://www.kernel.org/doc/html/v6.1/mm/damon/api.
+       html).
+
+It’s typically easiest to use the damo front-end. Let’s do so!
+
+Running a memory workload and visualizing it with DAMON’s damo
+front-end
+A sample run with DAMON’s damo front-end can help us visualize the data access patterns (on a given
+process) that it superbly extracts. We’ll use masim, a “simulator for intensive memory access,” to pro-
+vide a process that accesses memory (intensively) in a given pattern (via a config file specified to it. In
+fact, the masim and damo apps are written by none other than the lead author of the DAMON patches,
+SeongJae Park). To do so, follow these steps:
+
+   1.   Install masim (the workload):
+            git clone https://github.com/sjp38/masim
+            cd masim
+            make
+
+   2.   Install damo: git clone https://github.com/awslabs/damo (the damo Python script is there)
+   3.   Start the memory-intensive workload process (masim; or, you could start your own workload)
+        and then (immediately) start recording the memory accesses (which are internally being cap-
+        tured by the DAMON kernel component!) via damo, writing the recording into a file. Right, let’s
+        start the workload process, masim (we’re currently within the damo tool’s directory):
+            $ ../masim/masim ../masim/configs/stairs_30secs.cfg &
+
+            # Now, ASAP, let's start the recorder process, damo:
+            $ sudo ./damo record -o damon.data $(pidof masim)
+            initial phase:                      102,870 accesses/msec, 5001 msecs run
+            Press Ctrl+C to stop
+            phase 0:                     107,374 accesses/msec, 2500 msecs run
+            phase 1:                     101,921 accesses/msec, 2500 msecs run
+            phase 2:                     102,666 accesses/msec, 2501 msecs run
+            [ … ]
+            phase 9:                     104,962 accesses/msec, 2500 msecs run
+            [ perf record: Woken up 2 times to write data ]
+            [ perf record: Captured and wrote 1.198 MB damon.data (2920 samples) ]
+            [1]+ Done                          ../masim/masim ../masim/configs/
+            stairs_30secs.cfg
+            $
+
+        Here, I am using a workload called stairs_30secs.cfg; you can use any other one, or your
+        own workload.
+
+      4.   Visualize the data accesses via damo’s heatmap feature:
+              sudo ./damo report heats --heatmap stdout
+
+                 ​
+
+Figure 9.7: Screenshot of running a “stairs” memory workload (via masim) and DAMON’s damo front-
+                       end showing a visualization of the memory access patterns (as a “heatmap”)
+
+              An aside: damo requires the perf utility to be installed and working. Now, perf will be
+              installed and ready to use if you’ve followed the install instructions from Online Chapter,
+              Kernel Workspace Setup, and you’re running the stock/distro kernel, not a custom one. The
+              issue is that perf is tightly coupled with the kernel it runs upon; hence, if you’re running
+              a custom kernel (like our 6.1.25 one that we built back in Chapters 3 and 4), then you’ll
+              need to manually build perf from within its kernel source tree. In turn, perf requires a
+              Python module named setuptools, which in turn needs pip (yes, a descent into depen-
+              dency hell). So, if needed, on a custom kernel system, you can do this: sudo apt install
+              python3-pip.
+
+              After this, switch to your custom kernel source tree and build perf; for example:
+
+                  cd ~/kernels/linux-6.1.25/tools/perf ; make
+
+              (Don’t forget to add the perf location to the PATH).
+
+              Now, perf, and thus damo, should work.
+
+How does DAMON actually help? Several interesting case studies dealing with how profiling and
+optimization were affected by leveraging DAMON have been written up by SeongJae Park; do refer
+to the Further reading section for links on this and more. We also provide many useful links there on
+MGLRU (including good articles by LWN) and DAMON.
+
+So, to conclude, all of this reclaim technology should certainly help the kernel reclaim sufficient
+memory frames when needed such that it’s comfy once again! But can it always do enough? If not
+(hint: sometimes that’s the case!), heaven forbid, the kernel’s dreaded OOM killer may pay a visit!
+
+Stayin’ alive – the OOM killer
+Now that we’ve covered background details regarding kernel memory management, particularly the
+reclaiming of free memory, you’re well placed to understand what the Out of Memory (OOM) killer
+kernel component is, how to work with it, even how to deliberately invoke it and, to an extent, control it.
+
+Let’s revisit a key point, that of memory (RAM and swap) running short. Let’s play devil’s advocate:
+what if RAM runs low and all this memory reclamation work (which we just covered in the previous
+section) simply doesn’t help, and memory pressure keeps increasing to the point where the complete
+memory pyramid is exhausted, where a kernel allocation of even a few pages fails (or infinitely retries,
+which, frankly, is just as useless, perhaps worse)? In other words, what if all CPU caches, RAM, and swap
+are (almost completely) full!? Well, most systems just die at this point (actually, they don’t technically
+die; they just become so painfully slow that it appears to us humans that they’re permanently hung).
+
+              Furthermore, realize that on many embedded systems, there’s no swap partition (or file),
+              thus enhancing the likelihood of completely running out of memory!
+
+The Linux kernel, though, being Linux, tends to get aggressive in these situations; it now invokes a
+component aptly named the OOM killer. The OOM killer’s job is to identify and summarily kill the
+memory-hogger process and its descendants by sending them the fatal SIGKILL signal; thus, it could
+end up killing a whole bunch of processes.
+
+Quoting directly from the kernel docs: “The OOM killer selects a task to sacrifice for the sake of the
+overall system health. The selected task is killed in a hope that after it exits enough memory will be
+freed to continue normal operation.”
+
+As you might imagine, it has had its fair share of controversy. Early versions of the OOM killer have
+been (quite rightly) criticized (occasionally, it killed the wrong chap!).
+
+              My extremely able technical reviewer, ChiThanh Hoang, says this regarding the OOM kill-
+              er: “… “fairly” controversial is an understatement. Most of time people see OOM kills but
+              don’t know how to deal with it, especially on embedded systems where there is no swap.”
+
+There’s some hope, though; recent versions of the kernel use superior OOM killer victim-id heuristics
+that do work better.
+
+              You can find more information on the improved OOM killer work (the kick-in strategy
+              and the OOM reaper thread) in this LWN article (December 2015): Toward more predictable
+              and reliable out-of-memory handling, Jon Corbet: https://lwn.net/Articles/668126/.
+
+Deliberately invoking the OOM killer
+Rather than dwell on theory and internal implementation, we’d rather live a little, testing our friend,
+the OOM killer, provoking the kernel enough to have it unleash her! To do so, of course, we shall have
+to put enormous memory pressure on the system. If we succeed in this, the kernel will quite happily
+join battle, unleashing its weapon – the OOM killer, which, once invoked, will identify and kill some
+process (or processes).
+
+              Quite obviously, I highly recommend you try out stuff like this on a safe, isolated system,
+              preferably a test Linux VM (with no important data on it).
+
+Invoking the OOM killer via Magic SysRq
+The kernel provides an interesting feature dubbed Magic SysRq: essentially, certain keyboard key com-
+binations (or accelerators) result in a callback to some kernel code. For example (and assuming it’s
+enabled), pressing the Alt-SysRq-b key combination on an x86[_64] system results in a cold reboot!
+Take care – don’t just type anything; do read the relevant documentation here: https://www.kernel.
+org/doc/html/latest/admin-guide/sysrq.html
+
+Let’s try out some interesting things; to see the Magic SysRq state, we run the following on our x86_64
+Ubuntu 22.04 Linux VM:
+   $ cat /proc/sys/kernel/sysrq
+   176
+
+This reveals the current state of the Magic SysRq bitmask; being positive, it shows that the feature
+is partially enabled (the kernel documentation mentioned at the start of this section provides the
+details). To be able to invoke the OOM killer via the SysRq feature, we need to first enable it fully. To
+do so, run the following command:
+   sudo sh -c "echo 1 > /proc/sys/kernel/sysrq"
+
+Right, now we can use Magic SysRq to invoke the OOM killer!
+
+              Careful! Invoking the OOM killer, via Magic SysRq or otherwise, will cause some
+              process – typically the heavyweight one(s) – to unconditionally die!
+
+How? As root, just run the following command:
+   # echo f > /proc/sysrq-trigger
+
+Look up the kernel log to see whether anything interesting occurred! A detailed interpretation of the
+kernel log when the OOM killer strikes is covered in detail in the upcoming Demand paging and OOM
+section; for now, we’re just looking at getting it invoked.
+
+Invoking the OOM killer with a crazy allocator program
+Here’s a more hands-on and interesting way by which you can (most probably) invite the OOM killer
+in: let’s write a simple user-space C program that behaves as a “crazy allocator,” performing (typically)
+tens of thousands of memory allocations, writing something to each page, and – of course! – never
+freeing up the memory pages allocated, thus putting tremendous pressure on memory resources.
+
+Though we show you the code here, we put off running it – and triggering the OOM killer – for a bit.
+This is because the whole thing becomes much clearer once we understand the kernel’s VM over-
+commit settings and what they imply, which is the topic of the following main section. So, I request
+your patience...
+
+As usual, we show only the most relevant parts of the source code in the following snippet; please
+refer to and clone the book’s GitHub repo for the full code. Remember, this is a user-mode app, not
+a kernel module:
+      // ch9/oom_killer_try/oom_killer_try.c
+      #define BLK            (getpagesize()*2)
+      static int force_page_fault = 0;
+      int main(int argc, char **argv)
+      {
+          char *p;
+          int i = 0, j = 1, stepval = 5000, verbose = 0;
+          [...]
+
+          do {
+                 p = (char *)malloc(BLK);
+              if (!p) {
+                      fprintf(stderr, "%s: loop #%d: malloc failure.\n",
+                                  argv[0], i);
+                         break;
+                 }
+
+              if (force_page_fault) {
+                     p[2048] &= 0xde; // write something into a byte of the 1st page
+                     p[6143] |= 0xad; // write something into a byte of the 2nd page
+              }
+             if (!(i % stepval)) { // every 'stepval' (5000) iterations..
+                     if (!verbose) {
+                          if (!(j%5)) printf(". ");
+                          else printf(".");
+                          fflush(stdout);
+                          j++;
+                         [...]
+                     }
+              i++;
+          } while (p && (i < atoi(argv[1])));
+
+Hang on, though; before we can have fun with this program and fully understand what goes on under
+the hood when it executes, we require some background information; let’s get to it!
+
+Understanding the three VM overcommit_memory policies
+Here’s an interesting point: the Linux kernel follows a VM overcommit policy, deliberately over-com-
+mitting memory (to a certain extent). To understand this, let’s look up the current VM overcommit
+memory setting:
+   $ cat /proc/sys/vm/overcommit_memory
+   0
+
+This setting, 0, is the default value. The three permissible values (settable only by root) are as follows:
+
+  •     0: Allow memory overcommitting using a heuristic algorithm; this is the default (corresponds
+        to the macro OVERCOMMIT_GUESS).
+  •     1: Always overcommit; in other words, never refuse any malloc(); this is useful for some types
+        of scientific apps that use sparse memory (corresponds to the macro OVERCOMMIT_ALWAYS).
+  •     2: Never overcommit (corresponds to the macro OVERCOMMIT_NEVER), aka the “strict account-
+        ing” policy.
+
+        The following notes are direct quotes from the official kernel documentation on this value 2,
+        https://www.kernel.org/doc/html/v6.1/mm/overcommit-accounting.html:
+
+        “Don’t overcommit. The total address space commit for the system is not permitted to exceed
+         swap plus a configurable amount (default is 50%) of physical RAM. Depending on the amount
+         you use, in most situations this means a process will not be killed while accessing pages but
+         will receive errors on memory allocation as appropriate. Useful for applications that want to
+         guarantee their memory allocations will be available in the future without having to initialize
+         every page.”
+
+Now, the overcommit extent is determined by the overcommit ratio:
+   $ cat /proc/sys/vm/overcommit_ratio
+   50
+
+Worry not, we’ll soon get to what exactly these overcommit values mean practically. Also, we often refer
+to these numbers via the expression vm.overcommit_memory; it has the same meaning as the value of
+the sysctl /proc/sys/vm/overcommit_memory. This is as the sysctl utility (and the /etc/sysctl.conf
+configuration file) express a kernel system tunable – a “sysctl” – in this manner – foo.bar, where “foo”
+is a subsystem under /proc/sys – one of fs, kernel, net, or vm, and “bar” is the tunable in question
+within that subsystem. So, for the VM overcommit tunables, let’s look up the defaults:
+   $ sudo sysctl -a |grep "vm\.overcommit"
+   vm.overcommit_kbytes = 0
+   vm.overcommit_memory = 0
+   vm.overcommit_ratio = 50
+
+Great, it’s as expected. We’ll examine what exactly these VM overcommit values mean, via both code-
+based and empirical (running it!) viewpoints.
+
+VM overcommit from the viewpoint of the __vm_enough_memory()
+code
+This section’s a bit of a deviation, but important overall; do follow along…
+
+When a process attempts to allocate (virtual) memory pages, the kernel doesn’t really interfere by
+default; if the process requests too much, the allocation either fails or, in the worst case, the kernel
+OOM machinery takes over.
+
+For the Linux Security Modules (LSM) mechanism, though, the kernel does provide a helper routine
+to check whether a process can allocate the number of pages being requested, taking into consider-
+ation the three VM overcommit policies (the vm.overcommit_memory value). Here is the function: mm/
+util.c:__vm_enough_memory().
+
+Firstly, the three VM overcommit policies (with values 0, 1, and 2, respectively) are defined as macros
+here:
+      // include/uapi/linux/mman.h
+      ...
+      #define OVERCOMMIT_GUESS             0           << this is the default >>
+      #define OVERCOMMIT_ALWAYS           1
+      #define OVERCOMMIT_NEVER             2
+
+A quick glance at the __vm_enough_memory() function is interesting (we’ve added some annotations
+<< like this >> to help make it clear):
+
+      // mm/util.c
+      int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
+      {
+      [ … ]
+            /*
+             * Sometimes we want to use more memory than we have
+             */
+            if (sysctl_overcommit_memory == OVERCOMMIT_ALWAYS)
+                  return 0;
+
+          << this is the default >>
+            if (sysctl_overcommit_memory == OVERCOMMIT_GUESS) {
+                  if (pages > totalram_pages() + total_swap_pages)
+                      goto error;
+                  return 0;
+            }
+          << thus, this is the OVERCOMMIT_NEVER case >>
+          allowed = vm_commit_limit();
+            [ … ]
+
+   error:
+       pr_warn_ratelimited("%s: pid: %d, comm: %s, no enough memory for the
+   allocation\n", __func__, current->pid, current->comm);
+         vm_unacct_memory(pages);
+        return -ENOMEM;
+   }
+
+Glance at the code; clearly, for the VM overcommit memory values of 1 and 2, the logic is simple:
+
+  •     OVERCOMMIT_ALWAYS (1): Simply let the process go ahead (it’s on his head!)
+  •     OVERCOMMIT_GUESS (0): The default – flag an error if the number of pages requested is more
+        than the total available on the system (RAM + swap), else allow the allocation to go ahead. It
+        could later result in issues, but that’s okay – the kernel’s OOM machinery will handle the worst
+        case, if it comes to it. Do look at this if condition carefully (repeated here for clarity: if (pages >
+        totalram_pages() + total_swap_pages)): if a single very large allocation request (in effect, a spike)
+        is attempted, this code fails it; however, even if we request many tens of thousands of small
+        allocations (as we indeed do in our earlier experiment (ch9/oom_killer_try/oom_killer_try.c),
+        requesting just 8 KB at a time), one at a time, it tries to go through for as long as it can... In
+        effect, the kernel won’t bother us until one of these conditions occurs:
+
+            •   Mode 2 (OVERCOMMIT_NEVER policy) only: the kernel’s CommitLimit value is breached
+                (see the next section A note on the Commit* limits in proc).
+            •   The process user virtual address space becomes full (quite feasible on the relatively
+                small VAS on 32-bit (2 or 3 GB), unlikely on 64-bit).
+            •   The entire memory hierarchy pyramid has been exhausted (all CPU caches + RAM +
+                swap memory); then, the OOM killer jumps in...
+
+It’s important to realize that this __vm_enough_memory() function is not called every time a user-mode
+process attempts to allocate virtual pages; it’s only invoked on-demand by some kernel LSMs, on
+occasion. Thus, here, it’s all quite academic, merely helping us gain some insight into the underlying
+machinery, that’s all.
+
+A note on the Commit* limits in proc
+Within the /proc/meminfo pseudofile content, you’ll find the so-called Commit* VM limits. This is on my
+AArch64 Raspberry Pi 4 with close to 2 GB RAM, 100 MB swap, and running a recent 6.1 stock kernel:
+   # grep Commit /proc/meminfo
+   CommitLimit:          1049192 kB
+   Committed_AS:          203344 kB
+
+How do we interpret these values? The man page on proc(5) reveals the answer:
+       CommitLimit %lu (since Linux 2.6.10)
+                        This is the total amount of memory currently
+   available to be allocated on the system, expressed in kilobytes. This limit is
+
+       adhered to only if strict overcommit accounting               is   enabled     (mode     2   in /
+      proc/sys/vm/overcommit_memory). ......
+        Committed_AS %lu
+                           The amount of memory presently allocated on the system.
+      The committed memory is a sum of all of the memory which has been allocated by
+      processes, even if it has not been "used" by them as of yet. A process which
+      allocates 1 GB of memory (using malloc(3) or similar), but touches only 300 MB
+      of that memory will show up as using only 300 MB of memory even if it has the
+      address space allocated for the entire 1 GB. ...
+
+Okay, let’s now practically understand things by checking out two cases of the VM overcommit memory
+tunable while running our “crazy allocator” code on each of them (on our Raspberry Pi 64-bit board)
+in the following sections.
+
+Case 1: vm.overcommit_memory == 0 (the default, OVERCOMMIT_
+GUESS)
+This is the default VM overcommit setting; thus:
+
+   •     The sysctl vm.overcommit_memory is set to 0 (not 2).
+   •     With this, the vm.overcommit_ratio and vm.overcommit_kbytes don’t matter.
+
+From the kernel documentation: “The overcommit amount can be set via vm.overcommit_ratio (percentage)
+or vm.overcommit_kbytes (absolute value). These only have an effect when vm.overcommit_memory is set to 2.”
+
+With the vm.overcommit_memory tunable set to 0, the default, there is no formula to calculate the total
+overcommitted memory we’re “allowed” to swallow before being checked. The macro’s name gives it
+away – OVERCOMMIT_GUESS: it is a very heuristic approach. In effect, our memory hogger process will
+be allowed to consume many, many virtual pages of memory before either (a bit of repetition here):
+
+   •     It runs out of Virtual Address Space (VAS); on older 32-bit systems, this is a distinct possibility,
+         very much less so on 64-bit (the one we’re typically running upon, as the VAS is vast there).
+   •     It truly exhausts all memory (in the entire hierarchy, the memory pyramid) – CPU caches,
+         RAM, and swap are all used up; in spite of efforts to reclaim memory frames, this can fail in
+         the face of enormous memory pressure (as is indeed going to be applied here!). Now there’s
+         no choice: the kernel invokes the OOM killer.
+
+ So, on our AArch64 Raspberry Pi 4, with vm.overcommit_memory == 0 and 1,849 MB of RAM, no
+“huge pages or total_huge_TLB [1]" and 100 MB of swap, let’s be empirical, run our “crazy allocator”
+ program, and see what happens!
+
+               [1] Huge pages are a kernel feature allowing the kernel to employ larger-sized memory
+               pages; it’s typically employed on mid-to-large systems, including the x86_64 by default (but
+               not by default on embedded devices). Here, it implies the amount of memory reserved
+               for huge pages.
+
+Right, finally, let’s run our custom “crazy allocator” app (ch9/oom_killer_try/; we saw it in the In-
+voking the OOM killer with a crazy allocator program section). We run it with an enormous number of
+two-page allocations attempted – 500,000 – that aren’t ever freed:
+   $ ./oom_killer_try 500000 0
+   ./oom_killer_try: PID 874 (verbose mode: off)
+   ..... ..... ..... ..... ..... ..... ..... ..... ..... ..... ..... ..... .....
+   ..... ..... ..... ..... ..... .... Killed$
+
+Ah, see the Killed message? The OOM killer has indeed struck! (As the memory pressure gets very
+high, the slow down on my embedded machine is very, very palpable!)
+
+So, here:
+
+   •    See the periods (.) in the output block? They’re very deliberate printf()'s! Here, we got 18
+        groups of 5 periods plus 4 more, which is 18*5 + 4 = 94 “periods” before it was killed.
+   •    Each period emitted by our code represents 5,000 memory allocations - malloc()'s - , each
+        is an allocation of 2 pages (8 KB)); so, we have allocated a total of:
+
+                     94 * 5000 * 8192 ~= 3,672 MB ~= 3.5 GB of virtual memory!
+
+…and then we (quite obviously) hit the second condition just mentioned, we completely ran out of all
+memory on the system, thus forcing the kernel’s hand – the OOM killer stepped in and terminated us.
+The kernel log will indeed reveal this to be the case!
+   $ dmesg | tail -n1
+   [ ...] Out of memory: Killed process 874 (oom_killer_try) total-vm:3725008kB,
+   anon-rss:1779856kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:7320kB oom_
+   score_adj:0
+
+We shall interpret the kernel log details when OOM occurs in more detail in an upcoming section.
+
+Intercepting the OOM killer via systemd-oomd
+Sometimes, depending on how the system’s configured, you may not get a kernel-level OOM killer in-
+vocation, though you expected to! How come? Well, it’s the usual culprit – the powerful (and invasive)
+user-space systemd framework in action again!
+
+Systemd includes a component named systemd-oomd, a user-space daemon process. If so configured,
+its job is to monitor processes going overboard on memory usage. It does this via the really powerful
+cgroups (v2) kernel infrastructure (we will cover this in some detail in Chapter 11, The CPU Scheduler–
+Part 2). Also, the relevant cgroup(s) need to have memory accounting enabled and the kernel needs
+to support the somewhat new-ish Pressure Stall Information (PSI) feature. See the man page on
+systemd-oomd.service(8) for more details.
+
+               Very briefly, PSI is a kernel feature (4.20 and later) that allows insight into situations caused
+               by severe resource (CPU, memory, and I/O) crunches. As the official kernel docs on PSI
+               states: “Having an accurate measure of productivity losses caused by resource scarcity aids
+               users in sizing workloads to hardware--or provisioning hardware according to workload
+               demand.” The kernel documentation on PSI resides here: https://docs.kernel.org/
+               accounting/psi.html.
+
+You can think of systemd-oomd as a kind of “memory monitoring agent” between user-space apps (pro-
+cesses) and the Linux kernel (a user-space OOM killer!), thus allowing it to kill processes that exceed
+their memory usage limits. This can be seen as an advantage in some situations as it avoids sending
+the kernel into a possible OOM kill situation. As can be expected, its usage again is controversial;
+Ubuntu 22.04 does seem to ship with it enabled by default. Other distros (like Arch Linux) disable it by
+default. PSI made its way into the 4.20 kernel; this effectively implies the same for the systemd-based
+OOM killer. (For more on this, see the Further reading section of this chapter.)
+
+ As an example (it’s in fact from Chapter 11, The CPU Scheduler – Part 2), you can try out this systemd-based
+ service unit, which deliberately causes memory to be stressed; we do so by running this deliberate
+“lowram” service – ch11/cgroups/cpu_constrain/systemd_svcunit/svc3_primes_lowram.service
+– under the aegis of systemd via our setup_service wrapper script (located in the same folder). Our
+ service unit invokes the well-known stress-ng program like this:
+      stress-ng --oomable --pathological --vm 1 --vm-bytes 100% --vm-populate
+      --malloc-bytes 100G --malloc-touch --malloc 12
+
+This – very deliberately – can cause mayhem with system memory by putting tremendous stress on
+it, so as to try and invoke the OOM killer, our dubious objective here, of course.
+
+Somewhat ironically, something to note, though: triggering the OOM killer isn’t always as straight-
+forward (as our oom_killer app!); in order to invoke the OOM killer quicker (which is what we want
+here), it’s advisable to:
+
+   •     Disable swap first with sudo swapoff -a and then test
+   •     Have the system physically allocate the memory page(s) by touching them (via a write or ex-
+         ecute on them; we learned about this in the A brief note on user-mode memory allocations and
+         demand paging section, and we shall cover more on this in the upcoming Demand paging and
+         OOM section). (An aside: why physically allocate memory only on page write or execute? Why
+         not on the read as well? The upcoming The optimized (unmapped) read section explains it; you
+         can ignore it for now.)
+
+See this link as well: https://forum.linuxfoundation.org/discussion/858099/lab-13-1-invoking-
+the-oom-killer. Again, Chapter 11, The CPU Scheduler–Part 2, has more details on cgroups and systemd.
+
+Case 2: vm.overcommit_memory == 2 (VM overcommit turned off,
+OVERCOMMIT_NEVER) and vm.overcommit_ratio == 50
+Firstly, remember, this is not the default.
+
+   •    vm.overcommit_memory is now set to 2, i.e., VM overcommit memory is off; aka “strict account-
+        ing” mode (Setting it’s easy: sudo sh -c "echo 2 > /proc/sys/vm/overcommit_memory".)
+   •    vm.overcommit_ratio is 50, effectively a percentage value (the default).
+
+With the vm.overcommit_memory tunable set to 2, there is a formula to calculate the total (possibly
+overcommitted) available/allowed memory, as follows:
+
+   Total allowed memory = (total_RAM - total_huge_TLB) * (overcommit_ratio / 100) + total_swap
+
+Again, note that this formula only applies when vm.overcommit_memory == 2.
+
+So, on our AArch64 Raspberry Pi 4, with vm.overcommit_memory == 2, with 1,849 MB of RAM, no huge
+pages, the vm.overcommit_ratio percentage as 50, and 100 MB of swap, the above formula yields the
+following (expressed in units of megabytes, MB):
+    Total allowed memory (MB) = (1849 - 0) * (50/100) + 100 = 924.5 + 100 = 1024.5
+    MB = 1,049,088 KB ~= 1 GB.
+
+This figure also ties in almost perfectly with the value of the commit limit revealed via proc (it is, after
+all, derived via the same formula):
+    $ grep CommitLimit /proc/meminfo
+    CommitLimit:         1049192 kB
+
+ Right, let’s run the app like the last time (with an enormous number of two-page allocations attempted
+– 500,000 – that aren’t ever freed) and see what happens this time:
+    # ./oom_killer_try 500000 0
+    ./oom_killer_try: PID 929 (verbose mode: off)
+    ..... ..... ..... ..... ../oom_killer_try: loop #103137: malloc failure.
+
+Did you notice!? This time it didn’t die due to the OOM killer. No, it exited due to the malloc() API (on
+loop iteration 103,137) failing! Strict accounting in action!
+
+This time, there are a total of only 21 periods in the process’ output, implying that a total of:
+    21 * 5000 * 8192 = 860,160,000 bytes ~= 820 MB
+
+of memory was allocated before the malloc() request failed. This is in line with, and (kind of) close
+to, the expected theoretical maximum of 1 GB that we calculated and that the CommitLimit is set to.
+
+But why is it less? Why did the process get killed at 820 MB and not at 1 GB? Ah, the actual code allows
+for some slippage (reserving some memory for root-owned processes and keeping some memory in
+reserve in any case). Indeed, this time the kernel log reveals the message:
+      __vm_enough_memory: pid: 929, comm: oom_killer_try, no enough memory for the
+      allocation
+
+…which of course is emitted from the mm/util.c:__vm_enough_memory() function we saw earlier (in
+ the VM overcommit from the viewpoint of the __vm_enough_memory() code section).
+
+Right. Moving along, as we know, the VM memory overcommit is, after all, tunable (by root), includ-
+ing the ability to switch it off (by setting vm.overcommit_memory to the value 2). At first glance, it may
+appear tempting to do so, turning off the kernel’s “memory overcommit” feature. Do pause, though,
+and think it through; leaving the VM overcommit at the kernel defaults is best on most workloads.
+
+For example, setting the vm.overcommit_memory value to 2 on my x86_64 Ubuntu guest VM (with 2
+GB RAM) caused the effective available memory to change to just 2 GB! The typical memory usage,
+especially with the GUI running, far exceeded this, causing the system to be unable to even log in the
+user in GUI mode!
+
+This is an important point to ponder; the following links help throw more light on the subject:
+
+   •     Linux kernel documentation: https://www.kernel.org/doc/html/v6.1/mm/overcommit-
+         accounting.html.
+   •     What are the disadvantages of disabling memory overcommit in Linux?: https://www.quora.com/
+         What-are-the-disadvantages-of-disabling-memory-overcommit-in-Linux.
+   •     Chris Siebenmann’s blog articles on Linux memory overcommit (and Linux in general) are
+         very good and deal with real-world production servers: https://utcc.utoronto.ca/~cks/
+         space/blog/__IndexChron (search for overcommit here!).
+
+Also, do see the Further reading section of this chapter for more useful links.
+
+Real-world experience shows that there’s no single hard-and-fast rule regarding the best approach
+to determine which overcommit mode to employ in production: take the time to run your test suite
+under intense (memory) load and see what works best for your project.
+
+We’re not done with the OOM killer or even our crazy allocator program yet! The next section is very
+interesting; be sure to study it!
+
+Demand paging and OOM
+Recall the really important fact we learned earlier in this chapter, in the A brief note on user-mode memory
+allocations and demand paging section: because of the demand paging (or lazy allocation) policy that
+the OS uses, when a user-space memory page is allocated by malloc() (and friends), it only actually
+causes virtual memory space to be reserved in a region of the process user VAS; no physical memory
+is allocated at this time.
+
+ Only when you perform some action on any byte(s) of the virtual page, “touching” it in any manner
+– performing a read, write, or execute – does the MMU raise a page fault (internally accounted as a
+ minor fault or ‘good’ fault) and the OS’s page fault handler runs as a result. If it deems that this memory
+ access is legal, it has the kernel’s page allocator machinery a single physical frame! (which of course
+ is mapped to the process).
+
+In our simple oom_killer_try app, we manipulate this very idea via its third parameter, force_page_
+fault: when set to 1, we emulate precisely this situation – forcing a page fault – by writing something,
+anything really, into a byte – any byte – of each of the two pages allocated per loop iteration (peek at the
+code again if you need to: https://github.com/PacktPublishing/Linux-Kernel-Programming_2E/
+blob/main/ch9/oom_killer_try/oom_killer_try.c).
+
+So, now that you know this, let’s re-run our shy and retiring app (I am very tempted to put in a smiley
+here!) with the third parameter, force_page_fault, set to 1, to force page faults!
+
+Okay, before running our app, let’s check out the state of system memory on our trusty AArch64
+Raspberry Pi 4 machine:
+    $ free -h
+                       total           used            free        shared    buff/cache
+    available
+    Mem:               1.8Gi           74Mi            27Mi        1.0Mi     1.7Gi              1.7Gi
+    Swap:               99Mi              0B           99Mi
+
+Notice how, as the system has been performing a lot of file I/O (file reads and writes), a very significant
+percentage of RAM (1.7GB of the 1.8GB available!) is taken up by the page cache (the column labeled
+buff/cache; it’s mostly page cache data).
+
+                You’ll understand by now that this is fine and normal; as memory pressure increases, the
+                kernel’s page reclamation machinery swings into action, freeing up caches as required.
+                The last column, available, hints at precisely this fact (the available column has wrapped
+                around; its value is 1.7Gi, showing us that the majority of RAM’s actually available when
+                really required).
+
+With the VM overcommit memory setting on the default (0; OVERCOMMIT_GUESS), let’s run our app
+again, this time with the force_page_fault parameter set to 1, and, as usual, trying to allocate way
+too much memory:
+    $ cat /proc/sys/vm/overcommit_memory
+    0
+    $ ./oom_killer_try 500000 1
+    ./oom_killer_try: PID 812 (verbose mode: off)
+    ..... ..... ..... ..... ..... ..... ..... ..... ..... Killed
+    $
+
+As expected, the OOM killer is triggered, jumps in, and kills our app. The kernel log reveals this clearly:
+      $ dmesg |tail -n1
+      [ 750.748864] Out of memory: Killed process 812 (oom_killer_try) total-
+      vm:1791976kB, anon-rss:1711176kB, file-rss:4kB, shmem-rss:0kB, UID:1000
+      pgtables:3536kB oom_score_adj:0
+      $
+
+This time (too), you can feel the system struggle as it fights for memory. This time, it runs out of
+memory much sooner (than we saw in the Case 1 :: vm.overcommit_memory == 0 (the default, OVER-
+COMMIT_GUESS) section) as actual physical memory was allocated.
+
+From the preceding output, we see in this particular case:
+
+  •       Exactly 9 x 5 = 45 periods, with each period representing 5,000 malloc()s of 8 KB each.
+  •       Thus, the amount of physical memory allocated by the process (before it was ignominiously
+          killed) was 45 * 5,000 * 8192 ~= 1,758 MB.
+  •       We say physical memory because we passed the force_page_fault parameter as 1, causing – forc-
+          ing – demand paging to kick in!
+
+Apparently, at this point, one of two things occurred:
+
+  •       The system ran completely out of memory – CPU caches, RAM, and swap – thus failing to
+          allocate a page and inviting the OOM killer in.
+  •       The calculated (artificial) kernel VM commit limit was exceeded.
+
+We can easily look up this kernel VM commit value (again on the Raspberry Pi 4 where I ran this):
+      $ grep CommitLimit /proc/meminfo
+      CommitLimit:        1049192 kB
+
+This works out to just over (almost exactly) a gigabyte (well under our calculation of 1,758 MB). So
+here, it’s very likely that all the system memory ran out (as our dear app ate it all up!) and the first
+case came into play. Also notice how, before running our program, the amount of memory used by
+the larger system caches (the page and buffer caches) is significant (this does, of course, depend on
+the amount of file IO exercised; a system with higher uptime typically uses a significant percentage
+of RAM for the page cache).
+
+The column entitled buff/cache in the output of the free utility shows this. Before running our crazy
+allocator app, recall that 1.7 GB of the 1.8 GB of RAM available was being used for the page cache. Once
+our crazy allocator program runs, though, it applies so much memory pressure that the OS’s recla-
+mation machinery jumps into action, quickly reclaiming memory frames from all caches. Inevitably
+(as we refused to free any memory), the OOM killer jumps in and kills us, causing large amounts of
+memory to be reclaimed (freed up). Now let’s again run the free program:
+      $ free -h
+                       total           used          free         shared      buff/cache
+      available
+
+   Mem:                1.8Gi             93Mi             1.6Gi         0.0Ki        98Mi           1.7Gi
+   Swap:                 99Mi            58Mi             41Mi
+   $
+
+Wow, look at that! The free memory and the cache usage right after the OOM killer cleans up are 1.6
+GB and 98 MB, respectively, as expected. The cache usage right now is very low; it will increase as
+the system runs.)
+
+Next, looking up the kernel log reveals that indeed, the OOM killer has paid us a visit! Note that the
+following partial screenshot of the kernel log following the OOM killer shows only the kernel-mode
+stack dump - of our oom_killer_try process context of course - on the AArch64 Raspberry Pi 4 running
+the stock 6.1 kernel:
+
+Figure 9.8: The kernel log after the OOM killer, showing the kernel call stack (of our oom_killer_try
+                                                 process context)
+
+Examine the kernel-mode stack in Figure 9.8 carefully, reading it in a bottom-up fashion (ignoring any
+frames that start with ?); clearly, the sequence of events reveals itself:
+
+  •     A page fault occurred; you can see the call frames: do_mem_abort() (on ARM[64], one type
+        of page fault – like this one – is called the Data Abort exception, hence the function name
+        do_mem_abort()) --> do_page_fault() --> handle_mm_fault() --> […].
+
+            •   Why did this page fault occur? We’ve discussed this: when a fresh page is allocated by
+                our process (via malloc()), only the virtual page exists; when accessed in any manner
+                (here we wrote into it), the virtual address is sent via the CPU to the MMU for transla-
+                tion. When the MMU fails to translate the virtual address to a physical address (as the
+                physical page frame doesn’t exist yet), it raises a Data Abort exception on the ARM[64],
+                a page fault. (By the way, the el0_*() call frames at the bottom indicate that the fault
+                was taken at Exception Level 0 (EL0) – user mode on AArch64 processors.)
+
+  •    The OS runs the fault-handling code (in the process context of the faulting process, i.e., our
+       oom_killer_try process; in effect, current runs the fault-handling code (and all that follows…)).
+  •    The fault-handling code proceeds to figure out what actually occurred (it has a big complex
+       flow); here, it figures that we have a minor fault, a good fault. It thus begins to invoke page
+       allocator code to allocate a page frame!
+  •    This ultimately becomes the code deep inside the page allocator: __alloc_pages()! It’s literally
+       the heart of the zoned buddy system (or page) allocator – the engine of memory allocation
+       within the kernel, as we’ve seen (refer back to Figure 9.4). It’s key to understand that all these
+       steps, up to now, are completely normal, expected behavior. It’s how physical memory is allo-
+       cated to user-space tasks, after all! It’s demand-paging in action.
+  •    But (there’s always a but, right?) now, because of the intense memory pressure cooker situa-
+       tion we deliberately created, the kernel’s page allocator (the __alloc_pages() routine) simply
+       couldn’t find a free page frame to allocate; it fails. What!? This triggers, who else, the OOM
+       killer! You can clearly see the code flow via the call stack (Figure 9.8): __alloc_pages() -->
+      __alloc_pages_slowpath().
+
+         •    This – normally – always succeeds! But here, we’ve simply been too greedy...
+         •    The __alloc_pages_slowpath() routine fails, invoking the OOM killer code: out_of_
+              memory() --> oom_kill_process()! It’s how we got killed.
+
+  •    The dump_stack() ... call frames are the diagnostic routines to show us the kernel-mode stack;
+       precisely why we’re able to see it now...
+
+To make this as clear as we can, here’s a flow diagram that accentuates how demand paging – and
+possible OOM killer invocation – works. It is simplified; we’ve skipped many details.
+
+Nevertheless, it does show how this key process works:
+
+Figure 9.9: A (simplified) view on how demand paging – and possible OOM killer invocation – works
+
+So, there we are. At this point, it might be interesting, perhaps, to look back at Chapter 7, Memory-
+Management Internals – Essentials, Figure 7.3 and Figure 7.4, to see the continuity with Figure 9.9 here,
+to see, more, how address translation works and could – though rarely – end up in an OOM killer or
+kernel bug (an Oops!) situation.
+
+Back to the kernel log with regard to the OOM killer’s fatal attack; toward the latter part of its diagnos-
+tic dump, the kernel tries hard to justify its reason for killing a given process(es). It shows statistics
+regarding the system memory state, including that of the page allocator per-node, per-zone freelists,
+and a table of all threads alive at the time of the OOM kill and their memory usage (and various other
+statistics). These statistics are displayed due to the sysctl /proc/sys/vm/oom_dump_tasks being on
+(1) by default. Here’s a sampling (in the following output, we have eliminated the leftmost timestamp
+column of dmesg to make the data more readable):
+      $ sudo dmesg
+      [ ... ]
+      Tasks state (memory values in pages):
+      [   pid   ]   uid tgid total_vm rss pgtables_bytes swapents oom_score_adj name
+      [    144]     0   144   12280    1    90112              231         -250               systemd-
+      journal
+      [     177]    0   177   5414     1    53248              621         -1000              systemd-
+      udevd
+      [    299]     103 299   22027    0    69632              194          0                 systemd-
+      timesyn
+      -- snip --
+      [    728]     1000 728 2024      1    49152              420          0                 bash
+      [    812] 1000 812 447994 427795 3620864                 19725        0                oom_
+      killer_try
+      oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_
+      allowed=0,global_oom,task_memcg=/,task=oom_killer_try,pid=812,uid=1000
+      Out of memory: Killed process 812 (oom_killer_try) total-vm:1791976kB, anon-
+      rss:1711176kB, file-rss:4kB, shmem-rss:0kB, UID:1000 pgtables:3536kB oom_score_
+      adj:0
+      $
+
+In the preceding output block, we have highlighted in bold the rss (resident set size) column (the fifth
+column) as it’s a good indication of physical memory usage by the process in question (careful, the unit
+of rss is pages). Clearly, our oom_killer_try process is using an enormous amount of physical memory
+(here, it happens to be over 1,671 MB!). Further, it’s important to notice that it’s not just application
+(user-space) memory that plays a role in determining the OOM victim; it’s all kinds of memory usage
+that can cumulatively sum up to the maximum memory usage by the hogger process. Here, for our
+oom_killer_try process, notice how the pgtables_bytes (over 3 MB) and swapents (number of swap
+entries) column values are very high as well! (Recall, on x86_64 with 4-level paging, each mapped page
+costs us 16 KB in paging table metadata! It all adds up.)
+
+Modern kernels (4.6 onward) at times use a specialized oom_reaper kernel thread to perform the work
+of reaping (killing; it’s the “grim reaper”!) the victim process (though not the case here; at such times,
+the last line of the preceding output will show that this kernel thread “reaped” the victim process).
+Interestingly, the Linux kernel’s OOM can be also thought of as a (last) defense against fork bombs
+and similar (Distributed) Denial of Service ((D)DoS) attacks.
+
+The optimized (unmapped) read
+Well, there’s always more to understand: as usual, the reality is nuanced… Earlier, when beginning the
+discussion on demand paging and OOM, we said, and I quote: Only when you perform some action on
+any byte(s) of the virtual page, “touching” it in any manner – performing a read, write, or execute – does the
+MMU raise a page fault (internally accounted as a minor fault) and the OS’s page fault handler runs as a result.
+
+This is mostly correct; it’s just that reads on pages that don’t exist yet, on unmapped memory, are
+treated differently. How? The kernel is clever: when a virtual unmapped memory page is read from –
+imagine that instead of writing to memory in our oom_killer_try app, we just read instead – we know
+that it must get allocated to a clean zero-filled physical memory page frame. This approach, however,
+would have the kernel service every page read by allocating a page frame that must be initialized to
+zeroes; that’s expensive! the kernel has a far superior performance-benefiting approach instead. It
+merely maps every new virtual page that’s freshly read from to an underlying single kernel frame
+that’s populated with zeroes! This way, even if you perform ten thousand (or ten million) reads on ten
+thousand (or ten million) virtual pages, the kernel ends up physically mapping just one page frame
+to all of them.
+
+In effect, the kernel does not have to service every (minor) page fault on new pages by allocating a
+frame – no, just the ones that are targets of a write or execute! A detail, perhaps, but a very interest-
+ing one, implying that one can allocate enormous amounts of virtual memory if it’s sparse (literally
+meaning, empty) data; there are a few real-world apps that indeed do this (webkit, Address Sanitizer,
+and KASAN). (Again, offlinemark does a wonderful job of detailing this in this blog article: What they
+don’t tell you about demand paging in school, Oct 2020: https://offlinemark.com/2020/10/14/demand-
+paging/. Be sure to check it out.)
+
+Understanding the OOM score
+In order to speed up the discovery of who the top memory-hogging process is at crunch time (when
+the OOM killer is invoked), the kernel assigns and maintains an OOM score on a per-process basis (you
+can always look up the value in the /proc/<pid>/oom_score pseudofile).
+
+Moreover, the OOM score has a range; it’s from 0 to 1000:
+
+  •     An OOM score of 0 implies that the process is not using any memory available to it.
+  •     An OOM score of 1000 implies the process is using 100 percent of the memory available to it.
+
+Obviously, the process with the highest OOM score “wins.” Its reward – it’s selected as the victim to
+be killed by the OOM killer (talk about dry humor). Not so fast, though: the kernel has heuristics to
+protect important tasks. The baked-in heuristics imply that the OOM killer will not select as its victim
+any root-owned process, any kernel thread, or any task that has a hardware device open.
+
+What if we would like to ensure that a certain process will never be killed by the OOM killer? It’s quite
+possible to do so, though it does require root access. The kernel provides a tunable, /proc/<pid>/
+oom_score_adj, an OOM “adjustment” value (with the default being 0). The net OOM score is the sum
+of the oom_score value and the adjustment value:
+      net_oom_score = oom_score + oom_score_adj
+
+Thus, setting the oom_score_adj value of a process to 1000 pretty much guarantees that it will be
+killed, whereas setting it to -1000 has exactly the opposite effect – it will never be selected as a victim.
+
+A quick way to query (and even set) a process’s OOM score, as well as its OOM adjustment value, is
+via the choom(1) utility. For example, to query the OOM score and OOM adjustment value of the
+systemd process, just do choom -p 1. We did the obvious thing – wrote a script, a simple wrapper
+over choom – to query the OOM score of all processes currently alive on the system (it can be found
+here: ch9/query_process_oom.sh; do try it out on your box). Quick tip: The (10) processes with the
+highest OOM score on the system can quickly be seen with this command line (the third column is
+the net OOM score):
+      ./query_process_oom.sh | sort -k3n | tail
+
+Closing thoughts on the OOM killer and cgroups
+So, now that we’ve covered the OOM killer, what do you think? A rational response, I’d venture, would
+be: don’t let the situation that triggers the OOM killer occur in the first place! Perhaps easier said than done,
+granted, but care should be taken; it is important to think this way (don’t throw the baby out with the
+bath water, right?).
+
+As Andries Brouwer put it, in a tongue-in-cheek remark (back in Sept 2004: https://lwn.net/
+Articles/104185/), the OOM killer algorithm is perhaps akin to chucking passengers out of an air-
+craft when it runs too low on fuel.
+
+Then again, some production environments differ in individual server system setup; no one rule may
+be best. On some setups, having the OOM killer invoked and killing off the misbehaving app is pref-
+erable to having innocent smaller apps fail because they can’t get memory. It’s the usual thing: there
+is no silver bullet. Test and arrive at the best approach for your particular setup.
+
+Cgroups and memory bandwidth – a note
+Something we’ve mentioned quite often is control groups (cgroups); worry not, quite some detail on
+this key, powerful, and implicit kernel infrastructure is covered in Chapter 11, The CPU Scheduler – Part
+2, in the section entitled An introduction to cgroups (it’s more than an intro).
+
+Cgroups (now in their v2 implementation) allow one to apply resource constraints as required, whether
+the resource is the CPU, memory (RAM), IO, maximum number of PIDs (processes/threads) allowed,
+and so on, via so-called resource controllers. The memory resource controller is obviously used to apply
+constraints to a group of processes within a cgroup on their combined memory usage. To understand
+it, and make use of and thus leverage it, I suggest you do two things:
+
+   1.   Read the content on cgroups in Chapter 11, The CPU Scheduler – Part 2, in the section entitled
+        An introduction to cgroups.
+   2.   In parallel, refer to the official kernel documentation on it, particularly for the memory con-
+        troller; it’s available here: https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-
+        interface-files. You’ll see all the possible memory controller interface files and what exactly
+        they mean.
+        Further, the brief section entitled Usage Guidelines (https://docs.kernel.org/admin-guide/
+        cgroup-v2.html#usage-guidelines) is useful to read.
+
+Next, as our later coverage on cgroups (v2) is a bit biased toward the topic of constraining CPU band-
+width, we’ll quickly mention a few points regarding the memory controller here:
+
+  •     Constraining the memory usage of processes within a cgroup is not exactly the same as that
+        of constraining CPU usage. Think about this: CPU time is indeed infinite in the real sense of
+        the term; memory simply isn’t. Thus, we can set different types of limits on memory usage
+        (via the cgroup’s memory.min|low|high|max pseudofiles; refer to the kernel documentation
+        link just mentioned for details).
+  •     The 4.19 kernel introduced a tiny implementation of a cgroup-aware OOM killer component;
+        this allows – to quote – “an ability to kill a cgroup as a single unit and so guarantee the integrity
+        of the workload.” The interface is the memory.oom.group pseudofile; when set and a process
+        within a cgroup triggers the OOM killer, it kills all the processes within that cgroup (or none
+        at all).
+  •     Internals: The kernel incorporates a slab memory controller (kmemcg), which essentially rep-
+        licated slab memory internals for every existing memory cgroup (memcg). This led to major
+        under-utilization of the slab memory from within these memcgs (as they didn’t share slab
+        memory; each had its own slabs), which in turn led to serious issues – significant slab mem-
+        ory wastage, in effect. This led to the creation of a new slab memory controller (by Roman
+        Gushchin and others) from 5.9 Linux. The slab memory savings range from 35% to 50% (on
+        both desktop and server-class systems).
+  •     A perhaps easier way to control cgroups memory bandwidth allocation is to do so via the
+        interfaces made available by systemd. Similar to the kernel memory cgroup (memcg) inter-
+        faces, it provides MemoryMin, MemoryLow, MemoryHigh, and MemoryMax interfaces for the
+        processes within a given systemd unit (all set to a quantity, expressed in bytes/KB/MB/GB/TB
+        units). Alternatively, you can specify memory as a percentage of total RAM for them. Even swap
+        memory usage can be constrained via the MemorySwapMax and MemoryZSwapMax interfaces.
+
+        The MemoryHigh interface is typically the one recommended to be specified; to quote the
+        documentation on its usage (from the man page here: https://man7.org/linux/man-pages/
+        man5/systemd.resource-control.5.html “Specify the throttling limit on memory usage of
+        the executed processes in this unit. Memory usage may go above the limit if unavoidable, but
+        the processes are heavily slowed down and memory is taken away aggressively in such cases.
+        This is the main mechanism to control memory usage of a unit.”
+
+       The MemoryMax interface allows specifying a non-negotiable upper (or absolute) limit on
+       memory usage by the unit’s processes; if memory usage crosses this threshold, the OOM killer
+       is invoked.
+
+       There are a few caveats to setting up the systemd-based memcg settings; be sure to carefully
+       read the documentation.
+
+With this, we conclude this section and indeed this chapter.
+
+Summary
+In this chapter, we continued where we left off in the previous chapter. We covered, in a good amount
+of detail, how you can create and use your own custom slab caches (useful when your driver or module
+very frequently allocates and frees a certain data structure). We then provided an overview of available
+kernel debug techniques for debugging memory issues. Next, we learned about and used the kernel
+vmalloc() API (and friends). With the wealth of memory APIs available, how do you select which
+one to use in a given situation? We covered this important concern with a useful decision chart and
+table. We then delved into an understanding of the kernel page reclaim procedures; this discussion
+covered the zone watermarks, the kswapd kernel thread(s), the new MG-LRU lists, and the DAMON
+data access monitoring technology.
+
+We then went into what exactly the kernel’s dreaded OOM killer (and the systemd-oomd daemon)
+component is and how to work with it.
+
+As I have mentioned before, sufficiently deep knowledge of Linux memory management internals and
+exported API set will go a long way in helping you as a kernel module and/or device driver author. The
+reality, as we well know, is that a significant amount of time is spent by developers on troubleshooting
+and debugging code; the intricate knowledge and skills gained in these last few chapters on kernel
+internals and memory management will help you better navigate these mazes.
+
+This completes the explicit coverage of Linux kernel memory management in this book. Though we
+have covered many areas, we have also left out or only skimmed over some of them. The fact is that
+Linux memory management is a huge and complex topic, well worth understanding for the purposes
+of learning, writing more efficient code, and debugging complex situations. Learning the (basic) usage
+of the powerful crash utility (used to look deep within the kernel, via either a live session or a kernel
+dumpfile), and then re-looking at this and the previous chapter’s content armed with this knowledge,
+is indeed a powerful way to learn!
+
+So, great job on having covered Linux memory management! The next two chapters will have you
+learning about another core OS topic – how CPU (task) scheduling is performed on the Linux OS. Take
+a breather, work on the following assignments and questions, and browse through the Further read-
+ing materials that capture your interest. Then, revitalized, jump into the next exciting area with me!
+
+Questions
+As we conclude, here is a list of questions for you to test your knowledge regarding this chapter’s mate-
+rial: https://github.com/PacktPublishing/Linux-Kernel-Programming_2E/blob/main/questions/
+ch9_qs_assignments.txt. You will find some of the questions answered in the book’s GitHub repo:
+https://github.com/PacktPublishing/Linux-Kernel-Programming_2E/tree/master/solutions_
+to_assgn.
+
+Further reading
+To help you delve deeper into the subject with useful materials, we provide a rather detailed list of online
+references and links (and, at times, even books) in a Further reading document in this book’s GitHub
+repository. The Further reading document is available here: https://github.com/PacktPublishing/
+Linux-Kernel-Programming/blob/master/Further_Reading.md.
+
+Learn more on Discord
+To join the Discord community for this book – where you can share feedback, ask questions to the
+author, and learn about new releases – follow the QR code below:
+
+https://packt.link/SecNet
