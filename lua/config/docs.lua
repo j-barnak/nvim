@@ -1312,17 +1312,19 @@ end
 
 -- ── fuzzy-browse doc/source files under a directory ──────────────────────
 local function pick_files(dir, fd_args, prompt)
-	if not have("fd") then
-		return vim.notify("fd not found (needed to browse docs)", vim.log.levels.WARN)
+	-- fd, fdfind, or a find translation of the same arguments (util.find_cmd).
+	local cmd = util.find_cmd(dir, fd_args)
+	if not cmd then
+		return vim.notify("fd not found (needed to browse docs: install fd-find)", vim.log.levels.WARN)
 	end
 	prewarm_convcache(dir)
 	-- remember this picker so `D` in an opened doc reopens the same fuzzy finder
 	last_picker = function()
 		pick_files(dir, fd_args, prompt)
 	end
-	-- --base-directory guarantees the search root (fzf-lua's cwd isn't applied
-	-- to the raw command); cwd lets the builtin previewer resolve the entries.
-	fzf().fzf_exec("fd --base-directory " .. shq(dir) .. " --type f " .. fd_args, {
+	-- The command carries its own search root (fzf-lua's cwd isn't applied to
+	-- the raw command); cwd lets the builtin previewer resolve the entries.
+	fzf().fzf_exec(cmd, {
 		prompt = prompt,
 		cwd = dir,
 		previewer = "builtin",
@@ -4645,9 +4647,6 @@ local function pick_mdbook(dir, prompt, numbered)
 end
 
 local function ensure_book(mkey, entry)
-	if not have("fd") then
-		return vim.notify("fd is needed to browse books", vim.log.levels.WARN)
-	end
 	if entry.fmt == "mdbook" then
 		-- The four rust-lang mdBooks are committed under Resources/docs/rust;
 		-- resolve_docs falls back to a cache copy if one was ever built there.
@@ -4666,9 +4665,6 @@ end
 -- (readelf/objdump, ld, as, elf(5)) because that is where a reader reaches for
 -- the format definition, not among the tutorials.
 local function pick_elf_tis()
-	if not have("fd") then
-		return vim.notify("fd is needed to browse the ELF spec", vim.log.levels.WARN)
-	end
 	local out = resolve_docs("books/books-compilers/elf-specification")
 		or (frozen_root .. "/books/books-compilers/elf-specification")
 	pick_files(out, "-e txt", "ELF (TIS)> ")
@@ -4680,9 +4676,6 @@ end
 -- chapter books committed under Resources/docs, browsed straight from disk.
 -- Vol 1 is Application Programming, Vol 2 is System Programming.
 local function pick_apm(vol)
-	if not have("fd") then
-		return vim.notify("fd is needed to browse the AMD64 APM", vim.log.levels.WARN)
-	end
 	local rel = "amd-apm-vol" .. vol
 	local out = resolve_docs(rel) or (frozen_root .. "/" .. rel)
 	pick_files(out, "-e txt", "AMD64 APM v" .. vol .. "> ")
@@ -4943,7 +4936,11 @@ local function pick_books()
 		-- unreachable. Name them once rather than per occurrence.
 		vim.notify("Books: unreachable duplicate title(s): " .. table.concat(dupes, ", "), vim.log.levels.WARN)
 	end
-	table.sort(titles)
+	-- Case-insensitive: byte order put "glibc malloc", "ir0nstone" and "xv6"
+	-- below every capitalised title, past the bottom of the list.
+	table.sort(titles, function(a, b)
+		return a:lower() < b:lower()
+	end)
 	fzf().fzf_exec(titles, {
 		prompt = "Books> ",
 		fzf_opts = { ["--no-multi"] = true },
@@ -4984,7 +4981,9 @@ local function pick_riscv_books()
 		by_title[e.title] = e
 		titles[#titles + 1] = e.title
 	end
-	table.sort(titles)
+	table.sort(titles, function(a, b)
+		return a:lower() < b:lower()
+	end)
 	fzf().fzf_exec(titles, {
 		prompt = "RISC-V> ",
 		fzf_opts = { ["--no-multi"] = true },

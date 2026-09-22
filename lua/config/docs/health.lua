@@ -8,7 +8,9 @@ local have = require("config.util").have
 
 -- tool -> what it enables (missing = that feature is unavailable, not an error)
 local TOOLS = {
-	{ "fd", "browsing any file picker (books, docs, source)", true },
+	-- Not required: pick_files falls back to fdfind, then to a plain `find`
+	-- (slower, no .gitignore handling) when fd is missing.
+	{ "fd", "fast file pickers (books, docs, source); find is the fallback" },
 	{ "git", "cloning/updating the live doc repos (kernel, QEMU, Ghidra, ...)" },
 	{ "pandoc", "rendering .rst/.xml/.html docs and web articles" },
 	{ "curl", "web providers and PDF spec downloads" },
