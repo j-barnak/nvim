@@ -236,38 +236,9 @@ emit() {
 # have bare numbered clauses, no Chapter/Part) keep the depth heuristic below.
 SLUG=$(basename "$OUT")
 # Per-slug page furniture: a whole line, repeated on every page, that carries no
-# content. Two books need it and no other book has one, so it is keyed by slug
-# rather than added to the shared filter above.
-#   talking-compilers-with-chatgpt: a two-line licence/contact notice at the top
-#   of all 916 pages (its first page words the second line differently).
-#   Even pages carry "<printed page number>   Disarming Code" and odd pages
-#   "Chapter N: Title   <printed page number>" (or "Appendix A: ..."), and the
-#   OCR sprinkles stray spaces through both, so the pattern tolerates a space
-#   after any letter of the two fixed words and a space or a question mark
-#   inside the page number ("11 2", "3?4"). Requiring the title to start with a
-#   capital, a digit or a colon keeps body lines such as "Appendix B of this
-#   work provides ." out of it. The tail allows 200 characters rather than 100
-#   because the OCR leaves a very wide gap before the page number on two heads
-#   (page 207's "Chapter 6: ..." and page 415's "Chapter 11 : ..."), which were
-#   the only two the shorter bound missed; 200 matches those two and not one
-#   line more anywhere in the book.
-#   Its chapter opener pages carry no running head, only the bare printed page
-#   number. That used to need a per-slug $LEADNUM switch, which turned the old
-#   blank-line-triggered digit rule on for the first non-empty line of a chapter
-#   file; it is gone, because folio.awk sees physical pages and an opener folio
-#   is simply the top line of one.
-#   learn-programming-with-ocaml: the running head of a LaTeX book, on 430 of
-#   its 462 pages. Even pages carry "<printed page number>   Chapter N. Title"
-#   (or BIBLIOGRAPHY / INDEX) and odd pages "N.M. Section Title   <printed page
-#   number>". Every line the pattern matches in the whole book is the first
-#   line of its page, and the pages it leaves alone are the ones that open a
-#   part, a chapter or the end matter (those carry no running head).
-# Per-slug mid-line control byte. Only two books have one that is unambiguous,
-# and in both it is 0x08 heading a table-of-contents dot leader on every entry,
-# so it renders as "Preface?xv" / "Who This Book is For?  3" - the second of
-# which reads as a question the book never asks. Every 0x08 in these two books
-# is that leader (199 of 199 and 121 of 121). It is NOT global because 0x08 is
-# a floor bracket in The Algorithm Design Manual.
+# content and that the shared filter above does not catch. Keyed by slug below
+# (FURN), each pattern validated against its own book to match only running
+# heads and never a body line.
 CTLX=
 case "$SLUG" in
   fuzzing-against-the-machine)
@@ -292,7 +263,6 @@ s/$(printf '\007')/∃/g
 esac
 FURN=
 case "$SLUG" in
-  talking-compilers-with-chatgpt) FURN='^(This material is freely available|For typos or suggestions, please contact Fernando|Send comments, typos and suggestions to)' ;;
   learn-programming-with-ocaml) FURN='^([0-9]+ +(Chapter [0-9]+[.].*|BIBLIOGRAPHY|INDEX)|[0-9]+[.][0-9]+[.] .+ [0-9]+|(BIBLIOGRAPHY|INDEX) +[0-9]+)$' ;;
   # Books whose per-page running head is "<section-number> <Title>  <folio>"
   # (section head on one edge, folio right-aligned) and which folio.awk's learn
@@ -348,14 +318,6 @@ case "$SLUG" in
   # drops both, page-top only, keeping TOC dot-leaders. Every match is the first
   # non-blank line of its page, so no body/code line is touched.
   retrocomputing-with-clash) FIXAWK="${AWKF%/*}/retroclash_fix.awk" ;;
-  # Essentials of Compilation: folio.awk leaks 11 running heads in the four short
-  # sections (ch6, Appendix, References, Index). essentials_fix.awk drops them and
-  # guards the References/Index odd-form so the front-matter TOC survives.
-  essentials-of-compilation) FIXAWK="${AWKF%/*}/essentials_fix.awk" ;;
-  # Modern Compiler Implementation in C: folio.awk leaks 253 all-caps running
-  # heads ("CHAPTER ONE. INTRODUCTION"). The all-caps form is head-only (prose
-  # uses "Chapter N"), so modern_compiler_fix.awk drops it with no false hits.
-  modern-compiler-implementation-in-c) FIXAWK="${AWKF%/*}/modern_compiler_fix.awk" ;;
   # Memory Consistency Primer: 174 running heads folio.awk misses (even
   # "<folio> <n>. TITLE", odd "<n.m>. TITLE <folio>"), all-caps-title keyed.
   a-primer-on-memory-consistency-and-cache-coherence) FIXAWK="${AWKF%/*}/primer_fix.awk" ;;
@@ -392,18 +354,14 @@ esac
 # in ToUnicode-less, font-code-reusing math fonts (see mutool_furniture).
 EXTRACT=
 case "$SLUG" in
-  engineering-a-compiler) EXTRACT=mutool ;;
+  *) ;; # none at the moment (was engineering-a-compiler)
 esac
 # pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
-# control-byte tr. SSA-based Compiler Design typesets a few relations in
-# subsetted math fonts (MSAM10/MTSYN) that carry no ToUnicode map, so pdftotext
-# emits the raw font byte; the tr below would turn those bytes into "?" (which
-# the book also uses legitimately), losing them for good. ssa_fix.awk maps the
-# bytes to their real glyphs (triangleright, negationslash + relation) from the
-# font's own /Differences names while they are still distinct. No-op elsewhere.
+# control-byte tr, for a book whose math fonts carry no ToUnicode map (the tr
+# would turn the raw font bytes into "?" for good). No-op unless set.
 SSAFIX=
 case "$SLUG" in
-  ssa-based-compiler-design) SSAFIX="${AWKF%/*}/ssa_fix.awk" ;;
+  *) ;; # none at the moment (was ssa-based-compiler-design -> ssa_fix.awk)
 esac
 # Furniture learn pass: read the WHOLE book once and record which page-number
 # offsets its page ends attest, and which page-edge lines are running heads (see
@@ -426,21 +384,7 @@ pdftotext -layout "$PDF" - 2>/dev/null \
 # pdftotext failed and every folio would silently survive.
 [ "$(awk '/^#lines /{print $2; exit}' "$OUT/.folio.keys")" -gt 0 ] 2>/dev/null \
   || { echo "pdf_build: folio learn pass read no text from $PDF" >&2; exit 1; }
-if [ "$4" = book ] && { [ "$SLUG" = talking-compilers-with-chatgpt ] || [ "$SLUG" = introduction-to-static-analysis ]; }; then
-  # Three books whose printed table of contents is exactly the outline's depth-0
-  # nodes, so they leave .ch.tsv unwritten and let the depth fallback split there.
-  #   talking-compilers-with-chatgpt: these lecture notes are transcribed ChatGPT
-  #   sessions, and every numbered item of every answer ("1. Front-End (Language
-  #   Independence)") is bookmarked, so the title patterns below matched 240 of
-  #   them and shredded the book. Its 25 chapters are the depth-0 nodes (plus the
-  #   title and contents pages).
-  #   introduction-to-static-analysis: numbers its appendices as a bare letter
-  #   and a title ("A Reference for Mathematical Notions"), which no title
-  #   pattern below can tell from an ordinary section, so the appendices ended up
-  #   inside the last numbered chapter. Its depth-0 nodes are the chapters, the
-  #   appendices and the end matter, in printed order.
-  :
-elif [ "$4" = book ] && [ "$SLUG" = elf-specification ]; then
+if [ "$4" = book ] && [ "$SLUG" = elf-specification ]; then
   # The ELF spec's outline repeats "1. Object Files" under each of Books I, II
   # and III, so the outline/depth split produces three indistinguishable
   # chapters. Its real divisions are the Books' numbered sections; name them with
@@ -456,27 +400,6 @@ elif [ "$4" = book ] && [ "$SLUG" = elf-specification ]; then
     printf '71\tBook III: Program Loading and Dynamic Linking\n'
     printf '89\tBook III: Intel Architecture and System V R4 Dependencies\n'
     printf '103\tIndex\n'; } > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = essentials-of-compilation ]; then
-  # Auto-detect swallowed the Appendix (its outline title "A Appendix" matches
-  # no book-mode pattern) into ch12 Generics, and the References bookmark
-  # resolves one page early (onto the Appendix's last page). Fix both here; the
-  # front matter (pages 1-10) is auto-emitted before the first boundary.
-  { printf '11\tPreface\n'
-    printf '15\t1 Preliminaries\n'
-    printf '27\t2 Integers and Variables\n'
-    printf '43\t3 Parsing\n'
-    printf '59\t4 Register Allocation\n'
-    printf '79\t5 Booleans and Conditionals\n'
-    printf '105\t6 Loops and Dataflow Analysis\n'
-    printf '113\t7 Tuples and Garbage Collection\n'
-    printf '139\t8 Functions\n'
-    printf '157\t9 Lexically Scoped Functions\n'
-    printf '175\t10 Dynamic Typing\n'
-    printf '191\t11 Gradual Typing\n'
-    printf '209\t12 Generics\n'
-    printf '221\tA Appendix\n'
-    printf '223\tReferences\n'
-    printf '231\tIndex\n'; } > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = a-primer-on-memory-consistency-and-cache-coherence ]; then
   # The depth-0 fallback breaks here: the outline nodes are not in page order and
   # a stray "Blank Page" bookmark (page 2) would swallow the whole body. Take the
@@ -502,24 +425,6 @@ elif [ "$4" = book ] && { [ "$SLUG" = amd-apm-vol1 ] || [ "$SLUG" = amd-apm-vol2
         t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t)
         if ($2+0 <= 1) next
         if (lt ~ /^(contents|figures|tables|revision history)$/) next
-        print $2"\t"t
-      }' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
-    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = engineering-a-compiler ]; then
-  # Engineering a Compiler: the depth-0 outline nodes are the front matter
-  # (Front Cover .. About the Cover), the Preface, chapters 1-14, the two
-  # appendices "A ILOC" and "B Data Structures", the Bibliography and the Index.
-  # The appendices are titled with a bare letter (no "Appendix" keyword and no
-  # "A. lowercase" form), which the generic book pattern misses, so it folded
-  # them into chapter 14 and split on a stray deep "Appendix Notes" bookmark
-  # instead. Take the boundaries from the depth-0 outline: drop the
-  # cover/title/copyright/back-cover nodes so the front matter folds into the
-  # auto-emitted Front Matter (first boundary = the Preface), and prefix the two
-  # appendices with "Appendix " so they read as such.
-  awk -F'\t' '$1==0 {
-        t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t)
-        if (lt ~ /^(front cover|engineering a compiler|copyright|contents|about the authors|about the cover|back cover)$/) next
-        if (t ~ /^[AB] /) t="Appendix " t
         print $2"\t"t
       }' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
