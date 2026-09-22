@@ -287,14 +287,6 @@ case "$SLUG" in
   # folio/section number, so a "■ text" list item (■ at line start) never matches.
   computer-architecture-a-quantitative-approach)
     FURN='^ *([0-9]{1,4}|[A-M]-[0-9]+) +■ +(Appendix [A-M]|Chapter [0-9]+)|^ *([0-9]+[.][0-9]+|[A-M][.][0-9]+) .* +■ +([0-9]{1,4}|[A-M]-[0-9]+) *$' ;;
-  # from-day-zero-to-zero-day: the Early-Access per-page copyright line.
-  from-day-zero-to-zero-day) FURN='^From Day Zero to Zero Day [(]Early Access[)] © 2025 by Eugene Lim$' ;;
-  # file-system-forensic-analysis: a QuarkXPress production stamp ("...qxd DATE
-  # TIME Page xix") and the ALLCAPS running head that names the current section
-  # ("ANALYSIS TECHNIQUES") - the real section headings are title-case, so a
-  # multi-word ALLCAPS line is always the running head, never body text.
-  file-system-forensic-analysis)
-    FURN='^([A-Za-z0-9_]+[.]qxd[^ ]*[ ].*Page [ivxlcdm0-9]+|[A-Z][A-Z]+([ ][A-Z]+)+)[ ]*$' ;;
 esac
 # Per-slug code-listing repair (book_fix above): one awk filter per book that
 # needs it, kept next to pdf_build.sh and resolved from folio.awk's directory
@@ -512,20 +504,6 @@ elif [ "$4" = book ] && [ "$SLUG" = writing-a-bootloader-from-scratch-cmu-15-410
           for (i = 1; i <= N; i++) print HP[i] "\t" HT[i] "\t" HT[i] }' > "$OUT/.ch.tsv" \
     || : > "$OUT/.ch.tsv"
   rm -f "$OUT/.d0.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = rootkits ]; then
-  # Rootkits and Bootkits: the Brief Contents bookmarks add arabic-numbered
-  # "Part 1 / Part 3" nodes alongside the real roman "Part I / II / III", so the
-  # generic `^part [ivxlc0-9]` matches both and yields duplicate part chapters.
-  # Same logic as the generic book branch, but roman-only parts.
-  awk -F'\t' '
-    { t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); ty=0 }
-    lt ~ /^part [ivxlc]+([ :.]|$)/ || lt ~ /^chapter [0-9]+.*[a-z]/ || lt ~ /^appendix[: ]/ { ty=1; seen=1 }
-    lt ~ /^(preface|foreword|epilogue|afterword)([ .:]|$)/ { ty=1 }
-    lt ~ /^introduction[ ]*$/ && $1 <= 1 { ty=1 }
-    seen && lt ~ /^(bibliography|index|references|glossary)[ ]*$/ { ty=1 }
-    ty { print $2"\t"t }
-  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
-    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = computer-architecture-a-quantitative-approach ]; then
   # H&P 6e's outline is broken: Appendix I is absent, L/M are mis-placed, and the
   # References nodes are out of order, so the generic split truncated appendices J
@@ -561,43 +539,6 @@ elif [ "$4" = book ] && [ "$SLUG" = computer-architecture-a-quantitative-approac
     printf '1347\tM Historical Perspectives and References\n'
     printf '1441\tReferences\n'
     printf '1477\tIndex\n'; } > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = from-day-zero-to-zero-day ]; then
-  # No Starch outline: the chapters sit at depth 1 with the number fused to the
-  # title ("1Taint Analysis"), which no generic pattern matches, so the plain
-  # book branch splits only on the three Parts. Take the depth-0 nodes (the two
-  # forewords, Introduction, the "0Day Zero" chapter, the three Parts, Index) plus
-  # the depth-1 fused-number chapters, and normalise the titles ("1Taint Analysis"
-  # -> "1 Taint Analysis", "Part ICode Review" -> "Part I: Code Review").
-  awk -F'\t' '
-    function norm(t,   pre) {
-      if (match(t, /^Part [IVX]+/)) { return substr(t,1,RLENGTH) ": " substr(t,RLENGTH+1) }
-      if (match(t, /^[0-9]+/) && substr(t,RLENGTH+1,1) ~ /[A-Za-z]/) { return substr(t,1,RLENGTH) " " substr(t,RLENGTH+1) }
-      return t
-    }
-    { t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); keep=0 }
-    $1==0 && (lt ~ /^foreword/ || lt=="introduction" || lt=="0day zero" || lt ~ /^part [ivxlc]/ || lt=="index") { keep=1 }
-    $1==1 && t ~ /^[0-9]+[A-Za-z]/ { keep=1 }
-    keep { print $2"\t" norm(t) }
-  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
-    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = file-system-forensic-analysis ]; then
-  # Every chapter ends with its own "Bibliography" bookmark; the generic
-  # trailing-matter rule would promote each to a separate chapter (doubling the
-  # count). Same logic as the generic book branch below, but WITHOUT bibliography
-  # as a boundary, so each end-of-chapter bibliography folds into its chapter -
-  # only the final Index still splits.
-  awk -F'\t' '
-    { t=$3; sub(/^[ \t]+/,"",t); sub(/^\[[A-Za-z0-9 ._-]*\][ \t]*/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); ty=0 }
-    $1 == 0 { partop = (lt ~ /^part [ivxlc0-9]/ || lt ~ /^section [0-9]+[ :.]/) }
-    lt ~ /^part [ivxlc0-9]/ || lt ~ /^section [0-9]+[ :.]/ || lt ~ /^chapter [0-9]+.*[a-z]/ \
-      || t ~ /^[0-9]+\. [^(]/ || t ~ /^[0-9]+ [A-Z]/ || lt ~ /^appendix[: ]/ { ty=1; seen=1 }
-    seen && $1 <= 1 && lt ~ /^[a-h]\. [a-z]/ { ty=1 }
-    lt ~ /^(preface|foreword|epilogue|afterword)([ .:]|$)/ { ty=1 }
-    lt ~ /^introduction[ ]*$/ && ($1 == 0 || ($1 == 1 && partop)) { ty=1 }
-    seen && lt ~ /^(index|references|glossary)[ ]*$/ { ty=1 }
-    ty { print $2"\t"t }
-  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
-    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = embedded-systems-arm-cortex-m-zhu ]; then
   # Chapters are titled "ChN: Title" (abbreviated), which the generic book
   # pattern (Chapter/Part/Appendix at line start) misses, so it folded all 24

@@ -4339,24 +4339,7 @@ local BOOKS = {
 	{ module = "Linux / Drivers", key = "books-linux", items = {
 		{ title = "Linux Insides (0xAX)", fmt = "md", slug = "linux-insides", file = "https://github.com/0xAX/linux-insides" },
 	} },
-	{ module = "Algorithms", key = "books-algo", items = {
-		{ title = "Algorithms Illuminated, Part 2", fmt = "epub", file = "Algorithms Illuminated (Part 2)_ Graph Algorithms and Data -- Tim Roughgarden -- First edition, San Francisco, CA, 2018 -- Soundlikeyourself -- 9780999282908 -- 60673f61ed5b43af2525a40cf00038f9 -- Anna’s Archive.epub" },
-		{ title = "The Algorithm Design Manual", fmt = "pdf", file = "The-Algorithm-Design-Manual.pdf" },
-		{ title = "Introduction to Algorithms (CLRS, 3e)", fmt = "pdf", slug = "introduction-to-algorithms-clrs", file = "Cormen Introduction to Algorithms.pdf" },
-		-- https://opendatastructures.org/ods-python.pdf (the HTML edition renders code/math as images; the PDF has selectable Python code)
-		{ title = "Open Data Structures (Morin, Python edition)", fmt = "pdf", slug = "open-data-structures", file = "ods-python.pdf" },
-	} },
 	{ module = "Security", key = "books-security", items = {
-		{ title = "Gray Hat Hacking (6th ed)", fmt = "pdf", slug = "gray-hat-hacking-6e", file = "Gray Hat Hacking_ The Ethical Hacker's Handbook, Sixth -- Allen Harper, Ryan Linn, Stephen Sims, Michael Baucom, -- 6th ed, New York, 2022 -- isbn13 9781264268948 -- 422f2de1f3c65dc5351a861be7c9ef14 -- Anna’s Archi.pdf" },
-		{ title = "The Art of Mac Malware, Vol. 1 (Wardle)", fmt = "pdf", slug = "the-art-of-mac-malware", file = "Patrick Wardle - The Art of Mac Malware - libgen.li.pdf" },
-		{ title = "The Art of Mac Malware, Vol. 2 (Wardle)", fmt = "pdf", slug = "the-art-of-mac-malware-vol2", file = "[{Cyber-Security-COVER}] The Art of Mac Malware, Volume 2_ Detecting Malicious Software{Patrick Wardle}(2025, No Starch Press){108023820} libgen.li.pdf" },
-		{ title = "Rootkits and Bootkits (Matrosov et al.)", fmt = "pdf", slug = "rootkits", file = "Rootkits.pdf" },
-		{ title = "File System Forensic Analysis (Carrier)", fmt = "pdf", slug = "file-system-forensic-analysis", file = "File-System-Forensics-Analysis.pdf" },
-		{ title = "From Day Zero to Zero Day", fmt = "pdf", slug = "from-day-zero-to-zero-day", file = "FromDayZeroToZeroDay.pdf" },
-		{ title = "Android Security Internals (Elenkov)", fmt = "pdf", slug = "android-security-internals", file = "AndroidSecurityInternals.pdf" },
-		{ title = "The Art of Memory Forensics", fmt = "pdf", file = "TheArtOfMemoryForensics.pdf" },
-		{ title = "Attacking Network Protocols (Forshaw)", fmt = "pdf", slug = "attacking-network-protocols", file = "attacking-network-protocols.pdf" },
-		{ title = "Practical Binary Analysis", fmt = "epub", file = "PBA.epub" },
 		{ title = "Linternals + Kernel Exploitation (sam4k)", fmt = "md", slug = "linternals-sam4k", file = "https://sam4k.com/linternals/" },
 		{ title = "Nightmare: Binary Exploitation Course", fmt = "md", slug = "nightmare-binary-exploitation", file = "https://github.com/guyinatuxedo/nightmare" },
 		{ title = "Heap Exploitation (Dhaval Kapil)", fmt = "md", slug = "heap-exploitation-dhaval-kapil", file = "https://github.com/DhavalKapil/heap-exploitation" },

@@ -24,12 +24,7 @@ BOOK_TITLES = [title]  # plus the OPF dc:title entries, filled in below
 # Per-slug chapter names for spine docs the ncx never labels (see the labels code).
 NAME_FIX = {"more-ocaml-algorithms-methods-and-diversions": {
     "index_split_001.html": "Title Page", "index_split_002.html": "Copyright",
-    "index_split_019.html": "Part: Generating PDF Documents (an extended example)"},
-    # PBA back matter the ncx does not label: bm03 is the back-cover praise (it
-    # mined the blurb's first 140 chars as a title); nav is the epub landmarks.
-    "practical-binary-analysis": {
-        "bm03.xhtml": "Praise for Practical Binary Analysis",
-        "nav.xhtml": "Navigation"}}
+    "index_split_019.html": "Part: Generating PDF Documents (an extended example)"}}
 # Calibre PDF-reflow listings printed as <p> paragraphs whose lines are led by a
 # small-font <span class="X">N</span> line number (C++ Initialization Story:
 # 55 paragraphs, 7 listing runs). Value: (line-number span class, fence
@@ -1030,7 +1025,7 @@ def pandoc_html(html, srcdir):
 # anchor, or the spine is a coarse page-split). Split each spine document at the
 # ncx chapter anchors (the Part-expanded top-level boundaries) so the picker
 # matches the printed TOC. Every other book keeps the spine/group strategies.
-ANCHOR_SPLIT = {"algorithms-illuminated-part-2"}
+ANCHOR_SPLIT = set()  # none at the moment
 # Per-book label fixes applied to the ncx labels (slug -> {label: fixed}).
 RELABEL = {}
 # A spine AND an ncx too coarse to split on (a PDF-to-epub conversion with a

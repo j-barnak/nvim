@@ -14,7 +14,7 @@ Two kinds of book:
   (`title<TAB>url` rows) whose pages are `Resources/docs/.webcache/<sha256(url)>.txt`,
   shared between books.
 
-## Chapter books (epub / pdf / markdown repo) — 109
+## Chapter books (epub / pdf / markdown repo) — 95
 
 ### Rust (`books-rust`)
 
@@ -53,182 +53,163 @@ Two kinds of book:
 |---|---|---|---|---|---|
 | 7 | Linux Insides (0xAX) | md | `linux-insides` | 79 | keep |
 
-### Algorithms (`books-algo`)
-
-| # | Title | Fmt | Slug | Chapters | Keep? |
-|---|---|---|---|---|---|
-| 8 | Algorithms Illuminated, Part 2 | epub | `algorithms-illuminated-part-2` | 11 |  |
-| 9 | The Algorithm Design Manual | pdf | `the-algorithm-design-manual` | 28 |  |
-| 10 | Introduction to Algorithms (CLRS, 3e) | pdf | `introduction-to-algorithms-clrs` | 39 |  |
-| 11 | Open Data Structures (Morin, Python edition) | pdf | `open-data-structures` | 19 |  |
-
 ### Security (`books-security`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 12 | Gray Hat Hacking (6th ed) | pdf | `gray-hat-hacking-6e` | 18 |  |
-| 13 | The Art of Mac Malware, Vol. 1 (Wardle) | pdf | `the-art-of-mac-malware` | 18 |  |
-| 14 | The Art of Mac Malware, Vol. 2 (Wardle) | pdf | `the-art-of-mac-malware-vol2` | 21 |  |
-| 15 | Rootkits and Bootkits (Matrosov et al.) | pdf | `rootkits` | 26 |  |
-| 16 | File System Forensic Analysis (Carrier) | pdf | `file-system-forensic-analysis` | 25 |  |
-| 17 | From Day Zero to Zero Day | pdf | `from-day-zero-to-zero-day` | 18 |  |
-| 18 | Android Security Internals (Elenkov) | pdf | `android-security-internals` | 17 |  |
-| 19 | The Art of Memory Forensics | pdf | `the-art-of-memory-forensics` | 38 |  |
-| 20 | Attacking Network Protocols (Forshaw) | pdf | `attacking-network-protocols` | 14 |  |
-| 21 | Practical Binary Analysis | epub | `practical-binary-analysis` | 37 |  |
-| 22 | Linternals + Kernel Exploitation (sam4k) | md | `linternals-sam4k` | 12 | keep |
-| 23 | Nightmare: Binary Exploitation Course | md | `nightmare-binary-exploitation` | 136 | keep |
-| 24 | Heap Exploitation (Dhaval Kapil) | md | `heap-exploitation-dhaval-kapil` | 22 | keep |
-| 25 | ir0nstone: Binary Exploitation Notes | md | `ir0nstone-binary-exploitation` | 121 | keep |
-| 26 | Serious Cryptography (2e) | epub | `serious-cryptography-2e` | 30 |  |
-| 27 | An Introduction to Mathematical Cryptography | pdf | `an-introduction-to-mathematical-cryptography` | 13 |  |
-| 28 | The Joy of Cryptography (Rosulek) | pdf | `the-joy-of-cryptography` | 18 |  |
-| 29 | Cryptography Engineering (Ferguson, Schneier, Kohno) | pdf | `cryptography-engineering` | 34 |  |
-| 30 | Fuzzing Against the Machine | pdf | `fuzzing-against-the-machine` | 18 |  |
-| 31 | Secure Coding in C and C++ (2e) | pdf | `secure-coding-in-c-and-cpp` | 14 |  |
-| 32 | Reverse Engineering for Beginners (Yurichev) | pdf | `reverse-engineering-for-beginners` | 55 |  |
-| 33 | The Art of Software Security Assessment | pdf | `the-art-of-software-security-assessment` | 22 |  |
-| 34 | Surreptitious Software: Obfuscation, Watermarking, and Tamperproofing | pdf | `surreptitious-software` | 15 |  |
-| 35 | Microcontroller Exploits (Goodspeed) | pdf | `microcontroller-exploits` | 29 |  |
-| 36 | Reversing: Secrets of Reverse Engineering (Eilam) | pdf | `reversing-secrets-of-reverse-engineering` | 16 |  |
-| 37 | A Practical Guide to TPM 2.0 (Arthur, Challener, Goldman) | pdf | `practical-guide-to-tpm-2` | 26 |  |
+| 8 | Linternals + Kernel Exploitation (sam4k) | md | `linternals-sam4k` | 12 | keep |
+| 9 | Nightmare: Binary Exploitation Course | md | `nightmare-binary-exploitation` | 136 | keep |
+| 10 | Heap Exploitation (Dhaval Kapil) | md | `heap-exploitation-dhaval-kapil` | 22 | keep |
+| 11 | ir0nstone: Binary Exploitation Notes | md | `ir0nstone-binary-exploitation` | 121 | keep |
+| 12 | Serious Cryptography (2e) | epub | `serious-cryptography-2e` | 30 |  |
+| 13 | An Introduction to Mathematical Cryptography | pdf | `an-introduction-to-mathematical-cryptography` | 13 |  |
+| 14 | The Joy of Cryptography (Rosulek) | pdf | `the-joy-of-cryptography` | 18 |  |
+| 15 | Cryptography Engineering (Ferguson, Schneier, Kohno) | pdf | `cryptography-engineering` | 34 |  |
+| 16 | Fuzzing Against the Machine | pdf | `fuzzing-against-the-machine` | 18 |  |
+| 17 | Secure Coding in C and C++ (2e) | pdf | `secure-coding-in-c-and-cpp` | 14 |  |
+| 18 | Reverse Engineering for Beginners (Yurichev) | pdf | `reverse-engineering-for-beginners` | 55 |  |
+| 19 | The Art of Software Security Assessment | pdf | `the-art-of-software-security-assessment` | 22 |  |
+| 20 | Surreptitious Software: Obfuscation, Watermarking, and Tamperproofing | pdf | `surreptitious-software` | 15 |  |
+| 21 | Microcontroller Exploits (Goodspeed) | pdf | `microcontroller-exploits` | 29 |  |
+| 22 | Reversing: Secrets of Reverse Engineering (Eilam) | pdf | `reversing-secrets-of-reverse-engineering` | 16 |  |
+| 23 | A Practical Guide to TPM 2.0 (Arthur, Challener, Goldman) | pdf | `practical-guide-to-tpm-2` | 26 |  |
 
 ### Architecture (`books-arch`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 38 | Parallel and High Performance Computing (Robey, Zamora) | md | `parallel-high-performance-computing` | 29 |  |
-| 39 | Hardware and Software Support for Virtualization | pdf | `hardware-software-support-virtualization` | 14 |  |
-| 40 | Computer Architecture: A Quantitative Approach (H&P) | pdf | `computer-architecture-a-quantitative-approach` | 23 |  |
-| 41 | Computer Organization and Design (P&H) | pdf | `computer-organization-and-design` | 15 |  |
-| 42 | Modern Processor Design (Shen & Lipasti) | pdf | `modern-processor-design` | 14 |  |
-| 43 | The Garbage Collection Handbook | pdf | `the-garbage-collection-handbook` | 26 |  |
-| 44 | A Primer on Memory Consistency and Cache Coherence | pdf | `a-primer-on-memory-consistency-and-cache-coherence` | 15 |  |
-| 45 | Shared-Memory Synchronization | pdf | `shared-memory-synchronization` | 12 |  |
-| 46 | The Art of Multiprocessor Programming | pdf | `the-art-of-multiprocessor-programming` | 24 |  |
-| 47 | What Every Programmer Should Know About Memory | pdf | `what-every-programmer-should-know-about-memory` | 8 |  |
-| 48 | Hacker's Delight (2nd Edition) | pdf | `hackers-delight` | 27 |  |
-| 49 | Optimizing Software in C++ (Agner Fog) | pdf | `optimizing-software-in-cpp-agner-fog` | 20 |  |
-| 50 | Optimizing Subroutines in Assembly (Agner Fog) | pdf | `optimizing-subroutines-in-assembly-agner-fog` | 20 |  |
-| 51 | The Microarchitecture of Intel, AMD, and VIA CPUs (Agner Fog) | pdf | `microarchitecture-of-cpus-agner-fog` | 31 |  |
-| 52 | Instruction Tables (Agner Fog) | pdf | `instruction-tables-agner-fog` | 43 |  |
-| 53 | Calling Conventions (Agner Fog) | pdf | `calling-conventions-agner-fog` | 18 |  |
-| 54 | Computer Systems: A Programmer's Perspective (CSAPP, 3e) | pdf | `computer-systems-programmers-perspective` | 20 |  |
-| 55 | Digital Design and Computer Architecture (Harris, 2e) | pdf | `digital-design-and-computer-architecture` | 12 |  |
-| 56 | x86 Instruction Set Architecture (Shanley) | pdf | `x86-isa-shanley` | 40 |  |
+| 24 | Parallel and High Performance Computing (Robey, Zamora) | md | `parallel-high-performance-computing` | 29 |  |
+| 25 | Hardware and Software Support for Virtualization | pdf | `hardware-software-support-virtualization` | 14 |  |
+| 26 | Computer Architecture: A Quantitative Approach (H&P) | pdf | `computer-architecture-a-quantitative-approach` | 23 |  |
+| 27 | Computer Organization and Design (P&H) | pdf | `computer-organization-and-design` | 15 |  |
+| 28 | Modern Processor Design (Shen & Lipasti) | pdf | `modern-processor-design` | 14 |  |
+| 29 | The Garbage Collection Handbook | pdf | `the-garbage-collection-handbook` | 26 |  |
+| 30 | A Primer on Memory Consistency and Cache Coherence | pdf | `a-primer-on-memory-consistency-and-cache-coherence` | 15 |  |
+| 31 | Shared-Memory Synchronization | pdf | `shared-memory-synchronization` | 12 |  |
+| 32 | The Art of Multiprocessor Programming | pdf | `the-art-of-multiprocessor-programming` | 24 |  |
+| 33 | What Every Programmer Should Know About Memory | pdf | `what-every-programmer-should-know-about-memory` | 8 |  |
+| 34 | Hacker's Delight (2nd Edition) | pdf | `hackers-delight` | 27 |  |
+| 35 | Optimizing Software in C++ (Agner Fog) | pdf | `optimizing-software-in-cpp-agner-fog` | 20 |  |
+| 36 | Optimizing Subroutines in Assembly (Agner Fog) | pdf | `optimizing-subroutines-in-assembly-agner-fog` | 20 |  |
+| 37 | The Microarchitecture of Intel, AMD, and VIA CPUs (Agner Fog) | pdf | `microarchitecture-of-cpus-agner-fog` | 31 |  |
+| 38 | Instruction Tables (Agner Fog) | pdf | `instruction-tables-agner-fog` | 43 |  |
+| 39 | Calling Conventions (Agner Fog) | pdf | `calling-conventions-agner-fog` | 18 |  |
+| 40 | Computer Systems: A Programmer's Perspective (CSAPP, 3e) | pdf | `computer-systems-programmers-perspective` | 20 |  |
+| 41 | Digital Design and Computer Architecture (Harris, 2e) | pdf | `digital-design-and-computer-architecture` | 12 |  |
+| 42 | x86 Instruction Set Architecture (Shanley) | pdf | `x86-isa-shanley` | 40 |  |
 
 ### RISC-V (`books-riscv`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 57 | The RISC-V Instruction Set Manual | pdf | `the-risc-v-instruction-set-manual` | 43 |  |
-| 58 | RISC-V SBI (Supervisor Binary Interface) | pdf | `riscv-sbi` | 25 |  |
-| 59 | RISC-V Advanced Interrupt Architecture (AIA) | pdf | `riscv-aia` | 9 |  |
-| 60 | RISC-V PLIC (Platform-Level Interrupt Controller) | pdf | `riscv-plic` | 10 |  |
-| 61 | RISC-V Fast Interrupts (CLIC) | pdf | `riscv-fast-interrupt` | 7 |  |
-| 62 | RISC-V IOMMU | pdf | `riscv-iommu` | 11 |  |
-| 63 | RISC-V Debug Specification | pdf | `riscv-debug` | 11 |  |
-| 64 | RISC-V Processor Trace (E-Trace) | pdf | `riscv-trace` | 15 |  |
-| 65 | RISC-V Supervisor Domains (Smmtt) | pdf | `riscv-smmtt` | 9 |  |
-| 66 | RISC-V Platform Security Model | pdf | `riscv-security-model` | 7 |  |
-| 67 | RISC-V Control-Flow Integrity (CFI) | pdf | `riscv-cfi` | 9 |  |
-| 68 | RISC-V CHERI | pdf | `riscv-cheri` | 26 |  |
-| 69 | RISC-V UEFI Protocol | pdf | `riscv-uefi` | 9 |  |
-| 70 | RISC-V Boot and Runtime Services (BRS) | pdf | `riscv-brs` | 10 |  |
-| 71 | RISC-V ACPI FFH | pdf | `riscv-acpi-ffh` | 6 |  |
-| 72 | RISC-V Platform Management Interface (RPMI) | pdf | `riscv-rpmi` | 7 |  |
-| 73 | RISC-V Server Platform | pdf | `riscv-server-platform` | 6 |  |
-| 74 | RISC-V Server SoC | pdf | `riscv-server-soc` | 8 |  |
-| 75 | RISC-V Profiles | pdf | `riscv-profiles-spec` | 6 |  |
-| 76 | RISC-V ELF psABI (Calling Convention) | pdf | `riscv-psabi` | 16 |  |
-| 77 | RISC-V Assembly Programmer's Manual | pdf | `riscv-asm-manual` | 31 |  |
-| 78 | RISC-V C API | pdf | `riscv-c-api` | 6 |  |
-| 79 | RISC-V Cryptography Extensions | pdf | `riscv-crypto` | 8 |  |
-| 80 | RISC-V Semihosting | pdf | `riscv-semihosting` | 9 |  |
-| 81 | RISC-V Glossary | pdf | `riscv-glossary` | 7 |  |
+| 43 | The RISC-V Instruction Set Manual | pdf | `the-risc-v-instruction-set-manual` | 43 |  |
+| 44 | RISC-V SBI (Supervisor Binary Interface) | pdf | `riscv-sbi` | 25 |  |
+| 45 | RISC-V Advanced Interrupt Architecture (AIA) | pdf | `riscv-aia` | 9 |  |
+| 46 | RISC-V PLIC (Platform-Level Interrupt Controller) | pdf | `riscv-plic` | 10 |  |
+| 47 | RISC-V Fast Interrupts (CLIC) | pdf | `riscv-fast-interrupt` | 7 |  |
+| 48 | RISC-V IOMMU | pdf | `riscv-iommu` | 11 |  |
+| 49 | RISC-V Debug Specification | pdf | `riscv-debug` | 11 |  |
+| 50 | RISC-V Processor Trace (E-Trace) | pdf | `riscv-trace` | 15 |  |
+| 51 | RISC-V Supervisor Domains (Smmtt) | pdf | `riscv-smmtt` | 9 |  |
+| 52 | RISC-V Platform Security Model | pdf | `riscv-security-model` | 7 |  |
+| 53 | RISC-V Control-Flow Integrity (CFI) | pdf | `riscv-cfi` | 9 |  |
+| 54 | RISC-V CHERI | pdf | `riscv-cheri` | 26 |  |
+| 55 | RISC-V UEFI Protocol | pdf | `riscv-uefi` | 9 |  |
+| 56 | RISC-V Boot and Runtime Services (BRS) | pdf | `riscv-brs` | 10 |  |
+| 57 | RISC-V ACPI FFH | pdf | `riscv-acpi-ffh` | 6 |  |
+| 58 | RISC-V Platform Management Interface (RPMI) | pdf | `riscv-rpmi` | 7 |  |
+| 59 | RISC-V Server Platform | pdf | `riscv-server-platform` | 6 |  |
+| 60 | RISC-V Server SoC | pdf | `riscv-server-soc` | 8 |  |
+| 61 | RISC-V Profiles | pdf | `riscv-profiles-spec` | 6 |  |
+| 62 | RISC-V ELF psABI (Calling Convention) | pdf | `riscv-psabi` | 16 |  |
+| 63 | RISC-V Assembly Programmer's Manual | pdf | `riscv-asm-manual` | 31 |  |
+| 64 | RISC-V C API | pdf | `riscv-c-api` | 6 |  |
+| 65 | RISC-V Cryptography Extensions | pdf | `riscv-crypto` | 8 |  |
+| 66 | RISC-V Semihosting | pdf | `riscv-semihosting` | 9 |  |
+| 67 | RISC-V Glossary | pdf | `riscv-glossary` | 7 |  |
 
 ### Hardware (`books-hardware`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 82 | Getting Started with FPGAs (Merrick) | pdf | `getting-started-with-fpgas` | 17 |  |
-| 83 | Retrocomputing with Clash | pdf | `retrocomputing-with-clash` | 22 |  |
+| 68 | Getting Started with FPGAs (Merrick) | pdf | `getting-started-with-fpgas` | 17 |  |
+| 69 | Retrocomputing with Clash | pdf | `retrocomputing-with-clash` | 22 |  |
 
 ### Firmware (`books-firmware`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 84 | Mastering STM32 (Noviello) | pdf | `mastering-stm32` | 34 |  |
-| 85 | Beyond BIOS | epub | `beyond-bios` | 23 |  |
-| 86 | Embedded Systems: Introduction to Arm Cortex-M Microcontrollers (Valvano) | pdf | `embedded-systems-arm-cortex-m-valvano` | 18 |  |
-| 87 | Embedded Systems with ARM Cortex-M (Assembly and C, Zhu) | pdf | `embedded-systems-arm-cortex-m-zhu` | 36 |  |
-| 88 | The Definitive Guide to ARM Cortex-M0 and Cortex-M0+ (Yiu) | pdf | `arm-cortex-m0-definitive-guide` | 35 |  |
-| 89 | Programming Embedded Systems (Barr, Massa) | pdf | `programming-embedded-systems` | 24 |  |
-| 90 | Making Embedded Systems (Elecia White, 2e) | pdf | `making-embedded-systems` | 17 |  |
+| 70 | Mastering STM32 (Noviello) | pdf | `mastering-stm32` | 34 |  |
+| 71 | Beyond BIOS | epub | `beyond-bios` | 23 |  |
+| 72 | Embedded Systems: Introduction to Arm Cortex-M Microcontrollers (Valvano) | pdf | `embedded-systems-arm-cortex-m-valvano` | 18 |  |
+| 73 | Embedded Systems with ARM Cortex-M (Assembly and C, Zhu) | pdf | `embedded-systems-arm-cortex-m-zhu` | 36 |  |
+| 74 | The Definitive Guide to ARM Cortex-M0 and Cortex-M0+ (Yiu) | pdf | `arm-cortex-m0-definitive-guide` | 35 |  |
+| 75 | Programming Embedded Systems (Barr, Massa) | pdf | `programming-embedded-systems` | 24 |  |
+| 76 | Making Embedded Systems (Elecia White, 2e) | pdf | `making-embedded-systems` | 17 |  |
 
 ### Windows (`books-windows`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 91 | Windows Internals, Part 1 (7e) | pdf | `windows-internals-part-1` | 10 |  |
-| 92 | Windows Internals, Part 2 (7e) | pdf | `windows-internals-part-2` | 9 |  |
-| 93 | Windows Kernel Programming (2e) | pdf | `windows-kernel-programming-2e` | 11 |  |
+| 77 | Windows Internals, Part 1 (7e) | pdf | `windows-internals-part-1` | 10 |  |
+| 78 | Windows Internals, Part 2 (7e) | pdf | `windows-internals-part-2` | 9 |  |
+| 79 | Windows Kernel Programming (2e) | pdf | `windows-kernel-programming-2e` | 11 |  |
 
 ### Haskell (`books-haskell`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 94 | Haskell Programming from First Principles | pdf | `haskell-programming-from-first-principles` | 33 |  |
-| 95 | Programming in Haskell (2e) | epub | `programming-in-haskell-2e` | 31 |  |
-| 96 | Algorithm Design with Haskell (Bird, Gibbons) | pdf | `algorithm-design-with-haskell` | 27 |  |
-| 97 | Parallel and Concurrent Programming in Haskell (Marlow) | epub | `parallel-concurrent-haskell` | 26 |  |
+| 80 | Haskell Programming from First Principles | pdf | `haskell-programming-from-first-principles` | 33 |  |
+| 81 | Programming in Haskell (2e) | epub | `programming-in-haskell-2e` | 31 |  |
+| 82 | Algorithm Design with Haskell (Bird, Gibbons) | pdf | `algorithm-design-with-haskell` | 27 |  |
+| 83 | Parallel and Concurrent Programming in Haskell (Marlow) | epub | `parallel-concurrent-haskell` | 26 |  |
 
 ### OCaml (`books-ocaml`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 98 | More OCaml: Algorithms, Methods, and Diversions | epub | `more-ocaml-algorithms-methods-and-diversions` | 28 |  |
-| 99 | Learn Programming with OCaml | pdf | `learn-programming-with-ocaml` | 16 |  |
+| 84 | More OCaml: Algorithms, Methods, and Diversions | epub | `more-ocaml-algorithms-methods-and-diversions` | 28 |  |
+| 85 | Learn Programming with OCaml | pdf | `learn-programming-with-ocaml` | 16 |  |
 
 ### Python (`books-python`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 100 | Fluent Python (2nd Edition) | pdf | `fluent-python` | 33 |  |
-| 101 | Python Crash Course | pdf | `python-crash-course` | 31 |  |
-| 102 | Dead Simple Python | pdf | `dead-simple-python` | 33 |  |
+| 86 | Fluent Python (2nd Edition) | pdf | `fluent-python` | 33 |  |
+| 87 | Python Crash Course | pdf | `python-crash-course` | 31 |  |
+| 88 | Dead Simple Python | pdf | `dead-simple-python` | 33 |  |
 
 ### Java (`books-java`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 103 | Java Concurrency in Practice | pdf | `java-concurrency-in-practice` | 24 |  |
+| 89 | Java Concurrency in Practice | pdf | `java-concurrency-in-practice` | 24 |  |
 
 ### JavaScript (`books-js`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 104 | Eloquent JavaScript (4th Edition) | pdf | `eloquent-javascript-4e` | 24 |  |
-| 105 | Learning TypeScript (Goldberg) | pdf | `learning-typescript` | 24 |  |
+| 90 | Eloquent JavaScript (4th Edition) | pdf | `eloquent-javascript-4e` | 24 |  |
+| 91 | Learning TypeScript (Goldberg) | pdf | `learning-typescript` | 24 |  |
 
 ### Graphics (`books-graphics`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 106 | OpenGL SuperBible | pdf | `opengl-superbible` | 26 |  |
+| 92 | OpenGL SuperBible | pdf | `opengl-superbible` | 26 |  |
 
 ### Version Control (`books-vcs`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 107 | Build Your Own Git (CodeCrafters) | md | `build-your-own-git` | 8 | keep — CodeCrafters course |
-| 108 | Building Git | pdf | `building-git` | 41 |  |
+| 93 | Build Your Own Git (CodeCrafters) | md | `build-your-own-git` | 8 | keep — CodeCrafters course |
+| 94 | Building Git | pdf | `building-git` | 41 |  |
 
 ### Debugging (`books-debugging`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 109 | Building a Debugger | pdf | `building-a-debugger` | 27 |  |
+| 95 | Building a Debugger | pdf | `building-a-debugger` | 27 |  |
 
 ## Frozen web books (`WEB_BOOKS`) — 65
 
@@ -300,17 +281,20 @@ Two kinds of book:
 | 64 | Writing an OS in Rust (Phil Opp) | `writing-an-os-in-rust` | 12 | os.phil-opp.com | keep |
 | 65 | Algorithms for Modern Hardware (Algorithmica) | `algorithmica-hpc` | 82 | en.algorithmica.org | keep |
 
-## Removed from Books — 87
+## Removed from Books — 101
 
 (`moved` = still in :Docs, just not under Books any more.)
 
 | Slug / key | Verdict | Note |
 |---|---|---|
 | `advanced-programming-in-the-unix-environment` | remove | 2026-09-22 pass, chunk 5 |
+| `algorithms-illuminated-part-2` | remove | 2026-09-22 pass, chunk 8 |
 | `algs4` | remove | 2026-09-22 pass, chunk 2 |
 | `an-introduction-to-computer-networks` | remove | 2026-09-22 pass, chunk 5 |
+| `android-security-internals` | remove | 2026-09-22 pass, chunk 8 |
 | `api-design-for-cpp` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
 | `atomics` | remove | 2026-09-22 pass, chunk 1 |
+| `attacking-network-protocols` | remove | 2026-09-22 pass, chunk 8 |
 | `awesome-databases` | remove | 2026-09-22 pass, chunk 2 |
 | `beautiful-c-30-core-guidelines` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
 | `beautiful-racket` | remove | 2026-09-22 pass, chunk 1 |
@@ -340,7 +324,11 @@ Two kinds of book:
 | `engineering-a-compiler` | remove | 2026-09-22 pass, chunk 6 |
 | `essentials-of-compilation` | remove | 2026-09-22 pass, chunk 6 |
 | `expert-c-programming` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
+| `file-system-forensic-analysis` | remove | 2026-09-22 pass, chunk 8 |
+| `from-day-zero-to-zero-day` | remove | 2026-09-22 pass, chunk 8 |
+| `gray-hat-hacking-6e` | remove | 2026-09-22 pass, chunk 8 |
 | `how-to-write-shared-libraries` | remove | 2026-09-22 pass, chunk 6 |
+| `introduction-to-algorithms-clrs` | remove | 2026-09-22 pass, chunk 8 |
 | `introduction-to-static-analysis` | remove | 2026-09-22 pass, chunk 6 |
 | `is-parallel-programming-hard` | remove | 2026-09-22 pass, chunk 5 |
 | `learning-ebpf` | remove | 2026-09-22 pass, chunk 7 |
@@ -359,14 +347,17 @@ Two kinds of book:
 | `modern-cpp-design` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
 | `modern-x86-assembly-language-programming` | remove | 2026-09-22 pass, chunk 4 |
 | `ocaml-byexample` | remove | 2026-09-22 pass, chunk 1 |
+| `open-data-structures` | remove | 2026-09-22 pass, chunk 8 |
 | `operating-systems-design-and-implementation` | remove | 2026-09-22 pass, chunk 5 |
 | `operating-systems-three-easy-pieces` | remove | 2026-09-22 pass, chunk 5 |
 | `performance-analysis-and-tuning-on-modern-cpus` | remove | 2026-09-22 pass, chunk 7 |
+| `practical-binary-analysis` | remove | 2026-09-22 pass, chunk 8 |
 | `professional-assembly-language` | remove | 2026-09-22 pass, chunk 4 |
 | `professional-cmake` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
 | `program-analysis-cmu` | remove | 2026-09-22 pass, chunk 6 |
 | `programming-rust-2e` | remove | 2026-09-22 pass, chunk 4 |
 | `programming-with-posix-threads` | remove | 2026-09-22 pass, chunk 5 |
+| `rootkits` | remove | 2026-09-22 pass, chunk 8 |
 | `rust-for-rustaceans` | remove | 2026-09-22 pass, chunk 4 |
 | `rust-in-action` | remove | 2026-09-22 pass, chunk 4 |
 | `rust-under-the-hood` | remove | 2026-09-22 pass, chunk 4 |
@@ -379,7 +370,11 @@ Two kinds of book:
 | `systems-performance` | remove | 2026-09-22 pass, chunk 7 |
 | `talking-compilers-with-chatgpt` | remove | 2026-09-22 pass, chunk 6 |
 | `tcp-ip-illustrated-vol-1` | remove | 2026-09-22 pass, chunk 5 |
+| `the-algorithm-design-manual` | remove | 2026-09-22 pass, chunk 8 |
 | `the-art-of-arm-assembly-volume-1` | remove | 2026-09-22 pass, chunk 4 |
+| `the-art-of-mac-malware` | remove | 2026-09-22 pass, chunk 8 |
+| `the-art-of-mac-malware-vol2` | remove | 2026-09-22 pass, chunk 8 |
+| `the-art-of-memory-forensics` | remove | 2026-09-22 pass, chunk 8 |
 | `the-design-and-implementation-of-the-freebsd-operating-system` | remove | 2026-09-22 pass, chunk 5 |
 | `the-linux-memory-manager` | remove | 2026-09-22 pass, chunk 7 |
 | `the-linux-programming-interface` | remove | 2026-09-22 pass, chunk 7 |
