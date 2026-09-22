@@ -4887,7 +4887,6 @@ local WEB_BOOKS = {
 	{ title = "Page Cache (Series)", key = "page-cache", run = frozen_web_provider("page-cache", "Page Cache> ") },
 	{ title = "Write Your Own Allocators", key = "write-your-own-allocators", run = frozen_web_provider("write-your-own-allocators", "Allocators> ") },
 	{ title = "Exploit Development (Connor McGarr)", key = "exploit-dev-mcgarr", run = frozen_web_provider("exploit-dev-mcgarr", "Exploit Dev (McGarr)> ") },
-	{ title = "Gem5", key = "gem5", run = frozen_web_provider("gem5", "Gem5> ") },
 	{ title = "Linux Kernel Security (Index)", key = "linux-kernel-security", run = frozen_web_provider("linux-kernel-security", "Linux kernel security [topic]> ", "hybrid") },
 	{ title = "V8 Resources (Index)", key = "v8-resources", run = frozen_web_provider("v8-resources", "V8 resources [topic]> ", "hybrid") },
 	{ title = "V8 (Docs)", key = "v8-docs", run = frozen_web_provider("v8-docs", "V8 docs> ") },
@@ -6034,6 +6033,10 @@ providers[#providers + 1] = { name = "Mathematics in Lean", key = "mathematics-i
 providers[#providers + 1] = { name = "Programming Z3", key = "programming-z3", run = frozen_web_provider("programming-z3", "Programming Z3> ") }
 -- MaskRay Linker: Fangrui Song's linker/ELF blog posts, one per chapter.
 providers[#providers + 1] = { name = "MaskRay Linker (blog)", key = "maskray-linker", run = frozen_web_provider("maskray-linker", "MaskRay> ") }
+-- gem5 (gem5.org): Getting Started, the Learning gem5 course and the reference
+-- documentation, 94 frozen chapters. A simulator manual, so it sits with the
+-- other tool docs rather than in Books.
+providers[#providers + 1] = { name = "gem5 (simulator docs)", key = "gem5", run = frozen_web_provider("gem5", "gem5> ") }
 
 -- Every source in one list, each row carrying where its content lives. Rows are
 -- "<index>\t<display>": fzf shows column 2, the action looks the row up by
