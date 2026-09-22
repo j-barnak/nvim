@@ -85,3 +85,15 @@ provider builds its cache for the first time:
 
 The out-dir basename must be the book's slug (a few books have per-slug rules).
 Sources (epub/pdf) are not kept in the repo.
+
+Library bookkeeping (no build, safe to run any time):
+
+- `books_inventory.py`: regenerates `Resources/docs/BOOKS.md`, the list of
+  every title the `:Docs` Books menu offers, from the `BOOKS` and `WEB_BOOKS`
+  tables in `docs.lua`, with per-entry chapter/page counts and the Keep column
+  from `Resources/docs/books_decisions.tsv`. Run it after adding or removing a
+  book so the committed list matches the menu.
+- `webcache_orphans.py`: reports (`--delete` removes) the `.webcache` pages no
+  index, no `docs.lua` literal and no reachable page links to any more. Cache
+  files are shared between web books and reached by link-following, so this
+  transitive walk is the only safe way to clean up after removing one.
