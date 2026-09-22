@@ -239,24 +239,12 @@ SLUG=$(basename "$OUT")
 # content and that the shared filter above does not catch. Keyed by slug below
 # (FURN), each pattern validated against its own book to match only running
 # heads and never a body line.
+# Per-slug control-byte map (CTLX): a sed script run before the tr below turns
+# raw font bytes into "?", for a book whose math font has no ToUnicode map
+# (e.g. the old hackers-delight entry mapped 0x10/0x05/0x07 to −/∀/∃).
 CTLX=
 case "$SLUG" in
-  # Memory Consistency Primer: byte 0x16 is the mu of "μhb"/"μspec" (CCICheck),
-  # only ever mid-line; without this the tr turns it into a stray "?".
-  a-primer-on-memory-consistency-and-cache-coherence)
-    CTLX="s/$(printf '\026')/μ/g
-" ;;
-  # Hacker's Delight sets a few math signs in a font with no ToUnicode map, so
-  # pdftotext emits a raw control byte the tr below would turn into "?": 0x10 is
-  # the minus sign (14x, "base -2", "-1/0"), 0x05 the universal quantifier and
-  # 0x07 the existential (in the predicate formulas). Map them to the real glyphs
-  # while they are still distinct. (0x02 is a one-off on the Safari ad page and
-  # is left to the tr.)
-  hackers-delight)
-    CTLX="s/$(printf '\020')/−/g
-s/$(printf '\005')/∀/g
-s/$(printf '\007')/∃/g
-" ;;
+  *) ;; # none at the moment
 esac
 FURN=
 case "$SLUG" in
@@ -269,21 +257,8 @@ case "$SLUG" in
   # -contents dot-leader "9.9 X ... 132" and any prose sentence are excluded), then
   # at least three spaces (the right-aligned folio gap, never an inline number) and
   # a trailing page number. Validated per book to match only running heads.
-  computer-organization-and-design|\
-  modern-processor-design|mastering-stm32)
+  mastering-stm32)
     FURN='^[0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}[ ]*$' ;;
-  # GC Handbook: same section-head form, plus the Taylor & Francis blank-page
-  # production stamp that leaks at some chapter ends (a standalone line; the
-  # acknowledgments sentence that names the publisher wraps and never matches ^$).
-  the-garbage-collection-handbook)
-    FURN='^([0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}|Taylor & Francis( Group)?)[ ]*$' ;;
-  # H&P separates its running head from the folio with a box-drawing bullet (the
-  # same U+25A0 it uses as a list marker at line START). Its folios are arabic OR
-  # letter-dashed ("D-45"). Verso: "<folio> ■ Appendix X / Chapter N <title>";
-  # recto: "<N.N|X.N> <title> ■ <folio>". Both require the ■ to be preceded by a
-  # folio/section number, so a "■ text" list item (■ at line start) never matches.
-  computer-architecture-a-quantitative-approach)
-    FURN='^ *([0-9]{1,4}|[A-M]-[0-9]+) +■ +(Appendix [A-M]|Chapter [0-9]+)|^ *([0-9]+[.][0-9]+|[A-M][.][0-9]+) .* +■ +([0-9]{1,4}|[A-M]-[0-9]+) *$' ;;
 esac
 # Per-slug code-listing repair (book_fix above): one awk filter per book that
 # needs it, kept next to pdf_build.sh and resolved from folio.awk's directory
@@ -306,9 +281,6 @@ case "$SLUG" in
   # drops both, page-top only, keeping TOC dot-leaders. Every match is the first
   # non-blank line of its page, so no body/code line is touched.
   retrocomputing-with-clash) FIXAWK="${AWKF%/*}/retroclash_fix.awk" ;;
-  # Memory Consistency Primer: 174 running heads folio.awk misses (even
-  # "<folio> <n>. TITLE", odd "<n.m>. TITLE <folio>"), all-caps-title keyed.
-  a-primer-on-memory-consistency-and-cache-coherence) FIXAWK="${AWKF%/*}/primer_fix.awk" ;;
   # RISC-V specs (ISA manual + SBI/AIA/IOMMU/... the whole books-riscv set): the
   # asciidoc toolchain prints a "<Section Title> | Page <N>" footer on every
   # page; folio.awk strips only bare page numbers, so ~800 survive. riscv_fix
@@ -331,7 +303,6 @@ case "$SLUG" in
   # running-head vote. amd_apm_fix drops it, keyed on the exact chapter/appendix
   # title passed in via $CHTITLE, so it can never touch a body or table line.
   amd-apm-vol1 | amd-apm-vol2) FIXAWK="${AWKF%/*}/amd_apm_fix.awk" ;;
-  hackers-delight) FIXAWK="${AWKF%/*}/hackers_delight_fix.awk" ;;
 esac
 # Per-slug text extractor. "mutool" routes emit() through mutool draw -F txt +
 # mutool_furniture instead of pdftotext -layout, for books whose math notation is
@@ -384,13 +355,6 @@ if [ "$4" = book ] && [ "$SLUG" = elf-specification ]; then
     printf '71\tBook III: Program Loading and Dynamic Linking\n'
     printf '89\tBook III: Intel Architecture and System V R4 Dependencies\n'
     printf '103\tIndex\n'; } > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = a-primer-on-memory-consistency-and-cache-coherence ]; then
-  # The depth-0 fallback breaks here: the outline nodes are not in page order and
-  # a stray "Blank Page" bookmark (page 2) would swallow the whole body. Take the
-  # depth-0 nodes, drop "Blank Page", and sort by page; front matter is
-  # auto-emitted before the first boundary.
-  awk -F'\t' '$1==0 && $3!="Blank Page"{t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); print $2"\t"t}' "$OUT/.all.tsv" \
-    | sort -t"$(printf '\t')" -k1,1n -s > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && { [ "$SLUG" = amd-apm-vol1 ] || [ "$SLUG" = amd-apm-vol2 ]; }; then
   # AMD64 APM (FrameMaker PDFs): the depth-0 outline nodes are the front matter
   # (Contents/Figures/Tables/Revision History), the Preface, the numbered
@@ -465,41 +429,6 @@ elif [ "$4" = book ] && [ "$SLUG" = writing-a-bootloader-from-scratch-cmu-15-410
           for (i = 1; i <= N; i++) print HP[i] "\t" HT[i] "\t" HT[i] }' > "$OUT/.ch.tsv" \
     || : > "$OUT/.ch.tsv"
   rm -f "$OUT/.d0.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = computer-architecture-a-quantitative-approach ]; then
-  # H&P 6e's outline is broken: Appendix I is absent, L/M are mis-placed, and the
-  # References nodes are out of order, so the generic split truncated appendices J
-  # and M mid-section and leaked the next appendix's contents page into each one.
-  # Each chapter/appendix opens on a page whose first line is the bare number/
-  # letter then the title; those verified opener pages are the boundaries here.
-  # Front matter (pages 1-18) is auto-emitted before the first boundary.
-  # Each chapter/appendix opens with a mini-contents page (e.g. p32 lists "1.1
-  # Introduction, 1.2 ..."), THEN the numbered title page. Start each boundary at
-  # that mini-contents page (opener - 1) so the section list travels with its own
-  # chapter instead of leaking onto the end of the previous one. Front matter
-  # (cover, the whole-book Contents, and the Preface, pages 1-31) is auto-emitted
-  # as one chapter before the first boundary.
-  { printf '32\t1 Fundamentals of Quantitative Design and Analysis\n'
-    printf '108\t2 Memory Hierarchy Design\n'
-    printf '198\t3 Instruction-Level Parallelism and Its Exploitation\n'
-    printf '312\t4 Data-Level Parallelism in Vector, SIMD, and GPU Architectures\n'
-    printf '398\t5 Thread-Level Parallelism\n'
-    printf '496\t6 Warehouse-Scale Computers to Exploit Request-Level and Data-Level Parallelism\n'
-    printf '570\t7 Domain-Specific Architectures\n'
-    printf '650\tA Instruction Set Principles\n'
-    printf '706\tB Review of Memory Hierarchy\n'
-    printf '774\tC Pipelining: Basic and Intermediate Concepts\n'
-    printf '853\tD Storage Systems\n'
-    printf '921\tE Embedded Systems\n'
-    printf '948\tF Interconnection Networks\n'
-    printf '1067\tG Vector Processors in More Depth\n'
-    printf '1102\tH Hardware and Software for VLIW and EPIC\n'
-    printf '1147\tI Large-Scale Multiprocessors and Scientific Applications\n'
-    printf '1195\tJ Computer Arithmetic\n'
-    printf '1269\tK Survey of Instruction Set Architectures\n'
-    printf '1345\tL Advanced Concepts on Address Translation\n'
-    printf '1347\tM Historical Perspectives and References\n'
-    printf '1441\tReferences\n'
-    printf '1477\tIndex\n'; } > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = embedded-systems-arm-cortex-m-zhu ]; then
   # Chapters are titled "ChN: Title" (abbreviated), which the generic book
   # pattern (Chapter/Part/Appendix at line start) misses, so it folded all 24
