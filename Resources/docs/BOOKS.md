@@ -106,13 +106,13 @@ Two kinds of book:
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 57 | Build Your Own Docker (CodeCrafters) | md | `build-your-own-docker` | 7 |  |
+| 57 | Build Your Own Docker (CodeCrafters) | md | `build-your-own-docker` | 7 | keep — CodeCrafters course |
 
 ### Databases (`books-db`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 58 | Build Your Own SQLite (CodeCrafters) | md | `build-your-own-sqlite` | 10 |  |
+| 58 | Build Your Own SQLite (CodeCrafters) | md | `build-your-own-sqlite` | 10 | keep — CodeCrafters course |
 | 59 | Database Internals | epub | `database-internals` | 27 |  |
 | 60 | Designing Data-Intensive Applications (2e) | epub | `designing-data-intensive-applications-2e` | 25 |  |
 
@@ -306,7 +306,7 @@ Two kinds of book:
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 177 | Build Your Own Git (CodeCrafters) | md | `build-your-own-git` | 8 |  |
+| 177 | Build Your Own Git (CodeCrafters) | md | `build-your-own-git` | 8 | keep — CodeCrafters course |
 | 178 | Building Git | pdf | `building-git` | 41 |  |
 
 ### Debugging (`books-debugging`)
