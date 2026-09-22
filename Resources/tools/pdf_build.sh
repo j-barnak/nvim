@@ -248,29 +248,19 @@ case "$SLUG" in
 esac
 FURN=
 case "$SLUG" in
-  learn-programming-with-ocaml) FURN='^([0-9]+ +(Chapter [0-9]+[.].*|BIBLIOGRAPHY|INDEX)|[0-9]+[.][0-9]+[.] .+ [0-9]+|(BIBLIOGRAPHY|INDEX) +[0-9]+)$' ;;
+  *) ;; # none at the moment
 esac
 # Per-slug code-listing repair (book_fix above): one awk filter per book that
 # needs it, kept next to pdf_build.sh and resolved from folio.awk's directory
 # ($AWKF is already located above); a no-op for every other book.
 FIXAWK=
 case "$SLUG" in
-  # OpenGL SuperBible: long C/C++/GLSL statements are hard-wrapped in the PDF's
-  # own narrow code frame. superbible_fix.awk rejoins a continuation line only
-  # when the pending line is syntactically incomplete (ends in a binary
-  # operator/opener, or a comma inside unclosed brackets); author breaks pass.
-  opengl-superbible) FIXAWK="${AWKF%/*}/superbible_fix.awk" ;;
   # ELF spec: folio.awk's page-edge vote strips the even-page running footers but
   # leaves the odd-page ones (the two footer forms alternate: a page number then
   # the Book title, or an all-caps section title then the page number).
   # elf_fix.awk drops both forms symmetrically; it is anchored on the "N-M" page
   # tag and the all-caps title so it never touches a body line or a TOC entry.
   elf-specification) FIXAWK="${AWKF%/*}/elf_fix.awk" ;;
-  # Fluent Python: O'Reilly running head "<section> | <page>" / "<page> |
-  # <chapter>" on every body page, using section headings folio.awk's outline
-  # list does not know, so ~260 survive mid-listing. fluent_python_fix drops the
-  # bar-and-bare-page-number line (body-safe: prose/Python never look like that).
-  fluent-python) FIXAWK="${AWKF%/*}/fluent_python_fix.awk" ;;
   # SAT/SMT by Example: Yurichev's listings package prints a wrapped code line
   # with a continuation hook whose font glyph ToUnicode-maps to U+00C7 (Ç), so
   # every wrapped listing line opens with a spurious "Ç ". satsmt_fix remaps the
@@ -356,21 +346,6 @@ elif [ "$4" = book ] && { [ "$SLUG" = amd-apm-vol1 ] || [ "$SLUG" = amd-apm-vol2
         print $2"\t"t
       }' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = learn-programming-with-ocaml ]; then
-  # Chapters are the outline's depth-1 nodes (the depth fallback further down
-  # finds the same set), but this book's end matter cannot be taken from the
-  # outline: its single "Index" bookmark resolves seven pages early, which cut
-  # chapter 13 off in the middle of its exercises and swallowed the whole
-  # bibliography, and the bibliography has no bookmark of its own. Take the
-  # chapters from the outline and the two end-matter boundaries from the page
-  # that prints the heading, searching only the pages after the last chapter
-  # starts so a table-of-contents line cannot be mistaken for the heading.
-  awk -F'\t' '$1==1 && tolower($3) !~ /^(index|bibliography)$/ { t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); print $2"\t"t }' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
-  LASTP=$(tail -1 "$OUT/.ch.tsv" | cut -f1)
-  pdftotext -layout -f "${LASTP:-1}" "$PDF" - 2>/dev/null \
-    | awk -v off="${LASTP:-1}" 'BEGIN{RS="\f"} { n=split($0,L,"\n"); h=""; for(i=1;i<=n;i++){ h=L[i]; gsub(/^[ \t]+|[ \t]+$/,"",h); if(h!="") break } if (h=="Bibliography" || h=="Index") print (NR+off-1)"\t"h }' \
-    >> "$OUT/.ch.tsv"
-  sort -t"$(printf '\t')" -k1,1n -s -o "$OUT/.ch.tsv" "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = writing-a-bootloader-from-scratch-cmu-15-410 ]; then
   # A 20-page course handout with 12 sections, so most sections begin MID-PAGE
   # and a page-granular split cannot separate them: eleven of the twelve

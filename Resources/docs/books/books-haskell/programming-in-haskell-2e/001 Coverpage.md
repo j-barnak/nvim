@@ -1,1 +1,0 @@
-![Image](media/Images/9781316626221.png)

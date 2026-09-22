@@ -22,9 +22,7 @@ root, out, title = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2]), s
 SLUG = os.path.basename(out.rstrip("/"))
 BOOK_TITLES = [title]  # plus the OPF dc:title entries, filled in below
 # Per-slug chapter names for spine docs the ncx never labels (see the labels code).
-NAME_FIX = {"more-ocaml-algorithms-methods-and-diversions": {
-    "index_split_001.html": "Title Page", "index_split_002.html": "Copyright",
-    "index_split_019.html": "Part: Generating PDF Documents (an extended example)"}}
+NAME_FIX = {}  # slug -> {spine file: label}; none at the moment
 # Calibre PDF-reflow listings printed as <p> paragraphs whose lines are led by a
 # small-font <span class="X">N</span> line number (C++ Initialization Story:
 # 55 paragraphs, 7 listing runs). Value: (line-number span class, fence

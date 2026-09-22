@@ -1,3 +1,0 @@
-## **Part II**
-
-## **Going Further**

@@ -4344,37 +4344,8 @@ local BOOKS = {
 		{ title = "Heap Exploitation (Dhaval Kapil)", fmt = "md", slug = "heap-exploitation-dhaval-kapil", file = "https://github.com/DhavalKapil/heap-exploitation" },
 		{ title = "ir0nstone: Binary Exploitation Notes", fmt = "md", slug = "ir0nstone-binary-exploitation", file = "https://github.com/ir0nstone/cybersec-notes" },
 	} },
-	{ module = "Haskell", key = "books-haskell", items = {
-		{ title = "Haskell Programming from First Principles", fmt = "pdf", file = "Haskell Programming from First Principles -- Chris Allen, Julie Moronuki -- 1_0RC2, 2017 -- 0073d1100c226de172fca6fa9b2809d9 -- Anna’s Archive.pdf" },
-		{ title = "Programming in Haskell (2e)", fmt = "epub", file = "Programming in Haskell (9781316876152) -- Hutton, Graham -- Second Edition, 5th printing, 2018;2015 -- Cambridge University Press (Virtual Publishing) -- 9781139637534 -- f80c6f606a590ab38c7340907cab3be5 -- Anna’s.epub" },
-		{ title = "Algorithm Design with Haskell (Bird, Gibbons)", fmt = "pdf", slug = "algorithm-design-with-haskell", file = "Algorithm Design with Haskell -- Bird, Richard, Gibbons, Jeremy -- 1, PS, 2020 -- Cambridge University Press (Virtual Publishing) -- isbn13 9781108491617 -- 1bb46a11df379bf43523c739c31204d8 -- Anna’s Archive 2.pdf" },
-		{ title = "Parallel and Concurrent Programming in Haskell (Marlow)", fmt = "epub", slug = "parallel-concurrent-haskell", file = "Parallel and Concurrent Programming in Haskell -- Simon Marlow -- 2013 -- O'Reilly Media -- 89381c40386e8dfe4a04f05078619822 -- Anna’s Archive.epub" },
-	} },
-	{ module = "OCaml", key = "books-ocaml", items = {
-		{ title = "More OCaml: Algorithms, Methods, and Diversions", fmt = "epub", file = "More OCaml_ Algorithms, Methods, and Diversions -- John Whitington -- Reprint with corrections, Cambridge, United Kingdom, 2014 -- Coherent Press -- 9780957671119 -- 654b9e3e8e78e1a0d5c84ac0dcd6604c -- Anna’s Arch.epub" },
-		{ title = "Learn Programming with OCaml", fmt = "pdf", file = "programming_with_ocaml.pdf" },
-	} },
-	{ module = "Python", key = "books-python", items = {
-		{ title = "Fluent Python (2nd Edition)", fmt = "pdf", slug = "fluent-python", file = "fluent-python.pdf" },
-		{ title = "Python Crash Course", fmt = "pdf", file = "Python-Crash-Course.pdf" },
-		{ title = "Dead Simple Python", fmt = "pdf", file = "Dead Simple Python _ Idiomatic Python for the Impatient -- Jason C_ McDonald -- Penguin Random House LLC (Publisher Services), [N_p_], 2022 -- No -- 9781718500921 -- 86363cb1caad694cdfe8893bf2fb3de2 -- Anna’s Archi.pdf" },
-	} },
-	{ module = "Java", key = "books-java", items = {
-		{ title = "Java Concurrency in Practice", fmt = "pdf", file = "JavaConcurrencyInPractice.pdf" },
-	} },
-	{ module = "JavaScript", key = "books-js", items = {
-		{ title = "Eloquent JavaScript (4th Edition)", fmt = "pdf", slug = "eloquent-javascript-4e", file = "Eloquent JavaScript, 4th Edition_ A Modern Introduction to -- Marijn Haverbeke -- 4th Edition, 2024-11-05 -- No Starch Press, Incorporated -- 9781718504103 -- ddf4a7b3254590e9fff2ee3685be151d -- Anna’s Archive.pdf" },
-		{ title = "Learning TypeScript (Goldberg)", fmt = "pdf", slug = "learning-typescript", file = "Josh Goldberg - Learning TypeScript_ Enhance Your Web Development Skills Using Type-Safe JavaScript-O'Reilly Media (2022).pdf" },
-	} },
-	{ module = "Graphics", key = "books-graphics", items = {
-		{ title = "OpenGL SuperBible", fmt = "pdf", file = "OpenGL_Superbible.pdf" },
-	} },
 	{ module = "Version Control", key = "books-vcs", items = {
 		{ title = "Build Your Own Git (CodeCrafters)", fmt = "md", slug = "build-your-own-git", file = "https://github.com/codecrafters-io/build-your-own-git" },
-		{ title = "Building Git", fmt = "pdf", file = "Building_Git.pdf" },
-	} },
-	{ module = "Debugging", key = "books-debugging", items = {
-		{ title = "Building a Debugger", fmt = "pdf", file = "Building-a-debugger.pdf" },
 	} },
 }
 
