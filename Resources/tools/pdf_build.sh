@@ -281,11 +281,6 @@ case "$SLUG" in
   # drops both, page-top only, keeping TOC dot-leaders. Every match is the first
   # non-blank line of its page, so no body/code line is touched.
   retrocomputing-with-clash) FIXAWK="${AWKF%/*}/retroclash_fix.awk" ;;
-  # RISC-V specs (ISA manual + SBI/AIA/IOMMU/... the whole books-riscv set): the
-  # asciidoc toolchain prints a "<Section Title> | Page <N>" footer on every
-  # page; folio.awk strips only bare page numbers, so ~800 survive. riscv_fix
-  # drops the footer lines (body-safe: only a footer ends in "| Page N").
-  riscv-* | the-risc-v-instruction-set-manual) FIXAWK="${AWKF%/*}/riscv_fix.awk" ;;
   # Fluent Python: O'Reilly running head "<section> | <page>" / "<page> |
   # <chapter>" on every body page, using section headings folio.awk's outline
   # list does not know, so ~260 survive mid-listing. fluent_python_fix drops the

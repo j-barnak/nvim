@@ -1,7 +1,6 @@
 # :Docs Books
 
-Every title the `:Docs` → Books menu offers (RISC-V included for completeness;
-those 25 sit behind the top-level "RISC-V (manuals)" entry instead). Generated
+Every title the `:Docs` → Books menu offers. Generated
 by `Resources/tools/books_inventory.py` from the `BOOKS` and `WEB_BOOKS` tables
 in `lua/config/docs.lua`; the Keep column comes from `books_decisions.tsv`.
 
@@ -14,7 +13,7 @@ Two kinds of book:
   (`title<TAB>url` rows) whose pages are `Resources/docs/.webcache/<sha256(url)>.txt`,
   shared between books.
 
-## Chapter books (epub / pdf / markdown repo) — 64
+## Chapter books (epub / pdf / markdown repo) — 39
 
 ### Rust (`books-rust`)
 
@@ -62,118 +61,88 @@ Two kinds of book:
 | 10 | Heap Exploitation (Dhaval Kapil) | md | `heap-exploitation-dhaval-kapil` | 22 | keep |
 | 11 | ir0nstone: Binary Exploitation Notes | md | `ir0nstone-binary-exploitation` | 121 | keep |
 
-### RISC-V (`books-riscv`)
-
-| # | Title | Fmt | Slug | Chapters | Keep? |
-|---|---|---|---|---|---|
-| 12 | The RISC-V Instruction Set Manual | pdf | `the-risc-v-instruction-set-manual` | 43 |  |
-| 13 | RISC-V SBI (Supervisor Binary Interface) | pdf | `riscv-sbi` | 25 |  |
-| 14 | RISC-V Advanced Interrupt Architecture (AIA) | pdf | `riscv-aia` | 9 |  |
-| 15 | RISC-V PLIC (Platform-Level Interrupt Controller) | pdf | `riscv-plic` | 10 |  |
-| 16 | RISC-V Fast Interrupts (CLIC) | pdf | `riscv-fast-interrupt` | 7 |  |
-| 17 | RISC-V IOMMU | pdf | `riscv-iommu` | 11 |  |
-| 18 | RISC-V Debug Specification | pdf | `riscv-debug` | 11 |  |
-| 19 | RISC-V Processor Trace (E-Trace) | pdf | `riscv-trace` | 15 |  |
-| 20 | RISC-V Supervisor Domains (Smmtt) | pdf | `riscv-smmtt` | 9 |  |
-| 21 | RISC-V Platform Security Model | pdf | `riscv-security-model` | 7 |  |
-| 22 | RISC-V Control-Flow Integrity (CFI) | pdf | `riscv-cfi` | 9 |  |
-| 23 | RISC-V CHERI | pdf | `riscv-cheri` | 26 |  |
-| 24 | RISC-V UEFI Protocol | pdf | `riscv-uefi` | 9 |  |
-| 25 | RISC-V Boot and Runtime Services (BRS) | pdf | `riscv-brs` | 10 |  |
-| 26 | RISC-V ACPI FFH | pdf | `riscv-acpi-ffh` | 6 |  |
-| 27 | RISC-V Platform Management Interface (RPMI) | pdf | `riscv-rpmi` | 7 |  |
-| 28 | RISC-V Server Platform | pdf | `riscv-server-platform` | 6 |  |
-| 29 | RISC-V Server SoC | pdf | `riscv-server-soc` | 8 |  |
-| 30 | RISC-V Profiles | pdf | `riscv-profiles-spec` | 6 |  |
-| 31 | RISC-V ELF psABI (Calling Convention) | pdf | `riscv-psabi` | 16 |  |
-| 32 | RISC-V Assembly Programmer's Manual | pdf | `riscv-asm-manual` | 31 |  |
-| 33 | RISC-V C API | pdf | `riscv-c-api` | 6 |  |
-| 34 | RISC-V Cryptography Extensions | pdf | `riscv-crypto` | 8 |  |
-| 35 | RISC-V Semihosting | pdf | `riscv-semihosting` | 9 |  |
-| 36 | RISC-V Glossary | pdf | `riscv-glossary` | 7 |  |
-
 ### Hardware (`books-hardware`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 37 | Getting Started with FPGAs (Merrick) | pdf | `getting-started-with-fpgas` | 17 |  |
-| 38 | Retrocomputing with Clash | pdf | `retrocomputing-with-clash` | 22 |  |
+| 12 | Getting Started with FPGAs (Merrick) | pdf | `getting-started-with-fpgas` | 17 |  |
+| 13 | Retrocomputing with Clash | pdf | `retrocomputing-with-clash` | 22 |  |
 
 ### Firmware (`books-firmware`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 39 | Mastering STM32 (Noviello) | pdf | `mastering-stm32` | 34 |  |
-| 40 | Beyond BIOS | epub | `beyond-bios` | 23 |  |
-| 41 | Embedded Systems: Introduction to Arm Cortex-M Microcontrollers (Valvano) | pdf | `embedded-systems-arm-cortex-m-valvano` | 18 |  |
-| 42 | Embedded Systems with ARM Cortex-M (Assembly and C, Zhu) | pdf | `embedded-systems-arm-cortex-m-zhu` | 36 |  |
-| 43 | The Definitive Guide to ARM Cortex-M0 and Cortex-M0+ (Yiu) | pdf | `arm-cortex-m0-definitive-guide` | 35 |  |
-| 44 | Programming Embedded Systems (Barr, Massa) | pdf | `programming-embedded-systems` | 24 |  |
-| 45 | Making Embedded Systems (Elecia White, 2e) | pdf | `making-embedded-systems` | 17 |  |
+| 14 | Mastering STM32 (Noviello) | pdf | `mastering-stm32` | 34 |  |
+| 15 | Beyond BIOS | epub | `beyond-bios` | 23 |  |
+| 16 | Embedded Systems: Introduction to Arm Cortex-M Microcontrollers (Valvano) | pdf | `embedded-systems-arm-cortex-m-valvano` | 18 |  |
+| 17 | Embedded Systems with ARM Cortex-M (Assembly and C, Zhu) | pdf | `embedded-systems-arm-cortex-m-zhu` | 36 |  |
+| 18 | The Definitive Guide to ARM Cortex-M0 and Cortex-M0+ (Yiu) | pdf | `arm-cortex-m0-definitive-guide` | 35 |  |
+| 19 | Programming Embedded Systems (Barr, Massa) | pdf | `programming-embedded-systems` | 24 |  |
+| 20 | Making Embedded Systems (Elecia White, 2e) | pdf | `making-embedded-systems` | 17 |  |
 
 ### Windows (`books-windows`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 46 | Windows Internals, Part 1 (7e) | pdf | `windows-internals-part-1` | 10 |  |
-| 47 | Windows Internals, Part 2 (7e) | pdf | `windows-internals-part-2` | 9 |  |
-| 48 | Windows Kernel Programming (2e) | pdf | `windows-kernel-programming-2e` | 11 |  |
+| 21 | Windows Internals, Part 1 (7e) | pdf | `windows-internals-part-1` | 10 |  |
+| 22 | Windows Internals, Part 2 (7e) | pdf | `windows-internals-part-2` | 9 |  |
+| 23 | Windows Kernel Programming (2e) | pdf | `windows-kernel-programming-2e` | 11 |  |
 
 ### Haskell (`books-haskell`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 49 | Haskell Programming from First Principles | pdf | `haskell-programming-from-first-principles` | 33 |  |
-| 50 | Programming in Haskell (2e) | epub | `programming-in-haskell-2e` | 31 |  |
-| 51 | Algorithm Design with Haskell (Bird, Gibbons) | pdf | `algorithm-design-with-haskell` | 27 |  |
-| 52 | Parallel and Concurrent Programming in Haskell (Marlow) | epub | `parallel-concurrent-haskell` | 26 |  |
+| 24 | Haskell Programming from First Principles | pdf | `haskell-programming-from-first-principles` | 33 |  |
+| 25 | Programming in Haskell (2e) | epub | `programming-in-haskell-2e` | 31 |  |
+| 26 | Algorithm Design with Haskell (Bird, Gibbons) | pdf | `algorithm-design-with-haskell` | 27 |  |
+| 27 | Parallel and Concurrent Programming in Haskell (Marlow) | epub | `parallel-concurrent-haskell` | 26 |  |
 
 ### OCaml (`books-ocaml`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 53 | More OCaml: Algorithms, Methods, and Diversions | epub | `more-ocaml-algorithms-methods-and-diversions` | 28 |  |
-| 54 | Learn Programming with OCaml | pdf | `learn-programming-with-ocaml` | 16 |  |
+| 28 | More OCaml: Algorithms, Methods, and Diversions | epub | `more-ocaml-algorithms-methods-and-diversions` | 28 |  |
+| 29 | Learn Programming with OCaml | pdf | `learn-programming-with-ocaml` | 16 |  |
 
 ### Python (`books-python`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 55 | Fluent Python (2nd Edition) | pdf | `fluent-python` | 33 |  |
-| 56 | Python Crash Course | pdf | `python-crash-course` | 31 |  |
-| 57 | Dead Simple Python | pdf | `dead-simple-python` | 33 |  |
+| 30 | Fluent Python (2nd Edition) | pdf | `fluent-python` | 33 |  |
+| 31 | Python Crash Course | pdf | `python-crash-course` | 31 |  |
+| 32 | Dead Simple Python | pdf | `dead-simple-python` | 33 |  |
 
 ### Java (`books-java`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 58 | Java Concurrency in Practice | pdf | `java-concurrency-in-practice` | 24 |  |
+| 33 | Java Concurrency in Practice | pdf | `java-concurrency-in-practice` | 24 |  |
 
 ### JavaScript (`books-js`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 59 | Eloquent JavaScript (4th Edition) | pdf | `eloquent-javascript-4e` | 24 |  |
-| 60 | Learning TypeScript (Goldberg) | pdf | `learning-typescript` | 24 |  |
+| 34 | Eloquent JavaScript (4th Edition) | pdf | `eloquent-javascript-4e` | 24 |  |
+| 35 | Learning TypeScript (Goldberg) | pdf | `learning-typescript` | 24 |  |
 
 ### Graphics (`books-graphics`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 61 | OpenGL SuperBible | pdf | `opengl-superbible` | 26 |  |
+| 36 | OpenGL SuperBible | pdf | `opengl-superbible` | 26 |  |
 
 ### Version Control (`books-vcs`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 62 | Build Your Own Git (CodeCrafters) | md | `build-your-own-git` | 8 | keep — CodeCrafters course |
-| 63 | Building Git | pdf | `building-git` | 41 |  |
+| 37 | Build Your Own Git (CodeCrafters) | md | `build-your-own-git` | 8 | keep — CodeCrafters course |
+| 38 | Building Git | pdf | `building-git` | 41 |  |
 
 ### Debugging (`books-debugging`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 64 | Building a Debugger | pdf | `building-a-debugger` | 27 |  |
+| 39 | Building a Debugger | pdf | `building-a-debugger` | 27 |  |
 
 ## Frozen web books (`WEB_BOOKS`) — 65
 
@@ -245,7 +214,7 @@ Two kinds of book:
 | 64 | Writing an OS in Rust (Phil Opp) | `writing-an-os-in-rust` | 12 | os.phil-opp.com | keep |
 | 65 | Algorithms for Modern Hardware (Algorithmica) | `algorithmica-hpc` | 82 | en.algorithmica.org | keep |
 
-## Removed from Books — 132
+## Removed from Books — 157
 
 (`moved` = still in :Docs, just not under Books any more.)
 
@@ -342,6 +311,30 @@ Two kinds of book:
 | `programming-with-posix-threads` | remove | 2026-09-22 pass, chunk 5 |
 | `reverse-engineering-for-beginners` | remove | 2026-09-22 pass, chunk 9 |
 | `reversing-secrets-of-reverse-engineering` | remove | 2026-09-22 pass, chunk 9 |
+| `riscv-acpi-ffh` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-aia` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-asm-manual` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-brs` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-c-api` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-cfi` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-cheri` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-crypto` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-debug` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-fast-interrupt` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-glossary` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-iommu` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-plic` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-profiles-spec` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-psabi` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-rpmi` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-sbi` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-security-model` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-semihosting` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-server-platform` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-server-soc` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-smmtt` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-trace` | remove | 2026-09-22 pass, chunk 11 |
+| `riscv-uefi` | remove | 2026-09-22 pass, chunk 11 |
 | `rootkits` | remove | 2026-09-22 pass, chunk 8 |
 | `rust-for-rustaceans` | remove | 2026-09-22 pass, chunk 4 |
 | `rust-in-action` | remove | 2026-09-22 pass, chunk 4 |
@@ -372,6 +365,7 @@ Two kinds of book:
 | `the-linux-memory-manager` | remove | 2026-09-22 pass, chunk 7 |
 | `the-linux-programming-interface` | remove | 2026-09-22 pass, chunk 7 |
 | `the-little-book-of-semaphores` | remove | 2026-09-22 pass, chunk 5 |
+| `the-risc-v-instruction-set-manual` | remove | 2026-09-22 pass, chunk 11 |
 | `unix-and-linux-system-administration-handbook` | remove | 2026-09-22 pass, chunk 7 |
 | `unix-network-programming` | remove | 2026-09-22 pass, chunk 5 |
 | `v8-docs` | remove | 2026-09-22 pass, chunk 2 |

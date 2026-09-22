@@ -4063,9 +4063,8 @@ local STD_URLS = {
 	-- offers 2.10 and 2.9; each is its own ~2000-page spec PDF, cached separately).
 	["uefi-2.10"] = "https://uefi.org/sites/default/files/resources/UEFI_Spec_2_10_Aug29.pdf",
 	["uefi-2.9"] = "https://uefi.org/sites/default/files/resources/UEFI_Spec_2_9_2021_03_18.pdf",
-	-- RISC-V Platform Specification (the archived unified OS-A/M platform spec;
-	-- its successors, the Server Platform / Server SoC / BRS specs, are the
-	-- committed RISC-V books). Kept as a concise 31-page historical overview.
+	-- RISC-V Platform Specification (the archived unified OS-A/M platform spec).
+	-- Kept as a concise 31-page historical overview.
 	["riscv-platform"] = "https://raw.githubusercontent.com/riscvarchive/riscv-platform-specs/main/riscv-platform-spec.pdf",
 	-- ACPI Specification (UEFI Forum, release 6.5), split by chapter bookmarks.
 	["acpi"] = "https://uefi.org/sites/default/files/resources/ACPI_Spec_6_5_Aug29.pdf",
@@ -4344,33 +4343,6 @@ local BOOKS = {
 		{ title = "Nightmare: Binary Exploitation Course", fmt = "md", slug = "nightmare-binary-exploitation", file = "https://github.com/guyinatuxedo/nightmare" },
 		{ title = "Heap Exploitation (Dhaval Kapil)", fmt = "md", slug = "heap-exploitation-dhaval-kapil", file = "https://github.com/DhavalKapil/heap-exploitation" },
 		{ title = "ir0nstone: Binary Exploitation Notes", fmt = "md", slug = "ir0nstone-binary-exploitation", file = "https://github.com/ir0nstone/cybersec-notes" },
-	} },
-	{ module = "RISC-V", key = "books-riscv", items = {
-		{ title = "The RISC-V Instruction Set Manual", fmt = "pdf", slug = "the-risc-v-instruction-set-manual", file = "riscv-spec.pdf" },
-		{ title = "RISC-V SBI (Supervisor Binary Interface)", fmt = "pdf", slug = "riscv-sbi", file = "riscv-sbi.pdf" },
-		{ title = "RISC-V Advanced Interrupt Architecture (AIA)", fmt = "pdf", slug = "riscv-aia", file = "riscv-aia.pdf" },
-		{ title = "RISC-V PLIC (Platform-Level Interrupt Controller)", fmt = "pdf", slug = "riscv-plic", file = "riscv-plic.pdf" },
-		{ title = "RISC-V Fast Interrupts (CLIC)", fmt = "pdf", slug = "riscv-fast-interrupt", file = "riscv-fast-interrupt.pdf" },
-		{ title = "RISC-V IOMMU", fmt = "pdf", slug = "riscv-iommu", file = "riscv-iommu.pdf" },
-		{ title = "RISC-V Debug Specification", fmt = "pdf", slug = "riscv-debug", file = "riscv-debug.pdf" },
-		{ title = "RISC-V Processor Trace (E-Trace)", fmt = "pdf", slug = "riscv-trace", file = "riscv-trace.pdf" },
-		{ title = "RISC-V Supervisor Domains (Smmtt)", fmt = "pdf", slug = "riscv-smmtt", file = "riscv-smmtt.pdf" },
-		{ title = "RISC-V Platform Security Model", fmt = "pdf", slug = "riscv-security-model", file = "riscv-security-model.pdf" },
-		{ title = "RISC-V Control-Flow Integrity (CFI)", fmt = "pdf", slug = "riscv-cfi", file = "riscv-cfi.pdf" },
-		{ title = "RISC-V CHERI", fmt = "pdf", slug = "riscv-cheri", file = "riscv-cheri.pdf" },
-		{ title = "RISC-V UEFI Protocol", fmt = "pdf", slug = "riscv-uefi", file = "riscv-uefi.pdf" },
-		{ title = "RISC-V Boot and Runtime Services (BRS)", fmt = "pdf", slug = "riscv-brs", file = "riscv-brs.pdf" },
-		{ title = "RISC-V ACPI FFH", fmt = "pdf", slug = "riscv-acpi-ffh", file = "riscv-acpi-ffh.pdf" },
-		{ title = "RISC-V Platform Management Interface (RPMI)", fmt = "pdf", slug = "riscv-rpmi", file = "riscv-rpmi.pdf" },
-		{ title = "RISC-V Server Platform", fmt = "pdf", slug = "riscv-server-platform", file = "riscv-server-platform.pdf" },
-		{ title = "RISC-V Server SoC", fmt = "pdf", slug = "riscv-server-soc", file = "riscv-server-soc.pdf" },
-		{ title = "RISC-V Profiles", fmt = "pdf", slug = "riscv-profiles-spec", file = "riscv-profiles-spec.pdf" },
-		{ title = "RISC-V ELF psABI (Calling Convention)", fmt = "pdf", slug = "riscv-psabi", file = "riscv-psabi.pdf" },
-		{ title = "RISC-V Assembly Programmer's Manual", fmt = "pdf", slug = "riscv-asm-manual", file = "riscv-asm-manual.pdf" },
-		{ title = "RISC-V C API", fmt = "pdf", slug = "riscv-c-api", file = "riscv-c-api.pdf" },
-		{ title = "RISC-V Cryptography Extensions", fmt = "pdf", slug = "riscv-crypto", file = "riscv-crypto.pdf" },
-		{ title = "RISC-V Semihosting", fmt = "pdf", slug = "riscv-semihosting", file = "riscv-semihosting.pdf" },
-		{ title = "RISC-V Glossary", fmt = "pdf", slug = "riscv-glossary", file = "riscv-glossary.pdf" },
 	} },
 	{ module = "Hardware", key = "books-hardware", items = {
 		{ title = "Getting Started with FPGAs (Merrick)", fmt = "pdf", slug = "getting-started-with-fpgas", file = "Getting Started with FPGAs -- Russell Merrick -- 1, 2023 -- No Starch Press, Incorporated -- isbn13 9781718502956 -- 3b7d7f09b0634be1a8c1d17e8b5192d7 -- Anna’s Archive.pdf" },
@@ -4746,19 +4718,14 @@ local function pick_books()
 	-- without fd before this menu existed.
 	local titles, by_title, dupes = {}, {}, {}
 	for _, m in ipairs(BOOKS) do
-		-- RISC-V has 25 manuals; listed flat they drowned every other book in
-		-- the picker, so they live behind their own top-level "RISC-V" entry
-		-- (pick_riscv_books) and are skipped here.
-		if m.key ~= "books-riscv" then
-			for _, e in ipairs(m.items) do
-				-- Two books sharing a title would silently shadow each other here,
-				-- so keep the first and note the collision rather than lose one.
-				if by_title[e.title] then
-					dupes[#dupes + 1] = e.title
-				else
-					by_title[e.title] = { mkey = m.key, entry = e }
-					titles[#titles + 1] = e.title
-				end
+		for _, e in ipairs(m.items) do
+			-- Two books sharing a title would silently shadow each other here,
+			-- so keep the first and note the collision rather than lose one.
+			if by_title[e.title] then
+				dupes[#dupes + 1] = e.title
+			else
+				by_title[e.title] = { mkey = m.key, entry = e }
+				titles[#titles + 1] = e.title
 			end
 		end
 	end
@@ -4794,41 +4761,6 @@ local function pick_books()
 					return hit.run()
 				end
 				return ensure_book(hit.mkey, hit.entry)
-			end,
-		},
-	})
-end
-
--- The RISC-V manuals are their own top-level entry (RISC-V -> manual -> chapter)
--- instead of 25 lines in the flat Books list. Titles keep the "RISC-V " prefix
--- they already carry, so fzf still matches "aia", "iommu", "debug" etc.
-local function pick_riscv_books()
-	local mod
-	for _, m in ipairs(BOOKS) do
-		if m.key == "books-riscv" then
-			mod = m
-			break
-		end
-	end
-	if not mod then
-		return
-	end
-	local titles, by_title = {}, {}
-	for _, e in ipairs(mod.items) do
-		by_title[e.title] = e
-		titles[#titles + 1] = e.title
-	end
-	table.sort(titles, function(a, b)
-		return a:lower() < b:lower()
-	end)
-	fzf().fzf_exec(titles, {
-		prompt = "RISC-V> ",
-		fzf_opts = { ["--no-multi"] = true },
-		actions = {
-			["default"] = function(sel)
-				if sel and sel[1] and by_title[sel[1]] then
-					return ensure_book("books-riscv", by_title[sel[1]])
-				end
 			end,
 		},
 	})
@@ -5844,10 +5776,6 @@ local providers = {
 -- book-shaped web providers (Hypervisor From Scratch, learncpp.com, ...),
 -- which used to sit at the top level.
 providers[#providers + 1] = { name = "Books", key = "books", run = pick_books }
--- RISC-V manuals get their own top-level entry (25 books) so they do not crowd
--- the flat Books list. key "books-riscv" is the on-disk module dir, so :Docs
--- list still reports each manual's frozen status.
-providers[#providers + 1] = { name = "RISC-V (manuals)", key = "books-riscv", run = pick_riscv_books }
 providers[#providers + 1] = { name = "Typeclassopedia (Haskell)", key = "typeclassopedia", run = pick_tco }
 -- Formal methods / SMT: Mathematics in Lean (Lean 4 + Mathlib proofs) and
 -- Programming Z3 (the Z3 SMT solver internals + API). Frozen web books.

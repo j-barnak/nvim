@@ -85,8 +85,7 @@ def main():
     out = []
     w = out.append
     w("# :Docs Books\n")
-    w("Every title the `:Docs` → Books menu offers (RISC-V included for completeness;")
-    w("those 25 sit behind the top-level \"RISC-V (manuals)\" entry instead). Generated")
+    w("Every title the `:Docs` → Books menu offers. Generated")
     w("by `Resources/tools/books_inventory.py` from the `BOOKS` and `WEB_BOOKS` tables")
     w("in `lua/config/docs.lua`; the Keep column comes from `books_decisions.tsv`.\n")
     w("Two kinds of book:\n")
