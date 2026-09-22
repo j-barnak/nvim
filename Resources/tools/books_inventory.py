@@ -91,7 +91,7 @@ def main():
     w("in `lua/config/docs.lua`; the Keep column comes from `books_decisions.tsv`.\n")
     w("Two kinds of book:\n")
     w("- **Chapter books**: an epub/pdf or a markdown repo converted once into numbered")
-    w("  chapter files under `Resources/docs/books/<module>/<slug>/` (the four rust-lang")
+    w("  chapter files under `Resources/docs/books/<module>/<slug>/` (the rust-lang")
     w("  mdBooks under `Resources/docs/rust/<repo>/src`). Browsed with fd/find.")
     w("- **Web books**: a frozen site or article series, `Resources/docs/<key>/index.tsv`")
     w("  (`title<TAB>url` rows) whose pages are `Resources/docs/.webcache/<sha256(url)>.txt`,")

@@ -173,47 +173,6 @@ cut_anchor() {
       else if (e != "" && t == e) exit
       print }'
 }
-# relocate_footnote_in_code: undo the one place a page-bottom footnote lands in
-# the MIDDLE of a code listing. Per-slug and keyed on exact text, so it is a
-# plain `cat` for every other book and every other chapter.
-#   zero-to-production-in-rust, ch.3: the Cargo.toml listing
-#     #! Cargo.toml / # [...] / [dependencies] / actix-web = "4" / tokio = {...}
-#   straddles the page 26/27 break, and page 26's bottom footnote 17 ("During
-#   our development process ... cargo check was born ...") prints between the
-#   "# [...]" line and "[dependencies]". pdftotext -layout reads a page top to
-#   bottom, so the footnote (physically below the code) linearises INTO it and
-#   splits the listing. folio.awk cannot help: this is a one-off footnote, not a
-#   running head. Move the footnote to just after the listing (after the tokio
-#   line, where its reference sits) so the code reads as one contiguous block.
-#   No words are dropped -- only the footnote's own mid-paragraph blank line --
-#   so the chapter's word count is unchanged.
-relocate_footnote_in_code() {
-  case "$SLUG" in
-    zero-to-production-in-rust) ;;
-    *) cat; return ;;
-  esac
-  awk '
-    BEGIN { st=0 }
-    st==3 { print; next }                                # done: pass through
-    st==0 { print; if ($0=="# [...]") st=1; next }       # watch for listing head
-    st==1 {                                              # line after "# [...]"
-      if ($0 ~ /^ +17 During our development process/) { fb[++nf]=$0; st=2; next }
-      st=3; print; next                                  # not this spot; give up
-    }
-    st==2 {                                              # buffer footnote lines
-      if ($0=="[dependencies]") { print; st=22; next }   # code resumes
-      if ($0 !~ /^[ \t]*$/) fb[++nf]=$0
-      next
-    }
-    st==22 {                                             # print rest of listing
-      print
-      if ($0 ~ /^tokio = \{ version = "1"/) {             # last listing line
-        print ""; for (i=1;i<=nf;i++) print fb[i]; print ""
-        st=3
-      }
-      next
-    }'
-}
 # emit <first page> <last page> <title> [start anchor] [end anchor]
 emit() {
   idx=$((idx+1)); n=$(printf '%03d' "$idx")
@@ -266,7 +225,6 @@ emit() {
     | sed "$CTLX$CTL" | tr '\000-\010\013\015-\037' '[?*]' | sed "$LIG" \
     | awk -v book="$MODE" -v furn="$FURN" -v keys="$OUT/.folio.keys" -v first_page="$1" -f "$AWKF" \
     | cut_anchor "$4" "$5" \
-    | relocate_footnote_in_code \
     | book_fix \
     | caption_fix \
     | cat -s > "$OUT/$n $f.txt"
@@ -282,7 +240,6 @@ SLUG=$(basename "$OUT")
 # rather than added to the shared filter above.
 #   talking-compilers-with-chatgpt: a two-line licence/contact notice at the top
 #   of all 916 pages (its first page words the second line differently).
-#   disarming-code: the running head of a scanned book, on 499 of its 545 pages.
 #   Even pages carry "<printed page number>   Disarming Code" and odd pages
 #   "Chapter N: Title   <printed page number>" (or "Appendix A: ..."), and the
 #   OCR sprinkles stray spaces through both, so the pattern tolerates a space
@@ -313,7 +270,7 @@ SLUG=$(basename "$OUT")
 # a floor bracket in The Algorithm Design Manual.
 CTLX=
 case "$SLUG" in
-  modern-x86-assembly-language-programming|fuzzing-against-the-machine)
+  fuzzing-against-the-machine)
     CTLX="s/$(printf '\010')/ /g
 " ;;
   # Memory Consistency Primer: byte 0x16 is the mu of "μhb"/"μspec" (CCICheck),
@@ -336,7 +293,6 @@ esac
 FURN=
 case "$SLUG" in
   talking-compilers-with-chatgpt) FURN='^(This material is freely available|For typos or suggestions, please contact Fernando|Send comments, typos and suggestions to)' ;;
-  disarming-code) FURN='^([0-9?][0-9? ]{0,4} +D ?i ?s ?a ?r ?m ?i ?n ?g +C ?o ?d ?e$|(C ?h ?a ?p ?t ?e ?r|A ?p ?p ?e ?n ?d ?i ?x) ?[0-9AB]{1,2} ?([:.] ?[A-Za-z0-9/]|[A-Z0-9/]).{0,200}$)' ;;
   learn-programming-with-ocaml) FURN='^([0-9]+ +(Chapter [0-9]+[.].*|BIBLIOGRAPHY|INDEX)|[0-9]+[.][0-9]+[.] .+ [0-9]+|(BIBLIOGRAPHY|INDEX) +[0-9]+)$' ;;
   # Books whose per-page running head is "<section-number> <Title>  <folio>"
   # (section head on one edge, folio right-aligned) and which folio.awk's learn
@@ -362,8 +318,6 @@ case "$SLUG" in
   # folio/section number, so a "■ text" list item (■ at line start) never matches.
   computer-architecture-a-quantitative-approach)
     FURN='^ *([0-9]{1,4}|[A-M]-[0-9]+) +■ +(Appendix [A-M]|Chapter [0-9]+)|^ *([0-9]+[.][0-9]+|[A-M][.][0-9]+) .* +■ +([0-9]{1,4}|[A-M]-[0-9]+) *$' ;;
-  # rust-under-the-hood: an Anna's-Archive per-page email/date watermark.
-  rust-under-the-hood) FURN='^lanchonbeef@gmail[.]com 24 Aug 2025$' ;;
   # from-day-zero-to-zero-day: the Early-Access per-page copyright line.
   from-day-zero-to-zero-day) FURN='^From Day Zero to Zero Day [(]Early Access[)] © 2025 by Eugene Lim$' ;;
   # file-system-forensic-analysis: a QuarkXPress production stamp ("...qxd DATE
@@ -727,47 +681,6 @@ elif [ "$4" = book ] && [ "$SLUG" = writing-a-bootloader-from-scratch-cmu-15-410
           for (i = 1; i <= N; i++) print HP[i] "\t" HT[i] "\t" HT[i] }' > "$OUT/.ch.tsv" \
     || : > "$OUT/.ch.tsv"
   rm -f "$OUT/.d0.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = disarming-code ]; then
-  # A 545-page scan whose text layer is Acrobat Paper Capture OCR. It has no
-  # outline, and no reliable heading shape either (the display titles are set as
-  # artwork and come back mangled), so the boundaries below are the printed
-  # table of contents, written out here because there is nothing in the file to
-  # derive them from. Every page in the map was checked against the scan: a
-  # chapter opens on a page whose first line is the bare printed page number,
-  # with the chapter title on the next line, and all sixteen land on such a
-  # page. The closing note that follows appendix B carries no printed heading,
-  # so it stays at the end of appendix B rather than becoming its own chapter.
-  # Every title below was re-checked against two independent places in the book
-  # that name the chapter: the heading on its own opening page, and the running
-  # head repeated on the rest of its pages ("Chapter N: Title"). Three titles
-  # had been shortened to a topic word and are written out in full here: 9 was
-  # "Profiling" and is "System-Wide Tracing, Profiling & Auditing" (the printed
-  # contents page agrees), 11 was "Runtimes" and is "Runtimes & Higher-Level
-  # Languages", and 12 was "Post Mortem" and is "Exceptions, Crashes & Other
-  # Fatalities" (its opening page sets the same title as "Exceptions, Crashes
-  # and other Fatalities"; the running head's title case is used, as it is what
-  # the other fifteen entries follow). The appendix titles keep "disarm(j)" and
-  # "jtrace(j)": the front matter explains that the author specifies all of his
-  # own tools as living in manual section (j), so that is deliberate notation
-  # and not OCR damage.
-  cat > "$OUT/.ch.tsv" <<'EOF3'
-17	1. An ARM Assembly Primer
-75	2. Compilation & Linking
-99	3. Binary Formats
-141	4. The Process Lifecycle
-167	5. Memory - I - The System View
-191	6. Memory - II - The Process View
-249	7. MultiThreading
-285	8. I/O & IPC
-329	9. System-Wide Tracing, Profiling & Auditing
-359	10. Hooking & Injecting
-387	11. Runtimes & Higher-Level Languages
-423	12. Exceptions, Crashes & Other Fatalities
-445	13. Beyond User Mode
-491	14. Reverse Engineering
-521	A. disarm(j) - The Missing Manual Page
-535	B. jtrace(j) - The Missing Manual Page
-EOF3
 elif [ "$4" = book ] && { [ "$SLUG" = bpf-performance-tools ] || [ "$SLUG" = systems-performance ]; }; then
   # Gregg's two books: each Part-divider bookmark shares a page with that part's
   # first chapter, so the generic dedup drops the chapter; and two chapter titles
@@ -982,32 +895,9 @@ if [ ! -s "$OUT/.ch.tsv" ]; then
   D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
   [ -n "$D" ] && awk -F'\t' -v D="$D" '$1==D{t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); print $2"\t"t}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
 fi
-# Per-slug boundary correction, applied to whichever branch above wrote the map.
-#   zero-to-production-in-rust: every chapter bookmark is a hyperref anchor set
-#   before the \clearpage that ends the previous chapter, so it resolves to the
-#   printed page number rather than the PDF page and lands one page early. All
-#   eleven chapters opened with the last page of their predecessor ("Telemetry"
-#   with chapter 3's "3.11 Summary", and so on), so shift them on by one page.
-#   The Foreword and Preface anchors are on their own opening page already and
-#   are left where they are.
-#   The shipped chapters were rebuilt with this shift, so the book reads
-#   correctly today only because the shift is here. Drop it and eleven of the
-#   fourteen files open mid-sentence again ("004 Getting Started" would start
-#   "had built reading The Rust Book ...", the tail of the Preface). Checking
-#   the shipped files alone therefore proves nothing about whether the rule is
-#   still needed; rebuild without it to see the seams break.
-if [ "$4" = book ] && [ "$SLUG" = zero-to-production-in-rust ] && [ -s "$OUT/.ch.tsv" ]; then
-  awk -F'\t' 'BEGIN{OFS="\t"} $2=="Foreword" || $2=="Preface" {print; next} {print $1+1, $2}' \
-    "$OUT/.ch.tsv" > "$OUT/.ch.shift" && mv "$OUT/.ch.shift" "$OUT/.ch.tsv"
-fi
 # Far-side bound for the last chapter. It is normally the last page of the PDF,
 # but a scan can carry pages after the book ends.
-#   disarming-code: the scan runs to source page 545 and the book's body ends at
-#   541. Pages 542-545 are the back-cover blurb and then the scanning service's
-#   customer consent form, which carries a real person's name and a signature
-#   line. That is not book content and must not ship, so appendix B stops at 541.
 END_PAGE="$TOTAL"
-if [ "$4" = book ] && [ "$SLUG" = disarming-code ]; then END_PAGE=541; fi
 if [ -s "$OUT/.ch.tsv" ]; then
   # Pages before the first outline boundary (a preface, foreword, or an
   # unbookmarked introduction) used to be dropped entirely; emit them as a

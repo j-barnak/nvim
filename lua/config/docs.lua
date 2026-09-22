@@ -4320,23 +4320,8 @@ end
 -- into cleaner chapters). Duplicate copies are collapsed to one file.
 local BOOKS = {
 	{ module = "Rust", key = "books-rust", items = {
-		{ title = "Rust Under the Hood (Ahluwalia)", fmt = "pdf", slug = "rust-under-the-hood", file = "Rust Under the Hood -- Deepa Ahluwalia, Sandeep Ahluwalia -- 2024 -- Independently Published -- 9788320364460 -- 6beb7de3c93e2b512daedd8a1af5de7a -- Anna’s Archive.pdf" },
-		{ title = "Command-Line Rust", fmt = "epub", file = "Command-line Rust _ a project-based primer for writing Rust -- Ken Youens-Clark -- 2024 Updated Edition, 2024 -- O'Reilly Media, Incorporated; -- 9781098109400 -- 462825f45d6c0c1f3254f43a9f8062ee -- Anna’s Archive.epub" },
-		{ title = "Programming Rust (2e)", fmt = "epub", file = "Programming Rust_ Fast, Safe Systems Development, -- Jim Blandy & Jason Orendorff & Leonora F _ S_ Tindall -- 2nd Edition, 2021 -- O'Reilly Media -- 42c3a550a65cf7d0fe19185d1c57c56e -- Anna’s Archive.epub" },
-		{ title = "Rust in Action", fmt = "epub", file = "Rust_In_Action.epub" },
-		{ title = "Rust for Rustaceans (Gjengset)", fmt = "pdf", slug = "rust-for-rustaceans", file = "RustForRustaceans.pdf" },
-		{ title = "The Rust Programming Language (the book)", fmt = "mdbook", url = "https://github.com/rust-lang/book" },
-		{ title = "The Rustonomicon (unsafe Rust)", fmt = "mdbook", url = "https://github.com/rust-lang/nomicon" },
 		{ title = "Rust by Example", fmt = "mdbook", url = "https://github.com/rust-lang/rust-by-example" },
 		{ title = "Learn Rust With Entirely Too Many Linked Lists", fmt = "mdbook", url = "https://github.com/rust-unofficial/too-many-lists" },
-		{ title = "Zero to Production in Rust", fmt = "pdf", file = "Zero to Production in Rust.pdf" },
-	} },
-	{ module = "Assembly", key = "books-asm", items = {
-		{ title = "Modern x86 Assembly Language Programming", fmt = "pdf", file = "Daniel Kusswurm - Modern X86 Assembly Language Programming_ Covers X86 64-bit, AVX, AVX2, and AVX-512 (2023, Apress) [10.1007_978-1-4842-9603-5] - libgen.li.pdf" },
-		{ title = "The Art of ARM Assembly, Volume 1", fmt = "pdf", file = "[The BOOK of…] The Art of ARM Assembly. Volume 1_ 64-Bit ARM Machine Organization and Programming{Randall Hyde}(2025, No Starch Press){108023809} libgen.li.pdf" },
-		{ title = "DisARMing Code", fmt = "pdf", file = "DisARMing Code  545p (2).pdf" },
-		{ title = "Blue Fox: Arm Assembly Internals and Reverse Engineering", fmt = "pdf", slug = "blue-fox-arm-assembly-internals", file = "blue-fox-arm-assembly.pdf" },
-		{ title = "Professional Assembly Language (Blum)", fmt = "pdf", slug = "professional-assembly-language", file = "Professional_Assembly_Language_2005.pdf" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
 		{ title = "TCP/IP Illustrated, Volume 1 (Fall & Stevens, 2e)", fmt = "pdf", slug = "tcp-ip-illustrated-vol-1", file = "TCP-IP-Illustrated-Vol-1.pdf" },
@@ -4622,7 +4607,7 @@ end
 
 local function ensure_book(mkey, entry)
 	if entry.fmt == "mdbook" then
-		-- The four rust-lang mdBooks are committed under Resources/docs/rust;
+		-- The rust-lang mdBooks are committed under Resources/docs/rust;
 		-- resolve_docs falls back to a cache copy if one was ever built there.
 		local d = resolve_docs("rust/" .. entry.url:match("([^/]+)$") .. "/src") or (frozen_root .. "/rust/" .. entry.url:match("([^/]+)$") .. "/src")
 		return pick_mdbook(d, entry.title .. "> ")
@@ -5180,7 +5165,7 @@ local function docs_status(loc)
 	end
 	if loc.books then
 		-- Every title the Books picker offers: the converted chapter sets, the
-		-- four rust-lang mdBooks, and the frozen web books.
+		-- rust-lang mdBooks, and the frozen web books.
 		local total, frozen_n = 0, 0
 		for _, m in ipairs(BOOKS) do
 			for _, e in ipairs(m.items) do

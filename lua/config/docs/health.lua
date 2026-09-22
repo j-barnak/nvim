@@ -57,12 +57,6 @@ function M.check()
 	health.ok(("%d books frozen (epub/pdf chapters)"):format(#books))
 	local mdbooks = vim.fn.glob(fr .. "/rust/*/src", false, true)
 	health.ok(("%d rust mdBooks frozen"):format(#mdbooks))
-	local listings = vim.fn.isdirectory(fr .. "/rust/book/listings") == 1
-	if listings then
-		health.ok("rust/book/listings present (code {{#include}}s inline)")
-	else
-		health.warn("rust/book/listings missing: The Rust Programming Language will show {{#rustdoc_include}} markers")
-	end
 	-- Every frozen web provider, so a truncated or missing index is reported
 	-- rather than passing silently.
 	for _, w in ipairs({ { "learncpp", 356 }, { "osdev", 778 }, { "rayanfam", 8 }, { "herd7", 3 },

@@ -1045,7 +1045,7 @@ def pandoc_html(html, srcdir):
 # ncx chapter anchors (the Part-expanded top-level boundaries) so the picker
 # matches the printed TOC. Every other book keeps the spine/group strategies.
 ANCHOR_SPLIT = {"linux-device-drivers-3rd-edition","algorithms-illuminated-part-2","system-programming-in-linux",
-    "rust-in-action","bootlin-embedded-linux-bbb-labs","bootlin-linux-kernel-slides",
+    "bootlin-embedded-linux-bbb-labs","bootlin-linux-kernel-slides",
     "bootlin-embedded-linux-qemu-labs", "the-linux-memory-manager"}
 # Per-book label fixes applied to the ncx labels: LMM names Chapter 1 just
 # "Introduction" (its siblings are "Chapter N: ...") and its Chapter 11
