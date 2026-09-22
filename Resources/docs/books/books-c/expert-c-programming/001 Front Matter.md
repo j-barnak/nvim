@@ -1,1 +1,0 @@
-![](media/3cf52589dec7d588819a485c74d7c8b1d83a68a4.svgz)

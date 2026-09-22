@@ -4319,25 +4319,6 @@ end
 -- is preferred over pdf when a book exists as both (reflowed text/code splits
 -- into cleaner chapters). Duplicate copies are collapsed to one file.
 local BOOKS = {
-	{ module = "C", key = "books-c", items = {
-		{ title = "Expert C Programming", fmt = "epub", file = "Expert C Programming -- Peter van der Linden -- 2002 -- 6a6a0df494fc411c9842373f70197e46 -- Anna’s Archive.epub" },
-		{ title = "Modern C (Gustedt)", fmt = "pdf", slug = "modern-c", file = "modernC.pdf" },
-		{ title = "Effective C (Seacord)", fmt = "pdf", slug = "effective-c", file = "Robert C. Seacord - Effective C_ An Introduction to Professional C Programming-No Starch Press (2025).pdf" },
-		-- http://uploads.mitechie.com/books/Managing_Projects_with_GNU_Make_Third_Edition.pdf
-		{ title = "Managing Projects with GNU Make (3e)", fmt = "pdf", slug = "managing-projects-with-gnu-make", file = "Managing_Projects_with_GNU_Make_Third_Edition.pdf" },
-	} },
-	{ module = "C++", key = "books-cpp", items = {
-		{ title = "Modern C++ Design (Alexandrescu)", fmt = "pdf", slug = "modern-cpp-design", file = "[Addison Wesley] Andrei Alexandrescu - Modern C++ Design Generic Programming and Design Patterns Applied.pdf" },
-		{ title = "Beautiful C++ (30 Core Guidelines)", fmt = "pdf", file = "Beautiful C++ _ 30 Core Guidelines for Writing Clean, Safe, -- J_ Guy Davidson & Kate Gregory -- 1, 2021 -- Pearson Education, Limited; Addison-Wesley -- 9780137647842 -- 3d6251a17d7996d9091349de.pdf" },
-		{ title = "C++ Concurrency in Action", fmt = "pdf", file = "Anthony Williams - C++ Concurrency in Action (2019, Manning) - libgen.li.pdf" },
-		{ title = "C++ Move Semantics (The Complete Guide)", fmt = "pdf", file = "C++ Move Semantics - The Complete Guide -- Nicolai M_ Josuttis -- 2022 -- c6f2c4fe3e0701d95a17354ad517147a -- Anna’s Archive.pdf" },
-		{ title = "C++ Initialization Story", fmt = "epub", file = "C__ Initialization Story - Bartłomiej Filipek.epub" },
-		{ title = "C++ Templates: The Complete Guide (2e)", fmt = "pdf", file = "CppTemplates-CompleteGuide-2e.pdf" },
-		{ title = "Effective Modern C++", fmt = "epub", file = "Effective-Modern-C-.epub" },
-		{ title = "Elements of Programming", fmt = "pdf", slug = "elements-of-programming", file = "eop.pdf" },
-		{ title = "API Design for C++ (Reddy)", fmt = "pdf", slug = "api-design-for-cpp", file = "API Design for C++ -- Martin Reddy -- 2, 2024 -- Elsevier Science & Technology -- 9780443222191 -- ef84c54d6978c238ea272e874647ea73 -- Anna’s Archive.pdf" },
-		{ title = "Professional CMake (Scott)", fmt = "pdf", slug = "professional-cmake", file = "Professional CMake_ A Practical Guide -- Craig Scott -- 14, 2023 -- Crascit Pty Ltd -- 9781925904222 -- e4a295cfbab20ee49ce57c4b32ece32b -- Anna’s Archive.pdf" },
-	} },
 	{ module = "Rust", key = "books-rust", items = {
 		{ title = "Rust Under the Hood (Ahluwalia)", fmt = "pdf", slug = "rust-under-the-hood", file = "Rust Under the Hood -- Deepa Ahluwalia, Sandeep Ahluwalia -- 2024 -- Independently Published -- 9788320364460 -- 6beb7de3c93e2b512daedd8a1af5de7a -- Anna’s Archive.pdf" },
 		{ title = "Command-Line Rust", fmt = "epub", file = "Command-line Rust _ a project-based primer for writing Rust -- Ken Youens-Clark -- 2024 Updated Edition, 2024 -- O'Reilly Media, Incorporated; -- 9781098109400 -- 462825f45d6c0c1f3254f43a9f8062ee -- Anna’s Archive.epub" },

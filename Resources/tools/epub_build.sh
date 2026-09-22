@@ -43,7 +43,7 @@ NAME_FIX = {"more-ocaml-algorithms-methods-and-diversions": {
 # language). Keyed per slug because the same shape means something else in
 # other epubs (LMM's 12,567 kernel-source lines, footnote numbers in Bootlin
 # and Algorithms Illuminated).
-NUMBERED_LISTINGS = {"c-initialization-story": ("calibre20", "cpp")}
+NUMBERED_LISTINGS = {}  # none at the moment; was c-initialization-story: ("calibre20", "cpp")
 # --- CSS-carried layout -------------------------------------------------
 # Some epubs put a listing's indentation, and the alignment inside a line, in
 # CSS instead of in the text: a per-depth paragraph class (Programming in
@@ -1044,8 +1044,7 @@ def pandoc_html(html, srcdir):
 # anchor, or the spine is a coarse page-split). Split each spine document at the
 # ncx chapter anchors (the Part-expanded top-level boundaries) so the picker
 # matches the printed TOC. Every other book keeps the spine/group strategies.
-ANCHOR_SPLIT = {"expert-c-programming","effective-modern-c","c-initialization-story",
-    "linux-device-drivers-3rd-edition","algorithms-illuminated-part-2","system-programming-in-linux",
+ANCHOR_SPLIT = {"linux-device-drivers-3rd-edition","algorithms-illuminated-part-2","system-programming-in-linux",
     "rust-in-action","bootlin-embedded-linux-bbb-labs","bootlin-linux-kernel-slides",
     "bootlin-embedded-linux-qemu-labs", "the-linux-memory-manager"}
 # Per-book label fixes applied to the ncx labels: LMM names Chapter 1 just

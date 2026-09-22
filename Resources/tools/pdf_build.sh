@@ -280,7 +280,6 @@ SLUG=$(basename "$OUT")
 # Per-slug page furniture: a whole line, repeated on every page, that carries no
 # content. Two books need it and no other book has one, so it is keyed by slug
 # rather than added to the shared filter above.
-#   c-concurrency-in-action: a distributor watermark on all 592 pages.
 #   talking-compilers-with-chatgpt: a two-line licence/contact notice at the top
 #   of all 916 pages (its first page words the second line differently).
 #   disarming-code: the running head of a scanned book, on 499 of its 545 pages.
@@ -336,7 +335,6 @@ s/$(printf '\007')/∃/g
 esac
 FURN=
 case "$SLUG" in
-  c-concurrency-in-action) FURN='^https://avxhm\.se/' ;;
   talking-compilers-with-chatgpt) FURN='^(This material is freely available|For typos or suggestions, please contact Fernando|Send comments, typos and suggestions to)' ;;
   disarming-code) FURN='^([0-9?][0-9? ]{0,4} +D ?i ?s ?a ?r ?m ?i ?n ?g +C ?o ?d ?e$|(C ?h ?a ?p ?t ?e ?r|A ?p ?p ?e ?n ?d ?i ?x) ?[0-9AB]{1,2} ?([:.] ?[A-Za-z0-9/]|[A-Z0-9/]).{0,200}$)' ;;
   learn-programming-with-ocaml) FURN='^([0-9]+ +(Chapter [0-9]+[.].*|BIBLIOGRAPHY|INDEX)|[0-9]+[.][0-9]+[.] .+ [0-9]+|(BIBLIOGRAPHY|INDEX) +[0-9]+)$' ;;
@@ -385,10 +383,6 @@ esac
 FIXAWK=
 case "$SLUG" in
   programming-with-posix-threads) FIXAWK="${AWKF%/*}/posix_threads_fix.awk" ;;
-  # C++ Move Semantics: 70 alternating running heads survive folio.awk and
-  # linearise into text, four of them inside C++ listings. cmove_fix.awk drops
-  # both head forms and keeps the printed TOC (dot-leaders) and body headings.
-  c-move-semantics-the-complete-guide) FIXAWK="${AWKF%/*}/cmove_fix.awk" ;;
   # OpenGL SuperBible: long C/C++/GLSL statements are hard-wrapped in the PDF's
   # own narrow code frame. superbible_fix.awk rejoins a continuation line only
   # when the pending line is syntactically incomplete (ends in a binary
@@ -896,27 +890,6 @@ elif [ "$4" = book ] && [ "$SLUG" = the-design-and-implementation-of-the-freebsd
     printf '891\t15 System Startup and Shutdown\n'
     printf '928\tGlossary\n'
     printf '976\tIndex\n'; } > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = modern-cpp-design ]; then
-  # This scan has only a single junk bookmark ("Modern C++ Design.pdf"), so the
-  # outline is useless. The boundaries below are the printed chapter openings,
-  # each verified against the PDF page whose first line is that heading. Front
-  # matter (pages 1-9) is auto-emitted before the first boundary.
-  { printf '10\tPreface\n'
-    printf '15\tPart I: Techniques\n'
-    printf '16\t1 Policy-Based Class Design\n'
-    printf '33\t2 Techniques\n'
-    printf '56\t3 Typelists\n'
-    printf '82\t4 Small-Object Allocation\n'
-    printf '99\tPart II: Components\n'
-    printf '100\t5 Generalized Functors\n'
-    printf '127\t6 Implementing Singletons\n'
-    printf '152\t7 Smart Pointers\n'
-    printf '187\t8 Object Factories\n'
-    printf '205\t9 Abstract Factory\n'
-    printf '219\t10 Visitor\n'
-    printf '242\t11 Multimethods\n'
-    printf '276\tAppendix A: A Minimalist Multithreading Library\n'
-    printf '284\tBibliography\n'; } > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = from-day-zero-to-zero-day ]; then
   # No Starch outline: the chapters sit at depth 1 with the number fused to the
   # title ("1Taint Analysis"), which no generic pattern matches, so the plain
