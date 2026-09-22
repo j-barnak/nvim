@@ -1,1 +1,0 @@
-![](media/index-1_1.jpg)

@@ -2378,7 +2378,7 @@ local VERSIONED = {
 -- book's docs cache lives under docs/books/<key>/<slug>, so the shared "books"
 -- path segment can't identify the repo; key on the slug instead.
 local BOOK_SRC = {
-	["xv6-x86"] = "https://github.com/mit-pdos/xv6-public",
+	-- (none at the moment; e.g. ["xv6-x86"] = "https://github.com/mit-pdos/xv6-public")
 }
 gs_source = function(dir)
 	if not dir then
@@ -4324,21 +4324,8 @@ local BOOKS = {
 		{ title = "Learn Rust With Entirely Too Many Linked Lists", fmt = "mdbook", url = "https://github.com/rust-unofficial/too-many-lists" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
-		{ title = "TCP/IP Illustrated, Volume 1 (Fall & Stevens, 2e)", fmt = "pdf", slug = "tcp-ip-illustrated-vol-1", file = "TCP-IP-Illustrated-Vol-1.pdf" },
-		{ title = "Distributed Systems (Tanenbaum & van Steen, 4e)", fmt = "pdf", slug = "distributed-systems", file = "Distributed_Systems_4.pdf" },
-		{ title = "Operating Systems: Design and Implementation (Tanenbaum, 3e)", fmt = "pdf", slug = "operating-systems-design-and-implementation", file = "Operating Systems Design and Implementation, 3rd Edition.pdf" },
-		{ title = "The Design and Implementation of the FreeBSD OS", fmt = "pdf", slug = "the-design-and-implementation-of-the-freebsd-operating-system", file = "The-Design-and-Implementation-of-the-FreeBSD-OS.pdf" },
-		{ title = "An Introduction to Computer Networks (Dordal)", fmt = "pdf", slug = "an-introduction-to-computer-networks", file = "an-introduction-to-computer-networks.pdf" },
 		-- https://www.cs.cmu.edu/~410-s07/p4/p4-boot.pdf (CMU 15-410, 2007)
 		{ title = "Writing a Bootloader from Scratch (CMU 15-410)", fmt = "pdf", file = "CMU 15-410 Project 4 - Writing a Bootloader from Scratch.pdf" },
-		{ title = "Operating Systems: Three Easy Pieces", fmt = "pdf", file = "OSTEP.pdf" },
-		{ title = "xv6 (x86)", fmt = "epub", file = "x86-xv6.epub" },
-		{ title = "Advanced Programming in the UNIX Environment", fmt = "pdf", file = "Advanced Programming in the UNIX Environment.pdf" },
-		{ title = "System Programming in Linux", fmt = "epub", file = "System-Programming-in-Linux_-A-Hands-On-Introduction-Stewart-N_-Weiss-2025-No-Starch-Press_-Incorpor.epub" },
-		{ title = "Unix Network Programming", fmt = "pdf", file = "Unix-Network-Programming.pdf" },
-		{ title = "Programming with POSIX Threads", fmt = "pdf", file = "Programming with Posix Threads.pdf" },
-		{ title = "The Little Book of Semaphores", fmt = "pdf", file = "LittleBookOfSemaphores.pdf" },
-		{ title = "Is Parallel Programming Hard, And, If So, What Can You Do About It?", fmt = "pdf", slug = "is-parallel-programming-hard", file = "perfbook.pdf" },
 	} },
 	{ module = "Compilers", key = "books-compilers", items = {
 		{ title = "Linkers and Loaders", fmt = "pdf", file = "Linkers-and-Loaders.pdf" },

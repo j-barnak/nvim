@@ -303,7 +303,7 @@ case "$SLUG" in
   # at least three spaces (the right-aligned folio gap, never an inline number) and
   # a trailing page number. Validated per book to match only running heads.
   bpf-performance-tools|systems-performance|\
-  distributed-systems|tcp-ip-illustrated-vol-1|computer-organization-and-design|\
+  computer-organization-and-design|\
   modern-processor-design|mastering-stm32)
     FURN='^[0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}[ ]*$' ;;
   # GC Handbook: same section-head form, plus the Taylor & Francis blank-page
@@ -327,16 +327,11 @@ case "$SLUG" in
   file-system-forensic-analysis)
     FURN='^([A-Za-z0-9_]+[.]qxd[^ ]*[ ].*Page [ivxlcdm0-9]+|[A-Z][A-Z]+([ ][A-Z]+)+)[ ]*$' ;;
 esac
-# Per-slug code-listing repair (book_fix above). programming-with-posix-threads
-# is a Ghostscript print of an OCR'd Word .doc: its text layer carries the wrong
-# glyphs verbatim, so pdftotext cannot recover them and the prose OCR noise is
-# source-limited. posix_threads_fix.awk touches only a closed set of C API
-# prototypes where the intended token is mechanical and unambiguous; it is a
-# no-op everywhere else. Kept next to pdf_build.sh, resolved from folio.awk's
-# directory ($AWKF is already located above).
+# Per-slug code-listing repair (book_fix above): one awk filter per book that
+# needs it, kept next to pdf_build.sh and resolved from folio.awk's directory
+# ($AWKF is already located above); a no-op for every other book.
 FIXAWK=
 case "$SLUG" in
-  programming-with-posix-threads) FIXAWK="${AWKF%/*}/posix_threads_fix.awk" ;;
   # OpenGL SuperBible: long C/C++/GLSL statements are hard-wrapped in the PDF's
   # own narrow code frame. superbible_fix.awk rejoins a continuation line only
   # when the pending line is syntactically incomplete (ends in a binary
@@ -368,13 +363,6 @@ case "$SLUG" in
   # map, so every bulleted item opens with a literal "z" (1,827 of them);
   # tlpi_fix maps it back to a bullet and drops 9 even-page footer leaks.
   the-linux-programming-interface) FIXAWK="${AWKF%/*}/tlpi_fix.awk" ;;
-  # The Little Book of Semaphores: folio.awk leaks 35 running heads (even-page
-  # "<folio> Chapter Title" footers, odd-page "<n.m> Section Title <folio>"
-  # headers) that splice into the body. semaphores_fix drops both, keyed on the
-  # 12 chapter titles and the "n.m ... trailing folio" shape so no body/code
-  # line is touched. The book's pseudocode spacing ("sem . signal ()") is the
-  # source's own typesetting and is deliberately left as-is.
-  the-little-book-of-semaphores) FIXAWK="${AWKF%/*}/semaphores_fix.awk" ;;
   # RISC-V specs (ISA manual + SBI/AIA/IOMMU/... the whole books-riscv set): the
   # asciidoc toolchain prints a "<Section Title> | Page <N>" footer on every
   # page; folio.awk strips only bare page numbers, so ~800 survive. riscv_fix
@@ -438,7 +426,7 @@ pdftotext -layout "$PDF" - 2>/dev/null \
 # pdftotext failed and every folio would silently survive.
 [ "$(awk '/^#lines /{print $2; exit}' "$OUT/.folio.keys")" -gt 0 ] 2>/dev/null \
   || { echo "pdf_build: folio learn pass read no text from $PDF" >&2; exit 1; }
-if [ "$4" = book ] && { [ "$SLUG" = talking-compilers-with-chatgpt ] || [ "$SLUG" = introduction-to-static-analysis ] || [ "$SLUG" = is-parallel-programming-hard ]; }; then
+if [ "$4" = book ] && { [ "$SLUG" = talking-compilers-with-chatgpt ] || [ "$SLUG" = introduction-to-static-analysis ]; }; then
   # Three books whose printed table of contents is exactly the outline's depth-0
   # nodes, so they leave .ch.tsv unwritten and let the depth fallback split there.
   #   talking-compilers-with-chatgpt: these lecture notes are transcribed ChatGPT
@@ -446,11 +434,10 @@ if [ "$4" = book ] && { [ "$SLUG" = talking-compilers-with-chatgpt ] || [ "$SLUG
   #   Independence)") is bookmarked, so the title patterns below matched 240 of
   #   them and shredded the book. Its 25 chapters are the depth-0 nodes (plus the
   #   title and contents pages).
-  #   introduction-to-static-analysis and is-parallel-programming-hard: both
-  #   number their appendices as a bare letter and a title ("A Reference for
-  #   Mathematical Notions", "E Answers to Quick Quizzes"), which no title
+  #   introduction-to-static-analysis: numbers its appendices as a bare letter
+  #   and a title ("A Reference for Mathematical Notions"), which no title
   #   pattern below can tell from an ordinary section, so the appendices ended up
-  #   inside the last numbered chapter. Their depth-0 nodes are the chapters, the
+  #   inside the last numbered chapter. Its depth-0 nodes are the chapters, the
   #   appendices and the end matter, in printed order.
   :
 elif [ "$4" = book ] && [ "$SLUG" = elf-specification ]; then
@@ -572,62 +559,6 @@ elif [ "$4" = book ] && [ "$SLUG" = reverse-engineering-for-beginners ]; then
         # 535 is shared: LARGE_INTEGER keeps everything up to the heading and SIMD
         # starts at it.
         $2=="SIMD"{print $1,$2,"1.36 SIMD"; next} {print}' > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
-  # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
-  # no title pattern can find them; the split follows the outline's shape.
-  # Depth-0 nodes are the preface pieces, the two opening chapters and the
-  # three Parts. A Part is a depth-0 node whose subtree reaches depth 2 (its
-  # depth-1 children are chapters, which have depth-2 sections); chapter 2's
-  # depth-1 children are its own sections and stay inside the chapter (taking
-  # every depth-1 node exploded that chapter into ten files cut mid-page).
-  # The six preface bookmarks all resolve to the Preface's first page (broken
-  # anchors) and Contents / List of Figures have no bookmark at all, so the
-  # front-matter sections are found by the heading printed at the top of the
-  # page, and outline entries landing inside that front matter are treated as
-  # its subsection bookmarks. Chapters are numbered 1..51 (the dialogues are
-  # numbered chapters in this book) and parts I..III as on the contents page;
-  # the index sections at the end stay unnumbered.
-  FP=$(awk -F'\t' '$1==0{tp=$2} $1>=2{print tp; exit}' "$OUT/.all.tsv")
-  pdftotext -layout -f 1 -l $((FP-1)) "$PDF" - 2>/dev/null \
-    | awk 'BEGIN{RS="\f"} { n=split($0,L,"\n"); h=""; for(i=1;i<=n;i++){ h=L[i]; gsub(/^[ \t]+|[ \t]+$/,"",h); if(h!="") break } if (h ~ /^(Preface|Contents|List of Figures)$/) print NR"\t"h }' \
-    > "$OUT/.fm.tsv"
-  FML=$(tail -1 "$OUT/.fm.tsv" | cut -f1)
-  { cat "$OUT/.fm.tsv"; awk -F'\t' -v fml="${FML:-0}" '
-      { d[NR]=$1; p[NR]=$2; t[NR]=$3 }
-      END {
-        for (i=1;i<=NR;i++) { if (d[i]==0) top=i; else if (d[i]>=2) part[top]=1 }
-        split("I II III IV V", R, " "); n=0; np=0
-        for (i=1;i<=NR;i++) {
-          if (d[i]==0) top=i
-          if (p[i] <= fml) continue
-          if (d[i]==0 && part[i]) { np++; print p[i]"\tPart "R[np]": "t[i]; continue }
-          if (d[i]==0 || (d[i]==1 && part[top])) {
-            if (tolower(t[i]) ~ /^(general index|index|asides|tips|cruces)$/) print p[i]"\t"t[i]
-            else { n++; print p[i]"\t"n". "t[i] }
-          }
-        }
-      }' "$OUT/.all.tsv"; } | sort -t"$(printf '\t')" -k1,1n -s > "$OUT/.ch.tsv"
-  rm -f "$OUT/.fm.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = programming-with-posix-threads ]; then
-  # This PDF is a Word conversion and carries no outline at all, so the only
-  # structure left is the printed page text. Each of chapters 1 to 9 opens with
-  # its heading as the first line of its page ("1    Introduction": the number,
-  # a run of spaces, then the title), and the Preface opens the same way, so a
-  # page whose first line has that shape starts a chapter. Chapter 10 is the one
-  # exception: it starts halfway down page 188, where the heading is the tail of
-  # a body line, and it is picked up by a line ending in a chapter number and a
-  # short capitalised title. That second pattern matches exactly one line in the
-  # whole 202-page book, so nothing else is cut; chapter 10's file does open
-  # with the last few entries of the mini-reference that share its page.
-  pdftotext -layout "$PDF" - 2>/dev/null \
-    | awk 'BEGIN{RS="\f"}
-      {
-        n=split($0,L,"\n"); h=""
-        for(i=1;i<=n;i++){ h=L[i]; gsub(/^[ \t]+|[ \t]+$/,"",h); if(h!="") break }
-        if (h ~ /^[0-9]{1,2}[ \t]{2,}[^ \t]/) { num=h; sub(/[ \t].*$/,"",num); ttl=h; sub(/^[0-9]+[ \t]+/,"",ttl); print NR"\t"num". "ttl }
-        else if (h ~ /^Preface[ \t]*$/) { print NR"\tPreface" }
-        else { for(i=1;i<=n;i++) if (L[i] ~ /(^|[.] )[0-9]{1,2} [A-Z][a-z]+([ ][a-z]+){0,3}[ \t]*$/) { s=L[i]; sub(/^.*[.] /,"",s); gsub(/^[ \t]+|[ \t]+$/,"",s); num=s; sub(/[ \t].*$/,"",num); ttl=s; sub(/^[0-9]+[ \t]+/,"",ttl); print NR"\t"num". "ttl; break } }
-      }' > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = learn-programming-with-ocaml ]; then
   # Chapters are the outline's depth-1 nodes (the depth fallback further down
   # finds the same set), but this book's end matter cannot be taken from the
@@ -694,15 +625,6 @@ elif [ "$4" = book ] && { [ "$SLUG" = bpf-performance-tools ] || [ "$SLUG" = sys
     keep { print $2"\t"t }
   ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = distributed-systems ]; then
-  # Tanenbaum/van Steen: chapters are unnumbered depth-0 names (Introduction,
-  # Architectures, ...), so only the depth-0 nodes matter. The Glossary's
-  # alphabetical sub-sections are ALSO depth-0 single-letter bookmarks (B, C, D
-  # ...) that must not become chapters. Keep depth-0 titles longer than one
-  # character; the letters fold into the Glossary chapter.
-  awk -F'\t' '$1==0 { t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); if (length(t) > 1) print $2"\t"t }' "$OUT/.all.tsv" \
-    | sort -t"$(printf '\t')" -k1,1n -s \
-    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = rootkits ]; then
   # Rootkits and Bootkits: the Brief Contents bookmarks add arabic-numbered
   # "Part 1 / Part 3" nodes alongside the real roman "Part I / II / III", so the
@@ -752,57 +674,6 @@ elif [ "$4" = book ] && [ "$SLUG" = computer-architecture-a-quantitative-approac
     printf '1347\tM Historical Perspectives and References\n'
     printf '1441\tReferences\n'
     printf '1477\tIndex\n'; } > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = tcp-ip-illustrated-vol-1 ]; then
-  # No outline. Each chapter opens with the bare chapter number on its own line
-  # then the title, which no generic pattern matches. Boundaries below are the
-  # printed chapter openings (verified against the page carrying "<N>\n<Title>");
-  # front matter (pages 1-29) is auto-emitted before the first boundary.
-  { printf '30\tPreface to the Second Edition\n'
-    printf '40\t1 Introduction\n'
-    printf '70\t2 The Internet Address Architecture\n'
-    printf '118\t3 Link Layer\n'
-    printf '204\t4 ARP: Address Resolution Protocol\n'
-    printf '220\t5 The Internet Protocol (IP)\n'
-    printf '272\t6 System Configuration: DHCP and Autoconfiguration\n'
-    printf '338\t7 Firewalls and Network Address Translation (NAT)\n'
-    printf '392\t8 ICMPv4 and ICMPv6: Internet Control Message Protocol\n'
-    printf '474\t9 Broadcasting and Local Multicasting (IGMP and MLD)\n'
-    printf '512\t10 User Datagram Protocol (UDP) and IP Fragmentation\n'
-    printf '550\t11 Name Resolution and the Domain Name System (DNS)\n'
-    printf '618\t12 TCP: The Transmission Control Protocol (Preliminaries)\n'
-    printf '634\t13 TCP Connection Management\n'
-    printf '686\t14 TCP Timeout and Retransmission\n'
-    printf '730\t15 TCP Data Flow and Window Management\n'
-    printf '766\t16 TCP Congestion Control\n'
-    printf '832\t17 TCP Keepalive\n'
-    printf '844\t18 Security: EAP, IPsec, TLS, DNSSEC, and DKIM\n'
-    printf '972\tGlossary of Acronyms\n'
-    printf '1002\tIndex\n'; } > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = the-design-and-implementation-of-the-freebsd-operating-system ]; then
-  # A 1152-page scan with no outline. Boundaries are the printed chapter openings
-  # (printed page == PDF page here), taken from the book's own Contents and each
-  # checked against the page whose text carries that heading. The five Parts share
-  # a page with their first chapter (no separate divider page), so Parts are not
-  # their own boundaries - the "Part N:" line just sits atop that chapter. Front
-  # matter (pages 1-11) is auto-emitted before the first boundary.
-  { printf '12\tPreface\n'
-    printf '23\t1 History and Goals\n'
-    printf '44\t2 Design Overview of FreeBSD\n'
-    printf '84\t3 Kernel Services\n'
-    printf '117\t4 Process Management\n'
-    printf '183\t5 Security\n'
-    printf '266\t6 Memory Management\n'
-    printf '372\t7 I-O System Overview\n'
-    printf '425\t8 Devices\n'
-    printf '506\t9 The Fast Filesystem\n'
-    printf '615\t10 The Zettabyte Filesystem\n'
-    printf '646\t11 The Network Filesystem\n'
-    printf '690\t12 Interprocess Communication\n'
-    printf '753\t13 Network-Layer Protocols\n'
-    printf '834\t14 Transport-Layer Protocols\n'
-    printf '891\t15 System Startup and Shutdown\n'
-    printf '928\tGlossary\n'
-    printf '976\tIndex\n'; } > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = from-day-zero-to-zero-day ]; then
   # No Starch outline: the chapters sit at depth 1 with the number fused to the
   # title ("1Taint Analysis"), which no generic pattern matches, so the plain

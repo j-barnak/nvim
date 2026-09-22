@@ -1044,7 +1044,7 @@ def pandoc_html(html, srcdir):
 # anchor, or the spine is a coarse page-split). Split each spine document at the
 # ncx chapter anchors (the Part-expanded top-level boundaries) so the picker
 # matches the printed TOC. Every other book keeps the spine/group strategies.
-ANCHOR_SPLIT = {"linux-device-drivers-3rd-edition","algorithms-illuminated-part-2","system-programming-in-linux",
+ANCHOR_SPLIT = {"linux-device-drivers-3rd-edition","algorithms-illuminated-part-2",
     "bootlin-embedded-linux-bbb-labs","bootlin-linux-kernel-slides",
     "bootlin-embedded-linux-qemu-labs", "the-linux-memory-manager"}
 # Per-book label fixes applied to the ncx labels: LMM names Chapter 1 just
@@ -1055,15 +1055,12 @@ RELABEL = {"the-linux-memory-manager": {"Introduction": "Chapter 1: Introduction
     # The PDF-derived ncx invents an "Appendix" navPoint over the section the
     # published deck (and the file's own first line) calls "Backup slides".
     "bootlin-linux-kernel-slides": {"Appendix": "Backup slides"}}
-# A spine AND an ncx too coarse to split on. xv6's only source on disk is a
-# third-party PDF-to-epub conversion with a 2-item spine and a single navPoint,
-# so the whole 106-page book landed in two files with no chapter boundary
-# anywhere in it and not one markdown heading. The book still prints its own
-# chapter openers - a bold "Chapter 4" line whose next bold line is the title -
-# which is a boundary the ncx cannot give. Value: the pattern a bold line must
-# match exactly to open a chapter. Keyed per slug because a bold "Chapter 4"
-# mid-paragraph means something else in a book whose ncx already works.
-HEADING_SPLIT = {"xv6-x86": r"(?:Chapter\s+\d+|Appendix\s+[A-Z]|Index)"}
+# A spine AND an ncx too coarse to split on (a PDF-to-epub conversion with a
+# 2-item spine and a single navPoint): the pattern a bold line must match
+# exactly to open a chapter, keyed per slug because a bold "Chapter 4"
+# mid-paragraph means something else in a book whose ncx already works. None
+# at the moment (was xv6-x86: r"(?:Chapter\s+\d+|Appendix\s+[A-Z]|Index)").
+HEADING_SPLIT = {}
 SENT = "§§CHAPSPLIT§§"
 def split_segments(parts):
     """Cut the concatenated per-spine markdown at the sentinel paragraphs."""
