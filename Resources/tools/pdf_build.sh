@@ -241,9 +241,6 @@ SLUG=$(basename "$OUT")
 # heads and never a body line.
 CTLX=
 case "$SLUG" in
-  fuzzing-against-the-machine)
-    CTLX="s/$(printf '\010')/ /g
-" ;;
   # Memory Consistency Primer: byte 0x16 is the mu of "μhb"/"μspec" (CCICheck),
   # only ever mid-line; without this the tr turns it into a stray "?".
   a-primer-on-memory-consistency-and-cache-coherence)
@@ -415,42 +412,6 @@ elif [ "$4" = book ] && { [ "$SLUG" = amd-apm-vol1 ] || [ "$SLUG" = amd-apm-vol2
         print $2"\t"t
       }' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = reverse-engineering-for-beginners ]; then
-  # RE4B's outline uses bare topic phrases (no Chapter N / Part keyword), so the
-  # title patterns matched only stray deep bookmarks ("Part I", a "submenu"
-  # leaf, a "10 PRINT CHR$" demo) and left a 1.6 MB "Front Matter" swallowing the
-  # whole book. Its real divisions are the outline's depth-0 parts, in printed
-  # order - EXCEPT the first part, "Code Patterns", is 562 pages (p23-585, ~40%
-  # of the book), so it is split further into its own depth-1 sections (the only
-  # depth-1 nodes before p586). Two of those sections share a start page with a
-  # broken "... : redux" / "Worth noting ..." cross-reference bookmark that
-  # resolves to the same page but carries no content; among boundaries on one
-  # page, keep the node that has children (a real section always has depth-2
-  # subsections) so "Stack" (p62) and "Accessing passed arguments" (p147) win
-  # over their leaf collisions. Front matter (p1-22) is auto-emitted before the
-  # first boundary.
-  awk -F'\t' '
-    { d[NR]=$1; p[NR]=$2; t[NR]=$3 }
-    END {
-      for (i=1;i<=NR;i++) hc[i]=(i<NR && d[i+1]>d[i])?1:0
-      for (i=1;i<=NR;i++) if (d[i]==0 || (d[i]==1 && p[i]+0<586)) {
-        tt=t[i]; sub(/^[ \t]+/,"",tt); sub(/[ \t]+$/,"",tt)
-        k=p[i]+0
-        if (!(k in best) || (hc[i] && !bhc[k])) { best[k]=tt; bhc[k]=hc[i] }
-      }
-      for (k in best) print k"\t"best[k]
-    }' "$OUT/.all.tsv" \
-    | sort -t"$(printf '\t')" -k1,1n -s \
-    | awk -F'\t' 'BEGIN{OFS="\t"}
-        # "SIMD" (section 1.36) begins partway down page 535, whose top holds
-        # the tail of "LARGE_INTEGER structure case" (its RtlLargeIntegerAdd C
-        # listing and the little-endian wrap-up). Page-granular splitting put
-        # all of page 535 in the SIMD file, so LARGE_INTEGER dangled mid-sentence
-        # ("...what we can find in Windows Research Kernel:") and SIMD opened with
-        # foreign content. Give SIMD a cut_anchor on its printed heading so page
-        # 535 is shared: LARGE_INTEGER keeps everything up to the heading and SIMD
-        # starts at it.
-        $2=="SIMD"{print $1,$2,"1.36 SIMD"; next} {print}' > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = learn-programming-with-ocaml ]; then
   # Chapters are the outline's depth-1 nodes (the depth fallback further down
   # finds the same set), but this book's end matter cannot be taken from the
