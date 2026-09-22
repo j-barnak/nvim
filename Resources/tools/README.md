@@ -70,7 +70,7 @@ output under `Resources/docs`):
   source either loses its destination and keeps its text, as `epub_build.sh`
   does. `--max-asset` caps what goes into `media/` (default 16M; the sam4k
   capture alone is 96 MiB of animated GIFs). The per-book rules are keyed on
-  the slug: `linux-insides`, `ebpf-developer-tutorial`,
+  the slug: `linux-insides`,
   `heap-exploitation-dhaval-kapil`, `ir0nstone-binary-exploitation`, and
   `linternals-sam4k`, which runs in attach mode because `webextract.py`
   produces its chapters (it only adds `media/` and rewrites the references).

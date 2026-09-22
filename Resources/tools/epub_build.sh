@@ -25,13 +25,6 @@ BOOK_TITLES = [title]  # plus the OPF dc:title entries, filled in below
 NAME_FIX = {"more-ocaml-algorithms-methods-and-diversions": {
     "index_split_001.html": "Title Page", "index_split_002.html": "Copyright",
     "index_split_019.html": "Part: Generating PDF Documents (an extended example)"},
-    # DDIA 2e front matter the ncx does not label: the title page and the
-    # copyright page both carry the book title as their only h1 (so both mined
-    # the same name), and the Alan Kay epigraph has no heading (it fell to the
-    # "dedication03" file stem).
-    "designing-data-intensive-applications-2e": {
-        "titlepage01.html": "Title Page", "copyright-page01.html": "Copyright",
-        "dedication03.html": "Epigraph"},
     # PBA back matter the ncx does not label: bm03 is the back-cover praise (it
     # mined the blurb's first 140 chars as a title); nav is the epub landmarks.
     "practical-binary-analysis": {
@@ -770,8 +763,8 @@ def _headparts(t):
         if m: return m.group("n"), m.group("t").strip()
     return None
 RUNNING_HEADS = {
-    # Bootlin lab book (PDF-derived): the deck title is printed atop every page.
-    "bootlin-embedded-linux-qemu-labs": {"Embedded Linux System Development"},
+    # (PDF-derived decks print their title atop every page; none at the moment,
+    # e.g. "bootlin-embedded-linux-qemu-labs": {"Embedded Linux System Development"})
 }
 _CODEPUNCT = re.compile(r'[{}\[\];=<>`\\|$@#_]|::|->')
 _CHAPLABEL = re.compile(r'(chapter|part)\s+(\d+|[ivxlc]+)', re.I)
@@ -835,14 +828,7 @@ BOOK_WORDS = set()    # every word the book uses, to judge a broken hyphenation
 # and truncated the very titles it was meant to preserve here ("50/436 Kernel
 # configuration" -> "configuration"). A repeated prefix is not a shape.
 RUNNING_FOOTERS = {
-    "bootlin-linux-kernel-slides": (
-        "Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com",),
-    "bootlin-embedded-linux-bbb-labs": (
-        "© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license",
-        "© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license"),
-    "bootlin-embedded-linux-qemu-labs": (
-        "© 2004-2025 [Bootlin](https://bootlin.com), CC BY-SA license",
-        "© 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license"),
+    # none at the moment (the three Bootlin decks that needed it were removed)
 }
 _LEAD = re.compile(r"^[ \t]*(?:[-*+\u2022\u25b6\u25b8][ \t]+)?(?:\d{1,4}(?:/\d{1,4})?[ \t]+)?")
 _FOOT_PATS = [re.compile(_LEAD.pattern + re.escape(f) + r"(?:[ \t]*\d{1,4}(?:/\d{1,4})?)?[ \t]*")
@@ -1044,17 +1030,9 @@ def pandoc_html(html, srcdir):
 # anchor, or the spine is a coarse page-split). Split each spine document at the
 # ncx chapter anchors (the Part-expanded top-level boundaries) so the picker
 # matches the printed TOC. Every other book keeps the spine/group strategies.
-ANCHOR_SPLIT = {"linux-device-drivers-3rd-edition","algorithms-illuminated-part-2",
-    "bootlin-embedded-linux-bbb-labs","bootlin-linux-kernel-slides",
-    "bootlin-embedded-linux-qemu-labs", "the-linux-memory-manager"}
-# Per-book label fixes applied to the ncx labels: LMM names Chapter 1 just
-# "Introduction" (its siblings are "Chapter N: ...") and its Chapter 11
-# bookmark misspells Pressure.
-RELABEL = {"the-linux-memory-manager": {"Introduction": "Chapter 1: Introduction",
-    "Chapter 11: Reclaim and Memory Pressue": "Chapter 11: Reclaim and Memory Pressure"},
-    # The PDF-derived ncx invents an "Appendix" navPoint over the section the
-    # published deck (and the file's own first line) calls "Backup slides".
-    "bootlin-linux-kernel-slides": {"Appendix": "Backup slides"}}
+ANCHOR_SPLIT = {"algorithms-illuminated-part-2"}
+# Per-book label fixes applied to the ncx labels (slug -> {label: fixed}).
+RELABEL = {}
 # A spine AND an ncx too coarse to split on (a PDF-to-epub conversion with a
 # 2-item spine and a single navPoint): the pattern a bold line must match
 # exactly to open a chapter, keyed per slug because a bold "Chapter 4"

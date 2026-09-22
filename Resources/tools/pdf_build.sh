@@ -272,7 +272,6 @@ case "$SLUG" in
   # -contents dot-leader "9.9 X ... 132" and any prose sentence are excluded), then
   # at least three spaces (the right-aligned folio gap, never an inline number) and
   # a trailing page number. Validated per book to match only running heads.
-  bpf-performance-tools|systems-performance|\
   computer-organization-and-design|\
   modern-processor-design|mastering-stm32)
     FURN='^[0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}[ ]*$' ;;
@@ -321,10 +320,6 @@ case "$SLUG" in
   # Memory Consistency Primer: 174 running heads folio.awk misses (even
   # "<folio> <n>. TITLE", odd "<n.m>. TITLE <folio>"), all-caps-title keyed.
   a-primer-on-memory-consistency-and-cache-coherence) FIXAWK="${AWKF%/*}/primer_fix.awk" ;;
-  # The Linux Programming Interface: the list bullet is a dingbat with no Unicode
-  # map, so every bulleted item opens with a literal "z" (1,827 of them);
-  # tlpi_fix maps it back to a bullet and drops 9 even-page footer leaks.
-  the-linux-programming-interface) FIXAWK="${AWKF%/*}/tlpi_fix.awk" ;;
   # RISC-V specs (ISA manual + SBI/AIA/IOMMU/... the whole books-riscv set): the
   # asciidoc toolchain prints a "<Section Title> | Page <N>" footer on every
   # page; folio.awk strips only bare page numbers, so ~800 survive. riscv_fix
@@ -517,19 +512,6 @@ elif [ "$4" = book ] && [ "$SLUG" = writing-a-bootloader-from-scratch-cmu-15-410
           for (i = 1; i <= N; i++) print HP[i] "\t" HT[i] "\t" HT[i] }' > "$OUT/.ch.tsv" \
     || : > "$OUT/.ch.tsv"
   rm -f "$OUT/.d0.tsv"
-elif [ "$4" = book ] && { [ "$SLUG" = bpf-performance-tools ] || [ "$SLUG" = systems-performance ]; }; then
-  # Gregg's two books: each Part-divider bookmark shares a page with that part's
-  # first chapter, so the generic dedup drops the chapter; and two chapter titles
-  # are lower-case ("5 bpftrace", "13 perf") which the generic `^N [A-Z]` rule
-  # misses. Take the numbered chapters at depth <= 1 case-insensitively, plus the
-  # front/back matter, and drop the colliding Part dividers entirely.
-  awk -F'\t' '
-    { t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); keep=0 }
-    $1<=1 && t ~ /^[0-9]+ [A-Za-z]/ { keep=1 }
-    $1<=1 && lt ~ /^(foreword|preface|appendix|glossary|bibliography|index)([ .:]|$)/ { keep=1 }
-    keep { print $2"\t"t }
-  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
-    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = rootkits ]; then
   # Rootkits and Bootkits: the Brief Contents bookmarks add arabic-numbered
   # "Part 1 / Part 3" nodes alongside the real roman "Part I / II / III", so the

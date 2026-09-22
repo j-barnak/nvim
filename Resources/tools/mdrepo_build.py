@@ -37,8 +37,6 @@ own so one is prepended (see plan_codecrafters).
 
 Slugs:
   linux-insides                    0xAX/linux-insides, ordered by SUMMARY.md
-  ebpf-developer-tutorial          eunomia-bpf/bpf-developer-tutorial,
-                                   src/SUMMARY.md then the unlisted lessons
   heap-exploitation-dhaval-kapil   DhavalKapil/heap-exploitation, SUMMARY.md
   ir0nstone-binary-exploitation    ir0nstone/cybersec-notes, the Binary
                                    Exploitation part of SUMMARY.md
@@ -533,40 +531,6 @@ def plan_linux_insides(src):
 EBPF_LINK = re.compile(r"^\s*-\s*\[([^\]]*)\]\(([^)]+)\)\s*(.*?)\s*$")
 
 
-def plan_ebpf(src):
-    """src/SUMMARY.md order, then the English lessons SUMMARY does not list."""
-    recs = [{"title": "eBPF Developer Tutorial - Overview", "src": "README.md"}]
-    seen = set()
-    for line in read(os.path.join(src, "src", "SUMMARY.md")).split("\n"):
-        m = EBPF_LINK.match(line)
-        if not m:
-            continue
-        label, target, tail = m.group(1), m.group(2), m.group(3)
-        if target.startswith("http") or target.endswith(".zh.md"):
-            continue
-        rel = os.path.normpath(target)
-        if rel in seen or not os.path.isfile(os.path.join(src, "src", rel)):
-            continue
-        seen.add(rel)
-        lm = re.match(r"^lesson\s+(\d+)-", label)
-        clean = lambda t: re.sub(r"\s+", " ", t.replace("`", "").strip())
-        if lm and tail:
-            title = "Lesson %s - %s" % (lm.group(1), clean(tail))
-        else:
-            title = clean(tail) or clean(label) or rel
-        recs.append({"title": title, "src": os.path.join("src", rel)})
-    for d in sorted(os.listdir(os.path.join(src, "src"))):
-        rel = os.path.join(d, "README.md")
-        if not os.path.isfile(os.path.join(src, "src", rel)) or rel in seen:
-            continue
-        t = re.sub(r"\s+", " ", (first_heading(read(os.path.join(src, "src", rel))) or rel).strip())
-        hm = re.match(r"^eBPF Tutorial by Example (\d+):\s*(.+)$", t)
-        if hm:
-            t = "Lesson %s - %s" % (hm.group(1), hm.group(2))
-        recs.append({"title": t, "src": os.path.join("src", rel)})
-    return number(recs, safe=slashonly)
-
-
 GITBOOK_LINK = re.compile(r"^(\s*)\*\s+\[(.+?)\]\((.+?)\)\s*$")
 
 
@@ -964,7 +928,6 @@ def plan_linternals(src, out_dir):
 # chapters have to keep reproducing byte for byte.
 BOOKS = {
     "linux-insides": (plan_linux_insides, "https://github.com/0xAX/linux-insides/blob/master/", False),
-    "ebpf-developer-tutorial": (plan_ebpf, "https://github.com/eunomia-bpf/bpf-developer-tutorial/blob/main/", True),
     "heap-exploitation-dhaval-kapil": (plan_heap, "https://github.com/DhavalKapil/heap-exploitation/blob/master/", False),
     "ir0nstone-binary-exploitation": (plan_ir0nstone, "https://github.com/ir0nstone/cybersec-notes/blob/master/", True),
     "build-your-own-git": (plan_codecrafters, "https://github.com/codecrafters-io/build-your-own-git/blob/main/", False),

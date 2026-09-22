@@ -1,1 +1,0 @@
-![Linux Device Drivers, 3rd Edition](media/orm_front_cover.jpg)
