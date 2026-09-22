@@ -13,7 +13,7 @@ Two kinds of book:
   (`title<TAB>url` rows) whose pages are `Resources/docs/.webcache/<sha256(url)>.txt`,
   shared between books.
 
-## Chapter books (epub / pdf / markdown repo) — 39
+## Chapter books (epub / pdf / markdown repo) — 27
 
 ### Rust (`books-rust`)
 
@@ -61,88 +61,61 @@ Two kinds of book:
 | 10 | Heap Exploitation (Dhaval Kapil) | md | `heap-exploitation-dhaval-kapil` | 22 | keep |
 | 11 | ir0nstone: Binary Exploitation Notes | md | `ir0nstone-binary-exploitation` | 121 | keep |
 
-### Hardware (`books-hardware`)
-
-| # | Title | Fmt | Slug | Chapters | Keep? |
-|---|---|---|---|---|---|
-| 12 | Getting Started with FPGAs (Merrick) | pdf | `getting-started-with-fpgas` | 17 |  |
-| 13 | Retrocomputing with Clash | pdf | `retrocomputing-with-clash` | 22 |  |
-
-### Firmware (`books-firmware`)
-
-| # | Title | Fmt | Slug | Chapters | Keep? |
-|---|---|---|---|---|---|
-| 14 | Mastering STM32 (Noviello) | pdf | `mastering-stm32` | 34 |  |
-| 15 | Beyond BIOS | epub | `beyond-bios` | 23 |  |
-| 16 | Embedded Systems: Introduction to Arm Cortex-M Microcontrollers (Valvano) | pdf | `embedded-systems-arm-cortex-m-valvano` | 18 |  |
-| 17 | Embedded Systems with ARM Cortex-M (Assembly and C, Zhu) | pdf | `embedded-systems-arm-cortex-m-zhu` | 36 |  |
-| 18 | The Definitive Guide to ARM Cortex-M0 and Cortex-M0+ (Yiu) | pdf | `arm-cortex-m0-definitive-guide` | 35 |  |
-| 19 | Programming Embedded Systems (Barr, Massa) | pdf | `programming-embedded-systems` | 24 |  |
-| 20 | Making Embedded Systems (Elecia White, 2e) | pdf | `making-embedded-systems` | 17 |  |
-
-### Windows (`books-windows`)
-
-| # | Title | Fmt | Slug | Chapters | Keep? |
-|---|---|---|---|---|---|
-| 21 | Windows Internals, Part 1 (7e) | pdf | `windows-internals-part-1` | 10 |  |
-| 22 | Windows Internals, Part 2 (7e) | pdf | `windows-internals-part-2` | 9 |  |
-| 23 | Windows Kernel Programming (2e) | pdf | `windows-kernel-programming-2e` | 11 |  |
-
 ### Haskell (`books-haskell`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 24 | Haskell Programming from First Principles | pdf | `haskell-programming-from-first-principles` | 33 |  |
-| 25 | Programming in Haskell (2e) | epub | `programming-in-haskell-2e` | 31 |  |
-| 26 | Algorithm Design with Haskell (Bird, Gibbons) | pdf | `algorithm-design-with-haskell` | 27 |  |
-| 27 | Parallel and Concurrent Programming in Haskell (Marlow) | epub | `parallel-concurrent-haskell` | 26 |  |
+| 12 | Haskell Programming from First Principles | pdf | `haskell-programming-from-first-principles` | 33 |  |
+| 13 | Programming in Haskell (2e) | epub | `programming-in-haskell-2e` | 31 |  |
+| 14 | Algorithm Design with Haskell (Bird, Gibbons) | pdf | `algorithm-design-with-haskell` | 27 |  |
+| 15 | Parallel and Concurrent Programming in Haskell (Marlow) | epub | `parallel-concurrent-haskell` | 26 |  |
 
 ### OCaml (`books-ocaml`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 28 | More OCaml: Algorithms, Methods, and Diversions | epub | `more-ocaml-algorithms-methods-and-diversions` | 28 |  |
-| 29 | Learn Programming with OCaml | pdf | `learn-programming-with-ocaml` | 16 |  |
+| 16 | More OCaml: Algorithms, Methods, and Diversions | epub | `more-ocaml-algorithms-methods-and-diversions` | 28 |  |
+| 17 | Learn Programming with OCaml | pdf | `learn-programming-with-ocaml` | 16 |  |
 
 ### Python (`books-python`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 30 | Fluent Python (2nd Edition) | pdf | `fluent-python` | 33 |  |
-| 31 | Python Crash Course | pdf | `python-crash-course` | 31 |  |
-| 32 | Dead Simple Python | pdf | `dead-simple-python` | 33 |  |
+| 18 | Fluent Python (2nd Edition) | pdf | `fluent-python` | 33 |  |
+| 19 | Python Crash Course | pdf | `python-crash-course` | 31 |  |
+| 20 | Dead Simple Python | pdf | `dead-simple-python` | 33 |  |
 
 ### Java (`books-java`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 33 | Java Concurrency in Practice | pdf | `java-concurrency-in-practice` | 24 |  |
+| 21 | Java Concurrency in Practice | pdf | `java-concurrency-in-practice` | 24 |  |
 
 ### JavaScript (`books-js`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 34 | Eloquent JavaScript (4th Edition) | pdf | `eloquent-javascript-4e` | 24 |  |
-| 35 | Learning TypeScript (Goldberg) | pdf | `learning-typescript` | 24 |  |
+| 22 | Eloquent JavaScript (4th Edition) | pdf | `eloquent-javascript-4e` | 24 |  |
+| 23 | Learning TypeScript (Goldberg) | pdf | `learning-typescript` | 24 |  |
 
 ### Graphics (`books-graphics`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 36 | OpenGL SuperBible | pdf | `opengl-superbible` | 26 |  |
+| 24 | OpenGL SuperBible | pdf | `opengl-superbible` | 26 |  |
 
 ### Version Control (`books-vcs`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 37 | Build Your Own Git (CodeCrafters) | md | `build-your-own-git` | 8 | keep — CodeCrafters course |
-| 38 | Building Git | pdf | `building-git` | 41 |  |
+| 25 | Build Your Own Git (CodeCrafters) | md | `build-your-own-git` | 8 | keep — CodeCrafters course |
+| 26 | Building Git | pdf | `building-git` | 41 |  |
 
 ### Debugging (`books-debugging`)
 
 | # | Title | Fmt | Slug | Chapters | Keep? |
 |---|---|---|---|---|---|
-| 39 | Building a Debugger | pdf | `building-a-debugger` | 27 |  |
+| 27 | Building a Debugger | pdf | `building-a-debugger` | 27 |  |
 
 ## Frozen web books (`WEB_BOOKS`) — 65
 
@@ -214,7 +187,7 @@ Two kinds of book:
 | 64 | Writing an OS in Rust (Phil Opp) | `writing-an-os-in-rust` | 12 | os.phil-opp.com | keep |
 | 65 | Algorithms for Modern Hardware (Algorithmica) | `algorithmica-hpc` | 82 | en.algorithmica.org | keep |
 
-## Removed from Books — 157
+## Removed from Books — 169
 
 (`moved` = still in :Docs, just not under Books any more.)
 
@@ -228,11 +201,13 @@ Two kinds of book:
 | `an-introduction-to-mathematical-cryptography` | remove | 2026-09-22 pass, chunk 9 |
 | `android-security-internals` | remove | 2026-09-22 pass, chunk 8 |
 | `api-design-for-cpp` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
+| `arm-cortex-m0-definitive-guide` | remove | 2026-09-22 pass, chunk 12 |
 | `atomics` | remove | 2026-09-22 pass, chunk 1 |
 | `attacking-network-protocols` | remove | 2026-09-22 pass, chunk 8 |
 | `awesome-databases` | remove | 2026-09-22 pass, chunk 2 |
 | `beautiful-c-30-core-guidelines` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
 | `beautiful-racket` | remove | 2026-09-22 pass, chunk 1 |
+| `beyond-bios` | remove | 2026-09-22 pass, chunk 12 |
 | `blue-fox-arm-assembly-internals` | remove | 2026-09-22 pass, chunk 4 |
 | `bochs-docs` | moved | moved out of Books; reached from the top-level Bochs entry |
 | `bootlin-embedded-linux-bbb-labs` | remove | 2026-09-22 pass, chunk 7 |
@@ -262,12 +237,15 @@ Two kinds of book:
 | `effective-c` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
 | `effective-modern-c` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
 | `elements-of-programming` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
+| `embedded-systems-arm-cortex-m-valvano` | remove | 2026-09-22 pass, chunk 12 |
+| `embedded-systems-arm-cortex-m-zhu` | remove | 2026-09-22 pass, chunk 12 |
 | `engineering-a-compiler` | remove | 2026-09-22 pass, chunk 6 |
 | `essentials-of-compilation` | remove | 2026-09-22 pass, chunk 6 |
 | `expert-c-programming` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
 | `file-system-forensic-analysis` | remove | 2026-09-22 pass, chunk 8 |
 | `from-day-zero-to-zero-day` | remove | 2026-09-22 pass, chunk 8 |
 | `fuzzing-against-the-machine` | remove | 2026-09-22 pass, chunk 9 |
+| `getting-started-with-fpgas` | remove | 2026-09-22 pass, chunk 12 |
 | `gray-hat-hacking-6e` | remove | 2026-09-22 pass, chunk 8 |
 | `hackers-delight` | remove | 2026-09-22 pass, chunk 10 |
 | `hardware-software-support-virtualization` | remove | 2026-09-22 pass, chunk 10 |
@@ -284,7 +262,9 @@ Two kinds of book:
 | `linux-kernel-programming` | remove | 2026-09-22 pass, chunk 7 |
 | `linux-kernel-programming-part-2` | remove | 2026-09-22 pass, chunk 7 |
 | `lyah` | remove | 2026-09-22 pass, chunk 1 |
+| `making-embedded-systems` | remove | 2026-09-22 pass, chunk 12 |
 | `managing-projects-with-gnu-make` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
+| `mastering-stm32` | remove | 2026-09-22 pass, chunk 12 |
 | `microarchitecture-of-cpus-agner-fog` | remove | 2026-09-22 pass, chunk 10 |
 | `microcontroller-exploits` | remove | 2026-09-22 pass, chunk 9 |
 | `mit-6824` | remove | 2026-09-22 pass, chunk 1 |
@@ -307,8 +287,10 @@ Two kinds of book:
 | `professional-assembly-language` | remove | 2026-09-22 pass, chunk 4 |
 | `professional-cmake` | remove | 2026-09-22 pass, chunk 3 (C / C++ modules dropped) |
 | `program-analysis-cmu` | remove | 2026-09-22 pass, chunk 6 |
+| `programming-embedded-systems` | remove | 2026-09-22 pass, chunk 12 |
 | `programming-rust-2e` | remove | 2026-09-22 pass, chunk 4 |
 | `programming-with-posix-threads` | remove | 2026-09-22 pass, chunk 5 |
+| `retrocomputing-with-clash` | remove | 2026-09-22 pass, chunk 12 |
 | `reverse-engineering-for-beginners` | remove | 2026-09-22 pass, chunk 9 |
 | `reversing-secrets-of-reverse-engineering` | remove | 2026-09-22 pass, chunk 9 |
 | `riscv-acpi-ffh` | remove | 2026-09-22 pass, chunk 11 |
@@ -371,6 +353,9 @@ Two kinds of book:
 | `v8-docs` | remove | 2026-09-22 pass, chunk 2 |
 | `v8-resources` | remove | 2026-09-22 pass, chunk 2 |
 | `what-every-programmer-should-know-about-memory` | remove | 2026-09-22 pass, chunk 10 |
+| `windows-internals-part-1` | remove | 2026-09-22 pass, chunk 12 |
+| `windows-internals-part-2` | remove | 2026-09-22 pass, chunk 12 |
+| `windows-kernel-programming-2e` | remove | 2026-09-22 pass, chunk 12 |
 | `wisc-cs752` | remove | 2026-09-22 pass, chunk 2 |
 | `write-you-a-haskell` | remove | 2026-09-22 pass, chunk 1 |
 | `writing-a-c-compiler` | remove | 2026-09-22 pass, chunk 6 |

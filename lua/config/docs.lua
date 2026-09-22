@@ -4344,24 +4344,6 @@ local BOOKS = {
 		{ title = "Heap Exploitation (Dhaval Kapil)", fmt = "md", slug = "heap-exploitation-dhaval-kapil", file = "https://github.com/DhavalKapil/heap-exploitation" },
 		{ title = "ir0nstone: Binary Exploitation Notes", fmt = "md", slug = "ir0nstone-binary-exploitation", file = "https://github.com/ir0nstone/cybersec-notes" },
 	} },
-	{ module = "Hardware", key = "books-hardware", items = {
-		{ title = "Getting Started with FPGAs (Merrick)", fmt = "pdf", slug = "getting-started-with-fpgas", file = "Getting Started with FPGAs -- Russell Merrick -- 1, 2023 -- No Starch Press, Incorporated -- isbn13 9781718502956 -- 3b7d7f09b0634be1a8c1d17e8b5192d7 -- Anna’s Archive.pdf" },
-		{ title = "Retrocomputing with Clash", fmt = "pdf", slug = "retrocomputing-with-clash", file = "retroclash.pdf" },
-	} },
-	{ module = "Firmware", key = "books-firmware", items = {
-		{ title = "Mastering STM32 (Noviello)", fmt = "pdf", slug = "mastering-stm32", file = "Mastering-STM32.pdf" },
-		{ title = "Beyond BIOS", fmt = "epub", file = "Beyond BIOS - Vincent Zimmer,Michael Rothman,Suresh Marisetty.epub" },
-		{ title = "Embedded Systems: Introduction to Arm Cortex-M Microcontrollers (Valvano)", fmt = "pdf", slug = "embedded-systems-arm-cortex-m-valvano", file = "Embedded-Intro-to-Arm-Microcontrollers.pdf" },
-		{ title = "Embedded Systems with ARM Cortex-M (Assembly and C, Zhu)", fmt = "pdf", slug = "embedded-systems-arm-cortex-m-zhu", file = "Embedded Systems with ARM Cortex-M Microcontrollers in Assembly Language and C.pdf" },
-		{ title = "The Definitive Guide to ARM Cortex-M0 and Cortex-M0+ (Yiu)", fmt = "pdf", slug = "arm-cortex-m0-definitive-guide", file = "annas-arch-1909660c0a67.pdf" },
-		{ title = "Programming Embedded Systems (Barr, Massa)", fmt = "pdf", slug = "programming-embedded-systems", file = "Barr, Michael_Massa, Anthony - Programming Embedded Systems (2006, O'Reilly Media Incorporated) - libgen.li.pdf" },
-		{ title = "Making Embedded Systems (Elecia White, 2e)", fmt = "pdf", slug = "making-embedded-systems", file = "Elecia White - Making Embedded Systems_ Design Patterns for Great Software (2024, O’Reilly Media) - libgen.li.pdf" },
-	} },
-	{ module = "Windows", key = "books-windows", items = {
-		{ title = "Windows Internals, Part 1 (7e)", fmt = "pdf", slug = "windows-internals-part-1", file = "Windows-Internals-Part-1.pdf" },
-		{ title = "Windows Internals, Part 2 (7e)", fmt = "pdf", slug = "windows-internals-part-2", file = "Windows-Internals-Part-2.pdf" },
-		{ title = "Windows Kernel Programming (2e)", fmt = "pdf", file = "WindowsKernelProgramming.pdf" },
-	} },
 	{ module = "Haskell", key = "books-haskell", items = {
 		{ title = "Haskell Programming from First Principles", fmt = "pdf", file = "Haskell Programming from First Principles -- Chris Allen, Julie Moronuki -- 1_0RC2, 2017 -- 0073d1100c226de172fca6fa9b2809d9 -- Anna’s Archive.pdf" },
 		{ title = "Programming in Haskell (2e)", fmt = "epub", file = "Programming in Haskell (9781316876152) -- Hutton, Graham -- Second Edition, 5th printing, 2018;2015 -- Cambridge University Press (Virtual Publishing) -- 9781139637534 -- f80c6f606a590ab38c7340907cab3be5 -- Anna’s.epub" },

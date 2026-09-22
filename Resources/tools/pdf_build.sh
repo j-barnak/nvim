@@ -249,16 +249,6 @@ esac
 FURN=
 case "$SLUG" in
   learn-programming-with-ocaml) FURN='^([0-9]+ +(Chapter [0-9]+[.].*|BIBLIOGRAPHY|INDEX)|[0-9]+[.][0-9]+[.] .+ [0-9]+|(BIBLIOGRAPHY|INDEX) +[0-9]+)$' ;;
-  # Books whose per-page running head is "<section-number> <Title>  <folio>"
-  # (section head on one edge, folio right-aligned) and which folio.awk's learn
-  # pass does not attest (its folio does not march in a simple offset, or the head
-  # lands mid-column under -layout). The pattern is deliberately narrow: a
-  # dotted-decimal section number, a Title with NO period in it (so a table-of
-  # -contents dot-leader "9.9 X ... 132" and any prose sentence are excluded), then
-  # at least three spaces (the right-aligned folio gap, never an inline number) and
-  # a trailing page number. Validated per book to match only running heads.
-  mastering-stm32)
-    FURN='^[0-9]+[.][0-9]+[.]?[ ]+[A-Z][^.]*[ ][ ][ ]+[0-9]{1,4}[ ]*$' ;;
 esac
 # Per-slug code-listing repair (book_fix above): one awk filter per book that
 # needs it, kept next to pdf_build.sh and resolved from folio.awk's directory
@@ -276,11 +266,6 @@ case "$SLUG" in
   # elf_fix.awk drops both forms symmetrically; it is anchored on the "N-M" page
   # tag and the all-caps title so it never touches a body line or a TOC entry.
   elf-specification) FIXAWK="${AWKF%/*}/elf_fix.awk" ;;
-  # Retrocomputing with Clash: folio.awk leaves 145 running heads (verso
-  # "<folio> Chapter N <title>", recto "<n.m> <section> <folio>"); retroclash_fix
-  # drops both, page-top only, keeping TOC dot-leaders. Every match is the first
-  # non-blank line of its page, so no body/code line is touched.
-  retrocomputing-with-clash) FIXAWK="${AWKF%/*}/retroclash_fix.awk" ;;
   # Fluent Python: O'Reilly running head "<section> | <page>" / "<page> |
   # <chapter>" on every body page, using section headings folio.awk's outline
   # list does not know, so ~260 survive mid-listing. fluent_python_fix drops the
@@ -424,15 +409,6 @@ elif [ "$4" = book ] && [ "$SLUG" = writing-a-bootloader-from-scratch-cmu-15-410
           for (i = 1; i <= N; i++) print HP[i] "\t" HT[i] "\t" HT[i] }' > "$OUT/.ch.tsv" \
     || : > "$OUT/.ch.tsv"
   rm -f "$OUT/.d0.tsv"
-elif [ "$4" = book ] && [ "$SLUG" = embedded-systems-arm-cortex-m-zhu ]; then
-  # Chapters are titled "ChN: Title" (abbreviated), which the generic book
-  # pattern (Chapter/Part/Appendix at line start) misses, so it folded all 24
-  # into the front matter and split only on the "Appendix X:" nodes. The depth-0
-  # outline nodes are exactly the chapters, appendices, Bibliography and Index in
-  # page order; take them straight. Front matter (before Ch1) folds into the
-  # auto-emitted first block, like every other book.
-  awk -F'\t' '$1==0 {t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); print $2"\t"t}' "$OUT/.all.tsv" \
-    | sort -t"$(printf '\t')" -k1,1n -s > "$OUT/.ch.tsv"
 elif [ "$4" = book ]; then
   # Match on a lowercased copy so No Starch's "APPENDIX: ..." / "GLOSSARY" count;
   # accept letter-numbered appendices ("A. The One-Definition Rule") once a
