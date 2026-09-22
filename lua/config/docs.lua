@@ -3659,12 +3659,11 @@ end
 -- source, which clones the whole engine AT THAT TAG so the Python/Rust bindings,
 -- their tests, the C test suite and the samples are all browsable through :Src.
 local pick_unicorn_articles = frozen_web_provider("unicorn-articles", "Unicorn Articles & Tutorial> ")
--- Bochs top-level entry: the manuals (frozen "Bochs Documentation" web book)
--- and the emulator source live in one place, so clicking "Bochs" no longer
--- drops straight into C++. Documentation is first (and preselected) because
--- that is what most readers reach for; "Explore source" opens the tree for
--- gs/:Src. Both remain reachable on their own too (Documentation also shows
--- in the Books list).
+-- Bochs top-level entry: the manuals (the frozen bochs-docs set) and the
+-- emulator source live in one place, so clicking "Bochs" no longer drops
+-- straight into C++. Documentation is first (and preselected) because that is
+-- what most readers reach for; "Explore source" opens the tree for gs/:Src.
+-- The manuals are reached only from here (they left the Books list).
 local function pick_bochs()
 	fzf().fzf_exec({ "Documentation (User + Developer manuals)", "Explore source" }, {
 		prompt = "Bochs> ",
@@ -4822,13 +4821,9 @@ local WEB_BOOKS = {
 	{ title = "Linux Kernel Module Programming Guide", key = "lkmpg", run = pick_lkmpg },
 	{ title = "High Performance Browser Networking (Grigorik)", key = "hpbn", run = pick_hpbn },
 	{ title = "Cryptopals Crypto Challenges", key = "cryptopals", run = pick_cryptopals },
-	-- University course books: lecture/lab PDFs and notes frozen as chapters
-	-- (pdftotext / page fetch), no videos. Builders: <course>_build.sh.
-	{ title = "Wisconsin CS/ECE 752 Advanced Computer Architecture", key = "wisc-cs752", run = frozen_web_provider("wisc-cs752", "CS752> ") },
 	{ title = "LazyFoo SDL3 Tutorials", key = "lazyfoo-sdl3", run = pick_lazyfoo_sdl3 },
 	{ title = "QEMU Internals (Airbus Seclab)", key = "qemu-internals", run = pick_qemu_internals },
 	{ title = "JIT (Series)", key = "jit-series", run = pick_jit_series },
-	{ title = "Bochs Documentation", key = "bochs-docs", run = pick_bochs_docs },
 	{ title = "EmuDev (Emulator Development reading list)", key = "emudev", run = pick_emudev },
 	{ title = "The C10K Problem (Kegel)", key = "c10k", run = pick_c10k },
 	{ title = "BashGuide + Bash FAQ (Greg's Wiki)", key = "bashguide", run = pick_bashguide },
@@ -4845,14 +4840,7 @@ local WEB_BOOKS = {
 	{ title = "LibAFL (Articles)", key = "fuzzing-101-libafl", run = pick_fuzzing_101_libafl },
 	{ title = "AFL++ Articles", key = "aflpp-articles", run = frozen_web_provider("aflpp-articles", "AFL++ Articles> ") },
 	{ title = "What The Fuzz (wtf) Articles", key = "wtf-articles", run = frozen_web_provider("wtf-articles", "wtf Articles> ") },
-	{ title = "Awesome Databases (papers + storage)", key = "awesome-databases", run = frozen_web_provider("awesome-databases", "Awesome Databases> ") },
 	{ title = "Coding for SSDs (codecapsule)", key = "coding-for-ssds", run = frozen_web_provider("coding-for-ssds", "Coding for SSDs> ") },
-	-- SICP (JavaScript edition, sourceacademy.org/sicpjs): sections numbered
-	-- 1.0 / 1.1 / 1.1.1, JavaScript code preserved.
-	{ title = "SICP (JavaScript edition)", key = "sicp-js", run = frozen_web_provider("sicp-js", "SICP JS> ") },
-	-- Algorithms, 4th ed. (Sedgewick & Wayne, algs4.cs.princeton.edu): 6 chapter
-	-- landings + 30 sections (1.1 .. 6.6), Java code preserved, sections indented.
-	{ title = "Algorithms (Sedgewick & Wayne, algs4)", key = "algs4", run = frozen_web_provider("algs4", "algs4> ") },
 	{ title = "Ptrace Injection (Articles)", key = "ptrace-injection", run = pick_ptrace_injection },
 	{ title = "PCIe (Articles)", key = "pcie-articles", run = pick_pcie_articles },
 	{ title = "Perf Wiki", key = "perf-wiki", run = frozen_web_provider("perf-wiki", "Perf Wiki> ") },
@@ -4867,8 +4855,6 @@ local WEB_BOOKS = {
 	{ title = "Write Your Own Allocators", key = "write-your-own-allocators", run = frozen_web_provider("write-your-own-allocators", "Allocators> ") },
 	{ title = "Exploit Development (Connor McGarr)", key = "exploit-dev-mcgarr", run = frozen_web_provider("exploit-dev-mcgarr", "Exploit Dev (McGarr)> ") },
 	{ title = "Linux Kernel Security (Index)", key = "linux-kernel-security", run = frozen_web_provider("linux-kernel-security", "Linux kernel security [topic]> ", "hybrid") },
-	{ title = "V8 Resources (Index)", key = "v8-resources", run = frozen_web_provider("v8-resources", "V8 resources [topic]> ", "hybrid") },
-	{ title = "V8 (Docs)", key = "v8-docs", run = frozen_web_provider("v8-docs", "V8 docs> ") },
 	{ title = "Unicorn Engine (Articles & Tutorial)", key = "unicorn-articles", run = pick_unicorn_articles },
 	{ title = "Decompilation (decompilation.wiki + papers)", key = "decompilation-wiki", run = pick_decompilation },
 	{ title = "Writing an OS in Rust (Phil Opp)", key = "writing-an-os-in-rust", run = pick_philopp },
@@ -5106,7 +5092,6 @@ LOCATION["lkmpg"] = { index = "lkmpg/index.tsv", unit = "chapter" }
 LOCATION["typeclassopedia"] = { index = "typeclassopedia/index.tsv", unit = "chapter" }
 LOCATION["hpbn"] = { index = "hpbn/index.tsv", unit = "chapter" }
 LOCATION["cryptopals"] = { index = "cryptopals/index.tsv", unit = "chapter" }
-LOCATION["wisc-cs752"] = { index = "wisc-cs752/index.tsv", unit = "chapter" }
 LOCATION["x86-insns"] = { index = "x86-insns/index.tsv", unit = "page" }
 LOCATION["lazyfoo-sdl3"] = { index = "lazyfoo-sdl3/index.tsv", unit = "chapter" }
 LOCATION["qemu-internals"] = { index = "qemu-internals/index.tsv", unit = "chapter" }
@@ -5140,8 +5125,6 @@ LOCATION["write-your-own-allocators"] = { index = "write-your-own-allocators/ind
 LOCATION["exploit-dev-mcgarr"] = { index = "exploit-dev-mcgarr/index.tsv", unit = "chapter" }
 LOCATION["gem5"] = { index = "gem5/index.tsv", unit = "chapter" }
 LOCATION["linux-kernel-security"] = { index = "linux-kernel-security/index.tsv", unit = "article" }
-LOCATION["v8-resources"] = { index = "v8-resources/index.tsv", unit = "article" }
-LOCATION["v8-docs"] = { index = "v8-docs/index.tsv", unit = "chapter" }
 LOCATION["valgrind-quickstart"] = { index = "valgrind-quickstart/index.tsv", unit = "chapter" }
 LOCATION["valgrind-faq"] = { index = "valgrind-faq/index.tsv", unit = "chapter" }
 LOCATION["valgrind-manual"] = { index = "valgrind-manual/index.tsv", unit = "chapter" }
@@ -5152,11 +5135,8 @@ LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "c
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
 LOCATION["aflpp-articles"] = { index = "aflpp-articles/index.tsv", unit = "article" }
 LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" }
-LOCATION["awesome-databases"] = { index = "awesome-databases/index.tsv", unit = "article" }
 LOCATION["coding-for-ssds"] = { index = "coding-for-ssds/index.tsv", unit = "part" }
 LOCATION["miasm-docs"] = { index = "miasm-docs/index.tsv", unit = "module" }
-LOCATION["sicp-js"] = { index = "sicp-js/index.tsv", unit = "section" }
-LOCATION["algs4"] = { index = "algs4/index.tsv", unit = "section" }
 LOCATION["maskray-linker"] = { index = "maskray-linker/index.tsv", unit = "post" }
 LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }

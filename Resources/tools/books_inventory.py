@@ -6,7 +6,7 @@
 Reads the BOOKS and WEB_BOOKS tables out of lua/config/docs.lua (the menu is
 built from exactly those two), counts what is on disk for each entry, and
 writes one table per group.  Decisions from the keep/remove pass live in
-Resources/docs/books_decisions.tsv (`<slug-or-key>\\t<keep|remove>\\t<note>`),
+Resources/docs/books_decisions.tsv (`<slug-or-key>\\t<keep|remove|moved>\\t<note>`),
 so the Keep column reflects them and an entry that was removed from docs.lua
 but is still marked there is reported on stderr.  Run it after every change
 to either table so the committed list never drifts from the menu.
@@ -121,18 +121,19 @@ def main():
     # of a removal, and is what the last table is built from; a `keep` row in
     # that state is a mistake worth flagging.
     gone = sorted(set(dec) - used)
-    removed = [(i, dec[i][1]) for i in gone if dec[i][0] == "remove"]
+    removed = [(i, dec[i][0], dec[i][1]) for i in gone if dec[i][0] in ("remove", "moved")]
     if removed:
         w("## Removed from Books — %d\n" % len(removed))
-        w("| Slug / key | Note |")
-        w("|---|---|")
-        for ident, note in removed:
-            w("| `%s` | %s |" % (ident, note))
+        w("(`moved` = still in :Docs, just not under Books any more.)\n")
+        w("| Slug / key | Verdict | Note |")
+        w("|---|---|---|")
+        for ident, verdict, note in removed:
+            w("| `%s` | %s | %s |" % (ident, verdict, note))
         w("")
     with open(OUT, "w", encoding="utf-8") as fh:
         fh.write("\n".join(out))
     for ident in gone:
-        if dec[ident][0] != "remove":
+        if dec[ident][0] not in ("remove", "moved"):
             print("books_decisions.tsv: %r is marked %s but is not in docs.lua" % (ident, dec[ident][0]), file=sys.stderr)
     print("wrote %s: %d chapter books, %d web books" % (os.path.relpath(OUT, CFG), n_ch, len(webs)))
 
