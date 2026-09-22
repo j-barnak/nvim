@@ -60,9 +60,7 @@ def web_books(src):
     body = src[src.index("local WEB_BOOKS = {"):src.index("-- All books under one entry")]
     for m in re.finditer(r'\{ title = "([^"]+)", key = "([^"]+)"', body):
         title, key = m.groups()
-        # LOCATION keys and on-disk dirs agree except for the one alias below.
-        d = {"atomics": "rust-atomics"}.get(key, key)
-        idx = os.path.join(DOCS, d, "index.tsv")
+        idx = os.path.join(DOCS, key, "index.tsv")
         lines, hosts = [], []
         if os.path.isfile(idx):
             with open(idx, encoding="utf-8", errors="replace") as fh:
@@ -119,10 +117,23 @@ def main():
         h = ", ".join(hosts[:3]) + (" …" if len(hosts) > 3 else "")
         w("| %d | %s | `%s` | %s | %s | %s |" % (i, title, key, n or "MISSING", h, keep(key)))
     w("")
+    # A `remove` row whose entry is gone from docs.lua is the normal end state
+    # of a removal, and is what the last table is built from; a `keep` row in
+    # that state is a mistake worth flagging.
+    gone = sorted(set(dec) - used)
+    removed = [(i, dec[i][1]) for i in gone if dec[i][0] == "remove"]
+    if removed:
+        w("## Removed from Books — %d\n" % len(removed))
+        w("| Slug / key | Note |")
+        w("|---|---|")
+        for ident, note in removed:
+            w("| `%s` | %s |" % (ident, note))
+        w("")
     with open(OUT, "w", encoding="utf-8") as fh:
         fh.write("\n".join(out))
-    for ident in sorted(set(dec) - used):
-        print("books_decisions.tsv: %r is not in docs.lua any more (%s)" % (ident, dec[ident][0]), file=sys.stderr)
+    for ident in gone:
+        if dec[ident][0] != "remove":
+            print("books_decisions.tsv: %r is marked %s but is not in docs.lua" % (ident, dec[ident][0]), file=sys.stderr)
     print("wrote %s: %d chapter books, %d web books" % (os.path.relpath(OUT, CFG), n_ch, len(webs)))
 
 

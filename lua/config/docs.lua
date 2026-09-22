@@ -3341,9 +3341,6 @@ end
 local pick_learncpp = frozen_web_provider("learncpp", "Learn C++ lesson> ")
 -- rayanfam.com: the full Hypervisor From Scratch series (8 parts).
 local pick_rayanfam = frozen_web_provider("rayanfam", "Hypervisor From Scratch> ")
--- marabos.nl/atomics: Rust Atomics and Locks (Mara Bos), free to read by the
--- author's arrangement with O'Reilly. Foreword, preface, 10 chapters, index.
-local pick_rust_atomics = frozen_web_provider("rust-atomics", "Rust Atomics and Locks> ")
 -- Curated reading lists assembled from many sites: the main article plus the
 -- works it cites (astra), and a set of write-ups on one topic (kernel-ctf).
 -- Same frozen shape as the others, so they are offline from a bare clone.
@@ -3384,17 +3381,14 @@ local pick_makefile_tutorial = frozen_web_provider("makefile-tutorial", "Makefil
 local pick_abs = frozen_web_provider("abs", "Bash Guide> ")
 local pick_studyplan_cpp = frozen_web_provider("studyplan-pro-cpp", "Pro C++> ")
 local pick_studyplan_dsa = frozen_web_provider("studyplan-dsa", "DSA> ")
-local pick_lyah = frozen_web_provider("lyah", "LYAH> ")
 local pick_qiling_docs = frozen_web_provider("qiling-docs", "Qiling docs> ")
 local pick_capstone_docs = frozen_web_provider("capstone-docs", "Capstone docs> ")
 local pick_rizin_book = frozen_web_provider("rizin-book", "The Rizin Handbook> ")
 local pick_sf = frozen_web_provider("software-foundations-lf", "Software Foundations> ")
-local pick_wyah = frozen_web_provider("write-you-a-haskell", "Write You a Haskell> ")
 local pick_lkmpg = frozen_web_provider("lkmpg", "LKMPG> ")
 local pick_tco = frozen_web_provider("typeclassopedia", "Typeclassopedia> ")
 local pick_hpbn = frozen_web_provider("hpbn", "HPBN> ")
 local pick_cryptopals = frozen_web_provider("cryptopals", "Cryptopals> ")
-local pick_cryptohack = frozen_web_provider("cryptohack", "CryptoHack> ")
 local pick_lazyfoo_sdl3 = frozen_web_provider("lazyfoo-sdl3", "SDL3> ")
 local pick_qemu_internals = frozen_web_provider("qemu-internals", "QEMU> ")
 local pick_jit_series = frozen_web_provider("jit-series", "JIT> ")
@@ -4807,7 +4801,6 @@ local WEB_BOOKS = {
 	{ title = "Kernel Internals", key = "kernel-internals", run = pick_kernel_internals },
 	{ title = "Linux Kernel Labs", key = "kernel-labs", run = pick_kernel_labs },
 	{ title = "Making Our Own Executable Packer", key = "packer", run = pick_packer },
-	{ title = "Rust Atomics and Locks", key = "atomics", run = pick_rust_atomics },
 	{ title = "SLUB", key = "slub", run = pick_slub },
 	{ title = "Snapshot Fuzzer", key = "snapshot-fuzzer", run = pick_snapshot_fuzzer },
 	{ title = "The Astra Book", key = "astra", run = pick_astra },
@@ -4825,26 +4818,12 @@ local WEB_BOOKS = {
 	{ title = "Advanced Bash-Scripting Guide", key = "abs", run = pick_abs },
 	{ title = "Professional C++ (studyplan.dev)", key = "studyplan-pro-cpp", run = pick_studyplan_cpp },
 	{ title = "Data Structures & Algorithms (studyplan.dev)", key = "studyplan-dsa", run = pick_studyplan_dsa },
-	{ title = "Learn You a Haskell for Great Good!", key = "lyah", run = pick_lyah },
 	{ title = "Software Foundations: Logic Foundations", key = "software-foundations-lf", run = pick_sf },
-	{ title = "Write You a Haskell (Stephen Diehl)", key = "write-you-a-haskell", run = pick_wyah },
 	{ title = "Linux Kernel Module Programming Guide", key = "lkmpg", run = pick_lkmpg },
 	{ title = "High Performance Browser Networking (Grigorik)", key = "hpbn", run = pick_hpbn },
-	-- OCaml By Example (o1-labs.github.io/ocamlbyexample): frozen, "[Section]
-	-- Title" in sidebar order (Language Basics / Project Management / Advanced
-	-- Ocaml); sets/functors/monads are site placeholders -> stubbed.
-	{ title = "OCaml by Example", key = "ocaml-byexample", run = frozen_web_provider("ocaml-byexample", "OCaml by Example> ") },
-	-- Beautiful Racket (beautifulracket.com): frozen, "[Section] Title" in TOC
-	-- order (Start, the eleven Tutorials in full, Explainers).
-	{ title = "Beautiful Racket", key = "beautiful-racket", run = frozen_web_provider("beautiful-racket", "Beautiful Racket> ") },
 	{ title = "Cryptopals Crypto Challenges", key = "cryptopals", run = pick_cryptopals },
-	{ title = "CryptoHack Courses", key = "cryptohack", run = pick_cryptohack },
 	-- University course books: lecture/lab PDFs and notes frozen as chapters
 	-- (pdftotext / page fetch), no videos. Builders: <course>_build.sh.
-	{ title = "CMU 15-411 Compiler Design", key = "cmu-15411", run = frozen_web_provider("cmu-15411", "CMU 15-411> ") },
-	{ title = "CMU 15-445 Database Systems", key = "cmu-15445", run = frozen_web_provider("cmu-15445", "CMU 15-445> ") },
-	{ title = "MIT 6.5950 Secure Hardware Design", key = "mit-shd", run = frozen_web_provider("mit-shd", "Secure HW Design> ") },
-	{ title = "MIT 6.824 Distributed Systems", key = "mit-6824", run = frozen_web_provider("mit-6824", "MIT 6.824> ") },
 	{ title = "Wisconsin CS/ECE 752 Advanced Computer Architecture", key = "wisc-cs752", run = frozen_web_provider("wisc-cs752", "CS752> ") },
 	{ title = "LazyFoo SDL3 Tutorials", key = "lazyfoo-sdl3", run = pick_lazyfoo_sdl3 },
 	{ title = "QEMU Internals (Airbus Seclab)", key = "qemu-internals", run = pick_qemu_internals },
@@ -5080,7 +5059,6 @@ LOCATION.herd7 = { index = "herd7/index.tsv", unit = "page" }
 LOCATION.osdev = { index = "osdev/index.tsv", unit = "article" }
 LOCATION.learncpp = { index = "learncpp/index.tsv", unit = "lesson" }
 LOCATION.rayanfam = { index = "rayanfam/index.tsv", unit = "part" }
-LOCATION.atomics = { index = "rust-atomics/index.tsv", unit = "chapter" }
 -- The curated multi-source web books (each is a directory of the same name).
 LOCATION.astra = { index = "astra/index.tsv", unit = "chapter" }
 LOCATION["kernel-ctf"] = { index = "kernel-ctf/index.tsv", unit = "chapter" }
@@ -5104,7 +5082,6 @@ LOCATION["makefile-tutorial"] = { index = "makefile-tutorial/index.tsv", unit = 
 LOCATION["abs"] = { index = "abs/index.tsv", unit = "chapter" }
 LOCATION["studyplan-pro-cpp"] = { index = "studyplan-pro-cpp/index.tsv", unit = "chapter" }
 LOCATION["studyplan-dsa"] = { index = "studyplan-dsa/index.tsv", unit = "chapter" }
-LOCATION["lyah"] = { index = "lyah/index.tsv", unit = "chapter" }
 LOCATION["qiling-docs"] = { index = "qiling-docs/index.tsv", unit = "chapter" }
 LOCATION["capstone-docs"] = { index = "capstone-docs/index.tsv", unit = "chapter" }
 LOCATION["rizin-book"] = { index = "rizin-book/index.tsv", unit = "chapter" }
@@ -5117,8 +5094,6 @@ LOCATION["triton-docs"] = { index = "triton-docs/index.tsv", unit = "page" }
 LOCATION["angr-docs"] = { index = "angr-docs/index.tsv", unit = "page" }
 LOCATION["dynamorio-docs"] = { index = "dynamorio-docs/index.tsv", unit = "page" }
 LOCATION["rust-std"] = { index = "rust-std/index.tsv", unit = "item" }
-LOCATION["ocaml-byexample"] = { index = "ocaml-byexample/index.tsv", unit = "page" }
-LOCATION["beautiful-racket"] = { index = "beautiful-racket/index.tsv", unit = "page" }
 LOCATION["sel4-docs"] = { index = "sel4-docs/index.tsv", unit = "page" }
 LOCATION["sel4-manual"] = { index = "sel4-manual/index.tsv", unit = "chapter" }
 LOCATION["serde-guide"] = { index = "serde-guide/index.tsv", unit = "page" }
@@ -5127,16 +5102,10 @@ LOCATION["chumsky"] = { network = true } -- crate-only, live from docs.rs
 LOCATION["binja-user-docs"] = { index = "binja-user-docs/index.tsv", unit = "page" }
 LOCATION["binja-dev-docs"] = { index = "binja-dev-docs/index.tsv", unit = "page" }
 LOCATION["software-foundations-lf"] = { index = "software-foundations-lf/index.tsv", unit = "chapter" }
-LOCATION["write-you-a-haskell"] = { index = "write-you-a-haskell/index.tsv", unit = "chapter" }
 LOCATION["lkmpg"] = { index = "lkmpg/index.tsv", unit = "chapter" }
 LOCATION["typeclassopedia"] = { index = "typeclassopedia/index.tsv", unit = "chapter" }
 LOCATION["hpbn"] = { index = "hpbn/index.tsv", unit = "chapter" }
 LOCATION["cryptopals"] = { index = "cryptopals/index.tsv", unit = "chapter" }
-LOCATION["cryptohack"] = { index = "cryptohack/index.tsv", unit = "chapter" }
-LOCATION["cmu-15411"] = { index = "cmu-15411/index.tsv", unit = "chapter" }
-LOCATION["cmu-15445"] = { index = "cmu-15445/index.tsv", unit = "chapter" }
-LOCATION["mit-shd"] = { index = "mit-shd/index.tsv", unit = "chapter" }
-LOCATION["mit-6824"] = { index = "mit-6824/index.tsv", unit = "chapter" }
 LOCATION["wisc-cs752"] = { index = "wisc-cs752/index.tsv", unit = "chapter" }
 LOCATION["x86-insns"] = { index = "x86-insns/index.tsv", unit = "page" }
 LOCATION["lazyfoo-sdl3"] = { index = "lazyfoo-sdl3/index.tsv", unit = "chapter" }
@@ -6019,8 +5988,8 @@ local providers = {
 }
 
 -- Every book under one entry, flat: Books -> book -> chapter. Includes the
--- three book-shaped web providers (Hypervisor From Scratch, learncpp.com,
--- Rust Atomics and Locks), which used to sit at the top level.
+-- book-shaped web providers (Hypervisor From Scratch, learncpp.com, ...),
+-- which used to sit at the top level.
 providers[#providers + 1] = { name = "Books", key = "books", run = pick_books }
 -- RISC-V manuals get their own top-level entry (25 books) so they do not crowd
 -- the flat Books list. key "books-riscv" is the on-disk module dir, so :Docs
@@ -6132,7 +6101,6 @@ local KEY_ALIAS = {
 	cpp = "Learn C++ (learncpp.com)",
 	learncpp = "Learn C++ (learncpp.com)",
 	rayanfam = "Hypervisor From Scratch",
-	atomics = "Rust Atomics and Locks",
 }
 
 vim.api.nvim_create_user_command("DocsGrep", function()

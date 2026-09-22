@@ -315,7 +315,7 @@ Two kinds of book:
 |---|---|---|---|---|---|
 | 179 | Building a Debugger | pdf | `building-a-debugger` | 27 |  |
 
-## Frozen web books (`WEB_BOOKS`) — 82
+## Frozen web books (`WEB_BOOKS`) — 72
 
 | # | Title | Key | Entries | Source | Keep? |
 |---|---|---|---|---|---|
@@ -325,79 +325,84 @@ Two kinds of book:
 | 4 | Kernel Internals | `kernel-internals` | 482 | kernel-internals.org | keep |
 | 5 | Linux Kernel Labs | `kernel-labs` | 27 | linux-kernel-labs.github.io | keep |
 | 6 | Making Our Own Executable Packer | `packer` | 18 | fasterthanli.me | keep |
-| 7 | Rust Atomics and Locks | `atomics` | 13 | marabos.nl |  |
-| 8 | SLUB | `slub` | 14 | argp.github.io, blogs.oracle.com, dangokyo.wordpress.com … | keep |
-| 9 | Snapshot Fuzzer | `snapshot-fuzzer` | 13 | doar-e.github.io, h0mbre.github.io | keep |
-| 10 | The Astra Book | `astra` | 7 | 2ourc3.com, lcamtuf.blogspot.com, lcamtuf.coredump.cx … | keep |
-| 11 | Linux Kernel Exploitation Dojo | `kernel-exploitation` | 77 | 0x434b.dev, 0xten.gitbook.io, a13xp0p0v.github.io … | keep |
-| 12 | LLVM Tutorial (Kaleidoscope + ORC JIT) | `llvm-tutorial` | 15 | llvm.org | keep |
-| 13 | Web Browser Engineering | `browser-engineering` | 24 | browser.engineering | keep |
-| 14 | LearnOpenGL | `learnopengl` | 72 | learnopengl.com | keep |
-| 15 | Hypervisor Development (revers.engineering) | `revers-hypervisor` | 8 | revers.engineering | keep |
-| 16 | ELF (Series) | `elf-series` | 6 | intezer.com, lwn.net, nathanotterness.com | keep |
-| 17 | glibc malloc | `glibc-malloc` | 3 | azeria-labs.com, sploitfun.wordpress.com | keep |
-| 18 | JavaScript Exploitation | `javascript-exploitation` | 12 | jhalon.github.io, madstacks.dev, phrack.org | keep |
-| 19 | Bootloader (Articles) | `bootloader-articles` | 9 | 0xc0ffee.netlify.app, en.wikibooks.org, interrupt.memfault.com … | keep |
-| 20 | Binary Exploitation Dojo | `binary-exploitation-dojo` | 49 | 0x434b.dev, 4xura.com, axcheron.github.io … | keep |
-| 21 | Learn Makefiles | `makefile-tutorial` | 19 | makefiletutorial.com | keep |
-| 22 | Advanced Bash-Scripting Guide | `abs` | 140 | tldp.org | keep |
-| 23 | Professional C++ (studyplan.dev) | `studyplan-pro-cpp` | 128 | studyplan.dev | keep |
-| 24 | Data Structures & Algorithms (studyplan.dev) | `studyplan-dsa` | 69 | studyplan.dev | keep |
-| 25 | Learn You a Haskell for Great Good! | `lyah` | 14 | learnyouahaskell.github.io |  |
-| 26 | Software Foundations: Logic Foundations | `software-foundations-lf` | 21 | softwarefoundations.cis.upenn.edu | keep |
-| 27 | Write You a Haskell (Stephen Diehl) | `write-you-a-haskell` | 10 | smunix.github.io |  |
-| 28 | Linux Kernel Module Programming Guide | `lkmpg` | 1 | sysprog21.github.io | keep |
-| 29 | High Performance Browser Networking (Grigorik) | `hpbn` | 18 | hpbn.co | keep |
-| 30 | OCaml by Example | `ocaml-byexample` | 31 | o1-labs.github.io |  |
-| 31 | Beautiful Racket | `beautiful-racket` | 118 | beautifulracket.com |  |
-| 32 | Cryptopals Crypto Challenges | `cryptopals` | 57 | cryptopals.com | keep |
-| 33 | CryptoHack Courses | `cryptohack` | 64 | cryptohack.org |  |
-| 34 | CMU 15-411 Compiler Design | `cmu-15411` | 41 | cs.cmu.edu |  |
-| 35 | CMU 15-445 Database Systems | `cmu-15445` | 60 | 15445.courses.cs.cmu.edu |  |
-| 36 | MIT 6.5950 Secure Hardware Design | `mit-shd` | 34 | people.csail.mit.edu, shd.mit.edu |  |
-| 37 | MIT 6.824 Distributed Systems | `mit-6824` | 43 | pdos.csail.mit.edu |  |
-| 38 | Wisconsin CS/ECE 752 Advanced Computer Architecture | `wisc-cs752` | 36 | cs.utah.edu, cs.wisc.edu, pages.cs.wisc.edu … |  |
-| 39 | LazyFoo SDL3 Tutorials | `lazyfoo-sdl3` | 21 | lazyfoo.net | keep |
-| 40 | QEMU Internals (Airbus Seclab) | `qemu-internals` | 15 | airbus-seclab.github.io | keep |
-| 41 | JIT (Series) | `jit-series` | 4 | eli.thegreenplace.net, nullprogram.com | keep |
-| 42 | Bochs Documentation | `bochs-docs` | 99 | bochs.sourceforge.io |  |
-| 43 | EmuDev (Emulator Development reading list) | `emudev` | 43 | alexaltea.github.io, andrewkelley.me, bheisler.github.io … | keep |
-| 44 | The C10K Problem (Kegel) | `c10k` | 1 | kegel.com | keep |
-| 45 | BashGuide + Bash FAQ (Greg's Wiki) | `bashguide` | 13 | mywiki.wooledge.org | keep |
-| 46 | The Fuzzing Book (fuzzingbook.org) | `fuzzingbook` | 30 | fuzzingbook.org | keep |
-| 47 | Fuzzing Made Easy (SRLabs) | `fuzzing-made-easy` | 7 | srlabs.de | keep |
-| 48 | Fuzzing BitDefender's AntiVirus Engine (stackbits) | `fuzzing-bitdefender` | 2 | stackbits.eu | keep |
-| 49 | AFL++ Under The Hood (ritsec + core.gen.tr) | `afl-under-the-hood` | 17 | blog.ritsec.club, core.gen.tr | keep |
-| 50 | Syzkaller Articles (Collabora, xairy, LWN, ...) | `syzkaller-articles` | 9 | collabora.com, lwn.net, slavamoskvin.com … | keep |
-| 51 | Namespaces in operation (LWN, Kerrisk) | `namespaces-lwn` | 9 | lwn.net | keep |
-| 52 | Control groups (LWN, Neil Brown) | `cgroups-lwn` | 7 | lwn.net | keep |
-| 53 | LWN Kernel Index (categorized reference) | `lwn-index` | 5988 | lwn.net | keep |
-| 54 | The Modern JavaScript Tutorial (javascript.info) | `javascript-info` | 175 | javascript.info |  |
-| 55 | Testing Handbook (Trail of Bits, appsec.guide) | `testing-handbook` | 70 | appsec.guide | keep |
-| 56 | LibAFL (Articles) | `fuzzing-101-libafl` | 12 | aflplus.plus, andreafioraldi.github.io, atredis.com … | keep |
-| 57 | AFL++ Articles | `aflpp-articles` | 20 | aflplus.plus, airbus-seclab.github.io, appsec.guide … | keep |
-| 58 | What The Fuzz (wtf) Articles | `wtf-articles` | 5 | blog.ret2.io, blog.thalium.re, doar-e.github.io … | keep |
-| 59 | Awesome Databases (papers + storage) | `awesome-databases` | 28 | bailis.org, cockroachlabs.com, db.in.tum.de … |  |
-| 60 | Coding for SSDs (codecapsule) | `coding-for-ssds` | 6 | codecapsule.com | keep |
-| 61 | SICP (JavaScript edition) | `sicp-js` | 129 | sourceacademy.org |  |
-| 62 | Algorithms (Sedgewick & Wayne, algs4) | `algs4` | 36 | algs4.cs.princeton.edu |  |
-| 63 | Ptrace Injection (Articles) | `ptrace-injection` | 2 | akamai.com, blog.xpnsec.com | keep |
-| 64 | PCIe (Articles) | `pcie-articles` | 3 | ctf.re, en.wikipedia.org | keep |
-| 65 | Perf Wiki | `perf-wiki` | 13 | perfwiki.github.io | keep |
-| 66 | Intel PT (Articles) | `intel-pt-articles` | 2 | carteryagemann.com, jauu.net | keep |
-| 67 | Perf Ninja (Articles) | `perf-ninja` | 58 | easyperf.net | keep |
-| 68 | Game Networking (Articles) | `game-networking` | 6 | gabrielgambetta.com, keithjohnston.wordpress.com, web.archive.org | keep |
-| 69 | Android by 8K Sec (Series) | `android-8ksec` | 5 | 8ksec.io | keep |
-| 70 | Memory Integrity Enforcement (Series) | `mie-8ksec` | 2 | 8ksec.io | keep |
-| 71 | Advanced Frida (Series by 8ksec) | `advanced-frida-8ksec` | 10 | 8ksec.io | keep |
-| 72 | ARM64 Reversing and Exploitation (8KSec) | `arm64-exploitation-8ksec` | 10 | 8ksec.io | keep |
-| 73 | Page Cache (Series) | `page-cache` | 10 | biriukov.dev | keep |
-| 74 | Write Your Own Allocators | `write-your-own-allocators` | 9 | danluu.com, dgtlgrove.com, gingerbill.org … | keep |
-| 75 | Exploit Development (Connor McGarr) | `exploit-dev-mcgarr` | 16 | connormcgarr.github.io | keep |
-| 76 | Linux Kernel Security (Index) | `linux-kernel-security` | 1083 | 0x434b.dev, 0xkol.github.io, 0xnull007.github.io … | keep |
-| 77 | V8 Resources (Index) | `v8-resources` | 263 | abiondo.me, alibabacloud.com, anvbis.au … |  |
-| 78 | V8 (Docs) | `v8-docs` | 52 | v8.dev |  |
-| 79 | Unicorn Engine (Articles & Tutorial) | `unicorn-articles` | 4 | blog.quarkslab.com, reverse.put.as, sect.iij.ad.jp … | keep |
-| 80 | Decompilation (decompilation.wiki + papers) | `decompilation-wiki` | 73 | academic.oup.com, arxiv.org, cs.cornell.edu … | keep |
-| 81 | Writing an OS in Rust (Phil Opp) | `writing-an-os-in-rust` | 12 | os.phil-opp.com |  |
-| 82 | Algorithms for Modern Hardware (Algorithmica) | `algorithmica-hpc` | 82 | en.algorithmica.org |  |
+| 7 | SLUB | `slub` | 14 | argp.github.io, blogs.oracle.com, dangokyo.wordpress.com … | keep |
+| 8 | Snapshot Fuzzer | `snapshot-fuzzer` | 13 | doar-e.github.io, h0mbre.github.io | keep |
+| 9 | The Astra Book | `astra` | 7 | 2ourc3.com, lcamtuf.blogspot.com, lcamtuf.coredump.cx … | keep |
+| 10 | Linux Kernel Exploitation Dojo | `kernel-exploitation` | 77 | 0x434b.dev, 0xten.gitbook.io, a13xp0p0v.github.io … | keep |
+| 11 | LLVM Tutorial (Kaleidoscope + ORC JIT) | `llvm-tutorial` | 15 | llvm.org | keep |
+| 12 | Web Browser Engineering | `browser-engineering` | 24 | browser.engineering | keep |
+| 13 | LearnOpenGL | `learnopengl` | 72 | learnopengl.com | keep |
+| 14 | Hypervisor Development (revers.engineering) | `revers-hypervisor` | 8 | revers.engineering | keep |
+| 15 | ELF (Series) | `elf-series` | 6 | intezer.com, lwn.net, nathanotterness.com | keep |
+| 16 | glibc malloc | `glibc-malloc` | 3 | azeria-labs.com, sploitfun.wordpress.com | keep |
+| 17 | JavaScript Exploitation | `javascript-exploitation` | 12 | jhalon.github.io, madstacks.dev, phrack.org | keep |
+| 18 | Bootloader (Articles) | `bootloader-articles` | 9 | 0xc0ffee.netlify.app, en.wikibooks.org, interrupt.memfault.com … | keep |
+| 19 | Binary Exploitation Dojo | `binary-exploitation-dojo` | 49 | 0x434b.dev, 4xura.com, axcheron.github.io … | keep |
+| 20 | Learn Makefiles | `makefile-tutorial` | 19 | makefiletutorial.com | keep |
+| 21 | Advanced Bash-Scripting Guide | `abs` | 140 | tldp.org | keep |
+| 22 | Professional C++ (studyplan.dev) | `studyplan-pro-cpp` | 128 | studyplan.dev | keep |
+| 23 | Data Structures & Algorithms (studyplan.dev) | `studyplan-dsa` | 69 | studyplan.dev | keep |
+| 24 | Software Foundations: Logic Foundations | `software-foundations-lf` | 21 | softwarefoundations.cis.upenn.edu | keep |
+| 25 | Linux Kernel Module Programming Guide | `lkmpg` | 1 | sysprog21.github.io | keep |
+| 26 | High Performance Browser Networking (Grigorik) | `hpbn` | 18 | hpbn.co | keep |
+| 27 | Cryptopals Crypto Challenges | `cryptopals` | 57 | cryptopals.com | keep |
+| 28 | Wisconsin CS/ECE 752 Advanced Computer Architecture | `wisc-cs752` | 36 | cs.utah.edu, cs.wisc.edu, pages.cs.wisc.edu … |  |
+| 29 | LazyFoo SDL3 Tutorials | `lazyfoo-sdl3` | 21 | lazyfoo.net | keep |
+| 30 | QEMU Internals (Airbus Seclab) | `qemu-internals` | 15 | airbus-seclab.github.io | keep |
+| 31 | JIT (Series) | `jit-series` | 4 | eli.thegreenplace.net, nullprogram.com | keep |
+| 32 | Bochs Documentation | `bochs-docs` | 99 | bochs.sourceforge.io |  |
+| 33 | EmuDev (Emulator Development reading list) | `emudev` | 43 | alexaltea.github.io, andrewkelley.me, bheisler.github.io … | keep |
+| 34 | The C10K Problem (Kegel) | `c10k` | 1 | kegel.com | keep |
+| 35 | BashGuide + Bash FAQ (Greg's Wiki) | `bashguide` | 13 | mywiki.wooledge.org | keep |
+| 36 | The Fuzzing Book (fuzzingbook.org) | `fuzzingbook` | 30 | fuzzingbook.org | keep |
+| 37 | Fuzzing Made Easy (SRLabs) | `fuzzing-made-easy` | 7 | srlabs.de | keep |
+| 38 | Fuzzing BitDefender's AntiVirus Engine (stackbits) | `fuzzing-bitdefender` | 2 | stackbits.eu | keep |
+| 39 | AFL++ Under The Hood (ritsec + core.gen.tr) | `afl-under-the-hood` | 17 | blog.ritsec.club, core.gen.tr | keep |
+| 40 | Syzkaller Articles (Collabora, xairy, LWN, ...) | `syzkaller-articles` | 9 | collabora.com, lwn.net, slavamoskvin.com … | keep |
+| 41 | Namespaces in operation (LWN, Kerrisk) | `namespaces-lwn` | 9 | lwn.net | keep |
+| 42 | Control groups (LWN, Neil Brown) | `cgroups-lwn` | 7 | lwn.net | keep |
+| 43 | LWN Kernel Index (categorized reference) | `lwn-index` | 5988 | lwn.net | keep |
+| 44 | The Modern JavaScript Tutorial (javascript.info) | `javascript-info` | 175 | javascript.info |  |
+| 45 | Testing Handbook (Trail of Bits, appsec.guide) | `testing-handbook` | 70 | appsec.guide | keep |
+| 46 | LibAFL (Articles) | `fuzzing-101-libafl` | 12 | aflplus.plus, andreafioraldi.github.io, atredis.com … | keep |
+| 47 | AFL++ Articles | `aflpp-articles` | 20 | aflplus.plus, airbus-seclab.github.io, appsec.guide … | keep |
+| 48 | What The Fuzz (wtf) Articles | `wtf-articles` | 5 | blog.ret2.io, blog.thalium.re, doar-e.github.io … | keep |
+| 49 | Awesome Databases (papers + storage) | `awesome-databases` | 28 | bailis.org, cockroachlabs.com, db.in.tum.de … |  |
+| 50 | Coding for SSDs (codecapsule) | `coding-for-ssds` | 6 | codecapsule.com | keep |
+| 51 | SICP (JavaScript edition) | `sicp-js` | 129 | sourceacademy.org |  |
+| 52 | Algorithms (Sedgewick & Wayne, algs4) | `algs4` | 36 | algs4.cs.princeton.edu |  |
+| 53 | Ptrace Injection (Articles) | `ptrace-injection` | 2 | akamai.com, blog.xpnsec.com | keep |
+| 54 | PCIe (Articles) | `pcie-articles` | 3 | ctf.re, en.wikipedia.org | keep |
+| 55 | Perf Wiki | `perf-wiki` | 13 | perfwiki.github.io | keep |
+| 56 | Intel PT (Articles) | `intel-pt-articles` | 2 | carteryagemann.com, jauu.net | keep |
+| 57 | Perf Ninja (Articles) | `perf-ninja` | 58 | easyperf.net | keep |
+| 58 | Game Networking (Articles) | `game-networking` | 6 | gabrielgambetta.com, keithjohnston.wordpress.com, web.archive.org | keep |
+| 59 | Android by 8K Sec (Series) | `android-8ksec` | 5 | 8ksec.io | keep |
+| 60 | Memory Integrity Enforcement (Series) | `mie-8ksec` | 2 | 8ksec.io | keep |
+| 61 | Advanced Frida (Series by 8ksec) | `advanced-frida-8ksec` | 10 | 8ksec.io | keep |
+| 62 | ARM64 Reversing and Exploitation (8KSec) | `arm64-exploitation-8ksec` | 10 | 8ksec.io | keep |
+| 63 | Page Cache (Series) | `page-cache` | 10 | biriukov.dev | keep |
+| 64 | Write Your Own Allocators | `write-your-own-allocators` | 9 | danluu.com, dgtlgrove.com, gingerbill.org … | keep |
+| 65 | Exploit Development (Connor McGarr) | `exploit-dev-mcgarr` | 16 | connormcgarr.github.io | keep |
+| 66 | Linux Kernel Security (Index) | `linux-kernel-security` | 1083 | 0x434b.dev, 0xkol.github.io, 0xnull007.github.io … | keep |
+| 67 | V8 Resources (Index) | `v8-resources` | 263 | abiondo.me, alibabacloud.com, anvbis.au … |  |
+| 68 | V8 (Docs) | `v8-docs` | 52 | v8.dev |  |
+| 69 | Unicorn Engine (Articles & Tutorial) | `unicorn-articles` | 4 | blog.quarkslab.com, reverse.put.as, sect.iij.ad.jp … | keep |
+| 70 | Decompilation (decompilation.wiki + papers) | `decompilation-wiki` | 73 | academic.oup.com, arxiv.org, cs.cornell.edu … | keep |
+| 71 | Writing an OS in Rust (Phil Opp) | `writing-an-os-in-rust` | 12 | os.phil-opp.com |  |
+| 72 | Algorithms for Modern Hardware (Algorithmica) | `algorithmica-hpc` | 82 | en.algorithmica.org |  |
+
+## Removed from Books — 10
+
+| Slug / key | Note |
+|---|---|
+| `atomics` | 2026-09-22 pass, chunk 1 |
+| `beautiful-racket` | 2026-09-22 pass, chunk 1 |
+| `cmu-15411` | 2026-09-22 pass, chunk 1 |
+| `cmu-15445` | 2026-09-22 pass, chunk 1 |
+| `cryptohack` | 2026-09-22 pass, chunk 1 |
+| `lyah` | 2026-09-22 pass, chunk 1 |
+| `mit-6824` | 2026-09-22 pass, chunk 1 |
+| `mit-shd` | 2026-09-22 pass, chunk 1 |
+| `ocaml-byexample` | 2026-09-22 pass, chunk 1 |
+| `write-you-a-haskell` | 2026-09-22 pass, chunk 1 |
