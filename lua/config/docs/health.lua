@@ -14,7 +14,7 @@ local TOOLS = {
 	{ "git", "cloning/updating the live doc repos (kernel, QEMU, Ghidra, ...)" },
 	{ "pandoc", "rendering .rst/.xml/.html docs and web articles" },
 	{ "curl", "web providers and PDF spec downloads" },
-	{ "mutool", "splitting PDF specs (C/C++/DWARF/ABI/RISC-V/Arm, Intel SDM)" },
+	{ "mutool", "splitting PDF specs (C/C++/DWARF/ABI/RISC-V)" },
 	{ "pdftotext", "extracting PDF spec text" },
 	{ "pdfinfo", "PDF page counts for the spec splitter" },
 	{ "man", "man 1-8, ld/as/elf/bash, binutils, NetBSD pages" },
@@ -28,8 +28,6 @@ local TOOLS = {
 	{ "nice", "background pre-conversion runs at low priority (optional)" },
 	{ "setsid", "background pre-conversion is killed cleanly on exit (optional)" },
 	{ "timeout", "network fetches and man renders are capped at 60 s (optional)" },
-	{ "pdftoppm", "Intel SDM figure extraction (optional)" },
-	{ "convert", "Intel SDM figure cropping (optional, ImageMagick)" },
 	{ "xdg-open", "opening a figure when snacks.image is unavailable (optional)" },
 }
 
@@ -65,7 +63,7 @@ function M.check()
 		{ "slub", 14 }, { "kernel-internals", 482 }, { "kernel-exploitation", 77 },
 		{ "llvm-tutorial", 15 }, { "browser-engineering", 24 }, { "learnopengl", 72 },
 		{ "revers-hypervisor", 8 }, { "glibc", 775 },
-		{ "elf-series", 6 }, { "glibc-malloc", 3 }, { "javascript-exploitation", 12 }, { "bootloader-articles", 9 }, { "binary-exploitation-dojo", 49 }, { "makefile-tutorial", 19 }, { "abs", 140 }, { "studyplan-pro-cpp", 128 }, { "studyplan-dsa", 69 }, { "qiling-docs", 23 }, { "capstone-docs", 12 }, { "rizin-book", 138 }, { "pwntools-docs", 77 }, { "lief-docs", 126 }, { "qbdi-docs", 32 }, { "qbindiff-docs", 24 }, { "drgn-docs", 30 }, { "triton-docs", 40 }, { "angr-docs", 44 }, { "frida-docs", 32 }, { "dynamorio-docs", 123 }, { "binja-user-docs", 49 }, { "binja-dev-docs", 24 }, { "rust-std", 2010 }, { "serde-guide", 38 }, { "dioxus-guide", 91 }, { "sel4-docs", 80 }, { "sel4-manual", 12 }, { "lazyfoo-sdl3", 21 }, { "qemu-internals", 15 }, { "jit-series", 4 }, { "bochs-docs", 99 }, { "emudev", 43 }, { "c10k", 1 }, { "systemd", 83 }, { "lkl", 10 }, { "bashguide", 13 }, { "fuzzingbook", 30 }, { "fuzzing-made-easy", 7 }, { "fuzzing-bitdefender", 2 }, { "afl-under-the-hood", 17 }, { "syzkaller-articles", 9 }, { "namespaces-lwn", 9 }, { "cgroups-lwn", 7 }, { "lwn-index", 5988 }, { "javascript-info", 175 }, { "testing-handbook", 70 }, { "fuzzing-101-libafl", 12 }, { "aflpp-articles", 20 }, { "wtf-articles", 5 }, { "docker", 9 }, { "ptrace-injection", 2 }, { "pcie-articles", 3 }, { "perf-wiki", 13 }, { "intel-pt-articles", 2 }, { "perf-ninja", 58 }, { "game-networking", 6 }, { "android-8ksec", 5 }, { "mie-8ksec", 2 }, { "advanced-frida-8ksec", 10 }, { "arm64-exploitation-8ksec", 10 }, { "page-cache", 10 }, { "write-your-own-allocators", 9 }, { "exploit-dev-mcgarr", 16 }, { "gem5", 94 }, { "linux-kernel-security", 1083 }, { "valgrind-quickstart", 6 }, { "valgrind-faq", 21 }, { "valgrind-manual", 13 }, { "styx-docs", 45 }, { "unicorn-articles", 4 }, { "decompilation-wiki", 73 }, { "writing-an-os-in-rust", 12 }, { "algorithmica-hpc", 82 }, { "software-foundations-lf", 21 }, { "lkmpg", 1 }, { "typeclassopedia", 1 }, { "hpbn", 18 }, { "cryptopals", 57 }, { "x86-insns", 1222 }, { "ebbr", 6 }, { "kafl-docs", 42 }, { "rbil", 214 }, { "mathematics-in-lean", 56 }, { "programming-z3", 68 }, { "coding-for-ssds", 6 }, { "miasm-docs", 150 }, { "maskray-linker", 55 } }) do
+		{ "elf-series", 6 }, { "glibc-malloc", 3 }, { "javascript-exploitation", 12 }, { "bootloader-articles", 9 }, { "binary-exploitation-dojo", 49 }, { "makefile-tutorial", 19 }, { "abs", 140 }, { "studyplan-pro-cpp", 128 }, { "studyplan-dsa", 69 }, { "qiling-docs", 23 }, { "capstone-docs", 12 }, { "rizin-book", 138 }, { "pwntools-docs", 77 }, { "lief-docs", 126 }, { "qbdi-docs", 32 }, { "qbindiff-docs", 24 }, { "drgn-docs", 30 }, { "triton-docs", 40 }, { "angr-docs", 44 }, { "frida-docs", 32 }, { "dynamorio-docs", 123 }, { "binja-user-docs", 49 }, { "binja-dev-docs", 24 }, { "rust-std", 2010 }, { "serde-guide", 38 }, { "dioxus-guide", 91 }, { "sel4-docs", 80 }, { "sel4-manual", 12 }, { "lazyfoo-sdl3", 21 }, { "qemu-internals", 15 }, { "jit-series", 4 }, { "bochs-docs", 99 }, { "emudev", 43 }, { "c10k", 1 }, { "systemd", 83 }, { "lkl", 10 }, { "bashguide", 13 }, { "fuzzingbook", 30 }, { "fuzzing-made-easy", 7 }, { "fuzzing-bitdefender", 2 }, { "afl-under-the-hood", 17 }, { "syzkaller-articles", 9 }, { "namespaces-lwn", 9 }, { "cgroups-lwn", 7 }, { "lwn-index", 5988 }, { "javascript-info", 175 }, { "testing-handbook", 70 }, { "fuzzing-101-libafl", 12 }, { "aflpp-articles", 20 }, { "wtf-articles", 5 }, { "docker", 9 }, { "ptrace-injection", 2 }, { "pcie-articles", 3 }, { "perf-wiki", 13 }, { "intel-pt-articles", 2 }, { "perf-ninja", 58 }, { "game-networking", 6 }, { "android-8ksec", 5 }, { "mie-8ksec", 2 }, { "advanced-frida-8ksec", 10 }, { "arm64-exploitation-8ksec", 10 }, { "page-cache", 10 }, { "write-your-own-allocators", 9 }, { "exploit-dev-mcgarr", 16 }, { "gem5", 94 }, { "linux-kernel-security", 1083 }, { "valgrind-quickstart", 6 }, { "valgrind-faq", 21 }, { "valgrind-manual", 13 }, { "styx-docs", 45 }, { "unicorn-articles", 4 }, { "decompilation-wiki", 73 }, { "writing-an-os-in-rust", 12 }, { "algorithmica-hpc", 82 }, { "software-foundations-lf", 21 }, { "lkmpg", 1 }, { "typeclassopedia", 1 }, { "hpbn", 18 }, { "cryptopals", 57 }, { "x86-insns", 1222 }, { "kafl-docs", 42 }, { "rbil", 214 }, { "mathematics-in-lean", 56 }, { "programming-z3", 68 }, { "coding-for-ssds", 6 }, { "miasm-docs", 150 }, { "maskray-linker", 55 } }) do
 		local idx = fr .. "/" .. w[1] .. "/index.tsv"
 		if vim.fn.filereadable(idx) == 1 then
 			local n = #vim.fn.readfile(idx)
@@ -80,7 +78,7 @@ function M.check()
 	if tools then
 		health.ok("Resources/tools present (builders for regenerating the library)")
 	else
-		health.warn("Resources/tools missing: PDF spec / SDM / doxygen builds need it")
+		health.warn("Resources/tools missing: PDF spec / doxygen builds need it")
 	end
 
 	health.start("Plugins")

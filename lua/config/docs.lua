@@ -21,8 +21,8 @@ local data_root = vim.fn.stdpath("data") .. "/docs"
 -- it is read directly (no epub/pdf build step). stdpath("config") keeps this
 -- portable. Other providers still fetch/convert into the volatile data_root.
 local frozen_root = vim.fn.stdpath("config") .. "/Resources/docs"
--- The build scripts (PDF/SDM splitters, doxygen pipeline, kernel-doc index,
--- aya crate index, SDM figure extractor) live as files under Resources/tools
+-- The build scripts (PDF splitters, doxygen pipeline, kernel-doc index, aya
+-- crate index) live as files under Resources/tools
 -- and are read only when a build actually runs; nothing is parsed at startup.
 local tools_src = vim.fn.stdpath("config") .. "/Resources/tools"
 local function tool_script(name)
@@ -65,7 +65,7 @@ end
 -- the one that exists everywhere; the cache is the fallback, and a fetch is
 -- the last resort. Writes always go to data_root: the frozen tree is read-only
 -- at runtime, so a build never touches the repo.
---   rel     the path a provider uses under EITHER root ("bcc/master", "sdm/vol1")
+--   rel     the path a provider uses under EITHER root ("bcc/master", "std/dwarf5")
 --   marker  optional entry that proves the copy is real rather than a
 --           half-finished directory (the same marker the fetch checks)
 -- Returns dir, "frozen"|"cached" -- or nil, nil when neither root has it.
@@ -90,7 +90,7 @@ local tags_cache = cache_root .. "/tags.txt"
 local viewer_win -- reused doc-viewer window handle
 local viewer_seq = 0 -- for unique scratch buffer names
 
--- ── figure viewer: show an extracted SDM diagram inline (snacks.image) ────
+-- ── figure viewer: show a book's image inline (snacks.image) ──────────────
 -- snacks renders PNG natively via the kitty graphics protocol (works over
 -- SSH+tmux with allow-passthrough), no ImageMagick needed. Opening the PNG
 -- in a float lets snacks' image hijack render it. Falls back to xdg-open.
@@ -138,26 +138,8 @@ local function show_figure(png)
 	vim.notify("Figure image at " .. png, vim.log.levels.INFO)
 end
 
--- On a line that names a figure ("Figure 4-8" / "see Figure 5-9"), show the
--- diagram cropped from the PDF during the SDM build (docs_dir/figures/).
-local function open_figure_under_cursor()
-	local dir = vim.b.docs_dir
-	if not dir then
-		return
-	end
-	local id = vim.api.nvim_get_current_line():match("[Ff]igure%s+([%dA-Z]+%-%w+)")
-	if not id then
-		return
-	end
-	local png = dir .. "/figures/Figure " .. id .. ".png"
-	if vim.fn.filereadable(png) == 0 then
-		return vim.notify("No image for Figure " .. id, vim.log.levels.WARN)
-	end
-	show_figure(png)
-end
-
 -- ── table of contents: fuzzy-jump the current doc's headings (<leader>fs) ─
--- Handles markdown ("## Heading") and Intel SDM numbered sections
+-- Handles markdown ("## Heading") and pdftotext-split specs' numbered sections
 -- ("4.1   PAGING MODES AND CONTROL BITS": section number, 2+ spaces, title;
 -- inline refs like "4.10 provides ..." use a single space and are excluded).
 local function docs_toc()
@@ -522,8 +504,7 @@ local function render_lines(lines, ft, dir, title)
 	end
 	-- <CR> in every viewer (the global <CR> is `ciw`, which raised E21 on
 	-- these read-only buffers): an image link on the line shows that image,
-	-- an SDM "Figure N-M" line shows the cropped diagram, anything else
-	-- follows the link under the cursor.
+	-- anything else follows the link under the cursor.
 	vim.keymap.set("n", "<CR>", function()
 		-- md_link, not a pattern: the third and last site that used
 		-- "!%[[^%]]*%]%(" and so found no image on a line whose caption holds an
@@ -536,9 +517,6 @@ local function render_lines(lines, ft, dir, title)
 			if vim.fn.filereadable(p) == 1 then
 				return show_figure(p)
 			end
-		end
-		if dir and dir:match("/sdm/vol%d") then
-			return open_figure_under_cursor()
 		end
 		if dir then
 			return follow_link()
@@ -1915,15 +1893,6 @@ local simple = {
 		exts = "-e md",
 		prompt = "PE format> ",
 	},
-	armtf = {
-		-- Arm Trusted Firmware-A: EL3/secure world, PSCI, SMCCC, boot flow.
-		url = "https://github.com/ARM-software/arm-trusted-firmware",
-		sparse = "/docs /readme.rst",
-		marker = "docs",
-		browse = "/docs",
-		exts = "-e rst -e md",
-		prompt = "Arm TF-A> ",
-	},
 	bpftrace = {
 		url = "https://github.com/bpftrace/bpftrace",
 		sparse = "/docs /man /tools/README.md /README.md",
@@ -2478,61 +2447,6 @@ local function pick_doxygen(name, url, sparse, input, patterns)
 			end
 		)
 	end)
-end
-
--- ── Intel SDM figure extraction (stdlib Python; written to disk by pick_sdm) ─
--- SDM diagrams are vector art with selectable text labels, so a figure is the
--- band between its caption and the nearest full-width paragraph above it. We
--- find that band from `pdftotext -bbox-layout`, render just that region with
--- pdftoppm, and trim to a tight PNG named after the figure ("Figure 4-8.png").
-
--- ── Intel SDM: download the PDF, split by chapter into text + figures ─────
--- The manuals aren't published as markdown, so fetch the latest PDF and
--- pdftotext -layout each chapter (page ranges from the PDF outline) into
--- per-chapter text files, stripping running headers/footers and form feeds.
--- Figures (vector diagrams) are then cropped to PNGs via Resources/tools/figextract.py so
--- <CR> on a "Figure N-M" line shows the diagram inline (snacks.image).
-
-local SDM = "https://www.intel.com/content/dam/www/public/us/en/documents/manuals/"
-local SDM_URLS = {
-	[1] = SDM .. "64-ia-32-architectures-software-developer-vol-1-manual.pdf",
-	[2] = SDM .. "64-ia-32-architectures-software-developer-instruction-set-reference-manual-325383.pdf",
-	[3] = SDM .. "64-ia-32-architectures-software-developer-system-programming-manual-325384.pdf",
-	[4] = "https://www.intel.com/content/dam/develop/external/us/en/documents/335592-sdm-vol-4.pdf",
-}
-
-local function pick_sdm(vol)
-	local out = data_root .. "/sdm/vol" .. vol
-	local pdf = tools_dir .. "/sdm-vol" .. vol .. ".pdf"
-	local function browse()
-		pick_files(out, "-e txt", "Intel SDM v" .. vol .. "> ")
-	end
-	-- Browse a built cache first; the fetch/split tools are only needed to build.
-	if vim.fn.filereadable(out .. "/.complete") == 1 then
-		return browse()
-	end
-	for _, t in ipairs({ "curl", "mutool", "pdftotext", "pdfinfo" }) do
-		if not have(t) then
-			return vim.notify(t .. " needed to build Intel SDM", vim.log.levels.WARN)
-		end
-	end
-	mkdir(out)
-	local py = tools_src .. "/figextract.py" -- committed under Resources/tools, no runtime copy
-	mkdir(tools_dir) -- the downloaded PDF lands here
-	vim.notify("Fetching + splitting Intel SDM Vol " .. vol .. " … (first time; figures take a minute)")
-	vim.system(
-		{ "sh", "-c", tool_script("sdm_build.sh"), "sdm", pdf, out, SDM_URLS[vol], py },
-		{ text = true, timeout = 600000 },
-		function(res)
-			vim.schedule(function()
-				if vim.fn.filereadable(out .. "/.complete") == 1 then
-					browse()
-				else
-					vim.notify("SDM build failed:\n" .. (res.stderr or ""):sub(1, 400), vim.log.levels.ERROR)
-				end
-			end)
-		end
-	)
 end
 
 -- ── man pages + cppman: reference at your fingertips while writing C/C++ ──
@@ -4044,7 +3958,7 @@ local function man_provider(cmd, title)
 end
 
 -- ── generic chaptered-PDF provider (C/C++ ISO working drafts) ────────────
--- Same idea as the Intel SDM: fetch the PDF, split by the PDF outline into
+-- Fetch the PDF, split by the PDF outline into
 -- per-clause text files (pdftotext -layout), stripping the ISO running
 -- header / page numbers. Browsable, and <leader>fs gives the clause TOC.
 
@@ -4054,8 +3968,6 @@ local STD_URLS = {
 	["dwarf5"] = "https://dwarfstd.org/doc/DWARF5.pdf",
 	["x86-64-abi"] = "https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build",
 	["riscv"] = "https://github.com/riscv/riscv-isa-manual/releases/latest/download/riscv-spec.pdf",
-	["arm-a"] = "https://www.cs.princeton.edu/courses/archive/fall19/cos217/reading/ArmArchitectureReferenceManual.pdf",
-	["arm-m"] = "https://community.arm.com/cfs-file/__key/communityserver-discussions-components-files/471/DDI0553B_5F00_y_5F00_armv8m_5F00_arm.pdf",
 	["gdb-manual"] = "https://sourceware.org/gdb/download/onlinedocs/gdb.pdf",
 	-- Drepper's "ELF Handling For Thread-Local Storage" (7 chapters by outline).
 	["tls"] = "https://www.uclibc.org/docs/tls.pdf",
@@ -4462,8 +4374,8 @@ local function pick_elf_tis()
 end
 
 -- AMD64 APM: the AMD64 Architecture Programmer's Manual, the AMD counterpart to
--- the Intel SDM and next to it in the picker. AMD's own PDF links are broken
--- (they 302 to a search hub), so unlike the SDM these two volumes are frozen
+-- the (removed) Intel SDM. AMD's own PDF links are broken (they 302 to a
+-- search hub), so these two volumes are frozen
 -- chapter books committed under Resources/docs, browsed straight from disk.
 -- Vol 1 is Application Programming, Vol 2 is System Programming.
 local function pick_apm(vol)
@@ -4730,7 +4642,7 @@ end
 --   LOCAL SYSTEM  rendered from what is installed here (man pages, pydoc)
 --   FROZEN        committed under Resources/docs -> survives a bare git clone
 -- Status comes from resolve_docs(), never from the key string: key and cache
--- directory disagree (`kernel` browses docs/linux, `sdm1` browses sdm/vol1)
+-- directory disagree (`kernel` browses docs/linux, `cstd` browses std/c-draft)
 -- and three keys are aliases into Books.
 
 -- Rough "how much is in here", bounded: an exact count would walk a
@@ -4777,17 +4689,12 @@ LOCATION["android-kernel"] = { versions = "android-kernel", marker = "drivers/an
 LOCATION.libdrgn = { rel = "libdrgn/master", marker = ".dox" }
 LOCATION.sfml = { rel = "sfml/master", marker = ".dox" }
 -- Split-PDF providers: `.complete` is the builder's success stamp.
-for vol = 1, 4 do
-	LOCATION["sdm" .. vol] = { rel = "sdm/vol" .. vol, marker = ".complete" }
-end
 for key, std in pairs({
 	cstd = "c-draft",
 	cppstd = "cpp-draft",
 	dwarf = "dwarf5",
 	abi = "x86-64-abi",
 	riscv = "riscv",
-	["arm-a"] = "arm-a",
-	["arm-m"] = "arm-m",
 }) do
 	LOCATION[key] = { rel = "std/" .. std, marker = ".complete" }
 end
@@ -4896,7 +4803,6 @@ LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" 
 LOCATION["coding-for-ssds"] = { index = "coding-for-ssds/index.tsv", unit = "part" }
 LOCATION["miasm-docs"] = { index = "miasm-docs/index.tsv", unit = "module" }
 LOCATION["maskray-linker"] = { index = "maskray-linker/index.tsv", unit = "post" }
-LOCATION["ebbr"] = { index = "ebbr/index.tsv", unit = "section" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
 LOCATION["rbil"] = { index = "rbil/index.tsv", unit = "interrupt" }
 LOCATION["mathematics-in-lean"] = { index = "mathematics-in-lean/index.tsv", unit = "section" }
@@ -5165,10 +5071,6 @@ local providers = {
 	{ name = "Python", key = "python", run = make_simple("python", simple.python) },
 	{ name = "LLVM", key = "llvm", run = register_versioned("llvm", vspec(simple.llvm, "llvmorg-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LLVM", diskpat = "^llvmorg%-%d" })) },
 	{ name = "Xen", key = "xen", run = register_versioned("xen", vspec(simple.xen, "RELEASE-[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Xen", diskpat = "^RELEASE%-%d" })) },
-	{ name = "Intel SDM Vol 1", key = "sdm1", run = function() pick_sdm(1) end },
-	{ name = "Intel SDM Vol 2", key = "sdm2", run = function() pick_sdm(2) end },
-	{ name = "Intel SDM Vol 3", key = "sdm3", run = function() pick_sdm(3) end },
-	{ name = "Intel SDM Vol 4", key = "sdm4", run = function() pick_sdm(4) end },
 	-- felixcloutier.com/x86: every x86/amd64 instruction is a chapter, prefixed
 	-- by its index category ([Core Instruction] AAA, [SGX/SMX/VMX/Xeon Phi
 	-- Instruction]). Tables span-expanded (fc_tables.py) + width-compacted at
@@ -5189,8 +5091,6 @@ local providers = {
 	{ name = "x86-64 System V ABI (Intel/AMD64)", key = "abi", run = function() pick_pdf("x86-64-abi", "x86-64 ABI> ") end },
 	{ name = "ELF Handling For Thread-Local Storage", key = "tls", run = function() pick_pdf("tls", "TLS> ") end },
 	{ name = "RISC-V ISA (unpriv + priv, H ext)", key = "riscv", run = function() pick_pdf("riscv", "RISC-V ISA> ") end },
-	{ name = "Arm ARM (A-profile, application)", key = "arm-a", run = function() pick_pdf("arm-a", "Arm A-profile> ") end },
-	{ name = "Arm ARM (M-profile, microcontroller)", key = "arm-m", run = function() pick_pdf("arm-m", "Arm M-profile> ") end },
 	-- UEFI Specification, versioned: a two-item menu (2.10 / 2.9) dispatching to the
 	-- per-version spec PDF (split by its chapter bookmarks like the other specs).
 	{ name = "UEFI Specification (2.10 / 2.9)", key = "uefi-spec", run = function()
@@ -5210,104 +5110,8 @@ local providers = {
 			},
 		})
 	end },
-	-- Arm SystemReady: the Base System Architecture (BSA), Server BSA (SBSA) and
-	-- Base Boot Requirements (BBR). Arm serves these PDF-only through its doc
-	-- service; the download URL is resolved from that service's JSON at build time
-	-- (so it always fetches the current revision), then split like the other specs.
-	{ name = "Arm SystemReady (BSA / SBSA / BBR)", key = "arm-sysready", run = function()
-		local DOCS = {
-			{ label = "BSA (Base System Architecture, DEN0094)", id = "den0094", name = "arm-bsa", prompt = "Arm BSA> " },
-			{ label = "SBSA (Server Base System Architecture, DEN0029)", id = "den0029", name = "arm-sbsa", prompt = "Arm SBSA> " },
-			{ label = "BBR (Base Boot Requirements, DEN0044)", id = "den0044", name = "arm-bbr", prompt = "Arm BBR> " },
-		}
-		local function open_doc(d)
-			-- Already built: browse the cache without touching the network.
-			if vim.fn.filereadable(data_root .. "/std/" .. d.name .. "/.complete") == 1 then
-				return pick_pdf(d.name, d.prompt)
-			end
-			vim.notify("Resolving " .. d.label .. " from Arm's doc service …")
-			vim.system(
-				{ "curl", "-fsSL", "--max-time", "40", "https://documentation-service.arm.com/documentation/" .. d.id .. "/latest" },
-				{ text = true, timeout = 60000 },
-				function(res)
-					vim.schedule(function()
-						local ok, j = pcall(vim.json.decode, res.stdout or "")
-						local href = ok
-							and j
-							and j._links
-							and j._links.resources
-							and j._links.resources[1]
-							and j._links.resources[1].href
-						if not href then
-							return vim.notify("Arm " .. d.label .. ": could not resolve the PDF URL", vim.log.levels.ERROR)
-						end
-						pick_pdf(d.name, d.prompt, href)
-					end)
-				end
-			)
-		end
-		local labels = {}
-		for _, d in ipairs(DOCS) do
-			labels[#labels + 1] = d.label
-		end
-		fzf().fzf_exec(labels, {
-			prompt = "Arm SystemReady> ",
-			fzf_opts = { ["--no-multi"] = true },
-			actions = {
-				["default"] = function(sel)
-					if not (sel and sel[1]) then
-						return
-					end
-					for _, d in ipairs(DOCS) do
-						if d.label == sel[1] then
-							return open_doc(d)
-						end
-					end
-				end,
-			},
-		})
-	end },
-	-- Arm PSCI (Power State Coordination Interface, DEN0022) and SMCCC (SMC
-	-- Calling Convention, DEN0028): the core Arm firmware platform specs. Like the
-	-- SystemReady docs above, Arm serves these PDF-only, so the download URL is
-	-- resolved from Arm's doc-service JSON at build time, then split by bookmarks.
-	{ name = "Arm PSCI (Power State Coordination Interface)", key = "psci", run = function()
-		if vim.fn.filereadable(data_root .. "/std/arm-psci/.complete") == 1 then
-			return pick_pdf("arm-psci", "Arm PSCI> ")
-		end
-		vim.notify("Resolving Arm PSCI from Arm's doc service …")
-		vim.system({ "curl", "-fsSL", "--max-time", "40", "https://documentation-service.arm.com/documentation/den0022/latest" }, { text = true, timeout = 60000 }, function(res)
-			vim.schedule(function()
-				local ok, j = pcall(vim.json.decode, res.stdout or "")
-				local href = ok and j and j._links and j._links.resources and j._links.resources[1] and j._links.resources[1].href
-				if not href then
-					return vim.notify("Arm PSCI: could not resolve the PDF URL", vim.log.levels.ERROR)
-				end
-				pick_pdf("arm-psci", "Arm PSCI> ", href)
-			end)
-		end)
-	end },
-	{ name = "Arm SMCCC (SMC Calling Convention)", key = "smccc", run = function()
-		if vim.fn.filereadable(data_root .. "/std/arm-smccc/.complete") == 1 then
-			return pick_pdf("arm-smccc", "Arm SMCCC> ")
-		end
-		vim.notify("Resolving Arm SMCCC from Arm's doc service …")
-		vim.system({ "curl", "-fsSL", "--max-time", "40", "https://documentation-service.arm.com/documentation/den0028/latest" }, { text = true, timeout = 60000 }, function(res)
-			vim.schedule(function()
-				local ok, j = pcall(vim.json.decode, res.stdout or "")
-				local href = ok and j and j._links and j._links.resources and j._links.resources[1] and j._links.resources[1].href
-				if not href then
-					return vim.notify("Arm SMCCC: could not resolve the PDF URL", vim.log.levels.ERROR)
-				end
-				pick_pdf("arm-smccc", "Arm SMCCC> ", href)
-			end)
-		end)
-	end },
 	-- RISC-V Platform Specification (archived unified OS-A/M spec, 31 pages).
 	{ name = "RISC-V Platform Specification (archived unified spec)", key = "riscv-platform", run = function() pick_pdf("riscv-platform", "RISC-V Platform> ") end },
-	-- EBBR (Embedded Base Boot Requirements): the UEFI-based boot spec for embedded
-	-- Arm and RISC-V. Frozen from the arm-software.github.io/ebbr Sphinx site.
-	{ name = "EBBR (Embedded Base Boot Requirements)", key = "ebbr", run = frozen_web_provider("ebbr", "EBBR> ") },
 	-- ACPI Specification (UEFI Forum, release 6.5), split by chapter bookmarks.
 	{ name = "ACPI Specification (6.5)", key = "acpi", run = function() pick_pdf("acpi", "ACPI> ") end },
 	-- SMBIOS Specification (DMTF DSP0134, release 3.8.0), split by bookmarks.
@@ -5704,7 +5508,6 @@ local providers = {
 	{ name = "Win32 API", key = "winsdk", run = make_simple("winsdk", simple.winsdk) },
 	{ name = "Windows Driver (WDK)", key = "windriver", run = make_simple("windriver", simple.windriver) },
 	{ name = "PE / COFF format", key = "pe", run = make_simple("pe", simple.pe) },
-	{ name = "Arm Trusted Firmware-A", key = "armtf", run = make_simple("armtf", simple.armtf) },
 	{ name = "SQLite C API", key = "sqlite", run = pick_sqlite },
 	{ name = "Ghidra API (versioned)", key = "ghidra", run = pick_ghidra },
 	{ name = "Multiboot specs", key = "multiboot", run = pick_multiboot },

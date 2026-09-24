@@ -80,7 +80,6 @@ provider builds its cache for the first time:
 
 - `api_build.sh`: kernel-doc index for `:Docs kernel-api` (`$1` = kernel tree).
 - `dox_pipeline.sh`: doxygen -> markdown for the doxygen-based providers.
-- `sdm_build.sh` + `figextract.py`: Intel SDM download, split and figure crop.
 - `aya_api_idx.sh`: aya crate item index.
 
 The out-dir basename must be the book's slug (a few books have per-slug rules).

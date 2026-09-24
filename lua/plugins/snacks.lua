@@ -1,5 +1,5 @@
 -- snacks.image: inline images in the terminal via the kitty graphics protocol.
--- Renders :Docs diagrams (extracted Intel SDM figures, opened in a float) and
+-- Renders :Docs figures (a book's images, opened in a float) and
 -- images embedded in the markdown providers (SDL wiki, CPython, AFL++, SFML).
 --
 -- Chosen over image.nvim because it handles tmux far better (no flicker/ghost
