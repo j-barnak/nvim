@@ -2274,6 +2274,9 @@ local SRC_URLS = {
 	-- gs from a frozen glibc manual page explores glibc source (master; the
 	-- glibc provider's own menu is where a specific release is chosen).
 	glibc = "https://github.com/bminor/glibc",
+	-- gs from a Collections reference page (latest site) explores ansible-core
+	-- master; a specific release is chosen in the Ansible version menu.
+	["ansible-collections"] = "https://github.com/ansible/ansible",
 }
 -- Providers whose useful source is a different repo than their doc set: aya's
 -- docs are the book, but "explore the source" means the crate itself.
@@ -2343,6 +2346,8 @@ local VERSIONED = {
 	pwntools = { url = simple.pwntools.url },
 	coreboot = { url = simple.coreboot.url },
 	ns3 = { url = "https://github.com/nsnam/ns-3-dev-git" },
+	-- Docs come from ansible-documentation; the source at the same branch is ansible-core.
+	ansible = { url = "https://github.com/ansible/ansible" },
 	codeql = { url = simple.codeql.url },
 	lldb = { url = simple.lldb.url },
 	dynamorio = { url = simple.dynamorio.url },
@@ -3593,6 +3598,139 @@ local function pick_ns3()
 	end)
 end
 VERSIONED_PICK.ns3 = pick_ns3
+
+-- Ansible: the guides (getting started, playbook/inventory/vault/module guides,
+-- dev guide, network, reference appendices, roadmaps) are Sphinx RST in the
+-- ansible-documentation repo, one stable-2.NN branch per ansible-core release
+-- plus devel, so each is a sparse checkout of docs/docsite/rst at that branch.
+-- The Collections reference (every module/plugin page, ~12k for 207
+-- collections) is generated at site build time and lives in no repo, and
+-- docs.ansible.com itself refuses scripted fetches (Cloudflare challenge), so
+-- it is an on-demand web set: Resources/tools/ansible_collections_idx.py reads
+-- the site's Sphinx inventory through the Wayback Machine once (latest site
+-- version, one shared index), and hybrid_fetch fetches each page the same way
+-- when it is opened. Explore source is ansible-core at the same branch.
+local ANSIBLE_DOCS_URL = "https://github.com/ansible/ansible-documentation"
+local function pick_ansible()
+	local core = "https://github.com/ansible/ansible"
+	local function guides(br)
+		local dir = data_root .. "/ansible/" .. br
+		local function browse(d)
+			pick_files(d .. "/docs/docsite/rst", "-e rst", "Ansible " .. br .. "> ")
+		end
+		if vim.fn.isdirectory(dir .. "/docs/docsite/rst/playbook_guide") == 1 then
+			return browse(dir)
+		end
+		if not have("git") then
+			return vim.notify("git not found (needed to fetch the Ansible docs)", vim.log.levels.WARN)
+		end
+		ensure_repo(dir, ANSIBLE_DOCS_URL, "/docs/docsite/rst", "docs/docsite/rst/playbook_guide", browse, br)
+	end
+	local function collections()
+		local open = frozen_web_provider("ansible-collections", "Ansible collections (latest)> ", "hybrid")
+		if resolve_docs("ansible-collections/index.tsv") then
+			return open()
+		end
+		if not have("python3") then
+			return vim.notify("python3 is needed to index the Ansible collections", vim.log.levels.WARN)
+		end
+		vim.notify("Fetching the Ansible collections index (via the Wayback Machine) …")
+		vim.system(
+			{ "python3", tools_src .. "/ansible_collections_idx.py", "latest", data_root .. "/ansible-collections" },
+			{ text = true, timeout = 180000 },
+			function(res)
+				vim.schedule(function()
+					if res.code == 0 and resolve_docs("ansible-collections/index.tsv") then
+						return open()
+					end
+					vim.notify("Ansible collections index: " .. vim.trim(res.stderr ~= "" and res.stderr or (res.stdout or "failed")), vim.log.levels.WARN)
+				end)
+			end
+		)
+	end
+	local MENU = {
+		{ "Guides (docs/docsite/rst at this branch)", guides },
+		{ "Collections reference (modules & plugins, latest site)", function() collections() end },
+		{ "Explore source (ansible-core at this branch)", function(br) require("config.src").open("ansible/" .. br, core, nil, nil, br) end },
+	}
+	local function menu(br)
+		local labels = {}
+		for _, e in ipairs(MENU) do
+			labels[#labels + 1] = e[1]
+		end
+		fzf().fzf_exec(labels, {
+			prompt = br .. "> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				for _, e in ipairs(MENU) do
+					if e[1] == sel[1] then return e[2](br) end
+				end
+			end },
+		})
+	end
+	-- "stable-2.19  (Ansible 12)": the package number readers know the site by
+	-- (Ansible N ships ansible-core 2.(N+7) from 2.13/6 on); devel has none.
+	local function label(br)
+		local minor = tonumber(br:match("^stable%-2%.(%d+)$"))
+		return minor and minor >= 13 and string.format("%s  (Ansible %d)", br, minor - 7) or br
+	end
+	local function pick(branches)
+		local rows = vim.tbl_map(label, branches)
+		fzf().fzf_exec(rows, {
+			prompt = "Ansible release> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if sel and sel[1] then menu(sel[1]:match("^(%S+)")) end
+			end },
+		})
+	end
+	-- Branch list: cached like a tag index (:Docs update drops it), merged with
+	-- the branches already checked out so an offline machine still opens them.
+	local idx = data_root .. "/ansible/tags.txt"
+	local function withdisk(list)
+		local seen = {}
+		for _, b in ipairs(list) do seen[b] = true end
+		for _, d in ipairs(vim.fn.glob(data_root .. "/ansible/*", false, true)) do
+			local b = vim.fs.basename(d)
+			if not seen[b] and vim.fn.isdirectory(d) == 1 and (b == "devel" or b:match("^stable%-2%.%d+$")) then
+				seen[b] = true
+				list[#list + 1] = b
+			end
+		end
+		return list
+	end
+	if vim.fn.filereadable(idx) == 1 then
+		return pick(withdisk(vim.fn.readfile(idx)))
+	end
+	if not have("git") then
+		local ondisk = withdisk({})
+		if #ondisk > 0 then return pick(ondisk) end
+		return vim.notify("git not found (needed to list Ansible releases)", vim.log.levels.WARN)
+	end
+	if not mkdir(vim.fs.dirname(idx)) then
+		return
+	end
+	vim.notify("Fetching Ansible releases …")
+	local cmd = "git ls-remote --heads " .. shq(ANSIBLE_DOCS_URL)
+		.. " | sed 's#.*refs/heads/##' | grep -E '^(devel|stable-2\\.[0-9]+)$' | sort -Vr"
+	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
+		vim.schedule(function()
+			local list = vim.split(res.stdout or "", "\n", { trimempty = true })
+			if #list == 0 then
+				return vim.notify("Could not list Ansible releases:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
+			end
+			-- devel first, then the stable branches newest first.
+			table.sort(list, function(a, b)
+				if a == "devel" or b == "devel" then return a == "devel" end
+				return a > b
+			end)
+			vim.fn.writefile(list, idx)
+			pick(withdisk(list))
+		end)
+	end)
+end
+VERSIONED_PICK.ansible = pick_ansible
 
 -- LKL (Linux Kernel Library): the Linux kernel built as a userspace library
 -- (github.com/lkl/linux, arch/lkl). A curated sub-picker - each option targets a
@@ -4907,6 +5045,8 @@ LOCATION["valgrind-manual"] = { index = "valgrind-manual/index.tsv", unit = "cha
 LOCATION["styx-docs"] = { index = "styx-docs/index.tsv", unit = "chapter" }
 LOCATION.styx = { versions = "styx", unit = "version" }
 LOCATION.ns3 = { versions = "ns3", unit = "version" }
+LOCATION.ansible = { versions = "ansible", unit = "branch" }
+LOCATION["ansible-collections"] = { index = "ansible-collections/index.tsv", unit = "page" }
 LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "chapter" }
 LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
@@ -5073,6 +5213,7 @@ local providers = {
 		minmajor = 4,
 	}) },
 	{ name = "ns-3 (network simulator)", key = "ns3", run = pick_ns3 },
+	{ name = "Ansible (guides per release + collections reference)", key = "ansible", run = pick_ansible },
 	{ name = "glibc (manual + per-version source)", key = "glibc", run = pick_glibc },
 	{ name = "libbpf", key = "libbpf", run = register_versioned("libbpf", vspec(simple.libbpf, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "libbpf" })) },
 	{ name = "bpftrace", key = "bpftrace", run = register_versioned("bpftrace", vspec(simple.bpftrace, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "bpftrace" })) },

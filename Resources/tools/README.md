@@ -83,6 +83,10 @@ provider builds its cache for the first time:
 - `aya_api_idx.sh`: aya crate item index.
 - `ns3_api_idx.py`: per-release index of ns-3's published Doxygen (Topics and
   class list) for the versioned ns-3 provider; pages are fetched on open.
+- `ansible_collections_idx.py`: index of the Ansible Collections reference
+  (every module/plugin page) from the site's Sphinx inventory, read through the
+  Wayback Machine because docs.ansible.com blocks scripted fetches; pages are
+  fetched the same way on open.
 
 The out-dir basename must be the book's slug (a few books have per-slug rules).
 Sources (epub/pdf) are not kept in the repo.
