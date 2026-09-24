@@ -81,6 +81,8 @@ provider builds its cache for the first time:
 - `api_build.sh`: kernel-doc index for `:Docs kernel-api` (`$1` = kernel tree).
 - `dox_pipeline.sh`: doxygen -> markdown for the doxygen-based providers.
 - `aya_api_idx.sh`: aya crate item index.
+- `ns3_api_idx.py`: per-release index of ns-3's published Doxygen (Topics and
+  class list) for the versioned ns-3 provider; pages are fetched on open.
 
 The out-dir basename must be the book's slug (a few books have per-slug rules).
 Sources (epub/pdf) are not kept in the repo.

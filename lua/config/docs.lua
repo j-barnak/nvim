@@ -2342,6 +2342,7 @@ local VERSIONED = {
 	qiling = { url = simple.qiling.url },
 	pwntools = { url = simple.pwntools.url },
 	coreboot = { url = simple.coreboot.url },
+	ns3 = { url = "https://github.com/nsnam/ns-3-dev-git" },
 	codeql = { url = simple.codeql.url },
 	lldb = { url = simple.lldb.url },
 	dynamorio = { url = simple.dynamorio.url },
@@ -3486,6 +3487,95 @@ local function pick_styx()
 	end)
 end
 VERSIONED_PICK["styx"] = pick_styx
+
+-- ns-3 (network simulator): everything at one release tag. The tutorial,
+-- manual, installation and contributing guides are Sphinx RST under doc/, and
+-- the Model Library chapters live in src/<module>/doc/source (Sphinx gathers
+-- them into doc/models only at build time), so one sparse checkout at the tag
+-- serves all five and pandoc renders the .rst. The API reference is the
+-- published Doxygen site (thousands of pages, built by ns-3 per release): an
+-- index of its Topics (module groups) and its class list is fetched once per
+-- version by Resources/tools/ns3_api_idx.py, then each page is fetched on first
+-- open and cached (hybrid live mode). Both live under docs/ns3/<tag>/, so gs
+-- resolves the source at the SAME tag and :V returns here. Hand-rolled like
+-- pick_styx because the per-version menu has eight entries, not two.
+local NS3_URL = "https://github.com/nsnam/ns-3-dev-git"
+local function pick_ns3()
+	local function docs(ver, sub, exts, prompt)
+		local dir = data_root .. "/ns3/" .. ver
+		local function browse(d)
+			pick_files(d .. sub, exts, "ns-3 " .. ver .. " " .. prompt .. "> ")
+		end
+		if vim.fn.isdirectory(dir .. "/doc/manual") == 1 then
+			return browse(dir)
+		end
+		if not have("git") then
+			return vim.notify("git not found (needed to fetch ns-3 docs)", vim.log.levels.WARN)
+		end
+		ensure_repo(dir, NS3_URL, "/doc/tutorial /doc/manual /doc/installation /doc/contributing /src/*/doc", "doc/manual", browse, ver)
+	end
+	local function api(ver, which)
+		local rel = "ns3/" .. ver .. "/api-" .. which
+		local open = frozen_web_provider(rel, "ns-3 " .. ver .. " API " .. which .. "> ", "hybrid")
+		if resolve_docs(rel .. "/index.tsv") then
+			return open()
+		end
+		if not have("python3") then
+			return vim.notify("python3 is needed to index the ns-3 API docs", vim.log.levels.WARN)
+		end
+		local site = ver:gsub("^ns%-", "")
+		vim.notify("Fetching the ns-3 " .. site .. " API index …")
+		vim.system(
+			{ "python3", tools_src .. "/ns3_api_idx.py", site, data_root .. "/ns3/" .. ver },
+			{ text = true, timeout = 120000 },
+			function(res)
+				vim.schedule(function()
+					if res.code == 0 and resolve_docs(rel .. "/index.tsv") then
+						return open()
+					end
+					vim.notify("ns-3 API index: " .. vim.trim(res.stderr ~= "" and res.stderr or (res.stdout or "failed")), vim.log.levels.WARN)
+				end)
+			end
+		)
+	end
+	local MENU = {
+		{ "Tutorial", function(v) docs(v, "/doc/tutorial/source", "-e rst", "tutorial") end },
+		{ "Manual", function(v) docs(v, "/doc/manual/source", "-e rst", "manual") end },
+		{ "Model Library (src/*/doc)", function(v) docs(v, "/src", "-e rst", "models") end },
+		{ "Installation", function(v) docs(v, "/doc/installation/source", "-e rst", "installation") end },
+		{ "Contributing", function(v) docs(v, "/doc/contributing/source", "-e rst", "contributing") end },
+		{ "API: Topics (doxygen module groups)", function(v) api(v, "topics") end },
+		{ "API: Classes (doxygen class list)", function(v) api(v, "classes") end },
+		{ "Explore source", function(v) require("config.src").open("ns3/" .. v, NS3_URL, nil, nil, v) end },
+	}
+	local function menu(ver)
+		local labels = {}
+		for _, e in ipairs(MENU) do
+			labels[#labels + 1] = e[1]
+		end
+		fzf().fzf_exec(labels, {
+			prompt = ver .. "> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				for _, e in ipairs(MENU) do
+					if e[1] == sel[1] then return e[2](ver) end
+				end
+			end },
+		})
+	end
+	-- Release tags only ("ns-3.48", "ns-3.46.1"); the -RC tags are excluded.
+	versioned_tags("ns3", NS3_URL, { tagre = "ns-3\\.[0-9]+(\\.[0-9]+)?", diskpat = "^ns%-3" }, function(tags)
+		fzf().fzf_exec(tags, {
+			prompt = "ns-3 version> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = function(sel)
+				if sel and sel[1] then menu(sel[1]) end
+			end },
+		})
+	end)
+end
+VERSIONED_PICK.ns3 = pick_ns3
 
 -- LKL (Linux Kernel Library): the Linux kernel built as a userspace library
 -- (github.com/lkl/linux, arch/lkl). A curated sub-picker - each option targets a
@@ -4799,6 +4889,7 @@ LOCATION["valgrind-faq"] = { index = "valgrind-faq/index.tsv", unit = "chapter" 
 LOCATION["valgrind-manual"] = { index = "valgrind-manual/index.tsv", unit = "chapter" }
 LOCATION["styx-docs"] = { index = "styx-docs/index.tsv", unit = "chapter" }
 LOCATION.styx = { versions = "styx", unit = "version" }
+LOCATION.ns3 = { versions = "ns3", unit = "version" }
 LOCATION["javascript-info"] = { index = "javascript-info/index.tsv", unit = "chapter" }
 LOCATION["testing-handbook"] = { index = "testing-handbook/index.tsv", unit = "chapter" }
 LOCATION["fuzzing-101-libafl"] = { index = "fuzzing-101-libafl/index.tsv", unit = "chapter" }
@@ -4964,6 +5055,7 @@ local providers = {
 		-- here if you want them.
 		minmajor = 4,
 	}) },
+	{ name = "ns-3 (network simulator)", key = "ns3", run = pick_ns3 },
 	{ name = "glibc (manual + per-version source)", key = "glibc", run = pick_glibc },
 	{ name = "libbpf", key = "libbpf", run = register_versioned("libbpf", vspec(simple.libbpf, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "libbpf" })) },
 	{ name = "bpftrace", key = "bpftrace", run = register_versioned("bpftrace", vspec(simple.bpftrace, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "bpftrace" })) },

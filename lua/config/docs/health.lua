@@ -45,6 +45,17 @@ function M.check()
 		end
 	end
 
+	-- webextract.py (every live web fetch: LWN, the kernel-security and V8
+	-- indexes, the ns-3 Doxygen pages) imports bs4; python3 alone is not enough.
+	if have("python3") then
+		vim.fn.system({ "python3", "-c", "import bs4" })
+		if vim.v.shell_error == 0 then
+			health.ok("python3 bs4: live web page extraction (webextract.py)")
+		else
+			health.warn("python3 bs4 missing: live web pages open in the browser instead", { "Install python3-bs4 (apt) or beautifulsoup4 (pip)" })
+		end
+	end
+
 	health.start("Frozen library (Resources/docs, committed)")
 	local fr = vim.fn.stdpath("config") .. "/Resources/docs"
 	if vim.fn.isdirectory(fr) ~= 1 then
