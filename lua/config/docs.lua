@@ -3123,6 +3123,22 @@ do
 		"slideshare.net", "speakerdeck.com", "issues.chromium.org", "linkedin.com",
 		"mp.weixin.qq.com", "zhuanlan.zhihu.com",
 	}
+	-- Sites behind a Cloudflare JavaScript challenge, which curl can never pass
+	-- (docs.ansible.com answers 429 / "Just a moment…"). The Wayback Machine's
+	-- raw endpoint (web/<stamp>id_/<url>) serves the archived page byte for byte,
+	-- with none of the archive's own rewriting, so it is fetched from there
+	-- instead. Only the transport changes: the cache file, the absolute-link base
+	-- passed to webextract and the browser fallback all keep the ORIGINAL url,
+	-- so gd from one archived page to another lands on the same cache entry.
+	local WAYBACK_HOSTS = { "docs.ansible.com" }
+	local function fetch_url(url, host)
+		for _, h in ipairs(WAYBACK_HOSTS) do
+			if host == h or host:sub(-#h - 1) == "." .. h then
+				return "https://web.archive.org/web/2id_/" .. url, 60
+			end
+		end
+		return url, 30
+	end
 	local function open_in_browser(url)
 		if vim.ui and vim.ui.open then
 			local ok = pcall(vim.ui.open, url)
@@ -3154,6 +3170,7 @@ do
 		local we = vim.fn.stdpath("config") .. "/Resources/tools/webextract.py"
 		local q = vim.fn.shellescape
 		local ua = "'Mozilla/5.0 (personal-docs-archive)'"
+		local src, secs = fetch_url(url, host)
 		local script
 		if is_pdf then
 			if not have("pdftotext") then
@@ -3163,13 +3180,13 @@ do
 				end
 				return on_done(nil, "pdftotext is needed to render PDFs")
 			end
-			script = "curl -fsSL --compressed --max-time 45 -A " .. ua .. " " .. q(url) .. " | pdftotext -nopgbrk - -"
+			script = "curl -fsSL --compressed --max-time " .. (secs + 15) .. " -A " .. ua .. " " .. q(src) .. " | pdftotext -nopgbrk - -"
 		else
 			-- fetch once, then try selectors in order; take the first substantial one
 			script = table.concat({
-				"html=$(curl -fsSL --compressed --max-time 30 -A " .. ua .. " " .. q(url) .. ")",
+				"html=$(curl -fsSL --compressed --max-time " .. secs .. " -A " .. ua .. " " .. q(src) .. ")",
 				"best=''",
-				"for sel in article main 'div.post-content' 'div.entry-content' 'div.contents' 'div.content' 'article.markdown-body' 'div.prose' 'div.post' body; do",
+				"for sel in article main 'div.post-content' 'div.entry-content' 'div.contents' 'div[itemprop=articleBody]' 'div.content' 'article.markdown-body' 'div.prose' 'div.post' body; do",
 				"  out=$(printf '%s' \"$html\" | python3 " .. q(we) .. " content \"$sel\" " .. q(url)
 					.. " abs 2>/dev/null | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs 2>/dev/null | python3 "
 					.. q(we) .. " clean '' '' 2>/dev/null)",
