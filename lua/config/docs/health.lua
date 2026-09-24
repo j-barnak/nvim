@@ -36,7 +36,8 @@ function M.check()
 	health.start("External tools")
 	for _, t in ipairs(TOOLS) do
 		local bin, what, required = t[1], t[2], t[3]
-		if have(bin) then
+		-- Debian/Ubuntu ship fd as fdfind; the pickers accept either.
+		if have(bin) or (bin == "fd" and have("fdfind")) then
 			health.ok(bin .. ": " .. what)
 		elseif required then
 			health.error(bin .. " missing: " .. what, { "Install " .. bin })
