@@ -792,9 +792,13 @@ local function open_file(path)
 	if vim.fn.filereadable(cf) == 1 then
 		return finish(vim.fn.readfile(cf), "markdown")
 	end
+	-- cwd = the file's directory: Sphinx trees resolve `.. include:: replace.txt`
+	-- (ns-3 substitutions, kernel disclaimers) relative to the document, and
+	-- pandoc resolves it relative to its cwd, so from Neovim's cwd every include
+	-- silently failed and the substitutions came out as literal "|ns3|".
 	vim.system(
-		{ "pandoc", "-f", from, "-t", "gfm-raw_html", "--wrap=none", path },
-		{ text = true, timeout = 120000 },
+		{ "pandoc", "-f", from, "-t", "gfm-raw_html", "--wrap=none", vim.fs.basename(path) },
+		{ text = true, timeout = 120000, cwd = vim.fs.dirname(path) },
 		function(res)
 			vim.schedule(function()
 				local lines = vim.split(res.stdout or "", "\n")
@@ -1022,7 +1026,7 @@ while IFS= read -r f; do
   out="$2/$key.md"
   [ -s "$out" ] && continue
   case "$f" in *.rst) from=rst ;; *.xml) from=docbook ;; *) from=html ;; esac
-  if pandoc -f "$from" -t gfm-raw_html --wrap=none "$f" >"$out.tmp" 2>/dev/null && [ -s "$out.tmp" ]; then
+  if (cd "$(dirname "$f")" && pandoc -f "$from" -t gfm-raw_html --wrap=none "$(basename "$f")") >"$out.tmp" 2>/dev/null && [ -s "$out.tmp" ]; then
     mv "$out.tmp" "$out"
   else
     rm -f "$out.tmp"
@@ -3164,7 +3168,7 @@ do
 			script = table.concat({
 				"html=$(curl -fsSL --compressed --max-time 30 -A " .. ua .. " " .. q(url) .. ")",
 				"best=''",
-				"for sel in article main 'div.post-content' 'div.entry-content' 'div.content' 'article.markdown-body' 'div.prose' 'div.post' body; do",
+				"for sel in article main 'div.post-content' 'div.entry-content' 'div.contents' 'div.content' 'article.markdown-body' 'div.prose' 'div.post' body; do",
 				"  out=$(printf '%s' \"$html\" | python3 " .. q(we) .. " content \"$sel\" " .. q(url)
 					.. " abs 2>/dev/null | pandoc -f html -t gfm-raw_html --wrap=none --preserve-tabs 2>/dev/null | python3 "
 					.. q(we) .. " clean '' '' 2>/dev/null)",
