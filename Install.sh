@@ -19,6 +19,8 @@
 #   2. installs the three Python libraries the doc builders import
 #   3. links this checkout to ~/.config/nvim (or $XDG_CONFIG_HOME/nvim)
 #   4. bootstraps the plugins (lazy.nvim) headlessly so the first real launch is ready
+#   5. installs the code formatters conform.nvim runs on save (clang-format,
+#      ormolu, ocamlformat, raco fmt, prettier/prettierd, ruff, rustfmt)
 #
 # It is idempotent: re-running it re-checks packages and re-syncs plugins.
 # Usage:  ./Install.sh            (interactive: asks before sudo installs)
@@ -60,6 +62,9 @@ if [ "$(id -u)" -ne 0 ]; then have sudo && SUDO="sudo" || warn "not root and no 
 #   python3            - runs the doc builders
 # Optional (installed if the manager has them, never fatal): cppman,
 # imagemagick(convert)+xdg-utils (Intel SDM figures), tmux.
+# Formatters (conform.nvim, format on save; see lua/plugins/conform.lua):
+#   clang-format ormolu ocamlformat racket nodejs+npm from the package manager
+#   where it has them; the rest are user-level in install_formatters below.
 detect_pm() {
   for pm in apt-get dnf pacman zypper apk brew; do have "$pm" && { echo "$pm"; return; }; done
   echo ""
@@ -84,12 +89,16 @@ install_packages() {
       fi
       # optional: cppman (CppReference), imagemagick+xdg-utils (Intel SDM figures), tmux
       $SUDO apt-get install -y cppman imagemagick xdg-utils tmux 2>/dev/null || true
+      # formatters (ruff/prettier are not packaged: install_formatters handles them)
+      $SUDO apt-get install -y clang-format ormolu ocamlformat racket nodejs npm 2>/dev/null \
+        || warn "some formatter packages failed (clang-format ormolu ocamlformat racket nodejs npm)"
       ;;
     dnf)
       $SUDO dnf install -y neovim git curl ripgrep fd-find fzf pandoc \
         poppler-utils mupdf ctags texinfo man-db util-linux perl \
         python3 python3-pip python3-beautifulsoup4 python3-lxml python3-pyyaml || warn "some dnf packages failed"
       $SUDO dnf install -y cppman ImageMagick xdg-utils tmux 2>/dev/null || true
+      $SUDO dnf install -y clang-tools-extra ormolu ocamlformat racket nodejs npm ruff 2>/dev/null || true
       ;;
     pacman)
       $SUDO pacman -Sy --needed --noconfirm neovim git curl ripgrep fd fzf pandoc \
@@ -97,12 +106,14 @@ install_packages() {
         python python-beautifulsoup4 python-lxml python-yaml \
         || warn "some pacman packages failed"
       $SUDO pacman -S --needed --noconfirm imagemagick xdg-utils tmux 2>/dev/null || true
+      $SUDO pacman -S --needed --noconfirm clang ormolu ocamlformat racket nodejs npm ruff prettier 2>/dev/null || true
       ;;
     zypper)
       $SUDO zypper install -y neovim git curl ripgrep fd fzf pandoc \
         poppler-tools mupdf-tools ctags texinfo man util-linux perl \
         python3 python3-pip python3-beautifulsoup4 python3-lxml python3-PyYAML || warn "some zypper packages failed"
       $SUDO zypper install -y ImageMagick xdg-utils tmux 2>/dev/null || true
+      $SUDO zypper install -y clang-tools ocamlformat racket nodejs npm 2>/dev/null || true
       ;;
     apk)
       $SUDO apk add neovim git curl ripgrep fd fzf pandoc poppler-utils mupdf-tools \
@@ -110,12 +121,14 @@ install_packages() {
         python3 py3-pip py3-beautifulsoup4 py3-lxml py3-yaml \
         || warn "some apk packages failed"
       $SUDO apk add imagemagick xdg-utils tmux 2>/dev/null || true
+      $SUDO apk add clang-extra-tools ocamlformat racket nodejs npm ruff 2>/dev/null || true
       ;;
     brew)
       # macOS ships man, col and perl; add mutool and imagemagick.
       brew install neovim git curl ripgrep fd fzf pandoc poppler mupdf-tools \
         universal-ctags texinfo python3 || warn "some brew packages failed"
       brew install cppman imagemagick tmux 2>/dev/null || true
+      brew install clang-format ormolu ocamlformat minimal-racket node ruff prettier 2>/dev/null || true
       ;;
   esac
 }
@@ -138,6 +151,77 @@ PY
     # PEP 668 externally-managed environments: try a venv the builders can use.
     python3 -m pip install --user --break-system-packages beautifulsoup4 lxml pyyaml 2>/dev/null \
       || warn "could not pip install bs4/lxml/pyyaml; install them with your package manager"
+  fi
+}
+
+# ── 5. formatters conform.nvim runs on save (user-level, no sudo) ───────────
+# The package manager above supplies what it packages; this step covers the
+# rest the same way on every distro, into ~/.local/bin (already on PATH on
+# Debian/Ubuntu via ~/.profile) or the tool's own user scope. Each part is
+# skipped when the tool is already there, so re-runs are no-ops.
+install_formatters() {
+  local bin="$HOME/.local/bin"
+  mkdir -p "$bin"
+  case ":$PATH:" in *":$bin:"*) ;; *) warn "$bin is not on PATH; add it (Ubuntu's ~/.profile does after a re-login)" ;; esac
+
+  # ruff (Python): no Debian package and pip is PEP-668-blocked, so the static
+  # release binary. Arch/brew/dnf/apk install it above and skip this.
+  if have ruff; then
+    log "ruff already installed"
+  elif have curl && have python3; then
+    local arch os asset tag tmp
+    arch="$(uname -m)"; os="$(uname -s)"
+    case "$arch" in x86_64|amd64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; esac
+    case "$os" in Linux) asset="ruff-$arch-unknown-linux-gnu.tar.gz" ;; Darwin) asset="ruff-$arch-apple-darwin.tar.gz" ;; *) asset="" ;; esac
+    tag="$(curl -fsSL https://api.github.com/repos/astral-sh/ruff/releases/latest 2>/dev/null \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])' 2>/dev/null || true)"
+    if [ -n "$asset" ] && [ -n "$tag" ]; then
+      log "installing ruff $tag into $bin"
+      tmp="$(mktemp -d)"
+      if curl -fsSL -o "$tmp/ruff.tgz" "https://github.com/astral-sh/ruff/releases/download/$tag/$asset" \
+        && tar -xzf "$tmp/ruff.tgz" -C "$tmp" && install -m755 "$tmp"/ruff-*/ruff "$bin/ruff"; then
+        :
+      else
+        warn "could not install ruff; see https://docs.astral.sh/ruff/installation/"
+      fi
+      rm -rf "$tmp"
+    else
+      warn "could not resolve a ruff release for $os/$arch; install it manually"
+    fi
+  else
+    warn "curl and python3 are needed to fetch ruff"
+  fi
+
+  # rustfmt (Rust): part of the rustup toolchain.
+  if have rustfmt; then
+    log "rustfmt already installed"
+  elif have rustup; then
+    rustup component add rustfmt || warn "rustup could not add rustfmt"
+  else
+    warn "rustfmt missing: install rustup (https://rustup.rs), it ships rustfmt"
+  fi
+
+  # raco fmt (Racket): the `fmt` package in the user's Racket scope.
+  if have raco; then
+    if raco pkg show fmt 2>/dev/null | grep -q '^ *fmt '; then
+      log "racket fmt package already installed"
+    else
+      log "installing the Racket fmt package (raco fmt)"
+      raco pkg install --auto --skip-installed fmt || warn "raco pkg install fmt failed"
+    fi
+  else
+    warn "racket missing: raco fmt unavailable until it is installed"
+  fi
+
+  # prettier + prettierd (JavaScript/TypeScript/JSON): npm into ~/.local so the
+  # binaries land in ~/.local/bin without sudo.
+  if have prettier && have prettierd; then
+    log "prettier and prettierd already installed"
+  elif have npm; then
+    log "installing prettier + prettierd into $HOME/.local"
+    npm install -g --prefix "$HOME/.local" prettier @fsouza/prettierd || warn "npm install of prettier/prettierd failed"
+  else
+    warn "npm missing: prettier/prettierd unavailable until nodejs+npm are installed"
   fi
 }
 
@@ -171,6 +255,7 @@ bootstrap_plugins() {
 log "Neovim config installer  (repo: $REPO_DIR)"
 if ask "Install system packages (needs sudo)?"; then install_packages; else warn "skipping system packages"; fi
 install_python_libs
+install_formatters
 link_config
 bootstrap_plugins
 
@@ -192,6 +277,23 @@ for m,label in (("bs4","beautifulsoup4"),("lxml","lxml"),("yaml","pyyaml")):
     mark = ok if u.find_spec(m) else no
     print("  %s python:%s" % (mark, label))
 PY
+# Formatters are per-language: a missing one only affects that filetype, so
+# they are listed but do not decide the final message.
+log "formatters (conform.nvim, format on save):"
+for t in clang-format ormolu ocamlformat raco prettier prettierd ruff rustfmt; do
+  if have "$t"; then
+    printf '  \033[1;32m✓\033[0m %s\n' "$t"
+  else
+    printf '  \033[1;31m✗\033[0m %s (missing)\n' "$t"
+  fi
+done
+if have raco; then
+  if raco pkg show fmt 2>/dev/null | grep -q '^ *fmt '; then
+    printf '  \033[1;32m✓\033[0m raco fmt (fmt package)\n'
+  else
+    printf '  \033[1;31m✗\033[0m raco fmt (fmt package missing)\n'
+  fi
+fi
 echo
 if [ "$ok" = 1 ]; then
   log "Done. The frozen :Docs library works offline; :Src clones sources on demand."
