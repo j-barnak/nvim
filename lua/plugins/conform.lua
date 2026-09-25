@@ -4,11 +4,10 @@
 -- formatter, and it takes care of trailing whitespace as part of its output.
 -- Every other filetype falls through to the "_" entry, conform's built-in
 -- trim_whitespace + trim_newlines, so trailing spaces and blank lines at the
--- end of the file never survive a save anywhere. (mini.trailspace stays for
--- the highlight only; a second BufWritePre trimmer would fight the formatters.)
--- Markdown is the one deliberate hole: two trailing spaces are a hard line
--- break there, so it only gets trim_newlines. (An empty list would not do: conform
--- treats it as "no entry" and falls back to "_", trailing-space trim included.)
+-- end of the file never survive a save anywhere, Markdown included (a hard
+-- line break there is a trailing backslash, not two trailing spaces).
+-- mini.trailspace stays for the highlight only; a second BufWritePre trimmer
+-- would fight the formatters.
 --
 -- Format-on-save follows the conform recipe: a function so that
 -- :FormatDisable (global) / :FormatDisable! (this buffer) / :FormatEnable can
@@ -60,7 +59,6 @@ return {
 			-- file with no .ocamlformat nearby still formats.
 			ocaml = { "ocamlformat" },
 			racket = { "racketfmt" }, -- `raco fmt` (the fmt package)
-			markdown = { "trim_newlines" },
 			["_"] = { "trim_whitespace", "trim_newlines" },
 		},
 		format_on_save = function(bufnr)
