@@ -3226,10 +3226,17 @@ local function frozen_web_provider(name, prompt, live)
 	return function()
 		-- Frozen first (the committed index is the one a bare clone gets), with
 		-- the volatile cache as a fallback for an index scraped locally.
-		local idxfile = resolve_docs(name .. "/index.tsv") or (frozen_root .. "/" .. name .. "/index.tsv")
+		local idxfile, where = resolve_docs(name .. "/index.tsv")
+		idxfile = idxfile or (frozen_root .. "/" .. name .. "/index.tsv")
 		if vim.fn.filereadable(idxfile) ~= 1 then
 			return vim.notify(name .. ": frozen index missing", vim.log.levels.WARN)
 		end
+		-- Where a page fetched live is written. A committed index's pages go
+		-- into the repo's .webcache (they are candidates to commit); an index
+		-- that lives only in the volatile cache (ns-3 API, Ansible collections)
+		-- keeps its pages there too, so a live fetch never drops an untracked
+		-- file into the repo that nothing committed references.
+		local page_root = where == "cached" and data_root or frozen_root
 		local function browse()
 			last_picker = browse -- D reopens the index
 			fzf().fzf_exec(vim.fn.readfile(idxfile), {
@@ -3245,7 +3252,7 @@ local function frozen_web_provider(name, prompt, live)
 							return
 						end
 						local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
-							or (frozen_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt")
+							or (page_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt")
 						local ddir = resolve_docs(name) or (frozen_root .. "/" .. name)
 						if vim.fn.filereadable(cf) == 1 then
 							-- Pass the provider's committed docs dir (not nil) so the
