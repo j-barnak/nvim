@@ -2274,6 +2274,7 @@ local SRC_URLS = {
 	-- gs from a frozen glibc manual page explores glibc source (master; the
 	-- glibc provider's own menu is where a specific release is chosen).
 	glibc = "https://github.com/bminor/glibc",
+	podman = "https://github.com/containers/podman",
 	-- gs from a Collections reference page (latest site) explores ansible-core
 	-- master; a specific release is chosen in the Ansible version menu.
 	["ansible-collections"] = "https://github.com/ansible/ansible",
@@ -3464,7 +3465,15 @@ local function frozen_nested_provider(name, top_prompt)
 		fzf().fzf_exec(order, {
 			prompt = top_prompt,
 			fzf_opts = { ["--no-multi"] = true },
-			actions = { ["default"] = function(sel) if sel and sel[1] then pick_chapter(sel[1]) end end },
+			actions = { ["default"] = function(sel)
+				if not (sel and sel[1]) then return end
+				-- A one-page category (Podman's Introduction) opens its page
+				-- directly rather than through a one-row picker; D still returns
+				-- to this menu.
+				local items = cats[sel[1]]
+				if items and #items == 1 then return open_doc(items[1].title, items[1].url) end
+				pick_chapter(sel[1])
+			end },
 		})
 	end
 	return run
@@ -3474,6 +3483,10 @@ end
 -- by section (Fuzzing, Static Analysis, Web/Burp, Languages, Cryptography).
 local pick_javascript_info = frozen_nested_provider("javascript-info", "JavaScript.info> ")
 local pick_testing_handbook = frozen_nested_provider("testing-handbook", "Testing Handbook> ")
+-- Podman: docs.podman.io (Introduction, the command pages with their
+-- subcommands, Reference, the GitHub Markdown tutorials) and the Python SDK
+-- (podman-py.readthedocs.io), frozen by Resources/tools/podman_docs_build.sh.
+local pick_podman = frozen_nested_provider("podman", "Podman> ")
 
 -- Styx: versioned emulator. Source = github (release tags + the `main` branch);
 -- docs = the external docs.styx-emulator.org site, frozen (same for every version).
@@ -5060,6 +5073,7 @@ LOCATION["rbil"] = { index = "rbil/index.tsv", unit = "interrupt" }
 LOCATION["mathematics-in-lean"] = { index = "mathematics-in-lean/index.tsv", unit = "section" }
 LOCATION["programming-z3"] = { index = "programming-z3/index.tsv", unit = "section" }
 LOCATION["docker"] = { index = "docker/index.tsv", unit = "chapter" }
+LOCATION["podman"] = { index = "podman/index.tsv", unit = "page" }
 LOCATION["ptrace-injection"] = { index = "ptrace-injection/index.tsv", unit = "chapter" }
 LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit = "chapter" }
 LOCATION["writing-an-os-in-rust"] = { index = "writing-an-os-in-rust/index.tsv", unit = "chapter" }
@@ -5424,6 +5438,7 @@ local providers = {
 	{ name = "systemd (systemd.io docs + blog series)", key = "systemd", run = pick_systemd },
 	{ name = "LKL (Linux Kernel Library: docs, API, source, fuzzers)", key = "lkl", run = pick_lkl },
 	{ name = "Docker (official docs + softchris tutorial)", key = "docker", run = pick_docker },
+	{ name = "Podman (docs.podman.io + Python SDK)", key = "podman", run = pick_podman },
 	{ name = "herdtools7 (cat models, litmus tests)", key = "herdtools7", run = make_simple("herdtools7", simple.herdtools7) },
 	{ name = "NetBSD kernel internals (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
