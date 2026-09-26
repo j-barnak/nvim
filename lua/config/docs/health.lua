@@ -14,7 +14,7 @@ local TOOLS = {
 	{ "git", "cloning/updating the live doc repos (kernel, QEMU, Ghidra, ...)" },
 	{ "pandoc", "rendering .rst/.xml/.html docs and web articles" },
 	{ "curl", "web providers and PDF spec downloads" },
-	{ "mutool", "splitting PDF specs (C/C++/DWARF/ABI/RISC-V)" },
+	{ "mutool", "splitting PDF specs (C/C++/DWARF/ABI)" },
 	{ "pdftotext", "extracting PDF spec text" },
 	{ "pdfinfo", "PDF page counts for the spec splitter" },
 	{ "man", "man 1-8, ld/as/elf/bash, binutils, NetBSD pages" },

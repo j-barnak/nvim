@@ -132,8 +132,8 @@ mutool_furniture() {
 }
 book_fix() {
   # chtitle carries the current chapter/appendix running-head string (its title
-  # with the "N " / "Appendix X " prefix stripped); only amd_apm_fix.awk reads it,
-  # every other per-slug fix ignores the extra -v.
+  # with the "N " / "Appendix X " prefix stripped) for a per-slug fix that keys
+  # on it; a fix that does not need it ignores the extra -v.
   if [ -n "$FIXAWK" ] && [ -f "$FIXAWK" ]; then awk -v chtitle="$CHTITLE" -f "$FIXAWK"; else cat; fi
 }
 # pre_fix runs on the RAW pdftotext output, before the control-byte tr, for a
@@ -179,11 +179,9 @@ emit() {
   # Chapter file name: full title, cut at a word boundary near 140 chars (the
   # old hard cut -c1-80 chopped 11 Beautiful C++ guideline titles mid-word).
   f=$(printf '%s' "$3" | tr '/' '-' | awk '{ if (length($0) > 140) { s = substr($0, 1, 140); sub(/ [^ ]*$/, "", s); print s } else print }')
-  # The AMD64 APM prints the current chapter/appendix title as a running footer
-  # ("<Title> ... <page>"); CHTITLE is that title (the emit title minus its
-  # "N " or "Appendix X " number prefix) so amd_apm_fix.awk can drop the footer
-  # that folio.awk misses in the manual's short sections. Empty / ignored for
-  # every other book.
+  # CHTITLE is the current chapter/appendix title (the emit title minus its
+  # "N " or "Appendix X " number prefix), for the per-slug stages that key on
+  # the running head (book_fix's awk, mutool_furniture). Ignored elsewhere.
   CHTITLE=$(printf '%s' "$3" | sed -E 's/^[0-9]+ //; s/^Appendix [A-Z] //')
   # Line filter (folio.awk): strip the bracket tag some PDF tools stamp on
   # bookmarks, drop page folios, converter banners, and (book mode) two more
@@ -267,12 +265,6 @@ case "$SLUG" in
   # leading "Ç " to the conventional hook "↪ " (588 lines, Ç is never a real
   # letter in this book), pairing it with the ⤦ that ends the line above.
   sat-smt-by-example) FIXAWK="${AWKF%/*}/satsmt_fix.awk" ;;
-  # AMD64 APM (both volumes): the running footer "<chapter title> ... <page>"
-  # (and its even-page mirror "<page> ... <chapter title>") leaks in the
-  # manual's short sections, where folio.awk has too few pages to key its
-  # running-head vote. amd_apm_fix drops it, keyed on the exact chapter/appendix
-  # title passed in via $CHTITLE, so it can never touch a body or table line.
-  amd-apm-vol1 | amd-apm-vol2) FIXAWK="${AWKF%/*}/amd_apm_fix.awk" ;;
 esac
 # Per-slug text extractor. "mutool" routes emit() through mutool draw -F txt +
 # mutool_furniture instead of pdftotext -layout, for books whose math notation is
@@ -325,27 +317,6 @@ if [ "$4" = book ] && [ "$SLUG" = elf-specification ]; then
     printf '71\tBook III: Program Loading and Dynamic Linking\n'
     printf '89\tBook III: Intel Architecture and System V R4 Dependencies\n'
     printf '103\tIndex\n'; } > "$OUT/.ch.tsv"
-elif [ "$4" = book ] && { [ "$SLUG" = amd-apm-vol1 ] || [ "$SLUG" = amd-apm-vol2 ]; }; then
-  # AMD64 APM (FrameMaker PDFs): the depth-0 outline nodes are the front matter
-  # (Contents/Figures/Tables/Revision History), the Preface, the numbered
-  # chapters, the lettered appendices (vol 2) and the Index. Two vol-1 chapters
-  # are titled "5 64-Bit Media Programming" and "6 x87 Floating-Point
-  # Programming" - a digit / a lowercase letter right after the chapter number -
-  # which the generic book pattern (^N <Capital>) misses, so it folded 5 and 6
-  # into chapter 4. Take the boundaries straight from the depth-0 outline
-  # instead. Vol 2's outline opens with three cover-page nodes that all resolve
-  # to page 1 (the title block); drop page <= 1 so they do not each become a
-  # chapter. Contents..Revision History are dropped as boundaries so they fold
-  # into the auto-emitted Front Matter (the first real boundary is the Preface),
-  # matching every other book in this library. Dedupe by page in case two nodes
-  # resolve to the same page.
-  awk -F'\t' '$1==0 {
-        t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t)
-        if ($2+0 <= 1) next
-        if (lt ~ /^(contents|figures|tables|revision history)$/) next
-        print $2"\t"t
-      }' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
-    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = writing-a-bootloader-from-scratch-cmu-15-410 ]; then
   # A 20-page course handout with 12 sections, so most sections begin MID-PAGE
   # and a page-granular split cannot separate them: eleven of the twelve

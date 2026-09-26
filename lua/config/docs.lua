@@ -4229,44 +4229,12 @@ local STD_URLS = {
 	["cpp-draft"] = "https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/n4950.pdf",
 	["dwarf5"] = "https://dwarfstd.org/doc/DWARF5.pdf",
 	["x86-64-abi"] = "https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build",
-	["riscv"] = "https://github.com/riscv/riscv-isa-manual/releases/latest/download/riscv-spec.pdf",
 	["gdb-manual"] = "https://sourceware.org/gdb/download/onlinedocs/gdb.pdf",
 	-- Drepper's "ELF Handling For Thread-Local Storage" (7 chapters by outline).
 	["tls"] = "https://www.uclibc.org/docs/tls.pdf",
-	-- UEFI Specification, split per version (the "UEFI Specification" picker below
-	-- offers 2.10 and 2.9; each is its own ~2000-page spec PDF, cached separately).
-	["uefi-2.10"] = "https://uefi.org/sites/default/files/resources/UEFI_Spec_2_10_Aug29.pdf",
-	["uefi-2.9"] = "https://uefi.org/sites/default/files/resources/UEFI_Spec_2_9_2021_03_18.pdf",
-	-- RISC-V Platform Specification (the archived unified OS-A/M platform spec).
-	-- Kept as a concise 31-page historical overview.
-	["riscv-platform"] = "https://raw.githubusercontent.com/riscvarchive/riscv-platform-specs/main/riscv-platform-spec.pdf",
-	-- ACPI Specification (UEFI Forum, release 6.5), split by chapter bookmarks.
-	["acpi"] = "https://uefi.org/sites/default/files/resources/ACPI_Spec_6_5_Aug29.pdf",
-	-- SMBIOS Specification (DMTF DSP0134, release 3.8.0), split by bookmarks.
-	["smbios"] = "https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.8.0.pdf",
 	-- SPDM (Security Protocol and Data Model) Specification (DMTF DSP0274,
 	-- release 1.4.0): device attestation / measurement / secure sessions.
 	["spdm"] = "https://www.dmtf.org/sites/default/files/standards/documents/DSP0274_1.4.0.pdf",
-	-- UEFI PI (Platform Initialization) Specification 1.8: the PEI/DXE/MM
-	-- firmware volumes that sit under the UEFI spec (companion to edk2).
-	["uefi-pi"] = "https://uefi.org/sites/default/files/resources/UEFI_PI_Spec_1_8_March3.pdf",
-	-- Device Tree Specification 0.4 (devicetree.org): hardware description used
-	-- across embedded, Arm and RISC-V boot (the non-ACPI hardware description).
-	["devicetree"] = "https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf",
-	-- VirtIO Specification 1.2 (OASIS): the paravirtualized device standard used
-	-- by QEMU/KVM and friends.
-	["virtio"] = "https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.pdf",
-	-- TPM 2.0 Library Specification (TCG, r1.59), four parts. The "TPM 2.0
-	-- Library Specification" picker below offers each part.
-	["tpm2-part1"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part1_Architecture_pub.pdf",
-	["tpm2-part2"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part2_Structures_pub.pdf",
-	["tpm2-part3"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part3_Commands_pub.pdf",
-	["tpm2-part4"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_TPM2_r1p59_Part4_SuppRoutines_pub.pdf",
-	-- TPM companions (also in the "TPM 2.0 (TCG specifications)" picker): the TSS
-	-- Enhanced System API (the C stack above the raw commands) and the PC Client
-	-- Platform Firmware Profile (measured boot / PCR usage).
-	["tpm2-esapi"] = "https://trustedcomputinggroup.org/wp-content/uploads/TSS_ESAPI_v1p0_r14_pub10012021.pdf",
-	["tpm2-pfp"] = "https://trustedcomputinggroup.org/wp-content/uploads/TCG_PCClient_PFP_r1p05_v23_pub.pdf",
 }
 
 -- pick_pdf(name, prompt[, url]): browse a built spec cache, else fetch+split it.
@@ -4635,17 +4603,6 @@ local function pick_elf_tis()
 	pick_files(out, "-e txt", "ELF (TIS)> ")
 end
 
--- AMD64 APM: the AMD64 Architecture Programmer's Manual, the AMD counterpart to
--- the (removed) Intel SDM. AMD's own PDF links are broken (they 302 to a
--- search hub), so these two volumes are frozen
--- chapter books committed under Resources/docs, browsed straight from disk.
--- Vol 1 is Application Programming, Vol 2 is System Programming.
-local function pick_apm(vol)
-	local rel = "amd-apm-vol" .. vol
-	local out = resolve_docs(rel) or (frozen_root .. "/" .. rel)
-	pick_files(out, "-e txt", "AMD64 APM v" .. vol .. "> ")
-end
-
 -- Aya: the book (aya-rs.dev) and the crate reference (docs.rs) under one entry.
 local function pick_aya()
 	fzf().fzf_exec({ "Book (aya-rs.dev)", "Crate reference (docs.rs)" }, {
@@ -4956,7 +4913,6 @@ for key, std in pairs({
 	cppstd = "cpp-draft",
 	dwarf = "dwarf5",
 	abi = "x86-64-abi",
-	riscv = "riscv",
 }) do
 	LOCATION[key] = { rel = "std/" .. std, marker = ".complete" }
 end
@@ -5079,8 +5035,6 @@ LOCATION["decompilation-wiki"] = { index = "decompilation-wiki/index.tsv", unit 
 LOCATION["writing-an-os-in-rust"] = { index = "writing-an-os-in-rust/index.tsv", unit = "chapter" }
 LOCATION["algorithmica-hpc"] = { index = "algorithmica-hpc/index.tsv", unit = "chapter" }
 LOCATION["elf-tis"] = { rel = "books/books-compilers/elf-specification", marker = ".complete", unit = "chapter" }
-LOCATION["amd-apm-vol1"] = { rel = "amd-apm-vol1", marker = ".complete", unit = "chapter" }
-LOCATION["amd-apm-vol2"] = { rel = "amd-apm-vol2", marker = ".complete", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
 	LOCATION[key] = { network = true }
@@ -5351,80 +5305,13 @@ local providers = {
 	-- the x86 instruction reference.
 	{ name = "Ralf Brown's Interrupt List (RBIL)", key = "rbil",
 		run = frozen_web_provider("rbil", "RBIL interrupt> ") },
-	{ name = "AMD64 APM Vol 1 (Application Programming)", key = "amd-apm-vol1", run = function() pick_apm(1) end },
-	{ name = "AMD64 APM Vol 2 (System Programming)", key = "amd-apm-vol2", run = function() pick_apm(2) end },
 	{ name = "C standard (C23 draft)", key = "cstd", run = function() pick_pdf("c-draft", "C draft> ") end },
 	{ name = "C++ standard (draft)", key = "cppstd", run = function() pick_pdf("cpp-draft", "C++ draft> ") end },
 	{ name = "DWARF 5 spec", key = "dwarf", run = function() pick_pdf("dwarf5", "DWARF 5> ") end },
 	{ name = "x86-64 System V ABI (Intel/AMD64)", key = "abi", run = function() pick_pdf("x86-64-abi", "x86-64 ABI> ") end },
 	{ name = "ELF Handling For Thread-Local Storage", key = "tls", run = function() pick_pdf("tls", "TLS> ") end },
-	{ name = "RISC-V ISA (unpriv + priv, H ext)", key = "riscv", run = function() pick_pdf("riscv", "RISC-V ISA> ") end },
-	-- UEFI Specification, versioned: a two-item menu (2.10 / 2.9) dispatching to the
-	-- per-version spec PDF (split by its chapter bookmarks like the other specs).
-	{ name = "UEFI Specification (2.10 / 2.9)", key = "uefi-spec", run = function()
-		fzf().fzf_exec({ "2.10 (August 2022)", "2.9 (March 2021)" }, {
-			prompt = "UEFI version> ",
-			fzf_opts = { ["--no-multi"] = true },
-			actions = {
-				["default"] = function(sel)
-					if not (sel and sel[1]) then
-						return
-					end
-					if sel[1]:match("^2%.10") then
-						return pick_pdf("uefi-2.10", "UEFI 2.10> ")
-					end
-					return pick_pdf("uefi-2.9", "UEFI 2.9> ")
-				end,
-			},
-		})
-	end },
-	-- RISC-V Platform Specification (archived unified OS-A/M spec, 31 pages).
-	{ name = "RISC-V Platform Specification (archived unified spec)", key = "riscv-platform", run = function() pick_pdf("riscv-platform", "RISC-V Platform> ") end },
-	-- ACPI Specification (UEFI Forum, release 6.5), split by chapter bookmarks.
-	{ name = "ACPI Specification (6.5)", key = "acpi", run = function() pick_pdf("acpi", "ACPI> ") end },
-	-- SMBIOS Specification (DMTF DSP0134, release 3.8.0), split by bookmarks.
-	{ name = "SMBIOS Specification (3.8.0)", key = "smbios", run = function() pick_pdf("smbios", "SMBIOS> ") end },
 	-- SPDM Specification (DMTF DSP0274, release 1.4.0): device attestation.
 	{ name = "SPDM Specification (DSP0274, 1.4.0)", key = "spdm", run = function() pick_pdf("spdm", "SPDM> ") end },
-	-- UEFI PI (Platform Initialization) Specification 1.8.
-	{ name = "UEFI PI (Platform Initialization) Specification (1.8)", key = "uefi-pi", run = function() pick_pdf("uefi-pi", "UEFI PI> ") end },
-	-- Device Tree Specification 0.4.
-	{ name = "Device Tree Specification (0.4)", key = "devicetree", run = function() pick_pdf("devicetree", "Device Tree> ") end },
-	-- VirtIO Specification 1.2 (OASIS).
-	{ name = "VirtIO Specification (1.2)", key = "virtio", run = function() pick_pdf("virtio", "VirtIO> ") end },
-	-- TPM 2.0 (TCG specifications): the four-part Library Specification (r1.59)
-	-- plus the TSS Enhanced System API and the PC Client Platform Firmware
-	-- Profile companions. Each is its own spec PDF split by bookmarks.
-	{ name = "TPM 2.0 (TCG specifications)", key = "tpm2", run = function()
-		local PARTS = {
-			{ "Library Part 1: Architecture", "tpm2-part1", "TPM2 Part 1> " },
-			{ "Library Part 2: Structures", "tpm2-part2", "TPM2 Part 2> " },
-			{ "Library Part 3: Commands", "tpm2-part3", "TPM2 Part 3> " },
-			{ "Library Part 4: Supporting Routines", "tpm2-part4", "TPM2 Part 4> " },
-			{ "TSS: Enhanced System API (ESAPI)", "tpm2-esapi", "TPM2 ESAPI> " },
-			{ "PC Client Platform Firmware Profile", "tpm2-pfp", "TPM2 PFP> " },
-		}
-		local labels = {}
-		for _, p in ipairs(PARTS) do
-			labels[#labels + 1] = p[1]
-		end
-		fzf().fzf_exec(labels, {
-			prompt = "TPM 2.0> ",
-			fzf_opts = { ["--no-multi"] = true },
-			actions = {
-				["default"] = function(sel)
-					if not (sel and sel[1]) then
-						return
-					end
-					for _, p in ipairs(PARTS) do
-						if p[1] == sel[1] then
-							return pick_pdf(p[2], p[3])
-						end
-					end
-				end,
-			},
-		})
-	end },
 	{ name = "Commands (man 1)", key = "man1", run = function() pick_man(1) end },
 	{ name = "System calls (man 2)", key = "man2", run = function() pick_man(2) end },
 	{ name = "Library functions (man 3)", key = "man3", run = function() pick_man(3) end },
