@@ -21,6 +21,10 @@
 #   4. bootstraps the plugins (lazy.nvim) headlessly so the first real launch is ready
 #   5. installs the code formatters conform.nvim runs on save (clang-format,
 #      ormolu, ocamlformat, raco fmt, prettier/prettierd, ruff, rustfmt)
+#   6. installs the everyday shell tools (zoxide, atuin, bat, eza, delta, tldr,
+#      rga, sd, dust/duf/procs/btop, entr, just, direnv, shellcheck/shfmt, glow,
+#      yq, miller, mosh, socat, pv, progress, moreutils, git-absorb, ncdu) and
+#      the two oh-my-zsh plugins (autosuggestions, syntax-highlighting)
 #
 # It is idempotent: re-running it re-checks packages and re-syncs plugins.
 # Usage:  ./Install.sh            (interactive: asks before sudo installs)
@@ -92,6 +96,11 @@ install_packages() {
       # formatters (ruff/prettier are not packaged: install_formatters handles them)
       $SUDO apt-get install -y clang-format ormolu ocamlformat racket nodejs npm 2>/dev/null \
         || warn "some formatter packages failed (clang-format ormolu ocamlformat racket nodejs npm)"
+      # everyday shell tools (see install_shell_tools for the zsh side)
+      $SUDO apt-get install -y zoxide atuin bat eza git-delta tealdeer ripgrep-all sd \
+        du-dust duf procs btop entr just direnv shellcheck shfmt \
+        glow yq miller mosh socat pv progress moreutils git-absorb ncdu 2>/dev/null \
+        || warn "some shell-tool packages failed"
       ;;
     dnf)
       $SUDO dnf install -y neovim git curl ripgrep fd-find fzf pandoc \
@@ -99,6 +108,8 @@ install_packages() {
         python3 python3-pip python3-beautifulsoup4 python3-lxml python3-pyyaml || warn "some dnf packages failed"
       $SUDO dnf install -y cppman ImageMagick xdg-utils tmux 2>/dev/null || true
       $SUDO dnf install -y clang-tools-extra ormolu ocamlformat racket nodejs npm ruff 2>/dev/null || true
+      $SUDO dnf install -y zoxide atuin bat eza git-delta tealdeer ripgrep-all sd dust duf procs btop entr just direnv \
+        ShellCheck shfmt glow yq miller mosh socat pv progress moreutils git-absorb ncdu 2>/dev/null || true
       ;;
     pacman)
       $SUDO pacman -Sy --needed --noconfirm neovim git curl ripgrep fd fzf pandoc \
@@ -107,6 +118,8 @@ install_packages() {
         || warn "some pacman packages failed"
       $SUDO pacman -S --needed --noconfirm imagemagick xdg-utils tmux 2>/dev/null || true
       $SUDO pacman -S --needed --noconfirm clang ormolu ocamlformat racket nodejs npm ruff prettier 2>/dev/null || true
+      $SUDO pacman -S --needed --noconfirm zoxide atuin bat eza git-delta tealdeer ripgrep-all sd dust duf procs btop entr just direnv \
+        shellcheck shfmt glow yq miller mosh socat pv progress moreutils git-absorb ncdu 2>/dev/null || true
       ;;
     zypper)
       $SUDO zypper install -y neovim git curl ripgrep fd fzf pandoc \
@@ -129,6 +142,8 @@ install_packages() {
         universal-ctags texinfo python3 || warn "some brew packages failed"
       brew install cppman imagemagick tmux 2>/dev/null || true
       brew install clang-format ormolu ocamlformat minimal-racket node ruff prettier 2>/dev/null || true
+      brew install zoxide atuin bat eza git-delta tealdeer ripgrep-all sd dust duf procs btop entr just direnv \
+        shellcheck shfmt glow yq miller mosh socat pv progress moreutils git-absorb ncdu 2>/dev/null || true
       ;;
   esac
 }
@@ -225,6 +240,34 @@ install_formatters() {
   fi
 }
 
+# ── 6. everyday shell tools: the oh-my-zsh side ─────────────────────────────
+# The packages come from the manager above. What no manager ships are the two
+# oh-my-zsh plugins, cloned into $ZSH_CUSTOM/plugins when oh-my-zsh is there.
+# Enabling them (plugins=(... zsh-autosuggestions zsh-syntax-highlighting), the
+# fzf plugin, zoxide/atuin/direnv init guarded on the binaries, bat/eza aliases) is a ~/.zshrc
+# edit this script does not make for you; the report prints the lines.
+install_shell_tools() {
+  local zsh_custom="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+  if [ ! -d "$HOME/.oh-my-zsh" ]; then
+    warn "oh-my-zsh not found: skipping the zsh plugin clones"
+    return
+  fi
+  have git || { warn "git missing: cannot clone the zsh plugins"; return; }
+  local name url
+  for name in zsh-autosuggestions zsh-syntax-highlighting; do
+    url="https://github.com/zsh-users/$name"
+    if [ -d "$zsh_custom/plugins/$name" ]; then
+      log "$name already cloned"
+    else
+      log "cloning $name into $zsh_custom/plugins"
+      git clone -q --depth=1 "$url" "$zsh_custom/plugins/$name" || warn "clone of $name failed"
+    fi
+  done
+  if have tldr && [ ! -d "${XDG_CACHE_HOME:-$HOME/.cache}/tealdeer" ]; then
+    tldr --update >/dev/null 2>&1 || true
+  fi
+}
+
 # ── 3. link this checkout into place ────────────────────────────────────────
 link_config() {
   if [ "$REPO_DIR" = "$CONFIG_DIR" ]; then
@@ -256,6 +299,7 @@ log "Neovim config installer  (repo: $REPO_DIR)"
 if ask "Install system packages (needs sudo)?"; then install_packages; else warn "skipping system packages"; fi
 install_python_libs
 install_formatters
+install_shell_tools
 link_config
 bootstrap_plugins
 
@@ -294,6 +338,19 @@ if have raco; then
     printf '  \033[1;31m✗\033[0m raco fmt (fmt package missing)\n'
   fi
 fi
+log "shell tools:"
+for t in zoxide atuin bat eza delta tldr rga sd dust duf procs btop entr just direnv shellcheck shfmt \
+         glow yq mlr mosh socat pv progress git-absorb ncdu; do
+  if have "$t" || { [ "$t" = bat ] && have batcat; }; then
+    printf '  \033[1;32m✓\033[0m %s\n' "$t"
+  else
+    printf '  \033[1;31m✗\033[0m %s (missing)\n' "$t"
+  fi
+done
+zc="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins"
+for p in zsh-autosuggestions zsh-syntax-highlighting; do
+  if [ -d "$zc/$p" ]; then printf '  \033[1;32m✓\033[0m %s\n' "$p"; else printf '  \033[1;31m✗\033[0m %s (not cloned)\n' "$p"; fi
+done
 echo
 if [ "$ok" = 1 ]; then
   log "Done. The frozen :Docs library works offline; :Src clones sources on demand."

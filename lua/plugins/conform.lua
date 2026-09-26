@@ -59,6 +59,9 @@ return {
 			-- file with no .ocamlformat nearby still formats.
 			ocaml = { "ocamlformat" },
 			racket = { "racketfmt" }, -- `raco fmt` (the fmt package)
+			sh = { "shfmt" },
+			bash = { "shfmt" },
+			zsh = { "shfmt" }, -- close enough for zsh; shfmt has no zsh dialect
 			["_"] = { "trim_whitespace", "trim_newlines" },
 		},
 		format_on_save = function(bufnr)
