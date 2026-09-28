@@ -1,0 +1,234 @@
+# Use strong randomness
+
+### Problem
+Many cryptographic systems require sources of random numbers, and fail with even slight deviations from randomness. For example, leaking just one bit of each random number in the DSA will reveal a private key astonishingly quickly. Lack of randomness can be surprisingly hard to diagnose: the Debian random number generator [failure](http://www.debian.org/security/2008/dsa-1571) in OpenSSL went unnoticed for 2 years, compromising a vast number of keys. The requirements on random numbers for cryptographic purposes are very stringent: most pseudorandom number generators (PRNG) fail to meet them.
+
+### Bad solutions
+
+For cryptographic applications,
+
+* Do not rely only on predictable entropy source like timestamps, PIDs, temperature sensors, etc.
+* Do not rely only on general-purpose pseudorandom functions like `stdlib`'s `rand()`, `srand()`, `random()`, or Python's `random` module.
+* Do not use [Mersenne Twister](http://crypto.di.uoa.gr/CRYPTO.SEC/Randomness_Attacks.html).
+* Do not use things like http://www.random.org/ (the random data may be shared with and available to other parties).
+* Do not design your own PRNG, even if it's based on a secure cryptographic primitive (unless you know what you're doing).
+* Do not reuse the same randomness accross applications to "save" random numbers.
+* Do not conclude that a PRNG is secure just because it passes the [Diehard](http://www.stat.fsu.edu/pub/diehard/) tests or [NIST's tests](http://csrc.nist.gov/groups/ST/toolkit/rng/stats_tests.html).
+* Do not assume that a cryptographically secure PRNG necessarily provides forward or backward secrecy (aka [backtracking resistance and prediction resistance](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-90Ar1.pdf)), would the internal state leak to an attacker.
+* Do not directly use "entropy" as pseudorandom data (entropy from analog sources is often biased, that is, N bits from an entropy pool often provide less than N bits of entropy).
+
+### Solution
+Minimize the need for randomness through design and choice of primitives (for example [Ed25519](http://ed25519.cr.yp.to/) produces signatures deterministically).
+
+On Linux, use the [`getrandom()`](http://man7.org/linux/man-pages/man2/getrandom.2.html) system call, which ensures that the underlying PRNG has a high enough level entropy but will not "block" afterwards.
+On OpenBSD, use [`arc4random()`](https://man.openbsd.org/arc4random.3), which is a ChaCha20-based PRNG that calls `getentropy()` for its initial seed. Use this for large amounts of cryptographically-secure randomness. [`getentropy()`](https://man.openbsd.org/getentropy.2) has a 256-byte limit per call and is suitable for scenarios such as seeding PRNGs.
+On FreeBSD 12 and newer, both [`getrandom()`](https://www.freebsd.org/cgi/man.cgi?getrandom) and [`getentropy()`](https://www.freebsd.org/cgi/man.cgi?query=getentropy&sektion=3&apropos=0&manpath=FreeBSD+12.0-RELEASE+and+Ports) are available. Older versions only have the `KERN_ARND` `sysctl`.	
+
+The OpenSSL API offers [`RAND_bytes()`](https://www.openssl.org/docs/man1.0.2/man3/RAND_bytes.html), which behaves differently depending on the platform and attempts to use reliable source of entropy when available. For example, on a Unix platform it would use `/dev/urandom` and the RDRAND/RDSEED instructions, if available, among others.
+
+When generating random bytes use operating-system provided sources guaranteed to meet cryptographic requirements like `/dev/random`. On constrained platforms consider adding analog sources of noise and mixing them well.
+
+Do [check the return values](http://jbp.io/2014/01/16/openssl-rand-api) of your RNG, to make sure that the random bytes are as strong as they should be, and they have been written successfully.
+
+Follow the recommendations from Nadia Heninger et al. in Section 7 of their [Mining Your Ps and Qs](https://factorable.net/weakkeys12.extended.pdf) paper.
+
+On Intel CPUs based on the Ivy Bridge microarchitecture (and future generations), the [built-in PRNG](http://software.intel.com/en-us/articles/intel-digital-random-number-generator-drng-software-implementation-guide) guarantees high entropy and throughput.
+
+On Unix systems, if no reliable syscall is available, you should generally use `/dev/random` or `/dev/urandom`. However on Linux, the former is "blocking", meaning that it won't return any data when it deems that its entropy pool contains insufficient entropy. This feature limits its usability, and is the reason why `/dev/urandom` is more often used. Extracting a random number from `/dev/urandom` can be as simple as
+
+```C
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdio.h>
+
+int main() {
+  int randint;
+  int bytes_read;
+  int fd = open("/dev/urandom", O_RDONLY);
+  if (fd != -1) {
+    bytes_read = read(fd, &randint, sizeof(randint));
+    if (bytes_read != sizeof(randint)) {
+      fprintf(stderr, "read() failed (%d bytes read)\n", bytes_read);
+      return -1;
+    }
+  }
+  else {
+    fprintf(stderr, "open() failed\n");
+    return -2;
+  }
+  printf("%08x\n", randint); /* assumes sizeof(int) <= 4 */
+  close(fd);
+  return 0;
+}
+```
+
+However, this simple program may not be sufficient for secure randomness generation in your environment: it is safer to perform additional error checks, as found in [LibreSSL](http://libressl.org)'s `getentropy_urandom` function:
+
+```C
+static int
+getentropy_urandom(void *buf, size_t len)
+{
+    struct stat st;
+    size_t i;
+    int fd, cnt, flags;
+    int save_errno = errno;
+
+start:
+
+    flags = O_RDONLY;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+#ifdef O_CLOEXEC
+    flags |= O_CLOEXEC;
+#endif
+    fd = open("/dev/urandom", flags, 0);
+    if (fd == -1) {
+        if (errno == EINTR)
+            goto start;
+        goto nodevrandom;
+    }
+#ifndef O_CLOEXEC
+    fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
+#endif
+
+    /* Lightly verify that the device node looks sane */
+    if (fstat(fd, &st) == -1 || !S_ISCHR(st.st_mode)) {
+        close(fd);
+        goto nodevrandom;
+    }
+    if (ioctl(fd, RNDGETENTCNT, &cnt) == -1) {
+        close(fd);
+        goto nodevrandom;
+    }
+    for (i = 0; i < len; ) {
+        size_t wanted = len - i;
+        ssize_t ret = read(fd, (char *)buf + i, wanted);
+
+        if (ret == -1) {
+            if (errno == EAGAIN || errno == EINTR)
+                continue;
+            close(fd);
+            goto nodevrandom;
+        }
+        i += ret;
+    }
+    close(fd);
+    if (gotdata(buf, len) == 0) {
+        errno = save_errno;
+        return 0;        /* satisfied */
+    }
+nodevrandom:
+    errno = EIO;
+    return -1;
+}
+```
+
+On Windows, when using the Microsoft C compiler, [rand_s](https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/rand-s?view=vs-2019) can be used to generate 32 bits of cryptographically secure data:
+
+```C
+#include <string.h>
+
+#define _CRT_RAND_S
+#include <stdlib.h>
+
+int randombytes(unsigned char *out, size_t outlen) {
+    size_t wordlen = sizeof(unsigned int);
+    size_t fullwordslen = (outlen / wordlen) * wordlen;
+    size_t taillen = outlen - fullwordslen;
+
+    for (size_t i = 0; i < fullwordslen; i += wordlen) {
+        unsigned int randword;
+
+        if (rand_s(&randword))
+            return -1;
+
+	memcpy(&out[i], &randword, wordlen);
+    }
+
+    if (taillen) {
+        unsigned int randword;
+
+        if (rand_s(&randword))
+            return -1;
+
+        memcpy(&out[fullwordslen], &randword, taillen);
+    }
+
+    return 0;
+}
+```
+
+On recent Windows platforms, [BCryptGenRandom](https://docs.microsoft.com/en-us/windows/desktop/api/bcrypt/nf-bcrypt-bcryptgenrandom) (nothing to do with the password hash bcrypt) should be used to generate cryptographically secure data. Its interface is straightforward:
+
+```C
+NTSTATUS BCryptGenRandom(
+  BCRYPT_ALG_HANDLE hAlgorithm,
+  PUCHAR            pbBuffer,
+  ULONG             cbBuffer,
+  ULONG             dwFlags
+);
+```
+
+On legacy Windows platforms, [CryptGenRandom](http://msdn.microsoft.com/en-us/library/aa379942.aspx) from the legacy Win32 CryptoAPI provides cryptographically secure pseudorandom bytes. Microsoft provides the following usage example:
+
+```C
+#include <stddef.h>
+#include <stdint.h>
+#include <windows.h>
+
+#pragma comment(lib, "advapi32.lib")
+
+int randombytes(unsigned char *out, size_t outlen)
+{
+  static HCRYPTPROV handle = 0; /* only freed when program ends */
+  if(!handle) {
+    if(!CryptAcquireContext(&handle, 0, 0, PROV_RSA_FULL,
+                            CRYPT_VERIFYCONTEXT | CRYPT_SILENT)) {
+      return -1;
+    }
+  }
+  while(outlen > 0) {
+    const DWORD len = outlen > 1048576UL ? 1048576UL : outlen;
+    if(!CryptGenRandom(handle, len, out)) {
+      return -2;
+    }
+    out    += len;
+    outlen -= len;
+  }
+  return 0;
+}
+```
+
+When targeting Windows XP or above, the CryptoAPI above can be bypassed in favor of [RtlGenRandom](http://msdn.microsoft.com/en-us/library/windows/desktop/aa387694%28v=vs.85%29.aspx):
+
+```C
+#include <stdint.h>
+#include <stdio.h>
+
+#include <Windows.h>
+
+#define RtlGenRandom SystemFunction036
+#if defined(__cplusplus)
+extern "C"
+#endif
+BOOLEAN NTAPI RtlGenRandom(PVOID RandomBuffer, ULONG RandomBufferLength);
+
+#pragma comment(lib, "advapi32.lib")
+
+int main()
+{
+    uint8_t buffer[32] = { 0 };
+    
+    if (FALSE == RtlGenRandom(buffer, sizeof buffer))
+        return -1;
+
+    for (size_t i = 0; i < sizeof buffer; ++i)
+        printf("%02X ", buffer[i]);
+    printf("\n");
+
+    return 0;
+}
+```

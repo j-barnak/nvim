@@ -2275,6 +2275,7 @@ local SRC_URLS = {
 	-- glibc provider's own menu is where a specific release is chosen).
 	glibc = "https://github.com/bminor/glibc",
 	podman = "https://github.com/containers/podman",
+	cryptocoding = "https://github.com/veorq/cryptocoding",
 	-- gs from a Collections reference page (latest site) explores ansible-core
 	-- master; a specific release is chosen in the Ansible version menu.
 	["ansible-collections"] = "https://github.com/ansible/ansible",
@@ -5031,6 +5032,7 @@ LOCATION["wtf-articles"] = { index = "wtf-articles/index.tsv", unit = "article" 
 LOCATION["coding-for-ssds"] = { index = "coding-for-ssds/index.tsv", unit = "part" }
 LOCATION["miasm-docs"] = { index = "miasm-docs/index.tsv", unit = "module" }
 LOCATION["maskray-linker"] = { index = "maskray-linker/index.tsv", unit = "post" }
+LOCATION["cryptocoding"] = { index = "cryptocoding/index.tsv", unit = "chapter" }
 LOCATION["kafl-docs"] = { index = "kafl-docs/index.tsv", unit = "page" }
 LOCATION["rbil"] = { index = "rbil/index.tsv", unit = "interrupt" }
 LOCATION["mathematics-in-lean"] = { index = "mathematics-in-lean/index.tsv", unit = "section" }
@@ -5702,6 +5704,11 @@ providers[#providers + 1] = { name = "Mathematics in Lean", key = "mathematics-i
 providers[#providers + 1] = { name = "Programming Z3", key = "programming-z3", run = frozen_web_provider("programming-z3", "Programming Z3> ") }
 -- MaskRay Linker: Fangrui Song's linker/ELF blog posts, one per chapter.
 providers[#providers + 1] = { name = "MaskRay Linker (blog)", key = "maskray-linker", run = frozen_web_provider("maskray-linker", "MaskRay> ") }
+-- Cryptocoding (github.com/veorq/cryptocoding): the coding rules for crypto
+-- implementations (constant-time comparison, no secret-dependent branches or
+-- table lookups, ...), one chapter per rule in the README's ToC order, frozen
+-- by Resources/tools/cryptocoding_build.py.
+providers[#providers + 1] = { name = "Cryptocoding (rules for crypto implementations)", key = "cryptocoding", run = frozen_web_provider("cryptocoding", "Cryptocoding> ") }
 -- gem5 (gem5.org): Getting Started, the Learning gem5 course and the reference
 -- documentation, 94 frozen chapters. A simulator manual, so it sits with the
 -- other tool docs rather than in Books.

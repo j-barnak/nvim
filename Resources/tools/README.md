@@ -83,6 +83,8 @@ provider builds its cache for the first time:
 - `aya_api_idx.sh`: aya crate item index.
 - `ns3_api_idx.py`: per-release index of ns-3's published Doxygen (Topics and
   class list) for the versioned ns-3 provider; pages are fetched on open.
+- `cryptocoding_build.py`: splits veorq/cryptocoding's README into one frozen
+  chapter per rule (ToC order) for the top-level Cryptocoding provider.
 - `podman_docs_build.sh`: freezes docs.podman.io (Introduction, every command
   and subcommand page, Reference, the GitHub tutorials) and the Podman Python SDK
   docs into the two-level `podman` provider.
