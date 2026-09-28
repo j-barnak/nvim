@@ -1,4 +1,4 @@
-local vault = vim.fs.normalize("~/Documents/Obsidian Vault")
+local vault = vim.fs.normalize("~/Documents/Systems-and-Security")
 
 return {
 	"obsidian-nvim/obsidian.nvim",
