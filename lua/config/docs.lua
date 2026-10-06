@@ -2055,6 +2055,16 @@ end
 -- "v5.0.7648-stable" that plain `sort -Vr` floats to the top because 'v' > '6'.
 -- Opt-in (spec.vsort) so only the one provider that mixes bare and v-prefixed
 -- tag shapes (Binary Ninja: v5 stable + v6 dev) is reordered.
+-- A tag can be a nested ref ("stable/6.0.10601", Binary Ninja's current
+-- naming). The version is one path segment on disk, so the slash is spelled
+-- "~" there (never part of a tag name): ver_dir() for the directory, ver_ref()
+-- back to the ref git checks out. Flat tags pass through both unchanged.
+local function ver_dir(v)
+	return (v:gsub("/", "~"))
+end
+local function ver_ref(d)
+	return (d:gsub("~", "/"))
+end
 local function vkey(s)
 	local nums = {}
 	for n in s:gmatch("%d+") do nums[#nums + 1] = tonumber(n) end
@@ -2090,7 +2100,7 @@ local function versioned_tags(name, url, spec, cb)
 			seen[key(v)] = true
 		end
 		for _, d in ipairs(vim.fn.glob(data_root .. "/" .. name .. "/*", false, true)) do
-			local v = vim.fs.basename(d)
+			local v = ver_ref(vim.fs.basename(d)) -- "stable~6.0.10601" on disk is the ref "stable/6.0.10601"
 			if not seen[key(v)] and vim.fn.isdirectory(d) == 1 and v:match(diskpat) then
 				seen[key(v)] = true
 				list[#list + 1] = v
@@ -2115,10 +2125,11 @@ local function versioned_tags(name, url, spec, cb)
 		return
 	end
 	vim.notify("Fetching " .. name .. " versions …")
-	-- The bare tag name is reduced with `sed 's#.*/##'` and matched WHOLE against
-	-- ^(tagre)$, so the printed string IS the exact git ref (a prefix like
-	-- "llvmorg-"/"edk2-stable" stays attached — grep -oE would have stripped it and
-	-- handed back a ref that does not exist). tagre carries no anchors of its own.
+	-- The tag name is everything after "refs/tags/" (a nested name like
+	-- "stable/6.0.10601" stays whole: cutting at the last slash handed back a ref
+	-- that does not exist) and is matched WHOLE against ^(tagre)$, so the printed
+	-- string IS the exact git ref (a prefix like "llvmorg-"/"edk2-stable" stays
+	-- attached too). tagre carries no anchors of its own.
 	local tagre = spec.tagre or "v[0-9]+\\.[0-9]+(\\.[0-9]+)?"
 	-- The awk major test only makes sense for the default numeric form; a custom
 	-- tagre is already the filter (its major may sit behind a prefix like
@@ -2128,7 +2139,7 @@ local function versioned_tags(name, url, spec, cb)
 		awkf = " | awk -F. '{ m = $1; sub(/^v/, \"\", m); if (m + 0 >= " .. spec.minmajor .. ") print }'"
 	end
 	local cmd = "git ls-remote --tags --refs " .. shq(url)
-		.. " | sed 's#.*/##'"
+		.. " | sed 's#.*refs/tags/##'"
 		.. " | grep -E " .. shq("^(" .. tagre .. ")$")
 		.. awkf
 		.. " | sort -Vr"
@@ -2156,6 +2167,9 @@ end
 --                    doxygen set from the source at the tag; "none" = source only.
 --   spec.submodules - recurse git submodules when exploring source (AFL++/LibAFL).
 --   spec.excl     - extra ctags excludes passed to config.src.open.
+--   spec.heads    - branch names listed ahead of the tags ({ "dev" }): a branch
+--                   checks out and clones exactly like a tag, so a project whose
+--                   newest work is only on a branch still gets it in the picker.
 local function make_versioned(name, spec)
 	local src_url = spec.src_url or spec.url
 	local function menu(version)
@@ -2173,7 +2187,7 @@ local function make_versioned(name, spec)
 					end
 					if sel[1] == "Explore source" then
 						return require("config.src").open(
-							name .. "/" .. version, src_url, nil, spec.excl, version, spec.submodules, spec.src_sparse)
+							name .. "/" .. ver_dir(version), src_url, nil, spec.excl, version, spec.submodules, spec.src_sparse)
 					end
 					-- docs_mode "latest": docs live in a separate repo not tagged
 					-- per release (wiki/website/book) or generated from headers, so
@@ -2184,7 +2198,7 @@ local function make_versioned(name, spec)
 					if spec.docs_mode == "doxygen" then
 						return pick_doxygen_at(name, version, spec)
 					end
-					local dir = data_root .. "/" .. name .. "/" .. version
+					local dir = data_root .. "/" .. name .. "/" .. ver_dir(version)
 					if vim.fn.isdirectory(dir .. "/" .. spec.marker) == 1 then
 						return pick_files(dir .. spec.browse, spec.exts, spec.prompt)
 					end
@@ -2199,6 +2213,12 @@ local function make_versioned(name, spec)
 		-- No git gate here: versioned_tags needs git only when it must FETCH the
 		-- index, and a version already on disk browses with no git at all.
 		versioned_tags(name, src_url, spec, function(list)
+			if spec.heads then
+				local all = {}
+				for _, h in ipairs(spec.heads) do all[#all + 1] = h end
+				for _, v in ipairs(list) do all[#all + 1] = v end
+				list = all
+			end
 			fzf().fzf_exec(list, {
 				prompt = (spec.label or name) .. " version> ",
 				fzf_opts = { ["--no-multi"] = true },
@@ -2420,7 +2440,7 @@ gs_source = function(dir)
 		-- is in a versioned doc tree.
 		local ver = dir:match("/docs/" .. name .. "/([^/]+)")
 		srcname = name .. (ver and ("/" .. ver) or "")
-		url, excl, ref, gs_sub = VERSIONED[name].url, VERSIONED[name].excl, ver, VERSIONED[name].submodules
+		url, excl, ref, gs_sub = VERSIONED[name].url, VERSIONED[name].excl, ver and ver_ref(ver), VERSIONED[name].submodules
 		gs_sparse = VERSIONED[name].src_sparse
 	elseif name and simple[name] then
 		srcname, url = name, simple[name].url
@@ -5629,30 +5649,30 @@ local providers = {
 	{ name = "QBDI (Quarkslab)", key = "qbdi", run = register_versioned("qbdi", vspec(simple.qbdi, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBDI", docs_mode = "latest", docs_fn = frozen_web_provider("qbdi-docs", "QBDI docs> ") })) },
 	{ name = "Capstone", key = "capstone", run = register_versioned("capstone", vspec(simple.capstone, "v?[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Capstone", docs_mode = "latest", docs_fn = pick_capstone_docs })) },
 	{ name = "Rizin", key = "rizin", run = register_versioned("rizin", vspec(simple.rizin, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "Rizin", docs_mode = "latest", docs_fn = pick_rizin_book })) },
-	-- Stable tags are "vN.N.N-stable"; Binary Ninja 6 is (so far) only tagged on
-	-- the dev channel as bare "6.N.NNNNN" (the "dev/" prefix is stripped by the
-	-- ls-remote reducer), so match those too to surface v6 now, newest first. The
-	-- "vN.-stable" alternative still picks up "v6.N.N-stable" once it is pushed.
-	-- Only major 6 is admitted as a bare number (v5 has ~800 dev tags that would
-	-- otherwise flood the picker). diskpat accepts both "v5..." and "6..." on disk.
-	{ name = "Binary Ninja", key = "binja", run = function()
-		fzf().fzf_exec({ "User Documentation", "Developer Documentation", "Explore source (dev branch)", "Explore source (v5.0.7648-stable)" }, {
-			prompt = "Binary Ninja> ",
-			fzf_opts = { ["--no-multi"] = true },
-			actions = { ["default"] = function(sel)
-				if not (sel and sel[1]) then return end
-				if sel[1] == "User Documentation" then
-					frozen_web_provider("binja-user-docs", "Binary Ninja (User)> ")()
-				elseif sel[1] == "Developer Documentation" then
+	-- Binary Ninja: releases were tagged "vN.N.N-stable" up to v5.0 and
+	-- "stable/N.N.N" since (stable/6.0.10601 is the newest), so both shapes are
+	-- accepted and sorted numerically (vsort) so 6.0 lists above v5.0. The dev
+	-- channel's ~900 "dev/N.N.N" tags would flood the picker; the `dev` branch
+	-- stands in for it. Docs are the two frozen binary.ninja sites (latest
+	-- only), reached from "Browse Documentation" under any version.
+	{ name = "Binary Ninja", key = "binja", run = register_versioned("binja", vspec(simple.binja, "v[0-9]+\\.[0-9]+\\.[0-9]+-stable|stable/[0-9]+\\.[0-9]+\\.[0-9]+", {
+		-- diskpat is a Lua pattern (no alternation): anything with a digit is a
+		-- version dir under binja/ ("v5.0.7648-stable", "stable~6.0.10601").
+		label = "Binary Ninja", diskpat = "%d", vsort = true, heads = { "dev" }, docs_mode = "latest",
+		docs_fn = function()
+			fzf().fzf_exec({ "User Documentation", "Developer Documentation" }, {
+				prompt = "Binary Ninja docs> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = { ["default"] = function(sel)
+					if not (sel and sel[1]) then return end
+					if sel[1] == "User Documentation" then
+						return frozen_web_provider("binja-user-docs", "Binary Ninja (User)> ")()
+					end
 					frozen_web_provider("binja-dev-docs", "Binary Ninja (Dev)> ")()
-				elseif sel[1]:match("dev branch") then
-					require("config.src").open("binja/dev", "https://github.com/Vector35/binaryninja-api", nil, nil, "dev")
-				else
-					require("config.src").open("binja/v5.0.7648-stable", "https://github.com/Vector35/binaryninja-api", nil, nil, "v5.0.7648-stable")
-				end
-			end },
-		})
-	end },
+				end },
+			})
+		end,
+	})) },
 	{ name = "LIEF", key = "lief", run = register_versioned("lief", vspec(simple.lief, "[0-9]+\\.[0-9]+\\.[0-9]+", { label = "LIEF", diskpat = "^%d", docs_mode = "latest", docs_fn = frozen_web_provider("lief-docs", "LIEF docs> ") })) },
 	{ name = "pyelftools", key = "pyelftools", run = register_versioned("pyelftools", vspec(simple.pyelftools, "v[0-9]+\\.[0-9]+", { label = "pyelftools" })) },
 	{ name = "QBinDiff", key = "qbindiff", run = register_versioned("qbindiff", vspec(simple.qbindiff, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "QBINDiff", docs_mode = "latest", docs_fn = frozen_web_provider("qbindiff-docs", "QBinDiff docs> ") })) },
