@@ -1230,6 +1230,37 @@ do
 		end
 	end
 
+	-- The previewer for the grep. fn_transform below rewrites a hit inside a
+	-- frozen web page into "[provider] Title:lnum:col:text" for the list, which
+	-- fzf-lua's stock previewer would parse as a file path ("[rizin-book] The
+	-- Rizin Handbook") and report "Unable to stat file". This subclass resolves
+	-- the displayed entry through grep_entry_map, the same table the open action
+	-- uses, and falls back to the stock parser for untouched entries.
+	-- Like fzf-lua's own help_tags/man_pages previewers: extend() gives the
+	-- class and only parse_entry is overridden. It is handed to live_grep as a
+	-- previewer SPEC (the stock builtin spec with `_ctor` swapped), the form
+	-- fzf-lua's Previewer.new instantiates fresh for each picker; passing the
+	-- bare class would route through its `new` field with the class table as
+	-- `self`, so every run would share and mutate one object.
+	local DocsGrepPreviewer
+	local function grep_previewer_spec()
+		if not DocsGrepPreviewer then
+			DocsGrepPreviewer = require("fzf-lua.previewer.builtin").buffer_or_file:extend()
+			function DocsGrepPreviewer:parse_entry(entry_str)
+				local info = grep_entry_map and grep_entry_map[entry_str]
+				if info then
+					return { path = info.path, line = info.lnum, col = info.col or 1 }
+				end
+				return DocsGrepPreviewer.super.parse_entry(self, entry_str)
+			end
+		end
+		return vim.tbl_extend("force", require("fzf-lua.config").globals.previewers.builtin, {
+			_ctor = function()
+				return DocsGrepPreviewer
+			end,
+		})
+	end
+
 	docs_grep = function()
 		if not have("rg") then
 			return vim.notify("Docs grep needs ripgrep (rg)", vim.log.levels.WARN)
@@ -1259,6 +1290,7 @@ do
 			rg_glob = false,
 			file_icons = false,
 			git_icons = false,
+			previewer = grep_previewer_spec(),
 			fzf_opts = { ["--no-multi"] = true },
 			fn_transform = function(line)
 				local relpath, lnum, col, text = line:match("^(.-):(%d+):(%d+):(.*)$")
@@ -1280,11 +1312,11 @@ do
 					local disp = string.format("[%s] %s:%s:%s:%s", meta.provider, meta.title, lnum, col, text)
 					grep_entry_map[disp] = {
 						path = abspath, webcache = true, provider = meta.provider,
-						title = meta.title, lnum = tonumber(lnum), text = text,
+						title = meta.title, lnum = tonumber(lnum), col = tonumber(col), text = text,
 					}
 					return disp
 				end
-				grep_entry_map[line] = { path = abspath, webcache = false, lnum = tonumber(lnum), text = text }
+				grep_entry_map[line] = { path = abspath, webcache = false, lnum = tonumber(lnum), col = tonumber(col), text = text }
 				return line
 			end,
 			actions = { ["default"] = docs_grep_open },
