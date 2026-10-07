@@ -13,6 +13,7 @@ local TOOLS = {
 	{ "fd", "fast file pickers (books, docs, source); find is the fallback" },
 	{ "git", "cloning/updating the live doc repos (kernel, QEMU, Ghidra, ...)" },
 	{ "pandoc", "rendering .rst/.xml/.html docs and web articles" },
+	{ "xmllint", "rustdoc page extraction (:DocsRust)" },
 	{ "curl", "web providers and PDF spec downloads" },
 	{ "mutool", "splitting PDF specs (C/C++/DWARF/ABI)" },
 	{ "pdftotext", "extracting PDF spec text" },

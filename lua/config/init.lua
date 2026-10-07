@@ -15,3 +15,12 @@ end, {
 		return vim.fn.getcompletion("Docs " .. arg_lead, "cmdline")
 	end,
 })
+-- The same stub for the module's other commands, so :DocsGrep / :DocsFile /
+-- :DocsRust work in a fresh session before :Docs has ever been run (the module
+-- defines the real commands over these when it loads).
+for _, name in ipairs({ "DocsGrep", "DocsFile", "DocsRust" }) do
+	vim.api.nvim_create_user_command(name, function()
+		require("config.docs")
+		vim.cmd[name]()
+	end, { desc = "Browse documentation (" .. name .. ")" })
+end

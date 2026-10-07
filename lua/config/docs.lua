@@ -229,10 +229,11 @@ local function version_repick(dir)
 	vim.notify("No versioned document here (:V / :Version)", vim.log.levels.INFO)
 end
 local last_picker -- re-open the current provider's fuzzy finder (D in a doc)
--- Docs-only live grep (<leader>fg in a docs buffer / :DocsGrep). These three are
--- the only main-chunk locals it needs visible to render_lines; the rest live in a
--- do-block below (Lua caps a chunk at 200 locals).
-local docs_grep, jump_to_match, pending_grep_jump
+-- Docs-only live grep (<leader>fg in a docs buffer / :DocsGrep) and its
+-- file-finder twin (<leader>ff / :DocsFile), plus :DocsRust. These are the only
+-- main-chunk locals they need visible to render_lines; the rest live in
+-- do-blocks below (Lua caps a chunk at 200 locals).
+local docs_grep, docs_file, docs_rust, jump_to_match, pending_grep_jump
 -- Bumped on every user-initiated open; an async render (pandoc/curl) checks it
 -- before drawing so a slow conversion cannot clobber a doc opened after it.
 local render_seq = 0
@@ -439,6 +440,8 @@ local function render_lines(lines, ft, dir, title)
 	vim.keymap.set("n", "<leader>fs", docs_toc, { buffer = buf, desc = "Docs: table of contents" })
 	vim.keymap.set("n", "<leader>fg", function() docs_grep() end,
 		{ buffer = buf, nowait = true, silent = true, desc = "Docs: grep the docs library" })
+	vim.keymap.set("n", "<leader>ff", function() docs_file() end,
+		{ buffer = buf, nowait = true, silent = true, desc = "Docs: find a doc by name" })
 	-- D reopens whichever picker produced this doc. Bound for every viewer:
 	-- web articles and man pages render with no dir and used to get no D.
 	vim.keymap.set("n", "D", function()
@@ -1321,6 +1324,312 @@ do
 			end,
 			actions = { ["default"] = docs_grep_open },
 		})
+	end
+
+	-- :DocsFile / <leader>ff: the file-finder twin of docs_grep (what <leader>ff
+	-- is to <leader>fg). Same scope rules, same previewer, same open path, but
+	-- the entries are document NAMES rather than matching lines: a web page by
+	-- its index title ("[podman] podman run"), a file-backed doc by its path
+	-- under its project ("[ir0nstone-binary-exploitation] 003 ret2win.md").
+	docs_file = function()
+		local scope = vim.b.docs_dir
+		local paths, label = grep_search_paths(scope)
+		if #paths == 0 then
+			return vim.notify("Docs: no library to search (is Resources/docs present?)", vim.log.levels.WARN)
+		end
+		grep_entry_map = {}
+		local entries, seen = {}, {}
+		local function add(disp, info)
+			if seen[disp] then return end
+			seen[disp] = true
+			grep_entry_map[disp] = info
+			entries[#entries + 1] = disp
+		end
+		-- One web page: its cached text under the provider's dir (the frozen copy
+		-- or, for the on-demand sets, the data_root one).
+		local function add_page(provider, title, url)
+			local sha = vim.fn.sha256(url)
+			local cf = resolve_docs(".webcache/" .. sha .. ".txt")
+			if not cf then return end
+			local pdir = resolve_docs(provider) or (frozen_root .. "/" .. provider)
+			add(string.format("[%s] %s", provider, title),
+				{ path = cf, webcache = true, provider = provider, title = title, lnum = 1, col = 1, text = "", pdir = pdir })
+		end
+		-- One file-backed set: every doc file under `root`, labelled `name`.
+		local exts = {}
+		for _, e in ipairs(DOC_GREP_EXTS) do exts[#exts + 1] = "-e " .. e end
+		local function add_dir(root, name)
+			local cmd = util.find_cmd(root, table.concat(exts, " ") .. " --exclude .git --exclude .stamps")
+			if not cmd then return end
+			local res = vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }):wait()
+			local rels = vim.split(res.stdout or "", "\n", { trimempty = true })
+			table.sort(rels)
+			for _, rel in ipairs(rels) do
+				add(string.format("[%s] %s", name, rel), { path = root .. "/" .. rel, webcache = false, lnum = 1, col = 1, text = "" })
+			end
+		end
+		local idx = scope and (scope .. "/index.tsv")
+		if idx and vim.fn.filereadable(idx) == 1 then
+			-- A web book: its own pages, in index order.
+			local provider = vim.fs.basename(scope)
+			for _, ln in ipairs(vim.fn.readfile(idx)) do
+				local f = vim.split(ln, "\t", { plain = true })
+				if #f >= 2 and #f[#f] > 0 then
+					add_page(provider, f[#f - 1], f[#f])
+				end
+			end
+		elseif scope then
+			-- A file-backed set: grep_search_paths already resolved its project root.
+			add_dir(paths[1], vim.fs.basename(paths[1]))
+		else
+			-- Whole library: every frozen web page by title, every chapter book and
+			-- mdBook, and every provider clone in the volatile cache.
+			for _, idxfile in ipairs(vim.fn.globpath(frozen_root, "*/index.tsv", false, true)) do
+				local provider = vim.fs.basename(vim.fs.dirname(idxfile))
+				for _, ln in ipairs(vim.fn.readfile(idxfile)) do
+					local f = vim.split(ln, "\t", { plain = true })
+					if #f >= 2 and #f[#f] > 0 then
+						add_page(provider, f[#f - 1], f[#f])
+					end
+				end
+			end
+			for _, d in ipairs(vim.fn.glob(frozen_root .. "/books/*/*", false, true)) do
+				if vim.fn.isdirectory(d) == 1 then add_dir(d, vim.fs.basename(d)) end
+			end
+			for _, d in ipairs(vim.fn.glob(frozen_root .. "/rust/*/src", false, true)) do
+				add_dir(d, vim.fs.basename(vim.fs.dirname(d)))
+			end
+			if vim.fn.isdirectory(data_root) == 1 then
+				for name, typ in vim.fs.dir(data_root) do
+					if typ == "directory" and name:sub(1, 1) ~= "." then
+						add_dir(data_root .. "/" .. name, name)
+					end
+				end
+			end
+		end
+		if #entries == 0 then
+			return vim.notify("Docs: nothing to list here", vim.log.levels.WARN)
+		end
+		local function open(selected)
+			local sel = selected and selected[1]
+			local info = sel and grep_entry_map[sel]
+			if not info then return end
+			if info.webcache then
+				render_lines(vim.fn.readfile(info.path), "markdown", info.pdir, info.title)
+			else
+				open_file(info.path)
+			end
+		end
+		last_picker = docs_file
+		fzf().fzf_exec(entries, {
+			prompt = "Docs files (" .. (label or "all") .. ")> ",
+			previewer = grep_previewer_spec(),
+			fzf_opts = { ["--no-multi"] = true },
+			actions = { ["default"] = open },
+		})
+	end
+end
+
+-- ── :DocsRust: rustdoc, crate by crate ───────────────────────────────────
+-- The crates with rustdoc on this machine: the toolchain's (std, core, alloc,
+-- proc_macro, test under <sysroot>/share/doc/rust/html, from the rust-docs
+-- component) and, inside a Cargo project, the project's own crates and its
+-- dependencies under target/doc. A crate is a directory with an all.html. The
+-- picker goes crate -> item (every rustdoc page, shown as a Rust path with its
+-- kind: "std::vec::Vec  (struct)"), and a page is the rustdoc HTML's
+-- #main-content pulled out with xmllint and turned into Markdown by pandoc,
+-- shown in the standard viewer (q, D back to the item list, <leader>fs TOC,
+-- gd, <leader>fg/<leader>ff). When the project has no target/doc yet,
+-- `cargo doc` (dependencies included) runs first and the picker opens when it
+-- is done. Replaces the old <leader>K in after/ftplugin/rust.lua, which was one
+-- flat list of every page of every crate with its own viewer.
+do
+	local EXTRACT = [[xmllint --html --xpath "//*[@id='main-content']" %s 2>/dev/null | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null]]
+
+	local function sysroot_html()
+		if not have("rustc") then
+			return nil
+		end
+		-- Cached: the sysroot is fixed for the session, and this is the only
+		-- blocking call on this path.
+		if vim.g.rust_sysroot == nil then
+			vim.g.rust_sysroot = vim.fn.trim(vim.fn.system({ "rustc", "--print", "sysroot" }))
+		end
+		local d = vim.g.rust_sysroot .. "/share/doc/rust/html"
+		return vim.fn.isdirectory(d) == 1 and d or nil
+	end
+
+	-- Every crate directory (has all.html) under a rustdoc root.
+	local function crates_in(root, tag)
+		local out = {}
+		for _, f in ipairs(vim.fn.glob(root .. "/*/all.html", false, true)) do
+			local dir = vim.fs.dirname(f)
+			out[#out + 1] = { name = vim.fs.basename(dir), dir = dir, tag = tag }
+		end
+		table.sort(out, function(a, b) return a.name < b.name end)
+		return out
+	end
+
+	-- "vec/struct.Vec.html" -> "std::vec::Vec  (struct)"; "vec/index.html" ->
+	-- "std::vec  (module)"; the crate's own index/all pages are named as such.
+	local function item_label(crate, rel)
+		local dir, file = rel:match("^(.-)([^/]+)$")
+		local mods = {}
+		for seg in dir:gmatch("[^/]+") do
+			mods[#mods + 1] = seg
+		end
+		local modpath = crate .. (#mods > 0 and ("::" .. table.concat(mods, "::")) or "")
+		if file == "all.html" and #mods == 0 then
+			return crate .. "  (all items)"
+		elseif file == "index.html" then
+			return modpath .. (#mods == 0 and "  (crate root)" or "  (module)")
+		end
+		local kind, name = file:match("^(%w+)%.(.+)%.html$")
+		if kind and name then
+			return modpath .. "::" .. name .. "  (" .. kind .. ")"
+		end
+		return crate .. "/" .. rel
+	end
+
+	local function open_page(path, title, crate_dir, reopen)
+		if not (have("xmllint") and have("pandoc")) then
+			return vim.notify("xmllint and pandoc are needed to render rustdoc pages", vim.log.levels.WARN)
+		end
+		render_seq = render_seq + 1
+		local myseq = render_seq -- a later open supersedes this render
+		vim.system({ "sh", "-c", EXTRACT:format(shq(path)) }, { text = true, timeout = 30000 }, function(res)
+			vim.schedule(function()
+				if myseq ~= render_seq then
+					return
+				end
+				local lines = vim.split(res.stdout or "", "\n")
+				while #lines > 0 and lines[#lines]:match("^%s*$") do
+					lines[#lines] = nil
+				end
+				if #lines == 0 then
+					return vim.notify("Could not render " .. vim.fs.basename(path), vim.log.levels.WARN)
+				end
+				last_picker = reopen
+				render_lines(lines, "markdown", crate_dir, title)
+			end)
+		end)
+	end
+
+	local function pick_items(crate, back)
+		local cmd = util.find_cmd(crate.dir, "-e html")
+		if not cmd then
+			return vim.notify("fd/find not found (needed to list rustdoc pages)", vim.log.levels.WARN)
+		end
+		local res = vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }):wait()
+		local rels = vim.split(res.stdout or "", "\n", { trimempty = true })
+		table.sort(rels)
+		local labels, map = {}, {}
+		for _, rel in ipairs(rels) do
+			local l = item_label(crate.name, rel)
+			if not map[l] then
+				map[l] = rel
+				labels[#labels + 1] = l
+			end
+		end
+		local function show()
+			last_picker = show
+			fzf().fzf_exec(labels, {
+				prompt = crate.name .. "> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = {
+					["default"] = function(sel)
+						if not (sel and sel[1] and map[sel[1]]) then
+							return
+						end
+						local title = sel[1]:gsub("%s+%b()$", "")
+						open_page(crate.dir .. "/" .. map[sel[1]], title, crate.dir, show)
+					end,
+					-- ctrl-h: back up to the crate list
+					["ctrl-h"] = function() back() end,
+				},
+			})
+		end
+		show()
+	end
+
+	-- The project's own package name, as rustdoc spells it (hyphens become
+	-- underscores), so it sorts first among the target/doc crates.
+	local function package_name(root)
+		for _, ln in ipairs(vim.fn.readfile(root .. "/Cargo.toml", "", 60)) do
+			local n = ln:match('^name%s*=%s*"([^"]+)"')
+			if n then
+				return (n:gsub("-", "_"))
+			end
+		end
+	end
+
+	local function pick_crates(crates)
+		local labels, map = {}, {}
+		for _, c in ipairs(crates) do
+			local l = string.format("%-28s %s", c.name, c.tag)
+			labels[#labels + 1] = l
+			map[l] = c
+		end
+		local function show()
+			last_picker = show
+			fzf().fzf_exec(labels, {
+				prompt = "Rust crates> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = {
+					["default"] = function(sel)
+						if sel and sel[1] and map[sel[1]] then
+							pick_items(map[sel[1]], show)
+						end
+					end,
+				},
+			})
+		end
+		show()
+	end
+
+	docs_rust = function()
+		local from = vim.api.nvim_buf_get_name(0)
+		local root = vim.fs.root(from ~= "" and 0 or vim.fn.getcwd(), "Cargo.toml")
+		local sys = sysroot_html()
+		local function go()
+			local crates = {}
+			if root then
+				local own = package_name(root)
+				local project = crates_in(root .. "/target/doc", "(" .. vim.fs.basename(root) .. ", target/doc)")
+				table.sort(project, function(a, b)
+					if (a.name == own) ~= (b.name == own) then return a.name == own end
+					return a.name < b.name
+				end)
+				for _, c in ipairs(project) do crates[#crates + 1] = c end
+			end
+			if sys then
+				for _, c in ipairs(crates_in(sys, "(toolchain)")) do crates[#crates + 1] = c end
+			end
+			if #crates == 0 then
+				return vim.notify("No rustdoc found: `rustup component add rust-docs` for std, `cargo doc` in a project", vim.log.levels.WARN)
+			end
+			pick_crates(crates)
+		end
+		if root and #vim.fn.glob(root .. "/target/doc/*/all.html", false, true) == 0 then
+			if not have("cargo") then
+				vim.notify("cargo not found: showing the toolchain crates only", vim.log.levels.WARN)
+				return go()
+			end
+			vim.notify("Building rustdoc for " .. vim.fs.basename(root) .. " (cargo doc) …")
+			vim.system({ "cargo", "doc" }, { cwd = root, text = true, timeout = 900000 }, function(res)
+				vim.schedule(function()
+					if res.code ~= 0 then
+						vim.notify("cargo doc failed:\n" .. (res.stderr or ""):sub(-600), vim.log.levels.ERROR)
+					end
+					go()
+				end)
+			end)
+			return
+		end
+		if not root then
+			vim.notify("Not inside a Cargo project: toolchain crates only", vim.log.levels.INFO)
+		end
+		go()
 	end
 end
 
@@ -5865,6 +6174,12 @@ local KEY_ALIAS = {
 vim.api.nvim_create_user_command("DocsGrep", function()
 	docs_grep()
 end, { desc = "Live-grep the :Docs library (prose only, never source)" })
+vim.api.nvim_create_user_command("DocsFile", function()
+	docs_file()
+end, { desc = "Find a :Docs document by name (the file-finder twin of :DocsGrep)" })
+vim.api.nvim_create_user_command("DocsRust", function()
+	docs_rust()
+end, { desc = "rustdoc: pick a crate (toolchain + this Cargo project), then an item" })
 
 vim.api.nvim_create_user_command("Docs", function(o)
 	local key = o.fargs[1]
