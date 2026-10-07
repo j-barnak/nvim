@@ -193,7 +193,7 @@ local function docs_toc()
 		end
 		return vim.notify("No headings or symbols in this document", vim.log.levels.INFO)
 	end
-	fzf().fzf_exec(entries, {
+	docs_fzf_exec(entries, {
 		prompt = "TOC> ",
 		fzf_opts = { ["--with-nth"] = "2..", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 		actions = {
@@ -229,6 +229,39 @@ local function version_repick(dir)
 	vim.notify("No versioned document here (:V / :Version)", vim.log.levels.INFO)
 end
 local last_picker -- re-open the current provider's fuzzy finder (D in a doc)
+-- The ROOT of the picker chain the reader is in: the :Docs menu for everything
+-- started from :Docs / :DocsGrep / :DocsFile, the crate list for :DocsRust. Set
+-- by those entry points, reached from anywhere by ctrl-g in a picker, <leader>R
+-- in a rendered doc, or :DocsRoot. Where last_picker steps back one level,
+-- M.root jumps to the top. Kept on M (not as main-chunk locals): the chunk is
+-- at Lua's 200-local cap.
+function M.root()
+	if M.root_picker then
+		return M.root_picker()
+	end
+	return M.open()
+end
+-- Every picker in this module goes through here (never fzf().fzf_exec directly)
+-- so each one carries the ctrl-g -> root action and, unless it prints its own
+-- header, the hint for it. A picker that IS a root passes root = true and gets
+-- no hint.
+local function docs_fzf_exec(entries, opts)
+	opts = vim.deepcopy(opts or {})
+	opts.actions = opts.actions or {}
+	if opts.actions["ctrl-g"] == nil then
+		opts.actions["ctrl-g"] = function()
+			M.root()
+		end
+	end
+	if not opts.root then
+		opts.fzf_opts = opts.fzf_opts or {}
+		if opts.fzf_opts["--header"] == nil then
+			opts.fzf_opts["--header"] = "ctrl-g: root  D: back"
+		end
+	end
+	opts.root = nil
+	return fzf().fzf_exec(entries, opts)
+end
 -- Docs-only live grep (<leader>fg in a docs buffer / :DocsGrep) and its
 -- file-finder twin (<leader>ff / :DocsFile), plus :DocsRust. These are the only
 -- main-chunk locals they need visible to render_lines; the rest live in
@@ -449,6 +482,8 @@ local function render_lines(lines, ft, dir, title)
 			reopen()
 		end
 	end, { buffer = buf, nowait = true, silent = true, desc = "Docs: reopen this provider's fuzzy finder" })
+	vim.keymap.set("n", "<leader>R", M.root,
+		{ buffer = buf, nowait = true, silent = true, desc = "Docs: back to the root picker" })
 	if ft == "man" then
 		-- gd follows the cross-reference under the cursor (e.g. gd on `read`
 		-- opens read's man page) in a new split, so this page is not replaced.
@@ -1265,6 +1300,7 @@ do
 	end
 
 	docs_grep = function()
+		M.root_picker = M.root_picker or M.open
 		if not have("rg") then
 			return vim.notify("Docs grep needs ripgrep (rg)", vim.log.levels.WARN)
 		end
@@ -1294,7 +1330,7 @@ do
 			file_icons = false,
 			git_icons = false,
 			previewer = grep_previewer_spec(),
-			fzf_opts = { ["--no-multi"] = true },
+			fzf_opts = { ["--no-multi"] = true, ["--header"] = "ctrl-g: root" },
 			fn_transform = function(line)
 				local relpath, lnum, col, text = line:match("^(.-):(%d+):(%d+):(.*)$")
 				if not relpath then
@@ -1322,7 +1358,7 @@ do
 				grep_entry_map[line] = { path = abspath, webcache = false, lnum = tonumber(lnum), col = tonumber(col), text = text }
 				return line
 			end,
-			actions = { ["default"] = docs_grep_open },
+			actions = { ["default"] = docs_grep_open, ["ctrl-g"] = function() M.root() end },
 		})
 	end
 
@@ -1332,6 +1368,7 @@ do
 	-- its index title ("[podman] podman run"), a file-backed doc by its path
 	-- under its project ("[ir0nstone-binary-exploitation] 003 ret2win.md").
 	docs_file = function()
+		M.root_picker = M.root_picker or M.open
 		local scope = vim.b.docs_dir
 		local paths, label = grep_search_paths(scope)
 		if #paths == 0 then
@@ -1421,7 +1458,7 @@ do
 			end
 		end
 		last_picker = docs_file
-		fzf().fzf_exec(entries, {
+		docs_fzf_exec(entries, {
 			prompt = "Docs files (" .. (label or "all") .. ")> ",
 			previewer = grep_previewer_spec(),
 			fzf_opts = { ["--no-multi"] = true },
@@ -1533,7 +1570,7 @@ do
 		end
 		local function show()
 			last_picker = show
-			fzf().fzf_exec(labels, {
+			docs_fzf_exec(labels, {
 				prompt = crate.name .. "> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = {
@@ -1572,8 +1609,10 @@ do
 		end
 		local function show()
 			last_picker = show
-			fzf().fzf_exec(labels, {
+			M.root_picker = show
+			docs_fzf_exec(labels, {
 				prompt = "Rust crates> ",
+				root = true,
 				fzf_opts = { ["--no-multi"] = true },
 				actions = {
 					["default"] = function(sel)
@@ -1647,7 +1686,7 @@ local function pick_files(dir, fd_args, prompt)
 	end
 	-- The command carries its own search root (fzf-lua's cwd isn't applied to
 	-- the raw command); cwd lets the builtin previewer resolve the entries.
-	fzf().fzf_exec(cmd, {
+	docs_fzf_exec(cmd, {
 		prompt = prompt,
 		cwd = dir,
 		previewer = "builtin",
@@ -1666,7 +1705,7 @@ local function api_search(dir)
 	last_picker = function()
 		api_search(dir) -- D in a kernel-API doc reopens this search, not an older picker
 	end
-	fzf().fzf_exec("cat " .. shq(dir .. "/api-index.tsv"), {
+	docs_fzf_exec("cat " .. shq(dir .. "/api-index.tsv"), {
 		prompt = "Kernel API> ",
 		fzf_opts = { ["--delimiter"] = "\t", ["--with-nth"] = "1..2", ["--no-multi"] = true },
 		actions = {
@@ -1788,7 +1827,7 @@ end
 -- at a version is not always preceded by wanting to read its documentation.
 -- Each version is a separate shallow checkout, so this costs disk per version.
 local function kernel_menu(version)
-	fzf().fzf_exec({ "Browse Documentation", "API reference", "Explore source" }, {
+	docs_fzf_exec({ "Browse Documentation", "API reference", "Explore source" }, {
 		prompt = version .. "> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -1815,7 +1854,7 @@ local function pick_kernel_version()
 		return vim.notify("git not found (needed to fetch kernel docs)", vim.log.levels.WARN)
 	end
 	with_versions(function(list)
-		fzf().fzf_exec(list, {
+		docs_fzf_exec(list, {
 			prompt = "Kernel version> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -2486,7 +2525,7 @@ local function make_versioned(name, spec)
 		if spec.docs_mode == "none" then
 			choices = { "Explore source" }
 		end
-		fzf().fzf_exec(choices, {
+		docs_fzf_exec(choices, {
 			prompt = version .. "> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -2528,7 +2567,7 @@ local function make_versioned(name, spec)
 				for _, v in ipairs(list) do all[#all + 1] = v end
 				list = all
 			end
-			fzf().fzf_exec(list, {
+			docs_fzf_exec(list, {
 				prompt = (spec.label or name) .. " version> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = {
@@ -2889,7 +2928,7 @@ local function pick_man(section)
 		section,
 		section
 	)
-	fzf().fzf_exec(cmd, {
+	docs_fzf_exec(cmd, {
 		prompt = "man " .. section .. "> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -2951,7 +2990,7 @@ local function pick_cppman()
 			.. "      if len(k)>1 and not k.startswith('('): s.add(k)\n"
 			.. "  except Exception: pass\n"
 			.. "print('\\n'.join(sorted(s)))"
-		fzf().fzf_exec("python3 -c " .. shq(py) .. " " .. shq(db), {
+		docs_fzf_exec("python3 -c " .. shq(py) .. " " .. shq(db), {
 			prompt = "cppman> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -2982,7 +3021,7 @@ local function pick_nbsd(section)
 	local dir = data_root .. "/netbsd"
 	ensure_repo(dir, "https://github.com/NetBSD/src", "/share/man/man9 /share/man/man4", "share/man/man9", function(d)
 		local mandir = d .. "/share/man/man" .. section
-		fzf().fzf_exec("fd --base-directory " .. shq(mandir) .. " --type f .", {
+		docs_fzf_exec("fd --base-directory " .. shq(mandir) .. " --type f .", {
 			prompt = "NetBSD (" .. section .. ")> ",
 			cwd = mandir,
 			fzf_opts = { ["--no-multi"] = true },
@@ -3033,7 +3072,7 @@ local function pick_haskell()
 					entries[#entries + 1] = string.format("%d\t%s  (%s, %s)", i, sig, mod, pkg)
 					by_idx[i] = r
 				end
-				fzf().fzf_exec(entries, {
+				docs_fzf_exec(entries, {
 					prompt = "Hoogle> ",
 					fzf_opts = { ["--with-nth"] = "2..", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 					actions = {
@@ -3075,7 +3114,7 @@ local function pick_ocaml()
 	local dir = data_root .. "/ocaml"
 	local idxfile = dir .. "/modules.txt"
 	local function browse()
-		fzf().fzf_exec(vim.fn.readfile(idxfile), {
+		docs_fzf_exec(vim.fn.readfile(idxfile), {
 			prompt = "OCaml module> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -3144,7 +3183,7 @@ local function pick_aya_api()
 				sub[#sub + 1] = line
 			end
 		end
-		fzf().fzf_exec(sub, {
+		docs_fzf_exec(sub, {
 			prompt = mod .. "> ",
 			fzf_opts = { ["--with-nth"] = "2", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 			actions = {
@@ -3173,7 +3212,7 @@ local function pick_aya_api()
 			end
 		end
 		table.sort(mods)
-		fzf().fzf_exec(mods, {
+		docs_fzf_exec(mods, {
 			prompt = "Aya module> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -3277,7 +3316,7 @@ local function pick_crate(crate, opts)
 				titles[#titles + 1] = h.title
 				map[h.title] = h
 			end
-			fzf().fzf_exec(titles, {
+			docs_fzf_exec(titles, {
 				prompt = crate .. " sections> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = { ["default"] = function(sel)
@@ -3324,7 +3363,7 @@ local function pick_crate(crate, opts)
 				end
 			end
 			table.sort(mods)
-			return fzf().fzf_exec(mods, {
+			return docs_fzf_exec(mods, {
 				prompt = crate .. " modules> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = { ["default"] = function(sel)
@@ -3342,7 +3381,7 @@ local function pick_crate(crate, opts)
 			end
 		end
 		table.sort(sub)
-		fzf().fzf_exec(sub, {
+		docs_fzf_exec(sub, {
 			prompt = crate .. " " .. kindlabel:lower() .. "> ",
 			fzf_opts = { ["--with-nth"] = "2", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -3378,7 +3417,7 @@ local function pick_crate(crate, opts)
 				groups[#groups + 1] = k
 			end
 		end
-		fzf().fzf_exec(groups, {
+		docs_fzf_exec(groups, {
 			prompt = crate .. " items> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -3415,7 +3454,7 @@ local function pick_crate(crate, opts)
 		last_picker = menu
 		local ov = opts.sections and "Sections (crate overview)" or "Overview (crate root)"
 		local it = opts.items_label or "Crate items"
-		fzf().fzf_exec({ ov, it }, {
+		docs_fzf_exec({ ov, it }, {
 			prompt = crate .. "> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -3601,7 +3640,7 @@ local function frozen_web_provider(name, prompt, live)
 		local page_root = where == "cached" and data_root or frozen_root
 		local function browse()
 			last_picker = browse -- D reopens the index
-			fzf().fzf_exec(vim.fn.readfile(idxfile), {
+			docs_fzf_exec(vim.fn.readfile(idxfile), {
 				prompt = prompt,
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 				actions = {
@@ -3768,7 +3807,7 @@ local function pick_systemd()
 	local function pick_chapter(cat)
 		local items = cats[cat]
 		last_picker = pick_systemd -- D returns to the top-level systemd category menu
-		fzf().fzf_exec(vim.tbl_map(function(it) return it.title end, items), {
+		docs_fzf_exec(vim.tbl_map(function(it) return it.title end, items), {
 			prompt = "systemd/" .. cat .. "> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -3780,7 +3819,7 @@ local function pick_systemd()
 		})
 	end
 	last_picker = pick_systemd
-	fzf().fzf_exec(order, {
+	docs_fzf_exec(order, {
 		prompt = "systemd> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = { ["default"] = function(sel) if sel and sel[1] then pick_chapter(sel[1]) end end },
@@ -3819,7 +3858,7 @@ local function frozen_nested_provider(name, top_prompt)
 		local function pick_chapter(cat)
 			local items = cats[cat]
 			last_picker = run -- D returns to the top-level category menu
-			fzf().fzf_exec(vim.tbl_map(function(it) return it.title end, items), {
+			docs_fzf_exec(vim.tbl_map(function(it) return it.title end, items), {
 				prompt = cat .. "> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = { ["default"] = function(sel)
@@ -3831,7 +3870,7 @@ local function frozen_nested_provider(name, top_prompt)
 			})
 		end
 		last_picker = run
-		fzf().fzf_exec(order, {
+		docs_fzf_exec(order, {
 			prompt = top_prompt,
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -3868,13 +3907,13 @@ local function pick_styx()
 		for _, t in ipairs(tags) do
 			versions[#versions + 1] = t
 		end
-		fzf().fzf_exec(versions, {
+		docs_fzf_exec(versions, {
 			prompt = "Styx version> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
 				if not (sel and sel[1]) then return end
 				local ver = sel[1]
-				fzf().fzf_exec({ "Browse Documentation", "Explore source" }, {
+				docs_fzf_exec({ "Browse Documentation", "Explore source" }, {
 					prompt = ver .. "> ",
 					fzf_opts = { ["--no-multi"] = true },
 					actions = { ["default"] = function(s2)
@@ -3957,7 +3996,7 @@ local function pick_ns3()
 		for _, e in ipairs(MENU) do
 			labels[#labels + 1] = e[1]
 		end
-		fzf().fzf_exec(labels, {
+		docs_fzf_exec(labels, {
 			prompt = ver .. "> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -3970,7 +4009,7 @@ local function pick_ns3()
 	end
 	-- Release tags only ("ns-3.48", "ns-3.46.1"); the -RC tags are excluded.
 	versioned_tags("ns3", NS3_URL, { tagre = "ns-3\\.[0-9]+(\\.[0-9]+)?", diskpat = "^ns%-3" }, function(tags)
-		fzf().fzf_exec(tags, {
+		docs_fzf_exec(tags, {
 			prompt = "ns-3 version> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -4040,7 +4079,7 @@ local function pick_ansible()
 		for _, e in ipairs(MENU) do
 			labels[#labels + 1] = e[1]
 		end
-		fzf().fzf_exec(labels, {
+		docs_fzf_exec(labels, {
 			prompt = br .. "> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -4059,7 +4098,7 @@ local function pick_ansible()
 	end
 	local function pick(branches)
 		local rows = vim.tbl_map(label, branches)
-		fzf().fzf_exec(rows, {
+		docs_fzf_exec(rows, {
 			prompt = "Ansible release> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -4131,7 +4170,7 @@ local function pick_lkl()
 		end
 		local ddir = resolve_docs("lkl") or (frozen_root .. "/lkl")
 		last_picker = open_article
-		fzf().fzf_exec(vim.fn.readfile(idxfile), {
+		docs_fzf_exec(vim.fn.readfile(idxfile), {
 			prompt = "LKL articles> ",
 			fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -4170,7 +4209,7 @@ local function pick_lkl()
 		ensure_repo(data_root .. "/lkl/master", LKL_URL, LKL_SPARSE, "tools/lkl/include/lkl.h", go)
 	end
 	last_picker = pick_lkl
-	fzf().fzf_exec({
+	docs_fzf_exec({
 		"Manual & Docs (Documentation/lkl)",
 		"API headers (lkl.h, lkl_host.h, lkl_config.h)",
 		"Examples & tests (tools/lkl/tests)",
@@ -4210,7 +4249,7 @@ local pick_unicorn_articles = frozen_web_provider("unicorn-articles", "Unicorn A
 -- what most readers reach for; "Explore source" opens the tree for gs/:Src.
 -- The manuals are reached only from here (they left the Books list).
 local function pick_bochs()
-	fzf().fzf_exec({ "Documentation (User + Developer manuals)", "Explore source" }, {
+	docs_fzf_exec({ "Documentation (User + Developer manuals)", "Explore source" }, {
 		prompt = "Bochs> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -4290,7 +4329,7 @@ local function glibc_versions(cb)
 end
 local function pick_glibc()
 	glibc_versions(function(list)
-		fzf().fzf_exec(list, {
+		docs_fzf_exec(list, {
 			prompt = "glibc version> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -4305,7 +4344,7 @@ local function pick_glibc()
 					if resolve_docs("glibc/index.tsv") then
 						table.insert(choices, 1, "Browse Documentation")
 					end
-					fzf().fzf_exec(choices, {
+					docs_fzf_exec(choices, {
 						prompt = version .. "> ",
 						fzf_opts = { ["--no-multi"] = true },
 						actions = {
@@ -4360,7 +4399,7 @@ local function pick_ghidra()
 	end
 	local menu
 	menu = function(tags)
-			fzf().fzf_exec(tags, {
+			docs_fzf_exec(tags, {
 				prompt = "Ghidra version> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = {
@@ -4436,7 +4475,7 @@ local function pick_multiboot()
 		["Multiboot (v1)"] = "https://www.gnu.org/software/grub/manual/multiboot/multiboot.html",
 		["Multiboot2"] = "https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html",
 	}
-	fzf().fzf_exec(vim.tbl_keys(specs), {
+	docs_fzf_exec(vim.tbl_keys(specs), {
 		prompt = "Multiboot> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -4459,7 +4498,7 @@ local function pick_pydoc()
 	-- e.g. pexpect, requests, numpy) so third-party packages are discoverable.
 	-- Streamed into fzf; collecting it first blocked the UI for ~35 ms.
 	local py = "import pkgutil,sys; print(chr(10).join(sorted(set([m.name for m in pkgutil.iter_modules()] + list(sys.builtin_module_names)))))"
-	fzf().fzf_exec("python3 -c " .. shq(py), {
+	docs_fzf_exec("python3 -c " .. shq(py), {
 		prompt = "pydoc> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -4643,7 +4682,7 @@ end
 -- (a MoinMoin wiki on sourceware, opened in the browser rather than frozen).
 local GDB_SRC_URL = "https://sourceware.org/git/binutils-gdb.git"
 local function pick_gdb()
-	fzf().fzf_exec({ "User Manual (PDF)", "Internals Manual (wiki)", "Explore source (by version)" }, {
+	docs_fzf_exec({ "User Manual (PDF)", "Internals Manual (wiki)", "Explore source (by version)" }, {
 		prompt = "GDB> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -4664,7 +4703,7 @@ local function pick_gdb()
 				end
 				-- Explore source, versioned (gdb-N.N-release tags, newest first).
 				versioned_tags("gdb", GDB_SRC_URL, { tagre = "gdb-[0-9.]+-release", diskpat = "^gdb%-%d" }, function(list)
-					fzf().fzf_exec(list, {
+					docs_fzf_exec(list, {
 						prompt = "GDB version> ",
 						fzf_opts = { ["--no-multi"] = true },
 						actions = {
@@ -4695,7 +4734,7 @@ local function pick_gcc()
 	}
 	-- /libiberty/at-file.texi: the GCC user manual (gcc.texi) @includes it via srcdir.
 	ensure_repo(data_root .. "/gcc", "https://github.com/gcc-mirror/gcc", "/gcc/doc /libiberty/at-file.texi", "gcc/doc", function(d)
-		fzf().fzf_exec(vim.tbl_keys(docs), {
+		docs_fzf_exec(vim.tbl_keys(docs), {
 			prompt = "GCC docs> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -4732,7 +4771,7 @@ local function pick_android_kernel()
 			if #branches == 0 then
 				return vim.notify("Android kernel: could not list branches", vim.log.levels.WARN)
 			end
-			fzf().fzf_exec(branches, {
+			docs_fzf_exec(branches, {
 				prompt = "Android kernel (ACK)> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = {
@@ -4796,7 +4835,7 @@ local function pick_binutils()
 		return vim.notify("man not found", vim.log.levels.WARN)
 	end
 	local tools = { "readelf", "objdump", "nm", "strings", "objcopy", "addr2line", "size", "strip", "ar", "ranlib", "c++filt", "ld", "as" }
-	fzf().fzf_exec(tools, {
+	docs_fzf_exec(tools, {
 		prompt = "binutils> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -4935,7 +4974,7 @@ local function pick_mdbook(dir, prompt, numbered)
 	last_picker = function()
 		pick_mdbook(dir, prompt, numbered)
 	end
-	fzf().fzf_exec(entries, {
+	docs_fzf_exec(entries, {
 		prompt = prompt,
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -4974,7 +5013,7 @@ end
 
 -- Aya: the book (aya-rs.dev) and the crate reference (docs.rs) under one entry.
 local function pick_aya()
-	fzf().fzf_exec({ "Book (aya-rs.dev)", "Crate reference (docs.rs)" }, {
+	docs_fzf_exec({ "Book (aya-rs.dev)", "Crate reference (docs.rs)" }, {
 		prompt = "Aya> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -5034,7 +5073,7 @@ local function pick_rust_std()
 		-- D from an item page returns to the top-level std menu, not this
 		-- category subpicker (Primitives/Modules/Macros/...).
 		last_picker = pick_rust_std
-		fzf().fzf_exec(vim.fn.readfile(f), {
+		docs_fzf_exec(vim.fn.readfile(f), {
 			prompt = prompt,
 			fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 			actions = {
@@ -5059,7 +5098,7 @@ local function pick_rust_std()
 		"Crate: alloc", "Crate: core", "Crate: proc_macro",
 		"Crate: std_detect", "Crate: test",
 	}
-	fzf().fzf_exec(menu, {
+	docs_fzf_exec(menu, {
 		prompt = "Rust std> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -5198,7 +5237,7 @@ local function pick_books()
 	table.sort(titles, function(a, b)
 		return a:lower() < b:lower()
 	end)
-	fzf().fzf_exec(titles, {
+	docs_fzf_exec(titles, {
 		prompt = "Books> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -5521,7 +5560,7 @@ local providers = {
 	{ name = "BCC", key = "bcc", run = register_versioned("bcc", vspec(simple.bcc, "v[0-9]+\\.[0-9]+\\.[0-9]+", { label = "BCC" })) },
 	{ name = "Bochs (x86/x64 emulator)", key = "bochs", run = pick_bochs },
 	{ name = "Valgrind", key = "valgrind", run = function()
-		fzf().fzf_exec({ "Quick Start", "FAQ", "User Manual" }, {
+		docs_fzf_exec({ "Quick Start", "FAQ", "User Manual" }, {
 			prompt = "Valgrind> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -5584,7 +5623,7 @@ local providers = {
 			-- doc's main TOC, which offers "» API Reference" to drill back in),
 			-- not this subpicker.
 			last_picker = narrative
-			fzf().fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
+			docs_fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
 				prompt = "drgn API reference (chapter)> ",
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 				actions = { ["default"] = function(s) open_row(root, s) end },
@@ -5595,7 +5634,7 @@ local providers = {
 			local entries = vim.fn.readfile(root .. "/index.tsv")
 			entries[#entries + 1] = "\u{00bb} API Reference (browse by chapter)\tAPI-REF"
 			last_picker = narrative
-			fzf().fzf_exec(entries, {
+			docs_fzf_exec(entries, {
 				prompt = "drgn docs> ",
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 				actions = { ["default"] = function(sel)
@@ -5722,7 +5761,7 @@ local providers = {
 		end
 		menu = function()
 			last_picker = menu
-			fzf().fzf_exec({ "Whitepaper", "Manual", "Documentation", "Publications" }, {
+			docs_fzf_exec({ "Whitepaper", "Manual", "Documentation", "Publications" }, {
 				prompt = "seL4> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = { ["default"] = function(sel)
@@ -5743,7 +5782,7 @@ local providers = {
 	-- choice runs its own picker (which sets its own D target), so it does not
 	-- touch last_picker itself.
 	{ name = "Rust", key = "rust", run = function()
-		fzf().fzf_exec({ "The Rust Reference", "The Standard Library (std)" }, {
+		docs_fzf_exec({ "The Rust Reference", "The Standard Library (std)" }, {
 			prompt = "Rust> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -5763,7 +5802,7 @@ local providers = {
 	-- plus the crate API reference browsed live from docs.rs. Launcher like
 	-- the Books menu: each choice sets its own D target.
 	{ name = "Serde", key = "serde-guide", run = function()
-		fzf().fzf_exec({ "Guide (serde.rs)", "Crate reference (docs.rs)" }, {
+		docs_fzf_exec({ "Guide (serde.rs)", "Crate reference (docs.rs)" }, {
 			prompt = "Serde> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -5776,7 +5815,7 @@ local providers = {
 	-- Dioxus: the crate API reference (live docs.rs) plus the dioxuslabs.com
 	-- 0.7 guide (frozen, "[Section] Title" in sidebar order).
 	{ name = "Dioxus", key = "dioxus-guide", run = function()
-		fzf().fzf_exec({ "Crate reference (docs.rs)", "Guide (dioxuslabs.com 0.7)" }, {
+		docs_fzf_exec({ "Crate reference (docs.rs)", "Guide (dioxuslabs.com 0.7)" }, {
 			prompt = "Dioxus> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = { ["default"] = function(sel)
@@ -5815,7 +5854,7 @@ local providers = {
 			-- doc's main TOC, which offers "» API Reference" to drill back in),
 			-- not this subpicker.
 			last_picker = narrative
-			fzf().fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
+			docs_fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
 				prompt = "Frida API reference> ",
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 				actions = { ["default"] = function(s) open_row(root, s) end },
@@ -5826,7 +5865,7 @@ local providers = {
 			local entries = vim.fn.readfile(root .. "/index.tsv")
 			entries[#entries + 1] = "\u{00bb} API Reference (JavaScript / C / Gum / Core / Swift / Go)\tAPI-REF"
 			last_picker = narrative
-			fzf().fzf_exec(entries, {
+			docs_fzf_exec(entries, {
 				prompt = "Frida docs> ",
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 				actions = { ["default"] = function(sel)
@@ -5869,7 +5908,7 @@ local providers = {
 			for _, e in ipairs(SRC) do
 				labels[#labels + 1] = e[1]
 			end
-			fzf().fzf_exec(labels, {
+			docs_fzf_exec(labels, {
 				prompt = "kAFL source> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = {
@@ -5887,7 +5926,7 @@ local providers = {
 			})
 		end
 		return function()
-			fzf().fzf_exec({ "Documentation", "Explore source (kAFL + components)" }, {
+			docs_fzf_exec({ "Documentation", "Explore source (kAFL + components)" }, {
 				prompt = "kAFL> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = {
@@ -5931,7 +5970,7 @@ local providers = {
 			-- doc's main TOC, which offers "» API Reference" to drill back in),
 			-- not this subpicker.
 			last_picker = narrative
-			fzf().fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
+			docs_fzf_exec(vim.fn.readfile(root .. "/api.tsv"), {
 				prompt = "angr API reference (module)> ",
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 				actions = { ["default"] = function(s) open_row(root, s) end },
@@ -5942,7 +5981,7 @@ local providers = {
 			local entries = vim.fn.readfile(root .. "/index.tsv")
 			entries[#entries + 1] = "\u{00bb} API Reference (browse angr.* modules)\tAPI-REF"
 			last_picker = narrative
-			fzf().fzf_exec(entries, {
+			docs_fzf_exec(entries, {
 				prompt = "angr docs> ",
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 				actions = { ["default"] = function(sel)
@@ -5969,7 +6008,7 @@ local providers = {
 		-- version dir under binja/ ("v5.0.7648-stable", "stable~6.0.10601").
 		label = "Binary Ninja", diskpat = "%d", vsort = true, heads = { "dev" }, docs_mode = "latest",
 		docs_fn = function()
-			fzf().fzf_exec({ "User Documentation", "Developer Documentation" }, {
+			docs_fzf_exec({ "User Documentation", "Developer Documentation" }, {
 				prompt = "Binary Ninja docs> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = { ["default"] = function(sel)
@@ -6006,7 +6045,7 @@ local providers = {
 		local menu
 		menu = function()
 			last_picker = menu
-			fzf().fzf_exec({ "Documentation (nyx-fuzz/Nyx)", "Paper: Nyx - Greybox Hypervisor Fuzzing (USENIX Security 2021)" }, {
+			docs_fzf_exec({ "Documentation (nyx-fuzz/Nyx)", "Paper: Nyx - Greybox Hypervisor Fuzzing (USENIX Security 2021)" }, {
 				prompt = "Nyx> ",
 				fzf_opts = { ["--no-multi"] = true },
 				actions = { ["default"] = function(sel)
@@ -6080,6 +6119,7 @@ providers[#providers + 1] = { name = "gem5 (simulator docs)", key = "gem5", run 
 -- index, so a name containing a tab or a status word cannot mis-dispatch.
 pick_list = function()
 	last_picker = pick_list
+	M.root_picker = M.open
 	local rows = {}
 	local function add(name, key, run)
 		local status, count = docs_status(LOCATION[key])
@@ -6121,7 +6161,7 @@ pick_list = function()
 	for i, r in ipairs(rows) do
 		entries[i] = string.format("%d\t%s  %s  %s  %s", i, pad(r.status, 12), pad(r.name, w_name), pad(":Docs " .. r.key, 18), r.count or "")
 	end
-	fzf().fzf_exec(entries, {
+	docs_fzf_exec(entries, {
 		prompt = "Sources> ",
 		fzf_opts = { ["--with-nth"] = "2..", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 		actions = {
@@ -6138,11 +6178,13 @@ pick_list = function()
 end
 
 function M.open()
+	M.root_picker = M.open
 	local names = vim.tbl_map(function(p)
 		return p.name
 	end, providers)
-	fzf().fzf_exec(names, {
+	docs_fzf_exec(names, {
 		prompt = "Docs> ",
+		root = true,
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
 			["default"] = function(sel)
@@ -6180,9 +6222,13 @@ end, { desc = "Find a :Docs document by name (the file-finder twin of :DocsGrep)
 vim.api.nvim_create_user_command("DocsRust", function()
 	docs_rust()
 end, { desc = "rustdoc: pick a crate (toolchain + this Cargo project), then an item" })
+vim.api.nvim_create_user_command("DocsRoot", function()
+	M.root()
+end, { desc = "Back to the root picker (:Docs menu, or the crate list for :DocsRust)" })
 
 vim.api.nvim_create_user_command("Docs", function(o)
 	local key = o.fargs[1]
+	M.root_picker = M.open -- a direct :Docs <key> still roots at the menu
 	if not key then
 		return M.open()
 	end
